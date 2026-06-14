@@ -49,10 +49,13 @@ nav:
   - Getting Started: getting-started.md
   - Design:
       - Roadmap: 00-roadmap.md
-      - Architecture: 01-architecture.md
+      - Architecture Overview: 01-architecture.md
       - Agent Loop: 02-agent-loop.md
       - Tools: 03-tools.md
       - Sessions: 04-sessions.md
       - Core Types and Events: 05-core-types-and-events.md
+  - Architecture Notes:
+      - Overview: architecture/index.md
+      - "Phase 1: Core Types and Events": architecture/phase-1-core-types-and-events.md
   - ADRs:
       - Use Textual for TUI: adr/0001-use-textual-for-tui.md
