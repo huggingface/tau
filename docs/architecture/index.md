@@ -31,5 +31,6 @@ The most important boundary is that `tau_agent` should stay portable. It can def
 - [Phase 9: Skills and Prompt Templates](phase-9-skills-prompts.md)
 - [Phase 10: System Prompt Assembly](phase-10-system-prompt.md)
 - [Phase 11: Print and Event Rendering Modes](phase-11-print-event-rendering.md)
+- [Phase 12: Textual TUI](phase-12-textual-tui.md)
 
 More pages will be added here as each phase lands.

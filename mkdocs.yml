@@ -70,5 +70,6 @@ nav:
       - "Phase 9: Skills and Prompt Templates": architecture/phase-9-skills-prompts.md
       - "Phase 10: System Prompt Assembly": architecture/phase-10-system-prompt.md
       - "Phase 11: Print and Event Rendering Modes": architecture/phase-11-print-event-rendering.md
+      - "Phase 12: Textual TUI": architecture/phase-12-textual-tui.md
   - ADRs:
       - Use Textual for TUI: adr/0001-use-textual-for-tui.md
