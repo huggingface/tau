@@ -5,6 +5,14 @@ from tau_coding.prompt_templates import (
     load_prompt_templates,
     render_prompt_template,
 )
+from tau_coding.rendering import (
+    EventRenderer,
+    FinalTextRenderer,
+    JsonEventRenderer,
+    PrintOutputMode,
+    TranscriptRenderer,
+    create_event_renderer,
+)
 from tau_coding.resources import ResourceError, TauResourcePaths
 from tau_coding.session import (
     CodingSession,
@@ -44,12 +52,17 @@ __all__ = [
     "CodingSessionConfig",
     "CommandResult",
     "BuildSystemPromptOptions",
+    "EventRenderer",
+    "FinalTextRenderer",
+    "JsonEventRenderer",
+    "PrintOutputMode",
     "ProjectContextFile",
     "PromptTemplate",
     "ResourceError",
     "Skill",
     "TauResourcePaths",
     "ToolDefinition",
+    "TranscriptRenderer",
     "build_skill_index",
     "build_system_prompt",
     "collect_prompt_guidelines",
@@ -58,6 +71,7 @@ __all__ = [
     "create_coding_tools",
     "create_edit_tool",
     "create_edit_tool_definition",
+    "create_event_renderer",
     "create_read_tool",
     "create_read_tool_definition",
     "create_write_tool",
