@@ -111,6 +111,32 @@ def test_chat_items_fold_long_unbroken_text_to_console_width() -> None:
     assert max(len(line) for line in output.splitlines()) <= 36
 
 
+def test_chat_items_render_fenced_code_without_markers() -> None:
+    console = Console(record=True, width=60)
+    item = ChatItem(
+        role="assistant",
+        text='Here is code:\n\n```python\nprint("hi")\n```',
+    )
+
+    console.print(render_chat_item(item))
+    output = console.export_text()
+
+    assert 'print("hi")' in output
+    assert "```" not in output
+    assert "python" not in output
+
+
+def test_chat_items_preserve_malformed_fenced_code() -> None:
+    console = Console(record=True, width=60)
+    item = ChatItem(role="assistant", text='```python\nprint("hi")')
+
+    console.print(render_chat_item(item))
+    output = console.export_text()
+
+    assert "```python" in output
+    assert 'print("hi")' in output
+
+
 @pytest.mark.anyio
 async def test_tui_app_mounts_sidebar_and_transcript() -> None:
     app = TauTuiApp(FakeSession())

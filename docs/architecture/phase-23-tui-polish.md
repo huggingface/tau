@@ -19,6 +19,11 @@ Live tool results now render successful output in the transcript, matching
 restored session history. This keeps tool-call blocks useful during an active
 run instead of hiding successful command output until the session is reloaded.
 
+Transcript blocks now render fenced code and persisted edit patches with Rich
+syntax renderables inside the same Pi-style stacked message blocks. The
+transcript state still stores plain role/text items; this is renderer-only
+polish in the Textual frontend.
+
 Live `edit` tool results now include their unified patch in the tool block. This
 provides an inline diff view for file edits while keeping the event adapter and
 Textual widgets decoupled. Tool-result metadata is now preserved in
@@ -58,8 +63,8 @@ commands, and rendering.
 ## Still deferred
 
 The larger Phase 23 roadmap still includes a richer modal session picker,
-deeper transcript rendering, and deeper theme polish. Those should remain
-separate atomic slices.
+broader markdown transcript rendering, and deeper theme polish. Those should
+remain separate atomic slices.
 
 ## Tests
 

@@ -6,6 +6,7 @@ from typing import Protocol
 
 from rich.console import Group, RenderableType
 from rich.panel import Panel
+from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from textual.widgets import RichLog, Static
@@ -101,7 +102,7 @@ def render_session_sidebar(session: SessionSummarySource) -> RenderableType:
 def render_chat_item(item: ChatItem) -> Panel:
     """Render a chat item as a standalone colored transcript block."""
     border_style, body_style = _ROLE_BLOCK_STYLES[item.role]
-    body = Text(item.text, style=body_style, overflow="fold", no_wrap=False)
+    body = _render_chat_body(item.text, body_style=body_style)
     return Panel(
         body,
         border_style=border_style,
@@ -109,6 +110,95 @@ def render_chat_item(item: ChatItem) -> Panel:
         padding=(0, 1),
         expand=True,
     )
+
+
+def _render_chat_body(text: str, *, body_style: str) -> RenderableType:
+    patch_body = _render_patch_body(text, body_style=body_style)
+    if patch_body is not None:
+        return patch_body
+    fenced_body = _render_fenced_body(text, body_style=body_style)
+    if fenced_body is not None:
+        return fenced_body
+    return _plain_text(text, body_style=body_style)
+
+
+def _render_patch_body(text: str, *, body_style: str) -> RenderableType | None:
+    marker = "\nPatch:\n"
+    if marker not in text:
+        return None
+    before_patch, patch = text.split(marker, 1)
+    if not patch.strip():
+        return None
+    return Group(
+        _plain_text(f"{before_patch}{marker.rstrip()}", body_style=body_style),
+        Syntax(
+            patch.rstrip("\n"),
+            "diff",
+            theme="ansi_dark",
+            word_wrap=True,
+            background_color="default",
+        ),
+    )
+
+
+def _render_fenced_body(text: str, *, body_style: str) -> RenderableType | None:
+    if "```" not in text:
+        return None
+
+    renderables: list[RenderableType] = []
+    cursor = 0
+    while cursor < len(text):
+        fence_start = text.find("```", cursor)
+        if fence_start == -1:
+            _append_plain(renderables, text[cursor:], body_style=body_style)
+            break
+
+        line_start = text.rfind("\n", 0, fence_start) + 1
+        if line_start != fence_start:
+            return None
+
+        fence_line_end = text.find("\n", fence_start)
+        if fence_line_end == -1:
+            return None
+        closing_start = text.find("\n```", fence_line_end + 1)
+        if closing_start == -1:
+            return None
+
+        _append_plain(renderables, text[cursor:fence_start], body_style=body_style)
+        language = _fence_language(text[fence_start + 3 : fence_line_end])
+        code = text[fence_line_end + 1 : closing_start]
+        renderables.append(
+            Syntax(
+                code.rstrip("\n"),
+                language,
+                theme="ansi_dark",
+                word_wrap=True,
+                background_color="default",
+            )
+        )
+        closing_line_end = text.find("\n", closing_start + 1)
+        cursor = len(text) if closing_line_end == -1 else closing_line_end + 1
+
+    return Group(*renderables) if renderables else None
+
+
+def _append_plain(
+    renderables: list[RenderableType],
+    text: str,
+    *,
+    body_style: str,
+) -> None:
+    if text:
+        renderables.append(_plain_text(text.rstrip("\n"), body_style=body_style))
+
+
+def _plain_text(text: str, *, body_style: str) -> Text:
+    return Text(text, style=body_style, overflow="fold", no_wrap=False)
+
+
+def _fence_language(raw: str) -> str:
+    language = raw.strip().split(maxsplit=1)[0] if raw.strip() else ""
+    return language or "text"
 
 
 def render_completion_suggestions(state: CompletionState) -> Text:

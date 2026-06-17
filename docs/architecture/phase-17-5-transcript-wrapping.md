@@ -47,6 +47,11 @@ block instead of forcing horizontal scrolling.
 Tool output and code-like text preserve line breaks. Very long unbroken chunks
 are folded intentionally rather than clipped.
 
+Later Phase 23 polish keeps the same display-state shape but renders fenced
+code blocks and edit patches with Rich syntax renderables inside the block.
+Malformed or inline fences fall back to plain text so transcript content is not
+lost.
+
 ## Visual model
 
 Each role gets a distinct dark block style:
