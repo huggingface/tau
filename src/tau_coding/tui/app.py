@@ -34,11 +34,14 @@ class CompletionActionTarget(Protocol):
 
     def action_completion_previous(self) -> None: ...
 
+    def action_open_command_palette(self) -> None: ...
+
 
 class PromptInput(Input):
     """Prompt input with completion key bindings."""
 
     BINDINGS = [
+        Binding("ctrl+k", "open_command_palette", show=False, priority=True),
         Binding("tab", "accept_completion", show=False, priority=True),
         Binding("down", "completion_next", show=False, priority=True),
         Binding("up", "completion_previous", show=False, priority=True),
@@ -56,6 +59,10 @@ class PromptInput(Input):
         """Select the previous app-level completion."""
         self._completion_target().action_completion_previous()
 
+    def action_open_command_palette(self) -> None:
+        """Open the app-level command palette."""
+        self._completion_target().action_open_command_palette()
+
     def action_scroll_down(self) -> None:
         """Use down arrow for completion selection while focused."""
         self._completion_target().action_completion_next()
@@ -69,6 +76,9 @@ class PromptInput(Input):
         if event.key == "tab":
             event.stop()
             self._completion_target().action_accept_completion()
+        elif event.key == "ctrl+k":
+            event.stop()
+            self._completion_target().action_open_command_palette()
         elif event.key == "down":
             event.stop()
             self._completion_target().action_completion_next()
@@ -152,6 +162,7 @@ class TauTuiApp(App[None]):
     """
     BINDINGS = [
         ("escape", "cancel", "Cancel"),
+        Binding("ctrl+k", "open_command_palette", "Commands"),
         Binding("tab", "accept_completion", "Complete", priority=True),
         Binding("down", "completion_next", "Next completion", priority=True),
         Binding("up", "completion_previous", "Previous completion", priority=True),
@@ -277,6 +288,15 @@ class TauTuiApp(App[None]):
         if not self._completion_state.items:
             return
         self._completion_state = self._completion_state.select_previous()
+        self._refresh_completions()
+
+    def action_open_command_palette(self) -> None:
+        """Open the slash-command palette in the prompt."""
+        prompt = self.query_one("#prompt", Input)
+        prompt.focus()
+        prompt.value = "/"
+        prompt.cursor_position = len(prompt.value)
+        self._completion_state = self._build_completion_state(prompt.value)
         self._refresh_completions()
 
     def _refresh(self) -> None:

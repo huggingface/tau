@@ -221,6 +221,20 @@ async def test_tui_app_cycles_completion_selection() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_app_opens_command_palette_from_keybinding() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        await pilot.press("ctrl+k")
+
+        assert prompt.value == "/"
+        assert app._completion_state.items
+        assert any(item.display == "/help" for item in app._completion_state.items)
+        assert app.query_one("#autocomplete").display is True
+
+
+@pytest.mark.anyio
 async def test_tui_prompt_worker_refreshes_directly() -> None:
     app = TauTuiApp(FakeSession(events=[AgentStartEvent(), AgentEndEvent()]))
     refreshes = 0

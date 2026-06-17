@@ -38,6 +38,7 @@ The most important boundary is that `tau_agent` should stay portable. It can def
 - [Phase 16: Robust Resource Discovery](phase-16-resource-discovery.md)
 - [Phase 17: TUI Slash-command Autocomplete](phase-17-tui-autocomplete.md)
 - [Phase 17.5: TUI Transcript Wrapping](phase-17-5-transcript-wrapping.md)
+- [Phase 23: Advanced TUI and Product Polish](phase-23-tui-polish.md)
 - [Phase 18: Provider Configuration Foundation](phase-18-provider-config-foundation.md)
 - [Phase 19: Project Context Discovery and Reload](phase-19-context-discovery.md)
 - [Phase 20: Installation and Configuration Docs](phase-20-installation-docs.md)

@@ -83,5 +83,6 @@ nav:
       - "Phase 19: Project Context Discovery and Reload": architecture/phase-19-context-discovery.md
       - "Phase 20: Installation and Configuration Docs": architecture/phase-20-installation-docs.md
       - "Phase 22: Compaction Replay Foundation": architecture/phase-22-compaction-foundation.md
+      - "Phase 23: Advanced TUI and Product Polish": architecture/phase-23-tui-polish.md
   - ADRs:
       - Use Textual for TUI: adr/0001-use-textual-for-tui.md
