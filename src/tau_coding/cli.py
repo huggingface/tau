@@ -72,7 +72,7 @@ def main(
         render_session_list(SessionManager().list_sessions())
         raise typer.Exit()
 
-    if prompt_option is None and prompt_arg == "tui":
+    if prompt_option is None and (prompt_arg is None or prompt_arg == "tui"):
         try:
             anyio.run(run_openai_tui, model, cwd or Path.cwd(), resume, new_session)
         except RuntimeError as exc:
@@ -80,9 +80,8 @@ def main(
         raise typer.Exit()
 
     prompt = prompt_option or prompt_arg
-    if not prompt:
-        typer.echo("Tau print mode is installed. Pass a prompt or run `tau --version`.")
-        raise typer.Exit()
+    if prompt is None:
+        raise AssertionError("prompt should be set outside TUI mode")
 
     try:
         ok = anyio.run(run_openai_print_mode, prompt, model, cwd or Path.cwd(), output)

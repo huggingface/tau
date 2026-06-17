@@ -26,11 +26,23 @@ def test_version_command() -> None:
     assert result.stdout.strip() == "tau 0.1.0"
 
 
-def test_cli_without_prompt_prints_print_mode_hint() -> None:
+def test_cli_without_prompt_invokes_tui_runner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[str, Path, str | None, bool]] = []
+
+    async def fake_run_openai_tui(
+        model: str, cwd: Path, session_id: str | None, new_session: bool
+    ) -> None:
+        calls.append((model, cwd, session_id, new_session))
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
     result = CliRunner().invoke(app, [])
 
     assert result.exit_code == 0
-    assert "Tau print mode is installed" in result.stdout
+    assert calls == [("gpt-4.1-mini", tmp_path, None, False)]
 
 
 @pytest.mark.anyio

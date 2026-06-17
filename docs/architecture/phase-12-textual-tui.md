@@ -22,16 +22,22 @@ Tau now has a minimal interactive TUI that:
 - supports Escape to request cancellation
 - stores the early default TUI session at `.tau/sessions/default.jsonl`
 
-The CLI opens the TUI with:
+The CLI opens the TUI by default:
+
+```bash
+tau
+```
+
+The older explicit `tui` argument is still accepted as an alias:
 
 ```bash
 tau tui
 ```
 
-Global options can be passed before `tui`:
+Global options can be passed before starting the TUI:
 
 ```bash
-tau --model gpt-4.1-mini --cwd /path/to/project tui
+tau --model gpt-4.1-mini --cwd /path/to/project
 ```
 
 ## Why this exists

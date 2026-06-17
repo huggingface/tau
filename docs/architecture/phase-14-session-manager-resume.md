@@ -89,21 +89,22 @@ The TUI now creates sessions through `SessionManager`.
 Default behavior:
 
 ```bash
-tau tui
+tau
 ```
 
 creates a new session.
 
-The explicit new-session flag is also accepted for clarity:
+The older explicit `tui` argument and the explicit new-session flag are also
+accepted for clarity:
 
 ```bash
-tau --new-session tui
+tau --new-session
 ```
 
 Resume an indexed session:
 
 ```bash
-tau --resume <session-id> tui
+tau --resume <session-id>
 ```
 
 If the session id is unknown, Tau exits with a clear error.
