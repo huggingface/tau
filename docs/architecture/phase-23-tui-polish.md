@@ -24,6 +24,12 @@ syntax renderables inside the same Pi-style stacked message blocks. The
 transcript state still stores plain role/text items; this is renderer-only
 polish in the Textual frontend.
 
+Assistant transcript blocks now also render common Markdown constructs such as
+headings, bullets, blockquotes, links, inline code, and emphasis through Rich
+Markdown. User, tool, status, and error blocks stay literal unless they are
+handled by the explicit code or patch renderers, which keeps pasted prompts and
+tool output predictable.
+
 Live `edit` tool results now include their unified patch in the tool block. This
 provides an inline diff view for file edits while keeping the event adapter and
 Textual widgets decoupled. Tool-result metadata is now preserved in
@@ -70,9 +76,8 @@ commands, and rendering.
 
 ## Still deferred
 
-The larger Phase 23 roadmap still includes a richer modal session picker and
-broader markdown transcript rendering. Those should remain separate atomic
-slices.
+The larger Phase 23 roadmap still includes a richer modal session picker. That
+should remain a separate atomic slice.
 
 ## Tests
 

@@ -136,6 +136,30 @@ def test_chat_items_render_fenced_code_without_markers() -> None:
     assert "python" not in output
 
 
+def test_assistant_chat_items_render_markdown_lists() -> None:
+    console = Console(record=True, width=60)
+    item = ChatItem(role="assistant", text="Plan:\n\n- inspect\n- patch")
+
+    console.print(render_chat_item(item))
+    output = console.export_text()
+
+    assert "Plan:" in output
+    assert "• inspect" in output
+    assert "• patch" in output
+    assert "- inspect" not in output
+
+
+def test_user_chat_items_keep_markdown_literal() -> None:
+    console = Console(record=True, width=60)
+    item = ChatItem(role="user", text="- keep this literal")
+
+    console.print(render_chat_item(item))
+    output = console.export_text()
+
+    assert "- keep this literal" in output
+    assert "• keep this literal" not in output
+
+
 def test_chat_items_preserve_malformed_fenced_code() -> None:
     console = Console(record=True, width=60)
     item = ChatItem(role="assistant", text='```python\nprint("hi")')

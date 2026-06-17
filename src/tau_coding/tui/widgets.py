@@ -2,9 +2,11 @@
 
 from collections.abc import Sequence
 from pathlib import Path
+from re import search
 from typing import Protocol
 
 from rich.console import Group, RenderableType
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
@@ -143,6 +145,7 @@ def render_chat_item(
     role_style = theme.role_styles[item.role]
     body = _render_chat_body(
         item.text,
+        role=item.role,
         body_style=role_style.body,
         syntax_theme=theme.syntax_theme,
     )
@@ -158,6 +161,7 @@ def render_chat_item(
 def _render_chat_body(
     text: str,
     *,
+    role: str,
     body_style: str,
     syntax_theme: str,
 ) -> RenderableType:
@@ -175,6 +179,15 @@ def _render_chat_body(
     )
     if fenced_body is not None:
         return fenced_body
+    if "```" in text:
+        return _plain_text(text, body_style=body_style)
+    if role == "assistant" and _looks_like_markdown(text):
+        return Markdown(
+            text,
+            style=body_style,
+            code_theme=syntax_theme,
+            inline_code_theme=syntax_theme,
+        )
     return _plain_text(text, body_style=body_style)
 
 
@@ -260,6 +273,14 @@ def _append_plain(
 
 def _plain_text(text: str, *, body_style: str) -> Text:
     return Text(text, style=body_style, overflow="fold", no_wrap=False)
+
+
+def _looks_like_markdown(text: str) -> bool:
+    return search(
+        r"(?m)(^#{1,6}\s+\S|^\s*[-*+]\s+\S|^\s*\d+\.\s+\S|^>\s+\S|"
+        r"`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\([^)]+\))",
+        text,
+    ) is not None
 
 
 def _fence_language(raw: str) -> str:
