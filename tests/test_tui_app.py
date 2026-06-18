@@ -15,6 +15,7 @@ from tau_agent import (
     AgentStartEvent,
     AgentToolResult,
     AssistantMessage,
+    ErrorEvent,
     MessageEndEvent,
     ToolCall,
     ToolExecutionEndEvent,
@@ -1248,6 +1249,25 @@ async def test_tui_prompt_worker_refreshes_directly() -> None:
     await app._run_prompt("hello")
 
     assert refreshes == 2
+    assert app.state.running is False
+
+
+@pytest.mark.anyio
+async def test_tui_prompt_worker_shows_diagnostic_log_path_for_error_event(tmp_path: Path) -> None:
+    class ErrorSession(FakeSession):
+        def __init__(self) -> None:
+            super().__init__(events=[AgentStartEvent(), ErrorEvent(message="provider failed")])
+            self.last_diagnostic_log_path = tmp_path / "tau-home" / "logs" / "agent-calls.jsonl"
+
+    session = ErrorSession()
+    app = TauTuiApp(session)
+    app._refresh = lambda: None  # type: ignore[method-assign]
+
+    await app._run_prompt("break")
+
+    assert app.state.error == f"Error: provider failed\nLog: {session.last_diagnostic_log_path}"
+    assert app.state.items[-1].role == "error"
+    assert app.state.items[-1].text == app.state.error
     assert app.state.running is False
 
 

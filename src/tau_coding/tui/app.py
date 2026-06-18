@@ -11,9 +11,20 @@ from textual.binding import Binding, BindingsMap
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Key, Resize
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Header, Input, Label, ListItem, ListView, Static, TextArea
+from textual.widgets import (
+    Button,
+    Footer,
+    Header,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    Static,
+    TextArea,
+)
 from textual.worker import Worker
 
+from tau_agent import ErrorEvent
 from tau_agent.messages import AgentMessage
 from tau_agent.tools import AgentTool
 from tau_ai import ProviderErrorEvent, ProviderEvent
@@ -1108,6 +1119,8 @@ class TauTuiApp(App[None]):
         try:
             async for event in self.session.prompt(text):
                 self.adapter.apply(event)
+                if isinstance(event, ErrorEvent) and not event.recoverable:
+                    _attach_diagnostic_log_path_to_error(self.state, self.session)
                 self._refresh()
         except Exception as exc:  # noqa: BLE001 - surface unexpected worker errors in the TUI
             message = _format_prompt_error(exc, self.session)
@@ -1607,6 +1620,19 @@ def _format_prompt_error(exc: BaseException, session: CodingSession) -> str:
     if isinstance(log_path, Path):
         return f"{message}\nLog: {log_path}"
     return message
+
+
+def _attach_diagnostic_log_path_to_error(state: TuiState, session: CodingSession) -> None:
+    log_path = getattr(session, "last_diagnostic_log_path", None)
+    if not isinstance(log_path, Path) or state.error is None:
+        return
+    message = f"Error: {state.error}\nLog: {log_path}"
+    state.error = message
+    for item in reversed(state.items):
+        if item.role == "error":
+            item.text = message
+            return
+    state.add_item("error", message)
 
 
 async def run_tui_app(

@@ -11,9 +11,9 @@ from rich.console import Console, Group, RenderableType
 from rich.markdown import Markdown
 from rich.padding import Padding
 from rich.panel import Panel
+from rich.style import Style
 from rich.syntax import Syntax
 from rich.table import Table
-from rich.style import Style
 from rich.text import Text
 from rich.theme import Theme
 from textual.events import Resize
