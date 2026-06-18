@@ -101,7 +101,7 @@ Example:
     "accept_completion": "f2",
     "completion_next": "down",
     "completion_previous": "up",
-    "quit": "ctrl+q"
+    "quit": "ctrl+d"
   }
 }
 ```

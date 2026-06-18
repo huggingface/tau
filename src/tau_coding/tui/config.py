@@ -22,7 +22,7 @@ class TuiKeybindings:
     accept_completion: str = "tab"
     completion_next: str = "down"
     completion_previous: str = "up"
-    quit: str = "ctrl+q"
+    quit: str = "ctrl+d"
 
     def to_json(self) -> dict[str, str]:
         """Serialize these keybindings to JSON-compatible data."""
