@@ -860,6 +860,15 @@ class TauTuiApp(App[None]):
         color: $tau-muted-text;
     }
 
+    Toast {
+        background: $tau-chrome-background;
+        color: $tau-chrome-text;
+    }
+
+    Toast .toast--title {
+        color: $tau-accent;
+    }
+
     #status {
         height: 1;
         padding: 0 1;
