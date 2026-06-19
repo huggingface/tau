@@ -423,6 +423,8 @@ class CommandOutputScreen(ModalScreen[None]):
     BINDINGS: ClassVar[list[BindingEntry]] = [
         Binding("escape", "close", "Close"),
         Binding("enter", "close", "Close"),
+        Binding("up", "scroll_up", "Scroll up", show=False),
+        Binding("down", "scroll_down", "Scroll down", show=False),
     ]
 
     def __init__(self, title: str, message: str, *, theme: TuiTheme) -> None:
@@ -439,9 +441,32 @@ class CommandOutputScreen(ModalScreen[None]):
                 yield Static(self.message, id="command-output-body", markup=False)
             yield Static("Enter or Escape closes", id="command-output-help")
 
+    def on_mount(self) -> None:
+        """Focus the scroll area so arrow keys navigate long output."""
+        self.query_one("#command-output-scroll", VerticalScroll).focus()
+
+    def on_key(self, event: Key) -> None:
+        """Route arrow keys to the command output scroll area."""
+        if event.key == "up":
+            event.stop()
+            self.action_scroll_up()
+        elif event.key == "down":
+            event.stop()
+            self.action_scroll_down()
+
     def action_close(self) -> None:
         """Close the command output modal."""
         self.dismiss(None)
+
+    def action_scroll_up(self) -> None:
+        """Scroll command output up."""
+        scroll = self.query_one("#command-output-scroll", VerticalScroll)
+        scroll.scroll_y = max(0, scroll.scroll_y - 1)
+
+    def action_scroll_down(self) -> None:
+        """Scroll command output down."""
+        scroll = self.query_one("#command-output-scroll", VerticalScroll)
+        scroll.scroll_y = min(scroll.max_scroll_y, scroll.scroll_y + 1)
 
 
 class LoginProviderPickerScreen(ModalScreen[str | None]):

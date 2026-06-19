@@ -1383,7 +1383,29 @@ async def test_tui_app_help_uses_modal_instead_of_transcript() -> None:
         assert isinstance(app.screen, CommandOutputScreen)
         assert app.state.items == []
         assert "Available commands:" in app.screen.message
-        assert app.screen.query_one("#command-output-scroll", VerticalScroll) is not None
+        scroll = app.screen.query_one("#command-output-scroll", VerticalScroll)
+        assert scroll is not None
+        assert app.screen.focused is scroll
+
+
+@pytest.mark.anyio
+async def test_tui_app_command_modal_arrow_keys_scroll_output() -> None:
+    app = TauTuiApp(FakeSession())
+    long_message = "\n".join(f"line {index}" for index in range(80))
+
+    async with app.run_test(size=(100, 20)) as pilot:
+        app._show_command_message("/long", long_message)
+        await pilot.pause()
+
+        assert isinstance(app.screen, CommandOutputScreen)
+        scroll = app.screen.query_one("#command-output-scroll", VerticalScroll)
+        await pilot.pause()
+        assert scroll.max_scroll_y > 0
+        assert scroll.scroll_y == 0
+
+        app.screen.action_scroll_down()
+
+        assert scroll.scroll_y > 0
 
 
 @pytest.mark.anyio
