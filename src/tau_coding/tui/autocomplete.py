@@ -295,13 +295,6 @@ def _command_argument_completions(
             ),
             sort=False,
         )
-    if command_name == "thinking":
-        return _value_completions(
-            text=text,
-            start=token_end + 1,
-            options=_completion_options(thinking_levels, description="Set thinking mode"),
-            sort=False,
-        )
     if command_name == "theme":
         return _value_completions(
             text=text,

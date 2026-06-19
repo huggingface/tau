@@ -82,6 +82,9 @@ class CommandResult:
     clear_requested: bool = False
     new_session_requested: bool = False
     compact_summary: str | None = None
+    export_requested: bool = False
+    export_destination: Path | None = None
+    export_format: str | None = None
     resume_session_id: str | None = None
     resume_picker_requested: bool = False
     login_picker_requested: bool = False
@@ -175,18 +178,8 @@ def create_default_command_registry() -> CommandRegistry:
     registry = CommandRegistry()
     registry.register(
         SlashCommand(
-            name="help",
-            aliases=("?",),
-            usage="/help",
-            description="Show available slash commands.",
-            handler=_help_command,
-        )
-    )
-    registry.register(
-        SlashCommand(
-            name="exit",
-            aliases=("quit", "q"),
-            usage="/exit",
+            name="quit",
+            usage="/quit",
             description="Exit the current session.",
             handler=_exit_command,
         )
@@ -210,10 +203,10 @@ def create_default_command_registry() -> CommandRegistry:
     )
     registry.register(
         SlashCommand(
-            name="status",
-            usage="/status",
-            description="Show current session status.",
-            handler=_status_command,
+            name="export",
+            usage="/export [--format html|jsonl] [destination]",
+            description="Export the current session.",
+            handler=_export_command,
         )
     )
     registry.register(
@@ -236,22 +229,6 @@ def create_default_command_registry() -> CommandRegistry:
     )
     registry.register(
         SlashCommand(
-            name="skills",
-            usage="/skills",
-            description="List loaded skills.",
-            handler=_skills_command,
-        )
-    )
-    registry.register(
-        SlashCommand(
-            name="resources",
-            usage="/resources",
-            description="Show loaded resources and discovery diagnostics.",
-            handler=_resources_command,
-        )
-    )
-    registry.register(
-        SlashCommand(
             name="reload",
             usage="/reload",
             description="Reload resources and provider configuration.",
@@ -260,27 +237,11 @@ def create_default_command_registry() -> CommandRegistry:
     )
     registry.register(
         SlashCommand(
-            name="context",
-            usage="/context",
-            description="Show active project context files.",
-            handler=_context_command,
-        )
-    )
-    registry.register(
-        SlashCommand(
-            name="skill",
-            usage="/skill:<name> [request]",
-            description="Use a loaded skill in the next prompt.",
-            handler=_skill_command,
-        )
-    )
-    registry.register(
-        SlashCommand(
             name="resume",
             usage="/resume [session-id]",
             description="Resume a previous session.",
             handler=_resume_command,
-            search_terms=("sessions", "history", "previous"),
+            search_terms=("history", "previous"),
         )
     )
     registry.register(
@@ -298,15 +259,6 @@ def create_default_command_registry() -> CommandRegistry:
             usage="/model",
             description="Choose the active model.",
             handler=_model_command,
-        )
-    )
-    registry.register(
-        SlashCommand(
-            name="thinking",
-            usage="/thinking [mode]",
-            description="Show or set the active thinking mode.",
-            handler=_thinking_command,
-            search_terms=("reasoning", "effort"),
         )
     )
     registry.register(
@@ -353,6 +305,19 @@ def _compact_command(context: CommandContext) -> CommandResult:
     return CommandResult(
         handled=True,
         compact_summary=context.args.strip(),
+    )
+
+
+def _export_command(context: CommandContext) -> CommandResult:
+    try:
+        export_format, destination = _parse_export_args(context.args)
+    except ValueError as exc:
+        return CommandResult(handled=True, message=str(exc))
+    return CommandResult(
+        handled=True,
+        export_requested=True,
+        export_destination=destination,
+        export_format=export_format,
     )
 
 
@@ -645,6 +610,30 @@ def _format_diagnostics(
 def _parse_command(text: str) -> tuple[str, str]:
     command, separator, args = text[1:].partition(" ")
     return _normalize_name(command), args.strip() if separator else ""
+
+
+def _parse_export_args(args: str) -> tuple[str | None, Path | None]:
+    parts = args.split()
+    export_format: str | None = None
+    destination: Path | None = None
+    index = 0
+    while index < len(parts):
+        part = parts[index]
+        if part == "--format":
+            index += 1
+            if index >= len(parts):
+                raise ValueError("Usage: /export [--format html|jsonl] [destination]")
+            export_format = parts[index]
+        elif part.startswith("--format="):
+            export_format = part.partition("=")[2]
+        elif part.startswith("-"):
+            raise ValueError(f"Unknown export option: {part}")
+        elif destination is None:
+            destination = Path(part).expanduser()
+        else:
+            raise ValueError("Usage: /export [--format html|jsonl] [destination]")
+        index += 1
+    return export_format, destination
 
 
 def _validated_session_name(value: str) -> str:

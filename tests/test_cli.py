@@ -530,11 +530,18 @@ async def test_export_session_command_writes_html_for_indexed_session(tmp_path: 
 @pytest.mark.anyio
 async def test_export_session_command_writes_html_for_jsonl_path(tmp_path: Path) -> None:
     session_path = tmp_path / "session.jsonl"
+    cwd = Path.cwd()
     await JsonlSessionStorage(session_path).append(
         MessageEntry(id="root", message=UserMessage(content="Path export"))
     )
 
-    output_path = await cli.export_session_command(str(session_path))
+    try:
+        import os
+
+        os.chdir(tmp_path)
+        output_path = await cli.export_session_command(str(session_path))
+    finally:
+        os.chdir(cwd)
 
     html = output_path.read_text(encoding="utf-8")
     assert output_path == tmp_path / "session.html"
@@ -542,18 +549,54 @@ async def test_export_session_command_writes_html_for_jsonl_path(tmp_path: Path)
     assert "Path export" in html
 
 
+@pytest.mark.anyio
+async def test_export_session_command_writes_jsonl_format_to_cwd(tmp_path: Path) -> None:
+    session_path = tmp_path / ".tau" / "sessions" / "session.jsonl"
+    cwd = Path.cwd()
+    await JsonlSessionStorage(session_path).append(
+        MessageEntry(id="root", message=UserMessage(content="JSONL export"))
+    )
+
+    try:
+        import os
+
+        os.chdir(tmp_path)
+        output_path = await cli.export_session_command(str(session_path), export_format="jsonl")
+    finally:
+        os.chdir(cwd)
+
+    assert output_path == tmp_path / "session.jsonl"
+    assert "JSONL export" in output_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.anyio
+async def test_export_session_command_treats_suffixless_output_as_directory(
+    tmp_path: Path,
+) -> None:
+    session_path = tmp_path / "source" / "session.jsonl"
+    await JsonlSessionStorage(session_path).append(
+        MessageEntry(id="root", message=UserMessage(content="Directory export"))
+    )
+
+    output_path = await cli.export_session_command(str(session_path), tmp_path / "exports")
+
+    assert output_path == tmp_path / "exports" / "session.html"
+    assert "Directory export" in output_path.read_text(encoding="utf-8")
+
+
 def test_export_command_invokes_exporter(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    calls: list[tuple[str, Path | None]] = []
+    calls: list[tuple[str, Path | None, str | None]] = []
     output_path = tmp_path / "out.html"
 
     async def fake_export_session_command(
         session_ref: str,
         requested_output_path: Path | None = None,
+        requested_export_format: str | None = None,
     ) -> Path:
-        calls.append((session_ref, requested_output_path))
+        calls.append((session_ref, requested_output_path, requested_export_format))
         return output_path
 
     monkeypatch.setattr(cli, "export_session_command", fake_export_session_command)
@@ -561,8 +604,31 @@ def test_export_command_invokes_exporter(
     result = CliRunner().invoke(app, ["export", "session-1", str(output_path)])
 
     assert result.exit_code == 0
-    assert calls == [("session-1", output_path)]
+    assert calls == [("session-1", output_path, None)]
     assert f"Exported session to {output_path}" in result.stdout
+
+
+def test_export_command_accepts_format_option(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[tuple[str, Path | None, str | None]] = []
+    output_path = tmp_path / "out.jsonl"
+
+    async def fake_export_session_command(
+        session_ref: str,
+        requested_output_path: Path | None = None,
+        requested_export_format: str | None = None,
+    ) -> Path:
+        calls.append((session_ref, requested_output_path, requested_export_format))
+        return output_path
+
+    monkeypatch.setattr(cli, "export_session_command", fake_export_session_command)
+
+    result = CliRunner().invoke(app, ["export", "session-1", "--format", "jsonl"])
+
+    assert result.exit_code == 0
+    assert calls == [("session-1", None, "jsonl")]
 
 
 def test_providers_command_lists_default_provider(

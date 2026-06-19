@@ -1476,6 +1476,15 @@ class TauTuiApp(App[None]):
                     self._notify(compact_message)
                 except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
                     self._notify(f"Error: {exc}", severity="error")
+            if command.export_requested:
+                try:
+                    exported_path = await self.session.export(
+                        command.export_destination,
+                        format=command.export_format,
+                    )
+                    self._notify(f"Exported session to {exported_path}")
+                except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
+                    self._notify(f"Could not export session: {exc}", severity="error")
             if command.resume_session_id is not None:
                 await self._resume_session(command.resume_session_id)
             if command.resume_picker_requested:

@@ -35,23 +35,21 @@ hardcoding command behavior.
 
 The default registry includes:
 
-- `/help` — list registered commands
-- `/exit` — request TUI exit
+- `/quit` — exit the current session
 - `/new` — start a new session
-- `/status` — show model, cwd, tools, skills, prompt templates, and session id
-- `/session` — Pi-compatible command name for session info and stats
+- `/compact` — replace active context with a manual summary
+- `/export` — export the current session
+- `/session` — show session info and stats
 - `/hotkeys` — show common TUI keyboard shortcuts
-- `/skills` — list loaded skills
-- `/skill` — explain `/skill:<name>` usage
 - `/resume` — open previous-session selection or resume a specific session id
 - `/model` — choose or switch the current model
 - `/login` — add or refresh a built-in provider login
-
-Aliases include `/q`, `/quit`, and `/?`.
+- `/reload` — reload resources and provider configuration
+- `/name` — rename the current session
+- `/theme` — show or set the TUI theme
 
 Autocomplete also uses non-executable search terms. For example, typing
-`/clear` suggests `/new`, and typing `/sessions` suggests `/resume`, but those
-search terms are not registered commands.
+`/clear` suggests `/new`, but search terms are not registered commands.
 
 ## Why this belongs in `tau_coding`
 
@@ -75,26 +73,22 @@ Tau mirrors the commands that map cleanly onto existing Tau capabilities:
 
 - `/session` maps to Tau's existing session status/details output.
 - `/hotkeys` reports Tau's current common TUI shortcuts.
-- `/quit` remains an alias for `/exit`.
-- `/model`, `/login`, `/new`, `/compact`, `/resume`, `/reload`, and `/name`
-  already exist in Tau's command registry.
+- `/quit` is the only registered exit command; older Tau-specific `/exit` and
+  `/q` aliases are intentionally not retained.
+- `/model`, `/login`, `/new`, `/compact`, `/resume`, `/reload`, `/name`,
+  `/theme`, and `/export` exist in Tau's command registry.
 
-Tau intentionally keeps a few diagnostic commands that Pi does not expose as
-first-class built-ins:
-
-- `/skills` lists loaded skills.
-- `/skill` explains manual skill invocation.
-- `/resources` shows resource discovery diagnostics.
-- `/context` shows active project context files.
-- `/thinking` and `/theme` expose Tau's current controls until a broader
-  Pi-style `/settings` command exists.
+Tau intentionally removes older Tau-specific diagnostic commands from the
+registry, including `/help`, `/status`, `/skills`, `/resources`, `/context`,
+and `/thinking`. Equivalent information remains visible through
+Pi-aligned commands, persistent UI surfaces, keybindings, or the model's system
+prompt.
 
 The remaining Pi commands are deferred because they require larger workflows
 outside this registry cleanup:
 
 - `/settings`
 - `/scoped-models`
-- `/export`
 - `/import`
 - `/share`
 - `/copy`
@@ -127,7 +121,7 @@ The registry intentionally returns `handled=False` for text beginning with
 `/skill:` so `CodingSession.prompt()` can expand the skill before sending the
 prompt to the model.
 
-The plain `/skill` command exists only to show usage guidance.
+There is no plain `/skill` slash command in the Pi-aligned registry.
 
 ## Future use
 

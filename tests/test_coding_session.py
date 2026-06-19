@@ -151,6 +151,32 @@ async def test_load_empty_session_appends_metadata(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
+async def test_session_export_defaults_to_cwd(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / ".tau" / "sessions" / "session-1.jsonl")
+    session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
+    await storage.append(MessageEntry(id="root", message=UserMessage(content="Export me")))
+
+    output_path = await session.export()
+
+    assert output_path == tmp_path / "session-1.html"
+    html = output_path.read_text(encoding="utf-8")
+    assert "Export me" in html
+    assert str(storage.path) in html
+
+
+@pytest.mark.anyio
+async def test_session_export_writes_jsonl_to_destination_directory(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / ".tau" / "sessions" / "session-1.jsonl")
+    session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
+    await storage.append(MessageEntry(id="root", message=UserMessage(content="Export me")))
+
+    output_path = await session.export(Path("exports"), format="jsonl")
+
+    assert output_path == tmp_path / "exports" / "session-1.jsonl"
+    assert "Export me" in output_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.anyio
 async def test_prompt_logs_unexpected_agent_call_exception(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
@@ -755,7 +781,7 @@ async def test_session_loads_with_resource_diagnostics_instead_of_failing(
     assert [skill.name for skill in session.skills] == ["dup"]
     assert len(session.resource_diagnostics) == 1
     assert "Duplicate skill name" in session.resource_diagnostics[0].message
-    assert "Resource diagnostics: 1" in (session.handle_command("/status").message or "")
+    assert "Resource diagnostics: 1" in (session.handle_command("/session").message or "")
 
 
 @pytest.mark.anyio
@@ -1177,9 +1203,8 @@ def test_minimal_commands_are_handled(tmp_path: Path) -> None:
     )
 
     assert session.handle_command("hello").handled is False
-    assert session.handle_command("/help").message is not None
-    assert "/help" in session.handle_command("/help").message
     assert session.handle_command("/new").new_session_requested is True
     assert session.handle_command("/clear").message == "Unknown command: /clear"
-    assert session.handle_command("/exit").exit_requested is True
+    assert session.handle_command("/quit").exit_requested is True
+    assert session.handle_command("/exit").message == "Unknown command: /exit"
     assert session.handle_command("/unknown").message == "Unknown command: /unknown"

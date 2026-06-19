@@ -106,17 +106,27 @@ class FakeSession:
         self.streaming_behaviors: list[str | None] = []
         self.terminal_commands: list[tuple[str, bool]] = []
         self.cancel_count = 0
+        self.export_calls: list[tuple[Path | None, str | None]] = []
 
     def handle_command(self, text: str) -> CommandResult:
-        if text == "/help":
+        if text == "/session":
             return CommandResult(
                 handled=True,
-                message="Available commands:\n/help\tShow available slash commands.",
+                message="Session info",
             )
         if text == "/new":
             return CommandResult(handled=True, new_session_requested=True)
         if text.startswith("/compact "):
             return CommandResult(handled=True, compact_summary=text.removeprefix("/compact "))
+        if text == "/export":
+            return CommandResult(handled=True, export_requested=True)
+        if text.startswith("/export "):
+            return CommandResult(
+                handled=True,
+                export_requested=True,
+                export_destination=Path("out.jsonl"),
+                export_format="jsonl",
+            )
         if text.startswith("/resume "):
             return CommandResult(handled=True, resume_session_id=text.removeprefix("/resume "))
         if text == "/resume":
@@ -162,6 +172,10 @@ class FakeSession:
         self.compact_summaries.append(summary)
         self.context_token_estimate = 42
         return "Compacted 2 context entries."
+
+    async def export(self, destination: Path | None = None, *, format: str | None = None) -> Path:
+        self.export_calls.append((destination, format))
+        return self.cwd / "session.html"
 
     async def resume(self, session_id: str) -> str:
         self.resumed_session_ids.append(session_id)
@@ -720,7 +734,7 @@ async def test_tui_app_footer_hints_update_for_completions() -> None:
 
     async with app.run_test(size=(120, 30)):
         prompt = app.query_one("#prompt")
-        prompt.value = "/st"
+        prompt.value = "/se"
         app._completion_state = app._build_completion_state(prompt.value)
         app._refresh_completions()
 
@@ -1092,6 +1106,28 @@ async def test_tui_app_compact_command_runs_session_compaction() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_app_export_command_runs_session_export() -> None:
+    session = FakeSession(messages=[UserMessage(content="Earlier")])
+    app = TauTuiApp(session)
+    notifications: list[str] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        del kwargs
+        notifications.append(message)
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/export --format jsonl out.jsonl"
+        await pilot.press("enter")
+
+        assert session.export_calls == [(Path("out.jsonl"), "jsonl")]
+        assert notifications == ["Exported session to /workspace/project/session.html"]
+        assert session.prompt_texts == []
+
+
+@pytest.mark.anyio
 async def test_tui_app_resume_command_reloads_visible_state() -> None:
     session = FakeSession(messages=[UserMessage(content="Earlier")])
     app = TauTuiApp(session)
@@ -1179,13 +1215,13 @@ async def test_tui_app_completes_registered_slash_command() -> None:
 
     async with app.run_test() as pilot:
         prompt = app.query_one("#prompt")
-        prompt.value = "/st"
+        prompt.value = "/se"
         app._completion_state = app._build_completion_state(prompt.value)
         app._refresh_completions()
 
         await pilot.press("tab")
 
-        assert prompt.value == "/status"
+        assert prompt.value == "/session"
 
 
 @pytest.mark.anyio
@@ -1194,13 +1230,13 @@ async def test_tui_app_enter_accepts_completion_without_submitting() -> None:
 
     async with app.run_test() as pilot:
         prompt = app.query_one("#prompt")
-        prompt.value = "/st"
+        prompt.value = "/se"
         app._completion_state = app._build_completion_state(prompt.value)
         app._refresh_completions()
 
         await pilot.press("enter")
 
-        assert prompt.value == "/status"
+        assert prompt.value == "/session"
         assert app.state.items == []
 
 
@@ -1449,7 +1485,7 @@ async def test_tui_app_opens_command_palette_from_keybinding() -> None:
 
         assert prompt.value == "/"
         assert app._completion_state.items
-        assert any(item.display == "/help" for item in app._completion_state.items)
+        assert any(item.display == "/session" for item in app._completion_state.items)
         assert app.query_one("#autocomplete").display is True
 
 
@@ -1503,12 +1539,12 @@ async def test_tui_app_help_uses_modal_instead_of_transcript() -> None:
 
     async with app.run_test() as pilot:
         prompt = app.query_one("#prompt")
-        prompt.value = "/help"
+        prompt.value = "/session"
         await pilot.press("enter")
 
         assert isinstance(app.screen, CommandOutputScreen)
         assert app.state.items == []
-        assert "Available commands:" in app.screen.message
+        assert "Session info" in app.screen.message
         scroll = app.screen.query_one("#command-output-scroll", VerticalScroll)
         assert scroll is not None
         assert app.screen.focused is scroll
@@ -1541,12 +1577,12 @@ async def test_tui_app_command_modal_renders_literal_markup_text() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
-        app._show_command_message("/help", "Available [commands]\n/help")
+        app._show_command_message("/session", "Session [info]\n/session")
         await pilot.pause()
 
         assert isinstance(app.screen, CommandOutputScreen)
         body = app.screen.query_one("#command-output-body")
-        assert str(body.render()) == "Available [commands]\n/help"
+        assert str(body.render()) == "Session [info]\n/session"
 
 
 @pytest.mark.anyio
@@ -1554,7 +1590,7 @@ async def test_tui_app_command_modal_uses_centered_picker_style() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
-        app._show_command_message("/context", "Active context files")
+        app._show_command_message("/session", "Session info")
         await pilot.pause()
 
         assert isinstance(app.screen, CommandOutputScreen)
@@ -1659,7 +1695,7 @@ async def test_tui_app_uses_configured_command_palette_keybinding() -> None:
 
         assert prompt.value == "/"
         assert app._completion_state.items
-        assert any(item.display == "/help" for item in app._completion_state.items)
+        assert any(item.display == "/session" for item in app._completion_state.items)
 
 
 @pytest.mark.anyio
@@ -1692,15 +1728,15 @@ async def test_tui_app_uses_configured_completion_keybinding() -> None:
 
     async with app.run_test() as pilot:
         prompt = app.query_one("#prompt")
-        prompt.value = "/st"
+        prompt.value = "/se"
         app._completion_state = app._build_completion_state(prompt.value)
         app._refresh_completions()
 
         await pilot.press("tab")
-        assert prompt.value == "/st"
+        assert prompt.value == "/se"
 
         await pilot.press("f2")
-        assert prompt.value == "/status"
+        assert prompt.value == "/session"
 
 
 @pytest.mark.anyio
@@ -1909,29 +1945,6 @@ async def test_tui_model_opens_interactive_picker() -> None:
 
     assert session.provider_name == "local"
     assert session.model == "local-model"
-    assert session.prompt_texts == []
-
-
-@pytest.mark.anyio
-async def test_tui_app_thinking_command_updates_session() -> None:
-    session = FakeSession()
-    app = TauTuiApp(session)
-    notifications: list[str] = []
-
-    def fake_notify(message: str, **kwargs: object) -> None:
-        del kwargs
-        notifications.append(message)
-
-    app._notify = fake_notify  # type: ignore[method-assign]
-
-    async with app.run_test() as pilot:
-        prompt = app.query_one("#prompt")
-        prompt.value = "/thinking high"
-        await pilot.press("enter")
-        await pilot.pause()
-
-    assert session.thinking_level == "high"
-    assert notifications == []
     assert session.prompt_texts == []
 
 
