@@ -246,7 +246,11 @@ async def test_openai_compatible_provider_streams_reasoning_content() -> None:
 
 @pytest.mark.anyio
 async def test_openai_compatible_provider_streams_tool_calls() -> None:
-    async def executor(arguments: Mapping[str, JSONValue]) -> AgentToolResult:
+    async def executor(
+        arguments: Mapping[str, JSONValue],
+        signal: object | None = None,
+    ) -> AgentToolResult:
+        del signal
         return AgentToolResult(
             tool_call_id="call-1",
             name="read",
@@ -555,7 +559,11 @@ async def test_openai_codex_provider_streams_tool_calls() -> None:
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    async def executor(arguments: Mapping[str, JSONValue]) -> AgentToolResult:
+    async def executor(
+        arguments: Mapping[str, JSONValue],
+        signal: object | None = None,
+    ) -> AgentToolResult:
+        del signal
         return AgentToolResult(
             tool_call_id="call-1|fc-1",
             name="read",

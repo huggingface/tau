@@ -14,7 +14,8 @@ from tau_coding.system_prompt import (
 from tau_coding.tools import create_coding_tools
 
 
-async def _unused_executor(_arguments: object) -> AgentToolResult:
+async def _unused_executor(_arguments: object, signal: object | None = None) -> AgentToolResult:
+    del signal
     return AgentToolResult(tool_call_id="", name="hidden", ok=True, content="")
 
 
@@ -41,7 +42,7 @@ def test_tool_without_prompt_snippet_is_hidden_from_available_tools() -> None:
         name="hidden",
         description="Still sent to provider",
         input_schema={"type": "object"},
-        executor=_unused_executor,  # type: ignore[arg-type]
+        executor=_unused_executor,
     )
 
     assert format_available_tools([tool]) == "(none)"
@@ -114,7 +115,7 @@ def test_skills_are_included_only_when_read_tool_is_available(tmp_path: Path) ->
         name="custom",
         description="Custom",
         input_schema={"type": "object"},
-        executor=_unused_executor,  # type: ignore[arg-type]
+        executor=_unused_executor,
         prompt_snippet="Custom tool",
     )
 

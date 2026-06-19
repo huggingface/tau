@@ -98,6 +98,13 @@ active thinking mode when the current provider/model supports it, while `Ctrl-T`
 toggles display of streamed thinking tokens. Thinking-token transcript blocks
 are hidden by default and rendered with their own role style when shown.
 
+Model controls now include a Pi-style scoped-model flow. `/model` still opens
+the provider/model picker, but `Space` toggles the highlighted model into the
+persisted scoped list and `Tab` switches the picker between all models and
+scoped models. `Ctrl-P` cycles through the scoped list directly from the prompt.
+The TUI asks `CodingSession` to mutate and cycle this list; Textual does not
+read or write provider settings itself.
+
 The activity indicator now lives in a stable row directly above the prompt
 instead of in the top status line. This keeps the bottom input area visually
 active while an agent turn is running, and leaves the top status area focused on
@@ -109,6 +116,17 @@ follow-up, and prompt clear shortcuts, switches to autocomplete-focused bindings
 completions are open, and switches again while an agent turn is running. Tau
 does not add a separate custom hint row; the built-in bottom toolbar remains the
 single shortcut surface.
+
+The TUI treats `Esc` as a two-step cancellation flow. The first press requests
+graceful cancellation through `CodingSession.cancel()` and leaves the active
+worker visible while the provider or tool observes the cancellation token. The
+second press interrupts the current Textual worker immediately. This mirrors
+Pi's cancellation boundary: UI code requests cancellation, the portable agent
+loop carries a cancellation token, and long-running tools such as `bash` honor
+that token without making Textual a dependency of `tau_agent`. Because
+cancellation is an intentional user action, the built-in TUI renders the final
+cancellation event as status text instead of adding an error row to the
+transcript.
 
 Assistant code block rendering is now more defensive. Known fence languages use
 Rich/Pygments syntax highlighting, while unknown or custom fence labels fall

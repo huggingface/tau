@@ -84,6 +84,9 @@ class TuiEventAdapter:
 
         if isinstance(event, ErrorEvent):
             self._flush_assistant_buffer()
+            if event.recoverable and event.message == "Agent run cancelled":
+                self.state.add_item("status", "Agent run cancelled.")
+                return
             self.state.error = event.message
             self.state.add_item("error", f"Error: {event.message}")
             if not event.recoverable:

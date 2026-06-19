@@ -143,6 +143,7 @@ async def run_agent_loop(
             assistant_message.tool_calls,
             tool_by_name,
             messages,
+            signal,
         ):
             yield tool_event
 
@@ -188,23 +189,36 @@ async def _execute_tool_calls(
     tool_calls: list[ToolCall],
     tool_by_name: Mapping[str, AgentTool],
     messages: list[AgentMessage],
+    signal: CancellationToken | None,
 ) -> AsyncIterator[AgentEvent]:
-    for tool_call in tool_calls:
+    for index, tool_call in enumerate(tool_calls):
+        if signal is not None and signal.is_cancelled():
+            for cancelled_tool_call in tool_calls[index:]:
+                result = _cancelled_tool_result(cancelled_tool_call)
+                messages.append(_tool_result_message(result))
+                yield ToolExecutionEndEvent(result=result)
+            yield ErrorEvent(message="Agent run cancelled", recoverable=True)
+            return
+
         yield ToolExecutionStartEvent(tool_call=tool_call)
 
         tool = tool_by_name.get(tool_call.name)
         if tool is None:
             result = _unknown_tool_result(tool_call)
         else:
-            result = await _execute_tool(tool, tool_call)
+            result = await _execute_tool(tool, tool_call, signal)
 
         messages.append(_tool_result_message(result))
         yield ToolExecutionEndEvent(result=result)
 
 
-async def _execute_tool(tool: AgentTool, tool_call: ToolCall) -> AgentToolResult:
+async def _execute_tool(
+    tool: AgentTool,
+    tool_call: ToolCall,
+    signal: CancellationToken | None,
+) -> AgentToolResult:
     try:
-        result = await tool.execute(tool_call.arguments)
+        result = await tool.execute(tool_call.arguments, signal=signal)
     except Exception as exc:  # noqa: BLE001 - tools are an isolation boundary
         return AgentToolResult(
             tool_call_id=tool_call.id,
@@ -221,6 +235,17 @@ async def _execute_tool(tool: AgentTool, tool_call: ToolCall) -> AgentToolResult
 
 def _unknown_tool_result(tool_call: ToolCall) -> AgentToolResult:
     message = f"Unknown tool: {tool_call.name}"
+    return AgentToolResult(
+        tool_call_id=tool_call.id,
+        name=tool_call.name,
+        ok=False,
+        content=message,
+        error=message,
+    )
+
+
+def _cancelled_tool_result(tool_call: ToolCall) -> AgentToolResult:
+    message = "Tool call cancelled"
     return AgentToolResult(
         tool_call_id=tool_call.id,
         name=tool_call.name,

@@ -58,6 +58,10 @@ Example:
       "max_retries": 2,
       "max_retry_delay_seconds": 0.5
     }
+  ],
+  "scoped_models": [
+    {"provider": "local", "model": "qwen"},
+    {"provider": "local", "model": "llama"}
   ]
 }
 ```
@@ -106,6 +110,12 @@ Inside the TUI:
 /login
 ```
 
+The optional `scoped_models` list stores favorite provider/model pairs for fast
+TUI cycling. Open `/model`, highlight a model, and press `Space` to add or
+remove it from the scoped list. Press `Tab` in the picker to show only scoped
+models. Press `Ctrl+P` in the prompt to cycle through scoped models without
+opening the picker.
+
 ## TUI Settings
 
 The built-in Textual frontend reads optional settings from:
@@ -128,6 +138,7 @@ Example:
     "completion_next": "down",
     "completion_previous": "up",
     "thinking_cycle": "shift+tab",
+    "model_cycle": "ctrl+p",
     "toggle_thinking": "ctrl+t",
     "toggle_tool_results": "ctrl+o",
     "copy_message": "ctrl+c",
@@ -199,12 +210,14 @@ tau --resume <session-id>
 tau --new-session
 tau export <session-id>
 tau export <session-id> session.html
+tau export <session-id> --format jsonl
 ```
 
 `tau export` writes a standalone HTML file with the preserved session tree and
 the storage-order transcript. The source can be an indexed session id or a path
-to a JSONL session file. When no output path is provided, Tau writes the HTML
-next to the source session file with a `.html` suffix.
+to a JSONL session file. When no output path is provided, Tau writes the export
+artifact to the current working directory. HTML is the default format; pass
+`--format jsonl` or a `.jsonl` destination to export JSONL.
 
 Inside the TUI:
 
@@ -212,7 +225,9 @@ Inside the TUI:
 /resume
 /tree
 /name <new name>
-/status
+/session
+/theme [name]
+/export [--format html|jsonl] [destination]
 ```
 
 `/name <new name>` renames the current indexed session. The new name is shown
@@ -249,18 +264,8 @@ Project resources override user resources with the same name. Duplicate or
 overridden resources are reported through diagnostics instead of preventing Tau
 from starting.
 
-Useful TUI commands:
-
-```text
-/skills
-/resources
-/skill:<name> [request]
-```
-
-`/skill:<name>` injects the full skill markdown into the next prompt with the
-skill file location and the directory relative references should resolve from.
-For ordinary prompts, Tau lists loaded skills in the system prompt so the model
-can read a relevant skill file through the `read` tool.
+Tau lists loaded skills in the system prompt so the model can read a relevant
+skill file through the `read` tool.
 
 ## Project Context
 
@@ -282,10 +287,9 @@ The project root is the nearest ancestor containing a marker such as `.git`,
 Useful TUI commands:
 
 ```text
-/context
 /reload
-/thinking
-/thinking high
+/theme
+/theme tau-light
 ```
 
 In the TUI, `Shift-Tab` cycles the active thinking mode by default. `Ctrl+T`
@@ -324,7 +328,7 @@ skips hidden paths and common generated/cache directories such as `.git`,
 
 ## Context Management
 
-`/status` shows a rough context-size estimate:
+`/session` shows a rough context-size estimate:
 
 ```text
 Estimated context tokens: <count>

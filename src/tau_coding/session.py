@@ -52,10 +52,12 @@ from tau_coding.provider_config import (
     ProviderConfig,
     ProviderConfigError,
     ProviderSettings,
+    ScopedModelConfig,
     load_provider_settings,
     provider_default_thinking_level,
     provider_has_usable_credentials,
     provider_thinking_levels,
+    save_provider_settings,
 )
 from tau_coding.provider_runtime import ClosableModelProvider, create_model_provider
 from tau_coding.resources import (
@@ -63,6 +65,11 @@ from tau_coding.resources import (
     ResourceError,
     TauResourcePaths,
     resource_paths_with_cwd,
+)
+from tau_coding.session_export import (
+    default_session_export_artifact_path,
+    export_session_artifact,
+    normalize_export_format,
 )
 from tau_coding.session_manager import SessionManager
 from tau_coding.skills import Skill, expand_skill_command, load_skills_with_diagnostics
@@ -307,6 +314,21 @@ class CodingSession:
         )
 
     @property
+    def scoped_model_choices(self) -> tuple[ModelChoice, ...]:
+        """Return configured quick-switch model choices that are currently usable."""
+        if self._provider_settings is None:
+            return ()
+        available = set(self.available_model_choices)
+        return tuple(
+            choice
+            for choice in (
+                ModelChoice(provider_name=item.provider, model=item.model)
+                for item in self._provider_settings.scoped_models
+            )
+            if choice in available
+        )
+
+    @property
     def tools(self) -> tuple[AgentTool, ...]:
         """Return the tools available to the agent."""
         return tuple(self._harness.config.tools)
@@ -397,6 +419,32 @@ class CodingSession:
     def storage(self) -> SessionStorage:
         """Return the backing session storage."""
         return self._config.storage
+
+    async def export(
+        self,
+        destination: Path | None = None,
+        *,
+        format: str | None = None,
+    ) -> Path:
+        """Export the current session to a user-facing artifact."""
+        entries = await self._config.storage.read_all()
+        session_path = _storage_path(self._config.storage)
+        export_format = normalize_export_format(
+            format or (destination.suffix.removeprefix(".") if destination else "html")
+        )
+        output_path = _resolve_export_destination(
+            destination,
+            cwd=self.cwd,
+            session_path=session_path,
+            format=export_format,
+        )
+        return export_session_artifact(
+            entries,
+            output_path,
+            title=_session_export_title(self),
+            source=str(session_path) if session_path is not None else self.session_id,
+            format=export_format,
+        )
 
     @property
     def skills(self) -> tuple[Skill, ...]:
@@ -501,6 +549,51 @@ class CodingSession:
         self._refresh_runtime_provider()
         if self._config.session_id is not None and self._config.session_manager is not None:
             self._config.session_manager.touch_session(self._config.session_id, model=model)
+
+    def set_model_choice(self, choice: ModelChoice) -> None:
+        """Switch provider/model as one operation."""
+        if choice.provider_name != self.provider_name:
+            self.set_provider(choice.provider_name)
+        self.set_model(choice.model)
+
+    def is_scoped_model(self, choice: ModelChoice) -> bool:
+        """Return whether a provider/model pair is in the scoped model list."""
+        return choice in self.scoped_model_choices
+
+    def toggle_scoped_model(self, choice: ModelChoice) -> tuple[ModelChoice, ...]:
+        """Add or remove a model from the persisted scoped model list."""
+        if self._provider_settings is None:
+            raise ProviderConfigError("Provider settings are not available for this session")
+        available = set(self.available_model_choices)
+        if choice not in available:
+            raise ProviderConfigError(
+                f"Model is not available: {choice.provider_name}:{choice.model}"
+            )
+
+        existing = list(self._provider_settings.scoped_models)
+        target = ScopedModelConfig(provider=choice.provider_name, model=choice.model)
+        if target in existing:
+            existing = [item for item in existing if item != target]
+        else:
+            existing.append(target)
+        self._provider_settings = replace(self._provider_settings, scoped_models=tuple(existing))
+        save_provider_settings(self._provider_settings, self._resource_paths.paths)
+        return self.scoped_model_choices
+
+    def cycle_scoped_model(self, *, reverse: bool = False) -> ModelChoice:
+        """Switch to the next configured scoped model."""
+        scoped = self.scoped_model_choices
+        if not scoped:
+            raise ProviderConfigError("No scoped models configured.")
+        current = ModelChoice(provider_name=self.provider_name, model=self.model)
+        try:
+            current_index = scoped.index(current)
+        except ValueError:
+            current_index = -1 if not reverse else 0
+        delta = -1 if reverse else 1
+        choice = scoped[(current_index + delta) % len(scoped)]
+        self.set_model_choice(choice)
+        return choice
 
     def set_provider(self, provider_name: str) -> None:
         """Switch the active provider and reset to that provider's default model."""
@@ -1074,6 +1167,46 @@ def _messages_after_entry_on_active_path(
         for entry in active_path[target_index + 1 :]
         if entry.type == "message"
     )
+def _storage_path(storage: SessionStorage) -> Path | None:
+    path = getattr(storage, "path", None)
+    return path if isinstance(path, Path) else None
+
+
+def _resolve_export_destination(
+    destination: Path | None,
+    *,
+    cwd: Path,
+    session_path: Path | None,
+    format: str,
+) -> Path:
+    if destination is None:
+        if session_path is not None:
+            return default_session_export_artifact_path(
+                session_path,
+                destination_dir=cwd,
+                format=format,
+            )
+        return cwd / f"tau-session.{format}"
+
+    resolved = destination if destination.is_absolute() else cwd / destination
+    if resolved.suffix:
+        return resolved
+    name = session_path.stem if session_path is not None else "tau-session"
+    return default_session_export_artifact_path(
+        Path(name),
+        destination_dir=resolved,
+        format=format,
+    )
+
+
+def _session_export_title(session: CodingSession) -> str:
+    manager = session.session_manager
+    session_id = session.session_id
+    if manager is not None and session_id is not None:
+        record = manager.get_session(session_id)
+        if record is not None and record.title:
+            return record.title
+    return f"Tau session {session_id}" if session_id is not None else "Tau Session Export"
 
 
 def _state_thinking_level(

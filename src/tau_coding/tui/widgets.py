@@ -234,7 +234,7 @@ def render_compact_session_info(
     right = Text(style=theme.muted_text, overflow="fold", no_wrap=False, justify="right")
     right.append(_context_usage(session), style=theme.completion_description)
     right.append("  ")
-    right.append(f"{session.provider_name}:{session.model}", style=theme.prompt_text)
+    right.append(session.model, style=theme.prompt_text)
     right.append(" ")
     right.append(f"({_thinking_level(session)})", style=theme.completion_description)
 

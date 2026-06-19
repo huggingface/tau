@@ -10,6 +10,7 @@ from tau_coding.provider_config import (
     OpenAICompatibleProviderConfig,
     ProviderConfigError,
     ProviderSettings,
+    ScopedModelConfig,
     anthropic_config_from_provider,
     load_provider_settings,
     openai_compatible_config_from_provider,
@@ -74,6 +75,7 @@ def test_save_and_load_provider_settings_round_trip(tmp_path: Path) -> None:
                 max_retry_delay_seconds=0.5,
             ),
         ),
+        scoped_models=(ScopedModelConfig(provider="local", model="llama"),),
     )
 
     path = save_provider_settings(settings, paths)
@@ -83,8 +85,38 @@ def test_save_and_load_provider_settings_round_trip(tmp_path: Path) -> None:
     assert loaded == settings
 
 
+def test_provider_settings_parses_scoped_models() -> None:
+    settings = provider_settings_from_json(
+        {
+            "default_provider": "local",
+            "providers": [
+                {
+                    "type": "openai-compatible",
+                    "name": "local",
+                    "base_url": "http://localhost:11434/v1",
+                    "api_key_env": "LOCAL_API_KEY",
+                    "models": ["qwen", "llama"],
+                    "default_model": "qwen",
+                }
+            ],
+            "scoped_models": [
+                {"provider": "local", "model": "qwen"},
+                {"provider": "local", "model": "qwen"},
+                {"provider": "local", "model": "llama"},
+            ],
+        }
+    )
+
+    assert settings.scoped_models == (
+        ScopedModelConfig(provider="local", model="qwen"),
+        ScopedModelConfig(provider="local", model="llama"),
+    )
+
+
 def test_upsert_openai_compatible_provider_replaces_and_sets_default() -> None:
-    settings = ProviderSettings()
+    settings = ProviderSettings(
+        scoped_models=(ScopedModelConfig(provider="openai", model="gpt-5.5"),)
+    )
     provider = OpenAICompatibleProviderConfig(
         name="local",
         base_url="http://localhost:11434/v1",
@@ -116,6 +148,7 @@ def test_upsert_openai_compatible_provider_replaces_and_sets_default() -> None:
         "openrouter",
     ]
     assert replaced.get_provider("local").default_model == "llama"
+    assert replaced.scoped_models == settings.scoped_models
 
 
 def test_resolve_provider_selection_uses_configured_defaults() -> None:

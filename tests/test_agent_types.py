@@ -60,7 +60,18 @@ def test_models_reject_unknown_fields() -> None:
 
 @pytest.mark.anyio
 async def test_agent_tool_executes_with_json_arguments() -> None:
-    async def executor(arguments: Mapping[str, JSONValue]) -> AgentToolResult:
+    class FakeCancellationToken:
+        def is_cancelled(self) -> bool:
+            return False
+
+    observed_signal: list[object | None] = []
+
+    async def executor(
+        arguments: Mapping[str, JSONValue],
+        *,
+        signal: object | None = None,
+    ) -> AgentToolResult:
+        observed_signal.append(signal)
         return AgentToolResult(
             tool_call_id="call-1",
             name="echo",
@@ -75,10 +86,12 @@ async def test_agent_tool_executes_with_json_arguments() -> None:
         executor=executor,
     )
 
-    result = await tool.execute({"text": "hi"})
+    signal = FakeCancellationToken()
+    result = await tool.execute({"text": "hi"}, signal=signal)
 
     assert result.ok is True
     assert result.content == "hi"
+    assert observed_signal == [signal]
 
 
 def test_events_have_stable_type_names() -> None:

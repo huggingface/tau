@@ -322,7 +322,11 @@ async def test_harness_can_drain_all_queued_messages_together() -> None:
 
 @pytest.mark.anyio
 async def test_harness_passes_tools_to_loop() -> None:
-    async def executor(arguments: Mapping[str, JSONValue]) -> AgentToolResult:
+    async def executor(
+        arguments: Mapping[str, JSONValue],
+        signal: object | None = None,
+    ) -> AgentToolResult:
+        del signal
         return AgentToolResult(
             tool_call_id="call-1",
             name="echo",

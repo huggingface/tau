@@ -134,6 +134,23 @@ from every configured provider, so selecting a model can switch the active
 provider behind the scenes. `/login` is the TUI path for adding or refreshing a
 built-in provider.
 
+The same provider settings file can also store scoped models:
+
+```json
+{
+  "scoped_models": [
+    {"provider": "openai", "model": "gpt-5.5"},
+    {"provider": "local", "model": "qwen"}
+  ]
+}
+```
+
+Tau treats these as TUI favorites. The coding session filters the stored list
+against currently usable providers before exposing it, so stale entries remain
+harmless in the JSON file. This mirrors Pi's scoped-model idea while keeping the
+durable config in `tau_coding` and the reusable harness unaware of provider
+settings.
+
 ## Boundary
 
 Provider settings belong to `tau_coding`, not `tau_agent`.

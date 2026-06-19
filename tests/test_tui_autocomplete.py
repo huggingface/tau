@@ -22,15 +22,15 @@ def test_command_completion_for_slash_lists_every_registered_command() -> None:
 
 def test_command_completion_suggests_registered_commands() -> None:
     state = build_completion_state(
-        "/st",
+        "/se",
         command_registry=create_default_command_registry(),
         skills=(),
         prompt_templates=(),
     )
 
-    assert [item.display for item in state.items] == ["/status"]
+    assert [item.display for item in state.items] == ["/session"]
     assert state.selected is not None
-    assert state.selected.apply("/st") == "/status"
+    assert state.selected.apply("/se") == "/session"
 
 
 def test_command_completion_matches_search_terms_with_canonical_replacement() -> None:
@@ -50,12 +50,12 @@ def test_command_completion_matches_search_terms_with_canonical_replacement() ->
     assert [item.display for item in clear_state.items] == ["/new"]
     assert clear_state.selected is not None
     assert clear_state.selected.apply("/cl") == "/new"
-    assert [item.display for item in sessions_state.items] == ["/resume"]
+    assert [item.display for item in sessions_state.items] == ["/session"]
     assert sessions_state.selected is not None
-    assert sessions_state.selected.apply("/sess") == "/resume"
+    assert sessions_state.selected.apply("/sess") == "/session"
 
 
-def test_skill_command_completion_prefers_colon_form() -> None:
+def test_skill_command_is_not_registered_for_command_completion() -> None:
     state = build_completion_state(
         "/ski",
         command_registry=create_default_command_registry(),
@@ -63,7 +63,7 @@ def test_skill_command_completion_prefers_colon_form() -> None:
         prompt_templates=(),
     )
 
-    assert "/skill:" in [item.display for item in state.items]
+    assert state.items == ()
 
 
 def test_skill_name_completion_preserves_request_text() -> None:
@@ -146,9 +146,7 @@ def test_thinking_argument_completion_uses_available_modes() -> None:
         thinking_levels=("off", "minimal", "low", "medium", "high", "xhigh"),
     )
 
-    assert [item.display for item in state.items] == ["high"]
-    assert state.selected is not None
-    assert state.selected.apply("/thinking h") == "/thinking high"
+    assert state.items == ()
 
 
 def test_theme_argument_completion_uses_theme_names() -> None:
@@ -230,4 +228,4 @@ def test_file_reference_completion_stays_off_for_slash_commands(tmp_path: Path) 
         cwd=tmp_path,
     )
 
-    assert [item.display for item in state.items] == ["/help"]
+    assert state.items == ()

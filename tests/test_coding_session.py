@@ -35,8 +35,10 @@ from tau_coding import (
     CodingSession,
     CodingSessionConfig,
     FileCredentialStore,
+    ModelChoice,
     OpenAICompatibleProviderConfig,
     ProviderSettings,
+    ScopedModelConfig,
     SessionManager,
     TauPaths,
     TauResourcePaths,
@@ -148,6 +150,32 @@ async def test_load_empty_session_appends_metadata(tmp_path: Path) -> None:
     assert session.cwd == tmp_path
     assert session.model == "fake"
     assert [tool.name for tool in session.tools] == ["read", "write", "edit", "bash"]
+
+
+@pytest.mark.anyio
+async def test_session_export_defaults_to_cwd(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / ".tau" / "sessions" / "session-1.jsonl")
+    session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
+    await storage.append(MessageEntry(id="root", message=UserMessage(content="Export me")))
+
+    output_path = await session.export()
+
+    assert output_path == tmp_path / "session-1.html"
+    html = output_path.read_text(encoding="utf-8")
+    assert "Export me" in html
+    assert str(storage.path) in html
+
+
+@pytest.mark.anyio
+async def test_session_export_writes_jsonl_to_destination_directory(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / ".tau" / "sessions" / "session-1.jsonl")
+    session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
+    await storage.append(MessageEntry(id="root", message=UserMessage(content="Export me")))
+
+    output_path = await session.export(Path("exports"), format="jsonl")
+
+    assert output_path == tmp_path / "exports" / "session-1.jsonl"
+    assert "Export me" in output_path.read_text(encoding="utf-8")
 
 
 @pytest.mark.anyio
@@ -890,7 +918,7 @@ async def test_session_loads_with_resource_diagnostics_instead_of_failing(
     assert [skill.name for skill in session.skills] == ["dup"]
     assert len(session.resource_diagnostics) == 1
     assert "Duplicate skill name" in session.resource_diagnostics[0].message
-    assert "Resource diagnostics: 1" in (session.handle_command("/status").message or "")
+    assert "Resource diagnostics: 1" in (session.handle_command("/session").message or "")
 
 
 @pytest.mark.anyio
@@ -1222,6 +1250,56 @@ async def test_available_model_choices_include_stored_credentials(
 
 
 @pytest.mark.anyio
+async def test_session_toggles_and_cycles_scoped_models(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "local-key")
+    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("qwen", "llama"),
+                default_model="qwen",
+            ),
+        ),
+        scoped_models=(ScopedModelConfig(provider="local", model="qwen"),),
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="qwen",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "scoped-session.jsonl"),
+            cwd=tmp_path,
+            provider_name="local",
+            provider_settings=settings,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    llama = ModelChoice(provider_name="local", model="llama")
+    scoped = session.toggle_scoped_model(llama)
+    choice = session.cycle_scoped_model()
+    saved = json.loads((tau_paths.home / "providers.json").read_text(encoding="utf-8"))
+
+    assert [(item.provider_name, item.model) for item in scoped] == [
+        ("local", "qwen"),
+        ("local", "llama"),
+    ]
+    assert choice == llama
+    assert session.model == "llama"
+    assert saved["scoped_models"] == [
+        {"provider": "local", "model": "qwen"},
+        {"provider": "local", "model": "llama"},
+    ]
+
+
+@pytest.mark.anyio
 async def test_session_resumes_indexed_session(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     first_record = manager.create_session(cwd=tmp_path / "first", model="fake", title="First")
@@ -1312,9 +1390,8 @@ def test_minimal_commands_are_handled(tmp_path: Path) -> None:
     )
 
     assert session.handle_command("hello").handled is False
-    assert session.handle_command("/help").message is not None
-    assert "/help" in session.handle_command("/help").message
     assert session.handle_command("/new").new_session_requested is True
     assert session.handle_command("/clear").message == "Unknown command: /clear"
-    assert session.handle_command("/exit").exit_requested is True
+    assert session.handle_command("/quit").exit_requested is True
+    assert session.handle_command("/exit").message == "Unknown command: /exit"
     assert session.handle_command("/unknown").message == "Unknown command: /unknown"

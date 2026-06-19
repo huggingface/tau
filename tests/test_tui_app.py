@@ -83,6 +83,7 @@ class FakeSession:
             ModelChoice(provider_name="openai", model="other-model"),
             ModelChoice(provider_name="local", model="local-model"),
         )
+        self.scoped_model_choices: tuple[ModelChoice, ...] = ()
         self.available_providers = ("openai",)
         self.tools = tuple(create_coding_tools(cwd=self.cwd))
         self.skills = (Skill(name="review", path=self.cwd / "review.md", content="Review code"),)
@@ -108,17 +109,27 @@ class FakeSession:
         self.streaming_behaviors: list[str | None] = []
         self.terminal_commands: list[tuple[str, bool]] = []
         self.cancel_count = 0
+        self.export_calls: list[tuple[Path | None, str | None]] = []
 
     def handle_command(self, text: str) -> CommandResult:
-        if text == "/help":
+        if text == "/session":
             return CommandResult(
                 handled=True,
-                message="Available commands:\n/help\tShow available slash commands.",
+                message="Session info",
             )
         if text == "/new":
             return CommandResult(handled=True, new_session_requested=True)
         if text.startswith("/compact "):
             return CommandResult(handled=True, compact_summary=text.removeprefix("/compact "))
+        if text == "/export":
+            return CommandResult(handled=True, export_requested=True)
+        if text.startswith("/export "):
+            return CommandResult(
+                handled=True,
+                export_requested=True,
+                export_destination=Path("out.jsonl"),
+                export_format="jsonl",
+            )
         if text.startswith("/resume "):
             return CommandResult(handled=True, resume_session_id=text.removeprefix("/resume "))
         if text == "/resume":
@@ -131,6 +142,8 @@ class FakeSession:
             return CommandResult(handled=True, login_provider=text.removeprefix("/login "))
         if text == "/model":
             return CommandResult(handled=True, model_picker_requested=True)
+        if text in {"/scoped-models", "/scoped models"}:
+            return CommandResult(handled=True, scoped_models_picker_requested=True)
         if text.startswith("/thinking "):
             return CommandResult(handled=True, thinking_level=text.removeprefix("/thinking "))
         if text == "/theme":
@@ -141,6 +154,31 @@ class FakeSession:
 
     def set_model(self, model: str) -> None:
         self.model = model
+
+    def set_model_choice(self, choice: ModelChoice) -> None:
+        self.set_provider(choice.provider_name)
+        self.set_model(choice.model)
+
+    def toggle_scoped_model(self, choice: ModelChoice) -> tuple[ModelChoice, ...]:
+        scoped = list(self.scoped_model_choices)
+        if choice in scoped:
+            scoped.remove(choice)
+        else:
+            scoped.append(choice)
+        self.scoped_model_choices = tuple(scoped)
+        return self.scoped_model_choices
+
+    def cycle_scoped_model(self) -> ModelChoice:
+        if not self.scoped_model_choices:
+            raise ValueError("No scoped models configured.")
+        current = ModelChoice(provider_name=self.provider_name, model=self.model)
+        try:
+            index = self.scoped_model_choices.index(current)
+        except ValueError:
+            index = -1
+        choice = self.scoped_model_choices[(index + 1) % len(self.scoped_model_choices)]
+        self.set_model_choice(choice)
+        return choice
 
     def set_provider(self, provider_name: str) -> None:
         self.provider_name = provider_name
@@ -166,6 +204,10 @@ class FakeSession:
         self.compact_summaries.append(summary)
         self.context_token_estimate = 42
         return "Compacted 2 context entries."
+
+    async def export(self, destination: Path | None = None, *, format: str | None = None) -> Path:
+        self.export_calls.append((destination, format))
+        return self.cwd / "session.html"
 
     async def resume(self, session_id: str) -> str:
         self.resumed_session_ids.append(session_id)
@@ -325,7 +367,8 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
     output = console.export_text()
     assert "/workspace/project (--)" in output
     assert "12k/200k context" in output
-    assert "openai:fake-model" in output
+    assert "fake-model" in output
+    assert "openai:fake-model" not in output
     assert "(medium)" in output
 
 
@@ -727,6 +770,7 @@ async def test_tui_app_uses_textual_footer_for_shortcut_hints() -> None:
             "Newline": "shift+enter",
             "Sessions": "ctrl+r",
             "Thinking": "shift+tab",
+            "Model": "ctrl+p",
             "Cancel": "escape",
         }
 
@@ -737,7 +781,7 @@ async def test_tui_app_footer_hints_update_for_completions() -> None:
 
     async with app.run_test(size=(120, 30)):
         prompt = app.query_one("#prompt")
-        prompt.value = "/st"
+        prompt.value = "/se"
         app._completion_state = app._build_completion_state(prompt.value)
         app._refresh_completions()
 
@@ -988,10 +1032,12 @@ async def test_tui_app_shows_activity_indicator_while_running() -> None:
 
     async with app.run_test():
         prompt = app.query_one("#prompt")
+        indicator = app.query_one("#activity-indicator")
 
         assert not app.query("#status")
         assert not app.query("#activity-status")
         assert prompt.styles.border.top[1].hex.lower() == "#2d3748"
+        assert indicator.render().plain == " \n \n "
 
         app.adapter.apply(AgentStartEvent())
         app._refresh()
@@ -999,16 +1045,19 @@ async def test_tui_app_shows_activity_indicator_while_running() -> None:
         assert pytest.approx(tui_app.ACTIVITY_TICK_SECONDS) == 0.15
         assert tui_app.ACTIVITY_COLOR_FADE_STEPS == 24
         assert prompt.styles.border.top[1].hex.lower() == "#2d3748"
+        assert indicator.render().plain.startswith("■")
 
         app._tick_activity()
 
-        assert prompt.styles.border.top[1].hex.lower() == "#353b49"
+        assert prompt.styles.border.top[1].hex.lower() == "#2d3748"
+        assert indicator.render().plain.splitlines()[1] == "■"
 
         app.adapter.apply(AgentEndEvent())
         app._refresh()
 
         assert not app.query("#status")
         assert prompt.styles.border.top[1].hex.lower() == "#2d3748"
+        assert indicator.render().plain == " \n \n "
 
 
 @pytest.mark.anyio
@@ -1017,6 +1066,7 @@ async def test_tui_app_clears_activity_status_on_error() -> None:
 
     async with app.run_test():
         prompt = app.query_one("#prompt")
+        indicator = app.query_one("#activity-indicator")
         app.adapter.apply(AgentStartEvent())
         app._refresh()
         app.adapter.apply(ErrorEvent(message="provider failed", recoverable=False))
@@ -1025,6 +1075,7 @@ async def test_tui_app_clears_activity_status_on_error() -> None:
         assert not app.query("#status")
         assert not app.query("#activity-status")
         assert prompt.styles.border.top[1].hex.lower() == "#2d3748"
+        assert indicator.render().plain == " \n \n "
 
 
 @pytest.mark.anyio
@@ -1106,6 +1157,28 @@ async def test_tui_app_compact_command_runs_session_compaction() -> None:
 
         assert session.compact_summaries == ["Summary of earlier work."]
         assert [(item.role, item.text) for item in app.state.items] == [("user", "Earlier")]
+
+
+@pytest.mark.anyio
+async def test_tui_app_export_command_runs_session_export() -> None:
+    session = FakeSession(messages=[UserMessage(content="Earlier")])
+    app = TauTuiApp(session)
+    notifications: list[str] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        del kwargs
+        notifications.append(message)
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/export --format jsonl out.jsonl"
+        await pilot.press("enter")
+
+        assert session.export_calls == [(Path("out.jsonl"), "jsonl")]
+        assert notifications == ["Exported session to /workspace/project/session.html"]
+        assert session.prompt_texts == []
 
 
 @pytest.mark.anyio
@@ -1196,13 +1269,13 @@ async def test_tui_app_completes_registered_slash_command() -> None:
 
     async with app.run_test() as pilot:
         prompt = app.query_one("#prompt")
-        prompt.value = "/st"
+        prompt.value = "/se"
         app._completion_state = app._build_completion_state(prompt.value)
         app._refresh_completions()
 
         await pilot.press("tab")
 
-        assert prompt.value == "/status"
+        assert prompt.value == "/session"
 
 
 @pytest.mark.anyio
@@ -1211,13 +1284,13 @@ async def test_tui_app_enter_accepts_completion_without_submitting() -> None:
 
     async with app.run_test() as pilot:
         prompt = app.query_one("#prompt")
-        prompt.value = "/st"
+        prompt.value = "/se"
         app._completion_state = app._build_completion_state(prompt.value)
         app._refresh_completions()
 
         await pilot.press("enter")
 
-        assert prompt.value == "/status"
+        assert prompt.value == "/session"
         assert app.state.items == []
 
 
@@ -1544,7 +1617,7 @@ async def test_tui_app_opens_command_palette_from_keybinding() -> None:
 
         assert prompt.value == "/"
         assert app._completion_state.items
-        assert any(item.display == "/help" for item in app._completion_state.items)
+        assert any(item.display == "/session" for item in app._completion_state.items)
         assert app.query_one("#autocomplete").display is True
 
 
@@ -1598,12 +1671,12 @@ async def test_tui_app_help_uses_modal_instead_of_transcript() -> None:
 
     async with app.run_test() as pilot:
         prompt = app.query_one("#prompt")
-        prompt.value = "/help"
+        prompt.value = "/session"
         await pilot.press("enter")
 
         assert isinstance(app.screen, CommandOutputScreen)
         assert app.state.items == []
-        assert "Available commands:" in app.screen.message
+        assert "Session info" in app.screen.message
         scroll = app.screen.query_one("#command-output-scroll", VerticalScroll)
         assert scroll is not None
         assert app.screen.focused is scroll
@@ -1636,12 +1709,12 @@ async def test_tui_app_command_modal_renders_literal_markup_text() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
-        app._show_command_message("/help", "Available [commands]\n/help")
+        app._show_command_message("/session", "Session [info]\n/session")
         await pilot.pause()
 
         assert isinstance(app.screen, CommandOutputScreen)
         body = app.screen.query_one("#command-output-body")
-        assert str(body.render()) == "Available [commands]\n/help"
+        assert str(body.render()) == "Session [info]\n/session"
 
 
 @pytest.mark.anyio
@@ -1649,7 +1722,7 @@ async def test_tui_app_command_modal_uses_centered_picker_style() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
-        app._show_command_message("/context", "Active context files")
+        app._show_command_message("/session", "Session info")
         await pilot.pause()
 
         assert isinstance(app.screen, CommandOutputScreen)
@@ -1689,7 +1762,7 @@ async def test_tui_app_escape_cancels_running_session_from_prompt() -> None:
 
         assert session.cancel_count == 1
         assert app.state.running is False
-        assert notifications == ["Cancellation requested."]
+        assert notifications == ["Interrupted current operation."]
 
 
 @pytest.mark.anyio
@@ -1754,7 +1827,7 @@ async def test_tui_app_uses_configured_command_palette_keybinding() -> None:
 
         assert prompt.value == "/"
         assert app._completion_state.items
-        assert any(item.display == "/help" for item in app._completion_state.items)
+        assert any(item.display == "/session" for item in app._completion_state.items)
 
 
 @pytest.mark.anyio
@@ -1787,15 +1860,15 @@ async def test_tui_app_uses_configured_completion_keybinding() -> None:
 
     async with app.run_test() as pilot:
         prompt = app.query_one("#prompt")
-        prompt.value = "/st"
+        prompt.value = "/se"
         app._completion_state = app._build_completion_state(prompt.value)
         app._refresh_completions()
 
         await pilot.press("tab")
-        assert prompt.value == "/st"
+        assert prompt.value == "/se"
 
         await pilot.press("f2")
-        assert prompt.value == "/status"
+        assert prompt.value == "/session"
 
 
 @pytest.mark.anyio
@@ -1975,6 +2048,13 @@ async def test_tui_login_api_key_opens_api_provider_picker() -> None:
 async def test_tui_model_opens_interactive_picker() -> None:
     session = FakeSession()
     app = TauTuiApp(session)
+    notifications: list[str] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        del kwargs
+        notifications.append(message)
+
+    app._notify = fake_notify  # type: ignore[method-assign]
 
     async with app.run_test() as pilot:
         prompt = app.query_one("#prompt")
@@ -1983,6 +2063,8 @@ async def test_tui_model_opens_interactive_picker() -> None:
         await pilot.pause()
 
         assert isinstance(app.screen, ModelPickerScreen)
+        tabs = app.screen.query_one("#model-picker-tabs", Static)
+        assert str(tabs.render()) == "Tabs: ● All models  ○ Scoped models"
         model_list = app.screen.query_one("#model-picker-list", ListView)
         labels = [str(item.query_one(Label).render()) for item in model_list.children]
         assert labels == [
@@ -1999,35 +2081,55 @@ async def test_tui_model_opens_interactive_picker() -> None:
         labels = [str(item.query_one(Label).render()) for item in model_list.children]
         assert labels == ["  local:local-model"]
 
+        await pilot.press("tab")
+        await pilot.pause()
+        assert str(tabs.render()) == "Tabs: ○ All models  ● Scoped models"
+
+        await pilot.press("tab")
+        await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
 
     assert session.provider_name == "local"
     assert session.model == "local-model"
     assert session.prompt_texts == []
+    assert notifications == []
 
 
 @pytest.mark.anyio
-async def test_tui_app_thinking_command_updates_session() -> None:
+async def test_tui_scoped_models_picker_toggles_scoped_models_without_switching_model() -> None:
     session = FakeSession()
     app = TauTuiApp(session)
-    notifications: list[str] = []
-
-    def fake_notify(message: str, **kwargs: object) -> None:
-        del kwargs
-        notifications.append(message)
-
-    app._notify = fake_notify  # type: ignore[method-assign]
 
     async with app.run_test() as pilot:
         prompt = app.query_one("#prompt")
-        prompt.value = "/thinking high"
+        prompt.value = "/scoped-models"
         await pilot.press("enter")
         await pilot.pause()
 
-    assert session.thinking_level == "high"
-    assert notifications == []
-    assert session.prompt_texts == []
+        assert isinstance(app.screen, ModelPickerScreen)
+        tabs = app.screen.query_one("#model-picker-tabs", Static)
+        assert str(tabs.render()) == (
+            "Scoped models setup — Enter toggles membership; active model is unchanged"
+        )
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert session.scoped_model_choices == (
+            ModelChoice(provider_name="openai", model="fake-model"),
+        )
+        assert session.provider_name == "openai"
+        assert session.model == "fake-model"
+        model_list = app.screen.query_one("#model-picker-list", ListView)
+        labels = [str(item.query_one(Label).render()) for item in model_list.children]
+        assert labels[0] == "* openai:fake-model [scoped]"
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert session.scoped_model_choices == ()
+        assert session.provider_name == "openai"
+        assert session.model == "fake-model"
 
 
 @pytest.mark.anyio
@@ -2308,6 +2410,31 @@ async def test_tui_app_cycles_thinking_from_keybinding() -> None:
         await pilot.pause()
 
     assert session.thinking_level == "high"
+    assert notifications == []
+
+
+@pytest.mark.anyio
+async def test_tui_app_cycles_scoped_model_from_keybinding() -> None:
+    session = FakeSession()
+    session.scoped_model_choices = (
+        ModelChoice(provider_name="openai", model="fake-model"),
+        ModelChoice(provider_name="openai", model="other-model"),
+    )
+    app = TauTuiApp(session)
+    notifications: list[str] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        del kwargs
+        notifications.append(message)
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+
+    assert session.provider_name == "openai"
+    assert session.model == "other-model"
     assert notifications == []
 
 

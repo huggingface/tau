@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from time import monotonic
 
-from tau_agent.tools import AgentTool, AgentToolResult
+from tau_agent.tools import AgentTool, AgentToolResult, ToolCancellationToken, ToolExecutor
 from tau_agent.types import JSONValue
 
 DEFAULT_MAX_OUTPUT_BYTES = 50 * 1024
@@ -74,14 +74,14 @@ class ToolDefinition:
     prompt_snippet: str
     prompt_guidelines: tuple[str, ...]
     input_schema: Mapping[str, JSONValue]
-    executor: object
+    executor: ToolExecutor
 
     def to_agent_tool(self) -> AgentTool:
         return AgentTool(
             name=self.name,
             description=self.description,
             input_schema=self.input_schema,
-            executor=self.executor,  # type: ignore[arg-type]
+            executor=self.executor,
             prompt_snippet=self.prompt_snippet,
             prompt_guidelines=self.prompt_guidelines,
         )
@@ -125,7 +125,11 @@ def create_read_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
     """
     root = Path.cwd() if cwd is None else Path(cwd)
 
-    async def execute(arguments: Mapping[str, JSONValue]) -> AgentToolResult:
+    async def execute(
+        arguments: Mapping[str, JSONValue],
+        signal: ToolCancellationToken | None = None,
+    ) -> AgentToolResult:
+        del signal
         raw_path = _str_arg(arguments, "path")
         path = _path_arg(arguments, "path", cwd=root)
         offset = _optional_int_arg(arguments, "offset")
@@ -260,7 +264,11 @@ def create_write_tool_definition(*, cwd: str | Path | None = None) -> ToolDefini
     """
     root = Path.cwd() if cwd is None else Path(cwd)
 
-    async def execute(arguments: Mapping[str, JSONValue]) -> AgentToolResult:
+    async def execute(
+        arguments: Mapping[str, JSONValue],
+        signal: ToolCancellationToken | None = None,
+    ) -> AgentToolResult:
+        del signal
         path = _path_arg(arguments, "path", cwd=root)
         content = _str_arg(arguments, "content")
 
@@ -321,7 +329,11 @@ def create_edit_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
     """
     root = Path.cwd() if cwd is None else Path(cwd)
 
-    async def execute(arguments: Mapping[str, JSONValue]) -> AgentToolResult:
+    async def execute(
+        arguments: Mapping[str, JSONValue],
+        signal: ToolCancellationToken | None = None,
+    ) -> AgentToolResult:
+        del signal
         prepared = _prepare_edit_arguments(arguments)
         path = _path_arg(prepared, "path", cwd=root)
         edits = _edits_arg(prepared)
@@ -429,11 +441,16 @@ def create_bash_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
     """
     root = Path.cwd() if cwd is None else Path(cwd)
 
-    async def execute(arguments: Mapping[str, JSONValue]) -> AgentToolResult:
+    async def execute(
+        arguments: Mapping[str, JSONValue],
+        signal: ToolCancellationToken | None = None,
+    ) -> AgentToolResult:
         command = _str_arg(arguments, "command")
         timeout = _optional_float_arg(arguments, "timeout")
         if timeout is not None and timeout <= 0:
             raise ToolInputError("timeout must be greater than 0")
+        if signal is not None and signal.is_cancelled():
+            raise ToolInputError("Command cancelled")
 
         start = monotonic()
         if os.name == "posix":
@@ -451,13 +468,11 @@ def create_bash_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
-        timed_out = False
-        try:
-            output_bytes, _stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-        except TimeoutError:
-            timed_out = True
-            _kill_process_tree(process)
-            output_bytes, _stderr = await process.communicate()
+        output_bytes, _stderr, timed_out, cancelled = await _communicate_with_cancellation(
+            process,
+            timeout=timeout,
+            signal=signal,
+        )
 
         output = output_bytes.decode(errors="replace")
         truncation = truncate_tail(output)
@@ -490,12 +505,14 @@ def create_bash_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
             status = (
                 f"Command timed out after {timeout:g} seconds" if timeout else "Command timed out"
             )
+        elif cancelled:
+            status = "Command cancelled"
         elif exit_code not in (0, None):
             status = f"Command exited with code {exit_code}"
         if status:
             output_text = append_status_block(output_text, status)
 
-        ok = exit_code == 0 and not timed_out
+        ok = exit_code == 0 and not timed_out and not cancelled
         return AgentToolResult(
             tool_call_id="",
             name="bash",
@@ -506,6 +523,7 @@ def create_bash_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
                 "command": command,
                 "exit_code": exit_code,
                 "timed_out": timed_out,
+                "cancelled": cancelled,
                 "duration_seconds": round(monotonic() - start, 3),
                 "truncation": truncation.to_json(),
                 "full_output_path": full_output_path,
@@ -553,6 +571,51 @@ def format_size(bytes_count: int) -> str:
 def append_status_block(text: str, status: str) -> str:
     """Append command status text after a blank line when output already exists."""
     return f"{text}\n\n{status}" if text else status
+
+
+async def _communicate_with_cancellation(
+    process: asyncio.subprocess.Process,
+    *,
+    timeout: float | None,
+    signal: ToolCancellationToken | None,
+) -> tuple[bytes, bytes | None, bool, bool]:
+    communicate = asyncio.create_task(process.communicate())
+    cancel_watch: asyncio.Task[None] | None = None
+    try:
+        wait_for = {communicate}
+        if signal is not None:
+            cancel_watch = asyncio.create_task(_wait_for_cancel(signal))
+            wait_for.add(cancel_watch)
+
+        done, _pending = await asyncio.wait(
+            wait_for,
+            timeout=timeout,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if communicate in done:
+            output_bytes, stderr = communicate.result()
+            return output_bytes, stderr, False, False
+
+        cancelled = cancel_watch is not None and cancel_watch in done
+        _kill_process_tree(process)
+        try:
+            output_bytes, stderr = await communicate
+        except asyncio.CancelledError:
+            output_bytes, stderr = b"", None
+        return output_bytes, stderr, not cancelled, cancelled
+    except asyncio.CancelledError:
+        _kill_process_tree(process)
+        if not communicate.done():
+            communicate.cancel()
+        raise
+    finally:
+        if cancel_watch is not None:
+            cancel_watch.cancel()
+
+
+async def _wait_for_cancel(signal: ToolCancellationToken) -> None:
+    while not signal.is_cancelled():
+        await asyncio.sleep(0.05)
 
 
 def truncate_head(

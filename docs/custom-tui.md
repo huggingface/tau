@@ -155,7 +155,9 @@ session.cancel()
 
 Cancellation is a request to stop the active agent turn. The frontend should
 still continue consuming events until the stream ends or reports an error, then
-update its running state.
+update its running state. The built-in Textual app treats the recoverable
+`Agent run cancelled` event as status text because it represents an intentional
+user action, not a failed provider or tool call.
 
 ## Autocomplete and Pickers
 

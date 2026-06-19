@@ -227,6 +227,18 @@ type ProviderConfig = (
 
 
 @dataclass(frozen=True, slots=True)
+class ScopedModelConfig:
+    """A provider/model pair enabled for quick model cycling."""
+
+    provider: str
+    model: str
+
+    def to_json(self) -> dict[str, str]:
+        """Serialize this scoped model reference."""
+        return {"provider": self.provider, "model": self.model}
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderSettings:
     """Tau provider settings loaded from Tau home."""
 
@@ -234,6 +246,7 @@ class ProviderSettings:
     providers: tuple[ProviderConfig, ...] = field(
         default_factory=lambda: builtin_provider_configs()
     )
+    scoped_models: tuple[ScopedModelConfig, ...] = ()
 
     def get_provider(self, name: str | None = None) -> ProviderConfig:
         """Return a configured provider by name."""
@@ -248,6 +261,7 @@ class ProviderSettings:
         return {
             "default_provider": self.default_provider,
             "providers": [provider.to_json() for provider in self.providers],
+            "scoped_models": [model.to_json() for model in self.scoped_models],
         }
 
 
@@ -368,7 +382,11 @@ def upsert_provider(
     providers_by_name[provider.name] = provider
     default_provider = provider.name if set_default else settings.default_provider
     providers = tuple(providers_by_name[name] for name in sorted(providers_by_name))
-    updated = ProviderSettings(default_provider=default_provider, providers=providers)
+    updated = ProviderSettings(
+        default_provider=default_provider,
+        providers=providers,
+        scoped_models=settings.scoped_models,
+    )
     updated.get_provider(default_provider)
     return updated
 
@@ -387,7 +405,11 @@ def _with_builtin_catalog_models(settings: ProviderSettings) -> ProviderSettings
         else provider
         for provider in settings.providers
     )
-    return ProviderSettings(default_provider=settings.default_provider, providers=providers)
+    return ProviderSettings(
+        default_provider=settings.default_provider,
+        providers=providers,
+        scoped_models=settings.scoped_models,
+    )
 
 
 def _merge_provider_config(existing: ProviderConfig, incoming: ProviderConfig) -> ProviderConfig:
@@ -446,9 +468,33 @@ def provider_settings_from_json(data: dict[str, Any]) -> ProviderSettings:
     names = [provider.name for provider in providers]
     if len(set(names)) != len(names):
         raise ProviderConfigError("Provider names must be unique")
-    settings = ProviderSettings(default_provider=default_provider, providers=providers)
+    scoped_models = _scoped_models_from_json(data.get("scoped_models"))
+    settings = ProviderSettings(
+        default_provider=default_provider,
+        providers=providers,
+        scoped_models=scoped_models,
+    )
     settings.get_provider(default_provider)
     return settings
+
+
+def _scoped_models_from_json(value: object) -> tuple[ScopedModelConfig, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ProviderConfigError("Provider settings field must be a list: scoped_models")
+    scoped: list[ScopedModelConfig] = []
+    seen: set[tuple[str, str]] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            raise ProviderConfigError("Provider scoped_models entries must be objects")
+        provider = _string(item.get("provider"), "scoped_models.provider")
+        model = _string(item.get("model"), "scoped_models.model")
+        key = (provider, model)
+        if key not in seen:
+            scoped.append(ScopedModelConfig(provider=provider, model=model))
+            seen.add(key)
+    return tuple(scoped)
 
 
 def resolve_provider_selection(

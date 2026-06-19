@@ -249,3 +249,17 @@ def test_tui_adapter_records_errors_and_stops_on_non_recoverable_error() -> None
         ("assistant", "partial"),
         ("error", "Error: provider failed"),
     ]
+
+
+def test_tui_adapter_renders_cancellation_as_status() -> None:
+    state = TuiState(running=True, assistant_buffer="partial")
+    adapter = TuiEventAdapter(state)
+
+    adapter.apply(ErrorEvent(message="Agent run cancelled", recoverable=True))
+
+    assert state.running is True
+    assert state.error is None
+    assert [(item.role, item.text) for item in state.items] == [
+        ("assistant", "partial"),
+        ("status", "Agent run cancelled."),
+    ]

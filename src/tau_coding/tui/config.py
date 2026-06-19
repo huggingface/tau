@@ -24,6 +24,7 @@ class TuiKeybindings:
     completion_next: str = "down"
     completion_previous: str = "up"
     thinking_cycle: str = "shift+tab"
+    model_cycle: str = "ctrl+p"
     toggle_thinking: str = "ctrl+t"
     toggle_tool_results: str = "ctrl+o"
     copy_message: str = "ctrl+c"
@@ -40,6 +41,7 @@ class TuiKeybindings:
             "completion_next": self.completion_next,
             "completion_previous": self.completion_previous,
             "thinking_cycle": self.thinking_cycle,
+            "model_cycle": self.model_cycle,
             "toggle_thinking": self.toggle_thinking,
             "toggle_tool_results": self.toggle_tool_results,
             "copy_message": self.copy_message,
