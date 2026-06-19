@@ -43,7 +43,7 @@ from tau_coding.tui.app import (
     SessionPickerScreen,
     TauTuiApp,
 )
-from tau_coding.tui.config import HIGH_CONTRAST_THEME, TuiKeybindings, TuiSettings
+from tau_coding.tui.config import HIGH_CONTRAST_THEME, TuiKeybindings, TuiSettings, tui_settings_path
 from tau_coding.tui.state import ChatItem
 from tau_coding.tui.widgets import (
     TranscriptView,
@@ -118,6 +118,8 @@ class FakeSession:
             return CommandResult(handled=True, model_picker_requested=True)
         if text.startswith("/thinking "):
             return CommandResult(handled=True, thinking_level=text.removeprefix("/thinking "))
+        if text.startswith("/theme "):
+            return CommandResult(handled=True, theme=text.removeprefix("/theme "))
         return CommandResult(handled=False)
 
     def set_model(self, model: str) -> None:
@@ -842,6 +844,23 @@ async def test_tui_app_clears_activity_status_on_error() -> None:
 
         assert str(status.render()) == "Ready"
         assert not app.query("#activity-status")
+
+
+@pytest.mark.anyio
+async def test_tui_app_theme_command_updates_theme_and_persists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/theme tau-light"
+        await pilot.press("enter")
+
+        assert app.tui_settings.theme == "tau-light"
+        assert tui_settings_path().read_text(encoding="utf-8").find('"theme": "tau-light"') != -1
+        assert app.get_theme_variable_defaults()["tau-screen-background"] == "#ffffff"
 
 
 @pytest.mark.anyio

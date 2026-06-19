@@ -60,7 +60,15 @@ from tau_coding.session_manager import SessionManager
 from tau_coding.thinking import DEFAULT_THINKING_LEVEL
 from tau_coding.tui.adapter import TuiEventAdapter
 from tau_coding.tui.autocomplete import CompletionOption, CompletionState, build_completion_state
-from tau_coding.tui.config import TuiKeybindings, TuiSettings, TuiTheme, load_tui_settings
+from tau_coding.tui.config import (
+    BUILTIN_TUI_THEME_NAMES,
+    TuiKeybindings,
+    TuiSettings,
+    TuiTheme,
+    TuiThemeName,
+    load_tui_settings,
+    save_tui_settings,
+)
 from tau_coding.tui.state import TuiState
 from tau_coding.tui.widgets import (
     CompactSessionInfo,
@@ -1260,6 +1268,8 @@ class TauTuiApp(App[None]):
                 self._open_model_picker()
             if command.thinking_level is not None:
                 await self._set_thinking_level(command.thinking_level)
+            if command.theme is not None:
+                self._set_tui_theme(cast(TuiThemeName, command.theme))
             if command.message:
                 self._show_command_message(text, command.message)
             self._refresh()
@@ -1279,6 +1289,15 @@ class TauTuiApp(App[None]):
         run_id = self._prompt_run_id
         self._refresh()
         self._prompt_worker = self.run_worker(self._run_prompt(text, run_id), exclusive=True)
+
+    def _set_tui_theme(self, theme: TuiThemeName) -> None:
+        self.tui_settings = TuiSettings(
+            keybindings=self.tui_settings.keybindings,
+            theme=theme,
+        )
+        save_tui_settings(self.tui_settings)
+        self.refresh_css(animate=False)
+        self._refresh()
 
     async def _queue_prompt(
         self,
@@ -1764,6 +1783,7 @@ class TauTuiApp(App[None]):
             model_names=self.session.available_models,
             provider_names=self.session.available_providers,
             thinking_levels=getattr(self.session, "available_thinking_levels", ()),
+            theme_names=BUILTIN_TUI_THEME_NAMES,
             session_options=_session_options(self.session),
         )
 
