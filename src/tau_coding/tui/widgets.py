@@ -5,6 +5,8 @@ from pathlib import Path
 from subprocess import TimeoutExpired, run
 from typing import Any, Protocol
 
+from pygments.lexers import get_lexer_by_name  # type: ignore[import-untyped]
+from pygments.util import ClassNotFound  # type: ignore[import-untyped]
 from rich import box
 from rich.align import Align
 from rich.console import Console, Group, RenderableType
@@ -498,7 +500,7 @@ def _render_fenced_body(
             return None
 
         _append_plain(renderables, text[cursor:fence_start], body_style=body_style)
-        language = _fence_language(text[fence_start + 3 : fence_line_end])
+        language = _syntax_language(text[fence_start + 3 : fence_line_end])
         code = text[fence_line_end + 1 : closing_start]
         renderables.append(
             Syntax(
@@ -561,7 +563,7 @@ def _context_file_label(path: Path, *, cwd: Path) -> str:
         expanded_path = cwd / expanded_path
     try:
         return str(expanded_path.resolve().relative_to(cwd.expanduser().resolve()))
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return _short_path(expanded_path)
 
 
@@ -604,6 +606,17 @@ def _has_unclosed_fence(text: str) -> bool:
 def _fence_language(raw: str) -> str:
     language = raw.strip().split(maxsplit=1)[0] if raw.strip() else ""
     return language or "text"
+
+
+def _syntax_language(raw: str) -> str:
+    language = _fence_language(raw)
+    if language == "text":
+        return language
+    try:
+        get_lexer_by_name(language)
+    except ClassNotFound:
+        return "text"
+    return language
 
 
 def render_completion_suggestions(

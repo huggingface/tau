@@ -161,6 +161,10 @@ full visible row can include Tau's left accent marker.
 Use `Alt+Up` / `Alt+Down` to select transcript messages and `Ctrl+C` to copy the
 selected message text through Textual's terminal clipboard integration.
 
+Assistant Markdown renders fenced code blocks with syntax highlighting when the
+fence language is known. Unknown fence languages fall back to plain code
+formatting so assistant output remains readable.
+
 Any omitted keybinding uses the built-in default. Key names use Textual's key
 syntax, such as `ctrl+k`, `tab`, `shift+tab`, `down`, `up`, and `f2`. Tau rejects unknown
 themes, unknown keybinding names, empty keys, and duplicate assignments so

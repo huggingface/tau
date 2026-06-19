@@ -48,6 +48,7 @@ from tau_coding.tui.state import ChatItem
 from tau_coding.tui.widgets import (
     TranscriptView,
     _compact_token_count,
+    _syntax_language,
     render_chat_item,
     render_compact_session_info,
     render_session_sidebar,
@@ -351,6 +352,33 @@ def test_chat_items_render_fenced_code_without_markers() -> None:
     assert 'print("hi")' in output
     assert "```" not in output
     assert "python" not in output
+
+
+def test_assistant_chat_items_apply_syntax_highlighting_to_code_fences() -> None:
+    console = Console(record=True, width=80, color_system="truecolor")
+    item = ChatItem(role="assistant", text="```python\ndef hi():\n    return 1\n```")
+
+    console.print(render_chat_item(item))
+    output = console.export_text(styles=True)
+
+    assert "def" in output
+    assert "return" in output
+    assert "\x1b[94;48;2;0;0;0mdef" in output
+    assert "\x1b[94;48;2;0;0;0mreturn" in output
+
+
+def test_chat_items_fallback_unknown_fenced_language_to_plain_code() -> None:
+    assert _syntax_language("definitely-not-a-lexer") == "text"
+
+    console = Console(record=True, width=60)
+    item = ChatItem(role="assistant", text="```definitely-not-a-lexer\nvalue\n```")
+
+    console.print(render_chat_item(item))
+    output = console.export_text()
+
+    assert "value" in output
+    assert "```" not in output
+    assert "definitely-not-a-lexer" not in output
 
 
 def test_tool_chat_items_hide_and_show_result_text() -> None:
