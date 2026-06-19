@@ -261,7 +261,7 @@ def render_chat_item(
         _render_tool_chat_body(
             item,
             body_style=theme.role_styles["tool"].body,
-            accent_style=_tool_accent_style(item),
+            accent_style=_tool_accent_style(item, theme=theme),
             show_tool_results=show_tool_results,
         )
         if item.role == "tool"
@@ -286,20 +286,42 @@ def render_chat_item(
 def _chat_item_role_style(item: ChatItem, theme: TuiTheme) -> TuiRoleStyle:
     if item.role == "tool" and item.tool_result_text:
         if item.tool_result_text.startswith("✓"):
-            return TuiRoleStyle(border="#9cffb1", body=theme.role_styles["tool"].body)
+            return TuiRoleStyle(
+                border=_tool_success_color(theme),
+                body=theme.role_styles["tool"].body,
+            )
         if item.tool_result_text.startswith("✗"):
             return TuiRoleStyle(border="#ff4f4f", body=theme.role_styles["tool"].body)
     return theme.role_styles[item.role]
 
 
-def _tool_accent_style(item: ChatItem) -> str | None:
+def _tool_accent_style(item: ChatItem, *, theme: TuiTheme) -> str | None:
     if item.role != "tool" or not item.tool_result_text:
         return None
     if item.tool_result_text.startswith("✓"):
-        return "#9cffb1 on #000000"
+        return _tool_success_style(theme)
     if item.tool_result_text.startswith("✗"):
-        return "#ff4f4f on #000000"
+        return _tool_error_style(theme)
     return None
+
+
+def _tool_success_color(theme: TuiTheme) -> str:
+    if theme.name == "tau-light":
+        return "#166534"
+    return "#9cffb1"
+
+
+def _tool_success_style(theme: TuiTheme) -> str:
+    color = _tool_success_color(theme)
+    if theme.name == "tau-light":
+        return color
+    return f"{color} on #000000"
+
+
+def _tool_error_style(theme: TuiTheme) -> str:
+    if theme.name == "tau-light":
+        return theme.role_styles["error"].border
+    return "#ff4f4f on #000000"
 
 
 def _render_tool_chat_body(
@@ -367,6 +389,7 @@ def _render_chat_body(
             code_theme=syntax_theme,
             inline_code_theme=syntax_theme,
             heading_style=theme.accent,
+            highlight_style=theme.highlight_text,
         )
     fenced_body = _render_fenced_body(
         text,
@@ -412,6 +435,7 @@ class ThemedMarkdown(Markdown):
         markup: str,
         *,
         heading_style: str,
+        highlight_style: str,
         code_theme: str,
         inline_code_theme: str,
         style: str = "none",
@@ -423,14 +447,16 @@ class ThemedMarkdown(Markdown):
             inline_code_theme=inline_code_theme,
         )
         self.heading_style = heading_style
+        self.highlight_style = highlight_style
 
     def __rich_console__(self, console: Console, options: Any) -> Any:
-        with console.use_theme(_markdown_theme(self.heading_style)):
+        with console.use_theme(_markdown_theme(self.heading_style, self.highlight_style)):
             yield from super().__rich_console__(console, options)
 
 
-def _markdown_theme(heading_style: str) -> Theme:
+def _markdown_theme(heading_style: str, highlight_style: str) -> Theme:
     accent = Style.parse(heading_style)
+    highlight = Style.parse(highlight_style)
     return Theme(
         {
             "markdown.h1": accent + Style(bold=True, underline=True),
@@ -442,6 +468,7 @@ def _markdown_theme(heading_style: str) -> Theme:
             "markdown.item.bullet": accent,
             "markdown.item.number": accent,
             "markdown.block_quote": accent,
+            "markdown.code": highlight,
         }
     )
 

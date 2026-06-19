@@ -43,7 +43,7 @@ from tau_coding.tui.app import (
     SessionPickerScreen,
     TauTuiApp,
 )
-from tau_coding.tui.config import HIGH_CONTRAST_THEME, TuiKeybindings, TuiSettings, tui_settings_path
+from tau_coding.tui.config import HIGH_CONTRAST_THEME, TAU_LIGHT_THEME, TuiKeybindings, TuiSettings, tui_settings_path
 from tau_coding.tui.state import ChatItem
 from tau_coding.tui.widgets import (
     TranscriptView,
@@ -434,6 +434,53 @@ def test_thinking_chat_items_use_distinct_style() -> None:
     assert "38;2;156;163;175" in output
 
 
+def test_light_theme_tool_success_uses_dark_text_without_background() -> None:
+    console = Console(record=True, width=80)
+    console.print(
+        render_chat_item(
+            ChatItem(role="tool", text="→ read README.md", tool_result_text="✓ read\ncontents"),
+            theme=TAU_LIGHT_THEME,
+            show_tool_results=True,
+        )
+    )
+
+    output = console.export_text(styles=True)
+
+    assert "38;2;22;101;52" in output
+    assert "38;2;22;101;52;48;2" not in output
+
+
+def test_light_theme_tool_error_uses_red_text_without_background() -> None:
+    console = Console(record=True, width=80)
+    console.print(
+        render_chat_item(
+            ChatItem(role="tool", text="$ false", tool_result_text="✗ bash\nfailed"),
+            theme=TAU_LIGHT_THEME,
+            show_tool_results=True,
+        )
+    )
+
+    output = console.export_text(styles=True)
+
+    assert "38;2;185;28;28" in output
+    assert "38;2;185;28;28;48;2" not in output
+
+
+def test_light_theme_markdown_code_uses_highlight_text_without_background() -> None:
+    console = Console(record=True, width=80)
+    console.print(
+        render_chat_item(
+            ChatItem(role="assistant", text="Use `tau` here."),
+            theme=TAU_LIGHT_THEME,
+        )
+    )
+
+    output = console.export_text(styles=True)
+
+    assert "38;2;29;78;216" in output
+    assert "38;2;29;78;216;48;2" not in output
+
+
 def test_tool_chat_items_color_status_metadata_not_tool_name_or_results() -> None:
     success_console = Console(record=True, width=80)
     success_console.print(
@@ -733,6 +780,7 @@ def test_tui_app_uses_light_theme_css_variables() -> None:
 
     assert variables["tau-screen-background"] == "#ffffff"
     assert variables["tau-chrome-background"] == "#f3f4f6"
+    assert variables["tau-muted-text"] == "#475569"
     assert variables["tau-prompt-background"] == "#f8fafc"
     assert variables["tau-prompt-border"] == "#2563eb"
 
@@ -754,8 +802,9 @@ def test_tau_light_theme_uses_light_chat_backgrounds() -> None:
     assert theme.transcript_background == "#ffffff"
     assert theme.prompt_text == "#111827"
     assert theme.syntax_theme == "ansi_light"
-    assert theme.role_styles["user"].body.endswith("on #ffffff")
-    assert theme.role_styles["assistant"].body.endswith("on #ffffff")
+    assert theme.role_styles["user"].body == "#111827"
+    assert theme.role_styles["assistant"].body == "#111827"
+    assert theme.role_styles["tool"].body == "#1f2937"
     assert theme.role_styles["error"].border == "#b91c1c"
 
 
