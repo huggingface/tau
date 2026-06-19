@@ -804,32 +804,28 @@ async def test_tui_app_shows_activity_indicator_while_running() -> None:
 
     async with app.run_test():
         status = app.query_one("#status")
-        activity = app.query_one("#activity-status")
         prompt = app.query_one("#prompt")
 
         assert str(status.render()) == "Ready"
-        assert str(activity.render()) == ""
-        assert activity.region.y < prompt.region.y
+        assert not app.query("#activity-status")
         assert prompt.styles.border.top[1].hex.lower() == "#2d3748"
 
         app.adapter.apply(AgentStartEvent())
         app._refresh()
 
         assert str(status.render()) == ""
-        assert str(activity.render()) == "working |"
-        assert tui_app.ACTIVITY_TICK_SECONDS == pytest.approx(0.4)
+        assert tui_app.ACTIVITY_TICK_SECONDS == pytest.approx(0.15)
+        assert tui_app.ACTIVITY_COLOR_FADE_STEPS == 24
         assert prompt.styles.border.top[1].hex.lower() == "#2d3748"
 
         app._tick_activity()
 
-        assert str(activity.render()) == "working /"
-        assert prompt.styles.border.top[1].hex.lower() == "#f4a261"
+        assert prompt.styles.border.top[1].hex.lower() == "#353b49"
 
         app.adapter.apply(AgentEndEvent())
         app._refresh()
 
         assert str(status.render()) == "Ready"
-        assert str(activity.render()) == ""
         assert prompt.styles.border.top[1].hex.lower() == "#2d3748"
 
 
@@ -839,15 +835,13 @@ async def test_tui_app_clears_activity_status_on_error() -> None:
 
     async with app.run_test():
         status = app.query_one("#status")
-        activity = app.query_one("#activity-status")
-
         app.adapter.apply(AgentStartEvent())
         app._refresh()
         app.adapter.apply(ErrorEvent(message="provider failed", recoverable=False))
         app._refresh()
 
         assert str(status.render()) == "Ready"
-        assert str(activity.render()) == ""
+        assert not app.query("#activity-status")
 
 
 @pytest.mark.anyio

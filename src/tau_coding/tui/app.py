@@ -72,8 +72,8 @@ from tau_coding.tui.widgets import (
 type BindingEntry = Binding | tuple[str, str] | tuple[str, str, str]
 SIDEBAR_MIN_WIDTH = 96
 SIDEBAR_MIN_HEIGHT = 24
-ACTIVITY_TICK_SECONDS = 0.4
-ACTIVITY_FRAMES = ("|", "/", "-", "\\")
+ACTIVITY_TICK_SECONDS = 0.15
+ACTIVITY_COLOR_FADE_STEPS = 24
 
 
 class LoginRequiredProvider:
@@ -915,14 +915,6 @@ class TauTuiApp(App[None]):
         border: tall $tau-prompt-border;
     }
 
-    #activity-status {
-        height: 1;
-        margin: 0 1 0 1;
-        padding: 0 1;
-        background: $tau-screen-background;
-        color: $tau-muted-text;
-    }
-
     #compact-session-info {
         height: auto;
         max-height: 3;
@@ -1177,7 +1169,6 @@ class TauTuiApp(App[None]):
                     markup=False,
                 )
                 yield Static("", id="queued-messages")
-                yield Static("", id="activity-status")
                 yield PromptInput(
                     placeholder="Ask Tau…  Enter submits, Shift+Enter inserts a newline",
                     id="prompt",
@@ -1726,14 +1717,12 @@ class TauTuiApp(App[None]):
     def _tick_activity(self) -> None:
         if not self.state.running:
             return
-        self._activity_frame = (self._activity_frame + 1) % len(ACTIVITY_FRAMES)
+        self._activity_frame += 1
         self._apply_activity_indicator()
         status = self.query_one("#status", Static)
         status.update(self._status_text())
 
     def _apply_activity_indicator(self) -> None:
-        activity = self.query_one("#activity-status", Static)
-        activity.update(self._activity_text())
         prompt = self.query_one("#prompt", PromptInput)
         prompt.styles.border = (
             "tall",
@@ -1743,11 +1732,6 @@ class TauTuiApp(App[None]):
                 running=self.state.running,
             ),
         )
-
-    def _activity_text(self) -> str:
-        if not self.state.running:
-            return ""
-        return f"working {ACTIVITY_FRAMES[self._activity_frame % len(ACTIVITY_FRAMES)]}"
 
     def _status_text(self) -> str:
         queue_text = _queue_status_text(self.state)
@@ -1796,9 +1780,36 @@ def _activity_prompt_border_color(theme: TuiTheme, *, frame: int, running: bool)
         theme.prompt_border,
         theme.accent,
         theme.highlight_background,
-        theme.accent,
+        theme.prompt_border,
     )
-    return palette[frame % len(palette)]
+    segment_count = len(palette) - 1
+    position = frame % (segment_count * ACTIVITY_COLOR_FADE_STEPS)
+    segment_index = position // ACTIVITY_COLOR_FADE_STEPS
+    segment_frame = position % ACTIVITY_COLOR_FADE_STEPS
+    fraction = segment_frame / ACTIVITY_COLOR_FADE_STEPS
+    return _blend_hex_colors(
+        palette[segment_index],
+        palette[segment_index + 1],
+        fraction=fraction,
+    )
+
+
+def _blend_hex_colors(start: str, end: str, *, fraction: float) -> str:
+    """Blend two ``#rrggbb`` colors by ``fraction``."""
+    start_rgb = _hex_to_rgb(start)
+    end_rgb = _hex_to_rgb(end)
+    blended = tuple(
+        round(start_channel + (end_channel - start_channel) * fraction)
+        for start_channel, end_channel in zip(start_rgb, end_rgb, strict=True)
+    )
+    return f"#{blended[0]:02x}{blended[1]:02x}{blended[2]:02x}"
+
+
+def _hex_to_rgb(color: str) -> tuple[int, int, int]:
+    value = color.removeprefix("#")
+    if len(value) != 6:
+        raise ValueError(f"Expected #rrggbb color, got {color!r}")
+    return (int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16))
 
 
 def _session_command_registry(session: CodingSession) -> CommandRegistry:
