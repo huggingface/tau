@@ -187,7 +187,7 @@ def create_default_command_registry() -> CommandRegistry:
             name="exit",
             aliases=("quit", "q"),
             usage="/exit",
-            description="Exit the current TUI session.",
+            description="Exit the current session.",
             handler=_exit_command,
         )
     )
@@ -214,6 +214,24 @@ def create_default_command_registry() -> CommandRegistry:
             usage="/status",
             description="Show current session status.",
             handler=_status_command,
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="session",
+            usage="/session",
+            description="Show session info and stats.",
+            handler=_status_command,
+            search_terms=("info",),
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="hotkeys",
+            usage="/hotkeys",
+            description="Show common keyboard shortcuts.",
+            handler=_hotkeys_command,
+            search_terms=("keys", "shortcuts", "bindings"),
         )
     )
     registry.register(
@@ -364,6 +382,21 @@ def _status_command(context: CommandContext) -> CommandResult:
         lines.append(f"Auto compact threshold: {session.auto_compact_token_threshold}")
     if session.session_id is not None:
         lines.append(f"Session: {session.session_id}")
+    return CommandResult(handled=True, message="\n".join(lines))
+
+
+def _hotkeys_command(context: CommandContext) -> CommandResult:
+    lines = [
+        "Common keyboard shortcuts:",
+        "- Enter: submit prompt",
+        "- Alt+Enter: queue follow-up while running",
+        "- Esc: cancel active run",
+        "- Ctrl+L: open model picker",
+        "- Shift+Tab: cycle thinking mode",
+        "- Ctrl+T: toggle thinking tokens",
+        "- Ctrl+O: collapse or expand tool output",
+        "- /: open slash-command completions",
+    ]
     return CommandResult(handled=True, message="\n".join(lines))
 
 

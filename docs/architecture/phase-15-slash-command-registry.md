@@ -39,6 +39,8 @@ The default registry includes:
 - `/exit` — request TUI exit
 - `/new` — start a new session
 - `/status` — show model, cwd, tools, skills, prompt templates, and session id
+- `/session` — Pi-compatible command name for session info and stats
+- `/hotkeys` — show common TUI keyboard shortcuts
 - `/skills` — list loaded skills
 - `/skill` — explain `/skill:<name>` usage
 - `/resume` — open previous-session selection or resume a specific session id
@@ -58,6 +60,49 @@ sessions, skills, provider/model UX, and UI expectations.
 
 The reusable `tau_agent` package remains independent of slash commands, Textual,
 Typer, local config directories, and Tau-specific product behavior.
+
+## Pi command alignment
+
+Pi's built-in command list includes:
+
+```text
+settings, model, scoped-models, export, import, share, copy, name, session,
+changelog, hotkeys, fork, clone, tree, login, logout, new, compact, resume,
+reload, quit
+```
+
+Tau mirrors the commands that map cleanly onto existing Tau capabilities:
+
+- `/session` maps to Tau's existing session status/details output.
+- `/hotkeys` reports Tau's current common TUI shortcuts.
+- `/quit` remains an alias for `/exit`.
+- `/model`, `/login`, `/new`, `/compact`, `/resume`, `/reload`, and `/name`
+  already exist in Tau's command registry.
+
+Tau intentionally keeps a few diagnostic commands that Pi does not expose as
+first-class built-ins:
+
+- `/skills` lists loaded skills.
+- `/skill` explains manual skill invocation.
+- `/resources` shows resource discovery diagnostics.
+- `/context` shows active project context files.
+- `/thinking` and `/theme` expose Tau's current controls until a broader
+  Pi-style `/settings` command exists.
+
+The remaining Pi commands are deferred because they require larger workflows
+outside this registry cleanup:
+
+- `/settings`
+- `/scoped-models`
+- `/export`
+- `/import`
+- `/share`
+- `/copy`
+- `/changelog`
+- `/fork`
+- `/clone`
+- `/tree`
+- `/logout`
 
 ## TUI integration
 

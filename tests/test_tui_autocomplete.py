@@ -50,7 +50,7 @@ def test_command_completion_matches_search_terms_with_canonical_replacement() ->
     assert [item.display for item in clear_state.items] == ["/new"]
     assert clear_state.selected is not None
     assert clear_state.selected.apply("/cl") == "/new"
-    assert [item.display for item in sessions_state.items] == ["/resume"]
+    assert [item.display for item in sessions_state.items] == ["/resume", "/session"]
     assert sessions_state.selected is not None
     assert sessions_state.selected.apply("/sess") == "/resume"
 

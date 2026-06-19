@@ -71,9 +71,11 @@ def test_help_lists_registered_commands(tmp_path: Path) -> None:
     assert result.handled is True
     assert result.message is not None
     assert "/help" in result.message
+    assert "/hotkeys" in result.message
     assert "/name <new name>" in result.message
     assert "/new" in result.message
     assert "/clear" not in result.message
+    assert "/session" in result.message
     assert "/skills" in result.message
 
 
@@ -112,6 +114,24 @@ def test_status_includes_session_details(tmp_path: Path) -> None:
     assert "Auto compact threshold: 200" in result.message
     assert "Resource diagnostics: 0" in result.message
     assert "Session: session-1" in result.message
+
+
+def test_session_command_matches_status_details(tmp_path: Path) -> None:
+    result = create_default_command_registry().execute(FakeSession(tmp_path), "/session")
+
+    assert result.message is not None
+    assert "Model: fake-model" in result.message
+    assert "Estimated context tokens: 123" in result.message
+    assert "Session: session-1" in result.message
+
+
+def test_hotkeys_command_lists_common_tui_shortcuts(tmp_path: Path) -> None:
+    result = create_default_command_registry().execute(FakeSession(tmp_path), "/hotkeys")
+
+    assert result.message is not None
+    assert "Common keyboard shortcuts:" in result.message
+    assert "Ctrl+L: open model picker" in result.message
+    assert "Shift+Tab: cycle thinking mode" in result.message
 
 
 def test_model_command_requests_picker_and_switches_models(tmp_path: Path) -> None:
