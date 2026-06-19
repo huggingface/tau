@@ -7,15 +7,18 @@ mutation, not a transcript edit.
 ## What Changed
 
 `/tree` opens a modal tree picker for the active session. The picker lists
-branchable entries with indentation from each entry's `parent_id`, marks the
-active leaf, and supports two actions:
+branchable conversation entries as a flat list, marks the active leaf, and
+supports two actions:
 
 - `Enter` moves the active leaf to the selected entry.
 - `S` moves the active leaf through a new `branch_summary` entry.
 
 Both actions preserve all existing JSONL entries. Tau records navigation by
 appending a new `leaf` entry, so reopening the session restores the selected
-branch.
+branch. The picker intentionally hides metadata entries such as model changes,
+thinking-level changes, leaf pointers, and session info; it only shows user
+messages, assistant messages, tool calls, compaction summaries, and branch
+summaries.
 
 ## Branch Summaries
 
