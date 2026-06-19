@@ -151,6 +151,20 @@ def test_thinking_argument_completion_uses_available_modes() -> None:
     assert state.selected.apply("/thinking h") == "/thinking high"
 
 
+def test_theme_argument_completion_uses_theme_names() -> None:
+    state = build_completion_state(
+        "/theme tau-",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        theme_names=("tau-dark", "tau-light", "high-contrast"),
+    )
+
+    assert [item.display for item in state.items] == ["tau-dark", "tau-light"]
+    assert state.selected is not None
+    assert state.selected.apply("/theme tau-") == "/theme tau-dark"
+
+
 def test_resume_argument_completion_uses_session_ids() -> None:
     state = build_completion_state(
         "/resume sess",

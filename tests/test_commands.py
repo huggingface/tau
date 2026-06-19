@@ -39,6 +39,7 @@ class FakeSession:
         self.auto_compact_token_threshold = 200
         self.thinking_level = "medium"
         self.available_thinking_levels = ("off", "minimal", "low", "medium", "high", "xhigh")
+        self.tui_theme = "tau-dark"
         self.resource_diagnostics = ()
         self.session_id = "session-1"
         self.session_manager: SessionManager | None = manager
@@ -174,6 +175,22 @@ def test_thinking_command_rejects_unsupported_available_mode(tmp_path: Path) -> 
     assert result.message is not None
     assert "Thinking mode high is not available for openai:fake-model" in result.message
     assert "Available modes: off, low" in result.message
+
+
+def test_theme_command_lists_and_requests_themes(tmp_path: Path) -> None:
+    session = FakeSession(tmp_path)
+    registry = create_default_command_registry()
+
+    list_result = registry.execute(session, "/theme")
+    switch_result = registry.execute(session, "/theme tau-light")
+    unknown_result = registry.execute(session, "/theme solarized")
+
+    assert list_result.message is not None
+    assert "Current theme: tau-dark" in list_result.message
+    assert "Available themes: tau-dark, tau-light, high-contrast" in list_result.message
+    assert switch_result.theme == "tau-light"
+    assert unknown_result.message is not None
+    assert "Unknown theme: solarized" in unknown_result.message
 
 
 def test_provider_command_is_not_registered(tmp_path: Path) -> None:

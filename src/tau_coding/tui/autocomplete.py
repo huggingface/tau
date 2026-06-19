@@ -73,6 +73,7 @@ def build_completion_state(
     model_names: Sequence[str] = (),
     provider_names: Sequence[str] = (),
     thinking_levels: Sequence[str] = (),
+    theme_names: Sequence[str] = (),
     session_ids: Sequence[str] = (),
     session_options: Sequence[CompletionOption] = (),
 ) -> CompletionState:
@@ -95,6 +96,7 @@ def build_completion_state(
         model_names=model_names,
         provider_names=provider_names,
         thinking_levels=thinking_levels,
+        theme_names=theme_names,
         session_ids=session_ids,
         session_options=session_options,
     )
@@ -175,6 +177,7 @@ def _command_argument_completions(
     model_names: Sequence[str],
     provider_names: Sequence[str],
     thinking_levels: Sequence[str],
+    theme_names: Sequence[str],
     session_ids: Sequence[str],
     session_options: Sequence[CompletionOption],
 ) -> tuple[CompletionItem, ...] | None:
@@ -212,6 +215,13 @@ def _command_argument_completions(
             text=text,
             start=token_end + 1,
             options=_completion_options(thinking_levels, description="Set thinking mode"),
+            sort=False,
+        )
+    if command_name == "theme":
+        return _value_completions(
+            text=text,
+            start=token_end + 1,
+            options=_completion_options(theme_names, description="Set TUI theme"),
             sort=False,
         )
     return None

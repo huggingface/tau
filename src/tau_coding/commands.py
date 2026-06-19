@@ -14,6 +14,8 @@ from tau_coding.skills import Skill
 from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.thinking import normalize_thinking_level
 
+BUILTIN_TUI_THEME_NAMES = ("tau-dark", "tau-light", "high-contrast")
+
 
 class CommandSession(Protocol):
     """Session attributes available to slash-command handlers."""
@@ -86,6 +88,7 @@ class CommandResult:
     login_provider: str | None = None
     model_picker_requested: bool = False
     thinking_level: str | None = None
+    theme: str | None = None
     message: str | None = None
 
 
@@ -285,6 +288,15 @@ def create_default_command_registry() -> CommandRegistry:
             description="Show or set the active thinking mode.",
             handler=_thinking_command,
             search_terms=("reasoning", "effort"),
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="theme",
+            usage="/theme [name]",
+            description="Show or set the TUI theme.",
+            handler=_theme_command,
+            search_terms=("light", "dark", "contrast"),
         )
     )
     registry.register(
@@ -547,6 +559,25 @@ def _thinking_command(context: CommandContext) -> CommandResult:
             ),
         )
     return CommandResult(handled=True, thinking_level=level)
+
+
+def _theme_command(context: CommandContext) -> CommandResult:
+    current_theme = getattr(context.session, "tui_theme", None) or "tau-dark"
+    if not context.args:
+        themes = ", ".join(BUILTIN_TUI_THEME_NAMES)
+        return CommandResult(
+            handled=True,
+            message=f"Current theme: {current_theme}\nAvailable themes: {themes}",
+        )
+
+    theme_name = context.args.strip()
+    if theme_name not in BUILTIN_TUI_THEME_NAMES:
+        themes = ", ".join(BUILTIN_TUI_THEME_NAMES)
+        return CommandResult(
+            handled=True,
+            message=f"Unknown theme: {theme_name}\nAvailable themes: {themes}",
+        )
+    return CommandResult(handled=True, theme=theme_name)
 
 
 def _login_command(context: CommandContext) -> CommandResult:
