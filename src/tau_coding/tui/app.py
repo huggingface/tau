@@ -936,13 +936,6 @@ class TauTuiApp(App[None]):
         color: $tau-accent;
     }
 
-    #status {
-        height: 1;
-        padding: 0 1;
-        background: $tau-screen-background;
-        color: $tau-muted-text;
-    }
-
     #workspace {
         height: 1fr;
     }
@@ -1255,7 +1248,6 @@ class TauTuiApp(App[None]):
     def compose(self) -> ComposeResult:
         """Compose the TUI widgets."""
         yield Header()
-        yield Static("Ready", id="status")
         with Horizontal(id="workspace"):
             yield SessionSidebar(id="sidebar")
             with Vertical(id="main-pane"):
@@ -1786,8 +1778,6 @@ class TauTuiApp(App[None]):
         queued_messages.display = self.state.queued_message_count > 0
         queued_messages.update(_render_queued_messages(self.state, theme=theme))
         self._sync_activity_indicator()
-        status = self.query_one("#status", Static)
-        status.update(self._status_text())
         self._refresh_footer_bindings()
 
     def _sync_queue_state(self) -> None:
@@ -1818,8 +1808,6 @@ class TauTuiApp(App[None]):
             return
         self._activity_frame += 1
         self._apply_activity_indicator()
-        status = self.query_one("#status", Static)
-        status.update(self._status_text())
 
     def _apply_activity_indicator(self) -> None:
         prompt = self.query_one("#prompt", PromptInput)
@@ -1831,12 +1819,6 @@ class TauTuiApp(App[None]):
                 running=self.state.running,
             ),
         )
-
-    def _status_text(self) -> str:
-        queue_text = _queue_status_text(self.state)
-        if self.state.running:
-            return f"queued: {queue_text}" if queue_text else ""
-        return f"Ready | queued: {queue_text}" if queue_text else "Ready"
 
     def _refresh_completions(self) -> None:
         suggestions = self.query_one("#autocomplete", Static)
@@ -2050,19 +2032,6 @@ def _theme_css_variables(theme: TuiTheme) -> dict[str, str]:
         "footer-key-foreground": theme.accent,
         "footer-item-background": theme.chrome_background,
     }
-
-
-def _queue_status_text(state: TuiState) -> str:
-    parts: list[str] = []
-    steering_count = len(state.queued_steering)
-    follow_up_count = len(state.queued_follow_up)
-    if steering_count:
-        suffix = "" if steering_count == 1 else "s"
-        parts.append(f"{steering_count} steering message{suffix}")
-    if follow_up_count:
-        suffix = "" if follow_up_count == 1 else "s"
-        parts.append(f"{follow_up_count} follow-up message{suffix}")
-    return ", ".join(parts)
 
 
 def _render_queued_messages(state: TuiState, *, theme: TuiTheme) -> Group:
