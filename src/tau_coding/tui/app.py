@@ -1245,6 +1245,7 @@ class TauTuiApp(App[None]):
         self._completion_state = CompletionState()
         self._activity_frame = 0
         self._activity_timer: Timer | None = None
+        self._active_notification_keys: set[tuple[str, str]] = set()
 
     def get_theme_variable_defaults(self) -> dict[str, str]:
         """Return Tau-specific CSS variables for the selected TUI theme."""
@@ -1761,6 +1762,15 @@ class TauTuiApp(App[None]):
         *,
         severity: Literal["information", "warning", "error"] = "information",
     ) -> None:
+        key = (message, severity)
+        if key in self._active_notification_keys:
+            return
+        self._active_notification_keys.add(key)
+        self.set_timer(
+            self.NOTIFICATION_TIMEOUT,
+            lambda: self._active_notification_keys.discard(key),
+            name=f"notification-dedupe-{hash(key)}",
+        )
         self.notify(message, severity=severity)
 
     def _refresh(self) -> None:

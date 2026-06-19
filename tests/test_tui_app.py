@@ -40,11 +40,17 @@ from tau_coding.tui.app import (
     LoginScreen,
     ModelPickerScreen,
     OAuthLoginScreen,
-    ThemePickerScreen,
     SessionPickerScreen,
     TauTuiApp,
+    ThemePickerScreen,
 )
-from tau_coding.tui.config import HIGH_CONTRAST_THEME, TAU_LIGHT_THEME, TuiKeybindings, TuiSettings, tui_settings_path
+from tau_coding.tui.config import (
+    HIGH_CONTRAST_THEME,
+    TAU_LIGHT_THEME,
+    TuiKeybindings,
+    TuiSettings,
+    tui_settings_path,
+)
 from tau_coding.tui.state import ChatItem
 from tau_coding.tui.widgets import (
     TranscriptView,
@@ -871,7 +877,7 @@ async def test_tui_app_shows_activity_indicator_while_running() -> None:
         app._refresh()
 
         assert str(status.render()) == ""
-        assert tui_app.ACTIVITY_TICK_SECONDS == pytest.approx(0.15)
+        assert pytest.approx(0.15) == tui_app.ACTIVITY_TICK_SECONDS
         assert tui_app.ACTIVITY_COLOR_FADE_STEPS == 24
         assert prompt.styles.border.top[1].hex.lower() == "#2d3748"
 
@@ -1343,6 +1349,26 @@ def test_tui_model_picker_guides_setup_when_no_provider_is_usable() -> None:
 
     assert notifications == [
         ("No configured providers are usable. Run /login to set up a provider.", "warning")
+    ]
+
+
+@pytest.mark.anyio
+async def test_tui_app_deduplicates_active_notifications() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(notifications=True) as pilot:
+        app._notify("Thinking controls are not available.", severity="warning")
+        app._notify("Thinking controls are not available.", severity="warning")
+        app._notify("Thinking controls are not available.", severity="error")
+        await pilot.pause()
+
+        active_notifications = tuple(app._notifications)
+
+    assert [
+        (notification.message, notification.severity) for notification in active_notifications
+    ] == [
+        ("Thinking controls are not available.", "warning"),
+        ("Thinking controls are not available.", "error"),
     ]
 
 
