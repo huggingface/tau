@@ -74,6 +74,7 @@ def test_help_lists_registered_commands(tmp_path: Path) -> None:
     assert "/name <new name>" in result.message
     assert "/new" in result.message
     assert "/clear" not in result.message
+    assert "/export" in result.message
     assert "/skills" in result.message
 
 
@@ -96,6 +97,26 @@ def test_compact_command_requires_and_returns_summary(tmp_path: Path) -> None:
 
     assert missing.message == "Usage: /compact <summary>"
     assert requested.compact_summary == "Summary of prior work."
+
+
+def test_export_command_requests_default_export(tmp_path: Path) -> None:
+    result = create_default_command_registry().execute(FakeSession(tmp_path), "/export")
+
+    assert result.handled is True
+    assert result.export_requested is True
+    assert result.export_destination is None
+    assert result.export_format is None
+
+
+def test_export_command_parses_format_and_destination(tmp_path: Path) -> None:
+    result = create_default_command_registry().execute(
+        FakeSession(tmp_path),
+        "/export --format jsonl exports/session.jsonl",
+    )
+
+    assert result.export_requested is True
+    assert result.export_format == "jsonl"
+    assert result.export_destination == Path("exports/session.jsonl")
 
 
 def test_status_includes_session_details(tmp_path: Path) -> None:

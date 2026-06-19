@@ -199,12 +199,14 @@ tau --resume <session-id>
 tau --new-session
 tau export <session-id>
 tau export <session-id> session.html
+tau export <session-id> --format jsonl
 ```
 
 `tau export` writes a standalone HTML file with the preserved session tree and
 the storage-order transcript. The source can be an indexed session id or a path
-to a JSONL session file. When no output path is provided, Tau writes the HTML
-next to the source session file with a `.html` suffix.
+to a JSONL session file. When no output path is provided, Tau writes the export
+artifact to the current working directory. HTML is the default format; pass
+`--format jsonl` or a `.jsonl` destination to export JSONL.
 
 Inside the TUI:
 
@@ -212,6 +214,7 @@ Inside the TUI:
 /resume
 /name <new name>
 /status
+/export [--format html|jsonl] [destination]
 ```
 
 `/name <new name>` renames the current indexed session. The new name is shown

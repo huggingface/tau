@@ -10,7 +10,16 @@ HTML document:
 ```bash
 tau export <session-id>
 tau export <session-id> session.html
+tau export <session-id> --format jsonl
 tau export ~/.tau/sessions/<project>/<session-id>.jsonl
+```
+
+When no destination is provided, `tau export` writes to the current working
+directory instead of Tau's internal session storage directory. Interactive
+sessions expose the same export flow through:
+
+```text
+/export [--format html|jsonl] [destination]
 ```
 
 The export contains two coordinated views:

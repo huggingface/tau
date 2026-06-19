@@ -151,6 +151,32 @@ async def test_load_empty_session_appends_metadata(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
+async def test_session_export_defaults_to_cwd(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / ".tau" / "sessions" / "session-1.jsonl")
+    session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
+    await storage.append(MessageEntry(id="root", message=UserMessage(content="Export me")))
+
+    output_path = await session.export()
+
+    assert output_path == tmp_path / "session-1.html"
+    html = output_path.read_text(encoding="utf-8")
+    assert "Export me" in html
+    assert str(storage.path) in html
+
+
+@pytest.mark.anyio
+async def test_session_export_writes_jsonl_to_destination_directory(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / ".tau" / "sessions" / "session-1.jsonl")
+    session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
+    await storage.append(MessageEntry(id="root", message=UserMessage(content="Export me")))
+
+    output_path = await session.export(Path("exports"), format="jsonl")
+
+    assert output_path == tmp_path / "exports" / "session-1.jsonl"
+    assert "Export me" in output_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.anyio
 async def test_prompt_logs_unexpected_agent_call_exception(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")

@@ -36,6 +36,25 @@ def default_session_export_path(session_path: Path) -> Path:
     return session_path.with_suffix(".html")
 
 
+def default_session_export_artifact_path(
+    session_path: Path,
+    *,
+    destination_dir: Path,
+    format: str = "html",
+) -> Path:
+    """Return the default user-facing export artifact path."""
+    suffix = _export_suffix(format)
+    return destination_dir / f"{session_path.stem}{suffix}"
+
+
+def export_session_jsonl(entries: Sequence[SessionEntry], output_path: Path) -> Path:
+    """Write session entries to a JSONL export and return its path."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [entry.model_dump_json() for entry in entries]
+    output_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    return output_path
+
+
 def export_session_html(
     entries: Sequence[SessionEntry],
     output_path: Path,
@@ -50,6 +69,35 @@ def export_session_html(
         encoding="utf-8",
     )
     return output_path
+
+
+def export_session_artifact(
+    entries: Sequence[SessionEntry],
+    output_path: Path,
+    *,
+    title: str = "Tau Session Export",
+    source: str | None = None,
+    format: str | None = None,
+) -> Path:
+    """Write a session export in the requested or inferred format."""
+    export_format = normalize_export_format(format or output_path.suffix.removeprefix("."))
+    if export_format == "jsonl":
+        return export_session_jsonl(entries, output_path)
+    return export_session_html(entries, output_path, title=title, source=source)
+
+
+def normalize_export_format(value: str | None) -> str:
+    """Normalize a session export format name."""
+    normalized = (value or "html").strip().lower().removeprefix(".")
+    if normalized in {"htm", "html"}:
+        return "html"
+    if normalized == "jsonl":
+        return "jsonl"
+    raise SessionExportError(f"Unsupported export format: {value}")
+
+
+def _export_suffix(format: str) -> str:
+    return ".jsonl" if normalize_export_format(format) == "jsonl" else ".html"
 
 
 def render_session_html(

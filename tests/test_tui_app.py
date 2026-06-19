@@ -106,6 +106,7 @@ class FakeSession:
         self.streaming_behaviors: list[str | None] = []
         self.terminal_commands: list[tuple[str, bool]] = []
         self.cancel_count = 0
+        self.export_calls: list[tuple[Path | None, str | None]] = []
 
     def handle_command(self, text: str) -> CommandResult:
         if text == "/help":
@@ -117,6 +118,15 @@ class FakeSession:
             return CommandResult(handled=True, new_session_requested=True)
         if text.startswith("/compact "):
             return CommandResult(handled=True, compact_summary=text.removeprefix("/compact "))
+        if text == "/export":
+            return CommandResult(handled=True, export_requested=True)
+        if text.startswith("/export "):
+            return CommandResult(
+                handled=True,
+                export_requested=True,
+                export_destination=Path("out.jsonl"),
+                export_format="jsonl",
+            )
         if text.startswith("/resume "):
             return CommandResult(handled=True, resume_session_id=text.removeprefix("/resume "))
         if text == "/resume":
@@ -162,6 +172,10 @@ class FakeSession:
         self.compact_summaries.append(summary)
         self.context_token_estimate = 42
         return "Compacted 2 context entries."
+
+    async def export(self, destination: Path | None = None, *, format: str | None = None) -> Path:
+        self.export_calls.append((destination, format))
+        return self.cwd / "session.html"
 
     async def resume(self, session_id: str) -> str:
         self.resumed_session_ids.append(session_id)
@@ -1089,6 +1103,28 @@ async def test_tui_app_compact_command_runs_session_compaction() -> None:
 
         assert session.compact_summaries == ["Summary of earlier work."]
         assert [(item.role, item.text) for item in app.state.items] == [("user", "Earlier")]
+
+
+@pytest.mark.anyio
+async def test_tui_app_export_command_runs_session_export() -> None:
+    session = FakeSession(messages=[UserMessage(content="Earlier")])
+    app = TauTuiApp(session)
+    notifications: list[str] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        del kwargs
+        notifications.append(message)
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/export --format jsonl out.jsonl"
+        await pilot.press("enter")
+
+        assert session.export_calls == [(Path("out.jsonl"), "jsonl")]
+        assert notifications == ["Exported session to /workspace/project/session.html"]
+        assert session.prompt_texts == []
 
 
 @pytest.mark.anyio
