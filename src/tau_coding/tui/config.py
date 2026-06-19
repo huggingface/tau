@@ -1,7 +1,7 @@
 """Durable Textual TUI configuration for Tau."""
 
 from dataclasses import dataclass, field
-from json import loads
+from json import dumps, loads
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -190,6 +190,7 @@ _THEMES: dict[TuiThemeName, TuiTheme] = {
     TAU_LIGHT_THEME.name: TAU_LIGHT_THEME,
     HIGH_CONTRAST_THEME.name: HIGH_CONTRAST_THEME,
 }
+BUILTIN_TUI_THEME_NAMES: tuple[TuiThemeName, ...] = tuple(_THEMES)
 
 
 def get_tui_theme(name: TuiThemeName = "tau-dark") -> TuiTheme:
@@ -231,6 +232,14 @@ def load_tui_settings(paths: TauPaths | None = None) -> TuiSettings:
     if not isinstance(raw, dict):
         raise TuiConfigError("TUI settings must be a JSON object")
     return tui_settings_from_json(raw)
+
+
+def save_tui_settings(settings: TuiSettings, paths: TauPaths | None = None) -> Path:
+    """Persist durable TUI settings and return the written path."""
+    path = tui_settings_path(paths)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(dumps(settings.to_json(), indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 def tui_settings_from_json(data: dict[str, Any]) -> TuiSettings:

@@ -4,6 +4,7 @@ from tau_coding.tui.adapter import TuiEventAdapter
 from tau_coding.tui.app import TauTuiApp, run_tui_app
 from tau_coding.tui.autocomplete import CompletionOption
 from tau_coding.tui.config import (
+    BUILTIN_TUI_THEME_NAMES,
     HIGH_CONTRAST_THEME,
     TAU_DARK_THEME,
     TAU_LIGHT_THEME,
@@ -15,6 +16,7 @@ from tau_coding.tui.config import (
     TuiThemeName,
     get_tui_theme,
     load_tui_settings,
+    save_tui_settings,
     tui_settings_path,
 )
 from tau_coding.tui.state import ChatItem, TuiState
@@ -28,6 +30,7 @@ from tau_coding.tui.widgets import (
 )
 
 __all__ = [
+    "BUILTIN_TUI_THEME_NAMES",
     "ChatItem",
     "CompletionOption",
     "CompactSessionInfo",
@@ -51,5 +54,6 @@ __all__ = [
     "render_compact_session_info",
     "render_session_sidebar",
     "run_tui_app",
+    "save_tui_settings",
     "tui_settings_path",
 ]

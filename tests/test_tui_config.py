@@ -10,6 +10,7 @@ from tau_coding.tui.config import (
     TuiSettings,
     get_tui_theme,
     load_tui_settings,
+    save_tui_settings,
     tui_settings_from_json,
     tui_settings_path,
 )
@@ -65,6 +66,15 @@ def test_load_tui_settings_reads_keybindings(tmp_path: Path) -> None:
     assert settings.keybindings.cancel == "escape"
     assert settings.theme == "high-contrast"
     assert settings.resolved_theme == HIGH_CONTRAST_THEME
+
+
+def test_save_tui_settings_writes_json(tmp_path: Path) -> None:
+    paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+
+    path = save_tui_settings(TuiSettings(theme="tau-light"), paths)
+
+    assert path == tmp_path / ".tau" / "tui.json"
+    assert load_tui_settings(paths).theme == "tau-light"
 
 
 def test_tui_settings_reject_unknown_fields() -> None:
