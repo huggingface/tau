@@ -33,6 +33,11 @@ class TauPaths:
         return self.logs_dir / "agent-calls.jsonl"
 
     @property
+    def llm_observations_log_path(self) -> Path:
+        """Return the JSONL diagnostic log for opt-in LLM API observations."""
+        return self.logs_dir / "llm-observations.jsonl"
+
+    @property
     def user_skills_dir(self) -> Path:
         """Return Tau's user-level skills directory."""
         return self.home / "skills"

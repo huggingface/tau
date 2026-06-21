@@ -29,7 +29,7 @@ from tau_agent.session import (
 from tau_agent.session.entries import SessionEntry
 from tau_agent.session.tree import SessionTreeError, path_to_entry
 from tau_agent.tools import AgentTool
-from tau_ai import ModelProvider
+from tau_ai import LLMObserver, ModelProvider
 from tau_coding.commands import CommandRegistry, CommandResult, create_default_command_registry
 from tau_coding.context import discover_project_context_with_diagnostics
 from tau_coding.context_window import (
@@ -159,6 +159,7 @@ class CodingSessionConfig:
     runtime_provider_config: ProviderConfig | None = None
     auto_compact_token_threshold: int | None = None
     thinking_level: ThinkingLevel = DEFAULT_THINKING_LEVEL
+    llm_observer: LLMObserver | None = None
 
 
 class CodingSession:
@@ -194,6 +195,7 @@ class CodingSession:
         self._provider_name = config.provider_name
         self._provider_settings = config.provider_settings
         self._runtime_provider_config = config.runtime_provider_config
+        self._llm_observer = config.llm_observer
         self._resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
         self._auto_compact_token_threshold = config.auto_compact_token_threshold
         self._thinking_level = _state_thinking_level(state, config.thinking_level)
@@ -613,6 +615,7 @@ class CodingSession:
                 credential_store=self._credential_store,
                 model=model,
                 thinking_level=thinking_level,
+                llm_observer=self._llm_observer,
             )
         except RuntimeError as exc:
             raise ProviderConfigError(str(exc)) from exc
@@ -702,6 +705,7 @@ class CodingSession:
                 credential_store=self._credential_store,
                 model=self.model,
                 thinking_level=self._thinking_level,
+                llm_observer=self._llm_observer,
             )
         except RuntimeError as exc:
             raise ProviderConfigError(str(exc)) from exc
@@ -760,6 +764,7 @@ class CodingSession:
                 runtime_provider_config=self._runtime_provider_config,
                 auto_compact_token_threshold=self._auto_compact_token_threshold,
                 thinking_level=self._thinking_level,
+                llm_observer=self._llm_observer,
             )
         )
         self._config = replacement._config
@@ -774,6 +779,7 @@ class CodingSession:
         self._provider_name = replacement._provider_name
         self._provider_settings = replacement._provider_settings
         self._runtime_provider_config = replacement._runtime_provider_config
+        self._llm_observer = replacement._llm_observer
         self._resource_paths = replacement._resource_paths
         self._auto_compact_token_threshold = replacement._auto_compact_token_threshold
         self._thinking_level = replacement._thinking_level
@@ -812,6 +818,7 @@ class CodingSession:
         self._provider_name = replacement._provider_name
         self._provider_settings = replacement._provider_settings
         self._runtime_provider_config = replacement._runtime_provider_config
+        self._llm_observer = replacement._llm_observer
         self._resource_paths = replacement._resource_paths
         self._auto_compact_token_threshold = replacement._auto_compact_token_threshold
         self._thinking_level = replacement._thinking_level
@@ -1163,10 +1170,10 @@ def _messages_after_entry_on_active_path(
     except StopIteration:
         return ()
     return tuple(
-        entry.message
-        for entry in active_path[target_index + 1 :]
-        if entry.type == "message"
+        entry.message for entry in active_path[target_index + 1 :] if entry.type == "message"
     )
+
+
 def _storage_path(storage: SessionStorage) -> Path | None:
     path = getattr(storage, "path", None)
     return path if isinstance(path, Path) else None

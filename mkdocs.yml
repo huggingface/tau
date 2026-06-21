@@ -89,6 +89,7 @@ nav:
       - "Phase 20.4: Session Export and Visualization": architecture/phase-20-4-session-export.md
       - "Provider Retry Events": architecture/provider-retries.md
       - "Queued Steering and Follow-ups": architecture/queued-steering-follow-ups.md
+      - "LLM API Observability": architecture/llm-observability.md
       - "Pre-extension Hardening Summary": architecture/pre-extension-hardening.md
       - "Phase 22: Compaction Replay Foundation": architecture/phase-22-compaction-foundation.md
       - "Phase 23: Advanced TUI and Product Polish": architecture/phase-23-tui-polish.md

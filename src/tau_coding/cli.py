@@ -12,11 +12,13 @@ from tau_ai import (
     DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES,
     DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS,
     DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS,
+    LLMObserver,
     ModelProvider,
 )
 from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL
 from tau_coding import __version__
 from tau_coding.credentials import FileCredentialStore
+from tau_coding.diagnostics import llm_observer_from_env
 from tau_coding.provider_config import (
     DEFAULT_MODEL,
     DEFAULT_PROVIDER_NAME,
@@ -422,10 +424,12 @@ async def run_openai_print_mode(
     """Run print mode with the OpenAI-compatible provider configured from the environment."""
     settings = load_provider_settings()
     selection = resolve_provider_selection(settings, provider_name=provider_name, model=model)
+    llm_observer = llm_observer_from_env()
     provider = create_model_provider(
         selection.provider,
         model=selection.model,
         thinking_level=DEFAULT_THINKING_LEVEL,
+        llm_observer=llm_observer,
     )
     manager = session_manager or SessionManager()
     record = manager.create_session(cwd=cwd, model=selection.model)
@@ -442,6 +446,7 @@ async def run_openai_print_mode(
             provider_name=selection.provider.name,
             provider_settings=settings,
             runtime_provider_config=selection.provider,
+            llm_observer=llm_observer,
         )
     finally:
         await provider.aclose()
@@ -461,6 +466,7 @@ async def run_print_mode(
     provider_name: str = DEFAULT_PROVIDER_NAME,
     provider_settings: ProviderSettings | None = None,
     runtime_provider_config: ProviderConfig | None = None,
+    llm_observer: LLMObserver | None = None,
 ) -> bool:
     """Run one non-interactive prompt and print streamed events.
 
@@ -479,6 +485,7 @@ async def run_print_mode(
             provider_name=provider_name,
             provider_settings=provider_settings,
             runtime_provider_config=runtime_provider_config,
+            llm_observer=llm_observer,
         )
     )
     renderer = create_event_renderer(output)

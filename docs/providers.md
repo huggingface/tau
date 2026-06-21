@@ -35,6 +35,41 @@ export OPENAI_MAX_RETRY_DELAY_SECONDS="0.5"
 
 The provider uses `/chat/completions` with streaming enabled.
 
+## LLM request observations
+
+Tau can write an opt-in, redacted JSONL trace of provider HTTP requests and
+response metadata. This is useful when debugging model selection, prompt
+construction, tool schemas, provider URLs, retry behavior, or provider error
+bodies.
+
+Enable it for one command:
+
+```bash
+TAU_LLM_OBSERVABILITY=1 tau --provider local -p "summarize this project"
+```
+
+or set the same environment variable before starting the TUI.
+
+Records are appended to:
+
+```text
+~/.tau/logs/llm-observations.jsonl
+```
+
+The log captures the adapter name, model, method, URL, retry attempt, streaming
+flag, redacted headers, redacted serialized request body, HTTP status, redacted
+response headers, and redacted HTTP/network errors. Streaming response chunks
+are not logged in this first version.
+
+Redaction is mandatory. Credential-like headers are replaced with `[REDACTED]`.
+Prompt-like text fields such as `content`, `text`, `instructions`, `system`,
+`output`, `arguments`, and error `body` are replaced with length and SHA-256
+metadata instead of raw text. The file can still reveal sensitive diagnostic
+context, so keep it local unless intentionally sharing it.
+
+See [LLM API Observability](architecture/llm-observability.md) for the
+architecture and privacy notes.
+
 ## OpenAI Codex Subscription Provider
 
 Tau also includes an `openai-codex` provider for Codex / ChatGPT subscription

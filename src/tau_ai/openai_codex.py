@@ -25,6 +25,12 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.observability import (
+    LLMObserver,
+    observe_llm_error,
+    observe_llm_request,
+    observe_llm_response,
+)
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 
@@ -63,10 +69,12 @@ class OpenAICodexProvider:
         config: OpenAICodexConfig,
         *,
         client: httpx.AsyncClient | None = None,
+        observer: LLMObserver | None = None,
     ) -> None:
         self._config = config
         self._client = client
         self._owns_client = client is None
+        self._observer = observer
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client if this provider created it."""
@@ -106,15 +114,51 @@ class OpenAICodexProvider:
                         account_id=credentials.account_id,
                         originator=self._config.originator,
                     )
+                    observe_llm_request(
+                        self._observer,
+                        provider="openai-codex",
+                        model=model,
+                        method="POST",
+                        url=url,
+                        headers=headers,
+                        body=payload,
+                        attempt=attempt + 1,
+                        stream=True,
+                    )
                     async with client.stream(
                         "POST",
                         url,
                         json=payload,
                         headers=headers,
                     ) as response:
+                        observe_llm_response(
+                            self._observer,
+                            provider="openai-codex",
+                            model=model,
+                            method="POST",
+                            url=url,
+                            status_code=response.status_code,
+                            headers=response.headers,
+                            attempt=attempt + 1,
+                            stream=True,
+                        )
                         if response.status_code >= 400:
                             body = await response.aread()
                             body_text = body.decode(errors="replace")
+                            observe_llm_error(
+                                self._observer,
+                                provider="openai-codex",
+                                model=model,
+                                method="POST",
+                                url=url,
+                                attempt=attempt + 1,
+                                stream=True,
+                                error={
+                                    "type": "http_status",
+                                    "status_code": response.status_code,
+                                    "body": body_text,
+                                },
+                            )
                             if self._should_retry(
                                 attempt,
                                 status_code=response.status_code,
@@ -160,6 +204,19 @@ class OpenAICodexProvider:
                             yield event
                         return
                 except httpx.HTTPError as exc:
+                    observe_llm_error(
+                        self._observer,
+                        provider="openai-codex",
+                        model=model,
+                        method="POST",
+                        url=url,
+                        attempt=attempt + 1,
+                        stream=True,
+                        error={
+                            "type": type(exc).__name__,
+                            "message": str(exc),
+                        },
+                    )
                     if not emitted_content and self._should_retry(attempt):
                         delay = retry_delay_seconds(
                             attempt,
@@ -185,6 +242,19 @@ class OpenAICodexProvider:
                     )
                     return
                 except Exception as exc:  # noqa: BLE001 - provider errors are surfaced as events
+                    observe_llm_error(
+                        self._observer,
+                        provider="openai-codex",
+                        model=model,
+                        method="POST",
+                        url=url,
+                        attempt=attempt + 1,
+                        stream=True,
+                        error={
+                            "type": type(exc).__name__,
+                            "message": str(exc),
+                        },
+                    )
                     yield ProviderErrorEvent(message=str(exc), data={"attempts": attempt + 1})
                     return
 
