@@ -5,6 +5,7 @@ from typing import Protocol
 
 from tau_ai import (
     AnthropicProvider,
+    LLMObserver,
     ModelProvider,
     OpenAICodexConfig,
     OpenAICodexCredentials,
@@ -41,12 +42,14 @@ def create_model_provider(
     credential_store: FileCredentialStore | None = None,
     model: str | None = None,
     thinking_level: ThinkingLevel | None = None,
+    llm_observer: LLMObserver | None = None,
 ) -> ClosableModelProvider:
     """Create a runtime model provider from durable provider settings."""
     credentials = credential_store or FileCredentialStore()
     if isinstance(provider, AnthropicProviderConfig):
         return AnthropicProvider(
-            anthropic_config_from_provider(provider, credential_reader=credentials)
+            anthropic_config_from_provider(provider, credential_reader=credentials),
+            observer=llm_observer,
         )
     if isinstance(provider, OpenAICodexProviderConfig):
         return OpenAICodexProvider(
@@ -60,7 +63,8 @@ def create_model_provider(
                 timeout_seconds=provider.timeout_seconds,
                 max_retries=provider.max_retries,
                 max_retry_delay_seconds=provider.max_retry_delay_seconds,
-            )
+            ),
+            observer=llm_observer,
         )
     return OpenAICompatibleProvider(
         openai_compatible_config_from_provider(
@@ -68,7 +72,8 @@ def create_model_provider(
             credential_reader=credentials,
             model=model,
             thinking_level=thinking_level,
-        )
+        ),
+        observer=llm_observer,
     )
 
 

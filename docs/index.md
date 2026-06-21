@@ -44,6 +44,7 @@ Tau currently has:
 - provider setup and switching
 - stored Tau credentials with environment-variable fallback
 - context accounting, manual/automatic compaction, and HTML session export
+- opt-in redacted LLM request and response observation logs
 - a Textual TUI with responsive sidebar, text selection, selected-message copy,
   activity status, thinking controls, optional thinking-token display, and
   queued steering/follow-up prompts while the agent is running

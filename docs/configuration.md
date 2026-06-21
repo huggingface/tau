@@ -17,6 +17,7 @@ Important files and directories:
 ~/.tau/providers.json
 ~/.tau/tui.json
 ~/.tau/sessions/
+~/.tau/logs/
 ~/.tau/skills/
 ~/.tau/prompts/
 ~/.tau/AGENTS.md
@@ -115,6 +116,30 @@ TUI cycling. Open `/model`, highlight a model, and press `Space` to add or
 remove it from the scoped list. Press `Tab` in the picker to show only scoped
 models. Press `Ctrl+P` in the prompt to cycle through scoped models without
 opening the picker.
+
+## Diagnostic Logs
+
+Tau writes durable diagnostics under:
+
+```text
+~/.tau/logs/
+```
+
+Current logs are:
+
+```text
+~/.tau/logs/agent-calls.jsonl
+~/.tau/logs/llm-observations.jsonl
+```
+
+`agent-calls.jsonl` records unexpected agent-call failures and non-recoverable
+error events without prompt or provider payload bodies.
+
+`llm-observations.jsonl` is only written when `TAU_LLM_OBSERVABILITY=1` is set.
+It contains redacted provider HTTP request, response, and error observations.
+Credential headers and prompt-like body text are removed by default, but the
+file can still reveal provider URLs, models, tool names, schema shape, lengths,
+and text hashes.
 
 ## TUI Settings
 

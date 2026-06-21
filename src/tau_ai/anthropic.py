@@ -19,6 +19,12 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.observability import (
+    LLMObserver,
+    observe_llm_error,
+    observe_llm_request,
+    observe_llm_response,
+)
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 
@@ -34,10 +40,12 @@ class AnthropicProvider:
         config: AnthropicConfig,
         *,
         client: httpx.AsyncClient | None = None,
+        observer: LLMObserver | None = None,
     ) -> None:
         self._config = config
         self._client = client
         self._owns_client = client is None
+        self._observer = observer
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client if this provider created it."""
@@ -76,11 +84,48 @@ class AnthropicProvider:
             while True:
                 emitted_content = False
                 try:
+                    observe_llm_request(
+                        self._observer,
+                        provider="anthropic",
+                        model=model,
+                        method="POST",
+                        url=url,
+                        headers=headers,
+                        body=payload,
+                        attempt=attempt + 1,
+                        stream=True,
+                    )
                     async with client.stream(
                         "POST", url, json=payload, headers=headers
                     ) as response:
+                        observe_llm_response(
+                            self._observer,
+                            provider="anthropic",
+                            model=model,
+                            method="POST",
+                            url=url,
+                            status_code=response.status_code,
+                            headers=response.headers,
+                            attempt=attempt + 1,
+                            stream=True,
+                        )
                         if response.status_code >= 400:
                             body = await response.aread()
+                            body_text = body.decode(errors="replace")
+                            observe_llm_error(
+                                self._observer,
+                                provider="anthropic",
+                                model=model,
+                                method="POST",
+                                url=url,
+                                attempt=attempt + 1,
+                                stream=True,
+                                error={
+                                    "type": "http_status",
+                                    "status_code": response.status_code,
+                                    "body": body_text,
+                                },
+                            )
                             if self._should_retry(attempt, status_code=response.status_code):
                                 delay = retry_delay_seconds(
                                     attempt,
@@ -93,7 +138,7 @@ class AnthropicProvider:
                                     reason=f"HTTP {response.status_code}",
                                     data={
                                         "status_code": response.status_code,
-                                        "body": body.decode(errors="replace"),
+                                        "body": body_text,
                                     },
                                 )
                                 attempt += 1
@@ -102,11 +147,10 @@ class AnthropicProvider:
                                 continue
                             yield ProviderErrorEvent(
                                 message=(
-                                    "Provider request failed with status "
-                                    f"{response.status_code}"
+                                    f"Provider request failed with status {response.status_code}"
                                 ),
                                 data={
-                                    "body": body.decode(errors="replace"),
+                                    "body": body_text,
                                     "attempts": attempt + 1,
                                 },
                             )
@@ -171,8 +215,7 @@ class AnthropicProvider:
                                 delta = chunk.get("delta")
                                 if isinstance(delta, Mapping):
                                     finish_reason = (
-                                        _string_or_empty(delta.get("stop_reason"))
-                                        or finish_reason
+                                        _string_or_empty(delta.get("stop_reason")) or finish_reason
                                     )
                             elif event_type == "error":
                                 error = chunk.get("error")
@@ -183,8 +226,7 @@ class AnthropicProvider:
                                 return
 
                         tool_calls = [
-                            builder.build(index)
-                            for index, builder in sorted(tool_builders.items())
+                            builder.build(index) for index, builder in sorted(tool_builders.items())
                         ]
                         for tool_call in tool_calls:
                             yield ProviderToolCallEvent(tool_call=tool_call)
@@ -198,6 +240,19 @@ class AnthropicProvider:
                         )
                         return
                 except httpx.HTTPError as exc:
+                    observe_llm_error(
+                        self._observer,
+                        provider="anthropic",
+                        model=model,
+                        method="POST",
+                        url=url,
+                        attempt=attempt + 1,
+                        stream=True,
+                        error={
+                            "type": type(exc).__name__,
+                            "message": str(exc),
+                        },
+                    )
                     if not emitted_content and self._should_retry(attempt):
                         delay = retry_delay_seconds(
                             attempt,

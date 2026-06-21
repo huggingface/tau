@@ -35,6 +35,7 @@ from tau_ai import ProviderErrorEvent, ProviderEvent
 from tau_ai.provider import CancellationToken
 from tau_coding.commands import CommandRegistry, create_default_command_registry
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
+from tau_coding.diagnostics import llm_observer_from_env
 from tau_coding.oauth import OAuthAuthInfo, OAuthPrompt, login_openai_codex
 from tau_coding.provider_catalog import (
     BUILTIN_PROVIDER_CATALOG,
@@ -985,9 +986,7 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         """Compose the model picker."""
         with Vertical(id="model-picker"):
             title = (
-                f"Model: {self.provider_name}"
-                if self.picker_kind == "model"
-                else "Scoped models"
+                f"Model: {self.provider_name}" if self.picker_kind == "model" else "Scoped models"
             )
             yield Static(title, id="model-picker-title")
             yield Static("", id="model-picker-tabs")
@@ -1149,7 +1148,10 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
             help_text = (
                 "all models: no matching models - Tab switches to scoped models"
                 if not self.visible_choices
-                else f"All models - Enter selects active model - Tab switches tabs - {scope_count} scoped"
+                else (
+                    "All models - Enter selects active model - Tab switches tabs - "
+                    f"{scope_count} scoped"
+                )
             )
         else:
             tabs.update("Tabs: ○ All models  ● Scoped models")
@@ -1925,7 +1927,7 @@ class TauTuiApp(App[None]):
             | TreePickerScreen
             | LoginMethodPickerScreen
             | LoginProviderPickerScreen
-            | ThemePickerScreen
+            | ThemePickerScreen,
         ):
             self.screen.action_select_cursor()
             return
@@ -2966,11 +2968,13 @@ async def run_tui_app(
     )
     startup_message: str | None = None
     runtime_provider_config: ProviderConfig | None = selection.provider
+    llm_observer = llm_observer_from_env()
     try:
         provider = create_model_provider(
             selection.provider,
             model=selection.model,
             thinking_level=DEFAULT_THINKING_LEVEL,
+            llm_observer=llm_observer,
         )
     except RuntimeError:
         startup_message = (
@@ -3002,6 +3006,7 @@ async def run_tui_app(
                 provider_settings=provider_settings,
                 runtime_provider_config=runtime_provider_config,
                 auto_compact_token_threshold=auto_compact_token_threshold,
+                llm_observer=llm_observer,
             )
         )
         app = TauTuiApp(

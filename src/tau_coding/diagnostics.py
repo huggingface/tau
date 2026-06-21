@@ -6,12 +6,16 @@ import json
 import traceback
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from os import environ
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from tau_agent.events import ErrorEvent
+from tau_ai.observability import LLMObservation, LLMObserver
 from tau_coding.paths import TauPaths
+
+LLM_OBSERVABILITY_ENV = "TAU_LLM_OBSERVABILITY"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +77,45 @@ class AgentCallDiagnosticLogger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as file:
             file.write(json.dumps(entry, sort_keys=True) + "\n")
+
+
+class LLMObservationLogger(LLMObserver):
+    """Append opt-in redacted LLM request/response observations as JSONL."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    @classmethod
+    def from_paths(cls, paths: TauPaths | None = None) -> LLMObservationLogger:
+        """Create a logger using Tau's default path layout."""
+        return cls((paths or TauPaths()).llm_observations_log_path)
+
+    def record(self, observation: LLMObservation) -> None:
+        """Append one already-redacted provider observation."""
+        entry = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            **observation.to_json(),
+        }
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(entry, sort_keys=True) + "\n")
+
+
+def llm_observability_enabled() -> bool:
+    """Return whether provider request observation is enabled for this process."""
+    return environ.get(LLM_OBSERVABILITY_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def llm_observer_from_env(paths: TauPaths | None = None) -> LLMObserver | None:
+    """Create the configured LLM observer, if provider observation is enabled."""
+    if not llm_observability_enabled():
+        return None
+    return LLMObservationLogger.from_paths(paths)
 
 
 def new_agent_call_run_id() -> str:

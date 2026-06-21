@@ -442,8 +442,9 @@ async def test_session_refreshes_runtime_provider_for_thinking_level(
         credential_store: FileCredentialStore | None = None,
         model: str | None = None,
         thinking_level: str | None = None,
+        llm_observer: object | None = None,
     ) -> SwitchableFakeProvider:
-        del provider_config, credential_store
+        del provider_config, credential_store, llm_observer
         created.append((model, thinking_level))
         return SwitchableFakeProvider(object())
 
@@ -1067,8 +1068,9 @@ async def test_session_switches_configured_provider(
         credential_store: FileCredentialStore | None = None,
         model: str | None = None,
         thinking_level: str | None = None,
+        llm_observer: object | None = None,
     ) -> SwitchableFakeProvider:
-        del credential_store, model, thinking_level
+        del credential_store, model, thinking_level, llm_observer
         provider = SwitchableFakeProvider(provider_config)
         created_providers.append(provider)
         return provider
@@ -1137,8 +1139,9 @@ async def test_session_switch_uses_session_credential_store(
         credential_store: FileCredentialStore | None = None,
         model: str | None = None,
         thinking_level: str | None = None,
+        llm_observer: object | None = None,
     ) -> SwitchableFakeProvider:
-        del provider_config, model, thinking_level
+        del provider_config, model, thinking_level, llm_observer
         assert credential_store is not None
         credential_store_paths.append(credential_store.path)
         return SwitchableFakeProvider(object())

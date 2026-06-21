@@ -21,6 +21,15 @@ from tau_ai.events import (
     ProviderToolCallEvent,
 )
 from tau_ai.fake import FakeProvider
+from tau_ai.observability import (
+    LLMObservation,
+    LLMObserver,
+    observe_llm_error,
+    observe_llm_request,
+    observe_llm_response,
+    redact_headers,
+    redact_json_value,
+)
 from tau_ai.openai_codex import (
     DEFAULT_OPENAI_CODEX_BASE_URL,
     OpenAICodexConfig,
@@ -46,6 +55,8 @@ __all__ = [
     "OpenAICodexProvider",
     "OpenAICompatibleConfig",
     "OpenAICompatibleProvider",
+    "LLMObservation",
+    "LLMObserver",
     "ProviderErrorEvent",
     "ProviderEvent",
     "ProviderResponseEndEvent",
@@ -54,5 +65,10 @@ __all__ = [
     "ProviderThinkingDeltaEvent",
     "ProviderTextDeltaEvent",
     "ProviderToolCallEvent",
+    "observe_llm_error",
+    "observe_llm_request",
+    "observe_llm_response",
     "openai_compatible_config_from_env",
+    "redact_headers",
+    "redact_json_value",
 ]

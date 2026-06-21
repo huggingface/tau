@@ -7,6 +7,8 @@ def test_tau_paths_user_locations(tmp_path: Path) -> None:
     paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
 
     assert paths.sessions_dir == tmp_path / ".tau" / "sessions"
+    assert paths.agent_calls_log_path == tmp_path / ".tau" / "logs" / "agent-calls.jsonl"
+    assert paths.llm_observations_log_path == tmp_path / ".tau" / "logs" / "llm-observations.jsonl"
     assert paths.user_skills_dir == tmp_path / ".tau" / "skills"
     assert paths.user_prompts_dir == tmp_path / ".tau" / "prompts"
     assert paths.user_agents_skills_dir == tmp_path / ".agents" / "skills"
