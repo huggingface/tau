@@ -32,17 +32,18 @@ TranscriptView renders blocks
 
 ## Wrapping behavior
 
-`TranscriptView` still uses Textual's `RichLog`, but it is created with:
+`TranscriptView` is now a `VerticalScroll` container of individual
+`TranscriptMessageWidget` children. The container keeps:
 
 ```python
-min_width=1
-wrap=True
+min_width = 1
 ```
 
-This removes RichLog's default wide minimum width and lets normal user and
-assistant messages reflow to the available terminal width. Chat block bodies use
-Rich `Text` with folded overflow so long unbroken strings are wrapped inside the
-block instead of forcing horizontal scrolling.
+Each message widget owns its Rich renderable and its selected-text extraction.
+This keeps normal user and assistant messages reflowing to the available
+terminal width while avoiding one large transcript-wide selection surface. Chat
+block bodies use Rich `Text` with folded overflow so long unbroken strings are
+wrapped inside the block instead of forcing horizontal scrolling.
 
 Tool output and code-like text preserve line breaks. Very long unbroken chunks
 are folded intentionally rather than clipped.
@@ -78,3 +79,4 @@ The tests verify:
 - chat items render without `you:`, `assistant:`, or `tool:` prefixes
 - long unbroken message text folds within a narrow console width
 - the mounted transcript uses a narrow `min_width`
+- selection extraction is scoped to one message widget or adjacent message widgets

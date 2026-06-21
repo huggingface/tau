@@ -26,6 +26,12 @@ syntax renderables inside the same Pi-style stacked message blocks. The
 transcript state still stores plain role/text items; this is renderer-only
 polish in the Textual frontend.
 
+The transcript surface is a scroll container of selectable message widgets, not
+one large `RichLog`. Each message widget owns selected-text extraction for its
+rendered block, so partial mouse selection stays scoped to the intended message
+and adjacent-message copies do not accidentally expand to the full
+conversation.
+
 Assistant transcript blocks now also render common Markdown constructs such as
 headings, bullets, blockquotes, links, inline code, and emphasis through Rich
 Markdown. User, tool, status, and error blocks stay literal unless they are

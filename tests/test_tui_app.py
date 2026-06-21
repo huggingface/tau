@@ -7,6 +7,8 @@ import pytest
 from rich.console import Console
 from rich.panel import Panel
 from textual.containers import VerticalScroll
+from textual.geometry import Offset
+from textual.selection import SELECT_ALL, Selection
 from textual.widgets import Footer, Input, Label, ListItem, ListView, Static, TextArea
 
 from tau_agent import (
@@ -57,12 +59,14 @@ from tau_coding.tui.config import (
 )
 from tau_coding.tui.state import ChatItem
 from tau_coding.tui.widgets import (
+    TranscriptMessageWidget,
     TranscriptView,
     _compact_token_count,
     _syntax_language,
     render_chat_item,
     render_compact_session_info,
     render_session_sidebar,
+    transcript_item_selection_text,
 )
 
 
@@ -697,6 +701,84 @@ def test_chat_items_preserve_malformed_fenced_code() -> None:
 
     assert "```python" in output
     assert 'print("hi")' in output
+
+
+@pytest.mark.anyio
+async def test_transcript_message_widget_extracts_partial_rendered_selection() -> None:
+    app = TauTuiApp(
+        FakeSession(
+            messages=[
+                UserMessage(content="alpha beta\ngamma"),
+            ]
+        )
+    )
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        widget = app.query_one(TranscriptMessageWidget)
+
+        assert widget.get_selection(Selection(Offset(8, 1), Offset(12, 1))) == (
+            "beta",
+            "\n",
+        )
+
+
+@pytest.mark.anyio
+async def test_tui_transcript_selects_only_one_message() -> None:
+    app = TauTuiApp(
+        FakeSession(
+            messages=[
+                UserMessage(content="first message"),
+                AssistantMessage(content="second message"),
+            ]
+        )
+    )
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        messages = list(app.query(TranscriptMessageWidget))
+
+        app.screen.selections = {messages[0]: SELECT_ALL}
+
+        assert app.screen.get_selected_text() == "first message"
+
+
+@pytest.mark.anyio
+async def test_tui_transcript_extracts_adjacent_message_selection() -> None:
+    app = TauTuiApp(
+        FakeSession(
+            messages=[
+                UserMessage(content="first one"),
+                AssistantMessage(content="middle message"),
+                UserMessage(content="third item"),
+            ]
+        )
+    )
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        messages = list(app.query(TranscriptMessageWidget))
+
+        app.screen.selections = {
+            messages[0]: Selection(Offset(8, 1), None),
+            messages[1]: SELECT_ALL,
+            messages[2]: Selection(None, Offset(7, 1)),
+        }
+
+        assert app.screen.get_selected_text() == "one\nmiddle message\nthird"
+
+
+def test_transcript_selection_text_tracks_tool_result_visibility() -> None:
+    item = ChatItem(
+        role="tool",
+        text="→ read README.md",
+        tool_result_text="✓ read\nREADME contents",
+    )
+
+    assert transcript_item_selection_text(item, show_tool_results=False) == "→ read README.md"
+    assert transcript_item_selection_text(item, show_tool_results=True) == (
+        "→ read README.md\n\n✓ read\nREADME contents"
+    )
 
 
 @pytest.mark.anyio

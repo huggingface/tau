@@ -1,6 +1,7 @@
 """Small Textual widgets for Tau's interactive TUI."""
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from subprocess import TimeoutExpired, run
 from typing import Any, Protocol
@@ -17,8 +18,11 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
+from textual.containers import VerticalScroll
 from textual.events import Resize
-from textual.widgets import RichLog, Static
+from textual.geometry import Offset
+from textual.selection import Selection
+from textual.widgets import Static
 
 from tau_agent.tools import AgentTool
 from tau_coding.prompt_templates import PromptTemplate
@@ -29,6 +33,22 @@ from tau_coding.tui.config import TAU_DARK_THEME, TuiRoleStyle, TuiTheme
 from tau_coding.tui.state import ChatItem, TuiState
 
 TAU_SIDEBAR_LOGO = "τ = 2π"
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptLine:
+    """Plain transcript line used by compatibility inspection helpers."""
+
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class _RenderedSelectionLine:
+    """One rendered transcript line mapped back to copyable body text."""
+
+    rendered_y: int
+    rendered_prefix_width: int
+    text: str
 
 
 class SessionSummarySource(Protocol):
@@ -91,11 +111,61 @@ class CompactSessionInfo(Static):
         self.update(render_compact_session_info(session, theme=theme))
 
 
-class TranscriptView(RichLog):
-    """Scrollable transcript view backed by ``TuiState``."""
+class TranscriptMessageWidget(Static):
+    """One selectable transcript message block."""
+
+    DEFAULT_CSS = """
+    TranscriptMessageWidget {
+        width: 1fr;
+        height: auto;
+    }
+    """
+
+    def __init__(
+        self,
+        item: ChatItem,
+        *,
+        theme: TuiTheme,
+        show_tool_results: bool,
+    ) -> None:
+        self.item = item
+        self.selection_text = transcript_item_selection_text(
+            item,
+            show_tool_results=show_tool_results,
+        )
+        super().__init__(
+            render_chat_item(
+                item,
+                theme=theme,
+                show_tool_results=show_tool_results,
+            ),
+            expand=True,
+            shrink=True,
+            markup=False,
+            classes="transcript-message",
+        )
+
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        """Return selected text from this message, not the whole transcript."""
+        selected_text = _extract_rendered_selection(self, selection)
+        if selected_text is None:
+            selected_text = _extract_text_selection(self.selection_text, selection)
+        if not selected_text:
+            return None
+        return selected_text, "\n"
+
+
+class TranscriptView(VerticalScroll):
+    """Scrollable transcript view backed by individual selectable message widgets."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        for legacy_option in ("wrap", "highlight", "markup"):
+            kwargs.pop(legacy_option, None)
+        min_width = kwargs.pop("min_width", None)
         super().__init__(*args, **kwargs)
+        self.min_width = min_width
+        if min_width is not None:
+            self.styles.min_width = min_width
         self._render_state: TuiState | None = None
         self._render_theme: TuiTheme = TAU_DARK_THEME
         self._last_render_width = 0
@@ -113,7 +183,7 @@ class TranscriptView(RichLog):
 
     def on_resize(self, event: Resize) -> None:
         """Re-render transcript entries when the terminal width changes."""
-        super().on_resize(event)
+        del event
         if self._render_state is None:
             return
         width = self.scrollable_content_region.width
@@ -129,31 +199,138 @@ class TranscriptView(RichLog):
             return
         theme = self._render_theme
         self._last_render_width = self.scrollable_content_region.width
-        self.clear()
-        for index, item in enumerate(state.items):
+        self.remove_children(TranscriptMessageWidget)
+        for item in state.items:
             if item.role == "thinking" and not state.show_thinking:
                 continue
-            self.write(
-                render_chat_item(
+            self.mount(
+                TranscriptMessageWidget(
                     item,
                     theme=theme,
                     show_tool_results=state.show_tool_results or item.always_show_tool_result,
-                ),
-                expand=True,
-                shrink=True,
-                scroll_end=scroll_end,
+                )
             )
         if state.assistant_buffer:
-            self.write(
-                render_chat_item(
+            self.mount(
+                TranscriptMessageWidget(
                     ChatItem(role="assistant", text=state.assistant_buffer),
                     theme=theme,
                     show_tool_results=state.show_tool_results,
-                ),
-                expand=True,
-                shrink=True,
-                scroll_end=scroll_end,
+                )
             )
+        self.refresh(layout=True)
+        if scroll_end:
+            self.scroll_end(animate=False)
+
+    @property
+    def lines(self) -> tuple[TranscriptLine, ...]:
+        """Compatibility text view for tests and lightweight transcript inspection."""
+        return tuple(
+            TranscriptLine(line)
+            for message in self.query(TranscriptMessageWidget)
+            for line in message.selection_text.splitlines()
+        )
+
+
+def transcript_item_selection_text(
+    item: ChatItem,
+    *,
+    show_tool_results: bool = False,
+) -> str:
+    """Return the plain text represented by a selectable transcript item."""
+    return _visible_chat_text(item, show_tool_results=show_tool_results)
+
+
+def _extract_rendered_selection(
+    widget: TranscriptMessageWidget,
+    selection: Selection,
+) -> str | None:
+    lines = _rendered_selection_lines(widget)
+    if not lines:
+        return None
+    selected_lines: list[str] = []
+    for line in lines:
+        span = selection.get_span(line.rendered_y)
+        if span is None:
+            continue
+        start, end = span
+        text_start = max(start - line.rendered_prefix_width, 0)
+        text_end = len(line.text) if end == -1 else max(end - line.rendered_prefix_width, 0)
+        selected_lines.append(line.text[text_start:text_end])
+    return "\n".join(selected_lines)
+
+
+def _rendered_selection_lines(widget: TranscriptMessageWidget) -> list[_RenderedSelectionLine]:
+    if widget.size.height <= 0:
+        return []
+    rendered_lines = [widget.render_line(y).text for y in range(widget.size.height)]
+    content_bounds = _rendered_content_bounds(rendered_lines)
+    if content_bounds is None:
+        return []
+    first_content_line, last_content_line = content_bounds
+    body_prefix_width = _body_prefix_width(rendered_lines[first_content_line])
+    selection_lines: list[_RenderedSelectionLine] = []
+    for rendered_y in range(first_content_line, last_content_line + 1):
+        line = rendered_lines[rendered_y]
+        prefix_width = _line_prefix_width(line, body_prefix_width)
+        selection_lines.append(
+            _RenderedSelectionLine(
+                rendered_y=rendered_y,
+                rendered_prefix_width=prefix_width,
+                text=line[prefix_width:].rstrip(),
+            )
+        )
+    return selection_lines
+
+
+def _rendered_content_bounds(lines: list[str]) -> tuple[int, int] | None:
+    first = next((index for index, line in enumerate(lines) if line.strip()), None)
+    if first is None:
+        return None
+    last = next(
+        index for index in range(len(lines) - 1, -1, -1) if lines[index].strip()
+    )
+    return first, last
+
+
+def _body_prefix_width(first_content_line: str) -> int:
+    if first_content_line.startswith("▌"):
+        if len(first_content_line) > 1 and first_content_line[1] == " ":
+            return 2
+        return 1
+    return len(first_content_line) - len(first_content_line.lstrip(" "))
+
+
+def _line_prefix_width(line: str, body_prefix_width: int) -> int:
+    if line.startswith("▌"):
+        return min(body_prefix_width, len(line))
+    prefix_width = 0
+    while prefix_width < min(body_prefix_width, len(line)) and line[prefix_width] == " ":
+        prefix_width += 1
+    return prefix_width
+
+
+def _extract_text_selection(text: str, selection: Selection) -> str:
+    clipped_selection = _clip_selection_to_text(selection, text)
+    return clipped_selection.extract(text)
+
+
+def _clip_selection_to_text(selection: Selection, text: str) -> Selection:
+    lines = text.splitlines()
+    if not lines:
+        return Selection(Offset(0, 0), Offset(0, 0))
+    return Selection(
+        _clip_selection_offset(selection.start, lines),
+        _clip_selection_offset(selection.end, lines),
+    )
+
+
+def _clip_selection_offset(offset: Offset | None, lines: list[str]) -> Offset | None:
+    if offset is None:
+        return None
+    line_index = min(max(offset.y, 0), len(lines) - 1)
+    column = min(max(offset.x, 0), len(lines[line_index]))
+    return Offset(column, line_index)
 
 
 def render_session_sidebar(

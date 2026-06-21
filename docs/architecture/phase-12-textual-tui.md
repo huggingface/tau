@@ -94,7 +94,7 @@ It uses:
 - `Footer`
 - `Static` for status and sidebar content
 - `Horizontal` and `Vertical` containers for the sidebar/main layout
-- `RichLog` for transcript output
+- a scrollable transcript made from selectable message widgets
 - `Input` for prompt submission
 
 Prompt execution runs in a Textual worker so the UI can continue updating while events stream.

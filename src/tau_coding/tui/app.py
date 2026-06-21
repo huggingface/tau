@@ -12,6 +12,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingsMap
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.events import Key, Resize
 from textual.screen import ModalScreen
 from textual.timer import Timer
@@ -1149,7 +1150,10 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
             help_text = (
                 "all models: no matching models - Tab switches to scoped models"
                 if not self.visible_choices
-                else f"All models - Enter selects active model - Tab switches tabs - {scope_count} scoped"
+                else (
+                    "All models - Enter selects active model - "
+                    f"Tab switches tabs - {scope_count} scoped"
+                )
             )
         else:
             tabs.update("Tabs: ○ All models  ● Scoped models")
@@ -2431,7 +2435,11 @@ class TauTuiApp(App[None]):
 
     def _apply_activity_indicator(self) -> None:
         theme = self.tui_settings.resolved_theme
-        prompt = self.query_one("#prompt", PromptInput)
+        try:
+            prompt = self.query_one("#prompt", PromptInput)
+            indicator = self.query_one("#activity-indicator", Static)
+        except NoMatches:
+            return
         prompt.styles.border = (
             "tall",
             _activity_prompt_border_color(
@@ -2441,7 +2449,6 @@ class TauTuiApp(App[None]):
                 shell_mode=_is_terminal_command_prompt(prompt.text),
             ),
         )
-        indicator = self.query_one("#activity-indicator", Static)
         indicator.update(
             _render_activity_indicator(
                 theme,
