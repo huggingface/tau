@@ -112,7 +112,7 @@ class FakeSession:
         self.session_manager = None
         self.compact_summaries: list[str] = []
         self.resumed_session_ids: list[str] = []
-        self.tree_branch_requests: list[tuple[str, bool]] = []
+        self.tree_branch_requests: list[tuple[str, bool, str | None]] = []
         self.new_session_count = 0
         self.prompt_texts: list[str] = []
         self.reload_count = 0
@@ -245,8 +245,14 @@ class FakeSession:
             SessionTreeChoice(entry_id="right", label="assistant: Right", active=True),
         )
 
-    async def branch_to_entry(self, entry_id: str, *, summarize: bool = False) -> str:
-        self.tree_branch_requests.append((entry_id, summarize))
+    async def branch_to_entry(
+        self,
+        entry_id: str,
+        *,
+        summarize: bool = False,
+        custom_instructions: str | None = None,
+    ) -> str:
+        self.tree_branch_requests.append((entry_id, summarize, custom_instructions))
         self.messages = (UserMessage(content=f"Branched to {entry_id}"),)
         return f"Branched session at {entry_id}."
 
@@ -1753,7 +1759,7 @@ async def test_tui_app_tree_picker_branches_with_summary() -> None:
         await pilot.press("s")
         await pilot.pause()
 
-        assert session.tree_branch_requests == [("left", True)]
+        assert session.tree_branch_requests == [("left", True, None)]
         assert [(item.role, item.text) for item in app.state.items] == [
             ("user", "Branched to left"),
         ]

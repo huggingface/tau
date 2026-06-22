@@ -235,8 +235,10 @@ in the `/resume` picker and in session-id completions.
 
 `/tree` opens the current session tree. Select an earlier entry with `Enter` to
 continue from that point while preserving the existing branch. Press `S` instead
-to add a branch summary for the messages left behind before Tau moves the active
-leaf.
+to ask the active model for a structured branch summary of the messages left
+behind before Tau moves the active leaf. Press `C` to provide custom focus
+instructions for that one summary. If the summary request is unavailable or
+fails, Tau falls back to the deterministic summary formatter.
 
 ## Skills and Prompt Templates
 
@@ -367,4 +369,6 @@ tau --auto-compact-threshold 100000
 ```
 
 Automatic compaction currently uses a deterministic extractive summary of prior
-messages. It does not call a model to generate the summary yet.
+messages. It does not call a model to generate the summary yet. Tree-branch
+summaries created with `S` do use the active model first, with deterministic
+summary fallback.

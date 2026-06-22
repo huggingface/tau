@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import datetime
 from inspect import isawaitable
 from pathlib import Path
@@ -462,7 +463,16 @@ class SessionPickerScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
-class TreePickerScreen(ModalScreen[tuple[str, bool] | None]):
+@dataclass(frozen=True, slots=True)
+class TreePickerResult:
+    """Tree-picker branch selection."""
+
+    entry_id: str
+    summarize: bool = False
+    custom_instructions: str | None = None
+
+
+class TreePickerScreen(ModalScreen[TreePickerResult | None]):
     """Modal picker for branching from a previous session entry."""
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
@@ -471,6 +481,7 @@ class TreePickerScreen(ModalScreen[tuple[str, bool] | None]):
         Binding("down", "cursor_down", "Down", show=False),
         Binding("enter", "select_cursor", "Branch", show=False),
         Binding("s", "select_with_summary", "Summarize", show=False),
+        Binding("c", "select_with_custom_summary", "Custom summary", show=False),
         Binding("ctrl+t", "toggle_tool_calls", "Tool calls", show=False),
     ]
 
@@ -518,13 +529,16 @@ class TreePickerScreen(ModalScreen[tuple[str, bool] | None]):
         elif event.key == "s":
             event.stop()
             self.action_select_with_summary()
+        elif event.key == "c":
+            event.stop()
+            self.action_select_with_custom_summary()
         elif event.key == "ctrl+t":
             event.stop()
             self.action_toggle_tool_calls()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Dismiss with the selected entry id."""
-        self.dismiss((self._visible_choices()[event.index].entry_id, False))
+        self.dismiss(TreePickerResult(entry_id=self._visible_choices()[event.index].entry_id))
 
     def action_cursor_up(self) -> None:
         """Move to the previous tree entry."""
@@ -544,7 +558,34 @@ class TreePickerScreen(ModalScreen[tuple[str, bool] | None]):
         index = tree_list.index
         if index is None:
             return
-        self.dismiss((self._visible_choices()[index].entry_id, True))
+        self.dismiss(
+            TreePickerResult(entry_id=self._visible_choices()[index].entry_id, summarize=True)
+        )
+
+    def action_select_with_custom_summary(self) -> None:
+        """Branch from the highlighted entry with custom summary instructions."""
+        tree_list = self.query_one("#tree-picker-list", ListView)
+        index = tree_list.index
+        if index is None:
+            return
+        self.app.push_screen(
+            BranchSummaryInstructionsScreen(theme=self.theme),
+            callback=lambda instructions: self._dismiss_with_custom_summary(index, instructions),
+        )
+
+    def _dismiss_with_custom_summary(self, index: int, instructions: str | None) -> None:
+        if instructions is None:
+            return
+        visible_choices = self._visible_choices()
+        if index >= len(visible_choices):
+            return
+        self.dismiss(
+            TreePickerResult(
+                entry_id=visible_choices[index].entry_id,
+                summarize=True,
+                custom_instructions=instructions,
+            )
+        )
 
     def action_toggle_tool_calls(self) -> None:
         """Toggle tool-call entries in the tree picker."""
@@ -582,12 +623,57 @@ class TreePickerScreen(ModalScreen[tuple[str, bool] | None]):
     def _help_text(self) -> str:
         tool_call_state = "shown" if self.show_tool_calls else "hidden"
         return (
-            "Enter branches - S branches with summary - "
+            "Enter branches - S summarizes - C custom summary - "
             f"Ctrl+T tool calls {tool_call_state} - Escape closes"
         )
 
     def action_cancel(self) -> None:
         """Close the picker without selecting an entry."""
+        self.dismiss(None)
+
+
+class BranchSummaryInstructionsScreen(ModalScreen[str | None]):
+    """Prompt for custom branch-summary instructions."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [Binding("escape", "cancel", "Cancel")]
+
+    def __init__(self, *, theme: TuiTheme) -> None:
+        super().__init__()
+        self.theme = theme
+
+    def compose(self) -> ComposeResult:
+        """Compose the custom-instructions prompt."""
+        with Vertical(id="branch-summary-instructions"):
+            yield Static(
+                "Custom summarization instructions",
+                id="branch-summary-instructions-title",
+            )
+            yield TextArea(id="branch-summary-instructions-input")
+            yield Static(
+                "Ctrl+Enter submits - Escape returns to tree",
+                id="branch-summary-instructions-help",
+            )
+
+    def on_mount(self) -> None:
+        """Focus the instruction editor."""
+        self.query_one("#branch-summary-instructions-input", TextArea).focus()
+
+    def on_key(self, event: Key) -> None:
+        """Submit on Ctrl+Enter and cancel on Escape."""
+        if event.key == "ctrl+enter":
+            event.stop()
+            self.action_submit()
+        elif event.key == "escape":
+            event.stop()
+            self.action_cancel()
+
+    def action_submit(self) -> None:
+        """Submit custom instructions."""
+        value = self.query_one("#branch-summary-instructions-input", TextArea).text.strip()
+        self.dismiss(value or None)
+
+    def action_cancel(self) -> None:
+        """Cancel custom instructions."""
         self.dismiss(None)
 
 
@@ -2205,22 +2291,35 @@ class TauTuiApp(App[None]):
             callback=self._handle_tree_picker_result,
         )
 
-    def _handle_tree_picker_result(self, result: tuple[str, bool] | None) -> None:
+    def _handle_tree_picker_result(self, result: TreePickerResult | None) -> None:
         if result is None:
             return
-        entry_id, summarize = result
         self.run_worker(
-            self._branch_to_tree_entry(entry_id, summarize=summarize),
+            self._branch_to_tree_entry(
+                result.entry_id,
+                summarize=result.summarize,
+                custom_instructions=result.custom_instructions,
+            ),
             exclusive=False,
         )
 
-    async def _branch_to_tree_entry(self, entry_id: str, *, summarize: bool) -> None:
+    async def _branch_to_tree_entry(
+        self,
+        entry_id: str,
+        *,
+        summarize: bool,
+        custom_instructions: str | None = None,
+    ) -> None:
         branch_to_entry = getattr(self.session, "branch_to_entry", None)
         if branch_to_entry is None:
             self._notify("Session tree is not available.", severity="warning")
             return
         try:
-            result = branch_to_entry(entry_id, summarize=summarize)
+            result = branch_to_entry(
+                entry_id,
+                summarize=summarize,
+                custom_instructions=custom_instructions,
+            )
             if isawaitable(result):
                 result = await result
             self.state.clear()

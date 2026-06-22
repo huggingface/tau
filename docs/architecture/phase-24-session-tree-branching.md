@@ -29,17 +29,23 @@ Tau already had a `BranchSummaryEntry` type. This phase makes it replay-aware:
 when the active root-to-leaf path contains a branch summary, `SessionState`
 converts it into a user-context summary message.
 
-The first implementation uses the same deterministic summary helper as automatic
-compaction to summarize active-path messages after the selected entry. That keeps
-the feature self-contained and testable. A later phase can replace this with a
-model-generated summary flow without changing the storage shape.
+Branch summaries now use the active provider and model to summarize active-path
+messages after the selected entry. `CodingSession` sends a one-off summarization
+request outside the main `AgentHarness` transcript, using a Pi-style structured
+summary prompt with sections for goal, constraints, progress, decisions, and
+next steps. The TUI supports both the default prompt and per-branch custom
+focus instructions. Tau stores the resulting text in the existing
+`BranchSummaryEntry` shape. If the provider returns no usable text, reports an
+error, or raises, Tau falls back to the same deterministic summary helper used
+by automatic compaction.
 
 ## Boundaries
 
 `tau_agent.session` owns generic replay semantics for `branch_summary` entries.
-`tau_coding.CodingSession` owns branch navigation, summary creation, storage
-mutation, and harness message replacement. The Textual TUI only displays choices
-and calls the session method selected by the user.
+`tau_coding.CodingSession` owns branch navigation, model summary creation,
+fallback summary creation, storage mutation, and harness message replacement.
+The Textual TUI only displays choices and calls the session method selected by
+the user.
 
 ## Validation
 

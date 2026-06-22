@@ -683,6 +683,127 @@ async def test_session_branch_restores_model_from_selected_path(tmp_path: Path) 
 @pytest.mark.anyio
 async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    provider = FakeProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(
+                    message=AssistantMessage(content="The abandoned branch went left.")
+                ),
+            ]
+        ]
+    )
+    root = MessageEntry(id="root", message=UserMessage(content="Root"))
+    left = MessageEntry(id="left", parent_id="root", message=AssistantMessage(content="Left"))
+    right = MessageEntry(
+        id="right",
+        parent_id="left",
+        message=UserMessage(content="Abandoned follow-up"),
+    )
+    await storage.append(root)
+    await storage.append(left)
+    await storage.append(right)
+    await storage.append(LeafEntry(entry_id="right"))
+    session = await CodingSession.load(_config(tmp_path, provider, storage))
+
+    result = await session.branch_to_entry("root", summarize=True)
+    entries = await storage.read_all()
+    summary = entries[-2]
+
+    assert "with branch summary" in result
+    assert summary.type == "branch_summary"
+    assert summary.parent_id == "root"
+    assert summary.branch_root_id == "root"
+    assert summary.summary.startswith(
+        "The user explored a different conversation branch before returning here."
+    )
+    assert "The abandoned branch went left." in summary.summary
+    assert provider.calls[0][3] == []
+    assert "<conversation>" in provider.calls[0][2][0].content
+    assert "Use this EXACT format:" in provider.calls[0][2][0].content
+    assert "Abandoned follow-up" in provider.calls[0][2][0].content
+    assert session.messages[0] == UserMessage(content="Root")
+    assert session.messages[1].role == "user"
+    assert isinstance(session.messages[1].content, str)
+    assert "Previous branch summary from root:" in session.messages[1].content
+    assert "The abandoned branch went left." in session.messages[1].content
+
+
+@pytest.mark.anyio
+async def test_session_branch_with_summary_accepts_custom_instructions(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    provider = FakeProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(
+                    message=AssistantMessage(content="Custom branch summary.")
+                ),
+            ]
+        ]
+    )
+    root = MessageEntry(id="root", message=UserMessage(content="Root"))
+    left = MessageEntry(id="left", parent_id="root", message=AssistantMessage(content="Left"))
+    right = MessageEntry(
+        id="right",
+        parent_id="left",
+        message=UserMessage(content="Abandoned follow-up"),
+    )
+    await storage.append(root)
+    await storage.append(left)
+    await storage.append(right)
+    await storage.append(LeafEntry(entry_id="right"))
+    session = await CodingSession.load(_config(tmp_path, provider, storage))
+
+    await session.branch_to_entry(
+        "root",
+        summarize=True,
+        custom_instructions="Focus on failing commands.",
+    )
+
+    prompt = provider.calls[0][2][0].content
+    assert "Use this EXACT format:" in prompt
+    assert "Additional focus: Focus on failing commands." in prompt
+
+
+@pytest.mark.anyio
+async def test_session_branch_with_summary_tracks_file_operations(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    provider = FakeProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="File work summary.")),
+            ]
+        ]
+    )
+    root = MessageEntry(id="root", message=UserMessage(content="Root"))
+    read_call = ToolCall(id="read-1", name="read", arguments={"path": "src/read_only.py"})
+    edit_call = ToolCall(id="edit-1", name="edit", arguments={"path": "src/changed.py"})
+    assistant = MessageEntry(
+        id="assistant",
+        parent_id="root",
+        message=AssistantMessage(content="Using tools", tool_calls=[read_call, edit_call]),
+    )
+    await storage.append(root)
+    await storage.append(assistant)
+    await storage.append(LeafEntry(entry_id="assistant"))
+    session = await CodingSession.load(_config(tmp_path, provider, storage))
+
+    await session.branch_to_entry("root", summarize=True)
+    entries = await storage.read_all()
+    summary = entries[-2]
+
+    assert summary.type == "branch_summary"
+    assert "<read-files>\nsrc/read_only.py\n</read-files>" in summary.summary
+    assert "<modified-files>\nsrc/changed.py\n</modified-files>" in summary.summary
+
+
+@pytest.mark.anyio
+async def test_session_branch_with_summary_falls_back_when_model_summary_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     root = MessageEntry(id="root", message=UserMessage(content="Root"))
     left = MessageEntry(id="left", parent_id="root", message=AssistantMessage(content="Left"))
     right = MessageEntry(
@@ -702,12 +823,8 @@ async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> N
 
     assert "with branch summary" in result
     assert summary.type == "branch_summary"
-    assert summary.parent_id == "root"
-    assert summary.branch_root_id == "root"
-    assert session.messages[0] == UserMessage(content="Root")
-    assert session.messages[1].role == "user"
-    assert isinstance(session.messages[1].content, str)
-    assert "Previous branch summary from root:" in session.messages[1].content
+    assert "Automatically compacted 2 prior message(s)." in summary.summary
+    assert "Abandoned follow-up" in summary.summary
     assert "Abandoned follow-up" in session.messages[1].content
 
 
