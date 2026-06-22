@@ -2928,6 +2928,104 @@ async def test_tui_app_runs_initial_prompt() -> None:
 
 
 @pytest.mark.anyio
+async def test_run_tui_app_falls_back_to_first_credentialed_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[str] = []
+    class FakeCredentialStore:
+        def get(self, name: str) -> str | None:
+            return "stored-key" if name == "openai" else None
+
+        def get_oauth(self, name: str) -> object | None:
+            return None
+
+    record = CodingSessionRecord(
+        id="new-session",
+        path=tmp_path / "new-session.jsonl",
+        cwd=tmp_path,
+        model="gpt-5.5",
+        title=None,
+        created_at=1.0,
+        updated_at=1.0,
+        provider_name="openai",
+    )
+
+    class FakeProvider:
+        async def aclose(self) -> None:
+            calls.append("provider_closed")
+
+    class FakeManager:
+        def create_session(
+            self,
+            *,
+            cwd: Path,
+            model: str,
+            provider_name: str | None = None,
+        ) -> CodingSessionRecord:
+            calls.append(f"create:{cwd}:{model}:{provider_name}")
+            return record
+
+        def get_session(self, session_id: str) -> CodingSessionRecord | None:
+            return None
+
+    class FakeCodingSession:
+        @classmethod
+        async def load(cls, config: object) -> str:
+            assert config.provider_name == "openai"  # type: ignore[attr-defined]
+            calls.append("load")
+            return "session"
+
+    class FakeApp:
+        def __init__(self, session: str, **kwargs: object) -> None:
+            assert session == "session"
+            assert kwargs["startup_message"] is None
+
+        async def run_async(self) -> None:
+            calls.append("run")
+
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("qwen",),
+                default_model="qwen",
+            ),
+            OpenAICompatibleProviderConfig(
+                name="openai",
+                credential_name="openai",
+                models=("gpt-5.5",),
+                default_model="gpt-5.5",
+            ),
+        ),
+    )
+    monkeypatch.setattr(tui_app, "FileCredentialStore", lambda: FakeCredentialStore())
+    monkeypatch.setattr(tui_app, "load_provider_settings", lambda: settings)
+    monkeypatch.setattr(tui_app, "load_tui_settings", lambda: TuiSettings())
+    monkeypatch.setattr(
+        tui_app,
+        "create_model_provider",
+        lambda provider, **kwargs: calls.append(f"provider:{provider.name}:{kwargs['model']}")
+        or FakeProvider(),
+    )
+    monkeypatch.setattr(tui_app, "CodingSession", FakeCodingSession)
+    monkeypatch.setattr(tui_app, "TauTuiApp", FakeApp)
+
+    await tui_app.run_tui_app(cwd=tmp_path, model=None, session_manager=FakeManager())
+
+    assert calls == [
+        "provider:openai:gpt-5.5",
+        f"create:{tmp_path}:gpt-5.5:openai",
+        "load",
+        "run",
+        "provider_closed",
+    ]
+
+
+@pytest.mark.anyio
 async def test_run_tui_app_ignores_latest_directory_provider_model_for_new_session(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -3005,6 +3103,7 @@ async def test_run_tui_app_ignores_latest_directory_provider_model_for_new_sessi
             ),
         ),
     )
+    monkeypatch.setenv("OPENAI_API_KEY", "stored-key")
     monkeypatch.setattr(tui_app, "load_provider_settings", lambda: settings)
     monkeypatch.setattr(tui_app, "load_tui_settings", lambda: TuiSettings())
     monkeypatch.setattr(
@@ -3113,6 +3212,7 @@ async def test_run_tui_app_does_not_start_new_session_from_scoped_model(
         ),
         scoped_models=(ScopedModelConfig(provider="openai-codex", model="gpt-5.5"),),
     )
+    monkeypatch.setenv("OPENAI_API_KEY", "stored-key")
     monkeypatch.setattr(tui_app, "FileCredentialStore", lambda: FakeCredentialStore())
     monkeypatch.setattr(tui_app, "load_provider_settings", lambda: settings)
     monkeypatch.setattr(tui_app, "load_tui_settings", lambda: TuiSettings())

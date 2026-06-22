@@ -3230,7 +3230,23 @@ def _resolve_tui_startup_selection(
         if record_selection is not None:
             return record_selection
 
-    return resolve_provider_selection(settings)
+    default_selection = resolve_provider_selection(settings)
+    if provider_has_usable_credentials(
+        default_selection.provider,
+        credential_reader=FileCredentialStore(),
+    ):
+        return default_selection
+
+    fallback_selection = _first_usable_startup_selection(settings)
+    return fallback_selection or default_selection
+
+
+def _first_usable_startup_selection(settings: Any) -> ProviderSelection | None:
+    credential_store = FileCredentialStore()
+    for provider in settings.providers:
+        if provider_has_usable_credentials(provider, credential_reader=credential_store):
+            return ProviderSelection(provider=provider, model=provider.default_model)
+    return None
 
 
 def _selection_from_session_record(settings: Any, record: Any | None) -> ProviderSelection | None:
