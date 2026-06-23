@@ -1938,7 +1938,9 @@ class TauTuiApp(App[None]):
             if command.theme is not None:
                 self._set_tui_theme(cast(TuiThemeName, command.theme))
             if command.message:
-                if _command_message_uses_transcript(text):
+                if _command_message_uses_notification(text, command.message):
+                    self._notify(command.message)
+                elif _command_message_uses_transcript(text):
                     self._append_command_message(text, command.message)
                 else:
                     self._show_command_message(text, command.message)
@@ -2968,6 +2970,12 @@ def _command_message_uses_transcript(command_text: str) -> bool:
     """Return whether slash-command output should appear inline in the transcript."""
     command_name = command_text.split(maxsplit=1)[0].casefold()
     return command_name == "/reload"
+
+
+def _command_message_uses_notification(command_text: str, message: str) -> bool:
+    """Return whether slash-command output should appear as a notification."""
+    command_name = command_text.split(maxsplit=1)[0].casefold()
+    return command_name == "/name" and message.startswith("Session renamed: ")
 
 
 def _command_output_title(command_text: str) -> str:

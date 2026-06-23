@@ -172,6 +172,11 @@ class FakeSession:
             return CommandResult(handled=True, theme_picker_requested=True)
         if text.startswith("/theme "):
             return CommandResult(handled=True, theme=text.removeprefix("/theme "))
+        if text.startswith("/name "):
+            return CommandResult(
+                handled=True,
+                message=f"Session renamed: {text.removeprefix('/name ')}",
+            )
         return CommandResult(handled=False)
 
     def set_model(self, model: str) -> None:
@@ -2072,6 +2077,28 @@ async def test_tui_app_reload_appends_command_output_to_transcript() -> None:
                 text="/reload\nReloaded local coding resources and project context.",
             )
         ]
+
+
+@pytest.mark.anyio
+async def test_tui_app_name_success_uses_notification_instead_of_modal() -> None:
+    app = TauTuiApp(FakeSession())
+    notifications: list[str] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        del kwargs
+        notifications.append(message)
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/name Customer bugfix"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert notifications == ["Session renamed: Customer bugfix"]
+        assert not isinstance(app.screen, CommandOutputScreen)
+        assert app.state.items == []
 
 
 @pytest.mark.anyio
