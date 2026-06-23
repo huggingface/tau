@@ -562,6 +562,35 @@ def test_tool_chat_items_hide_and_show_result_text() -> None:
     assert "full file contents" in expanded
 
 
+def test_expanded_edit_tool_result_renders_patch_as_colored_diff() -> None:
+    item = ChatItem(
+        role="tool",
+        text="→ edit README.md",
+        tool_result_text=(
+            "✓ edit\n"
+            "Successfully replaced 1 block.\n"
+            "\n"
+            "Patch:\n"
+            "--- a/README.md\n"
+            "+++ b/README.md\n"
+            "@@\n"
+            "-old\n"
+            "+new"
+        ),
+    )
+
+    console = Console(record=True, width=100, color_system="truecolor")
+    console.print(render_chat_item(item, show_tool_results=True))
+
+    plain = console.export_text(clear=False)
+    styled = console.export_text(styles=True)
+    assert "Patch:" in plain
+    assert "-old" in plain
+    assert "+new" in plain
+    assert "\x1b[91;49m-old" in styled
+    assert "\x1b[92;49m+new" in styled
+
+
 def test_thinking_chat_items_use_distinct_style_and_markdown() -> None:
     console = Console(record=True, width=80)
 

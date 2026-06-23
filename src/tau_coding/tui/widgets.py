@@ -731,6 +731,8 @@ def render_chat_item(
             body_style=theme.role_styles["tool"].body,
             accent_style=_tool_accent_style(item, theme=theme),
             show_tool_results=show_tool_results,
+            syntax_theme=theme.syntax_theme,
+            theme=theme,
         )
         if item.role == "tool"
         else _render_chat_body(
@@ -798,12 +800,21 @@ def _render_tool_chat_body(
     body_style: str,
     accent_style: str | None,
     show_tool_results: bool,
-) -> Text:
+    syntax_theme: str,
+    theme: TuiTheme,
+) -> RenderableType:
     text = _render_tool_invocation(item.text, body_style=body_style, accent_style=accent_style)
-    if show_tool_results and item.tool_result_text:
-        text.append("\n\n")
-        text.append(item.tool_result_text, style=body_style)
-    return text
+    if not show_tool_results or not item.tool_result_text:
+        return text
+
+    result_body = _render_chat_body(
+        item.tool_result_text,
+        role=item.role,
+        body_style=body_style,
+        syntax_theme=syntax_theme,
+        theme=theme,
+    )
+    return Group(text, Text(""), result_body)
 
 
 def _render_tool_invocation(text: str, *, body_style: str, accent_style: str | None) -> Text:
