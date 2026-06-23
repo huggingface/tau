@@ -127,6 +127,36 @@ class WaitingProvider:
         return iterator()
 
 
+class CancellableWaitingProvider:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.calls: list[list[AgentMessage]] = []
+
+    def stream_response(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[AgentMessage],
+        tools: list[AgentTool],
+        signal: CancellationToken | None = None,
+    ) -> AsyncIterator[ProviderEvent]:
+        del model, system, tools
+        self.calls.append(list(messages))
+
+        async def iterator() -> AsyncIterator[ProviderEvent]:
+            yield ProviderResponseStartEvent(model="fake")
+            self.started.set()
+            while not self.release.is_set():
+                if signal is not None and signal.is_cancelled():
+                    return
+                await asyncio.sleep(0)
+            yield ProviderResponseEndEvent(message=AssistantMessage(content="Finished"))
+
+        return iterator()
+
+
 @pytest.mark.anyio
 async def test_load_empty_session_appends_metadata(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
@@ -317,6 +347,8 @@ async def test_prompt_queues_steering_while_session_is_running(tmp_path: Path) -
         "session_info",
         "model_change",
         "thinking_level_change",
+        "message",
+        "leaf",
     ]
     assert session.messages == (
         UserMessage(content="Hello"),
@@ -329,6 +361,36 @@ async def test_prompt_queues_steering_while_session_is_running(tmp_path: Path) -
     message_entries = [entry for entry in entries if entry.type == "message"]
     assert [entry.message for entry in message_entries] == list(session.messages)
     assert any(isinstance(event, QueueUpdateEvent) for event in run_events)
+
+
+@pytest.mark.anyio
+async def test_tree_can_branch_from_first_user_message_before_assistant_response(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    provider = CancellableWaitingProvider()
+    session = await CodingSession.load(_config(tmp_path, provider, storage))
+
+    async def run_prompt() -> None:
+        async for _event in session.prompt("Start here"):
+            pass
+
+    task = asyncio.create_task(run_prompt())
+    await provider.started.wait()
+
+    choices = await session.tree_choices()
+
+    session.cancel()
+    await task
+    result = await session.branch_to_entry(choices[0].entry_id)
+    entries = await storage.read_all()
+    message_entries = [entry for entry in entries if entry.type == "message"]
+
+    assert [choice.label for choice in choices] == ["user: Start here"]
+    assert result == f"Branched session at {choices[0].entry_id}."
+    assert [entry.message for entry in message_entries] == [UserMessage(content="Start here")]
+    assert isinstance(entries[-1], LeafEntry)
+    assert entries[-1].entry_id == choices[0].entry_id
 
 
 @pytest.mark.anyio
@@ -435,10 +497,7 @@ async def test_session_uses_active_model_thinking_capabilities(
     session.set_model("plain")
 
     assert session.available_thinking_levels == ()
-    assert (
-        session.thinking_unavailable_reason
-        == "openai:plain is not declared in thinking_models"
-    )
+    assert session.thinking_unavailable_reason == "openai:plain is not declared in thinking_models"
     with pytest.raises(ValueError, match="openai:plain is not declared in thinking_models"):
         await session.cycle_thinking_level()
 

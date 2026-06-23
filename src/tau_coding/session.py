@@ -1103,7 +1103,9 @@ class CodingSession:
         before_count = len(self._harness.messages)
         overflow_event: ErrorEvent | None = None
         try:
-            async for event in self._harness.prompt(expanded_content):
+            prompt_stream = self._harness.prompt(expanded_content)
+            before_count = await self._persist_initial_prompt_message(before_count)
+            async for event in prompt_stream:
                 if isinstance(event, ErrorEvent) and not event.recoverable:
                     self._last_diagnostic_log_path = self._diagnostic_logger.log_error_event(
                         context=context,
@@ -1193,6 +1195,14 @@ class CodingSession:
                 model=self.model,
                 provider_name=self.provider_name,
             )
+
+    async def _persist_initial_prompt_message(self, before_count: int) -> int:
+        new_messages = self._harness.messages[before_count:]
+        if len(new_messages) != 1 or not isinstance(new_messages[0], UserMessage):
+            return before_count
+
+        await self._persist_new_messages(before_count)
+        return before_count + 1
 
     async def _try_auto_compact(
         self,
