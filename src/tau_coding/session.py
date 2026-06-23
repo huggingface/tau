@@ -202,11 +202,13 @@ class CodingSession:
         context_files: tuple[ProjectContextFile, ...] = (),
         resource_diagnostics: tuple[ResourceDiagnostic, ...] = (),
         command_registry: CommandRegistry | None = None,
+        pending_initial_entries: tuple[SessionEntry, ...] = (),
     ) -> None:
         self._config = config
         self._state = state
         self._harness = harness
         self._last_parent_id = last_parent_id
+        self._pending_initial_entries = pending_initial_entries
         self._skills = skills
         self._prompt_templates = prompt_templates
         self._context_files = context_files
@@ -230,6 +232,7 @@ class CodingSession:
     async def load(cls, config: CodingSessionConfig) -> CodingSession:
         """Load a coding session from append-only storage."""
         entries = await config.storage.read_all()
+        pending_initial_entries: tuple[SessionEntry, ...] = ()
         if not entries:
             info = SessionInfoEntry(cwd=str(config.cwd))
             model = ModelChangeEntry(parent_id=info.id, model=config.model)
@@ -237,10 +240,8 @@ class CodingSession:
                 parent_id=model.id,
                 thinking_level=config.thinking_level,
             )
-            await config.storage.append(info)
-            await config.storage.append(model)
-            await config.storage.append(thinking)
             entries = [info, model, thinking]
+            pending_initial_entries = (info, model, thinking)
 
         linear_state = SessionState.from_entries(entries)
         state = (
@@ -284,6 +285,7 @@ class CodingSession:
             context_files=resources.context_files,
             resource_diagnostics=resources.diagnostics,
             command_registry=config.command_registry,
+            pending_initial_entries=pending_initial_entries,
         )
         session._sync_thinking_level_to_active_model()
         session._refresh_runtime_provider()
@@ -733,6 +735,7 @@ class CodingSession:
             parent_id=self._last_parent_id,
             thinking_level=normalized,
         )
+        await self._ensure_session_initialized()
         await self._config.storage.append(entry)
         leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
         await self._config.storage.append(leaf)
@@ -1174,6 +1177,9 @@ class CodingSession:
 
     async def _persist_new_messages(self, before_count: int) -> None:
         new_messages = self._harness.messages[before_count:]
+        if not new_messages:
+            return
+        await self._ensure_session_initialized()
         last_message_entry_id: str | None = None
         for message in new_messages:
             entry = MessageEntry(parent_id=self._last_parent_id, message=message)
@@ -1193,6 +1199,13 @@ class CodingSession:
                 model=self.model,
                 provider_name=self.provider_name,
             )
+
+    async def _ensure_session_initialized(self) -> None:
+        if not self._pending_initial_entries:
+            return
+        for entry in self._pending_initial_entries:
+            await self._config.storage.append(entry)
+        self._pending_initial_entries = ()
 
     async def _try_auto_compact(
         self,
@@ -1357,6 +1370,7 @@ class CodingSession:
             summary=summary,
             replaces_entry_ids=list(replace_entry_ids),
         )
+        await self._ensure_session_initialized()
         await self._config.storage.append(compaction)
         leaf = LeafEntry(parent_id=compaction.id, entry_id=compaction.id)
         await self._config.storage.append(leaf)

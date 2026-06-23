@@ -128,23 +128,14 @@ class WaitingProvider:
 
 
 @pytest.mark.anyio
-async def test_load_empty_session_appends_metadata(tmp_path: Path) -> None:
+async def test_load_empty_session_defers_transcript_file(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
 
     session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
 
     entries = await storage.read_all()
-    assert isinstance(entries[0], SessionInfoEntry)
-    assert entries[0].cwd == str(tmp_path)
-    assert entries[1] == ModelChangeEntry(
-        id=entries[1].id, parent_id=entries[0].id, model="fake", timestamp=entries[1].timestamp
-    )
-    assert entries[2] == ThinkingLevelChangeEntry(
-        id=entries[2].id,
-        parent_id=entries[1].id,
-        thinking_level="medium",
-        timestamp=entries[2].timestamp,
-    )
+    assert entries == []
+    assert not storage.path.exists()
     assert session.messages == ()
     assert session.state.model == "fake"
     assert session.thinking_level == "medium"
@@ -231,6 +222,18 @@ async def test_prompt_persists_user_assistant_and_leaf_entries(tmp_path: Path) -
     _events = await _collect_session_events(session.prompt("Hello"))
 
     entries = await storage.read_all()
+    assert storage.path.exists()
+    assert isinstance(entries[0], SessionInfoEntry)
+    assert entries[0].cwd == str(tmp_path)
+    assert entries[1] == ModelChangeEntry(
+        id=entries[1].id, parent_id=entries[0].id, model="fake", timestamp=entries[1].timestamp
+    )
+    assert entries[2] == ThinkingLevelChangeEntry(
+        id=entries[2].id,
+        parent_id=entries[1].id,
+        thinking_level="medium",
+        timestamp=entries[2].timestamp,
+    )
     message_entries = [entry for entry in entries if entry.type == "message"]
     assert [entry.message for entry in message_entries] == [
         UserMessage(content="Hello"),
@@ -313,11 +316,7 @@ async def test_prompt_queues_steering_while_session_is_running(tmp_path: Path) -
     await task
 
     assert queue_events == [QueueUpdateEvent(steering=("Queued steering",))]
-    assert [entry.type for entry in entries_before_release] == [
-        "session_info",
-        "model_change",
-        "thinking_level_change",
-    ]
+    assert entries_before_release == []
     assert session.messages == (
         UserMessage(content="Hello"),
         AssistantMessage(content="First"),
