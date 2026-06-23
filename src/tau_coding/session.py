@@ -417,11 +417,11 @@ class CodingSession:
                     branch_root_id=entry_id,
                     summary=summary,
                 )
-                await self._config.storage.append(summary_entry)
+                await self._append_session_entry(summary_entry)
                 target_id = summary_entry.id
 
         leaf = LeafEntry(parent_id=target_id, entry_id=target_id)
-        await self._config.storage.append(leaf)
+        await self._append_session_entry(leaf)
         self._last_parent_id = target_id
 
         entries = await self._config.storage.read_all()
@@ -735,10 +735,9 @@ class CodingSession:
             parent_id=self._last_parent_id,
             thinking_level=normalized,
         )
-        await self._ensure_session_initialized()
-        await self._config.storage.append(entry)
+        await self._append_session_entry(entry)
         leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
-        await self._config.storage.append(leaf)
+        await self._append_session_entry(leaf)
         self._last_parent_id = entry.id
 
         entries = await self._config.storage.read_all()
@@ -1179,17 +1178,16 @@ class CodingSession:
         new_messages = self._harness.messages[before_count:]
         if not new_messages:
             return
-        await self._ensure_session_initialized()
         last_message_entry_id: str | None = None
         for message in new_messages:
             entry = MessageEntry(parent_id=self._last_parent_id, message=message)
-            await self._config.storage.append(entry)
+            await self._append_session_entry(entry)
             self._last_parent_id = entry.id
             last_message_entry_id = entry.id
 
         if last_message_entry_id is not None:
             leaf = LeafEntry(parent_id=last_message_entry_id, entry_id=last_message_entry_id)
-            await self._config.storage.append(leaf)
+            await self._append_session_entry(leaf)
 
         entries = await self._config.storage.read_all()
         self._state = SessionState.from_entries(entries)
@@ -1199,6 +1197,11 @@ class CodingSession:
                 model=self.model,
                 provider_name=self.provider_name,
             )
+
+    async def _append_session_entry(self, entry: SessionEntry) -> None:
+        """Append one durable entry after flushing deferred session metadata."""
+        await self._ensure_session_initialized()
+        await self._config.storage.append(entry)
 
     async def _ensure_session_initialized(self) -> None:
         if not self._pending_initial_entries:
@@ -1370,10 +1373,9 @@ class CodingSession:
             summary=summary,
             replaces_entry_ids=list(replace_entry_ids),
         )
-        await self._ensure_session_initialized()
-        await self._config.storage.append(compaction)
+        await self._append_session_entry(compaction)
         leaf = LeafEntry(parent_id=compaction.id, entry_id=compaction.id)
-        await self._config.storage.append(leaf)
+        await self._append_session_entry(leaf)
         self._last_parent_id = compaction.id
 
         entries = await self._config.storage.read_all()
