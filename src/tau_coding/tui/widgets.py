@@ -868,7 +868,7 @@ def _visible_chat_text(item: ChatItem, *, show_tool_results: bool) -> str:
         if show_tool_results and item.tool_result_text:
             return f"**Compaction Summary**\n\n{item.tool_result_text}"
         return item.text
-    if item.role != "tool" or not show_tool_results or not item.tool_result_text:
+    if item.role not in {"tool", "skill"} or not show_tool_results or not item.tool_result_text:
         return item.text
     return f"{item.text}\n\n{item.tool_result_text}"
 

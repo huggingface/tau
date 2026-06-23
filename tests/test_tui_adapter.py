@@ -112,6 +112,66 @@ def test_tui_adapter_flushes_assistant_buffer_before_tool_events() -> None:
     assert "→ read" in state.items[1].text
 
 
+def test_tui_adapter_renders_skill_file_reads_with_skill_style() -> None:
+    skill = Skill(
+        name="review",
+        path=Path("/workspace/.tau/skills/review.md"),
+        content="# Review",
+        description="Review code",
+    )
+    state = TuiState(skills=(skill,))
+    adapter = TuiEventAdapter(state)
+
+    adapter.apply(
+        ToolExecutionStartEvent(
+            tool_call=ToolCall(
+                id="call-1",
+                name="read",
+                arguments={"path": "/workspace/.tau/skills/review.md"},
+            )
+        )
+    )
+    adapter.apply(
+        ToolExecutionEndEvent(
+            result=AgentToolResult(
+                tool_call_id="call-1",
+                name="read",
+                ok=True,
+                content="# Review\nFull instructions.",
+            )
+        )
+    )
+
+    assert [(item.role, item.text, item.tool_result_text) for item in state.items] == [
+        ("skill", "Loading skill: review", "✓ read\n# Review\nFull instructions.")
+    ]
+
+
+def test_tui_adapter_leaves_ordinary_reads_as_tool_items() -> None:
+    skill = Skill(
+        name="review",
+        path=Path("/workspace/.tau/skills/review.md"),
+        content="# Review",
+        description="Review code",
+    )
+    state = TuiState(skills=(skill,))
+    adapter = TuiEventAdapter(state)
+
+    adapter.apply(
+        ToolExecutionStartEvent(
+            tool_call=ToolCall(
+                id="call-1",
+                name="read",
+                arguments={"path": "/workspace/README.md"},
+            )
+        )
+    )
+
+    assert [(item.role, item.text) for item in state.items] == [
+        ("tool", "→ read /workspace/README.md")
+    ]
+
+
 def test_tool_call_blocks_use_human_readable_invocations() -> None:
     assert (
         format_tool_call_block(

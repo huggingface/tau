@@ -1753,7 +1753,7 @@ class TauTuiApp(App[None]):
         super().__init__()
         self._bindings = BindingsMap(_app_bindings(self.tui_settings.keybindings))
         self.session = session
-        self.state = TuiState()
+        self.state = TuiState(skills=session.skills)
         self.state.load_messages(session.messages)
         self.adapter = TuiEventAdapter(self.state)
         self._prompt_worker: Worker[None] | None = None
@@ -1903,6 +1903,7 @@ class TauTuiApp(App[None]):
                     self._refresh()
                     compact_message = await self.session.compact(command.compact_summary)
                     self.state.clear()
+                    self.state.set_skills(self.session.skills)
                     self.state.load_messages(self.session.messages)
                     self._notify(compact_message)
                 except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
@@ -1936,6 +1937,7 @@ class TauTuiApp(App[None]):
                 await self._set_thinking_level(command.thinking_level)
             if command.theme is not None:
                 self._set_tui_theme(cast(TuiThemeName, command.theme))
+            self.state.set_skills(self.session.skills)
             if command.message:
                 if _command_message_uses_notification(text, command.message):
                     self._notify(command.message)
@@ -2272,6 +2274,7 @@ class TauTuiApp(App[None]):
         try:
             resume_message = await self.session.resume(session_id)
             self.state.clear()
+            self.state.set_skills(self.session.skills)
             self.state.load_messages(self.session.messages)
             self._notify(resume_message)
         except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
@@ -2333,6 +2336,7 @@ class TauTuiApp(App[None]):
             if isawaitable(result):
                 result = await result
             self.state.clear()
+            self.state.set_skills(self.session.skills)
             self.state.load_messages(self.session.messages)
             if isinstance(result, str):
                 self._notify(result)
@@ -2349,6 +2353,7 @@ class TauTuiApp(App[None]):
         try:
             await new_session()
             self.state.clear()
+            self.state.set_skills(self.session.skills)
             self.state.load_messages(self.session.messages)
         except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
             self._notify(f"Error: {exc}", severity="error")

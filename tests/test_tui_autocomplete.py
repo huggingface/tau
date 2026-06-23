@@ -68,7 +68,7 @@ def test_command_completion_prioritizes_direct_matches_over_search_terms() -> No
     assert state.selected.apply("/res") == "/resume"
 
 
-def test_skill_command_is_not_registered_for_command_completion() -> None:
+def test_skill_command_is_available_for_command_completion() -> None:
     state = build_completion_state(
         "/ski",
         command_registry=create_default_command_registry(),
@@ -76,7 +76,9 @@ def test_skill_command_is_not_registered_for_command_completion() -> None:
         prompt_templates=(),
     )
 
-    assert state.items == ()
+    assert [item.display for item in state.items] == ["/skill:"]
+    assert state.selected is not None
+    assert state.selected.apply("/ski") == "/skill:"
 
 
 def test_skill_name_completion_preserves_request_text() -> None:

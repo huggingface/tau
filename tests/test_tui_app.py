@@ -134,6 +134,13 @@ class FakeSession:
             )
         if text == "/reload":
             self.reload_count += 1
+            self.skills = (
+                Skill(
+                    name="reloaded",
+                    path=self.cwd / "reloaded.md",
+                    content="Reloaded skill",
+                ),
+            )
             return CommandResult(
                 handled=True,
                 message="Reloaded local coding resources and project context.",
@@ -570,6 +577,25 @@ def test_skill_chat_items_use_distinct_compact_style() -> None:
     assert "38;2;229;212;239" in output
 
 
+def test_skill_chat_items_expand_with_tool_results_toggle() -> None:
+    item = ChatItem(
+        role="skill",
+        text="Loading skill: review",
+        tool_result_text="✓ read\n# Review\nFull noisy instructions.",
+    )
+    collapsed_console = Console(record=True, width=80)
+    collapsed_console.print(render_chat_item(item, show_tool_results=False))
+    collapsed = collapsed_console.export_text()
+    expanded_console = Console(record=True, width=80)
+    expanded_console.print(render_chat_item(item, show_tool_results=True))
+    expanded = expanded_console.export_text()
+
+    assert "Loading skill: review" in collapsed
+    assert "Full noisy instructions" not in collapsed
+    assert "Loading skill: review" in expanded
+    assert "Full noisy instructions" in expanded
+
+
 def test_branch_summary_chat_items_expand_with_tool_results_toggle() -> None:
     item = ChatItem(
         role="branch_summary",
@@ -666,6 +692,42 @@ def test_tui_state_compacts_expanded_skill_messages() -> None:
     assert [(item.role, item.text) for item in state.items] == [
         ("skill", "Using skill: review"),
         ("user", "check the auth flow"),
+    ]
+
+
+def test_tui_state_renders_restored_skill_file_reads_with_skill_style() -> None:
+    skill = Skill(
+        name="review",
+        path=Path("/workspace/.tau/skills/review.md"),
+        content="# Review\nFull noisy instructions.",
+        description="Review code",
+    )
+    state = tui_app.TuiState(skills=(skill,))
+
+    state.load_messages(
+        [
+            AssistantMessage(
+                content="Reading skill.",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="read",
+                        arguments={"path": "/workspace/.tau/skills/review.md"},
+                    )
+                ],
+            ),
+            ToolResultMessage(
+                tool_call_id="call-1",
+                name="read",
+                ok=True,
+                content="# Review\nFull noisy instructions.",
+            ),
+        ]
+    )
+
+    assert [(item.role, item.text, item.tool_result_text) for item in state.items] == [
+        ("assistant", "Reading skill.", None),
+        ("skill", "Loading skill: review", "✓ read\n# Review\nFull noisy instructions."),
     ]
 
 
@@ -2085,6 +2147,7 @@ async def test_tui_app_reload_appends_command_output_to_transcript() -> None:
                 text="/reload\nReloaded local coding resources and project context.",
             )
         ]
+        assert [skill.name for skill in app.state.skills] == ["reloaded"]
 
 
 @pytest.mark.anyio

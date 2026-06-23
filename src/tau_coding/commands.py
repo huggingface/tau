@@ -235,6 +235,15 @@ def create_default_command_registry() -> CommandRegistry:
     )
     registry.register(
         SlashCommand(
+            name="skill",
+            usage="/skill:<name> [request]",
+            description="Expand a loaded skill into your prompt.",
+            handler=_skill_command,
+            search_terms=("skills",),
+        )
+    )
+    registry.register(
+        SlashCommand(
             name="hotkeys",
             usage="/hotkeys",
             description="Show common keyboard shortcuts.",

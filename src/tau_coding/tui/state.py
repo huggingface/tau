@@ -2,12 +2,13 @@
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 
 from tau_agent.messages import AgentMessage
 from tau_agent.tools import AgentToolResult, ToolCall
 from tau_agent.types import JSONValue
-from tau_coding.skills import parse_skill_invocation
+from tau_coding.skills import Skill, parse_skill_invocation
 
 ChatItemRole = Literal[
     "user",
@@ -49,6 +50,7 @@ class TuiState:
     show_thinking: bool = False
     queued_steering: tuple[str, ...] = ()
     queued_follow_up: tuple[str, ...] = ()
+    skills: tuple[Skill, ...] = ()
 
     def add_item(
         self,
@@ -72,6 +74,14 @@ class TuiState:
 
     def add_tool_call(self, tool_call: ToolCall) -> None:
         """Append a collapsed tool-call item."""
+        skill_name = self._read_skill_name(tool_call)
+        if skill_name is not None:
+            self.add_item(
+                "skill",
+                f"Loading skill: {skill_name}",
+                tool_call_id=tool_call.id,
+            )
+            return
         self.add_item(
             "tool",
             format_tool_call_block(tool_call),
@@ -122,7 +132,7 @@ class TuiState:
             data=result.data,
         )
         for item in reversed(self.items):
-            if item.role == "tool" and item.tool_call_id == result.tool_call_id:
+            if item.role in {"tool", "skill"} and item.tool_call_id == result.tool_call_id:
                 item.tool_result_text = result_text
                 return
         self.add_item(
@@ -158,6 +168,10 @@ class TuiState:
         self.assistant_buffer = ""
         self.error = None
 
+    def set_skills(self, skills: Iterable[Skill]) -> None:
+        """Replace loaded skill metadata used for presentation-only path matching."""
+        self.skills = tuple(skills)
+
     def load_messages(self, messages: Iterable[AgentMessage]) -> None:
         """Populate the transcript from restored session messages."""
         for message in messages:
@@ -180,6 +194,18 @@ class TuiState:
                         error=message.error,
                     )
                 )
+
+    def _read_skill_name(self, tool_call: ToolCall) -> str | None:
+        if tool_call.name != "read":
+            return None
+        path = _string_argument(tool_call.arguments, "path")
+        if path is None:
+            return None
+        read_path = _normalized_path(path)
+        for skill in self.skills:
+            if _normalized_path(skill.path) == read_path:
+                return skill.name
+        return None
 
 
 def _parse_branch_summary_message(content: str) -> str | None:
@@ -256,6 +282,10 @@ def _fallback_tool_call_invocation(tool_call: ToolCall) -> str:
 def _string_argument(arguments: dict[str, JSONValue], key: str) -> str | None:
     value = arguments.get(key)
     return value if isinstance(value, str) else None
+
+
+def _normalized_path(path: str | Path) -> Path:
+    return Path(path).expanduser().resolve(strict=False)
 
 
 def _int_argument(arguments: dict[str, JSONValue], key: str) -> int | None:

@@ -107,6 +107,7 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
         "resume",
         "scoped-models",
         "session",
+        "skill",
         "theme",
         "tree",
     ]
