@@ -2905,6 +2905,27 @@ async def test_tui_app_cycles_thinking_from_keybinding() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_app_cycles_thinking_from_keybinding_while_running() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+    notifications: list[str] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        del kwargs
+        notifications.append(message)
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        app.state.running = True
+        await pilot.press("shift+tab")
+        await pilot.pause()
+
+    assert session.thinking_level == "high"
+    assert notifications == []
+
+
+@pytest.mark.anyio
 async def test_tui_app_cycles_scoped_model_from_keybinding() -> None:
     session = FakeSession()
     session.scoped_model_choices = (

@@ -2240,9 +2240,6 @@ class TauTuiApp(App[None]):
 
     def action_cycle_thinking(self) -> None:
         """Cycle the active thinking mode."""
-        if self.state.running:
-            self._notify("Tau is already working. Press Escape to cancel.")
-            return
         self.run_worker(self._cycle_thinking_level(), exclusive=False)
 
     def action_cycle_model(self) -> None:
