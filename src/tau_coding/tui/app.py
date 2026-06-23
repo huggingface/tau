@@ -2906,13 +2906,14 @@ def _visible_completion_state(
     if not state.items or max_lines <= 0:
         return CompletionState()
 
+    selected_line_limit = max(max_lines - 1, 1)
     start = 0
     while start < state.selected_index:
         candidate = CompletionState(
             items=state.items[start:],
             selected_index=state.selected_index - start,
         )
-        if _completion_selected_render_line(candidate) < max_lines:
+        if _completion_selected_render_line(candidate) < selected_line_limit:
             break
         start += 1
 

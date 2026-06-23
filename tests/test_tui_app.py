@@ -2101,6 +2101,26 @@ def test_visible_completion_state_keeps_selected_item_in_render_window() -> None
     assert _completion_selected_render_line(visible) < 8
 
 
+def test_visible_completion_state_keeps_selected_item_above_bottom_edge() -> None:
+    items = tuple(
+        CompletionItem(
+            display=f"/prompt-{index:02d}",
+            replacement=f"/prompt-{index:02d}",
+            start=0,
+            end=1,
+            category="Custom prompts",
+        )
+        for index in range(30)
+    )
+    state = CompletionState(items=items, selected_index=15)
+
+    visible = _visible_completion_state(state, max_lines=8)
+
+    assert visible.selected is not None
+    assert visible.selected.display == "/prompt-15"
+    assert _completion_selected_render_line(visible) < 7
+
+
 @pytest.mark.anyio
 async def test_tui_app_scrolls_completion_selection_into_view() -> None:
     session = FakeSession()
