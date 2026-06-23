@@ -116,6 +116,13 @@ remove it from the scoped list. Press `Tab` in the picker to show only scoped
 models. Press `Ctrl+P` in the prompt to cycle through scoped models without
 opening the picker.
 
+Tau may update `providers.json` when you log in, change models, or edit scoped
+models. Those writes reload the latest file from disk first, apply only the
+requested provider/default/scoped-model change, write atomically, and keep a
+best-effort `providers.json.bak` backup of the previous file. This prevents an
+older running Tau process from saving stale provider settings over newer custom
+providers or scoped models.
+
 ## TUI Settings
 
 The built-in Textual frontend reads optional settings from:

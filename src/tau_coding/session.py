@@ -61,15 +61,14 @@ from tau_coding.provider_config import (
     ProviderConfig,
     ProviderConfigError,
     ProviderSettings,
-    ScopedModelConfig,
     load_provider_settings,
     provider_default_thinking_level,
     provider_has_usable_credentials,
     provider_thinking_levels,
     provider_thinking_unavailable_reason,
     resolve_provider_selection,
-    save_provider_settings,
-    set_default_provider_model,
+    save_default_provider_model,
+    toggle_saved_scoped_model,
 )
 from tau_coding.provider_runtime import ClosableModelProvider, create_model_provider
 from tau_coding.reload import CodingReloadSummary, ReloadCategorySummary
@@ -641,14 +640,13 @@ class CodingSession:
                 f"Model is not available: {choice.provider_name}:{choice.model}"
             )
 
-        existing = list(self._provider_settings.scoped_models)
-        target = ScopedModelConfig(provider=choice.provider_name, model=choice.model)
-        if target in existing:
-            existing = [item for item in existing if item != target]
-        else:
-            existing.append(target)
-        self._provider_settings = replace(self._provider_settings, scoped_models=tuple(existing))
-        save_provider_settings(self._provider_settings, self._resource_paths.paths)
+        self._provider_settings = toggle_saved_scoped_model(
+            provider_name=choice.provider_name,
+            model=choice.model,
+            paths=self._resource_paths.paths,
+            fallback_settings=self._provider_settings,
+        )
+        self._sync_thinking_level_to_active_model()
         return self.scoped_model_choices
 
     def cycle_scoped_model(self, *, reverse: bool = False) -> ModelChoice:
@@ -767,12 +765,13 @@ class CodingSession:
     def _persist_default_model_choice(self) -> None:
         if self._provider_settings is None:
             return
-        self._provider_settings = set_default_provider_model(
-            self._provider_settings,
+        self._provider_settings = save_default_provider_model(
             provider_name=self.provider_name,
             model=self.model,
+            paths=self._resource_paths.paths,
+            fallback_settings=self._provider_settings,
         )
-        save_provider_settings(self._provider_settings, self._resource_paths.paths)
+        self._sync_thinking_level_to_active_model()
 
     def _refresh_runtime_provider(self) -> None:
         if self._runtime_provider_config is None:

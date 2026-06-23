@@ -137,7 +137,14 @@ after saving credentials.
 
 When Tau loads `~/.tau/providers.json`, it merges the current built-in model
 catalog into built-in provider entries such as Hugging Face. Custom models and
-headers in the file are preserved.
+headers in the file are preserved. If `credentials.json` already contains stored
+credentials for a built-in provider that is missing from `providers.json`, Tau
+adds that provider back in memory so a stale provider file does not hide saved
+logins.
+
+When Tau writes provider settings after `/login`, `/model`, or scoped-model
+changes, it reloads the latest file first, applies the narrow requested change,
+writes atomically, and keeps a best-effort `providers.json.bak` backup.
 
 ## Fake provider
 

@@ -1,9 +1,12 @@
 """Durable provider configuration for Tau coding sessions."""
 
+from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from json import dumps, loads
 from os import environ
 from pathlib import Path
+from shutil import copy2
+from tempfile import NamedTemporaryFile
 from typing import Any, Protocol
 
 from tau_ai import (
@@ -16,6 +19,7 @@ from tau_ai import (
     OpenAICompatibleConfig,
 )
 from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL
+from tau_coding.credentials import FileCredentialStore, credentials_path
 from tau_coding.paths import TauPaths
 from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG, ProviderKind
 from tau_coding.thinking import (
@@ -353,15 +357,83 @@ def load_provider_settings(paths: TauPaths | None = None) -> ProviderSettings:
     raw = loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ProviderConfigError("Provider settings must be a JSON object")
-    return _with_builtin_catalog_models(provider_settings_from_json(raw))
+    return _with_builtin_catalog_models(provider_settings_from_json(raw), paths=paths)
 
 
 def save_provider_settings(settings: ProviderSettings, paths: TauPaths | None = None) -> Path:
     """Write durable provider settings and return the path."""
     path = provider_settings_path(paths)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(dumps(settings.to_json(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if path.exists():
+        with suppress(OSError):
+            copy2(path, path.with_suffix(path.suffix + ".bak"))
+    _atomic_write_text(path, dumps(settings.to_json(), indent=2, sort_keys=True) + "\n")
     return path
+
+
+def save_default_provider_model(
+    *,
+    provider_name: str,
+    model: str,
+    paths: TauPaths | None = None,
+    fallback_settings: ProviderSettings | None = None,
+) -> ProviderSettings:
+    """Reload settings, persist one default provider/model change, and return them."""
+    settings = _load_provider_settings_for_write(paths, fallback_settings=fallback_settings)
+    updated = set_default_provider_model(settings, provider_name=provider_name, model=model)
+    save_provider_settings(updated, paths)
+    return updated
+
+
+def toggle_saved_scoped_model(
+    *,
+    provider_name: str,
+    model: str,
+    paths: TauPaths | None = None,
+    fallback_settings: ProviderSettings | None = None,
+) -> ProviderSettings:
+    """Reload settings, toggle one scoped model, persist them, and return them."""
+    settings = _load_provider_settings_for_write(paths, fallback_settings=fallback_settings)
+    provider = settings.get_provider(provider_name)
+    if model not in provider.models:
+        raise ProviderConfigError(f"Model is not configured: {provider_name}:{model}")
+
+    existing = list(settings.scoped_models)
+    target = ScopedModelConfig(provider=provider_name, model=model)
+    if target in existing:
+        existing = [item for item in existing if item != target]
+    else:
+        existing.append(target)
+    updated = replace(settings, scoped_models=tuple(existing))
+    save_provider_settings(updated, paths)
+    return updated
+
+
+def upsert_saved_provider(
+    provider: ProviderConfig,
+    *,
+    set_default: bool = False,
+    paths: TauPaths | None = None,
+    fallback_settings: ProviderSettings | None = None,
+) -> ProviderSettings:
+    """Reload settings, upsert one provider entry, persist them, and return them."""
+    settings = _load_provider_settings_for_write(paths, fallback_settings=fallback_settings)
+    updated = upsert_provider(settings, provider, set_default=set_default)
+    save_provider_settings(updated, paths)
+    return updated
+
+
+def _load_provider_settings_for_write(
+    paths: TauPaths | None,
+    *,
+    fallback_settings: ProviderSettings | None = None,
+) -> ProviderSettings:
+    """Load the latest on-disk settings, falling back only when no file exists."""
+    if provider_settings_path(paths).exists():
+        return load_provider_settings(paths)
+    if fallback_settings is not None:
+        return fallback_settings
+    return load_provider_settings(paths)
 
 
 def set_default_provider_model(
@@ -417,7 +489,11 @@ def upsert_provider(
     return updated
 
 
-def _with_builtin_catalog_models(settings: ProviderSettings) -> ProviderSettings:
+def _with_builtin_catalog_models(
+    settings: ProviderSettings,
+    *,
+    paths: TauPaths | None = None,
+) -> ProviderSettings:
     """Return settings with current built-in model catalogs merged in."""
     builtin_configs = {
         provider.name: provider
@@ -431,11 +507,35 @@ def _with_builtin_catalog_models(settings: ProviderSettings) -> ProviderSettings
         else provider
         for provider in settings.providers
     )
+    providers = _append_credentialed_builtin_providers(providers, builtin_configs, paths=paths)
+    default_provider = settings.default_provider
+    if default_provider not in {provider.name for provider in providers}:
+        default_provider = providers[0].name if providers else DEFAULT_PROVIDER_NAME
     return ProviderSettings(
-        default_provider=settings.default_provider,
+        default_provider=default_provider,
         providers=providers,
         scoped_models=settings.scoped_models,
     )
+
+
+def _append_credentialed_builtin_providers(
+    providers: tuple[ProviderConfig, ...],
+    builtin_configs: dict[str, ProviderConfig],
+    *,
+    paths: TauPaths | None,
+) -> tuple[ProviderConfig, ...]:
+    """Append built-in providers that already have stored Tau credentials."""
+    credential_store = FileCredentialStore(credentials_path(paths) if paths else None)
+    provider_names = {provider.name for provider in providers}
+    appended = list(providers)
+    for entry in BUILTIN_PROVIDER_CATALOG:
+        provider = builtin_configs[entry.name]
+        if provider.name in provider_names:
+            continue
+        if provider_has_usable_credentials(provider, credential_reader=credential_store):
+            appended.append(provider)
+            provider_names.add(provider.name)
+    return tuple(appended)
 
 
 def _merge_provider_config(existing: ProviderConfig, incoming: ProviderConfig) -> ProviderConfig:
@@ -486,6 +586,29 @@ def _unique_strings(values: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
 
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write text through a sibling temp file and atomically replace the target."""
+    temp_path: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            "w",
+            dir=path.parent,
+            encoding="utf-8",
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(text)
+            temp_file.flush()
+        temp_path.replace(path)
+    except Exception:
+        if temp_path is not None:
+            with suppress(OSError):
+                temp_path.unlink()
+        raise
+
+
 def provider_settings_from_json(data: dict[str, Any]) -> ProviderSettings:
     """Parse provider settings from JSON-compatible data."""
     default_provider = _string(data.get("default_provider"), "default_provider")
@@ -497,13 +620,11 @@ def provider_settings_from_json(data: dict[str, Any]) -> ProviderSettings:
     if len(set(names)) != len(names):
         raise ProviderConfigError("Provider names must be unique")
     scoped_models = _scoped_models_from_json(data.get("scoped_models"))
-    settings = ProviderSettings(
+    return ProviderSettings(
         default_provider=default_provider,
         providers=providers,
         scoped_models=scoped_models,
     )
-    settings.get_provider(default_provider)
-    return settings
 
 
 def _scoped_models_from_json(value: object) -> tuple[ScopedModelConfig, ...]:
@@ -905,9 +1026,7 @@ def _reject_unimplemented_thinking_config(
     thinking_levels: tuple[ThinkingLevel, ...] | None,
 ) -> None:
     if thinking_levels is not None:
-        raise ProviderConfigError(
-            f"{provider_type} thinking controls are not implemented yet"
-        )
+        raise ProviderConfigError(f"{provider_type} thinking controls are not implemented yet")
 
 
 def _optional_string(value: object, field_name: str) -> str | None:

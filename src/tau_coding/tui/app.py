@@ -66,8 +66,7 @@ from tau_coding.provider_config import (
     provider_config_from_catalog_entry,
     provider_has_usable_credentials,
     resolve_provider_selection,
-    save_provider_settings,
-    upsert_provider,
+    upsert_saved_provider,
 )
 from tau_coding.provider_runtime import create_model_provider
 from tau_coding.session import (
@@ -2427,9 +2426,8 @@ class TauTuiApp(App[None]):
             return
         try:
             FileCredentialStore().set(entry.credential_name, api_key)
-            settings = load_provider_settings()
             provider = provider_config_from_catalog_entry(entry.name)
-            save_provider_settings(upsert_provider(settings, provider, set_default=False))
+            upsert_saved_provider(provider, set_default=False)
             self.session.reload_provider_settings()
             try:
                 self.session.set_provider(entry.name, persist_default=False)
@@ -2450,9 +2448,8 @@ class TauTuiApp(App[None]):
             return
         try:
             FileCredentialStore().set_oauth(entry.credential_name, credential)
-            settings = load_provider_settings()
             provider = provider_config_from_catalog_entry(entry.name)
-            save_provider_settings(upsert_provider(settings, provider, set_default=False))
+            upsert_saved_provider(provider, set_default=False)
             self.session.reload_provider_settings()
             try:
                 self.session.set_provider(entry.name, persist_default=False)

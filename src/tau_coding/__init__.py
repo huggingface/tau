@@ -66,9 +66,12 @@ from tau_coding.provider_config import (
     provider_thinking_levels,
     provider_thinking_unavailable_reason,
     resolve_provider_selection,
+    save_default_provider_model,
     save_provider_settings,
+    toggle_saved_scoped_model,
     upsert_openai_compatible_provider,
     upsert_provider,
+    upsert_saved_provider,
 )
 from tau_coding.rendering import (
     EventRenderer,
@@ -244,8 +247,11 @@ __all__ = [
     "render_prompt_template",
     "render_session_html",
     "resolve_provider_selection",
+    "save_default_provider_model",
     "save_provider_settings",
+    "toggle_saved_scoped_model",
     "export_session_html",
     "upsert_provider",
     "upsert_openai_compatible_provider",
+    "upsert_saved_provider",
 ]

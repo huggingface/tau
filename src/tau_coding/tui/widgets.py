@@ -616,9 +616,7 @@ def _rendered_content_bounds(lines: list[str]) -> tuple[int, int] | None:
     first = next((index for index, line in enumerate(lines) if line.strip()), None)
     if first is None:
         return None
-    last = next(
-        index for index in range(len(lines) - 1, -1, -1) if lines[index].strip()
-    )
+    last = next(index for index in range(len(lines) - 1, -1, -1) if lines[index].strip())
     return first, last
 
 
@@ -740,7 +738,7 @@ def render_compact_session_info(
     right = Text(style=theme.muted_text, overflow="fold", no_wrap=False, justify="right")
     right.append(_context_usage(session), style=theme.completion_description)
     right.append("  ")
-    right.append(session.model, style=theme.prompt_text)
+    right.append(f"{session.provider_name}:{session.model}", style=theme.prompt_text)
     right.append(" ")
     right.append(f"({_thinking_level(session)})", style=theme.completion_description)
 

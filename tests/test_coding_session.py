@@ -44,6 +44,7 @@ from tau_coding import (
     SessionManager,
     TauPaths,
     TauResourcePaths,
+    save_provider_settings,
 )
 from tau_coding import session as coding_session_module
 from tau_coding.session import parse_terminal_command
@@ -503,10 +504,7 @@ async def test_session_uses_active_model_thinking_capabilities(
     session.set_model("plain")
 
     assert session.available_thinking_levels == ()
-    assert (
-        session.thinking_unavailable_reason
-        == "openai:plain is not declared in thinking_models"
-    )
+    assert session.thinking_unavailable_reason == "openai:plain is not declared in thinking_models"
     with pytest.raises(ValueError, match="openai:plain is not declared in thinking_models"):
         await session.cycle_thinking_level()
 
@@ -1545,6 +1543,7 @@ async def test_session_switches_configured_provider(
         created_providers.append(provider)
         return provider
 
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("LOCAL_API_KEY", "test-key")
     monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
@@ -1819,6 +1818,67 @@ async def test_session_resumes_indexed_session(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
+async def test_session_toggle_scoped_model_preserves_newer_provider_file_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "local-key")
+    monkeypatch.setenv("REMOTE_API_KEY", "remote-key")
+    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    loaded_settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                api_key_env="LOCAL_API_KEY",
+                models=("qwen", "llama"),
+                default_model="qwen",
+            ),
+        ),
+        scoped_models=(ScopedModelConfig(provider="local", model="qwen"),),
+    )
+    newer_settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            loaded_settings.get_provider("local"),
+            OpenAICompatibleProviderConfig(
+                name="remote",
+                api_key_env="REMOTE_API_KEY",
+                models=("sonnet",),
+                default_model="sonnet",
+            ),
+        ),
+        scoped_models=(
+            ScopedModelConfig(provider="local", model="qwen"),
+            ScopedModelConfig(provider="remote", model="sonnet"),
+        ),
+    )
+    save_provider_settings(newer_settings, tau_paths)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="qwen",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "scoped-session.jsonl"),
+            cwd=tmp_path,
+            provider_name="local",
+            provider_settings=loaded_settings,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    session.toggle_scoped_model(ModelChoice(provider_name="local", model="llama"))
+
+    saved = coding_session_module.load_provider_settings(tau_paths)
+    assert saved.get_provider("remote").default_model == "sonnet"
+    assert saved.scoped_models == (
+        ScopedModelConfig(provider="local", model="qwen"),
+        ScopedModelConfig(provider="remote", model="sonnet"),
+        ScopedModelConfig(provider="local", model="llama"),
+    )
+
+
+@pytest.mark.anyio
 async def test_session_set_model_persists_default_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1907,6 +1967,56 @@ async def test_session_set_model_choice_persists_default_provider_model(
     assert saved.default_provider == "local"
     assert saved.get_provider("local").default_model == "llama"
     assert created == [("local", "qwen"), ("local", "llama")]
+
+
+@pytest.mark.anyio
+async def test_session_set_model_preserves_newer_provider_file_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    loaded_provider = OpenAICompatibleProviderConfig(
+        name="openai",
+        models=("gpt-5", "gpt-5-mini"),
+        default_model="gpt-5",
+    )
+    newer_settings = ProviderSettings(
+        default_provider="openai",
+        providers=(
+            loaded_provider,
+            OpenAICompatibleProviderConfig(
+                name="openrouter",
+                api_key_env="OPENROUTER_API_KEY",
+                credential_name="openrouter",
+                models=("openai/gpt-5.5",),
+                default_model="openai/gpt-5.5",
+                headers={"X-Title": "Tau"},
+            ),
+        ),
+        scoped_models=(ScopedModelConfig(provider="openrouter", model="openai/gpt-5.5"),),
+    )
+    save_provider_settings(newer_settings, tau_paths)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="gpt-5",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai",
+            provider_settings=ProviderSettings(providers=(loaded_provider,)),
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    session.set_model("gpt-5-mini")
+
+    saved = coding_session_module.load_provider_settings(tau_paths)
+    assert saved.get_provider("openai").default_model == "gpt-5-mini"
+    assert saved.get_provider("openrouter").headers == {"X-Title": "Tau"}
+    assert saved.scoped_models == (
+        ScopedModelConfig(provider="openrouter", model="openai/gpt-5.5"),
+    )
 
 
 @pytest.mark.anyio

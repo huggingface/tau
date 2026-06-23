@@ -1,7 +1,9 @@
+import json
 from pathlib import Path
 
 import pytest
 
+from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.paths import TauPaths
 from tau_coding.provider_config import (
     DEFAULT_MODEL,
@@ -77,10 +79,13 @@ def test_builtin_openai_declares_model_scoped_thinking_capabilities() -> None:
     )
     assert provider_thinking_unavailable_reason(openrouter, model="openai/gpt-5.5") is None
     assert provider_thinking_levels(openrouter, model="anthropic/claude-sonnet-4.6") == ()
-    assert provider_thinking_unavailable_reason(
-        openrouter,
-        model="anthropic/claude-sonnet-4.6",
-    ) == "openrouter:anthropic/claude-sonnet-4.6 is not declared in thinking_models"
+    assert (
+        provider_thinking_unavailable_reason(
+            openrouter,
+            model="anthropic/claude-sonnet-4.6",
+        )
+        == "openrouter:anthropic/claude-sonnet-4.6 is not declared in thinking_models"
+    )
     assert provider_thinking_levels(huggingface, model="openai/gpt-oss-120b") == (
         "low",
         "medium",
@@ -106,6 +111,41 @@ def test_builtin_openai_declares_model_scoped_thinking_capabilities() -> None:
     )
     assert provider_thinking_unavailable_reason(anthropic, model="claude-sonnet-4-6") is None
     assert provider_thinking_levels(anthropic, model="claude-haiku-4-5") == ()
+
+
+def test_save_provider_settings_writes_backup_when_replacing(tmp_path: Path) -> None:
+    paths = TauPaths(home=tmp_path / ".tau")
+    initial = ProviderSettings(
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="openai",
+                models=("gpt-5",),
+                default_model="gpt-5",
+            ),
+        ),
+    )
+    updated = ProviderSettings(
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="openai",
+                models=("gpt-5-mini",),
+                default_model="gpt-5-mini",
+            ),
+        ),
+    )
+
+    path = save_provider_settings(initial, paths)
+    save_provider_settings(updated, paths)
+
+    backup = path.with_suffix(path.suffix + ".bak")
+    assert backup.exists()
+    assert load_provider_settings(paths).get_provider("openai").default_model == "gpt-5-mini"
+    assert (
+        provider_settings_from_json(json.loads(backup.read_text()))
+        .get_provider("openai")
+        .default_model
+        == "gpt-5"
+    )
 
 
 def test_save_and_load_provider_settings_round_trip(tmp_path: Path) -> None:
@@ -647,6 +687,63 @@ def test_load_provider_settings_merges_builtin_model_catalog(tmp_path: Path) -> 
     assert "MiniMaxAI/MiniMax-M3" in provider.models
     assert "moonshotai/Kimi-K2.7-Code" in provider.models
     assert "custom/coder" in provider.models
+
+
+def test_load_provider_settings_restores_builtin_providers_with_stored_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    for env_name in (
+        "OPENAI_API_KEY",
+        "OPENAI_CODEX_ACCESS_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
+        "HF_TOKEN",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    (tau_home / "providers.json").write_text(
+        """
+{
+  "default_provider": "local",
+  "providers": [
+    {
+      "type": "openai-compatible",
+      "name": "local",
+      "base_url": "http://localhost:11434/v1",
+      "api_key_env": "LOCAL_API_KEY",
+      "credential_name": null,
+      "models": ["qwen"],
+      "default_model": "qwen"
+    }
+  ]
+}
+""".strip(),
+        encoding="utf-8",
+    )
+    store = FileCredentialStore(tau_home / "credentials.json")
+    store.set("openrouter", "stored-openrouter-key")
+    store.set_oauth(
+        "openai-codex",
+        OAuthCredential(
+            access="access-token",
+            refresh="refresh-token",
+            expires=123456,
+            account_id="account-1",
+        ),
+    )
+
+    settings = load_provider_settings(TauPaths(home=tau_home))
+
+    assert [provider.name for provider in settings.providers] == [
+        "local",
+        "openai-codex",
+        "openrouter",
+    ]
+    assert settings.default_provider == "local"
+    assert settings.get_provider("openrouter").credential_name == "openrouter"
+    assert settings.get_provider("openai-codex").credential_name == "openai-codex"
 
 
 def test_load_provider_settings_restores_builtin_credential_name(

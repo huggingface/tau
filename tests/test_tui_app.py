@@ -29,12 +29,13 @@ from tau_agent import (
     UserMessage,
 )
 from tau_coding.commands import CommandResult
-from tau_coding.credentials import OAuthCredential
+from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.provider_config import (
     OpenAICodexProviderConfig,
     OpenAICompatibleProviderConfig,
     ProviderSettings,
     ScopedModelConfig,
+    save_provider_settings,
 )
 from tau_coding.session import ModelChoice, SessionTreeChoice, TerminalCommandResult
 from tau_coding.session_manager import CodingSessionRecord
@@ -404,8 +405,7 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
     output = console.export_text()
     assert "/workspace/project (--)" in output
     assert "12k/200k context" in output
-    assert "fake-model" in output
-    assert "openai:fake-model" not in output
+    assert "openai:fake-model" in output
     assert "(medium)" in output
 
 
@@ -2371,6 +2371,45 @@ async def test_tui_login_openai_codex_saves_oauth_credentials(
 
 
 @pytest.mark.anyio
+async def test_tui_login_preserves_existing_scoped_models_and_providers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    tau_home = tmp_path / ".tau"
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                models=("qwen",),
+                default_model="qwen",
+            ),
+        ),
+        scoped_models=(ScopedModelConfig(provider="local", model="qwen"),),
+    )
+    save_provider_settings(settings)
+    session = FakeSession()
+    app = TauTuiApp(session)
+    entry = tui_app.builtin_provider_entry("openrouter")
+    assert entry is not None
+
+    async with app.run_test():
+        app._handle_login_result(entry, "stored-openrouter-key")
+
+    saved = tui_app.load_provider_settings()
+    assert saved.default_provider == "local"
+    assert saved.get_provider("local").default_model == "qwen"
+    assert saved.get_provider("openrouter").credential_name == "openrouter"
+    assert saved.scoped_models == (ScopedModelConfig(provider="local", model="qwen"),)
+    assert FileCredentialStore(tau_home / "credentials.json").get("openrouter") == (
+        "stored-openrouter-key"
+    )
+
+
+@pytest.mark.anyio
 async def test_tui_login_provider_does_not_change_default_startup_provider(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3068,6 +3107,7 @@ async def test_run_tui_app_falls_back_to_first_credentialed_provider(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls: list[str] = []
+
     class FakeCredentialStore:
         def get(self, name: str) -> str | None:
             return "stored-key" if name == "openai" else None
@@ -3144,8 +3184,9 @@ async def test_run_tui_app_falls_back_to_first_credentialed_provider(
     monkeypatch.setattr(
         tui_app,
         "create_model_provider",
-        lambda provider, **kwargs: calls.append(f"provider:{provider.name}:{kwargs['model']}")
-        or FakeProvider(),
+        lambda provider, **kwargs: (
+            calls.append(f"provider:{provider.name}:{kwargs['model']}") or FakeProvider()
+        ),
     )
     monkeypatch.setattr(tui_app, "CodingSession", FakeCodingSession)
     monkeypatch.setattr(tui_app, "TauTuiApp", FakeApp)
@@ -3245,8 +3286,9 @@ async def test_run_tui_app_ignores_latest_directory_provider_model_for_new_sessi
     monkeypatch.setattr(
         tui_app,
         "create_model_provider",
-        lambda provider, **kwargs: calls.append(f"provider:{provider.name}:{kwargs['model']}")
-        or FakeProvider(),
+        lambda provider, **kwargs: (
+            calls.append(f"provider:{provider.name}:{kwargs['model']}") or FakeProvider()
+        ),
     )
     monkeypatch.setattr(tui_app, "CodingSession", FakeCodingSession)
     monkeypatch.setattr(tui_app, "TauTuiApp", FakeApp)
@@ -3355,8 +3397,9 @@ async def test_run_tui_app_does_not_start_new_session_from_scoped_model(
     monkeypatch.setattr(
         tui_app,
         "create_model_provider",
-        lambda provider, **kwargs: calls.append(f"provider:{provider.name}:{kwargs['model']}")
-        or FakeProvider(),
+        lambda provider, **kwargs: (
+            calls.append(f"provider:{provider.name}:{kwargs['model']}") or FakeProvider()
+        ),
     )
     monkeypatch.setattr(tui_app, "CodingSession", FakeCodingSession)
     monkeypatch.setattr(tui_app, "TauTuiApp", FakeApp)
