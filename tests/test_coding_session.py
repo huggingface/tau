@@ -238,6 +238,40 @@ async def test_prompt_logs_unexpected_agent_call_exception(tmp_path: Path) -> No
 
 
 @pytest.mark.anyio
+async def test_prompt_logs_error_event_diagnostic_data(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    provider = FakeProvider(
+        [[ProviderErrorEvent(message="provider failed", data={"status_code": 400, "body": "bad request"})]]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            provider_name="fake-provider",
+            session_id="session-1",
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    await _collect_session_events(session.prompt("Hello"))
+
+    log_path = tau_paths.agent_calls_log_path
+    assert session.last_diagnostic_log_path == log_path
+    entry = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])
+    assert entry["kind"] == "error_event"
+    assert entry["error"] == {
+        "message": "provider failed",
+        "recoverable": False,
+        "data": {"status_code": 400, "body": "bad request"},
+    }
+    assert "Hello" not in log_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.anyio
 async def test_prompt_persists_user_assistant_and_leaf_entries(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(

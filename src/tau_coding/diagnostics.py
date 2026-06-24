@@ -60,12 +60,14 @@ class AgentCallDiagnosticLogger:
         phase: str,
         event: ErrorEvent,
     ) -> Path:
-        """Log an agent error event without provider payload bodies or prompts."""
+        """Log an agent error event with safe provider diagnostic details."""
         entry = _base_entry(context, phase=phase, kind="error_event")
         entry["error"] = {
             "message": event.message,
             "recoverable": event.recoverable,
         }
+        if event.data is not None:
+            entry["error"]["data"] = event.data
         self._append(entry)
         return self.path
 
