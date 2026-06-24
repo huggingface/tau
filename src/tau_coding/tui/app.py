@@ -1776,6 +1776,7 @@ class TauTuiApp(App[None]):
         self.state.load_messages(session.messages)
         self.adapter = TuiEventAdapter(self.state)
         self._prompt_worker: Worker[None] | None = None
+        self._compaction_worker: Worker[None] | None = None
         self._prompt_run_id = 0
         self._completion_state = CompletionState()
         self._activity_frame = 0
@@ -1926,17 +1927,13 @@ class TauTuiApp(App[None]):
             if command.new_session_requested:
                 await self._new_session()
             if command.compact_summary is not None:
-                try:
-                    self.state.clear()
-                    self.state.add_item("status", "Compacting session…")
-                    self._refresh()
-                    compact_message = await self.session.compact(command.compact_summary)
-                    self.state.clear()
-                    self.state.set_skills(self.session.skills)
-                    self.state.load_messages(self.session.messages)
-                    self._notify(compact_message)
-                except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
-                    self._notify(f"Error: {exc}", severity="error")
+                if self._is_compaction_active():
+                    self._notify("A compaction is already running.", severity="warning")
+                else:
+                    self._compaction_worker = self.run_worker(
+                        self._run_compaction(command.compact_summary),
+                        exclusive=False,
+                    )
             if command.export_requested:
                 try:
                     exported_path = await self.session.export(
@@ -1987,7 +1984,36 @@ class TauTuiApp(App[None]):
             await self._queue_prompt(text, streaming_behavior=streaming_behavior)
             return
 
+        if self._is_compaction_active():
+            prompt.text = raw_text
+            prompt.move_cursor(_text_end_location(raw_text))
+            self._notify("Compaction is still running. You can keep editing, but wait to submit.", severity="warning")
+            return
+
         self._submit_prompt(text)
+
+    def _is_compaction_active(self) -> bool:
+        """Return whether a manual compaction worker is still running."""
+        worker = self._compaction_worker
+        return worker is not None and not worker.is_finished and not worker.is_cancelled
+
+    async def _run_compaction(self, summary: str) -> None:
+        """Run manual compaction without disabling prompt editing."""
+        self.state.clear()
+        self.state.add_item("status", "Compacting session…")
+        self._refresh()
+        try:
+            compact_message = await self.session.compact(summary)
+        except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
+            self._notify(f"Error: {exc}", severity="error")
+            return
+        finally:
+            self._compaction_worker = None
+        self.state.clear()
+        self.state.set_skills(self.session.skills)
+        self.state.load_messages(self.session.messages)
+        self._notify(compact_message)
+        self._refresh()
 
     def _submit_prompt(self, text: str) -> None:
         """Add a prompt to the transcript and start the agent worker."""
