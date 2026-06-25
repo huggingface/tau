@@ -131,7 +131,10 @@ def build_completion_state(
     if argument_completions is not None:
         return CompletionState(argument_completions)
 
-    if has_argument_text and _matches_prompt_template_command(token, prompt_templates):
+    if has_argument_text and (
+        _matches_prompt_template_command(token, prompt_templates)
+        or _matches_registered_command(token, command_registry)
+    ):
         return CompletionState()
 
     return CompletionState(
@@ -318,6 +321,11 @@ def _matches_prompt_template_command(
 ) -> bool:
     command_name = token.removeprefix("/").lower()
     return any(template.name.lower() == command_name for template in prompt_templates)
+
+
+def _matches_registered_command(token: str, registry: CommandRegistry) -> bool:
+    command_name = token.removeprefix("/").lower()
+    return registry.get(command_name) is not None
 
 
 def _command_completions(

@@ -220,6 +220,36 @@ def test_custom_prompt_completion_hides_after_completed_prompt_command_space() -
     assert request_state.items == ()
 
 
+def test_builtin_command_completion_hides_after_completed_command_space() -> None:
+    trailing_space_state = build_completion_state(
+        "/compact ",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+    )
+    request_state = build_completion_state(
+        "/compact summarize old context",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+    )
+
+    assert trailing_space_state.items == ()
+    assert request_state.items == ()
+
+
+def test_builtin_command_argument_completion_wins_over_completed_command_hide() -> None:
+    state = build_completion_state(
+        "/model fak",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        model_names=("fake-model",),
+    )
+
+    assert [item.display for item in state.items] == ["fake-model"]
+
+
 def test_builtin_command_argument_completion_wins_over_custom_prompt_name() -> None:
     state = build_completion_state(
         "/model fak",
