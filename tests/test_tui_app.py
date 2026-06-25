@@ -96,6 +96,18 @@ def _strip_ansi(text: str) -> str:
     return ANSI_PATTERN.sub("", text)
 
 
+def _style_color_escape(color: str) -> str:
+    stripped = color.lstrip("#")
+    red, green, blue = (int(stripped[index : index + 2], 16) for index in (0, 2, 4))
+    return f"38;2;{red};{green};{blue}"
+
+
+def _style_rgb(color: str) -> str:
+    stripped = color.lstrip("#")
+    red, green, blue = (int(stripped[index : index + 2], 16) for index in (0, 2, 4))
+    return f"rgb({red},{green},{blue})"
+
+
 class FakeSessionState:
     thinking_level = "medium"
 
@@ -397,7 +409,7 @@ def test_session_sidebar_uses_accented_aligned_headers_without_section_borders()
     output = console.export_text()
     assert panels == []
     assert header.left == 1
-    assert str(header.renderable.style) == "bold #f4a261"
+    assert str(header.renderable.style) == f"bold {TAU_DARK_THEME.accent}"
     assert " session" in output
     assert " context" in output
     assert "─" in output
@@ -603,8 +615,8 @@ def test_expanded_edit_tool_result_renders_patch_as_colored_diff() -> None:
     assert "Patch:" in plain
     assert "-old" in plain
     assert "+new" in plain
-    assert "\x1b[91;49m-old" in styled
-    assert "\x1b[92;49m+new" in styled
+    assert re.search(r"\x1b\[91;[^m]*m-old", styled)
+    assert re.search(r"\x1b\[92;[^m]*m\+new", styled)
 
 
 def test_transcript_plain_tool_body_renders_patch_as_colored_diff() -> None:
@@ -628,8 +640,8 @@ def test_transcript_plain_tool_body_renders_patch_as_colored_diff() -> None:
     assert "Patch:" in plain
     assert "-old" in plain
     assert "+new" in plain
-    assert "\x1b[91;49m-old" in styled
-    assert "\x1b[92;49m+new" in styled
+    assert re.search(r"\x1b\[91;[^m]*m-old", styled)
+    assert re.search(r"\x1b\[92;[^m]*m\+new", styled)
 
 
 def test_thinking_chat_items_use_distinct_style_and_markdown() -> None:
@@ -858,7 +870,7 @@ def test_assistant_markdown_titles_use_highlight_color_and_left_alignment() -> N
     output = console.export_text(styles=True)
     plain_output = _strip_ansi(output)
 
-    assert "38;2;244;162;97" in output
+    assert _style_color_escape(TAU_DARK_THEME.markdown_heading) in output
     assert "Title" in plain_output
     assert not plain_output.splitlines()[1].startswith(" " * 20)
     assert LeftAlignedMarkdownHeading.LEVEL_ALIGN["h1"] == "left"
@@ -879,7 +891,7 @@ def test_dark_theme_markdown_bullets_use_theme_bullet_color() -> None:
 
     output = console.export_text(styles=True)
 
-    assert "38;2;244;162;97" in output
+    assert _style_color_escape(TAU_DARK_THEME.markdown_bullet) in output
 
 
 def test_markdown_tables_use_highlight_color_for_headers() -> None:
@@ -2302,7 +2314,7 @@ async def test_tui_app_tree_picker_branches_with_summary() -> None:
             "  assistant: Left",
             "* assistant: Right",
         ]
-        assert str(rendered_labels[0].spans[0].style) == "rgb(244,162,97)"
+        assert str(rendered_labels[0].spans[0].style) == _style_rgb(TAU_DARK_THEME.accent)
 
         await pilot.press("up")
         await pilot.pause()
@@ -4386,6 +4398,7 @@ async def test_run_tui_app_opens_when_provider_login_is_missing(
             calls.append("run")
 
     monkeypatch.setattr(tui_app, "load_provider_settings", lambda: ProviderSettings())
+    monkeypatch.setattr(tui_app, "provider_has_usable_credentials", lambda *args, **kwargs: False)
     monkeypatch.setattr(
         tui_app,
         "create_model_provider",
