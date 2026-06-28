@@ -208,3 +208,7 @@ Useful entry points:
 
 Tau is under active development. The implementation roadmap is tracked in
 [GitHub issue #1](https://github.com/alejandro-ao/tau/issues/1).
+
+## License
+
+Tau is released under the [MIT License](LICENSE).
