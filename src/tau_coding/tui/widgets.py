@@ -344,19 +344,30 @@ class TranscriptView(VerticalScroll):
         self._active_assistant_widget: StreamingTranscriptMessageWidget | None = None
         self._active_thinking_widget: StreamingTranscriptMessageWidget | None = None
         self._hidden_thinking_placeholder_visible = False
+        self._follow_output = True
 
     def on_mount(self) -> None:
         """Follow new transcript content until the user scrolls away."""
-        self.anchor()
+        self.follow_output()
 
     def follow_output(self) -> None:
         """Return to follow mode for a user-driven turn or explicit jump to bottom."""
-        self.anchor()
+        self._follow_output = True
+        self.anchor(False)
+        self.scroll_end(animate=False)
 
     @property
     def _should_follow_output(self) -> bool:
         """Return whether new content should keep the viewport pinned to the bottom."""
-        return self.is_vertical_scroll_end or (self.is_anchored and not self._anchor_released)
+        return self._follow_output or self.is_vertical_scroll_end
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Track whether user scrollback has opted out of transcript following."""
+        super().watch_scroll_y(old_value, new_value)
+        if round(new_value) >= self.max_scroll_y:
+            self._follow_output = True
+        elif round(new_value) < round(old_value):
+            self._follow_output = False
 
     def update_from_state(
         self,
@@ -442,6 +453,7 @@ class TranscriptView(VerticalScroll):
         scroll_end: bool = False,
     ) -> TranscriptMessageWidget | StreamingTranscriptMessageWidget:
         """Append one transcript item without rebuilding previous blocks."""
+        should_follow = self._should_follow_output if not scroll_end else True
         self._render_theme = theme
         widget = _transcript_widget(
             item,
@@ -454,7 +466,7 @@ class TranscriptView(VerticalScroll):
         self._hidden_thinking_placeholder_visible = False
         self._last_render_width = self.scrollable_content_region.width
         self.refresh(layout=True)
-        if scroll_end:
+        if should_follow:
             self.scroll_end(animate=False)
         return widget
 
@@ -467,6 +479,7 @@ class TranscriptView(VerticalScroll):
         """Create the active assistant message widget if needed."""
         if self._active_assistant_widget is not None:
             return self._active_assistant_widget
+        should_follow = self._should_follow_output if not scroll_end else True
         widget = StreamingTranscriptMessageWidget(
             ChatItem(role="assistant", text=""),
             theme=theme,
@@ -475,7 +488,7 @@ class TranscriptView(VerticalScroll):
         await self.mount(widget)
         self._active_assistant_widget = widget
         self._last_render_width = self.scrollable_content_region.width
-        if scroll_end:
+        if should_follow:
             self.scroll_end(animate=False)
         return widget
 
@@ -489,9 +502,10 @@ class TranscriptView(VerticalScroll):
         """Append streamed assistant text to the active message widget."""
         self._active_thinking_widget = None
         self._hidden_thinking_placeholder_visible = False
+        should_follow = self._should_follow_output if not scroll_end else True
         widget = await self.start_assistant_message(theme=theme, scroll_end=scroll_end)
         await widget.append_fragment(delta)
-        if scroll_end:
+        if should_follow:
             self.scroll_end(animate=False)
 
     async def append_thinking_delta(
@@ -503,6 +517,7 @@ class TranscriptView(VerticalScroll):
         scroll_end: bool = False,
     ) -> None:
         """Append streamed thinking text or one hidden-thinking placeholder."""
+        should_follow = self._should_follow_output if not scroll_end else True
         if not show_thinking:
             if self._hidden_thinking_placeholder_visible:
                 return
@@ -512,7 +527,7 @@ class TranscriptView(VerticalScroll):
                     text="Thinking… Press Ctrl+T to show thinking tokens.",
                 ),
                 theme=theme,
-                scroll_end=scroll_end,
+                scroll_end=should_follow,
             )
             self._hidden_thinking_placeholder_visible = True
             return
@@ -524,7 +539,7 @@ class TranscriptView(VerticalScroll):
             )
             await self.mount(self._active_thinking_widget)
         await self._active_thinking_widget.append_fragment(delta)
-        if scroll_end:
+        if should_follow:
             self.scroll_end(animate=False)
 
     async def finish_assistant_message(self, text: str | None = None) -> None:
