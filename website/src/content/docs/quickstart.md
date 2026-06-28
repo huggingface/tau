@@ -30,22 +30,23 @@ tau --version
 ## 2. Connect a model
 
 Tau needs an AI model to talk to. A **provider** is the service that hosts the
-model (OpenAI, Anthropic, …). The quickest path is an API key in your
-environment:
+model (OpenAI, Anthropic, …). Start Tau and use `/login` to connect one:
 
 ```bash
-export OPENAI_API_KEY="sk-..."
+tau
 ```
 
-That's enough to start. Tau ships with built-in entries for OpenAI, Anthropic,
-OpenAI Codex, OpenRouter, and Hugging Face — once the matching key is set, the
-provider is ready.
+Then run one of these inside Tau:
 
-:::note
-You can also log in from inside Tau (`/login openai`), use a subscription
-account (`/login openai-codex`), or add a custom/local OpenAI-compatible
-endpoint. See [Providers & models](./guides/providers-and-models.md).
-:::
+```text
+/login              # choose a provider
+/login openai       # save an OpenAI API key
+/login openai-codex # authenticate a Codex/ChatGPT subscription
+```
+
+Tau ships with built-in entries for OpenAI, Anthropic, OpenAI Codex,
+OpenRouter, and Hugging Face. See [Providers & models](./guides/providers-and-models.md)
+for switching models or adding a custom/local OpenAI-compatible endpoint.
 
 ## 3. Start a session
 
