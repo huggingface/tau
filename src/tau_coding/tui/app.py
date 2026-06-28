@@ -48,7 +48,7 @@ from tau_agent import (
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
 )
-from tau_agent.messages import AgentMessage
+from tau_agent.messages import AgentMessage, UserMessage
 from tau_agent.tools import AgentTool
 from tau_ai import ProviderErrorEvent, ProviderEvent
 from tau_ai.provider import CancellationToken
@@ -1776,6 +1776,11 @@ class TauTuiApp(App[None]):
         self.state = TuiState(skills=session.skills)
         self.state.load_messages(session.messages)
         self.adapter = TuiEventAdapter(self.state)
+        self._prompt_history = tuple(
+            message.content
+            for message in session.messages
+            if isinstance(message, UserMessage) and message.content.strip()
+        )
         self._prompt_worker: Worker[None] | None = None
         self._compaction_worker: Worker[None] | None = None
         self._prompt_run_id = 0
@@ -1950,7 +1955,8 @@ class TauTuiApp(App[None]):
                     prompt.text = raw_text
                     prompt.move_cursor(_text_end_location(raw_text))
                     self._notify(
-                        "Wait for the current agent turn and queued messages to finish before compacting.",
+                        "Wait for the current agent turn and queued messages "
+                        "to finish before compacting.",
                         severity="warning",
                     )
                     return
@@ -2006,10 +2012,18 @@ class TauTuiApp(App[None]):
             return
 
         if self.state.running:
+            self._remember_prompt(text)
             await self._queue_prompt(text, streaming_behavior=streaming_behavior)
             return
 
+        self._remember_prompt(text)
         self._submit_prompt(text)
+
+    def _remember_prompt(self, text: str) -> None:
+        """Remember a submitted user prompt for lightweight input recall."""
+        if not text.strip():
+            return
+        self._prompt_history = (*self._prompt_history, text)
 
     def _is_compaction_active(self) -> bool:
         """Return whether a manual compaction worker is still running."""
@@ -2022,7 +2036,12 @@ class TauTuiApp(App[None]):
         worker = self._prompt_worker
         is_worker_active = worker is not None and not worker.is_finished and not worker.is_cancelled
         is_session_running = bool(getattr(self.session, "is_running", False))
-        return self.state.running or is_session_running or is_worker_active or self.state.queued_message_count > 0
+        return (
+            self.state.running
+            or is_session_running
+            or is_worker_active
+            or self.state.queued_message_count > 0
+        )
 
     async def _run_compaction(self, summary: str) -> None:
         """Run manual compaction without disabling prompt editing."""
@@ -2325,10 +2344,24 @@ class TauTuiApp(App[None]):
         if not self._completion_state.items:
             if self.action_edit_queued_follow_up():
                 return
+            if self.action_recall_previous_prompt():
+                return
             self.query_one("#prompt", PromptInput).action_cursor_up()
             return
         self._completion_state = self._completion_state.select_previous()
         self._refresh_completions()
+
+    def action_recall_previous_prompt(self) -> bool:
+        """Recall the most recent submitted prompt into an empty prompt input."""
+        prompt = self.query_one("#prompt", PromptInput)
+        if prompt.text.strip() or not self._prompt_history:
+            return False
+        previous_prompt = self._prompt_history[-1]
+        prompt.text = previous_prompt
+        prompt.move_cursor(_text_end_location(previous_prompt))
+        self._completion_state = self._build_completion_state(prompt.text)
+        self._refresh_completions()
+        return True
 
     def action_edit_queued_follow_up(self) -> bool:
         """Move the latest queued follow-up back into the prompt for editing."""

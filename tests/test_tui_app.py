@@ -64,8 +64,8 @@ from tau_coding.tui.app import (
     TreePickerScreen,
     _activity_prompt_border_color,
     _completion_selected_render_line,
-    _theme_css_variables,
     _terminal_command_prefix_span,
+    _theme_css_variables,
     _visible_completion_state,
 )
 from tau_coding.tui.autocomplete import CompletionItem, CompletionState
@@ -81,9 +81,9 @@ from tau_coding.tui.state import ChatItem
 from tau_coding.tui.widgets import (
     LeftAlignedMarkdownHeading,
     StreamingTranscriptMessageWidget,
+    ThemedMarkdownWidget,
     TranscriptMessageWidget,
     TranscriptView,
-    ThemedMarkdownWidget,
     _compact_token_count,
     _syntax_language,
     _transcript_plain_body_text,
@@ -92,7 +92,6 @@ from tau_coding.tui.widgets import (
     render_session_sidebar,
     transcript_item_selection_text,
 )
-
 
 ANSI_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
@@ -883,7 +882,9 @@ def test_assistant_markdown_titles_use_highlight_color_and_left_alignment() -> N
 
 def test_dark_theme_markdown_links_use_theme_link_color() -> None:
     console = Console(record=True, width=80, color_system="truecolor")
-    console.print(render_chat_item(ChatItem(role="assistant", text="Read [docs](https://example.com).")))
+    console.print(
+        render_chat_item(ChatItem(role="assistant", text="Read [docs](https://example.com)."))
+    )
 
     output = console.export_text(styles=True)
 
@@ -902,7 +903,9 @@ def test_dark_theme_markdown_bullets_use_theme_bullet_color() -> None:
 def test_markdown_tables_use_highlight_color_for_headers() -> None:
     console = Console(record=True, width=80, color_system="truecolor")
     console.print(
-        render_chat_item(ChatItem(role="assistant", text="| Name | Value |\n| --- | --- |\n| A | B |"))
+        render_chat_item(
+            ChatItem(role="assistant", text="| Name | Value |\n| --- | --- |\n| A | B |")
+        )
     )
 
     output = console.export_text(styles=True)
@@ -1042,7 +1045,6 @@ def test_chat_items_preserve_malformed_fenced_code() -> None:
     assert 'print("hi")' in output
 
 
-
 @pytest.mark.anyio
 async def test_transcript_message_widget_extracts_plain_text_selection() -> None:
     app = TauTuiApp(
@@ -1085,7 +1087,6 @@ async def test_streaming_transcript_deltas_do_not_force_scroll_end() -> None:
         await pilot.pause()
 
     assert forced_scrolls == 0
-
 
 
 @pytest.mark.anyio
@@ -1767,7 +1768,9 @@ async def test_tui_app_blocks_session_commands_while_compacting(blocked_command:
             self.compact_summaries.append(summary)
             started.set()
             await finish.wait()
-            self.messages = (UserMessage(content="Previous conversation summary:\nGenerated summary"),)
+            self.messages = (
+                UserMessage(content="Previous conversation summary:\nGenerated summary"),
+            )
             self.context_token_estimate = 42
             return "Compacted 2 context entries."
 
@@ -1794,7 +1797,9 @@ async def test_tui_app_blocks_session_commands_while_compacting(blocked_command:
         assert session.new_session_count == 0
         assert session.resumed_session_ids == []
         assert prompt.value == blocked_command
-        assert notifications == ["Compaction is still running. You can keep editing, but wait to submit."]
+        assert notifications == [
+            "Compaction is still running. You can keep editing, but wait to submit."
+        ]
 
         finish.set()
         await pilot.pause()
@@ -1865,7 +1870,9 @@ async def test_tui_app_escape_cancels_active_compaction() -> None:
             self.compact_summaries.append(summary)
             started.set()
             await finish.wait()
-            self.messages = (UserMessage(content="Previous conversation summary:\nGenerated summary"),)
+            self.messages = (
+                UserMessage(content="Previous conversation summary:\nGenerated summary"),
+            )
             self.context_token_estimate = 42
             return "Compacted 2 context entries."
 
@@ -3674,7 +3681,7 @@ async def test_tui_app_queues_follow_up_prompt_from_keybinding() -> None:
 
 @pytest.mark.anyio
 async def test_tui_app_up_arrow_edits_latest_queued_follow_up() -> None:
-    session = FakeSession()
+    session = FakeSession(messages=[UserMessage(content="remembered prompt")])
     app = TauTuiApp(session)
 
     async with app.run_test() as pilot:
@@ -3693,6 +3700,70 @@ async def test_tui_app_up_arrow_edits_latest_queued_follow_up() -> None:
         assert app.state.queued_follow_up == ("first follow-up",)
         queued_messages = app.query_one("#queued-messages")
         assert queued_messages.display is True
+
+
+@pytest.mark.anyio
+async def test_tui_app_up_arrow_recalls_latest_sent_prompt_when_input_is_empty() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", TextArea)
+        prompt.text = "first prompt"
+        await pilot.press("enter")
+        await pilot.pause()
+        prompt.text = "latest prompt"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        prompt.text = ""
+        await pilot.press("up")
+        await pilot.pause()
+
+        assert prompt.text == "latest prompt"
+        assert prompt.cursor_location == (0, len("latest prompt"))
+        assert session.prompt_texts == ["first prompt", "latest prompt"]
+
+
+@pytest.mark.anyio
+async def test_tui_app_up_arrow_recalls_latest_restored_user_message() -> None:
+    app = TauTuiApp(
+        FakeSession(
+            messages=[
+                UserMessage(content="earlier prompt"),
+                AssistantMessage(content="response"),
+                UserMessage(content="restored prompt"),
+            ]
+        )
+    )
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", TextArea)
+        prompt.focus()
+        prompt.text = ""
+
+        await pilot.press("up")
+        await pilot.pause()
+
+        assert prompt.text == "restored prompt"
+        assert prompt.cursor_location == (0, len("restored prompt"))
+
+
+@pytest.mark.anyio
+async def test_tui_app_up_arrow_preserves_non_empty_prompt_movement() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="remembered prompt")]))
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", TextArea)
+        prompt.focus()
+        prompt.text = "first line\nsecond line"
+        prompt.move_cursor((1, len("second line")))
+
+        await pilot.press("up")
+        await pilot.pause()
+
+        assert prompt.text == "first line\nsecond line"
+        assert prompt.cursor_location == (0, len("first line"))
 
 
 @pytest.mark.anyio
