@@ -243,21 +243,17 @@ BUILTIN_PROVIDER_CATALOG: tuple[ProviderCatalogEntry, ...] = (
         models=(
             "deepseek-v4-flash",
             "deepseek-v4-pro",
-            "deepseek-v3",
-            "deepseek-r1",
         ),
         default_model="deepseek-v4-flash",
         docs_url="https://api-docs.deepseek.com",
         context_windows={
             "deepseek-v4-flash": 1_000_000,
-            "deepseek-v4-pro": 200_000,
-            "deepseek-v3": 128_000,
-            "deepseek-r1": 128_000,
+            "deepseek-v4-pro": 1_000_000,
         },
         thinking_levels=("off", "low", "medium", "high", "xhigh"),
         thinking_models=(
+            "deepseek-v4-flash",
             "deepseek-v4-pro",
-            "deepseek-r1",
         ),
         thinking_default="medium",
         thinking_parameter="reasoning_effort",
