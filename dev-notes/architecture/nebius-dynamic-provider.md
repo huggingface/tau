@@ -58,7 +58,7 @@ the catalog flag, durable config field, and build-time wiring live in
 ## How to test or use
 
 ```bash
-export NEBIUS_API_KEY="..."
+export NEBIUS_TOKEN_FACTORY_API_KEY="..."
 tau --provider nebius          # TUI; /model shows the live catalog
 tau --provider nebius -m <model-id>
 ```

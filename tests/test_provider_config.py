@@ -872,7 +872,7 @@ def test_nebius_builtin_entry_is_dynamic_with_empty_catalog() -> None:
 
     assert isinstance(nebius, OpenAICompatibleProviderConfig)
     assert nebius.base_url == "https://api.tokenfactory.nebius.com/v1"
-    assert nebius.api_key_env == "NEBIUS_API_KEY"
+    assert nebius.api_key_env == "NEBIUS_TOKEN_FACTORY_API_KEY"
     assert nebius.models == ()
     assert nebius.default_model == ""
 
@@ -882,7 +882,7 @@ async def test_ensure_dynamic_provider_models_populates_nebius_at_build(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("NEBIUS_API_KEY", "nebius-key")
+    monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_API_KEY", "nebius-key")
     paths = TauPaths(home=tmp_path / ".tau")
     settings = load_provider_settings(paths)
 
@@ -935,7 +935,7 @@ async def test_ensure_dynamic_provider_models_without_credentials_is_noop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("NEBIUS_API_KEY", raising=False)
+    monkeypatch.delenv("NEBIUS_TOKEN_FACTORY_API_KEY", raising=False)
     paths = TauPaths(home=tmp_path / ".tau")
     settings = load_provider_settings(paths)
 

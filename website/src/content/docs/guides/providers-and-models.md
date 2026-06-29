@@ -96,11 +96,11 @@ Hugging Face organization billing is just a header on the provider entry:
 ## Nebius Token Factory (dynamic model list)
 
 Nebius Token Factory is an OpenAI-compatible endpoint at
-`https://api.tokenfactory.nebius.com/v1`. Set `NEBIUS_API_KEY` (or run
-`/login nebius`) and select it:
+`https://api.tokenfactory.nebius.com/v1`. Set `NEBIUS_TOKEN_FACTORY_API_KEY`
+(or run `/login nebius`) and select it:
 
 ```bash
-export NEBIUS_API_KEY="..."
+export NEBIUS_TOKEN_FACTORY_API_KEY="..."
 tau --provider nebius
 ```
 
