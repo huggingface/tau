@@ -9,6 +9,8 @@ from shutil import copy2
 from tempfile import NamedTemporaryFile
 from typing import Any, Protocol
 
+import httpx
+
 from tau_ai import (
     DEFAULT_ANTHROPIC_BASE_URL,
     DEFAULT_OPENAI_CODEX_BASE_URL,
@@ -17,11 +19,16 @@ from tau_ai import (
     DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS,
     AnthropicConfig,
     OpenAICompatibleConfig,
+    list_openai_compatible_models,
 )
 from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL
 from tau_coding.credentials import FileCredentialStore, credentials_path
 from tau_coding.paths import TauPaths
-from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG, ProviderKind
+from tau_coding.provider_catalog import (
+    BUILTIN_PROVIDER_CATALOG,
+    ProviderKind,
+    builtin_provider_entry,
+)
 from tau_coding.thinking import (
     DEFAULT_THINKING_LEVEL,
     ThinkingLevel,
@@ -65,6 +72,7 @@ class OpenAICompatibleProviderConfig:
     thinking_models: tuple[str, ...] = ()
     thinking_default: ThinkingLevel | None = None
     thinking_parameter: ThinkingParameter | None = None
+    dynamic_models: bool = False
 
     def __post_init__(self) -> None:
         _validate_provider_numbers(
@@ -101,6 +109,7 @@ class OpenAICompatibleProviderConfig:
             "thinking_models": list(self.thinking_models),
             "thinking_default": self.thinking_default,
             "thinking_parameter": self.thinking_parameter,
+            "dynamic_models": self.dynamic_models,
         }
 
 
@@ -332,6 +341,7 @@ def provider_config_from_catalog_entry(name: str) -> ProviderConfig:
             thinking_models=entry.thinking_models,
             thinking_default=entry.thinking_default,
             thinking_parameter=entry.thinking_parameter,
+            dynamic_models=entry.dynamic_models,
         )
     raise ProviderConfigError(f"Unknown built-in provider: {name}")
 
@@ -739,6 +749,72 @@ def openai_compatible_config_from_provider(
     )
 
 
+async def ensure_dynamic_provider_models(
+    settings: ProviderSettings,
+    *,
+    provider_name: str,
+    paths: TauPaths | None = None,
+    credential_store: FileCredentialStore | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> ProviderSettings:
+    """Populate a dynamic provider's model list at build time.
+
+    Built-in providers flagged ``dynamic_models`` (such as Nebius Token Factory)
+    start with an empty model catalog. When Tau has usable credentials for the
+    selected provider, this fetches the live model list from the provider's
+    ``/models`` endpoint (with ``verbose=true``), persists it through the normal
+    provider-settings path, and returns the updated settings. It is best-effort:
+    any network, auth, or parse error leaves the settings unchanged so startup
+    never fails because of a model listing problem.
+    """
+    entry = builtin_provider_entry(provider_name)
+    if entry is None or not entry.dynamic_models:
+        return settings
+    try:
+        provider = settings.get_provider(provider_name)
+    except ProviderConfigError:
+        return settings
+    if not isinstance(provider, OpenAICompatibleProviderConfig):
+        return settings
+
+    store = credential_store or FileCredentialStore(credentials_path(paths) if paths else None)
+    if not provider_has_usable_credentials(provider, credential_reader=store):
+        return settings
+
+    try:
+        runtime_config = openai_compatible_config_from_provider(
+            provider, credential_reader=store
+        )
+        models = await list_openai_compatible_models(
+            runtime_config, verbose=True, client=client
+        )
+    except Exception:
+        return settings
+
+    if not models:
+        return settings
+
+    model_ids = tuple(model.id for model in models)
+    context_windows = {
+        **dict(provider.context_windows),
+        **{
+            model.id: model.context_window
+            for model in models
+            if model.context_window is not None
+        },
+    }
+    default_model = provider.default_model if provider.default_model in model_ids else model_ids[0]
+    updated_provider = replace(
+        provider,
+        models=model_ids,
+        default_model=default_model,
+        context_windows=context_windows,
+    )
+    updated = upsert_provider(settings, updated_provider)
+    save_provider_settings(updated, paths)
+    return updated
+
+
 def anthropic_config_from_provider(
     provider: AnthropicProviderConfig,
     *,
@@ -848,8 +924,15 @@ def _provider_from_json(data: object) -> ProviderConfig:
     credential_name = _optional_string(
         data.get("credential_name"), f"providers[{name}].credential_name"
     )
-    models = _string_tuple(data.get("models"), f"providers[{name}].models")
-    default_model = _string(data.get("default_model"), f"providers[{name}].default_model")
+    dynamic_models = bool(data.get("dynamic_models", False))
+    if dynamic_models:
+        models = _optional_string_tuple(data.get("models"), f"providers[{name}].models")
+        default_model = _emptyable_string(
+            data.get("default_model"), f"providers[{name}].default_model"
+        )
+    else:
+        models = _string_tuple(data.get("models"), f"providers[{name}].models")
+        default_model = _string(data.get("default_model"), f"providers[{name}].default_model")
     context_windows = _context_window_dict(
         data.get("context_windows", {}), f"providers[{name}].context_windows"
     )
@@ -881,7 +964,7 @@ def _provider_from_json(data: object) -> ProviderConfig:
     thinking_parameter = _optional_thinking_parameter(
         data.get("thinking_parameter"), f"providers[{name}].thinking_parameter"
     )
-    if default_model not in models:
+    if default_model and default_model not in models:
         models = (*models, default_model)
     if provider_type == "anthropic":
         return AnthropicProviderConfig(
@@ -935,6 +1018,7 @@ def _provider_from_json(data: object) -> ProviderConfig:
         thinking_models=thinking_models,
         thinking_default=thinking_default,
         thinking_parameter=thinking_parameter,
+        dynamic_models=dynamic_models,
     )
 
 
@@ -1034,6 +1118,15 @@ def _optional_string(value: object, field_name: str) -> str | None:
         return None
     if not isinstance(value, str) or not value.strip():
         raise ProviderConfigError(f"Provider field must be a non-empty string: {field_name}")
+    return value.strip()
+
+
+def _emptyable_string(value: object, field_name: str) -> str:
+    """Parse a string field that may be empty (used by dynamic model catalogs)."""
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ProviderConfigError(f"Provider field must be a string: {field_name}")
     return value.strip()
 
 
