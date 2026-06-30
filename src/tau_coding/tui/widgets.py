@@ -160,6 +160,7 @@ class ThemedMarkdownWidget(TextualMarkdown):
 
     ThemedMarkdownWidget MarkdownFence {
         background: $tau-markdown-code-block-background;
+        overflow-x: auto;
         scrollbar-size-horizontal: 1;
     }
 

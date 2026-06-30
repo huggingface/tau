@@ -1511,25 +1511,30 @@ async def test_tui_transcript_reflows_when_terminal_resizes() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_transcript_allows_horizontal_code_block_scrolling() -> None:
-    app = TauTuiApp(
-        FakeSession(
-            messages=[
-                AssistantMessage(
-                    content="```python\n" + "value = '" + ("x" * 140) + "'\n```"
-                )
-            ]
-        )
-    )
+@pytest.mark.parametrize(
+    ("code", "has_horizontal_overflow"),
+    [
+        ("x = 1", False),
+        ("value = '" + ("x" * 140) + "'", True),
+    ],
+)
+async def test_tui_transcript_code_block_scrollbar_matches_overflow(
+    code: str,
+    has_horizontal_overflow: bool,
+) -> None:
+    app = TauTuiApp(FakeSession(messages=[AssistantMessage(content=f"```python\n{code}\n```")]))
 
-    async with app.run_test(size=(64, 30)):
+    async with app.run_test(size=(64, 30)) as pilot:
+        await pilot.pause()
         transcript = app.query_one("#transcript", TranscriptView)
         fence = app.query_one("MarkdownFence")
         assert transcript.styles.overflow_x == "auto"
         assert transcript.styles.scrollbar_size_horizontal == 1
         assert fence.styles.scrollbar_size_horizontal == 1
-        assert fence.styles.overflow_x == "scroll"
+        assert fence.styles.overflow_x == "auto"
         assert fence.allow_horizontal_scroll is True
+        assert (fence.max_scroll_x > 0) is has_horizontal_overflow
+        assert fence.show_horizontal_scrollbar is has_horizontal_overflow
 
 
 def test_tui_app_uses_configured_theme_css_variables() -> None:
