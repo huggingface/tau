@@ -62,6 +62,11 @@ Provider metadata lives in `~/.tau/providers.json`:
 - Custom models can declare thinking support with `thinking_levels`,
   `thinking_default`, `thinking_models`, and `thinking_parameter`
   (`"reasoning_effort"`, `"reasoning.effort"`, or `"anthropic.thinking"`).
+- `"dynamic_models": true` marks an OpenAI-compatible provider whose model list
+  is fetched live at build time from `GET /v1/models?verbose=true` instead of
+  being hardcoded. Such a provider may have an empty `models` list and empty
+  `default_model` until the first successful fetch populates them (Nebius Token
+  Factory uses this).
 
 Writes after `/login`, `/model`, or scoped-model changes reload the file first,
 apply only the requested change, write atomically, and keep a `.bak` backup.

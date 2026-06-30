@@ -10,6 +10,10 @@ wheels/
 # Virtual environments
 .venv
 
+# Local environment files (secrets)
+.env
+.env.*
+
 # Astro / Starlight docs site (website/)
 website/node_modules/
 website/dist/

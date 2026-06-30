@@ -26,6 +26,7 @@ class ProviderCatalogEntry:
     thinking_models: tuple[str, ...] = ()
     thinking_default: ThinkingLevel | None = None
     thinking_parameter: ThinkingParameter | None = None
+    dynamic_models: bool = False
 
 
 BUILTIN_PROVIDER_CATALOG: tuple[ProviderCatalogEntry, ...] = (
@@ -232,6 +233,18 @@ BUILTIN_PROVIDER_CATALOG: tuple[ProviderCatalogEntry, ...] = (
         ),
         thinking_default="medium",
         thinking_parameter="reasoning_effort",
+    ),
+    ProviderCatalogEntry(
+        name="nebius",
+        display_name="Nebius Token Factory",
+        kind="openai-compatible",
+        base_url="https://api.tokenfactory.nebius.com/v1",
+        api_key_env="NEBIUS_TOKEN_FACTORY_API_KEY",
+        credential_name="nebius",
+        models=(),
+        default_model="",
+        docs_url="https://docs.tokenfactory.nebius.com",
+        dynamic_models=True,
     ),
 )
 

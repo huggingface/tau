@@ -10,6 +10,7 @@ from tau_ai import (
     AnthropicConfig,
     AnthropicProvider,
     FakeProvider,
+    ModelInfo,
     OpenAICodexConfig,
     OpenAICodexCredentials,
     OpenAICodexProvider,
@@ -22,6 +23,7 @@ from tau_ai import (
     ProviderTextDeltaEvent,
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
+    list_openai_compatible_models,
     openai_compatible_config_from_env,
 )
 
@@ -1086,3 +1088,65 @@ async def test_anthropic_provider_retries_transient_status_with_event() -> None:
         "text_delta",
         "response_end",
     ]
+
+
+@pytest.mark.anyio
+async def test_list_openai_compatible_models_uses_verbose_and_parses_ids() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "data": [
+                    {
+                        "id": "meta-llama/Llama-3.3-70B-Instruct",
+                        "object": "model",
+                        "owned_by": "system",
+                        "context_window": 131072,
+                    },
+                    {"id": "deepseek-ai/DeepSeek-R1-0528", "object": "model"},
+                    {"id": "meta-llama/Llama-3.3-70B-Instruct"},
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        models = await list_openai_compatible_models(
+            OpenAICompatibleConfig(
+                api_key="nebius-key",
+                base_url="https://api.tokenfactory.nebius.com/v1",
+            ),
+            verbose=True,
+            client=client,
+        )
+
+    assert [model.id for model in models] == [
+        "meta-llama/Llama-3.3-70B-Instruct",
+        "deepseek-ai/DeepSeek-R1-0528",
+    ]
+    assert isinstance(models[0], ModelInfo)
+    assert models[0].context_window == 131072
+    assert models[1].context_window is None
+    assert len(requests) == 1
+    assert requests[0].url.path == "/v1/models"
+    assert requests[0].url.params["verbose"] == "true"
+    assert requests[0].headers["authorization"] == "Bearer nebius-key"
+
+
+@pytest.mark.anyio
+async def test_list_openai_compatible_models_omits_verbose_when_false() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "verbose" not in request.url.params
+        return httpx.Response(200, json={"data": [{"id": "model-a"}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        models = await list_openai_compatible_models(
+            OpenAICompatibleConfig(api_key="key", base_url="https://example.test/v1"),
+            verbose=False,
+            client=client,
+        )
+
+    assert [model.id for model in models] == ["model-a"]

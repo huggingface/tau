@@ -22,8 +22,8 @@ tau
 ```
 
 Built-in providers include **OpenAI**, **Anthropic**, **OpenAI Codex**
-(subscription), **OpenRouter**, and **Hugging Face**. Credentials saved this way
-live in `~/.tau/credentials.json` (private permissions).
+(subscription), **OpenRouter**, **Hugging Face**, and **Nebius Token Factory**.
+Credentials saved this way live in `~/.tau/credentials.json` (private permissions).
 
 Check what's configured and how each provider will authenticate:
 
@@ -91,6 +91,32 @@ Hugging Face organization billing is just a header on the provider entry:
 ```json
 { "headers": { "X-HF-Bill-To": "my-org" } }
 ```
+:::
+
+## Nebius Token Factory (dynamic model list)
+
+Nebius Token Factory is an OpenAI-compatible endpoint at
+`https://api.tokenfactory.nebius.com/v1`. Set `NEBIUS_TOKEN_FACTORY_API_KEY`
+(or run `/login nebius`) and select it:
+
+```bash
+export NEBIUS_TOKEN_FACTORY_API_KEY="..."
+tau --provider nebius
+```
+
+Unlike the other built-in providers, Nebius ships with **no hardcoded model
+catalog**. When Tau has usable Nebius credentials, it fetches the live model
+list at build time from `GET /v1/models?verbose=true`, so the `/model` picker
+always shows every model the Token Factory currently serves. The default model
+is chosen dynamically from that list. The fetch is best-effort: if it fails (no
+network, bad key), startup still continues and Tau surfaces a clear missing-key
+error only if you actually select Nebius.
+
+:::note[Dynamic providers in `providers.json`]
+A built-in provider that fetches its models dynamically is stored with
+`"dynamic_models": true` and may have an empty `models` list and empty
+`default_model` until the first successful fetch populates them. This is
+expected and round-trips safely.
 :::
 
 ## How credentials are resolved
