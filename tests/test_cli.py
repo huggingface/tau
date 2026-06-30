@@ -14,6 +14,7 @@ from tau_ai import (
 )
 from tau_coding import CodingSessionRecord, SessionManager, cli
 from tau_coding.cli import app, run_print_mode
+from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.paths import TauPaths
 from tau_coding.provider_config import (
     OpenAICompatibleProviderConfig,
@@ -645,6 +646,60 @@ def test_providers_command_lists_default_provider(
     assert " \tanthropic\tanthropic\tclaude-sonnet-4-6" in result.stdout
     assert " \topenrouter\topenai-compatible\topenai/gpt-5.5" in result.stdout
     assert " \thuggingface\topenai-compatible\topenai/gpt-oss-120b" in result.stdout
+
+
+def test_providers_command_restores_codex_with_stored_oauth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("OPENAI_CODEX_ACCESS_TOKEN", raising=False)
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    (tau_home / "providers.json").write_text(
+        """
+{
+  "default_provider": "local",
+  "providers": [
+    {
+      "type": "openai-compatible",
+      "name": "openai",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "credential_name": "openai",
+      "models": ["gpt-5.5"],
+      "default_model": "gpt-5.5"
+    },
+    {
+      "type": "openai-compatible",
+      "name": "local",
+      "base_url": "http://localhost:11434/v1",
+      "api_key_env": "LOCAL_API_KEY",
+      "credential_name": null,
+      "models": ["qwen"],
+      "default_model": "qwen"
+    }
+  ]
+}
+""".strip(),
+        encoding="utf-8",
+    )
+    FileCredentialStore(tau_home / "credentials.json").set_oauth(
+        "openai-codex",
+        OAuthCredential(
+            access="access-token",
+            refresh="refresh-token",
+            expires=123456,
+            account_id="account-1",
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["providers"])
+
+    assert result.exit_code == 0
+    assert "*\tlocal\topenai-compatible\tqwen" in result.stdout
+    assert " \topenai-codex\topenai-codex\tgpt-5.5" in result.stdout
+    assert "\tOPENAI_CODEX_ACCESS_TOKEN\tstored:openai-codex\t" in result.stdout
 
 
 def test_render_provider_settings_shows_credential_source(
