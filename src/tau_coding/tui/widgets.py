@@ -160,6 +160,7 @@ class ThemedMarkdownWidget(TextualMarkdown):
 
     ThemedMarkdownWidget MarkdownFence {
         background: $tau-markdown-code-block-background;
+        scrollbar-size-horizontal: 1;
     }
 
     ThemedMarkdownWidget MarkdownTableContent {
@@ -285,6 +286,10 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
 
     StreamingTranscriptMessageWidget > MarkdownParagraph {
         margin: 0 0 1 0;
+    }
+
+    StreamingTranscriptMessageWidget MarkdownFence {
+        scrollbar-size-horizontal: 1;
     }
     """
 
@@ -992,7 +997,7 @@ class ThemedCodeBlock(CodeBlock):
     """Rich Markdown code block with Tau's themed background color."""
 
     @classmethod
-    def create(cls, markdown: Markdown, token: Any) -> "ThemedCodeBlock":
+    def create(cls, markdown: Markdown, token: Any) -> ThemedCodeBlock:
         node_info = token.info or ""
         lexer_name = node_info.partition(" ")[0]
         code_block_background = getattr(markdown, "code_block_background", "default")

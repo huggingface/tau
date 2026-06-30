@@ -64,8 +64,8 @@ from tau_coding.tui.app import (
     TreePickerScreen,
     _activity_prompt_border_color,
     _completion_selected_render_line,
-    _theme_css_variables,
     _terminal_command_prefix_span,
+    _theme_css_variables,
     _visible_completion_state,
 )
 from tau_coding.tui.autocomplete import CompletionItem, CompletionState
@@ -81,9 +81,9 @@ from tau_coding.tui.state import ChatItem
 from tau_coding.tui.widgets import (
     LeftAlignedMarkdownHeading,
     StreamingTranscriptMessageWidget,
+    ThemedMarkdownWidget,
     TranscriptMessageWidget,
     TranscriptView,
-    ThemedMarkdownWidget,
     _compact_token_count,
     _syntax_language,
     _transcript_plain_body_text,
@@ -92,7 +92,6 @@ from tau_coding.tui.widgets import (
     render_session_sidebar,
     transcript_item_selection_text,
 )
-
 
 ANSI_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
@@ -902,7 +901,9 @@ def test_dark_theme_markdown_bullets_use_theme_bullet_color() -> None:
 def test_markdown_tables_use_highlight_color_for_headers() -> None:
     console = Console(record=True, width=80, color_system="truecolor")
     console.print(
-        render_chat_item(ChatItem(role="assistant", text="| Name | Value |\n| --- | --- |\n| A | B |"))
+        render_chat_item(
+            ChatItem(role="assistant", text="| Name | Value |\n| --- | --- |\n| A | B |")
+        )
     )
 
     output = console.export_text(styles=True)
@@ -1509,6 +1510,28 @@ async def test_tui_transcript_reflows_when_terminal_resizes() -> None:
         assert transcript.scroll_offset.x == 0
 
 
+@pytest.mark.anyio
+async def test_tui_transcript_allows_horizontal_code_block_scrolling() -> None:
+    app = TauTuiApp(
+        FakeSession(
+            messages=[
+                AssistantMessage(
+                    content="```python\n" + "value = '" + ("x" * 140) + "'\n```"
+                )
+            ]
+        )
+    )
+
+    async with app.run_test(size=(64, 30)):
+        transcript = app.query_one("#transcript", TranscriptView)
+        fence = app.query_one("MarkdownFence")
+        assert transcript.styles.overflow_x == "auto"
+        assert transcript.styles.scrollbar_size_horizontal == 1
+        assert fence.styles.scrollbar_size_horizontal == 1
+        assert fence.styles.overflow_x == "scroll"
+        assert fence.allow_horizontal_scroll is True
+
+
 def test_tui_app_uses_configured_theme_css_variables() -> None:
     app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(theme="high-contrast"))
 
@@ -1767,7 +1790,9 @@ async def test_tui_app_blocks_session_commands_while_compacting(blocked_command:
             self.compact_summaries.append(summary)
             started.set()
             await finish.wait()
-            self.messages = (UserMessage(content="Previous conversation summary:\nGenerated summary"),)
+            self.messages = (
+                UserMessage(content="Previous conversation summary:\nGenerated summary"),
+            )
             self.context_token_estimate = 42
             return "Compacted 2 context entries."
 
@@ -1794,7 +1819,9 @@ async def test_tui_app_blocks_session_commands_while_compacting(blocked_command:
         assert session.new_session_count == 0
         assert session.resumed_session_ids == []
         assert prompt.value == blocked_command
-        assert notifications == ["Compaction is still running. You can keep editing, but wait to submit."]
+        assert notifications == [
+            "Compaction is still running. You can keep editing, but wait to submit."
+        ]
 
         finish.set()
         await pilot.pause()
@@ -1865,7 +1892,9 @@ async def test_tui_app_escape_cancels_active_compaction() -> None:
             self.compact_summaries.append(summary)
             started.set()
             await finish.wait()
-            self.messages = (UserMessage(content="Previous conversation summary:\nGenerated summary"),)
+            self.messages = (
+                UserMessage(content="Previous conversation summary:\nGenerated summary"),
+            )
             self.context_token_estimate = 42
             return "Compacted 2 context entries."
 

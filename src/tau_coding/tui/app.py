@@ -1477,8 +1477,9 @@ class TauTuiApp(App[None]):
         border: none;
         background: $tau-transcript-background;
         padding: 0 0 0 2;
+        overflow-x: auto;
         scrollbar-size-vertical: 0;
-        scrollbar-size-horizontal: 0;
+        scrollbar-size-horizontal: 1;
     }
 
     #queued-messages {
@@ -1951,7 +1952,8 @@ class TauTuiApp(App[None]):
                     prompt.text = raw_text
                     prompt.move_cursor(_text_end_location(raw_text))
                     self._notify(
-                        "Wait for the current agent turn and queued messages to finish before compacting.",
+                        "Wait for the current agent turn and queued messages to finish "
+                        "before compacting.",
                         severity="warning",
                     )
                     return
@@ -2023,7 +2025,12 @@ class TauTuiApp(App[None]):
         worker = self._prompt_worker
         is_worker_active = worker is not None and not worker.is_finished and not worker.is_cancelled
         is_session_running = bool(getattr(self.session, "is_running", False))
-        return self.state.running or is_session_running or is_worker_active or self.state.queued_message_count > 0
+        return (
+            self.state.running
+            or is_session_running
+            or is_worker_active
+            or self.state.queued_message_count > 0
+        )
 
     async def _run_compaction(self, summary: str) -> None:
         """Run manual compaction without disabling prompt editing."""
