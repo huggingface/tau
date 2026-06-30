@@ -63,6 +63,24 @@ def test_render_session_html_preserves_branch_tree() -> None:
     assert "Replaces entries" in html
 
 
+def test_render_session_html_uses_static_document_layout() -> None:
+    entries = [MessageEntry(id="root", message=UserMessage(content="Export layout"))]
+
+    html = render_session_html(entries, title="Layout Export")
+
+    assert '<p class="eyebrow">Tau session export</p>' in html
+    assert '<main class="session-shell">' in html
+    assert '<aside class="tree-rail">' in html
+    assert '<section class="entry-stream" aria-label="Session entries">' in html
+    assert 'class="entry-card active-entry"' in html
+    assert "Session Map" in html
+    assert "Transcript Stream" in html
+    assert "--accent-warm" in html
+    assert "border-left: 1px solid var(--line);" in html
+    assert "<script" not in html.lower()
+    assert "<link" not in html.lower()
+
+
 def test_export_session_html_writes_file(tmp_path: Path) -> None:
     entries = [MessageEntry(id="root", message=UserMessage(content="Hello"))]
     output_path = tmp_path / "session.html"

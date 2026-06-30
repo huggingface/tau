@@ -123,45 +123,58 @@ def render_session_html(
   <style>
     :root {{
       color-scheme: light dark;
-      --bg: #f8f7f2;
-      --panel: #ffffff;
-      --text: #171717;
-      --muted: #62615b;
-      --border: #d7d3c8;
-      --accent: #0b766d;
-      --accent-soft: #dff2ed;
-      --shadow: rgba(24, 24, 21, 0.08);
+      --canvas: #f4f6f8;
+      --surface: #ffffff;
+      --surface-muted: #eef3f7;
+      --text: #16181c;
+      --muted: #65707c;
+      --line: #d9e0e7;
+      --accent: #0f766e;
+      --accent-warm: #b45309;
+      --accent-soft: #dff5f1;
+      --code-bg: #eef2f6;
       font-family:
         Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
         sans-serif;
     }}
     @media (prefers-color-scheme: dark) {{
       :root {{
-        --bg: #121311;
-        --panel: #1b1d19;
-        --text: #eeeeea;
-        --muted: #a9a69d;
-        --border: #3c4038;
-        --accent: #62c7b6;
-        --accent-soft: #153f38;
-        --shadow: rgba(0, 0, 0, 0.22);
+        --canvas: #111418;
+        --surface: #171b20;
+        --surface-muted: #202832;
+        --text: #edf1f5;
+        --muted: #a4afbb;
+        --line: #303a45;
+        --accent: #5eead4;
+        --accent-warm: #fbbf24;
+        --accent-soft: #123b37;
+        --code-bg: #1d2530;
       }}
     }}
     * {{ box-sizing: border-box; }}
+    html {{ scroll-behavior: smooth; }}
     body {{
       margin: 0;
-      background: var(--bg);
+      background: var(--canvas);
       color: var(--text);
       line-height: 1.5;
     }}
     header {{
-      padding: 28px clamp(16px, 4vw, 44px) 18px;
-      border-bottom: 1px solid var(--border);
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 32px clamp(18px, 4vw, 48px) 20px;
     }}
     h1, h2, h3, h4 {{ margin: 0; line-height: 1.2; }}
-    h1 {{ font-size: clamp(1.7rem, 3vw, 2.35rem); }}
-    h2 {{ font-size: 1rem; margin-bottom: 12px; text-transform: uppercase; }}
-    h3 {{ font-size: 1rem; }}
+    h1 {{ font-size: clamp(1.85rem, 3vw, 2.45rem); font-weight: 750; }}
+    h2 {{
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0;
+      margin-bottom: 14px;
+      text-transform: uppercase;
+    }}
+    h3 {{ font-size: 1.02rem; font-weight: 720; }}
     h4 {{ font-size: 0.9rem; margin-top: 16px; }}
     code, pre {{
       font-family:
@@ -171,40 +184,71 @@ def render_session_html(
     pre {{
       white-space: pre-wrap;
       overflow-wrap: anywhere;
-      background: color-mix(in srgb, var(--bg) 82%, var(--panel));
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 12px;
+      background: var(--code-bg);
+      border: 0;
+      border-left: 3px solid var(--line);
+      border-radius: 4px;
+      padding: 12px 14px;
       margin: 10px 0 0;
+    }}
+    .eyebrow {{
+      color: var(--accent);
+      font-size: 0.8rem;
+      font-weight: 760;
+      margin: 0 0 8px;
+      text-transform: uppercase;
     }}
     .source, .generated {{
       margin: 8px 0 0;
       color: var(--muted);
       font-size: 0.92rem;
     }}
+    .export-meta {{
+      border-top: 1px solid var(--line);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 18px;
+      margin-top: 18px;
+      padding-top: 14px;
+    }}
     main {{
       display: grid;
       grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
-      gap: 20px;
-      padding: 20px clamp(16px, 4vw, 44px) 44px;
-    }}
-    aside, article {{
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      box-shadow: 0 12px 32px var(--shadow);
+      gap: 34px;
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 18px clamp(18px, 4vw, 48px) 56px;
     }}
     aside {{
       position: sticky;
-      top: 16px;
+      top: 18px;
       align-self: start;
       max-height: calc(100vh - 32px);
       overflow: auto;
-      padding: 16px;
+      padding: 4px 0 4px 16px;
+      border-left: 1px solid var(--line);
     }}
     article {{
-      margin-bottom: 14px;
-      padding: 16px;
+      position: relative;
+      margin: 0;
+      padding: 0 0 28px 28px;
+      border-left: 1px solid var(--line);
+    }}
+    article + article {{ padding-top: 28px; }}
+    article::before {{
+      content: "";
+      position: absolute;
+      left: -5px;
+      top: 3px;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--surface);
+      border: 2px solid var(--accent);
+    }}
+    article.active-entry::before {{
+      border-color: var(--accent-warm);
+      box-shadow: 0 0 0 4px var(--accent-soft);
     }}
     .tree {{
       list-style: none;
@@ -212,27 +256,24 @@ def render_session_html(
       padding-left: 0;
     }}
     .tree .tree {{
-      margin-left: 12px;
-      padding-left: 14px;
-      border-left: 1px solid var(--border);
+      margin-left: 10px;
+      padding-left: 12px;
+      border-left: 1px solid var(--line);
     }}
-    .tree li {{ margin: 8px 0; }}
+    .tree li {{ margin: 6px 0; }}
     .node-link {{
       display: block;
       color: var(--text);
       text-decoration: none;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 8px 10px;
-      background: color-mix(in srgb, var(--panel) 88%, var(--bg));
+      border-radius: 4px;
+      padding: 7px 9px;
     }}
-    .node-link:hover {{ border-color: var(--accent); }}
+    .node-link:hover {{ background: var(--surface-muted); }}
     .active-path > .node-link {{
-      border-color: var(--accent);
       background: var(--accent-soft);
     }}
     .active-leaf > .node-link {{
-      box-shadow: inset 3px 0 0 var(--accent);
+      box-shadow: inset 3px 0 0 var(--accent-warm);
     }}
     .node-type {{
       display: block;
@@ -262,11 +303,12 @@ def render_session_html(
       margin-top: 10px;
     }}
     .badge {{
-      border: 1px solid var(--border);
+      background: var(--surface-muted);
       border-radius: 999px;
       padding: 2px 8px;
-      color: var(--muted);
+      color: var(--accent-warm);
       font-size: 0.78rem;
+      font-weight: 700;
     }}
     .message-role {{
       margin-top: 14px;
@@ -280,22 +322,28 @@ def render_session_html(
     @media (max-width: 820px) {{
       main {{ grid-template-columns: 1fr; }}
       aside {{ position: static; max-height: none; }}
+      article, article + article {{ padding-left: 20px; }}
     }}
   </style>
 </head>
 <body>
   <header>
+    <p class="eyebrow">Tau session export</p>
     <h1>{_escape(title)}</h1>
-    {source_html}
-    <p class="generated">Generated: <time>{_escape(generated_at)}</time></p>
+    <div class="export-meta">
+      {source_html}
+      <p class="generated">
+        Generated: <time datetime="{_attr(generated_at)}">{_escape(generated_at)}</time>
+      </p>
+    </div>
   </header>
-  <main>
-    <aside>
-      <h2>Session Tree</h2>
+  <main class="session-shell">
+    <aside class="tree-rail">
+      <h2>Session Map</h2>
       {tree_html}
     </aside>
-    <section aria-label="Session entries">
-      <h2>Transcript Entries</h2>
+    <section class="entry-stream" aria-label="Session entries">
+      <h2>Transcript Stream</h2>
       {details_html}
     </section>
   </main>
@@ -453,11 +501,14 @@ def _render_entry_detail(
     active_path_ids: set[str],
     active_leaf_id: str | None,
 ) -> str:
+    classes = ["entry-card"]
     badges = []
     if entry.id in active_path_ids:
         badges.append("active path")
     if entry.id == active_leaf_id:
         badges.append("active leaf")
+    if badges:
+        classes.append("active-entry")
     badge_html = (
         '<div class="badges">'
         + "".join(f'<span class="badge">{_escape(badge)}</span>' for badge in badges)
@@ -467,7 +518,7 @@ def _render_entry_detail(
     )
     body = _render_entry_body(entry)
     return (
-        f'<article id="entry-{_attr(entry.id)}">'
+        f'<article id="entry-{_attr(entry.id)}" class="{" ".join(classes)}">'
         f"<h3>{index}. {_escape(_entry_title(entry))}</h3>"
         f"{badge_html}"
         '<dl class="entry-meta">'
