@@ -4172,9 +4172,9 @@ async def test_tui_resume_refreshes_context_after_session_swap() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_app_shows_startup_update_notice() -> None:
-    session = FakeSession()
-    app = TauTuiApp(session, startup_message="Tau 0.2.0 is available")
+async def test_tui_app_shows_startup_update_notice_in_transcript_only() -> None:
+    session = FakeSession(messages=[UserMessage(content="Earlier prompt")])
+    app = TauTuiApp(session, startup_notice="Tau 0.2.0 is available")
     notifications: list[tuple[str, str | None]] = []
 
     def fake_notify(message: str, **kwargs: object) -> None:
@@ -4183,10 +4183,16 @@ async def test_tui_app_shows_startup_update_notice() -> None:
 
     app._notify = fake_notify  # type: ignore[method-assign]
 
-    async with app.run_test():
-        pass
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert [line.text for line in transcript.lines] == [
+            "Tau 0.2.0 is available",
+            "Earlier prompt",
+        ]
 
-    assert notifications == [("Tau 0.2.0 is available", "warning")]
+    assert notifications == []
+    assert session.messages == (UserMessage(content="Earlier prompt"),)
 
 
 @pytest.mark.anyio
@@ -4655,7 +4661,7 @@ async def test_run_tui_app_opens_when_provider_login_is_missing(
         def __init__(self, session: str, **kwargs: object) -> None:
             assert session == "session"
             message = str(kwargs["startup_message"])
-            assert "Tau 0.2.0 is available" in message
+            assert "Tau 0.2.0 is available" not in message
             assert "Login required. Run /login" in message
             assert "/login openai" in message
             assert "OPENAI_API_KEY" not in message

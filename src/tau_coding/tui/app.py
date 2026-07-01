@@ -1767,15 +1767,19 @@ class TauTuiApp(App[None]):
         *,
         tui_settings: TuiSettings | None = None,
         startup_message: str | None = None,
+        startup_notice: str | None = None,
         initial_prompt: str | None = None,
     ) -> None:
         self.tui_settings = tui_settings or TuiSettings()
         self.startup_message = startup_message
+        self.startup_notice = startup_notice
         self.initial_prompt = initial_prompt
         super().__init__()
         self._bindings = BindingsMap(_app_bindings(self.tui_settings.keybindings))
         self.session = session
         self.state = TuiState(skills=session.skills)
+        if startup_notice:
+            self.state.add_item("status", startup_notice)
         self.state.load_messages(session.messages)
         self.adapter = TuiEventAdapter(self.state)
         self._prompt_worker: Worker[None] | None = None
@@ -3686,7 +3690,7 @@ async def run_tui_app(
         model=model,
         explicit_resume=session_id is not None,
     )
-    startup_message: str | None = startup_notice
+    startup_message: str | None = None
     runtime_provider_config: ProviderConfig | None = selection.provider
     try:
         provider = create_model_provider(
@@ -3699,11 +3703,7 @@ async def run_tui_app(
             "Login required. Run /login to choose a provider, "
             f"or /login {selection.provider.name} to continue with the current provider."
         )
-        startup_message = (
-            f"{startup_message}\n{login_required_message}"
-            if startup_message
-            else login_required_message
-        )
+        startup_message = login_required_message
         provider = LoginRequiredProvider(startup_message)
         runtime_provider_config = None
     session: CodingSession | None = None
@@ -3737,6 +3737,7 @@ async def run_tui_app(
             session,
             tui_settings=load_tui_settings(),
             startup_message=startup_message,
+            startup_notice=startup_notice,
             initial_prompt=initial_prompt,
         )
         await app.run_async()
