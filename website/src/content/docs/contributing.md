@@ -58,6 +58,17 @@ bun run build    # static output in website/dist/
 User-facing docs live in `website/src/content/docs/`; the landing and "Why Tau?"
 pages are standalone routes in `website/src/pages/`.
 
+## Contributor workflow
+
+For a complete contributor guide — including Git worktrees, branch naming
+conventions, and reusable prompt templates — see
+[CONTRIBUTING.md](https://github.com/huggingface/tau/blob/main/CONTRIBUTING.md)
+in the repository root.
+
+Tau ships with contributor prompt templates in `.agents/prompts/` for common
+tasks like implementing features, fixing bugs, writing dev notes, and updating
+docs. These help coding agents follow Tau's conventions automatically.
+
 ## Documentation expectations
 
 Each substantial phase should leave beginner-friendly notes in `dev-notes/`
