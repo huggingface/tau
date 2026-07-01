@@ -113,7 +113,7 @@ class AnthropicProviderConfig:
     api_key_env: str = "ANTHROPIC_API_KEY"
     credential_name: str | None = "anthropic"
     models: tuple[str, ...] = ("claude-fable-5", "claude-sonnet-5", "claude-sonnet-4-6")
-    default_model: str = "claude-fable-5"
+    default_model: str = "claude-sonnet-5"
     context_windows: dict[str, int] = field(default_factory=dict)
     headers: dict[str, str] = field(default_factory=dict)
     timeout_seconds: float = DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS

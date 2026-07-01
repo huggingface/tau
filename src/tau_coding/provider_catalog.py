@@ -130,7 +130,7 @@ BUILTIN_PROVIDER_CATALOG: tuple[ProviderCatalogEntry, ...] = (
             "claude-opus-4-8",
             "claude-haiku-4-5",
         ),
-        default_model="claude-fable-5",
+        default_model="claude-sonnet-5",
         docs_url="https://docs.anthropic.com",
         context_windows={
             "claude-fable-5": 1_000_000,
