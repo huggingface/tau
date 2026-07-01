@@ -199,6 +199,7 @@ class PromptInput(TextArea):
         tui_keybindings: TuiKeybindings | None = None,
         **kwargs: Any,
     ) -> None:
+        kwargs.setdefault("highlight_cursor_line", False)
         super().__init__(**kwargs)
         self.tui_keybindings = tui_keybindings or TuiKeybindings()
         self._base_bindings = self._bindings.copy()

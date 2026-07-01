@@ -1437,6 +1437,18 @@ async def test_tui_app_mounts_sidebar_and_transcript() -> None:
         assert prompt.soft_wrap is True
 
 
+@pytest.mark.anyio
+async def test_prompt_input_does_not_highlight_active_line() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "Keep the prompt background uniform."
+        await pilot.pause()
+
+        assert prompt.highlight_cursor_line is False
+
+
 def test_terminal_command_prefix_span_detects_shell_mode_prefix() -> None:
     assert _terminal_command_prefix_span("! pwd") == (0, 1)
     assert _terminal_command_prefix_span("!! pwd") == (0, 2)
