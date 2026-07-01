@@ -117,6 +117,17 @@ class NonSelectableStatic(Static):
 class TauMarkdownBlock(MarkdownBlock):
     """Markdown block that applies Tau's themed inline link color."""
 
+    @property
+    def allow_select(self) -> bool:
+        """Only allow native selection once Textual has mounted the block.
+
+        Textual may hit freshly-created Markdown blocks during a mouse-down before
+        they have a parent. Its selection startup path assumes selected content
+        widgets have a parent container, so an unmounted selectable Markdown block
+        can crash with ``container is None``.
+        """
+        return self.parent is not None and super().allow_select
+
     def _token_to_content(self, token: Any) -> Any:
         content = super()._token_to_content(token)
         markdown = self._markdown

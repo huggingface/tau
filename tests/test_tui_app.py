@@ -11,6 +11,7 @@ from textual.containers import VerticalScroll
 from textual.geometry import Offset
 from textual.selection import SELECT_ALL, Selection
 from textual.widgets import Footer, Input, Label, ListItem, ListView, Static, TextArea
+from textual.widgets import Markdown as TextualMarkdown
 
 from tau_agent import (
     AgentEndEvent,
@@ -81,6 +82,7 @@ from tau_coding.tui.config import (
 from tau_coding.tui.state import ChatItem
 from tau_coding.tui.widgets import (
     LeftAlignedMarkdownHeading,
+    TauMarkdownBlock,
     StreamingTranscriptMessageWidget,
     ThemedMarkdownWidget,
     TranscriptMessageWidget,
@@ -1435,6 +1437,16 @@ async def test_tui_app_mounts_sidebar_and_transcript() -> None:
         prompt = app.query_one("#prompt")
         assert isinstance(prompt, TextArea)
         assert prompt.soft_wrap is True
+
+
+def test_tau_markdown_block_is_not_selectable_until_mounted() -> None:
+    markdown = TextualMarkdown("example")
+    block = TauMarkdownBlock(
+        markdown,
+        type("Token", (), {"map": (0, 1), "level": 0, "type": "paragraph_open"})(),
+    )
+
+    assert block.allow_select is False
 
 
 @pytest.mark.anyio
