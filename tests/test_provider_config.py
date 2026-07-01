@@ -37,6 +37,7 @@ def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path)
         "anthropic",
         "openrouter",
         "huggingface",
+        "deepseek",
     ]
     assert settings.providers[0].default_model == DEFAULT_MODEL
     assert settings.get_provider("anthropic").api_key_env == "ANTHROPIC_API_KEY"
@@ -148,7 +149,12 @@ def test_save_provider_settings_writes_backup_when_replacing(tmp_path: Path) -> 
     )
 
 
-def test_save_and_load_provider_settings_round_trip(tmp_path: Path) -> None:
+def test_save_and_load_provider_settings_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     paths = TauPaths(home=tmp_path / ".tau")
     settings = ProviderSettings(
         default_provider="local",
@@ -234,6 +240,7 @@ def test_upsert_openai_compatible_provider_replaces_and_sets_default() -> None:
     assert updated.default_provider == "local"
     assert [item.name for item in updated.providers] == [
         "anthropic",
+        "deepseek",
         "huggingface",
         "local",
         "openai",
@@ -694,6 +701,7 @@ def test_load_provider_settings_restores_builtin_providers_with_stored_credentia
     tmp_path: Path,
 ) -> None:
     for env_name in (
+        "DEEPSEEK_API_KEY",
         "OPENAI_API_KEY",
         "OPENAI_CODEX_ACCESS_TOKEN",
         "ANTHROPIC_API_KEY",
