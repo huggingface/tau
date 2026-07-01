@@ -354,7 +354,16 @@ class TranscriptView(VerticalScroll):
         """Return to follow mode for a user-driven turn or explicit jump to bottom."""
         self._follow_output = True
         self.anchor(False)
-        self.scroll_end(animate=False)
+        self._request_follow_scroll(force=True)
+
+    def _request_follow_scroll(self, *, force: bool = False) -> None:
+        """Scroll to the bottom after layout if follow mode is still active."""
+
+        def scroll_if_still_following() -> None:
+            if force or self._follow_output or self.is_vertical_scroll_end:
+                self.scroll_end(animate=False, immediate=True)
+
+        self.call_after_refresh(scroll_if_still_following)
 
     @property
     def _should_follow_output(self) -> bool:
@@ -364,10 +373,10 @@ class TranscriptView(VerticalScroll):
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         """Track whether user scrollback has opted out of transcript following."""
         super().watch_scroll_y(old_value, new_value)
-        if round(new_value) >= self.max_scroll_y:
-            self._follow_output = True
-        elif round(new_value) < round(old_value):
+        if new_value < old_value:
             self._follow_output = False
+        elif new_value >= self.max_scroll_y:
+            self._follow_output = True
 
     def update_from_state(
         self,
@@ -442,7 +451,7 @@ class TranscriptView(VerticalScroll):
             )
         self.refresh(layout=True)
         if scroll_end:
-            self.scroll_end(animate=False)
+            self._request_follow_scroll()
 
     async def append_item(
         self,
@@ -467,7 +476,7 @@ class TranscriptView(VerticalScroll):
         self._last_render_width = self.scrollable_content_region.width
         self.refresh(layout=True)
         if should_follow:
-            self.scroll_end(animate=False)
+            self._request_follow_scroll(force=scroll_end)
         return widget
 
     async def start_assistant_message(
@@ -489,7 +498,7 @@ class TranscriptView(VerticalScroll):
         self._active_assistant_widget = widget
         self._last_render_width = self.scrollable_content_region.width
         if should_follow:
-            self.scroll_end(animate=False)
+            self._request_follow_scroll(force=scroll_end)
         return widget
 
     async def append_assistant_delta(
@@ -506,7 +515,7 @@ class TranscriptView(VerticalScroll):
         widget = await self.start_assistant_message(theme=theme, scroll_end=scroll_end)
         await widget.append_fragment(delta)
         if should_follow:
-            self.scroll_end(animate=False)
+            self._request_follow_scroll(force=scroll_end)
 
     async def append_thinking_delta(
         self,
@@ -540,7 +549,7 @@ class TranscriptView(VerticalScroll):
             await self.mount(self._active_thinking_widget)
         await self._active_thinking_widget.append_fragment(delta)
         if should_follow:
-            self.scroll_end(animate=False)
+            self._request_follow_scroll(force=scroll_end)
 
     async def finish_assistant_message(self, text: str | None = None) -> None:
         """Finalize the active assistant widget after the provider sends the full message."""

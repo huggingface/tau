@@ -1160,6 +1160,82 @@ async def test_streaming_transcript_deltas_preserve_user_scrollback() -> None:
 
 
 @pytest.mark.anyio
+async def test_streaming_transcript_deltas_do_not_apply_stale_follow_scroll() -> None:
+    app = TauTuiApp(
+        FakeSession(
+            messages=[
+                UserMessage(content=f"message {index}\n" + "line\n" * 4) for index in range(12)
+            ]
+        )
+    )
+
+    async with app.run_test(size=(40, 12)) as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+        transcript.follow_output()
+        await pilot.pause()
+        assert transcript.is_vertical_scroll_end
+
+        await transcript.append_assistant_delta("alpha\n" * 20)
+        transcript.scroll_to(
+            y=max(0, transcript.max_scroll_y - 5),
+            animate=False,
+            immediate=True,
+        )
+        scrollback_y = transcript.scroll_y
+        assert not transcript.is_vertical_scroll_end
+
+        await pilot.pause()
+
+        assert transcript.scroll_y == scrollback_y
+        assert not transcript.is_vertical_scroll_end
+
+
+@pytest.mark.anyio
+async def test_streaming_transcript_fractional_scrollback_after_refollow_stops_following() -> None:
+    app = TauTuiApp(
+        FakeSession(
+            messages=[
+                UserMessage(content=f"message {index}\n" + "line\n" * 4) for index in range(12)
+            ]
+        )
+    )
+
+    async with app.run_test(size=(40, 12)) as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+        transcript.follow_output()
+        await pilot.pause()
+        assert transcript.is_vertical_scroll_end
+
+        transcript.scroll_to(
+            y=max(0, transcript.max_scroll_y - 5),
+            animate=False,
+            immediate=True,
+        )
+        await pilot.pause()
+        assert not transcript.is_vertical_scroll_end
+
+        transcript.scroll_end(animate=False, immediate=True)
+        await pilot.pause()
+        assert transcript.is_vertical_scroll_end
+
+        transcript.scroll_to(
+            y=max(0, transcript.max_scroll_y - 0.6),
+            animate=False,
+            immediate=True,
+        )
+        scrollback_y = transcript.scroll_y
+        assert not transcript.is_vertical_scroll_end
+
+        await transcript.append_assistant_delta("alpha\n" * 20)
+        await pilot.pause()
+
+        assert transcript.scroll_y == scrollback_y
+        assert not transcript.is_vertical_scroll_end
+
+
+@pytest.mark.anyio
 async def test_tui_transcript_selects_only_one_message() -> None:
     app = TauTuiApp(
         FakeSession(
