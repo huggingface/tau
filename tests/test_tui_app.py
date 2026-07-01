@@ -4172,6 +4172,24 @@ async def test_tui_resume_refreshes_context_after_session_swap() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_app_shows_startup_update_notice() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session, startup_message="Tau 0.2.0 is available")
+    notifications: list[tuple[str, str | None]] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        severity = kwargs.get("severity")
+        notifications.append((message, severity if isinstance(severity, str) else None))
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test():
+        pass
+
+    assert notifications == [("Tau 0.2.0 is available", "warning")]
+
+
+@pytest.mark.anyio
 async def test_tui_app_runs_initial_prompt() -> None:
     session = FakeSession(
         events=[
@@ -4637,6 +4655,7 @@ async def test_run_tui_app_opens_when_provider_login_is_missing(
         def __init__(self, session: str, **kwargs: object) -> None:
             assert session == "session"
             message = str(kwargs["startup_message"])
+            assert "Tau 0.2.0 is available" in message
             assert "Login required. Run /login" in message
             assert "/login openai" in message
             assert "OPENAI_API_KEY" not in message
@@ -4656,7 +4675,12 @@ async def test_run_tui_app_opens_when_provider_login_is_missing(
     monkeypatch.setattr(tui_app, "TauTuiApp", FakeApp)
     monkeypatch.setattr(tui_app, "load_tui_settings", lambda: TuiSettings())
 
-    await tui_app.run_tui_app(cwd=tmp_path, model=None, session_manager=FakeManager())
+    await tui_app.run_tui_app(
+        cwd=tmp_path,
+        model=None,
+        session_manager=FakeManager(),
+        startup_notice="Tau 0.2.0 is available",
+    )
 
     assert calls == [f"prepare:{tmp_path}:gpt-5.5:openai", "load:LoginRequiredProvider", "run"]
 

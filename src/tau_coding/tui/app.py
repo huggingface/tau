@@ -3666,6 +3666,7 @@ async def run_tui_app(
     auto_compact_token_threshold: int | None = None,
     initial_prompt: str | None = None,
     session_manager: SessionManager | None = None,
+    startup_notice: str | None = None,
 ) -> None:
     """Create the default provider/session and run the Textual app."""
     if new_session and session_id is not None:
@@ -3685,7 +3686,7 @@ async def run_tui_app(
         model=model,
         explicit_resume=session_id is not None,
     )
-    startup_message: str | None = None
+    startup_message: str | None = startup_notice
     runtime_provider_config: ProviderConfig | None = selection.provider
     try:
         provider = create_model_provider(
@@ -3694,9 +3695,14 @@ async def run_tui_app(
             thinking_level=DEFAULT_THINKING_LEVEL,
         )
     except RuntimeError:
-        startup_message = (
+        login_required_message = (
             "Login required. Run /login to choose a provider, "
             f"or /login {selection.provider.name} to continue with the current provider."
+        )
+        startup_message = (
+            f"{startup_message}\n{login_required_message}"
+            if startup_message
+            else login_required_message
         )
         provider = LoginRequiredProvider(startup_message)
         runtime_provider_config = None
