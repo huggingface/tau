@@ -2934,7 +2934,7 @@ class TauTuiApp(App[None]):
             render_completion_suggestions(
                 _visible_completion_state(
                     self._completion_state,
-                    max_lines=COMPLETION_MAX_VISIBLE_LINES,
+                    max_lines=_completion_visible_line_limit(suggestions),
                     width=max(suggestions.content_size.width or suggestions.size.width, 1),
                 ),
                 theme=self.tui_settings.resolved_theme,
@@ -3058,6 +3058,13 @@ def _hex_to_rgb(color: str) -> tuple[int, int, int]:
     if len(value) != 6:
         raise ValueError(f"Expected #rrggbb color, got {color!r}")
     return (int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16))
+
+
+def _completion_visible_line_limit(suggestions: Static) -> int:
+    """Return the number of completion render lines that fit in the widget body."""
+    if suggestions.size.height > 0:
+        return max(min(COMPLETION_MAX_VISIBLE_LINES, suggestions.size.height), 1)
+    return COMPLETION_MAX_VISIBLE_LINES
 
 
 def _visible_completion_state(

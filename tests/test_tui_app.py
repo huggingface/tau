@@ -64,6 +64,7 @@ from tau_coding.tui.app import (
     TreePickerScreen,
     _activity_prompt_border_color,
     _completion_selected_render_line,
+    _completion_visible_line_limit,
     _terminal_command_prefix_span,
     _theme_css_variables,
     _visible_completion_state,
@@ -2767,15 +2768,19 @@ async def test_tui_app_scrolls_completion_selection_into_view() -> None:
     )
     app = TauTuiApp(session)
 
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(80, 24)) as pilot:
         prompt = app.query_one("#prompt")
         prompt.focus()
         prompt.value = "/"
         app._completion_state = app._build_completion_state(prompt.value)
         app._refresh_completions()
+        await pilot.pause()
+        autocomplete = app.query_one("#autocomplete", Static)
+        visible_line_limit = _completion_visible_line_limit(autocomplete)
+        assert visible_line_limit < tui_app.COMPLETION_MAX_VISIBLE_LINES
         visible = tui_app._visible_completion_state(
             app._completion_state,
-            max_lines=tui_app.COMPLETION_MAX_VISIBLE_LINES,
+            max_lines=visible_line_limit,
         )
         assert visible.items[0].display != "/prompt-00"
 
@@ -2785,13 +2790,14 @@ async def test_tui_app_scrolls_completion_selection_into_view() -> None:
 
         visible = tui_app._visible_completion_state(
             app._completion_state,
-            max_lines=tui_app.COMPLETION_MAX_VISIBLE_LINES,
+            max_lines=visible_line_limit,
         )
         selected = app._completion_state.selected
         assert selected is not None
         assert visible.selected is not None
         assert visible.selected.display == selected.display
         assert visible.items[0].display != "/prompt-00"
+        assert _completion_selected_render_line(visible) < visible_line_limit - 1
 
 
 @pytest.mark.anyio
