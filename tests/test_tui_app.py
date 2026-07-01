@@ -1450,6 +1450,20 @@ def test_tau_markdown_block_is_not_selectable_until_mounted() -> None:
 
 
 @pytest.mark.anyio
+async def test_tau_markdown_block_remains_selectable_after_mount() -> None:
+    app = TauTuiApp(
+        FakeSession([AssistantMessage(content="Read [docs](https://example.com).")]),
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        block = app.query_one(TauMarkdownBlock)
+        assert block.parent is not None
+        assert block.allow_select is True
+
+
+@pytest.mark.anyio
 async def test_tui_app_disables_text_selection_while_agent_is_running() -> None:
     app = TauTuiApp(FakeSession())
 
