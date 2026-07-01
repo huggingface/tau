@@ -61,6 +61,24 @@ def test_startup_update_notice_uses_fresh_cache(tmp_path) -> None:
     assert notice.latest_version == "0.2.0"
 
 
+def test_startup_update_notice_uses_fresh_empty_cache(tmp_path) -> None:
+    cache_path = tmp_path / "update-check.json"
+    cache_path.write_text(
+        '{"checked_at":"2026-01-01T00:00:00+00:00","latest_version":null}\n',
+        encoding="utf-8",
+    )
+
+    notice = startup_update_notice(
+        "0.1.0",
+        fetcher=lambda _url, _timeout: (_ for _ in ()).throw(AssertionError("no fetch")),
+        cache_path=cache_path,
+        now=lambda: datetime(2026, 1, 1, 12, tzinfo=UTC),
+        env={},
+    )
+
+    assert notice is None
+
+
 def test_startup_update_notice_refreshes_stale_cache(tmp_path) -> None:
     cache_path = tmp_path / "update-check.json"
     cache_path.write_text(
@@ -123,6 +141,14 @@ def test_fetch_latest_pypi_version_falls_back_to_info_version() -> None:
     )
 
     assert latest == "0.4.0"
+
+
+def test_fetch_latest_pypi_version_skips_malformed_release_versions() -> None:
+    latest = fetch_latest_pypi_version(
+        fetcher=lambda _url, _timeout: {"releases": {"0.3.0": [{}], "wat": [{}]}}
+    )
+
+    assert latest == "0.3.0"
 
 
 def test_fetch_latest_pypi_version_rejects_malformed_versions() -> None:

@@ -68,13 +68,15 @@ def startup_update_notice(
         return None
 
     current_time = (now or _utc_now)()
-    latest_version = _cached_latest_version(cache_path, current_time)
-    if latest_version is None:
+    cached_result = _cached_update_check_result(cache_path, current_time)
+    if cached_result is None:
         try:
             latest_version = fetch_latest_pypi_version(fetcher=fetcher)
         except Exception:  # noqa: BLE001 - update checks must never block startup
             return None
         _write_update_check_cache(cache_path, current_time, latest_version)
+    else:
+        latest_version = cached_result.latest_version
 
     if latest_version is None:
         return None
@@ -119,7 +121,10 @@ def _stable_release_versions(releases: dict[Any, Any]) -> list[Version]:
             continue
         if isinstance(files, list) and not files:
             continue
-        parsed = Version(version_text)
+        try:
+            parsed = Version(version_text)
+        except InvalidVersion:
+            continue
         if parsed.is_prerelease or parsed.is_devrelease:
             continue
         versions.append(parsed)
@@ -135,7 +140,7 @@ def _httpx_fetch_json(url: str, timeout_seconds: float) -> dict[str, Any]:
     return data
 
 
-def _cached_latest_version(cache_path: Path | None, now: datetime) -> str | None:
+def _cached_update_check_result(cache_path: Path | None, now: datetime) -> UpdateCheckResult | None:
     path = cache_path or default_update_check_cache_path()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -144,7 +149,7 @@ def _cached_latest_version(cache_path: Path | None, now: datetime) -> str | None
         return None
     if now - result.checked_at > UPDATE_CHECK_INTERVAL:
         return None
-    return result.latest_version
+    return result
 
 
 def _parse_cached_result(data: Any) -> UpdateCheckResult:
