@@ -145,6 +145,7 @@ class FakeSession:
         self.available_thinking_levels = ("off", "minimal", "low", "medium", "high", "xhigh")
         self.state = FakeSessionState()
         self.resource_diagnostics = ()
+        self.system_prompt = "You are Tau."
         self.session_manager = None
         self.compact_summaries: list[str] = []
         self.resumed_session_ids: list[str] = []
@@ -179,6 +180,8 @@ class FakeSession:
                 handled=True,
                 message="Reloaded local coding resources and project context.",
             )
+        if text == "/system":
+            return CommandResult(handled=True, message=self.system_prompt)
         if text == "/new":
             return CommandResult(handled=True, new_session_requested=True)
         if text == "/compact":
@@ -2883,6 +2886,20 @@ async def test_tui_app_reload_appends_command_output_to_transcript() -> None:
             )
         ]
         assert [skill.name for skill in app.state.skills] == ["reloaded"]
+
+
+@pytest.mark.anyio
+async def test_tui_app_system_appends_command_output_to_transcript() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/system"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert not isinstance(app.screen, CommandOutputScreen)
+        assert app.state.items == [ChatItem(role="status", text="/system\nYou are Tau.")]
 
 
 @pytest.mark.anyio

@@ -551,6 +551,11 @@ class CodingSession:
         )
 
     @property
+    def system_prompt(self) -> str:
+        """Return the effective system prompt sent to the model."""
+        return self._harness.config.system
+
+    @property
     def auto_compact_token_threshold(self) -> int | None:
         """Return the effective automatic compaction threshold, if any."""
         if not self._auto_compact_enabled:

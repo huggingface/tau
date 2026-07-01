@@ -1344,6 +1344,34 @@ async def test_session_loads_and_expands_skills(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
+async def test_system_command_shows_prompt_without_persisting_or_adding_context(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    provider = FakeProvider([])
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    before_messages = session.messages
+    before_entries = await storage.read_all()
+
+    result = session.handle_command("/system")
+
+    assert result.handled is True
+    assert result.message == "You are Tau."
+    assert session.messages == before_messages
+    assert await storage.read_all() == before_entries
+    assert provider.calls == []
+
+
+@pytest.mark.anyio
 async def test_session_expands_prompt_templates_as_slash_commands(tmp_path: Path) -> None:
     resource_root = tmp_path / "resources"
     prompts_dir = resource_root / "prompts"
@@ -2602,5 +2630,5 @@ def test_minimal_commands_are_handled(tmp_path: Path) -> None:
     assert session.handle_command("/new").new_session_requested is True
     assert session.handle_command("/clear").message == "Unknown command: /clear"
     assert session.handle_command("/quit").exit_requested is True
-    assert session.handle_command("/exit").message == "Unknown command: /exit"
+    assert session.handle_command("/exit").exit_requested is True
     assert session.handle_command("/unknown").message == "Unknown command: /unknown"

@@ -496,6 +496,11 @@ async def run_print_mode(
             )
             typer.echo(_format_terminal_command_result(result))
             return result.ok
+        command = session.handle_command(prompt)
+        if command.handled:
+            if command.message:
+                typer.echo(command.message)
+            return True
         async for event in session.prompt(prompt):
             renderer.render(event)
         return renderer.finish()

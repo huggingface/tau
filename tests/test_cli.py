@@ -138,6 +138,33 @@ async def test_run_print_mode_prints_final_assistant_text(
 
 
 @pytest.mark.anyio
+async def test_run_print_mode_system_command_prints_prompt_without_provider_call(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    provider = FakeProvider([])
+
+    ok = await run_print_mode(
+        prompt="/system",
+        model="fake",
+        cwd=tmp_path,
+        provider=provider,
+        storage=storage,
+        resource_paths=TauResourcePaths(root=tmp_path / "resources", agents_root=None),
+    )
+
+    captured = capsys.readouterr()
+    expected_system = build_system_prompt(
+        BuildSystemPromptOptions(cwd=tmp_path, tools=create_coding_tools(cwd=tmp_path))
+    )
+    assert ok is True
+    assert captured.out == f"{expected_system}\n"
+    assert captured.err == ""
+    assert provider.calls == []
+    assert await storage.read_all() == []
+
+
+@pytest.mark.anyio
 async def test_run_print_mode_fails_on_non_recoverable_error(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:

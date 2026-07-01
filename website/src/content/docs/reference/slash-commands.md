@@ -11,6 +11,7 @@ command palette with **Ctrl+K**.
 | `/quit` | Exit the session |
 | `/new` | Start a new session |
 | `/session` | Show session info and stats (model, cwd, tools, skills, context) |
+| `/system` | Show the active system prompt without adding it to context or session history |
 | `/compact [instructions]` | Summarize and compact the active context |
 | `/export [--format html\|jsonl] [dest]` | Export the current session |
 | `/resume [session-id]` | Resume a previous session, or open the picker |
