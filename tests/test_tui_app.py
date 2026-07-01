@@ -1144,6 +1144,25 @@ async def test_streaming_transcript_applies_role_foreground() -> None:
 
 
 @pytest.mark.anyio
+async def test_assistant_message_renders_without_role_block() -> None:
+    app = TauTuiApp(
+        FakeSession([AssistantMessage(content="line one\nline two")]),
+        tui_settings=TuiSettings(theme="high-contrast"),
+    )
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await pilot.pause()
+        widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "assistant")
+        body = widget.query_one(".transcript-message-body")
+
+        # Assistant output flows as plain prose: no left accent and no role
+        # background, so it reads the same while streaming and once finalized.
+        assert not widget.styles.has_rule("border_left")
+        assert widget.styles.background.a == 0
+        assert body.styles.background.a == 0
+
+
+@pytest.mark.anyio
 async def test_streaming_transcript_deltas_do_not_force_scroll_end_during_scrollback() -> None:
     app = TauTuiApp(
         FakeSession(
