@@ -1438,6 +1438,24 @@ async def test_tui_app_mounts_sidebar_and_transcript() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_app_disables_text_selection_while_agent_is_running() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(120, 30)):
+        assert app.ALLOW_SELECT is True
+
+        app.adapter.apply(AgentStartEvent())
+        app._refresh_chrome()
+
+        assert app.ALLOW_SELECT is False
+
+        app.adapter.apply(AgentEndEvent())
+        app._refresh_chrome()
+
+        assert app.ALLOW_SELECT is True
+
+
+@pytest.mark.anyio
 async def test_prompt_input_does_not_highlight_active_line() -> None:
     app = TauTuiApp(FakeSession())
 

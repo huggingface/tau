@@ -1793,6 +1793,13 @@ class TauTuiApp(App[None]):
         self._active_notification_keys: set[tuple[str, str]] = set()
         self._supports_pyperclip: bool | None = None
 
+    def _sync_text_selection_state(self) -> None:
+        """Disable native text selection while the transcript is mutating."""
+        self.ALLOW_SELECT = not self.state.running
+        if self.state.running and self.screen_stack:
+            with suppress(Exception):
+                self.screen.clear_selection()
+
     def copy_to_clipboard(self, text: str) -> None:
         """Copy text using pyperclip when available, then Textual's fallback."""
         if self._supports_pyperclip is None:
@@ -1847,6 +1854,7 @@ class TauTuiApp(App[None]):
         prompt.focus()
         self._update_responsive_layout(self.size.width, self.size.height)
         self._refresh()
+        self._sync_text_selection_state()
         self._refresh_completions()
         if self.startup_message:
             self._notify(self.startup_message, severity="warning")
@@ -2164,6 +2172,7 @@ class TauTuiApp(App[None]):
                 if active_run_id != self._prompt_run_id:
                     return
                 self.adapter.apply(event)
+                self._sync_text_selection_state()
                 if isinstance(event, ErrorEvent) and not event.recoverable:
                     _attach_diagnostic_log_path_to_error(self.state, self.session)
                 await self._apply_streaming_transcript_event(event)
@@ -2174,6 +2183,7 @@ class TauTuiApp(App[None]):
             self.state.error = message
             self.state.add_item("error", message)
             self.state.running = False
+            self._sync_text_selection_state()
             self._refresh()
         finally:
             if active_run_id == self._prompt_run_id:
@@ -2287,6 +2297,7 @@ class TauTuiApp(App[None]):
         self._prompt_worker = None
         self.state.running = False
         self.state.assistant_buffer = ""
+        self._sync_text_selection_state()
         self._refresh()
         if notify:
             self._notify("Interrupted current operation.")
@@ -2864,6 +2875,7 @@ class TauTuiApp(App[None]):
     def _refresh_chrome(self, *, theme: TuiTheme | None = None) -> None:
         """Refresh non-transcript chrome without remounting transcript blocks."""
         theme = theme or self.tui_settings.resolved_theme
+        self._sync_text_selection_state()
         self._sync_queue_state()
         sidebar = self.query_one("#sidebar", SessionSidebar)
         sidebar.update_from_session(self.session, theme=theme)
