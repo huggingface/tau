@@ -25,6 +25,10 @@ those locations and file formats.
 Tau also reads user-level `.agents` resources: `~/.agents/skills/`,
 `~/.agents/prompts/`, `~/.agents/AGENTS.md`.
 
+Startup update checks cache their latest PyPI result in
+`~/.tau/cache/update-check.json` and refresh at most once per day. Set
+`TAU_NO_UPDATE_CHECK=1` to disable the check; Tau also skips it when `CI` is set.
+
 ## Providers
 
 Provider metadata lives in `~/.tau/providers.json`:
