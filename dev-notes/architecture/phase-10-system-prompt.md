@@ -14,7 +14,8 @@ src/tau_coding/system_prompt.py
 
 Tau can now build a deterministic Pi-style system prompt from:
 
-- Tau's default coding-agent identity
+- a short project-first coding-agent identity
+- minimal Tau architecture boundaries
 - enabled tools
 - tool prompt snippets
 - tool prompt guidelines
@@ -32,11 +33,17 @@ Earlier phases added tools, skills, prompt templates, and coding sessions. Befor
 
 ## Default prompt shape
 
-The default prompt starts with Tau's identity:
+The default prompt starts with a project-focused identity:
 
 ```text
-You are an expert coding assistant operating inside Tau, a coding agent harness.
+You are a coding assistant in the user's current project.
 ```
+
+It treats the user's task, repository files, and project instructions as the
+primary sources of truth. Tau-specific guidance is limited to the operational
+package boundaries (`tau_coding`, `tau_agent`, `tau_ai`) and points to
+`website/src/content/docs/internals/architecture.md` for deeper architecture
+context instead of embedding product history in the model prompt.
 
 It then includes an available-tools section using each tool's `prompt_snippet`:
 
