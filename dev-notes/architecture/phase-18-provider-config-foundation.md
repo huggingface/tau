@@ -145,7 +145,11 @@ The same provider settings file can also store scoped models:
   "scoped_models": [
     {"provider": "openai", "model": "gpt-5.5"},
     {"provider": "local", "model": "qwen"}
-  ]
+  ],
+  "scoped_model_thinking_levels": {
+    "openai:gpt-5.5": "high",
+    "local:qwen": "low"
+  }
 }
 ```
 
@@ -154,6 +158,12 @@ against currently usable providers before exposing it, so stale entries remain
 harmless in the JSON file. This mirrors Pi's scoped-model idea while keeping the
 durable config in `tau_coding` and the reusable harness unaware of provider
 settings.
+
+The optional `scoped_model_thinking_levels` map stores the last thinking mode
+used with a scoped provider/model pair. `CodingSession` restores the value when
+that scoped model becomes active and updates it when the user changes thinking
+mode while the scoped model is active. Invalid or obsolete values are ignored and
+fall back to the provider's normal thinking default.
 
 ## Boundary
 

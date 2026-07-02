@@ -76,3 +76,8 @@ supported levels for the active model. When it's unavailable, `/session` shows
 the reason (e.g. the provider doesn't declare `thinking_levels`, or the model
 isn't listed). Custom providers can opt in via `thinking_levels` in their config
 — see [Configuration](../reference/configuration.md#providers).
+
+When you use scoped models in the TUI, Tau also remembers the last thinking
+level used with each scoped provider/model pair. Switching back to that scoped
+model restores its saved level; scoped models without a saved level continue to
+use the provider's normal default behavior.

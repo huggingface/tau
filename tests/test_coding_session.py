@@ -2096,6 +2096,170 @@ async def test_session_toggles_and_cycles_scoped_models(
 
 
 @pytest.mark.anyio
+async def test_session_restores_thinking_level_per_scoped_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "local-key")
+    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("qwen", "llama"),
+                default_model="qwen",
+                thinking_levels=("low", "medium", "high"),
+                thinking_default="medium",
+                thinking_parameter="reasoning_effort",
+            ),
+        ),
+        scoped_models=(
+            ScopedModelConfig(provider="local", model="qwen"),
+            ScopedModelConfig(provider="local", model="llama"),
+        ),
+        scoped_model_thinking_levels={
+            "local:qwen": "high",
+            "local:llama": "low",
+        },
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="qwen",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "scoped-thinking-session.jsonl"),
+            cwd=tmp_path,
+            provider_name="local",
+            provider_settings=settings,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    assert session.thinking_level == "high"
+
+    choice = session.cycle_scoped_model()
+
+    assert choice == ModelChoice(provider_name="local", model="llama")
+    assert session.model == "llama"
+    assert session.thinking_level == "low"
+
+    await session.set_thinking_level("high")
+    session.cycle_scoped_model()
+
+    saved = coding_session_module.load_provider_settings(tau_paths)
+    assert session.model == "qwen"
+    assert session.thinking_level == "high"
+    assert saved.scoped_model_thinking_levels == {
+        "local:qwen": "high",
+        "local:llama": "high",
+    }
+
+
+@pytest.mark.anyio
+async def test_session_scoped_model_thinking_preferences_are_provider_scoped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "local-key")
+    monkeypatch.setenv("REMOTE_API_KEY", "remote-key")
+    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("qwen",),
+                default_model="qwen",
+                thinking_levels=("low", "high"),
+                thinking_default="low",
+                thinking_parameter="reasoning_effort",
+            ),
+            OpenAICompatibleProviderConfig(
+                name="remote",
+                api_key_env="REMOTE_API_KEY",
+                credential_name=None,
+                models=("qwen",),
+                default_model="qwen",
+                thinking_levels=("low", "high"),
+                thinking_default="low",
+                thinking_parameter="reasoning_effort",
+            ),
+        ),
+        scoped_models=(
+            ScopedModelConfig(provider="local", model="qwen"),
+            ScopedModelConfig(provider="remote", model="qwen"),
+        ),
+        scoped_model_thinking_levels={
+            "local:qwen": "high",
+            "remote:qwen": "low",
+        },
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="qwen",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "provider-scoped-thinking-session.jsonl"),
+            cwd=tmp_path,
+            provider_name="local",
+            provider_settings=settings,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    session.cycle_scoped_model()
+
+    assert session.provider_name == "remote"
+    assert session.model == "qwen"
+    assert session.thinking_level == "low"
+
+
+@pytest.mark.anyio
+async def test_session_ignores_obsolete_scoped_model_thinking_preference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "local-key")
+    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("qwen",),
+                default_model="qwen",
+                thinking_levels=("low", "high"),
+                thinking_default="low",
+                thinking_parameter="reasoning_effort",
+            ),
+        ),
+        scoped_models=(ScopedModelConfig(provider="local", model="qwen"),),
+        scoped_model_thinking_levels={"local:qwen": "xhigh"},
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="qwen",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "obsolete-scoped-thinking-session.jsonl"),
+            cwd=tmp_path,
+            provider_name="local",
+            provider_settings=settings,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    assert session.thinking_level == "low"
+
+
+@pytest.mark.anyio
 async def test_session_resume_preserves_shell_command_prefix(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     first_cwd = tmp_path / "first"

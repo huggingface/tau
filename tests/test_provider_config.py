@@ -23,6 +23,8 @@ from tau_coding.provider_config import (
     provider_thinking_unavailable_reason,
     resolve_provider_selection,
     save_provider_settings,
+    save_scoped_model_thinking_level,
+    scoped_model_thinking_level,
     upsert_openai_compatible_provider,
 )
 
@@ -167,6 +169,7 @@ def test_save_and_load_provider_settings_round_trip(tmp_path: Path) -> None:
             ),
         ),
         scoped_models=(ScopedModelConfig(provider="local", model="llama"),),
+        scoped_model_thinking_levels={"local:llama": "high"},
     )
 
     path = save_provider_settings(settings, paths)
@@ -206,6 +209,113 @@ def test_provider_settings_parses_scoped_models() -> None:
     )
 
 
+def test_provider_settings_parses_scoped_model_thinking_preferences() -> None:
+    settings = provider_settings_from_json(
+        {
+            "default_provider": "local",
+            "providers": [
+                {
+                    "type": "openai-compatible",
+                    "name": "local",
+                    "base_url": "http://localhost:11434/v1",
+                    "api_key_env": "LOCAL_API_KEY",
+                    "models": ["qwen", "llama"],
+                    "default_model": "qwen",
+                },
+                {
+                    "type": "openai-compatible",
+                    "name": "remote",
+                    "base_url": "https://example.test/v1",
+                    "api_key_env": "REMOTE_API_KEY",
+                    "models": ["qwen"],
+                    "default_model": "qwen",
+                },
+            ],
+            "scoped_model_thinking_levels": {
+                "local:qwen": "HIGH",
+                "remote:qwen": "low",
+                "local:llama": "maximum",
+                "": "medium",
+                "local:plain": None,
+            },
+        }
+    )
+
+    assert scoped_model_thinking_level(settings, provider_name="local", model="qwen") == "high"
+    assert scoped_model_thinking_level(settings, provider_name="remote", model="qwen") == "low"
+    assert settings.scoped_model_thinking_levels == {
+        "local:qwen": "high",
+        "remote:qwen": "low",
+    }
+
+
+def test_provider_settings_ignores_malformed_scoped_model_thinking_preferences() -> None:
+    settings = provider_settings_from_json(
+        {
+            "default_provider": "local",
+            "providers": [
+                {
+                    "type": "openai-compatible",
+                    "name": "local",
+                    "base_url": "http://localhost:11434/v1",
+                    "api_key_env": "LOCAL_API_KEY",
+                    "models": ["qwen"],
+                    "default_model": "qwen",
+                }
+            ],
+            "scoped_model_thinking_levels": ["not", "a", "mapping"],
+        }
+    )
+
+    assert settings.scoped_model_thinking_levels == {}
+
+
+def test_save_scoped_model_thinking_level_preserves_newer_provider_file_changes(
+    tmp_path: Path,
+) -> None:
+    paths = TauPaths(home=tmp_path / ".tau")
+    loaded_settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                models=("qwen",),
+                default_model="qwen",
+            ),
+        ),
+        scoped_models=(ScopedModelConfig(provider="local", model="qwen"),),
+    )
+    newer_settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            loaded_settings.get_provider("local"),
+            OpenAICompatibleProviderConfig(
+                name="remote",
+                models=("llama",),
+                default_model="llama",
+            ),
+        ),
+        scoped_models=(ScopedModelConfig(provider="remote", model="llama"),),
+        scoped_model_thinking_levels={"remote:llama": "low"},
+    )
+    save_provider_settings(newer_settings, paths)
+
+    saved = save_scoped_model_thinking_level(
+        provider_name="local",
+        model="qwen",
+        thinking_level="high",
+        paths=paths,
+        fallback_settings=loaded_settings,
+    )
+
+    assert saved.scoped_models == (ScopedModelConfig(provider="remote", model="llama"),)
+    assert saved.get_provider("remote").default_model == "llama"
+    assert saved.scoped_model_thinking_levels == {
+        "remote:llama": "low",
+        "local:qwen": "high",
+    }
+
+
 def test_upsert_openai_compatible_provider_replaces_and_sets_default() -> None:
     settings = ProviderSettings(
         scoped_models=(ScopedModelConfig(provider="openai", model="gpt-5.5"),)
@@ -242,6 +352,7 @@ def test_upsert_openai_compatible_provider_replaces_and_sets_default() -> None:
     ]
     assert replaced.get_provider("local").default_model == "llama"
     assert replaced.scoped_models == settings.scoped_models
+    assert replaced.scoped_model_thinking_levels == settings.scoped_model_thinking_levels
 
 
 def test_resolve_provider_selection_uses_configured_defaults() -> None:
