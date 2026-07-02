@@ -9,7 +9,7 @@ description = "A Python implementation of a minimalist Pi-style coding-agent har
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = [
     "anyio>=4.0",
     "httpx>=0.27",
@@ -41,7 +41,7 @@ packages = ["src/tau_ai", "src/tau_agent", "src/tau_coding"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py314"
+target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
@@ -52,7 +52,7 @@ quote-style = "double"
 indent-style = "space"
 
 [tool.mypy]
-python_version = "3.14"
+python_version = "3.12"
 strict = true
 packages = ["tau_ai", "tau_agent", "tau_coding"]
 

@@ -1,5 +1,7 @@
 """Provider and model streaming layer for Tau."""
 
+from __future__ import annotations
+
 from tau_ai.anthropic import AnthropicProvider
 from tau_ai.env import (
     DEFAULT_ANTHROPIC_BASE_URL,

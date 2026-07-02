@@ -1,5 +1,7 @@
 """Shared retry helpers for provider adapters."""
 
+from __future__ import annotations
+
 from asyncio import sleep
 
 from tau_agent.types import JSONValue

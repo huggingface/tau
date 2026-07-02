@@ -1,5 +1,7 @@
 """Durable shell execution settings for Tau terminal commands."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from json import JSONDecodeError, loads
 from pathlib import Path

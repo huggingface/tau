@@ -1,5 +1,7 @@
 """Textual TUI frontend for Tau coding sessions."""
 
+from __future__ import annotations
+
 from tau_coding.tui.adapter import TuiEventAdapter
 from tau_coding.tui.app import TauTuiApp, run_tui_app
 from tau_coding.tui.autocomplete import CompletionOption

@@ -1,5 +1,7 @@
 """Provider protocol for Tau model adapters."""
 
+from __future__ import annotations
+
 from collections.abc import AsyncIterator
 from typing import Protocol
 

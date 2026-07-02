@@ -1,5 +1,7 @@
 """User-home session management for Tau coding sessions."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
 from time import time
