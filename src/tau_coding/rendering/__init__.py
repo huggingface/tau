@@ -1,5 +1,7 @@
 """Event renderers for Tau coding frontends and print modes."""
 
+from __future__ import annotations
+
 from tau_coding.rendering.base import EventRenderer, PrintOutputMode
 from tau_coding.rendering.json import JsonEventRenderer
 from tau_coding.rendering.plain import FinalTextRenderer

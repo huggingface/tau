@@ -1,5 +1,7 @@
 """Model-assisted summaries for abandoned session-tree branches."""
 
+from __future__ import annotations
+
 import json
 from collections.abc import Mapping, Sequence
 

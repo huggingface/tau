@@ -1,5 +1,7 @@
 """JSONL serialization helpers for session entries."""
 
+from __future__ import annotations
+
 from pydantic import TypeAdapter, ValidationError
 
 from tau_agent.session.entries import SessionEntry

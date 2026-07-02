@@ -1,5 +1,7 @@
 """Translate agent events into Textual TUI display state."""
 
+from __future__ import annotations
+
 from tau_agent import (
     AgentEndEvent,
     AgentEvent,

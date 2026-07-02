@@ -1,5 +1,7 @@
 """Persistent coding-session wrapper built on AgentHarness."""
 
+from __future__ import annotations
+
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from pathlib import Path

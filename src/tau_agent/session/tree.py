@@ -1,5 +1,7 @@
 """Session tree traversal helpers."""
 
+from __future__ import annotations
+
 from tau_agent.session.entries import SessionEntry
 
 

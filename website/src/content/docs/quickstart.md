@@ -15,6 +15,8 @@ Tau is a Python tool. The easiest way to install it is with
 uv tool install tau-ai
 ```
 
+Tau requires Python 3.12 or newer.
+
 Check it worked:
 
 ```bash
@@ -22,8 +24,9 @@ tau --version
 ```
 
 :::tip[Don't have uv?]
-`uv` is a fast Python package manager. Install it with
-`curl -LsSf https://astral.sh/uv/install.sh | sh` (macOS/Linux) or see the
+You can install Tau with `pipx install tau-ai` or
+`python -m pip install tau-ai`. If you prefer `uv`, install it with
+`curl -LsSf https://astral.sh/uv/install.sh | sh` (macOS/Linux), or see the
 [uv install docs](https://docs.astral.sh/uv/getting-started/installation/).
 :::
 

@@ -1,5 +1,7 @@
 """Thinking-mode primitives for Tau coding sessions."""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from typing import Literal
 

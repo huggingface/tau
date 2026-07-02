@@ -1,5 +1,7 @@
 """Tau coding-agent application package."""
 
+from __future__ import annotations
+
 from tau_coding.commands import (
     CommandRegistry,
     CommandResult,
