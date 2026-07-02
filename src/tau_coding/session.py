@@ -69,6 +69,8 @@ from tau_coding.provider_config import (
     provider_thinking_unavailable_reason,
     resolve_provider_selection,
     save_default_provider_model,
+    save_scoped_model_thinking_level,
+    scoped_model_thinking_level,
     toggle_saved_scoped_model,
 )
 from tau_coding.provider_runtime import ClosableModelProvider, create_model_provider
@@ -750,6 +752,7 @@ class CodingSession:
                 f"{self._provider_name}:{self.model}. Available modes: {modes}"
             )
         if normalized == self._thinking_level:
+            self._persist_active_scoped_model_thinking_level(normalized)
             return f"Thinking mode: {normalized}"
 
         previous = self._thinking_level
@@ -760,6 +763,7 @@ class CodingSession:
             self._thinking_level = previous
             raise
 
+        self._persist_active_scoped_model_thinking_level(normalized)
         entry = ThinkingLevelChangeEntry(
             parent_id=self._last_parent_id,
             thinking_level=normalized,
@@ -793,10 +797,40 @@ class CodingSession:
         provider = self._active_provider_config()
         if provider is None:
             return
+        current = self._thinking_level
+        saved = self._active_scoped_model_thinking_level()
+        if saved is not None:
+            current = saved
         self._thinking_level = _coerced_thinking_level(
             provider,
             model=self.model,
-            current=self._thinking_level,
+            current=current,
+        )
+
+    def _active_scoped_model_thinking_level(self) -> ThinkingLevel | None:
+        if self._provider_settings is None:
+            return None
+        choice = ModelChoice(provider_name=self.provider_name, model=self.model)
+        if choice not in self.scoped_model_choices:
+            return None
+        return scoped_model_thinking_level(
+            self._provider_settings,
+            provider_name=self.provider_name,
+            model=self.model,
+        )
+
+    def _persist_active_scoped_model_thinking_level(self, level: ThinkingLevel) -> None:
+        if self._provider_settings is None or self._resource_paths.paths is None:
+            return
+        choice = ModelChoice(provider_name=self.provider_name, model=self.model)
+        if choice not in self.scoped_model_choices:
+            return
+        self._provider_settings = save_scoped_model_thinking_level(
+            provider_name=self.provider_name,
+            model=self.model,
+            thinking_level=level,
+            paths=self._resource_paths.paths,
+            fallback_settings=self._provider_settings,
         )
 
     def _persist_default_model_choice(self) -> None:

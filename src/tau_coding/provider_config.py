@@ -253,6 +253,7 @@ class ProviderSettings:
         default_factory=lambda: builtin_provider_configs()
     )
     scoped_models: tuple[ScopedModelConfig, ...] = ()
+    scoped_model_thinking_levels: dict[str, ThinkingLevel] = field(default_factory=dict)
 
     def get_provider(self, name: str | None = None) -> ProviderConfig:
         """Return a configured provider by name."""
@@ -268,6 +269,7 @@ class ProviderSettings:
             "default_provider": self.default_provider,
             "providers": [provider.to_json() for provider in self.providers],
             "scoped_models": [model.to_json() for model in self.scoped_models],
+            "scoped_model_thinking_levels": dict(self.scoped_model_thinking_levels),
         }
 
 
@@ -409,6 +411,26 @@ def toggle_saved_scoped_model(
     return updated
 
 
+def save_scoped_model_thinking_level(
+    *,
+    provider_name: str,
+    model: str,
+    thinking_level: ThinkingLevel,
+    paths: TauPaths | None = None,
+    fallback_settings: ProviderSettings | None = None,
+) -> ProviderSettings:
+    """Reload settings, persist a scoped model thinking preference, and return them."""
+    settings = _load_provider_settings_for_write(paths, fallback_settings=fallback_settings)
+    updated = set_scoped_model_thinking_level(
+        settings,
+        provider_name=provider_name,
+        model=model,
+        thinking_level=thinking_level,
+    )
+    save_provider_settings(updated, paths)
+    return updated
+
+
 def upsert_saved_provider(
     provider: ProviderConfig,
     *,
@@ -453,7 +475,33 @@ def set_default_provider_model(
         default_provider=provider_name,
         providers=providers,
         scoped_models=settings.scoped_models,
+        scoped_model_thinking_levels=settings.scoped_model_thinking_levels,
     )
+
+
+def scoped_model_thinking_level(
+    settings: ProviderSettings,
+    *,
+    provider_name: str,
+    model: str,
+) -> ThinkingLevel | None:
+    """Return the saved thinking level for a provider/model pair, if present."""
+    return settings.scoped_model_thinking_levels.get(
+        _scoped_model_thinking_key(provider_name=provider_name, model=model)
+    )
+
+
+def set_scoped_model_thinking_level(
+    settings: ProviderSettings,
+    *,
+    provider_name: str,
+    model: str,
+    thinking_level: ThinkingLevel,
+) -> ProviderSettings:
+    """Return settings with one scoped model thinking preference updated."""
+    levels = dict(settings.scoped_model_thinking_levels)
+    levels[_scoped_model_thinking_key(provider_name=provider_name, model=model)] = thinking_level
+    return replace(settings, scoped_model_thinking_levels=levels)
 
 
 def upsert_openai_compatible_provider(
@@ -484,6 +532,7 @@ def upsert_provider(
         default_provider=default_provider,
         providers=providers,
         scoped_models=settings.scoped_models,
+        scoped_model_thinking_levels=settings.scoped_model_thinking_levels,
     )
     updated.get_provider(default_provider)
     return updated
@@ -515,6 +564,7 @@ def _with_builtin_catalog_models(
         default_provider=default_provider,
         providers=providers,
         scoped_models=settings.scoped_models,
+        scoped_model_thinking_levels=settings.scoped_model_thinking_levels,
     )
 
 
@@ -620,10 +670,14 @@ def provider_settings_from_json(data: dict[str, Any]) -> ProviderSettings:
     if len(set(names)) != len(names):
         raise ProviderConfigError("Provider names must be unique")
     scoped_models = _scoped_models_from_json(data.get("scoped_models"))
+    scoped_model_thinking_levels = _scoped_model_thinking_levels_from_json(
+        data.get("scoped_model_thinking_levels")
+    )
     return ProviderSettings(
         default_provider=default_provider,
         providers=providers,
         scoped_models=scoped_models,
+        scoped_model_thinking_levels=scoped_model_thinking_levels,
     )
 
 
@@ -644,6 +698,27 @@ def _scoped_models_from_json(value: object) -> tuple[ScopedModelConfig, ...]:
             scoped.append(ScopedModelConfig(provider=provider, model=model))
             seen.add(key)
     return tuple(scoped)
+
+
+def _scoped_model_thinking_levels_from_json(value: object) -> dict[str, ThinkingLevel]:
+    if value is None or not isinstance(value, dict):
+        return {}
+    levels: dict[str, ThinkingLevel] = {}
+    for raw_key, raw_level in value.items():
+        if not isinstance(raw_key, str) or not raw_key.strip():
+            continue
+        if not isinstance(raw_level, str):
+            continue
+        try:
+            level = normalize_thinking_level(raw_level)
+        except ValueError:
+            continue
+        levels[raw_key] = level
+    return levels
+
+
+def _scoped_model_thinking_key(*, provider_name: str, model: str) -> str:
+    return f"{provider_name}:{model}"
 
 
 def resolve_provider_selection(
