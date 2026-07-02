@@ -30,7 +30,12 @@ def test_default_prompt_includes_tools_guidelines_date_and_cwd(tmp_path: Path) -
         )
     )
 
-    assert "You are an expert coding assistant operating inside Tau" in prompt
+    assert "coding assistant in the user's current project" in prompt
+    assert "project instructions first" in prompt
+    assert "tau_coding=app/UI/resources" in prompt
+    assert "website/src/content/docs/internals/architecture.md" in prompt
+    assert "You are an expert coding assistant operating inside Tau" not in prompt
+    assert "In addition to the tools above" not in prompt
     assert "Available tools:\n- read: Read file contents" in prompt
     assert "- Use bash for file operations like ls, rg, find" in prompt
     assert "- Use read to examine files instead of cat or sed." in prompt

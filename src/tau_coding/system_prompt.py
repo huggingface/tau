@@ -49,11 +49,12 @@ def build_system_prompt(options: BuildSystemPromptOptions) -> str:
         return prompt
 
     prompt = (
-        "You are an expert coding assistant operating inside Tau, a coding agent harness. "
-        "You help users by reading files, executing commands, editing code, and writing new files."
+        "You are a coding assistant in the user's current project. "
+        "Follow the user's task, repository files, and project instructions first."
+        "\n\nTau boundary, when relevant: tau_coding=app/UI/resources; "
+        "tau_agent=portable harness; tau_ai=model streaming. Deeper Tau context: "
+        "website/src/content/docs/internals/architecture.md."
         f"\n\nAvailable tools:\n{format_available_tools(options.tools)}"
-        "\n\nIn addition to the tools above, you may have access to other custom tools "
-        "depending on the project."
         f"\n\nGuidelines:\n{format_guidelines(options.tools, options.extra_guidelines)}"
     )
 
