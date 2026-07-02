@@ -1,5 +1,7 @@
 """Display state for Tau's Textual TUI."""
 
+from __future__ import annotations
+
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path

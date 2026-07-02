@@ -1,5 +1,7 @@
 """Human-readable streaming transcript renderer."""
 
+from __future__ import annotations
+
 import typer
 from rich.console import Console
 from rich.text import Text

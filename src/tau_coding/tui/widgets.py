@@ -1,5 +1,7 @@
 """Small Textual widgets for Tau's interactive TUI."""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -1259,7 +1261,7 @@ def _context_file_label(path: Path, *, cwd: Path) -> str:
         expanded_path = cwd / expanded_path
     try:
         return str(expanded_path.resolve().relative_to(cwd.expanduser().resolve()))
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return _short_path(expanded_path)
 
 

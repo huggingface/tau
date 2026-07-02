@@ -1,5 +1,7 @@
 """OpenAI Codex subscription Responses provider."""
 
+from __future__ import annotations
+
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from json import JSONDecodeError, dumps, loads

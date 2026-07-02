@@ -1,5 +1,7 @@
 """Minimal Textual app for Tau coding sessions."""
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import suppress

@@ -1,5 +1,7 @@
 """OAuth helpers for subscription-backed coding providers."""
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import hashlib

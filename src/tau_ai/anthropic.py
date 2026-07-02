@@ -1,5 +1,7 @@
 """Anthropic Messages API provider."""
 
+from __future__ import annotations
+
 from collections.abc import AsyncIterator, Mapping
 from json import loads
 from typing import Any

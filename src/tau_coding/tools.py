@@ -7,6 +7,8 @@ directory, return structured `AgentToolResult` values, and keep local
 filesystem/shell behavior outside the reusable `tau_agent` package.
 """
 
+from __future__ import annotations
+
 import asyncio
 import difflib
 import json

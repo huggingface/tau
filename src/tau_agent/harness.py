@@ -1,5 +1,7 @@
 """Stateful reusable agent harness built on the pure loop."""
 
+from __future__ import annotations
+
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import suppress

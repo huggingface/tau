@@ -1,5 +1,7 @@
 """Durable provider configuration for Tau coding sessions."""
 
+from __future__ import annotations
+
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from json import dumps, loads

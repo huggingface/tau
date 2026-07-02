@@ -1,5 +1,7 @@
 """Command-line entry point for Tau."""
 
+from __future__ import annotations
+
 from os import environ
 from pathlib import Path
 from typing import Annotated

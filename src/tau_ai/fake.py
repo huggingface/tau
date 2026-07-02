@@ -1,5 +1,7 @@
 """Deterministic model provider for tests."""
 
+from __future__ import annotations
+
 from collections.abc import AsyncIterator, Iterable
 
 from tau_agent.messages import AgentMessage
