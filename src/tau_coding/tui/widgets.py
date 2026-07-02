@@ -29,6 +29,7 @@ from textual.widgets.markdown import MarkdownBlock, MarkdownStream
 
 from tau_agent.tools import AgentTool
 from tau_coding.prompt_templates import PromptTemplate
+from tau_coding.rendering.math import render_terminal_math
 from tau_coding.skills import Skill
 from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.tui.autocomplete import CompletionState
@@ -235,9 +236,11 @@ class TranscriptMessageWidget(Horizontal):
             item,
             show_tool_results=show_tool_results,
         )
-        self._markdown_text = _transcript_item_markdown(
-            item,
-            show_tool_results=show_tool_results,
+        self._markdown_text = render_terminal_math(
+            _transcript_item_markdown(
+                item,
+                show_tool_results=show_tool_results,
+            )
         )
         self._theme = theme
         self._role_style = _chat_item_role_style(item, theme)
@@ -311,7 +314,7 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
         self.item = item
         self.selection_text = item.text
         self._stream: MarkdownStream | None = None
-        super().__init__(item.text, theme=theme)
+        super().__init__(render_terminal_math(item.text), theme=theme)
         self.add_class("transcript-message")
 
     @property
@@ -327,14 +330,14 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
         self.item.text += fragment
         self.selection_text += fragment
         self._stream = None
-        await self.update(self.item.text)
+        await self.update(render_terminal_math(self.item.text))
 
     async def replace_text(self, text: str) -> None:
         """Replace the current markdown text, usually with the final provider message."""
         self.item.text = text
         self.selection_text = text
         self._stream = None
-        await self.update(text)
+        await self.update(render_terminal_math(text))
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
         """Return selected text from this streamed message block."""
