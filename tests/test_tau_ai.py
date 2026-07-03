@@ -1279,6 +1279,50 @@ async def test_responses_api_parses_streamed_tool_call() -> None:
 
 
 @pytest.mark.anyio
+async def test_responses_api_streams_refusal_as_text() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.refusal.delta","delta":"I can"}\n\n'
+                'data: {"type":"response.refusal.delta","delta":"not help with that."}\n\n'
+                'data: {"type":"response.refusal.done",'
+                '"refusal":"I cannot help with that."}\n\n'
+                'data: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="unsafe request")],
+                tools=[],
+            )
+        )
+
+    assert [event.type for event in events] == [
+        "response_start",
+        "text_delta",
+        "text_delta",
+        "response_end",
+    ]
+    text_deltas = [e.delta for e in events if isinstance(e, ProviderTextDeltaEvent)]
+    assert text_deltas == ["I can", "not help with that."]
+    end = events[-1]
+    assert isinstance(end, ProviderResponseEndEvent)
+    assert end.message.content == "I cannot help with that."
+    assert end.finish_reason == "stop"
+
+
+@pytest.mark.anyio
 async def test_responses_api_streams_reasoning_summary_as_thinking() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(

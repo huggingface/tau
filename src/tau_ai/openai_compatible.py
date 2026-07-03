@@ -378,7 +378,7 @@ class _ResponsesStreamParser:
         if not isinstance(chunk_type, str):
             return [], False
 
-        if chunk_type == "response.output_text.delta":
+        if chunk_type in ("response.output_text.delta", "response.refusal.delta"):
             delta = chunk.get("delta")
             if isinstance(delta, str) and delta:
                 self.emitted_content = True
