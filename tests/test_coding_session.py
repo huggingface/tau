@@ -947,6 +947,60 @@ async def test_session_branches_to_previous_entry_without_destroying_history(
 
 
 @pytest.mark.anyio
+async def test_persist_after_branch_keeps_state_on_active_branch(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    provider = FakeProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="New answer")),
+            ],
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="Branch summary")),
+            ],
+        ]
+    )
+    root = MessageEntry(id="root", message=UserMessage(content="Root"))
+    answer = MessageEntry(id="answer", parent_id="root", message=AssistantMessage(content="Answer"))
+    abandoned = MessageEntry(
+        id="abandoned",
+        parent_id="answer",
+        message=UserMessage(content="Abandoned follow-up"),
+    )
+    abandoned_answer = MessageEntry(
+        id="abandoned-answer",
+        parent_id="abandoned",
+        message=AssistantMessage(content="Abandoned answer"),
+    )
+    await storage.append(root)
+    await storage.append(answer)
+    await storage.append(abandoned)
+    await storage.append(abandoned_answer)
+    await storage.append(LeafEntry(entry_id="abandoned-answer"))
+    session = await CodingSession.load(_config(tmp_path, provider, storage))
+
+    await session.branch_to_entry("answer")
+    _events = await _collect_session_events(session.prompt("New follow-up"))
+
+    assert session.state.messages == (
+        UserMessage(content="Root"),
+        AssistantMessage(content="Answer"),
+        UserMessage(content="New follow-up"),
+        AssistantMessage(content="New answer"),
+    )
+    assert "abandoned" not in session.state.context_entry_ids
+    assert "abandoned-answer" not in session.state.context_entry_ids
+
+    await session.compact()
+    compactions = [entry for entry in await storage.read_all() if entry.type == "compaction"]
+    assert len(compactions) == 1
+    assert "abandoned" not in compactions[0].replaces_entry_ids
+    assert "abandoned-answer" not in compactions[0].replaces_entry_ids
+    assert "Abandoned" not in provider.calls[1][2][0].content
+
+
+@pytest.mark.anyio
 async def test_session_branches_to_before_selected_user_message_with_prefill(
     tmp_path: Path,
 ) -> None:
