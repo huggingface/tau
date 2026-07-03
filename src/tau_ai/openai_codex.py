@@ -10,7 +10,13 @@ from typing import Any
 
 import httpx
 
-from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    ToolResultMessage,
+    Usage,
+    UserMessage,
+)
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
 from tau_ai.env import (
@@ -364,6 +370,7 @@ async def _codex_provider_events(
     tools_by_call_id: dict[str, _ToolCallBuilder] = {}
     tools_by_output_index: dict[int, _ToolCallBuilder] = {}
     finish_reason: str | None = None
+    usage: Usage | None = None
 
     async for event in _iter_sse_objects(response):
         if signal is not None and signal.is_cancelled():
@@ -487,10 +494,15 @@ async def _codex_provider_events(
             "response.incomplete",
         }:
             finish_reason = _finish_reason_from_response(event)
+            usage = _usage_from_response(event) or usage
             break
 
     yield ProviderResponseEndEvent(
-        message=AssistantMessage(content="".join(content_parts), tool_calls=tool_calls),
+        message=AssistantMessage(
+            content="".join(content_parts),
+            tool_calls=tool_calls,
+            usage=usage,
+        ),
         finish_reason=finish_reason,
     )
 
@@ -650,6 +662,48 @@ def _finish_reason_from_response(event: Mapping[str, Any]) -> str | None:
     if isinstance(status, str):
         return status
     return None
+
+
+def _int_or_zero(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _usage_from_response(event: Mapping[str, Any]) -> Usage | None:
+    """Parse billed usage from a Responses ``response.completed``-style event.
+
+    Ports Pi's openai-responses-shared.ts usage handling: ``cached_tokens`` are
+    cache reads and are subtracted from ``input_tokens`` to leave fresh input.
+    The Responses API does not report cache writes, so ``cache_write`` stays 0.
+    Cost is left unset (None) because Tau has no per-model pricing table.
+    """
+    response = event.get("response")
+    if not isinstance(response, Mapping):
+        return None
+    raw = response.get("usage")
+    if not isinstance(raw, Mapping):
+        return None
+    input_details = raw.get("input_tokens_details")
+    cache_read = (
+        _int_or_zero(input_details.get("cached_tokens"))
+        if isinstance(input_details, Mapping)
+        else 0
+    )
+    output_details = raw.get("output_tokens_details")
+    # Leave reasoning None (not 0) when the provider reports no breakdown,
+    # honoring the "None = not reported" contract on Usage.
+    reasoning = (
+        _int_or_zero(output_details.get("reasoning_tokens"))
+        if isinstance(output_details, Mapping)
+        else None
+    )
+    return Usage(
+        input=max(0, _int_or_zero(raw.get("input_tokens")) - cache_read),
+        output=_int_or_zero(raw.get("output_tokens")),
+        cache_read=cache_read,
+        cache_write=0,
+        reasoning=reasoning,
+        total_tokens=_int_or_zero(raw.get("total_tokens")),
+    )
 
 
 def _response_error_message(event: Mapping[str, Any]) -> str:

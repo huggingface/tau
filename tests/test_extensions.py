@@ -584,6 +584,44 @@ async def test_agent_event_fan_out_and_wildcard(tmp_path: Path) -> None:
     assert len(wildcard) == 2
 
 
+async def test_message_end_event_surfaces_provider_usage(tmp_path: Path) -> None:
+    from typing import cast
+
+    from tau_agent import Usage
+    from tau_agent.events import MessageEndEvent
+    from tau_coding.extensions.api import ExtensionAPI
+
+    runtime = ExtensionRuntime()
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "usage_observer"))
+    seen: list[object] = []
+    api.on("message_end", seen.append)
+
+    listeners: list[object] = []
+
+    def subscribe(listener: object) -> object:
+        listeners.append(listener)
+        return lambda: listeners.remove(listener)
+
+    runtime.attach_harness_listener(subscribe)  # type: ignore[arg-type]
+
+    usage = Usage(input=20, output=5, cache_read=10, reasoning=2, total_tokens=35)
+    await listeners[0](  # type: ignore[operator]
+        MessageEndEvent(message=AssistantMessage(content="done", usage=usage))
+    )
+
+    assert len(seen) == 1
+    event = seen[0]
+    assert isinstance(event, MessageEndEvent)
+    assert isinstance(event.message, AssistantMessage)
+    observed = event.message.usage
+    assert observed is not None
+    assert observed.input == 20
+    assert observed.output == 5
+    assert observed.cache_read == 10
+    assert observed.reasoning == 2
+    assert observed.total_tokens == 35
+
+
 async def test_raising_event_handler_is_recorded(tmp_path: Path) -> None:
     runtime = ExtensionRuntime()
     api = _register_inline_extension(runtime, "raiser")

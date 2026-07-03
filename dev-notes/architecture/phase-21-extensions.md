@@ -169,6 +169,22 @@ the loop stamps it after execution. Extensions that need id correlation use
 the observation events (`tool_execution_start/end`), which carry the full
 `ToolCall`/`AgentToolResult`.
 
+**Ruling:** provider token usage is surfaced on `AssistantMessage.usage`
+(matching Pi's placement on `AssistantMessage.usage`, `packages/ai/src/types.ts`),
+so extensions read real billed usage from the `message_end` observation event as
+`event.message.usage` — e.g. `event.message.usage.input`, `.output`,
+`.cache_read`, `.cache_write`, `.cache_write_1h`, `.reasoning`, `.total_tokens`.
+`usage` is `Usage | None`: it is `None` when the provider reported no usage
+(rather than Pi's always-present zeroed object), so a downstream extension can
+distinguish "not reported" from "genuinely zero". Two field-level deviations from
+Pi, both because Tau has no per-model pricing table (no equivalent of Pi's
+`models.ts` `calculateCost`/`model.cost`): (1) `Usage.cost` is present in the type
+for shape-parity but always left `None` — providers populate only token counts;
+(2) the OpenAI-Responses/Codex path leaves `cache_write` at 0 because that API
+does not report cache-creation tokens (same as Pi). Usage is **per-response**
+only; lifetime/context totals are derivable by summing `message.usage` across the
+transcript (Pi likewise aggregates in its UI/session layer, not on the message).
+
 Chaining semantics mirror Pi: `input` transforms chain and `handled`
 short-circuits; `tool_call` blocking short-circuits remaining handlers;
 `tool_result` overrides chain, each handler seeing prior modifications.
