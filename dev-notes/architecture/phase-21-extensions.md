@@ -218,13 +218,16 @@ autocomplete automatically because autocomplete reads
   events, and the optional `message` is delivered through the UI bridge
   notification channel.
 - **`send_user_message`** — maps to `harness.steer` / `harness.follow_up`
-  when a run is active. When idle, the message is queued as a follow-up and
-  the runtime invokes a `turn_requested` callback. The TUI implements
-  `turn_requested` by scheduling its existing exclusive prompt worker to
-  call `continue_()` — the same serialization used for user submissions, so
-  an extension turn can never race a user-initiated run. Print mode and
-  tests may leave the callback unset; queued messages then wait for the next
-  run.
+  when a run is active. When idle, the runtime invokes a
+  `turn_requested(content)` callback carrying the message text (queuing a
+  follow-up and calling `continue_()` would hit the provider with a stale
+  transcript first, because the loop drains queues only after a turn). The
+  TUI implements the callback by submitting the content through its
+  existing exclusive prompt worker — the same serialization used for user
+  submissions, so an extension turn can never race a user-initiated run; if
+  a run starts while delivery is in flight, the text is queued as a
+  follow-up instead. Print mode and tests may leave the callback unset;
+  messages then queue as follow-ups for the next run.
 - **`append_entry`** — async; persists a `CustomEntry(namespace=..., data=...)`
   through the session's append path with proper parent linkage so the entry
   sits on the active root-to-leaf path (off-path custom entries are
