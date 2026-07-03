@@ -116,6 +116,9 @@ ACTIVITY_TICK_SECONDS = 0.15
 ACTIVITY_COLOR_FADE_STEPS = 24
 ACTIVITY_INDICATOR_HEIGHT = 3
 COMPLETION_MAX_VISIBLE_LINES = 16
+COMPLETION_INITIAL_TERMINAL_FRACTION = 3
+COMPLETION_MIN_TRANSCRIPT_LINES = 4
+COMPLETION_WIDGET_CHROME_LINES = 3
 NO_STORED_CREDENTIALS_MESSAGE = (
     "No stored credentials to remove. /logout only removes credentials saved by /login; "
     "environment variables and providers.json config are unchanged."
@@ -1790,6 +1793,7 @@ class TauTuiApp(App[None]):
         self._compaction_worker: Worker[None] | None = None
         self._prompt_run_id = 0
         self._completion_state = CompletionState()
+        self._completion_visible_line_budget: int | None = None
         self._activity_frame = 0
         self._activity_timer: Timer | None = None
         self._active_notification_keys: set[tuple[str, str]] = set()
@@ -1871,6 +1875,7 @@ class TauTuiApp(App[None]):
 
     def on_resize(self, event: Resize) -> None:
         """Update responsive chrome when the terminal changes size."""
+        self._completion_visible_line_budget = None
         self._update_responsive_layout(event.size.width, event.size.height)
 
     def on_click(self, event: events.Click) -> None:
@@ -1895,6 +1900,7 @@ class TauTuiApp(App[None]):
         if event.text_area.id != "prompt":
             return
         self._sync_prompt_shell_mode(event.text_area.text)
+        self._completion_visible_line_budget = None
         self._completion_state = self._build_completion_state(event.text_area.text)
         self._refresh_completions()
 
@@ -2945,17 +2951,70 @@ class TauTuiApp(App[None]):
     def _refresh_completions(self) -> None:
         suggestions = self.query_one("#autocomplete", Static)
         suggestions.display = bool(self._completion_state.items)
+        if not self._completion_state.items:
+            self._completion_visible_line_budget = None
+            suggestions.update(
+                render_completion_suggestions(
+                    CompletionState(),
+                    theme=self.tui_settings.resolved_theme,
+                )
+            )
+            self._refresh_footer_bindings()
+            return
+        max_lines = self._completion_window_line_budget(suggestions)
         suggestions.update(
             render_completion_suggestions(
                 _visible_completion_state(
                     self._completion_state,
-                    max_lines=_completion_visible_line_limit(suggestions),
+                    max_lines=max_lines,
                     width=max(suggestions.content_size.width or suggestions.size.width, 1),
                 ),
                 theme=self.tui_settings.resolved_theme,
             )
         )
         self._refresh_footer_bindings()
+
+    def _completion_window_line_budget(self, suggestions: Static) -> int:
+        """Return a stable completion window size for the current suggestion box.
+
+        The autocomplete widget has ``height: auto``. If we used its current
+        rendered height as the next render limit unconditionally, selecting an
+        item could render fewer rows, which would shrink the widget, which would
+        then make the next render limit smaller again. Keep the largest measured
+        height for the current completion session so navigation does not feed
+        back into progressively smaller boxes.
+        """
+        measured_limit = _completion_visible_line_limit(suggestions)
+        if suggestions.size.height <= 0:
+            if self._completion_visible_line_budget is None:
+                self._completion_visible_line_budget = self._initial_completion_line_budget()
+            return self._completion_visible_line_budget
+        self._completion_visible_line_budget = max(
+            self._completion_visible_line_budget or measured_limit,
+            measured_limit,
+        )
+        return self._completion_visible_line_budget
+
+    def _initial_completion_line_budget(self) -> int:
+        """Estimate the first completion window size before Textual lays it out."""
+        terminal_height = self.size.height
+        if terminal_height <= 0:
+            return COMPLETION_MAX_VISIBLE_LINES
+
+        reserved_rows = COMPLETION_MIN_TRANSCRIPT_LINES + COMPLETION_WIDGET_CHROME_LINES
+        reserved_rows += 2  # Header and footer.
+        for selector in ("#prompt-row", "#compact-session-info", "#queued-messages"):
+            with suppress(NoMatches):
+                widget = self.query_one(selector)
+                if widget.display:
+                    reserved_rows += widget.outer_size.height
+
+        available_rows = terminal_height - reserved_rows
+        terminal_fraction_rows = max(1, terminal_height // COMPLETION_INITIAL_TERMINAL_FRACTION)
+        return max(
+            1,
+            min(COMPLETION_MAX_VISIBLE_LINES, available_rows, terminal_fraction_rows),
+        )
 
     def _update_responsive_layout(self, width: int, height: int) -> None:
         show_sidebar = width >= SIDEBAR_MIN_WIDTH and height >= SIDEBAR_MIN_HEIGHT

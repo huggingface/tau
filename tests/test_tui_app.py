@@ -53,6 +53,7 @@ from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.tools import create_coding_tools
 from tau_coding.tui import app as tui_app
 from tau_coding.tui.app import (
+    COMPLETION_MAX_VISIBLE_LINES,
     CommandOutputScreen,
     LoginMethodPickerScreen,
     LoginProviderPickerScreen,
@@ -66,7 +67,6 @@ from tau_coding.tui.app import (
     TreePickerScreen,
     _activity_prompt_border_color,
     _completion_selected_render_line,
-    _completion_visible_line_limit,
     _terminal_command_prefix_span,
     _theme_css_variables,
     _visible_completion_state,
@@ -2868,7 +2868,7 @@ async def test_tui_app_scrolls_completion_selection_into_view() -> None:
         app._refresh_completions()
         await pilot.pause()
         autocomplete = app.query_one("#autocomplete", Static)
-        visible_line_limit = _completion_visible_line_limit(autocomplete)
+        visible_line_limit = app._completion_window_line_budget(autocomplete)
         assert visible_line_limit < tui_app.COMPLETION_MAX_VISIBLE_LINES
         visible = tui_app._visible_completion_state(
             app._completion_state,
@@ -2890,6 +2890,64 @@ async def test_tui_app_scrolls_completion_selection_into_view() -> None:
         assert visible.selected.display == selected.display
         assert visible.items[0].display != "/prompt-00"
         assert _completion_selected_render_line(visible) < visible_line_limit - 1
+
+
+@pytest.mark.anyio
+async def test_tui_app_uses_terminal_space_for_initial_completion_window() -> None:
+    session = FakeSession()
+    session.prompt_templates = tuple(
+        PromptTemplate(
+            name=f"prompt-{index:02d}",
+            path=Path(f"prompt-{index:02d}.md"),
+            content="Run.",
+        )
+        for index in range(30)
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(80, 18)) as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.focus()
+        prompt.value = "/"
+        await pilot.pause()
+        autocomplete = app.query_one("#autocomplete", Static)
+
+        initial_line_budget = app._completion_window_line_budget(autocomplete)
+        assert initial_line_budget < COMPLETION_MAX_VISIBLE_LINES
+
+        app.action_completion_next()
+        await pilot.pause()
+        assert app._completion_window_line_budget(autocomplete) == initial_line_budget
+
+
+@pytest.mark.anyio
+async def test_tui_app_keeps_completion_window_height_stable_while_navigating() -> None:
+    session = FakeSession()
+    session.prompt_templates = tuple(
+        PromptTemplate(
+            name=f"prompt-{index:02d}",
+            path=Path(f"prompt-{index:02d}.md"),
+            content="Run.",
+        )
+        for index in range(30)
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.focus()
+        prompt.value = "/"
+        app._completion_state = app._build_completion_state(prompt.value)
+        app._refresh_completions()
+        await pilot.pause()
+        autocomplete = app.query_one("#autocomplete", Static)
+        initial_line_budget = app._completion_window_line_budget(autocomplete)
+
+        app.action_completion_next()
+        await pilot.pause()
+
+        assert autocomplete.size.height < initial_line_budget
+        assert app._completion_window_line_budget(autocomplete) == initial_line_budget
 
 
 @pytest.mark.anyio
