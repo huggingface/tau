@@ -192,6 +192,11 @@ class ThemedMarkdownWidget(TextualMarkdown):
         super().__init__(markdown, classes=classes)
 
 
+# Roles rendered as free-flowing text with no left accent or role background,
+# matching how they appear while streaming.
+_BORDERLESS_TRANSCRIPT_ROLES = frozenset({"assistant", "thinking"})
+
+
 class TranscriptMessageWidget(Horizontal):
     """One selectable transcript message rendered as a full-height role block."""
 
@@ -235,12 +240,13 @@ class TranscriptMessageWidget(Horizontal):
         super().__init__(classes="transcript-message")
         foreground, background = _split_rich_style_colors(self._role_style.body)
         self._body_foreground = foreground
-        self._body_background = background
-        # A real left border spans wrapped/multi-line content, unlike a one-line
-        # gutter child; the container background makes the block rectangular.
-        self.styles.border_left = ("tall", self._role_style.border)
-        if background:
-            self.styles.background = background
+        if item.role in _BORDERLESS_TRANSCRIPT_ROLES:
+            self._body_background = None
+        else:
+            self._body_background = background
+            self.styles.border_left = ("tall", self._role_style.border)
+            if background:
+                self.styles.background = background
 
     def compose(self) -> Any:
         yield self._body_widget()
@@ -308,6 +314,11 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
         self._stream: MarkdownStream | None = None
         super().__init__(item.text, theme=theme)
         self.add_class("transcript-message")
+        # Apply the role foreground so streamed text matches the finalized block
+        # (e.g. dimmed thinking) instead of shifting color on the next redraw.
+        foreground, _ = _split_rich_style_colors(_chat_item_role_style(item, theme).body)
+        if foreground:
+            self.styles.color = foreground
 
     @property
     def stream(self) -> MarkdownStream:

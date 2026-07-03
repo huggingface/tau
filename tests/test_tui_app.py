@@ -151,6 +151,7 @@ class FakeSession:
         self.resource_diagnostics = ()
         self.system_prompt = "You are Tau."
         self.session_manager = None
+        self._session_title: str | None = None
         self.compact_summaries: list[str] = []
         self.resumed_session_ids: list[str] = []
         self.tree_branch_requests: list[tuple[str, bool, str | None]] = []
@@ -164,6 +165,10 @@ class FakeSession:
         self.terminal_commands: list[tuple[str, bool]] = []
         self.cancel_count = 0
         self.export_calls: list[tuple[Path | None, str | None]] = []
+
+    @property
+    def session_title(self) -> str | None:
+        return self._session_title
 
     def handle_command(self, text: str) -> CommandResult:
         if text == "/session":
@@ -226,9 +231,10 @@ class FakeSession:
         if text.startswith("/theme "):
             return CommandResult(handled=True, theme=text.removeprefix("/theme "))
         if text.startswith("/name "):
+            self._session_title = text.removeprefix("/name ")
             return CommandResult(
                 handled=True,
-                message=f"Session renamed: {text.removeprefix('/name ')}",
+                message=f"Session renamed: {self._session_title}",
             )
         return CommandResult(handled=False)
 
@@ -1105,6 +1111,55 @@ async def test_transcript_message_widget_renders_full_height_role_block() -> Non
 
         # Selecting the whole message still yields the original plain text.
         assert widget.get_selection(SELECT_ALL) == (plain_text, "\n")
+
+
+@pytest.mark.anyio
+async def test_streaming_transcript_applies_role_foreground() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+
+        thinking_fg, _ = _split_rich_style_colors(TAU_DARK_THEME.role_styles["thinking"].body)
+        assistant_fg, _ = _split_rich_style_colors(TAU_DARK_THEME.role_styles["assistant"].body)
+
+        # Streamed thinking is dimmed immediately, matching the finalized block
+        # instead of shifting color on the next redraw.
+        await transcript.append_thinking_delta(
+            "reasoning", theme=TAU_DARK_THEME, show_thinking=True
+        )
+        await pilot.pause()
+        thinking = next(
+            w for w in app.query(StreamingTranscriptMessageWidget) if w.item.role == "thinking"
+        )
+        assert thinking.styles.color == Color.parse(thinking_fg)
+
+        await transcript.append_assistant_delta("answer", theme=TAU_DARK_THEME)
+        await pilot.pause()
+        assistant = next(
+            w for w in app.query(StreamingTranscriptMessageWidget) if w.item.role == "assistant"
+        )
+        assert assistant.styles.color == Color.parse(assistant_fg)
+
+
+@pytest.mark.anyio
+async def test_assistant_message_renders_without_role_block() -> None:
+    app = TauTuiApp(
+        FakeSession([AssistantMessage(content="line one\nline two")]),
+        tui_settings=TuiSettings(theme="high-contrast"),
+    )
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await pilot.pause()
+        widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "assistant")
+        body = widget.query_one(".transcript-message-body")
+
+        # Assistant output flows as plain prose: no left accent and no role
+        # background, so it reads the same while streaming and once finalized.
+        assert not widget.styles.has_rule("border_left")
+        assert widget.styles.background.a == 0
+        assert body.styles.background.a == 0
 
 
 @pytest.mark.anyio
@@ -3108,6 +3163,39 @@ async def test_tui_app_system_appends_command_output_to_transcript() -> None:
 
         assert not isinstance(app.screen, CommandOutputScreen)
         assert app.state.items == [ChatItem(role="status", text="/system\nYou are Tau.")]
+
+
+@pytest.mark.anyio
+async def test_tui_app_uses_session_name_in_header() -> None:
+    session = FakeSession()
+    session._session_title = "Customer bugfix"
+    app = TauTuiApp(session)
+
+    async with app.run_test():
+        assert app.title == "Tau"
+        assert app.sub_title == "Customer bugfix"
+
+
+@pytest.mark.anyio
+async def test_tui_app_uses_default_header_for_unnamed_session() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test():
+        assert app.title == "Tau"
+        assert app.sub_title == "Untitled session"
+
+
+@pytest.mark.anyio
+async def test_tui_app_name_updates_header() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/name Customer bugfix"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.sub_title == "Customer bugfix"
 
 
 @pytest.mark.anyio
