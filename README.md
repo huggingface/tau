@@ -124,6 +124,10 @@ Tau ships with support for OpenAI, Anthropic, OpenAI Codex subscription auth,
 OpenRouter, Hugging Face, and custom OpenAI-compatible endpoints, including local
 models. See the [providers guide](https://twotimespi.dev/guides/providers-and-models/).
 
+The built-in catalog lives in `src/tau_coding/data/catalog.toml`; add your own
+providers and models by dropping a `~/.tau/catalog.toml` with the same schema —
+no code changes required.
+
 ## What Tau can do
 
 - Interactive Textual TUI and non-interactive print mode.

@@ -76,6 +76,19 @@ Use the layer boundaries to decide where code should live:
 
 If a change crosses layers, prefer adding a small typed boundary instead of importing app-specific details into core code.
 
+## Adding a provider or model
+
+The built-in provider catalog is data, not code: edit
+`src/tau_coding/data/catalog.toml` and open a PR — no Python changes needed.
+Each `[[providers]]` table declares the provider's name, kind
+(`openai-compatible`, `anthropic`, or `openai-codex`), base URL, models,
+default model, context windows, and thinking configuration. Validation happens
+at load time, so a typo fails tests with a pointed error message.
+
+For personal or unreleased providers, create `~/.tau/catalog.toml` with the
+same schema — it is overlaid on the built-in catalog (your values win, models
+are unioned) and needs no PR at all.
+
 ## Testing expectations
 
 - Add or update tests for behavior changes.
