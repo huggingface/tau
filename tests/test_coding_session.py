@@ -1600,6 +1600,10 @@ async def test_session_touches_session_manager_after_persisting_messages(tmp_pat
         [
             [
                 ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="Greeting")),
+            ],
+            [
+                ProviderResponseStartEvent(model="fake"),
                 ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
             ]
         ]
@@ -1621,6 +1625,158 @@ async def test_session_touches_session_manager_after_persisting_messages(tmp_pat
     updated = manager.get_session(record.id)
     assert updated is not None
     assert updated.updated_at >= record.updated_at
+
+
+@pytest.mark.anyio
+async def test_session_auto_names_first_unnamed_managed_session(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(cwd=tmp_path, model="fake")
+    provider = FakeProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(
+                    message=AssistantMessage(content='"Fix broken CLI output now"')
+                ),
+            ],
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+        )
+    )
+
+    await _collect_session_events(session.prompt("Please fix the broken CLI output."))
+
+    renamed = manager.get_session(record.id)
+    assert renamed is not None
+    assert renamed.title == "Fix broken CLI output"
+    assert provider.calls[0][0] == "fake"
+    assert provider.calls[0][3] == []
+    assert "Please fix the broken CLI output." in provider.calls[0][2][0].content
+    assert provider.calls[1][2] == [UserMessage(content="Please fix the broken CLI output.")]
+
+
+@pytest.mark.anyio
+async def test_session_auto_name_falls_back_when_provider_fails(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(cwd=tmp_path, model="fake")
+    provider = FakeProvider(
+        [
+            [
+                ProviderErrorEvent(message="naming failed"),
+            ],
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+        )
+    )
+
+    await _collect_session_events(session.prompt("Investigate flaky session restore tests"))
+
+    renamed = manager.get_session(record.id)
+    assert renamed is not None
+    assert renamed.title == "Investigate flaky session restore"
+    assert session.messages == (
+        UserMessage(content="Investigate flaky session restore tests"),
+        AssistantMessage(content="Done"),
+    )
+
+
+@pytest.mark.anyio
+async def test_session_auto_name_falls_back_when_provider_returns_unusable_title(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(cwd=tmp_path, model="fake")
+    provider = FakeProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="!!!")),
+            ],
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+        )
+    )
+
+    await _collect_session_events(session.prompt("Debug failing model picker"))
+
+    renamed = manager.get_session(record.id)
+    assert renamed is not None
+    assert renamed.title == "Debug failing model picker"
+
+
+@pytest.mark.anyio
+async def test_session_auto_name_does_not_overwrite_manual_name(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(cwd=tmp_path, model="fake", title="Manual name")
+    provider = FakeProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+        )
+    )
+
+    await _collect_session_events(session.prompt("Rename this automatically"))
+
+    unchanged = manager.get_session(record.id)
+    assert unchanged is not None
+    assert unchanged.title == "Manual name"
+    assert len(provider.calls) == 1
 
 
 @pytest.mark.anyio
@@ -2928,6 +3084,10 @@ async def test_session_new_session_is_indexed_after_first_message(
             [
                 [
                     ProviderResponseStartEvent(model="gpt-5"),
+                    ProviderResponseEndEvent(message=AssistantMessage(content="Greeting")),
+                ],
+                [
+                    ProviderResponseStartEvent(model="gpt-5"),
                     ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
                 ]
             ]
@@ -2961,6 +3121,7 @@ async def test_session_new_session_is_indexed_after_first_message(
     assert indexed is not None
     assert indexed.provider_name == "openai"
     assert indexed.model == "gpt-5"
+    assert indexed.title == "Greeting"
     assert indexed.path.exists()
 
 

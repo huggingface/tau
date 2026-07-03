@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import string
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -107,6 +108,10 @@ from tau_coding.thinking import (
 from tau_coding.tools import create_bash_tool, create_coding_tools
 
 StreamingBehavior = Literal["steer", "follow_up"]
+SESSION_NAME_SYSTEM_PROMPT = (
+    "You write concise coding-agent session names. Reply with only a short title, "
+    "maximum four words, no quotes, no punctuation-only output."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +253,7 @@ class CodingSession:
             credentials_path(self._resource_paths.paths) if self._resource_paths.paths else None
         )
         self._last_diagnostic_log_path: Path | None = None
+        self._pending_auto_session_title: str | None = None
 
     @classmethod
     async def load(cls, config: CodingSessionConfig) -> CodingSession:
@@ -1230,6 +1236,7 @@ class CodingSession:
             )
 
         await self._try_auto_compact(context=context, phase="auto_compact_before_prompt")
+        await self._try_auto_name_session(expanded_content, context=context)
         persisted_count = len(self._harness.messages)
         overflow_event: ErrorEvent | None = None
         try:
@@ -1432,8 +1439,10 @@ class CodingSession:
             cwd=self.cwd,
             model=self.model,
             provider_name=self.provider_name,
+            title=self._pending_auto_session_title,
             session_id=self._config.session_id,
         )
+        self._pending_auto_session_title = None
 
     async def _try_auto_compact(
         self,
@@ -1470,6 +1479,76 @@ class CodingSession:
                 exc=exc,
             )
             return False
+
+    async def _try_auto_name_session(
+        self,
+        first_message: str,
+        *,
+        context: AgentCallDiagnosticContext,
+    ) -> None:
+        if not self._should_auto_name_session():
+            return
+        try:
+            title = await self._generate_session_name(first_message)
+        except Exception as exc:  # noqa: BLE001 - naming must not interrupt the agent turn
+            self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
+                context=context,
+                phase="auto_name_session",
+                exc=exc,
+            )
+            title = _fallback_session_name(first_message)
+        if title is None:
+            title = _fallback_session_name(first_message)
+        if title is None:
+            return
+        self._set_auto_session_title(title)
+
+    def _should_auto_name_session(self) -> bool:
+        if self._config.session_id is None or self._config.session_manager is None:
+            return False
+        record = self._config.session_manager.get_session(self._config.session_id)
+        if record is not None and record.title:
+            return False
+        return not any(isinstance(message, UserMessage) for message in self._harness.messages)
+
+    async def _generate_session_name(self, first_message: str) -> str | None:
+        prompt = (
+            "Create a concise session name for this first user message. "
+            "Use at most four words.\n\n"
+            f"User message:\n{first_message}"
+        )
+        text_parts: list[str] = []
+        final_text: str | None = None
+        async for event in self._harness.config.provider.stream_response(
+            model=self.model,
+            system=SESSION_NAME_SYSTEM_PROMPT,
+            messages=[UserMessage(content=prompt)],
+            tools=[],
+        ):
+            if isinstance(event, ProviderTextDeltaEvent):
+                text_parts.append(event.delta)
+            elif isinstance(event, ProviderResponseEndEvent):
+                final_text = event.message.content
+            elif isinstance(event, ProviderErrorEvent):
+                details = f": {event.data}" if event.data is not None else ""
+                raise RuntimeError(f"Session naming failed: {event.message}{details}")
+        return _sanitize_session_name(final_text if final_text is not None else "".join(text_parts))
+
+    def _set_auto_session_title(self, title: str) -> None:
+        if self._config.session_id is None or self._config.session_manager is None:
+            return
+        existing = self._config.session_manager.get_session(self._config.session_id)
+        if existing is None and self._config.index_on_first_persist:
+            self._pending_auto_session_title = title
+            return
+        if existing is not None and existing.title:
+            return
+        self._config.session_manager.touch_session(
+            self._config.session_id,
+            model=self.model,
+            provider_name=self.provider_name,
+            title=title,
+        )
 
     def _provider_is_usable(self, provider: ProviderConfig) -> bool:
         return provider_has_usable_credentials(
@@ -1983,6 +2062,21 @@ def _unavailable_thinking_message(session: CodingSession) -> str:
     if reason:
         return f"{message}: {reason}"
     return message
+
+
+def _sanitize_session_name(text: str) -> str | None:
+    cleaned = " ".join(text.split()).strip()
+    cleaned = cleaned.strip("\"'`“”‘’")
+    cleaned = cleaned.strip(string.punctuation + " ")
+    words = [word.strip(string.punctuation + "\"'`“”‘’") for word in cleaned.split()]
+    words = [word for word in words if word]
+    if not words:
+        return None
+    return " ".join(words[:4])
+
+
+def _fallback_session_name(first_message: str) -> str | None:
+    return _sanitize_session_name(first_message)
 
 
 def _terminal_command_context_message(command: str, output: str) -> str:
