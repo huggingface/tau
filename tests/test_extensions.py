@@ -849,11 +849,151 @@ async def test_runtime_survives_new_session_swap(tmp_path: Path) -> None:
     assert ("start", "new") in module.EVENTS
 
 
+# -- subagents example extension ----------------------------------------------------
+
+
+EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples" / "extensions"
+
+
+def test_subagents_example_extension_loads(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    runtime = ExtensionRuntime()
+    runtime.load(
+        paths,
+        extra_paths=(EXAMPLES_DIR / "subagents",),
+        include_resource_dirs=False,
+    )
+
+    assert runtime.extension_names == ("subagents",)
+    assert {tool.name for tool in runtime.extension_tools} == {
+        "agent",
+        "get_subagent_result",
+    }
+    registry = runtime.build_command_registry()
+    assert registry.get("agents") is not None
+    assert not [diag for diag in runtime.diagnostics if diag.severity == "error"]
+
+
+def test_hello_and_permission_gate_examples_load(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    runtime = ExtensionRuntime()
+    runtime.load(
+        paths,
+        extra_paths=(
+            EXAMPLES_DIR / "hello_tool.py",
+            EXAMPLES_DIR / "permission_gate.py",
+        ),
+        include_resource_dirs=False,
+    )
+
+    assert runtime.extension_names == ("hello_tool", "permission_gate")
+    assert [tool.name for tool in runtime.extension_tools] == ["hello"]
+    assert not [diag for diag in runtime.diagnostics if diag.severity == "error"]
+
+
+async def test_subagents_foreground_run_returns_result(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    paths = _paths(tmp_path)
+    runtime = ExtensionRuntime()
+    runtime.load(
+        paths,
+        extra_paths=(EXAMPLES_DIR / "subagents",),
+        include_resource_dirs=False,
+    )
+    session = RecordingSession(tmp_path)
+    runtime.bind(session)
+
+    module = _loaded_extension_module("subagents")
+    module.load_provider_settings = lambda: None  # type: ignore[attr-defined]
+    module.resolve_provider_selection = (  # type: ignore[attr-defined]
+        lambda settings, model=None: SimpleNamespace(
+            provider=SimpleNamespace(name="fake"),
+            model="fake",
+        )
+    )
+    module.create_model_provider = (  # type: ignore[attr-defined]
+        lambda provider, model, thinking_level: FakeProvider(
+            [
+                [
+                    ProviderResponseStartEvent(model="fake"),
+                    ProviderResponseEndEvent(
+                        message=AssistantMessage(content="Subagent report: all good.")
+                    ),
+                ]
+            ]
+        )
+    )
+
+    agent_tool = next(tool for tool in runtime.extension_tools if tool.name == "agent")
+    result = await agent_tool.execute(
+        {"prompt": "Investigate the repo", "description": "investigate repo"}
+    )
+
+    assert result.ok is True
+    assert "Subagent report: all good." in result.content
+    assert "agent-1 [completed]" in result.content
+
+
+async def test_subagents_background_run_delivers_notification(tmp_path: Path) -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    paths = _paths(tmp_path)
+    runtime = ExtensionRuntime()
+    runtime.load(
+        paths,
+        extra_paths=(EXAMPLES_DIR / "subagents",),
+        include_resource_dirs=False,
+    )
+    session = RecordingSession(tmp_path)
+    runtime.bind(session)
+
+    module = _loaded_extension_module("subagents")
+    module.load_provider_settings = lambda: None  # type: ignore[attr-defined]
+    module.resolve_provider_selection = (  # type: ignore[attr-defined]
+        lambda settings, model=None: SimpleNamespace(
+            provider=SimpleNamespace(name="fake"),
+            model="fake",
+        )
+    )
+    module.create_model_provider = (  # type: ignore[attr-defined]
+        lambda provider, model, thinking_level: FakeProvider(
+            [
+                [
+                    ProviderResponseStartEvent(model="fake"),
+                    ProviderResponseEndEvent(message=AssistantMessage(content="Done.")),
+                ]
+            ]
+        )
+    )
+
+    agent_tool = next(tool for tool in runtime.extension_tools if tool.name == "agent")
+    spawn_result = await agent_tool.execute(
+        {
+            "prompt": "Long task",
+            "description": "long task",
+            "run_in_background": True,
+        }
+    )
+    assert spawn_result.ok is True
+    assert "agent-1" in spawn_result.content
+
+    for _ in range(200):
+        if session.followed_up:
+            break
+        await asyncio.sleep(0.01)
+
+    assert session.followed_up, "background completion should deliver a follow-up"
+    assert "<task-notification>" in session.followed_up[0]
+    assert "Done." in session.followed_up[0]
+
+
 def _loaded_extension_module(name: str) -> object:
     candidates = [
         module
         for module_name, module in sys.modules.items()
-        if module_name.startswith(f"tau_extension_{name}")
+        if module_name.startswith(f"tau_extension_{name}") and "." not in module_name
     ]
     assert candidates, f"extension module {name} not loaded"
     return candidates[-1]
