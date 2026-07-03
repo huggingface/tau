@@ -553,6 +553,40 @@ async def test_tree_can_branch_from_first_user_message_before_assistant_response
 
 
 @pytest.mark.anyio
+async def test_tree_branching_preserves_active_model(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    await storage.append(MessageEntry(id="first", message=UserMessage(content="Earlier")))
+    await storage.append(ModelChangeEntry(id="historical-model", parent_id="first", model="old"))
+    await storage.append(
+        MessageEntry(
+            id="assistant",
+            parent_id="historical-model",
+            message=AssistantMessage(content="Old answer"),
+        )
+    )
+    await storage.append(ModelChangeEntry(id="current-model", parent_id="assistant", model="new"))
+    await storage.append(
+        MessageEntry(
+            id="latest",
+            parent_id="current-model",
+            message=UserMessage(content="Latest"),
+        )
+    )
+    await storage.append(LeafEntry(entry_id="latest"))
+    session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
+
+    result = await session.branch_to_entry("assistant")
+
+    assert result == SessionTreeBranchResult(message="Branched session at assistant.")
+    assert session.model == "new"
+    assert session.state.model == "old"
+    assert session.messages == (
+        UserMessage(content="Earlier"),
+        AssistantMessage(content="Old answer"),
+    )
+
+
+@pytest.mark.anyio
 async def test_context_usage_recalculates_after_prompt_and_compaction(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(
@@ -1040,7 +1074,7 @@ async def test_session_branches_to_before_selected_user_message_with_prefill(
 
 
 @pytest.mark.anyio
-async def test_session_branch_restores_model_from_selected_path(tmp_path: Path) -> None:
+async def test_session_branch_preserves_active_model(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     first_model = ModelChangeEntry(id="model-a", model="first-model")
     left = MessageEntry(
@@ -1070,7 +1104,7 @@ async def test_session_branch_restores_model_from_selected_path(tmp_path: Path) 
     await session.branch_to_entry("left")
 
     assert session.state.model == "first-model"
-    assert session.model == "first-model"
+    assert session.model == "second-model"
 
 
 @pytest.mark.anyio
@@ -1106,7 +1140,7 @@ async def test_session_branch_with_summary_keeps_pre_branch_model_and_messages(
     await session.branch_to_entry("left", summarize=True)
 
     assert session.state.model == "first-model"
-    assert session.model == "first-model"
+    assert session.model == "second-model"
     assert len(session.messages) == 2
     assert session.messages[0] == UserMessage(content="Before switch")
     assert session.messages[1].content.startswith(
