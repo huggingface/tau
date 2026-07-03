@@ -179,6 +179,9 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
 
+    if resume is not None and new_session:
+        raise typer.BadParameter("--resume and --new-session cannot be used together")
+
     positional_args = prompt_args or []
     command = positional_args[0] if positional_args else None
     initial_prompt = " ".join(positional_args) if positional_args else None
