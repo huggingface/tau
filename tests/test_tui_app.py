@@ -165,6 +165,8 @@ class FakeSession:
         self.terminal_commands: list[tuple[str, bool]] = []
         self.cancel_count = 0
         self.export_calls: list[tuple[Path | None, str | None]] = []
+        self.session_id: str | None = None
+        self.loaded_siblings: dict[str, FakeSession] = {}
 
     @property
     def session_title(self) -> str | None:
@@ -304,6 +306,17 @@ class FakeSession:
         self.messages = (UserMessage(content="Restored prompt"),)
         self.context_token_estimate = 456
         return f"Resumed session: {session_id}"
+
+    async def load_sibling(self, session_id: str) -> "FakeSession":
+        if session_id in self.loaded_siblings:
+            return self.loaded_siblings[session_id]
+        sibling = type(self)(messages=(UserMessage(content="Restored prompt"),))
+        sibling.session_id = session_id
+        sibling._session_title = f"Session {session_id}"
+        sibling.session_manager = self.session_manager
+        sibling.context_token_estimate = 456
+        self.loaded_siblings[session_id] = sibling
+        return sibling
 
     async def tree_choices(self) -> tuple[SessionTreeChoice, ...]:
         return (
@@ -2505,7 +2518,9 @@ async def test_tui_app_session_picker_resumes_selected_session() -> None:
         await pilot.press("enter")
         await pilot.pause()
 
-        assert session.resumed_session_ids == ["session-1"]
+        assert session.resumed_session_ids == []
+        assert "session-1" in session.loaded_siblings
+        assert app.session.session_id == "session-1"
         assert [(item.role, item.text) for item in app.state.items] == [
             ("user", "Restored prompt"),
         ]
@@ -2589,7 +2604,177 @@ async def test_tui_app_session_picker_arrow_keys_select_session() -> None:
         await pilot.press("enter")
         await pilot.pause()
 
-        assert session.resumed_session_ids == ["session-2"]
+        assert session.resumed_session_ids == []
+        assert "session-2" in session.loaded_siblings
+        assert app.session.session_id == "session-2"
+
+
+@pytest.mark.anyio
+async def test_tui_left_sidebar_lists_sessions_for_current_directory() -> None:
+    session = FakeSession()
+    session.session_id = "session-current"
+    session._session_title = "Current work"
+    session.session_manager = _FakeSessionManager(
+        [
+            CodingSessionRecord(
+                id="session-current",
+                path=Path("/tmp/session-current.jsonl"),
+                cwd=Path("/workspace/project"),
+                model="fake-model",
+                title="Current work",
+                created_at=1.0,
+                updated_at=3.0,
+            ),
+            CodingSessionRecord(
+                id="session-other",
+                path=Path("/tmp/session-other.jsonl"),
+                cwd=Path("/workspace/project"),
+                model="other-model",
+                title="Other work",
+                created_at=1.0,
+                updated_at=2.0,
+            ),
+        ]
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 30)):
+        session_list = app.query_one("#session-list", ListView)
+        labels = [str(item.query_one(Label).content) for item in session_list.children]
+
+    assert any("Current work" in label and "›" in label for label in labels)
+    assert any("Other work" in label for label in labels)
+
+
+@pytest.mark.anyio
+async def test_tui_left_sidebar_switches_visible_session_without_resuming_mutably() -> None:
+    session = FakeSession(messages=[UserMessage(content="Current prompt")])
+    session.session_id = "session-current"
+    session.session_manager = _FakeSessionManager(
+        [
+            CodingSessionRecord(
+                id="session-current",
+                path=Path("/tmp/session-current.jsonl"),
+                cwd=Path("/workspace/project"),
+                model="fake-model",
+                title="Current work",
+                created_at=1.0,
+                updated_at=3.0,
+            ),
+            CodingSessionRecord(
+                id="session-other",
+                path=Path("/tmp/session-other.jsonl"),
+                cwd=Path("/workspace/project"),
+                model="other-model",
+                title="Other work",
+                created_at=1.0,
+                updated_at=2.0,
+            ),
+        ]
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 30)):
+        await app._switch_session_view("session-other")
+
+        assert session.resumed_session_ids == []
+        assert app.session.session_id == "session-other"
+        assert [(item.role, item.text) for item in app.state.items] == [
+            ("user", "Restored prompt"),
+        ]
+
+        await app._switch_session_view("session-current")
+
+        assert app.session is session
+        assert [(item.role, item.text) for item in app.state.items] == [
+            ("user", "Current prompt"),
+        ]
+
+
+@pytest.mark.anyio
+async def test_tui_background_session_keeps_working_after_switch() -> None:
+    started = asyncio.Event()
+    finish = asyncio.Event()
+    done = asyncio.Event()
+
+    class SlowSession(FakeSession):
+        async def prompt(
+            self,
+            text: str,
+            *,
+            streaming_behavior: str | None = None,
+        ) -> AsyncIterator[AgentEvent]:
+            del streaming_behavior
+            self.prompt_texts.append(text)
+            yield AgentStartEvent()
+            started.set()
+            await finish.wait()
+            yield MessageEndEvent(message=UserMessage(content=text))
+            yield MessageEndEvent(message=AssistantMessage(content="background done"))
+            yield AgentEndEvent()
+            done.set()
+
+        async def load_sibling(self, session_id: str) -> FakeSession:
+            sibling = FakeSession(messages=(UserMessage(content="Other prompt"),))
+            sibling.session_id = session_id
+            sibling.session_manager = self.session_manager
+            self.loaded_siblings[session_id] = sibling
+            return sibling
+
+    session = SlowSession()
+    session.session_id = "session-current"
+    session.session_manager = _FakeSessionManager(
+        [
+            CodingSessionRecord(
+                id="session-current",
+                path=Path("/tmp/session-current.jsonl"),
+                cwd=Path("/workspace/project"),
+                model="fake-model",
+                title="Current work",
+                created_at=1.0,
+                updated_at=3.0,
+            ),
+            CodingSessionRecord(
+                id="session-other",
+                path=Path("/tmp/session-other.jsonl"),
+                cwd=Path("/workspace/project"),
+                model="other-model",
+                title="Other work",
+                created_at=1.0,
+                updated_at=2.0,
+            ),
+        ]
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "work in current"
+        await pilot.press("enter")
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        await app._switch_session_view("session-other")
+        assert app.session.session_id == "session-other"
+        assert app.state.running is False
+
+        finish.set()
+        await asyncio.wait_for(done.wait(), timeout=1)
+        await pilot.pause()
+
+        background_view = app._session_views["session-current"]
+        assert app.session.session_id == "session-other"
+        assert background_view.state.running is False
+        assert [(item.role, item.text) for item in background_view.state.items] == [
+            ("user", "work in current"),
+            ("assistant", "background done"),
+        ]
+
+        prompt.value = "work in other"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert session.prompt_texts == ["work in current"]
+        assert app.session.prompt_texts == ["work in other"]
 
 
 @pytest.mark.anyio

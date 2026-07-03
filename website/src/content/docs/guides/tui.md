@@ -80,11 +80,19 @@ the transcript stays readable. Toggle full tool output with **Ctrl+O**.
   `Space` on a model in the `/model` picker.
 - **`/theme`** switches between `tau-dark`, `tau-light`, and `high-contrast`.
 
-## The sidebar
+## The sidebars
 
-On wide-enough terminals Tau shows a sidebar with the active provider/model,
-thinking mode, loaded tools, skills, prompt templates, and context files such as
-`AGENTS.md`. It hides automatically when the terminal is small.
+On wide-enough terminals Tau shows two sidebars:
+
+- the left sidebar lists sessions for the current working directory and marks
+  sessions that are idle, working, queued, loaded, or selected
+- the right sidebar shows the selected session's provider/model, thinking mode,
+  loaded tools, skills, prompt templates, and context files such as `AGENTS.md`
+
+Selecting another session in the left sidebar switches the visible transcript and
+prompt context. If a loaded session is still working, it keeps running in the
+background while you inspect or prompt another session. The sidebars hide
+automatically when the terminal is small.
 
 ## Next
 

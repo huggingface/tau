@@ -192,6 +192,45 @@ class SessionCompletionRecord(Protocol):
     updated_at: float
 
 
+@dataclass(slots=True)
+class TuiSessionView:
+    """One loaded session plus its independent TUI state."""
+
+    key: str
+    session: CodingSession
+    state: TuiState
+    adapter: TuiEventAdapter
+    prompt_history: tuple[str, ...] = ()
+    prompt_worker: Worker[None] | None = None
+    prompt_run_id: int = 0
+    prompt_draft: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class SessionListEntry:
+    """One row in the left-hand multi-session sidebar."""
+
+    key: str
+    session_id: str | None
+    title: str | None
+    model: str
+    cwd: Path
+    updated_at: float | None
+    active: bool
+    loaded: bool
+    running: bool
+    queued_count: int
+    error: str | None = None
+
+
+class SessionListItem(ListItem):
+    """List item that remembers the session key it switches to."""
+
+    def __init__(self, entry: SessionListEntry) -> None:
+        self.session_key = entry.key
+        super().__init__(Label(_session_list_entry_label(entry), markup=False))
+
+
 class PromptInput(TextArea):
     """Multiline prompt input with completion key bindings."""
 
@@ -1456,21 +1495,68 @@ class TauTuiApp(App[None]):
         height: 1fr;
     }
 
-    #sidebar {
-        width: 32;
-        min-width: 28;
+    #session-list-sidebar {
+        width: 30;
+        min-width: 24;
         height: 1fr;
-        padding: 1 1 0 0;
+        padding: 1 0 0 1;
         background: $tau-sidebar-background;
         border-right: tall $tau-border;
     }
 
-    TauTuiApp.-hide-sidebar #sidebar {
+    #session-list-title {
+        height: 1;
+        color: $tau-accent;
+        text-style: bold;
+        margin: 0 1 1 0;
+    }
+
+    #session-list {
+        height: 1fr;
+        background: $tau-sidebar-background;
+        color: $tau-muted-text;
+        border: none;
+    }
+
+    #session-list ListItem {
+        height: auto;
+        min-height: 2;
+        padding: 0 1 0 0;
+    }
+
+    #session-list ListItem Label {
+        color: $tau-muted-text;
+    }
+
+    #session-list ListItem.--highlight,
+    #session-list ListItem.-active-session {
+        background: $tau-highlight-background;
+        color: $tau-highlight-text;
+    }
+
+    #session-list ListItem.--highlight Label,
+    #session-list ListItem.-active-session Label {
+        background: $tau-highlight-background;
+        color: $tau-highlight-text;
+    }
+
+    #sidebar {
+        width: 32;
+        min-width: 28;
+        height: 1fr;
+        padding: 1 1 0 1;
+        background: $tau-sidebar-background;
+        border-left: tall $tau-border;
+    }
+
+    TauTuiApp.-hide-sidebar #sidebar,
+    TauTuiApp.-hide-sidebar #session-list-sidebar {
         display: none;
     }
 
     TauTuiApp.-hide-sidebar #main-pane {
         padding-left: 1;
+        padding-right: 1;
     }
 
     #main-pane {
@@ -1782,16 +1868,21 @@ class TauTuiApp(App[None]):
         self.initial_prompt = initial_prompt
         super().__init__()
         self._bindings = BindingsMap(_app_bindings(self.tui_settings.keybindings))
-        self.session = session
-        self.state = TuiState(skills=session.skills)
+        initial_key = _session_key_for_session(session)
+        initial_state = TuiState(skills=session.skills)
         if startup_notice:
-            self.state.add_item("status", startup_notice)
-        self._prompt_history: tuple[str, ...] = ()
-        self._load_session_messages_from_session()
-        self.adapter = TuiEventAdapter(self.state)
-        self._prompt_worker: Worker[None] | None = None
+            initial_state.add_item("status", startup_notice)
+        initial_view = TuiSessionView(
+            key=initial_key,
+            session=session,
+            state=initial_state,
+            adapter=TuiEventAdapter(initial_state),
+        )
+        self._session_views: dict[str, TuiSessionView] = {initial_key: initial_view}
+        self._active_session_key = initial_key
+        self._root_session = session
+        self._load_session_messages_from_view(initial_view)
         self._compaction_worker: Worker[None] | None = None
-        self._prompt_run_id = 0
         self._completion_state = CompletionState()
         self._completion_visible_line_budget: int | None = None
         self._activity_frame = 0
@@ -1804,6 +1895,53 @@ class TauTuiApp(App[None]):
         """Reflect the active session name in Textual's header state."""
         self.title = "Tau"
         self.sub_title = _session_header_sub_title(self.session)
+
+    @property
+    def active_session_view(self) -> TuiSessionView:
+        """Return the session view currently rendered in the main pane."""
+        return self._session_views[self._active_session_key]
+
+    @property
+    def session(self) -> CodingSession:
+        """Return the currently selected coding session."""
+        return self.active_session_view.session
+
+    @property
+    def state(self) -> TuiState:
+        """Return the display state for the currently selected session."""
+        return self.active_session_view.state
+
+    @property
+    def adapter(self) -> TuiEventAdapter:
+        """Return the event adapter for the currently selected session."""
+        return self.active_session_view.adapter
+
+    @property
+    def _prompt_history(self) -> tuple[str, ...]:
+        """Compatibility accessor for the active session's prompt history."""
+        return self.active_session_view.prompt_history
+
+    @_prompt_history.setter
+    def _prompt_history(self, value: tuple[str, ...]) -> None:
+        self.active_session_view.prompt_history = value
+
+    @property
+    def _prompt_worker(self) -> Worker[None] | None:
+        """Compatibility accessor for the active session's prompt worker."""
+        return self.active_session_view.prompt_worker
+
+    @_prompt_worker.setter
+    def _prompt_worker(self, value: Worker[None] | None) -> None:
+        self.active_session_view.prompt_worker = value
+
+    @property
+    def _prompt_run_id(self) -> int:
+        """Compatibility accessor for the active session's prompt run generation."""
+        return self.active_session_view.prompt_run_id
+
+    @_prompt_run_id.setter
+    def _prompt_run_id(self, value: int) -> None:
+        self.active_session_view.prompt_run_id = value
 
     def _sync_text_selection_state(self) -> None:
         """Disable native text selection while the transcript is mutating."""
@@ -1837,7 +1975,9 @@ class TauTuiApp(App[None]):
         """Compose the TUI widgets."""
         yield Header()
         with Horizontal(id="workspace"):
-            yield SessionSidebar(id="sidebar")
+            with Vertical(id="session-list-sidebar"):
+                yield Static("sessions", id="session-list-title")
+                yield ListView(id="session-list")
             with Vertical(id="main-pane"):
                 yield TranscriptView(
                     id="transcript",
@@ -1856,12 +1996,15 @@ class TauTuiApp(App[None]):
                     )
                 yield CompactSessionInfo(id="compact-session-info")
                 yield Static("", id="autocomplete")
+            yield SessionSidebar(id="sidebar")
         yield Footer()
 
     async def on_mount(self) -> None:
         """Focus the prompt when the app starts."""
+        self._refresh_session_list_sidebar()
         prompt = self.query_one(PromptInput)
         prompt.shell_mode_style = self.tui_settings.resolved_theme.accent
+        self._restore_prompt_draft()
         self._sync_prompt_shell_mode(prompt.text)
         prompt.focus()
         self._update_responsive_layout(self.size.width, self.size.height)
@@ -1873,11 +2016,20 @@ class TauTuiApp(App[None]):
         if self.initial_prompt and self.initial_prompt.strip():
             self._submit_prompt(self.initial_prompt.strip())
 
-    def on_unmount(self) -> None:
-        """Stop the activity timer when the app is torn down."""
+    async def on_unmount(self) -> None:
+        """Stop timers and close inactive loaded sessions when the app is torn down."""
         if self._activity_timer is not None:
             self._activity_timer.stop()
             self._activity_timer = None
+        for view in list(self._session_views.values()):
+            if view.session is self._root_session:
+                continue
+            close_session = getattr(view.session, "aclose", None)
+            if close_session is None:
+                continue
+            result = close_session()
+            if isawaitable(result):
+                await result
 
     def on_resize(self, event: Resize) -> None:
         """Update responsive chrome when the terminal changes size."""
@@ -1890,6 +2042,15 @@ class TauTuiApp(App[None]):
             return
         with suppress(NoMatches):
             self.screen.query_one("#prompt", PromptInput).focus()
+
+    @on(ListView.Selected, "#session-list")
+    async def on_session_list_selected(self, event: ListView.Selected) -> None:
+        """Switch to a session chosen from the left-hand session sidebar."""
+        event.stop()
+        item = event.item
+        if not isinstance(item, SessionListItem):
+            return
+        await self._switch_session_view(item.session_key)
 
     @on(events.TextSelected)
     async def on_text_selected(self) -> None:
@@ -1905,6 +2066,7 @@ class TauTuiApp(App[None]):
         """Update prompt autocomplete when the prompt text changes."""
         if event.text_area.id != "prompt":
             return
+        self.active_session_view.prompt_draft = event.text_area.text
         self._sync_prompt_shell_mode(event.text_area.text)
         self._completion_visible_line_budget = None
         self._completion_state = self._build_completion_state(event.text_area.text)
@@ -1925,6 +2087,7 @@ class TauTuiApp(App[None]):
     ) -> None:
         prompt = self.query_one("#prompt", PromptInput)
         raw_text = prompt.text
+        self.active_session_view.prompt_draft = raw_text
         applied_completion = self._apply_selected_completion(raw_text)
         if applied_completion is not None and applied_completion != raw_text:
             prompt.text = applied_completion
@@ -1953,6 +2116,7 @@ class TauTuiApp(App[None]):
             return
 
         prompt.text = ""
+        self.active_session_view.prompt_draft = ""
         self._completion_state = CompletionState()
         self._refresh_completions()
 
@@ -1973,6 +2137,7 @@ class TauTuiApp(App[None]):
                 self.state.clear()
             if command.new_session_requested:
                 await self._new_session()
+                self._refresh_session_list_sidebar()
             if command.compact_summary is not None:
                 if self._is_compaction_active():
                     self._notify("A compaction is already running.", severity="warning")
@@ -2001,6 +2166,7 @@ class TauTuiApp(App[None]):
                     self._notify(f"Could not export session: {exc}", severity="error")
             if command.resume_session_id is not None:
                 await self._resume_session(command.resume_session_id)
+                self._refresh_session_list_sidebar()
             if command.resume_picker_requested:
                 self.action_open_session_picker()
             if command.tree_picker_requested:
@@ -2051,11 +2217,15 @@ class TauTuiApp(App[None]):
         self._prompt_history = (*self._prompt_history, text)
 
     def _load_session_messages_from_session(self) -> None:
-        """Load visible session messages and reseed prompt history from them."""
-        self.state.load_messages(self.session.messages)
-        self._prompt_history = tuple(
+        """Load active visible session messages and reseed its prompt history."""
+        self._load_session_messages_from_view(self.active_session_view)
+
+    def _load_session_messages_from_view(self, view: TuiSessionView) -> None:
+        """Load visible session messages and reseed prompt history for one view."""
+        view.state.load_messages(view.session.messages)
+        view.prompt_history = tuple(
             message.content
-            for message in self.session.messages
+            for message in view.session.messages
             if isinstance(message, UserMessage) and message.content.strip()
         )
 
@@ -2079,11 +2249,12 @@ class TauTuiApp(App[None]):
 
     async def _run_compaction(self, summary: str) -> None:
         """Run manual compaction without disabling prompt editing."""
-        self.state.clear()
-        self.state.add_item("status", "Compacting session…")
-        self._refresh()
+        view = self.active_session_view
+        view.state.clear()
+        view.state.add_item("status", "Compacting session…")
+        self._refresh_view(view)
         try:
-            compact_message = await self.session.compact(summary)
+            compact_message = await view.session.compact(summary)
         except asyncio.CancelledError:
             return
         except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
@@ -2091,19 +2262,27 @@ class TauTuiApp(App[None]):
             return
         finally:
             self._compaction_worker = None
-        self.state.clear()
-        self.state.set_skills(self.session.skills)
-        self._load_session_messages_from_session()
+        view.state.clear()
+        view.state.set_skills(view.session.skills)
+        self._load_session_messages_from_view(view)
         self._notify(compact_message)
-        self._refresh()
+        self._refresh_view(view)
 
     def _submit_prompt(self, text: str) -> None:
-        """Add a prompt to the transcript and start the agent worker."""
-        self._prompt_run_id += 1
-        run_id = self._prompt_run_id
-        self._follow_transcript_output()
-        self._refresh()
-        self._prompt_worker = self.run_worker(self._run_prompt(text, run_id), exclusive=True)
+        """Add a prompt to the active transcript and start its agent worker."""
+        self._submit_prompt_for_view(self.active_session_view, text)
+
+    def _submit_prompt_for_view(self, view: TuiSessionView, text: str) -> None:
+        """Start one session worker without blocking other loaded sessions."""
+        view.prompt_run_id += 1
+        run_id = view.prompt_run_id
+        if view.key == self._active_session_key:
+            self._follow_transcript_output()
+            self._refresh()
+        view.prompt_worker = self.run_worker(
+            self._run_prompt_for_view(view.key, text, run_id),
+            exclusive=False,
+        )
 
     def _follow_transcript_output(self) -> None:
         """Put the transcript back in follow mode for explicit user actions."""
@@ -2113,45 +2292,48 @@ class TauTuiApp(App[None]):
             self.query_one("#transcript", TranscriptView).follow_output()
 
     async def _run_terminal_command(self, command: str, *, add_to_context: bool) -> None:
-        run_terminal_command = getattr(self.session, "run_terminal_command", None)
+        view = self.active_session_view
+        run_terminal_command = getattr(view.session, "run_terminal_command", None)
         if not callable(run_terminal_command):
             self._notify("Terminal commands are not available.", severity="error")
             return
 
-        item_index = len(self.state.items)
-        self.state.add_item(
+        item_index = len(view.state.items)
+        view.state.add_item(
             "tool",
             f"$ {command.strip()}",
             always_show_tool_result=True,
         )
-        self._follow_transcript_output()
-        self._refresh()
+        if view.key == self._active_session_key:
+            self._follow_transcript_output()
+        self._refresh_view(view)
 
         try:
             result = await run_terminal_command(command, add_to_context=add_to_context)
         except Exception as exc:  # noqa: BLE001 - surface command execution failures in the TUI
-            if item_index < len(self.state.items):
-                item = self.state.items[item_index]
+            if item_index < len(view.state.items):
+                item = view.state.items[item_index]
                 item.tool_result_text = format_terminal_command_result_block(
                     ok=False,
                     added_to_context=add_to_context,
                     output=str(exc),
                 )
             self._notify(f"Could not run command: {exc}", severity="error")
-            self._refresh()
+            self._refresh_view(view)
             return
 
-        if item_index >= len(self.state.items):
+        if item_index >= len(view.state.items):
             return
-        item = self.state.items[item_index]
+        item = view.state.items[item_index]
         item.text = f"$ {result.command}"
         item.tool_result_text = format_terminal_command_result_block(
             ok=result.ok,
             added_to_context=result.added_to_context,
             output=result.output,
         )
-        self._follow_transcript_output()
-        self._refresh()
+        if view.key == self._active_session_key:
+            self._follow_transcript_output()
+        self._refresh_view(view)
 
     def _set_tui_theme(self, theme: TuiThemeName) -> None:
         self.tui_settings = TuiSettings(
@@ -2170,49 +2352,72 @@ class TauTuiApp(App[None]):
         streaming_behavior: Literal["steer", "follow_up"],
     ) -> None:
         """Queue a prompt for the active agent worker."""
+        view = self.active_session_view
         try:
-            async for event in self.session.prompt(text, streaming_behavior=streaming_behavior):
-                self.adapter.apply(event)
+            async for event in view.session.prompt(text, streaming_behavior=streaming_behavior):
+                view.adapter.apply(event)
         except Exception as exc:  # noqa: BLE001 - surface queueing failures in the TUI
             self._notify(f"Could not queue message: {exc}", severity="error")
             return
-        self._refresh()
+        self._refresh_view(view)
 
     async def _run_prompt(self, text: str, run_id: int | None = None) -> None:
-        """Run one prompt and stream session events into the TUI state."""
-        active_run_id = self._prompt_run_id if run_id is None else run_id
-        try:
-            async for event in self.session.prompt(text):
-                if active_run_id != self._prompt_run_id:
-                    return
-                self.adapter.apply(event)
-                self._sync_text_selection_state()
-                if isinstance(event, ErrorEvent) and not event.recoverable:
-                    _attach_diagnostic_log_path_to_error(self.state, self.session)
-                await self._apply_streaming_transcript_event(event)
-        except Exception as exc:  # noqa: BLE001 - surface unexpected worker errors in the TUI
-            if active_run_id != self._prompt_run_id:
-                return
-            message = _format_prompt_error(exc, self.session)
-            self.state.error = message
-            self.state.add_item("error", message)
-            self.state.running = False
-            self._sync_text_selection_state()
-            self._refresh()
-        finally:
-            if active_run_id == self._prompt_run_id:
-                self._prompt_worker = None
+        """Run one prompt for the active session, used by tests and workers."""
+        view = self.active_session_view
+        active_run_id = view.prompt_run_id if run_id is None else run_id
+        await self._run_prompt_for_view(view.key, text, active_run_id)
 
-    async def _apply_streaming_transcript_event(self, event: AgentEvent) -> None:
+    async def _run_prompt_for_view(self, view_key: str, text: str, run_id: int) -> None:
+        """Run one prompt and stream events into that session's independent state."""
+        view = self._session_views.get(view_key)
+        if view is None:
+            return
+        try:
+            async for event in view.session.prompt(text):
+                if run_id != view.prompt_run_id:
+                    return
+                view.adapter.apply(event)
+                if isinstance(event, ErrorEvent) and not event.recoverable:
+                    _attach_diagnostic_log_path_to_error(view.state, view.session)
+                self._sync_text_selection_state()
+                await self._apply_streaming_transcript_event(event, view=view)
+        except Exception as exc:  # noqa: BLE001 - surface unexpected worker errors in the TUI
+            if run_id != view.prompt_run_id:
+                return
+            message = _format_prompt_error(exc, view.session)
+            view.state.error = message
+            view.state.add_item("error", message)
+            view.state.running = False
+            self._sync_text_selection_state()
+            self._refresh_view(view)
+        finally:
+            if run_id == view.prompt_run_id:
+                view.prompt_worker = None
+                if self.screen_stack and view.key == self._active_session_key:
+                    self._refresh_chrome()
+                elif self.screen_stack:
+                    self._refresh_session_list_sidebar()
+
+    async def _apply_streaming_transcript_event(
+        self,
+        event: AgentEvent,
+        *,
+        view: TuiSessionView | None = None,
+    ) -> None:
         """Apply an agent event to mounted transcript widgets without full redraws."""
+        view = view or self.active_session_view
+        if view.key != self._active_session_key:
+            self._refresh_view(view)
+            return
         if not self.screen_stack:
-            self._refresh()
+            self._refresh_view(view)
             return
         theme = self.tui_settings.resolved_theme
+        state = view.state
         try:
             transcript = self.query_one("#transcript", TranscriptView)
         except NoMatches:
-            self._refresh()
+            self._refresh_view(view)
             return
         if isinstance(event, AgentStartEvent):
             self._refresh_chrome()
@@ -2231,7 +2436,7 @@ class TauTuiApp(App[None]):
             await transcript.append_thinking_delta(
                 event.delta,
                 theme=theme,
-                show_thinking=self.state.show_thinking,
+                show_thinking=state.show_thinking,
             )
             self._sync_activity_indicator()
             return
@@ -2247,19 +2452,19 @@ class TauTuiApp(App[None]):
         if isinstance(event, ToolExecutionStartEvent):
             await transcript.finish_assistant_message()
             await transcript.append_item(
-                self.state.items[-1],
+                state.items[-1],
                 theme=theme,
-                show_tool_results=self.state.show_tool_results,
+                show_tool_results=state.show_tool_results,
             )
             self._refresh_chrome()
             return
         if isinstance(event, ToolExecutionUpdateEvent | RetryEvent | ErrorEvent):
             await transcript.finish_assistant_message()
-            if self.state.items:
+            if state.items:
                 await transcript.append_item(
-                    self.state.items[-1],
+                    state.items[-1],
                     theme=theme,
-                    show_tool_results=self.state.show_tool_results,
+                    show_tool_results=state.show_tool_results,
                 )
             self._refresh_chrome()
             return
@@ -2315,6 +2520,7 @@ class TauTuiApp(App[None]):
         self._refresh()
         if notify:
             self._notify("Interrupted current operation.")
+        self._refresh_session_list_sidebar()
 
     def action_accept_completion(self) -> None:
         """Accept the currently selected prompt completion."""
@@ -2433,9 +2639,6 @@ class TauTuiApp(App[None]):
 
     def action_open_session_picker(self) -> None:
         """Open the indexed session picker."""
-        if self.state.running:
-            self._notify("Tau is already working. Press Escape to cancel.")
-            return
         records = _session_records(self.session)
         if not records:
             self._notify("No sessions found.")
@@ -2474,14 +2677,16 @@ class TauTuiApp(App[None]):
 
     async def _resume_session(self, session_id: str) -> None:
         try:
-            resume_message = await self.session.resume(session_id)
-            self.state.clear()
-            self.state.set_skills(self.session.skills)
-            self._load_session_messages_from_session()
-            self._notify(resume_message)
+            loaded_view = self._session_views.get(session_id)
+            if loaded_view is not None:
+                await self._switch_session_view(loaded_view.key)
+                self._notify(f"Switched to session: {session_id}")
+            elif self._session_record_for_key(session_id) is not None:
+                await self._switch_session_view(session_id)
+            else:
+                await self._resume_session_by_mutation(session_id)
         except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
             self._notify(f"Error: {exc}", severity="error")
-        self._refresh()
 
     async def _open_tree_picker(self) -> None:
         tree_choices = getattr(self.session, "tree_choices", None)
@@ -2561,9 +2766,17 @@ class TauTuiApp(App[None]):
             return
         try:
             await new_session()
-            self.state.clear()
-            self.state.set_skills(self.session.skills)
-            self._load_session_messages_from_session()
+            view = self.active_session_view
+            view.key = _session_key_for_session(view.session)
+            if self._active_session_key not in self._session_views:
+                self._session_views[view.key] = view
+            else:
+                self._session_views.pop(self._active_session_key, None)
+                self._session_views[view.key] = view
+            self._active_session_key = view.key
+            view.state.clear()
+            view.state.set_skills(view.session.skills)
+            self._load_session_messages_from_view(view)
         except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
             self._notify(f"Error: {exc}", severity="error")
         self._refresh()
@@ -2899,6 +3112,7 @@ class TauTuiApp(App[None]):
         queued_messages = self.query_one("#queued-messages", Static)
         queued_messages.display = self.state.queued_message_count > 0
         queued_messages.update(_render_queued_messages(self.state, theme=theme))
+        self._refresh_session_list_sidebar()
         self._sync_activity_indicator()
         self._refresh_footer_bindings()
 
@@ -3052,6 +3266,150 @@ class TauTuiApp(App[None]):
         prompt.set_class(_is_terminal_command_prompt(text), "-shell-mode")
         prompt.refresh()
         self._apply_activity_indicator()
+
+    def _save_prompt_draft(self) -> None:
+        """Remember the mounted prompt text for the active session before switching."""
+        if not self.screen_stack:
+            return
+        with suppress(NoMatches):
+            self.active_session_view.prompt_draft = self.query_one("#prompt", PromptInput).text
+
+    def _restore_prompt_draft(self) -> None:
+        """Restore the selected session's draft into the mounted prompt."""
+        if not self.screen_stack:
+            return
+        prompt = self.query_one("#prompt", PromptInput)
+        prompt.text = self.active_session_view.prompt_draft
+        prompt.move_cursor(_text_end_location(prompt.text))
+
+    def _refresh_view(self, view: TuiSessionView) -> None:
+        """Refresh either the visible session or the left sidebar for a background one."""
+        self._sync_queue_state_for_view(view)
+        if view.key == self._active_session_key:
+            self._refresh()
+            return
+        self._refresh_session_list_sidebar()
+
+    def _sync_queue_state_for_view(self, view: TuiSessionView) -> None:
+        queue_event = getattr(view.session, "queue_update_event", None)
+        if not callable(queue_event):
+            return
+        view.adapter.apply(queue_event())
+
+    def _refresh_session_list_sidebar(self) -> None:
+        """Render the left sidebar with current-directory sessions and live status."""
+        if not self.screen_stack:
+            return
+        try:
+            session_list = self.query_one("#session-list", ListView)
+        except NoMatches:
+            return
+        entries = self._session_list_entries()
+        items: list[SessionListItem | ListItem] = []
+        active_index = 0
+        for index, entry in enumerate(entries):
+            item = SessionListItem(entry)
+            if entry.active:
+                item.add_class("-active-session")
+                active_index = index
+            items.append(item)
+        if not items:
+            items.append(ListItem(Label("No sessions", markup=False)))
+        session_list.clear()
+        session_list.extend(items)
+        session_list.index = min(active_index, len(items) - 1)
+
+    def _session_list_entries(self) -> tuple[SessionListEntry, ...]:
+        """Return sidebar rows from the durable index plus loaded in-process sessions."""
+        for view in self._session_views.values():
+            self._sync_queue_state_for_view(view)
+
+        entries: list[SessionListEntry] = []
+        seen: set[str] = set()
+        for record in _session_records(self.session):
+            key = record.id
+            matching_view = self._session_views.get(key)
+            entries.append(
+                _session_list_entry_from_record(
+                    record,
+                    active=key == self._active_session_key,
+                    view=matching_view,
+                )
+            )
+            seen.add(key)
+
+        for view in self._session_views.values():
+            if view.key in seen:
+                continue
+            entries.append(
+                _session_list_entry_from_view(
+                    view,
+                    active=view.key == self._active_session_key,
+                )
+            )
+
+        return tuple(entries)
+
+    async def _switch_session_view(self, session_key: str) -> None:
+        """Switch the visible transcript to another loaded or indexed session."""
+        if session_key == self._active_session_key:
+            return
+        self._save_prompt_draft()
+        view = self._session_views.get(session_key)
+        if view is None:
+            record = self._session_record_for_key(session_key)
+            if record is None:
+                self._notify("Session is no longer available.", severity="warning")
+                self._refresh_session_list_sidebar()
+                return
+            view = await self._load_session_view(record)
+            if view is None:
+                return
+        self._active_session_key = view.key
+        self._restore_prompt_draft()
+        self._completion_visible_line_budget = None
+        self._completion_state = self._build_completion_state(self.active_session_view.prompt_draft)
+        self._sync_prompt_shell_mode(self.active_session_view.prompt_draft)
+        self._refresh()
+        self._refresh_completions()
+
+    def _session_record_for_key(self, session_key: str) -> SessionCompletionRecord | None:
+        for record in _session_records(self.session):
+            if record.id == session_key:
+                return record
+        return None
+
+    async def _load_session_view(self, record: SessionCompletionRecord) -> TuiSessionView | None:
+        """Load an indexed session as a separate in-process view when possible."""
+        load_sibling = getattr(self.session, "load_sibling", None)
+        if not callable(load_sibling):
+            await self._resume_session_by_mutation(record.id)
+            return self.active_session_view
+        try:
+            session = await load_sibling(record.id)
+        except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
+            self._notify(f"Error: {exc}", severity="error")
+            return None
+        state = TuiState(skills=session.skills)
+        view = TuiSessionView(
+            key=record.id,
+            session=session,
+            state=state,
+            adapter=TuiEventAdapter(state),
+        )
+        self._load_session_messages_from_view(view)
+        self._session_views[record.id] = view
+        return view
+
+    async def _resume_session_by_mutation(self, session_id: str) -> None:
+        """Compatibility path for session fakes that only expose resume()."""
+        resume_message = await self.session.resume(session_id)
+        view = self.active_session_view
+        view.state.clear()
+        view.state.set_skills(view.session.skills)
+        self._load_session_messages_from_view(view)
+        self._notify(resume_message)
+        self._refresh()
 
 
 def _activity_prompt_border_color(
@@ -3496,6 +3854,81 @@ def _render_queued_messages(state: TuiState, *, theme: TuiTheme) -> Group:
         row.append(_queued_message_preview(message), style=theme.prompt_text)
         rows.append(row)
     return Group(*rows)
+
+
+def _session_key_for_session(session: CodingSession) -> str:
+    """Return the stable in-process key used for a loaded TUI session."""
+    session_id = getattr(session, "session_id", None)
+    if isinstance(session_id, str) and session_id:
+        return session_id
+    return f"session:{id(session)}"
+
+
+def _session_list_entry_from_record(
+    record: SessionCompletionRecord,
+    *,
+    active: bool,
+    view: TuiSessionView | None,
+) -> SessionListEntry:
+    state = view.state if view is not None else None
+    session = view.session if view is not None else None
+    return SessionListEntry(
+        key=record.id,
+        session_id=record.id,
+        title=record.title,
+        model=getattr(session, "model", record.model) if session is not None else record.model,
+        cwd=record.cwd,
+        updated_at=record.updated_at,
+        active=active,
+        loaded=view is not None,
+        running=_view_is_running(view),
+        queued_count=state.queued_message_count if state is not None else 0,
+        error=state.error if state is not None else None,
+    )
+
+
+def _session_list_entry_from_view(view: TuiSessionView, *, active: bool) -> SessionListEntry:
+    session_id = getattr(view.session, "session_id", None)
+    title = getattr(view.session, "session_title", None)
+    return SessionListEntry(
+        key=view.key,
+        session_id=session_id if isinstance(session_id, str) else None,
+        title=title if isinstance(title, str) else None,
+        model=view.session.model,
+        cwd=view.session.cwd,
+        updated_at=None,
+        active=active,
+        loaded=True,
+        running=_view_is_running(view),
+        queued_count=view.state.queued_message_count,
+        error=view.state.error,
+    )
+
+
+def _view_is_running(view: TuiSessionView | None) -> bool:
+    if view is None:
+        return False
+    worker = view.prompt_worker
+    worker_running = worker is not None and not worker.is_finished and not worker.is_cancelled
+    return view.state.running or bool(getattr(view.session, "is_running", False)) or worker_running
+
+
+def _session_list_entry_label(entry: SessionListEntry) -> str:
+    title = _named_session_title(entry.title) or entry.session_id or "New session"
+    if entry.running:
+        status = "● working"
+        if entry.queued_count:
+            status = f"{status} · queued {entry.queued_count}"
+    elif entry.queued_count:
+        status = f"↳ queued {entry.queued_count}"
+    elif entry.error:
+        status = "! error"
+    else:
+        status = "idle"
+    active_marker = "› " if entry.active else "  "
+    loaded_marker = " *" if entry.loaded and not entry.active else ""
+    model = f" · {entry.model}" if entry.model else ""
+    return f"{active_marker}{title}{loaded_marker}\n  {status}{model}"
 
 
 def _queued_message_preview(message: str) -> str:

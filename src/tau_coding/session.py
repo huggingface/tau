@@ -902,8 +902,8 @@ class CodingSession:
             self._thinking_level = previous_thinking_level
             raise
 
-    async def resume(self, session_id: str) -> str:
-        """Replace this session's active state with another indexed session."""
+    async def load_sibling(self, session_id: str) -> CodingSession:
+        """Load another indexed session without mutating this in-memory session."""
         manager = self._config.session_manager
         if manager is None:
             raise ValueError("Session manager is not available")
@@ -927,7 +927,7 @@ class CodingSession:
                 ) from exc
             provider_name = runtime_provider_config.name
 
-        replacement = await type(self).load(
+        return await type(self).load(
             CodingSessionConfig(
                 provider=self._harness.config.provider,
                 model=record.model or self.model,
@@ -950,6 +950,17 @@ class CodingSession:
                 shell_command_prefix=self._config.shell_command_prefix,
             )
         )
+
+    async def resume(self, session_id: str) -> str:
+        """Replace this session's active state with another indexed session."""
+        manager = self._config.session_manager
+        if manager is None:
+            raise ValueError("Session manager is not available")
+        record = manager.get_session(session_id)
+        if record is None:
+            raise ValueError(f"Unknown session: {session_id}")
+
+        replacement = await self.load_sibling(session_id)
         self._config = replacement._config
         self._state = replacement._state
         self._harness = replacement._harness

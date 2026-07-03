@@ -24,6 +24,7 @@ These are the default keys in the interactive [TUI](../guides/tui.md). Run
 | --- | --- |
 | `Ctrl+K` | Open the command palette |
 | `Ctrl+R` | Open the session picker |
+| `Up` / `Down` in the left sidebar | Choose a session to switch to |
 | `Tab` | Accept the highlighted completion |
 | `Down` / `Up` | Move through completions |
 
