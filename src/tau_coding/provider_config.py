@@ -22,6 +22,7 @@ from tau_ai import (
     OpenAICompatibleConfig,
 )
 from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL
+from tau_coding.catalog_loader import effective_catalog
 from tau_coding.credentials import FileCredentialStore, credentials_path
 from tau_coding.paths import TauPaths
 from tau_coding.provider_catalog import (
@@ -364,7 +365,7 @@ def load_provider_settings(paths: TauPaths | None = None) -> ProviderSettings:
     """Load durable provider settings, falling back to env-compatible defaults."""
     path = provider_settings_path(paths)
     if not path.exists():
-        return ProviderSettings()
+        return ProviderSettings(providers=_effective_provider_configs(paths))
     raw = loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ProviderConfigError("Provider settings must be a JSON object")
@@ -505,20 +506,15 @@ def _with_builtin_catalog_models(
     *,
     paths: TauPaths | None = None,
 ) -> ProviderSettings:
-    """Return settings with current built-in model catalogs merged in."""
-    builtin_configs = {
-        provider.name: provider
-        for provider in (
-            provider_config_from_catalog_entry(entry.name) for entry in BUILTIN_PROVIDER_CATALOG
-        )
-    }
+    """Return settings with the current provider catalog merged in."""
+    catalog_configs = {config.name: config for config in _effective_provider_configs(paths)}
     providers = tuple(
-        _merge_provider_config(provider, builtin_configs[provider.name])
-        if provider.name in builtin_configs
+        _merge_provider_config(provider, catalog_configs[provider.name])
+        if provider.name in catalog_configs
         else provider
         for provider in settings.providers
     )
-    providers = _append_credentialed_builtin_providers(providers, builtin_configs, paths=paths)
+    providers = _append_catalog_providers(providers, catalog_configs, paths=paths)
     default_provider = settings.default_provider
     if default_provider not in {provider.name for provider in providers}:
         default_provider = providers[0].name if providers else DEFAULT_PROVIDER_NAME
@@ -529,21 +525,28 @@ def _with_builtin_catalog_models(
     )
 
 
-def _append_credentialed_builtin_providers(
+def _effective_provider_configs(paths: TauPaths | None = None) -> tuple[ProviderConfig, ...]:
+    """Return provider configs for the effective catalog (builtin + user overlay)."""
+    return tuple(provider_config_from_entry(entry) for entry in effective_catalog(paths))
+
+
+def _append_catalog_providers(
     providers: tuple[ProviderConfig, ...],
-    builtin_configs: dict[str, ProviderConfig],
+    catalog_configs: dict[str, ProviderConfig],
     *,
     paths: TauPaths | None,
 ) -> tuple[ProviderConfig, ...]:
-    """Append built-in providers that already have stored Tau credentials."""
+    """Append catalog providers: user-catalog ones always, builtins when credentialed."""
     credential_store = FileCredentialStore(credentials_path(paths) if paths else None)
+    builtin_names = {entry.name for entry in BUILTIN_PROVIDER_CATALOG}
     provider_names = {provider.name for provider in providers}
     appended = list(providers)
-    for entry in BUILTIN_PROVIDER_CATALOG:
-        provider = builtin_configs[entry.name]
+    for provider in catalog_configs.values():
         if provider.name in provider_names:
             continue
-        if provider_has_usable_credentials(provider, credential_reader=credential_store):
+        if provider.name not in builtin_names or provider_has_usable_credentials(
+            provider, credential_reader=credential_store
+        ):
             appended.append(provider)
             provider_names.add(provider.name)
     return tuple(appended)
