@@ -11,7 +11,8 @@ those locations and file formats.
 
 ```text
 ~/.tau/
-├── providers.json      # configured providers
+├── catalog.toml        # optional provider/model catalog overlay
+├── providers.json      # provider/model preferences
 ├── credentials.json    # saved API keys / OAuth tokens (private permissions)
 ├── settings.json       # general settings (e.g. shell command prefix)
 ├── tui.json            # TUI theme + keybindings
@@ -31,7 +32,52 @@ Startup update checks cache their latest PyPI result in
 
 ## Providers
 
-Provider metadata lives in `~/.tau/providers.json`:
+Tau separates provider metadata from runtime preferences:
+
+- `src/tau_coding/data/catalog.toml` ships the built-in provider/model catalog.
+- `~/.tau/catalog.toml` optionally adds personal providers or overlays built-ins.
+- `~/.tau/providers.json` stores runtime preferences such as the default provider,
+  default model, scoped models, headers, and timeout/retry settings.
+
+### Provider catalog overlays
+
+Add reusable custom provider definitions to `~/.tau/catalog.toml`:
+
+```toml
+schema_version = 1
+
+[[providers]]
+name = "local-gateway"
+display_name = "Local Gateway"
+kind = "openai-compatible"
+base_url = "http://localhost:11434/v1"
+api_key_env = "LOCAL_GATEWAY_API_KEY"
+credential_name = "local-gateway"
+models = ["qwen-coder"]
+default_model = "qwen-coder"
+docs_url = "https://example.test/local-gateway"
+
+[providers.context_windows]
+qwen-coder = 64000
+```
+
+Catalog entries support `kind` values of `openai-compatible`, `anthropic`, and
+`openai-codex`. For most custom services, start with `openai-compatible`.
+
+User catalog overlays can be partial when they use the same `name` as a built-in
+provider. Scalar fields replace built-in values, `models` are merged with user
+models first, `context_windows` are merged, and the thinking fields
+(`thinking_levels`, `thinking_models`, `thinking_default`, `thinking_parameter`)
+replace as a group when `thinking_levels` is present.
+
+Invalid catalog files fail loudly. Tau rejects unknown keys, empty required
+strings, empty model names, unsupported provider kinds, default models that are
+not listed in `models`, `thinking_models` or `context_windows` entries for
+unknown models, and non-positive or non-integer context-window values.
+
+### Provider preferences
+
+Provider preferences live in `~/.tau/providers.json`:
 
 ```json
 {
@@ -66,9 +112,12 @@ Provider metadata lives in `~/.tau/providers.json`:
   custom or local model names to `models` before using them as defaults,
   CLI/TUI selections, or scoped models.
 - `scoped_models` are favorites for the **Ctrl+P** quick-cycle.
-- Custom models can declare thinking support with `thinking_levels`,
-  `thinking_default`, `thinking_models`, and `thinking_parameter`
-  (`"reasoning_effort"`, `"reasoning.effort"`, or `"anthropic.thinking"`).
+- Provider definitions can also be placed directly in `providers.json` for local
+  preferences. For reusable additions and overrides, prefer `catalog.toml`.
+- Custom models can declare thinking support in either file with
+  `thinking_levels`, `thinking_default`, `thinking_models`, and
+  `thinking_parameter` (`"reasoning_effort"`, `"reasoning.effort"`, or
+  `"anthropic.thinking"`).
 
 Writes after `/login`, `/model`, or scoped-model changes reload the file first,
 apply only the requested change, write atomically, and keep a `.bak` backup.

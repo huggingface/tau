@@ -43,6 +43,7 @@ For the practical frontend contract, see [Building a Custom TUI](../custom-tui.m
 - [Phase 17: TUI Slash-command Autocomplete](./phase-17-tui-autocomplete.md)
 - [Phase 17.5: TUI Transcript Wrapping](./phase-17-5-transcript-wrapping.md)
 - [Phase 18: Provider Configuration Foundation](./phase-18-provider-config-foundation.md)
+- [Config-driven Provider Catalog](./config-driven-provider-catalog.md)
 - [Provider Retry Events](./provider-retries.md)
 - [Provider/model safety and HTTP error details](./provider-model-safety.md)
 - [Phase 19: Project Context Discovery and Reload](./phase-19-context-discovery.md)

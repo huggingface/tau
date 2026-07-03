@@ -6,9 +6,9 @@ import tomllib
 from functools import cache
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StringConstraints, ValidationError
 
 from tau_coding.paths import TauPaths
 from tau_coding.provider_catalog import ProviderCatalogEntry, ProviderKind
@@ -21,6 +21,13 @@ USER_CATALOG_FILENAME = "catalog.toml"
 # replaces all four, mirroring _merge_provider_config in provider_config.
 _THINKING_FIELDS = ("thinking_levels", "thinking_models", "thinking_default", "thinking_parameter")
 
+_NonEmptyString = Annotated[
+    str,
+    StringConstraints(strict=True, strip_whitespace=True, min_length=1),
+]
+_NonEmptyStringTuple = Annotated[tuple[_NonEmptyString, ...], Field(min_length=1)]
+_PositiveInt = Annotated[StrictInt, Field(gt=0)]
+
 
 class CatalogError(ValueError):
     """Raised when a Tau catalog file is invalid."""
@@ -29,18 +36,18 @@ class CatalogError(ValueError):
 class _CatalogProvider(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    name: str
-    display_name: str
+    name: _NonEmptyString
+    display_name: _NonEmptyString
     kind: ProviderKind
-    base_url: str
-    api_key_env: str
-    credential_name: str
-    models: tuple[str, ...]
-    default_model: str
-    docs_url: str
-    context_windows: dict[str, int] | None = None
+    base_url: _NonEmptyString
+    api_key_env: _NonEmptyString
+    credential_name: _NonEmptyString
+    models: _NonEmptyStringTuple
+    default_model: _NonEmptyString
+    docs_url: _NonEmptyString
+    context_windows: dict[_NonEmptyString, _PositiveInt] | None = None
     thinking_levels: tuple[ThinkingLevel, ...] | None = None
-    thinking_models: tuple[str, ...] = ()
+    thinking_models: tuple[_NonEmptyString, ...] = ()
     thinking_default: ThinkingLevel | None = None
     thinking_parameter: ThinkingParameter | None = None
 
@@ -141,9 +148,9 @@ def _raw_providers(raw: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _raw_provider_name(provider: dict[str, Any]) -> str:
     name = provider.get("name")
-    if not isinstance(name, str) or not name:
+    if not isinstance(name, str) or not name.strip():
         raise CatalogError("catalog provider entries must have a non-empty string name")
-    return name
+    return name.strip()
 
 
 def _entries_from_raw(raw: dict[str, Any], *, source: str) -> tuple[ProviderCatalogEntry, ...]:

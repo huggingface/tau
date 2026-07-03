@@ -9,21 +9,25 @@ OpenAI-compatible endpoints (including local models).
 
 ## The fastest setup: `/login`
 
-Start Tau and use `/login` to connect a built-in provider:
+Start Tau and use `/login` to connect a provider:
 
 ```bash
 tau
 ```
 
 ```text
-/login              # choose a built-in provider
+/login              # choose a login method
 /login openai       # save an OpenAI API key
 /login openai-codex # authenticate a Codex/ChatGPT subscription via OAuth
+/login custom       # add an OpenAI-compatible custom provider
 ```
 
 Built-in providers include **OpenAI**, **Anthropic**, **OpenAI Codex**
 (subscription), **OpenRouter**, and **Hugging Face**. Credentials saved this way
-live in `~/.tau/credentials.json` (private permissions).
+live in `~/.tau/credentials.json` (private permissions). The custom-provider
+flow asks for the provider name, display name, base URL, API-key environment
+variable, default model, and API key; it writes the provider definition to
+`~/.tau/catalog.toml` and runtime preferences to `~/.tau/providers.json`.
 
 Check what's configured and how each provider will authenticate:
 
@@ -67,7 +71,15 @@ separate `openai-codex` subscription provider.
 ## Adding a custom / local provider
 
 Any OpenAI-compatible endpoint works — including local servers like Ollama or
-llama.cpp. Register one with `tau setup`:
+llama.cpp. The easiest interactive path is:
+
+```text
+/login custom
+```
+
+Tau prompts for the provider details, saves the API key, writes the provider
+metadata to `~/.tau/catalog.toml`, and makes the provider available immediately.
+For scripted or one-off local setup, you can also register one with `tau setup`:
 
 ```bash
 tau --provider local \
@@ -77,24 +89,75 @@ tau --provider local \
   setup
 ```
 
-This writes an entry to `~/.tau/providers.json` and (by default) makes it the
-default provider. Run it with:
+This writes the provider definition to `~/.tau/catalog.toml`, writes runtime
+preferences to `~/.tau/providers.json`, and (by default) makes it the default
+provider.
 
-```bash
-tau --provider local
-tau --provider local "summarize this project"   # TUI with an initial prompt
-tau --provider local -p "summarize this project" # one-shot print mode
+For reusable provider definitions, add a user-level catalog overlay at
+`~/.tau/catalog.toml`:
+
+```toml
+schema_version = 1
+
+[[providers]]
+name = "local-gateway"
+display_name = "Local Gateway"
+kind = "openai-compatible"
+base_url = "http://localhost:11434/v1"
+api_key_env = "LOCAL_GATEWAY_API_KEY"
+credential_name = "local-gateway"
+models = ["qwen-coder"]
+default_model = "qwen-coder"
+docs_url = "https://example.test/local-gateway"
+
+[providers.context_windows]
+qwen-coder = 64000
 ```
 
-Provider entries support `headers`, `timeout_seconds`, `max_retries`, and
-`max_retry_delay_seconds`. For the full JSON shape (and `thinking_levels` for
-custom models), see [Configuration]({{< relref "../reference/configuration.md#providers" >}}).
+Tau loads its bundled `src/tau_coding/data/catalog.toml` first, then overlays
+`~/.tau/catalog.toml`. A user entry with the same `name` can extend or override a
+built-in provider: scalar fields replace built-in values, `models` are merged
+with your models first, and `context_windows` are merged.
 
-{{% tip title="Org billing example" %}}
-Hugging Face organization billing is just a header on the provider entry:
+There is intentionally **no project-level** `.tau/catalog.toml`. Only the
+user-level `~/.tau/catalog.toml` is loaded, so cloning a repository cannot
+silently redirect a provider's `base_url` or credentials to an unexpected
+service.
+
+Run the custom provider with:
+
+```bash
+tau --provider local-gateway
+tau --provider local-gateway "summarize this project"    # TUI with an initial prompt
+tau --provider local-gateway -p "summarize this project" # one-shot print mode
+```
+
+Catalog TOML is for provider and model metadata. It does **not** accept runtime
+request options such as custom HTTP headers, timeouts, or retry settings. Put
+those in `~/.tau/providers.json` instead. Saved `providers.json` entries support
+`headers`, `timeout_seconds`, `max_retries`, and `max_retry_delay_seconds`. For
+the full JSON shape, the catalog TOML shape, and `thinking_levels` for custom
+models, see [Configuration]({{< relref "../reference/configuration.md#providers" >}}).
+
+{{% tip title="Hugging Face org billing" %}}
+To send a Hugging Face billing header, keep the provider definition in the
+catalog, then add the header to the matching provider preference in
+`~/.tau/providers.json`:
 
 ```json
-{ "headers": { "X-HF-Bill-To": "my-org" } }
+{
+  "default_provider": "huggingface",
+  "provider_preferences": {
+    "huggingface": {
+      "default_model": "openai/gpt-oss-120b",
+      "headers": { "X-HF-Bill-To": "my-org" },
+      "timeout_seconds": 60,
+      "max_retries": 2,
+      "max_retry_delay_seconds": 1
+    }
+  },
+  "scoped_models": []
+}
 ```
 {{% /tip %}}
 
@@ -102,6 +165,5 @@ Hugging Face organization billing is just a header on the provider entry:
 
 For a given provider, Tau uses, in order: a stored credential in
 `~/.tau/credentials.json`, then the environment variable named by the provider's
-`api_key_env`. Use `/login` for built-in providers. Custom/local providers
-created with `tau setup` use their configured environment variable until Tau has
-a custom-provider credential form.
+`api_key_env`. Use `/login` for built-in providers or `/login custom` for
+OpenAI-compatible custom providers.

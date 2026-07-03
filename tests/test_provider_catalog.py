@@ -161,6 +161,64 @@ def test_user_catalog_rejects_default_model_not_in_models(tmp_path: Path) -> Non
         effective_catalog(paths)
 
 
+@pytest.mark.parametrize(
+    ("body", "match"),
+    [
+        (
+            VALID_PROVIDER.replace('display_name = "Nebius AI Studio"', 'display_name = ""'),
+            r"providers\.nebius\.display_name",
+        ),
+        (
+            VALID_PROVIDER.replace(
+                'models = ["deepseek-ai/DeepSeek-V4-Pro", "Qwen/Qwen3-Coder-480B-A35B-Instruct"]',
+                'models = [""]',
+            ),
+            r"providers\.nebius\.models",
+        ),
+        (
+            VALID_PROVIDER.replace('"deepseek-ai/DeepSeek-V4-Pro" = 163840', '"" = 163840'),
+            r"providers\.nebius\.context_windows",
+        ),
+        (
+            VALID_PROVIDER.replace(
+                '"deepseek-ai/DeepSeek-V4-Pro" = 163840',
+                '"deepseek-ai/DeepSeek-V4-Pro" = 0',
+            ),
+            r"providers\.nebius\.context_windows",
+        ),
+        (
+            VALID_PROVIDER.replace(
+                '"deepseek-ai/DeepSeek-V4-Pro" = 163840',
+                '"deepseek-ai/DeepSeek-V4-Pro" = -1',
+            ),
+            r"providers\.nebius\.context_windows",
+        ),
+        (
+            VALID_PROVIDER.replace(
+                '"deepseek-ai/DeepSeek-V4-Pro" = 163840',
+                '"deepseek-ai/DeepSeek-V4-Pro" = true',
+            ),
+            r"providers\.nebius\.context_windows",
+        ),
+        (
+            VALID_PROVIDER.replace(
+                '"deepseek-ai/DeepSeek-V4-Pro" = 163840',
+                '"deepseek-ai/DeepSeek-V4-Pro" = "163840"',
+            ),
+            r"providers\.nebius\.context_windows",
+        ),
+    ],
+)
+def test_user_catalog_rejects_empty_and_coerced_values(
+    tmp_path: Path,
+    body: str,
+    match: str,
+) -> None:
+    paths = _write_user_catalog(tmp_path / ".tau", body)
+    with pytest.raises(CatalogError, match=match):
+        effective_catalog(paths)
+
+
 def test_user_catalog_rejects_bad_kind(tmp_path: Path) -> None:
     paths = _write_user_catalog(
         tmp_path / ".tau", VALID_PROVIDER.replace("openai-compatible", "grpc")
