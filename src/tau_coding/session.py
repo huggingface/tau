@@ -648,6 +648,12 @@ class CodingSession:
 
     def set_model(self, model: str) -> None:
         """Switch the active model for future turns and make it the default."""
+        # Fix for issue #226 by legacy7838-create: Prevent unavailable mid-session models
+        available = set(self.available_models)
+        if available and model not in available:
+            models_list = ", ".join(sorted(available))
+            raise ValueError(f"Unknown model for provider {self.provider_name}: {model}\nAvailable models: {models_list}")
+
         self._harness.config.model = model
         self._sync_thinking_level_to_active_model()
         self._refresh_runtime_provider()

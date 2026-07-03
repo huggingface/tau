@@ -196,12 +196,16 @@ class OpenAICompatibleProvider:
                                 if not await wait_for_retry(delay, signal=signal):
                                     return
                                 continue
+                            # Fix for issue #226 by legacy7838-create: Include provider detail in error message
+                            body_text = body.decode(errors="replace")
+                            detail = _http_error_detail(body_text)
+                            prefix = f"Provider request failed with status {response.status_code}"
+                            msg = f"{prefix}: {detail}" if detail else prefix
+                            
                             yield ProviderErrorEvent(
-                                message=(
-                                    f"Provider request failed with status {response.status_code}"
-                                ),
+                                message=msg,
                                 data={
-                                    "body": body.decode(errors="replace"),
+                                    "body": body_text,
                                     "attempts": attempt + 1,
                                 },
                             )
@@ -716,6 +720,24 @@ def _normalize_finish_reason(status: str | None, *, has_tool_calls: bool) -> str
         return "length"
     return "stop"
 
+
+# Fix for issue #226 by legacy7838-create: Parse JSON error details from provider
+def _http_error_detail(body: str) -> str:
+    parsed = _loads_object(body)
+    if parsed is not None:
+        error = parsed.get("error")
+        if isinstance(error, Mapping):
+            message = error.get("message")
+            if isinstance(message, str) and message:
+                return message
+            code = error.get("code")
+            if isinstance(code, str) and code:
+                return code
+        for key in ("message", "detail", "error"):
+            detail = parsed.get(key)
+            if isinstance(detail, str) and detail:
+                return detail
+    return body.strip()[:1000]
 
 def _responses_failure_event(chunk: Mapping[str, Any]) -> ProviderErrorEvent:
     message = "Provider response failed"

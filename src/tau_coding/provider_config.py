@@ -659,6 +659,15 @@ def resolve_provider_selection(
     selected_model = model or provider.default_model
     if not selected_model:
         raise ProviderConfigError(f"Provider {provider.name} does not define a default model")
+
+    # Fix for issue #226 by legacy7838-create: Prevent unavailable auto-selected models
+    if provider.models and selected_model not in provider.models:
+        models_list = ", ".join(provider.models)
+        raise ProviderConfigError(
+            f"Model '{selected_model}' is not available for provider '{provider.name}'. "
+            f"Available models: {models_list}"
+        )
+
     return ProviderSelection(provider=provider, model=selected_model)
 
 

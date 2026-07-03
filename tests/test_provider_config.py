@@ -269,6 +269,22 @@ def test_resolve_provider_selection_rejects_unknown_provider() -> None:
         resolve_provider_selection(ProviderSettings(), provider_name="missing")
 
 
+def test_resolve_provider_selection_rejects_unavailable_model() -> None:
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost",
+                api_key_env="LOCAL_KEY",
+                models=("qwen", "llama"),
+                default_model="qwen",
+            ),
+        ),
+    )
+    with pytest.raises(ProviderConfigError, match="Model 'gpt-5' is not available for provider 'local'"):
+        resolve_provider_selection(settings, model="gpt-5")
+
 def test_openai_compatible_config_from_provider_uses_configured_env_var(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
