@@ -2457,8 +2457,24 @@ class TauTuiApp(App[None]):
         self._notify("Tool results expanded." if expanded else "Tool results collapsed.")
 
     def action_toggle_thinking(self) -> None:
-        """Toggle thinking-token display in the transcript."""
+        """Toggle thinking-token display in the transcript.
+
+        While an agent turn is streaming, a full transcript redraw would tear
+        down the live assistant/thinking streaming widgets and reflow the
+        layout so ``_follow_output`` snaps the viewport back to the bottom --
+        the scroll-follow regression tracked in #175. During a running turn we
+        instead reconcile only the thinking widgets incrementally, preserving
+        the active streaming widgets and the user's follow/scrollback state.
+        """
         self.state.toggle_thinking()
+        if self.state.running and self.screen_stack:
+            with suppress(NoMatches):
+                transcript = self.query_one("#transcript", TranscriptView)
+                transcript.apply_thinking_visibility(
+                    self.state, theme=self.tui_settings.resolved_theme
+                )
+            self._refresh_chrome()
+            return
         self._refresh()
 
     def _handle_session_picker_result(self, session_id: str | None) -> None:

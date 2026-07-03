@@ -357,6 +357,7 @@ class TranscriptView(VerticalScroll):
         self._active_thinking_widget: StreamingTranscriptMessageWidget | None = None
         self._hidden_thinking_placeholder_visible = False
         self._follow_output = True
+        self._suppress_follow_update = False
 
     def on_mount(self) -> None:
         """Follow new transcript content until the user scrolls away."""
@@ -385,6 +386,8 @@ class TranscriptView(VerticalScroll):
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         """Track whether user scrollback has opted out of transcript following."""
         super().watch_scroll_y(old_value, new_value)
+        if self._suppress_follow_update:
+            return
         if new_value < old_value:
             self._follow_output = False
         elif new_value >= self.max_scroll_y:
@@ -400,6 +403,137 @@ class TranscriptView(VerticalScroll):
         self._render_state = state
         self._render_theme = theme
         self._redraw(scroll_end=self._should_follow_output)
+
+    def apply_thinking_visibility(
+        self,
+        state: TuiState,
+        *,
+        theme: TuiTheme = TAU_DARK_THEME,
+    ) -> None:
+        """Toggle thinking-token display without a full transcript remount.
+
+        During an active agent turn the transcript holds live
+        ``StreamingTranscriptMessageWidget`` instances for the assistant (and
+        possibly thinking) deltas. A full ``_redraw`` would tear those widgets
+        down, drop the incremental markdown stream, and reflow the layout so
+        ``_follow_output`` snaps the viewport back to the bottom -- the exact
+        scroll-follow regression tracked in #175.
+
+        Instead, this reconciles only the thinking-related widgets against the
+        accumulated ``state.items`` thinking block while preserving the active
+        assistant streaming widget and the current follow/scrollback state.
+        Like ``_redraw``, mounts are fire-and-forget so the toggle stays atomic
+        with respect to the streaming worker.
+        """
+        self._render_state = state
+        self._render_theme = theme
+        # Preserve follow/scrollback across the layout reflow: removing or
+        # adding thinking widgets changes content height and can transiently
+        # move scroll_y, which watch_scroll_y would otherwise interpret as a
+        # user scrollback and use to flip _follow_output (#175 regression). The
+        # suppression stays active until the deferred follow-scroll settles.
+        preserved_follow = self._follow_output
+        self._suppress_follow_update = True
+        try:
+            if state.show_thinking:
+                self._show_streaming_thinking(state, theme=theme)
+            else:
+                self._hide_streaming_thinking(state, theme=theme)
+        except Exception:
+            # Never leave follow updates suppressed if the reconcile failed.
+            self._suppress_follow_update = False
+            self._follow_output = preserved_follow
+            raise
+
+        def settle_follow_scroll() -> None:
+            self._follow_output = preserved_follow
+            self._suppress_follow_update = False
+            if preserved_follow or self.is_vertical_scroll_end:
+                self.scroll_end(animate=False, immediate=True)
+
+        self.call_after_refresh(settle_follow_scroll)
+
+    def _show_streaming_thinking(
+        self,
+        state: TuiState,
+        *,
+        theme: TuiTheme,
+    ) -> None:
+        """Mount a widget for each thinking block when showing thinking tokens.
+
+        ``state.items`` may carry several ``thinking`` blocks (one per reasoning
+        segment across tool calls). Each renders as its own widget, ordered ahead
+        of the active assistant streaming widget, which is never remounted so its
+        incremental markdown stream stays intact. Thinking widgets are rebuilt
+        from their committed text: ``StreamingTranscriptMessageWidget`` re-renders
+        the full ``item.text`` on mount, and the next thinking delta continues
+        appending to the freshly assigned active widget.
+        """
+        self._hidden_thinking_placeholder_visible = False
+        thinking_items = [item for item in state.items if item.role == "thinking"]
+        if not thinking_items:
+            return
+        self._remove_thinking_widgets()
+        anchor = self._active_assistant_widget
+        new_active: StreamingTranscriptMessageWidget | None = None
+        for index, item in enumerate(thinking_items):
+            widget = StreamingTranscriptMessageWidget(item, theme=theme)
+            if anchor is not None and anchor.is_mounted:
+                self.mount(widget, before=anchor)
+            else:
+                self.mount(widget)
+            if index == len(thinking_items) - 1:
+                new_active = widget
+        self._active_thinking_widget = new_active
+        self._last_render_width = self.scrollable_content_region.width
+        self.refresh(layout=True)
+
+    def _hide_streaming_thinking(
+        self,
+        state: TuiState,
+        *,
+        theme: TuiTheme,
+    ) -> None:
+        """Drop thinking widgets and show one placeholder when hiding tokens."""
+        self._remove_thinking_widgets()
+        self._active_thinking_widget = None
+        has_thinking_item = any(item.role == "thinking" for item in state.items)
+        if has_thinking_item and not self._hidden_thinking_placeholder_visible:
+            placeholder = TranscriptMessageWidget(
+                ChatItem(
+                    role="thinking",
+                    text="Thinking… Press Ctrl+T to show thinking tokens.",
+                ),
+                theme=theme,
+                show_tool_results=state.show_tool_results,
+            )
+            anchor = self._active_assistant_widget
+            if anchor is not None and anchor.is_mounted:
+                self.mount(placeholder, before=anchor)
+            else:
+                self.mount(placeholder)
+            self._hidden_thinking_placeholder_visible = True
+        else:
+            self._hidden_thinking_placeholder_visible = False
+        self._last_render_width = self.scrollable_content_region.width
+        self.refresh(layout=True)
+
+    def _remove_thinking_widgets(self) -> None:
+        """Remove displayed thinking widgets.
+
+        Covers both finalized ``TranscriptMessageWidget`` blocks (e.g. the
+        hidden-thinking placeholder or a committed thinking item from a prior
+        turn) and live ``StreamingTranscriptMessageWidget`` blocks. The active
+        assistant streaming widget is never thinking-role and is left intact.
+        """
+        to_remove = [
+            child
+            for child in self.children
+            if isinstance(child, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+            and getattr(child.item, "role", None) == "thinking"
+        ]
+        if to_remove:
+            self.remove_children(to_remove)
 
     def on_resize(self, event: Resize) -> None:
         """Re-render transcript entries when the terminal width changes."""

@@ -25,6 +25,7 @@ from tau_agent import (
     MessageEndEvent,
     MessageStartEvent,
     QueueUpdateEvent,
+    ThinkingDeltaEvent,
     ToolCall,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
@@ -4172,6 +4173,249 @@ async def test_tui_app_toggles_thinking_tokens_from_keybinding_while_running() -
         assert "internal plan" not in transcript_text()
 
     assert notifications == []
+
+
+@pytest.mark.anyio
+async def test_tui_thinking_toggle_during_stream_preserves_follow_scroll() -> None:
+    """Toggling thinking mid-stream must not tear down the streaming widgets.
+
+    Regression for the Ctrl+T re-regression of #175: pressing Ctrl+T while an
+    assistant/thinking message is streaming used to call the full ``_refresh``
+    redraw, which remounts every transcript block, resets ``_follow_output`` via
+    the layout reflow, and breaks the smooth bottom-follow scroll restored by
+    #177. While the agent is running the toggle should mutate only the thinking
+    widget and keep following new tokens.
+    """
+    app = TauTuiApp(
+        FakeSession(
+            messages=[
+                UserMessage(content=f"message {index}\n" + "line\n" * 4) for index in range(12)
+            ]
+        )
+    )
+
+    async with app.run_test(size=(40, 12)) as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+        transcript.follow_output()
+        await pilot.pause()
+        assert transcript.is_vertical_scroll_end
+
+        # Simulate an active agent turn: thinking then assistant deltas stream in.
+        app.state.running = True
+        theme = app.tui_settings.resolved_theme
+
+        async def stream_following(delta: str, *, thinking: bool = False) -> None:
+            if thinking:
+                await transcript.append_thinking_delta(delta, theme=theme, show_thinking=True)
+            else:
+                await transcript.append_assistant_delta(delta, theme=theme)
+            for _ in range(6):
+                await pilot.pause()
+                if transcript.is_vertical_scroll_end:
+                    break
+
+        await stream_following("thinking line\n" * 20, thinking=True)
+        await stream_following("answer line\n" * 20)
+        assert transcript.is_vertical_scroll_end
+        active_assistant = transcript._active_assistant_widget
+        assert active_assistant is not None
+        assert app.state.show_thinking is False
+
+        # First Ctrl+T turns thinking on mid-stream; must not destroy widgets.
+        app.action_toggle_thinking()
+        await pilot.pause()
+        assert app.state.show_thinking is True
+        # The assistant streaming widget survives the toggle.
+        assert transcript._active_assistant_widget is active_assistant
+        # Follow mode is preserved, so the viewport stays pinned to the bottom.
+        assert transcript._follow_output is True
+        assert transcript.is_vertical_scroll_end
+
+        # Streaming continues after the toggle and still follows smoothly.
+        await stream_following("more line\n" * 20)
+        assert transcript.is_vertical_scroll_end
+
+        # Toggle thinking back off mid-stream still keeps following.
+        app.action_toggle_thinking()
+        await pilot.pause()
+        assert app.state.show_thinking is False
+        assert transcript._follow_output is True
+        await stream_following("more thinking\n" * 20, thinking=True)
+        assert transcript.is_vertical_scroll_end
+
+
+@pytest.mark.anyio
+async def test_tui_thinking_toggle_during_stream_preserves_user_scrollback() -> None:
+    """A mid-stream thinking toggle must not yank the viewport back to the bottom.
+
+    Regression for #175: if the user scrolled up during streaming, toggling
+    thinking (Ctrl+T) must preserve their scrollback position instead of
+    remounting the transcript and snapping back to the bottom.
+    """
+    app = TauTuiApp(
+        FakeSession(
+            messages=[
+                UserMessage(content=f"message {index}\n" + "line\n" * 4) for index in range(12)
+            ]
+        )
+    )
+
+    async with app.run_test(size=(40, 12)) as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+        transcript.follow_output()
+        await pilot.pause()
+        assert transcript.max_scroll_y > 0
+
+        app.state.running = True
+        theme = app.tui_settings.resolved_theme
+        # Stream some content so the transcript is tall enough to scroll back in.
+        await transcript.append_thinking_delta(
+            "thinking line\n" * 20, theme=theme, show_thinking=True
+        )
+        await transcript.append_assistant_delta("answer line\n" * 20, theme=theme)
+        await pilot.pause()
+
+        # User scrolls up away from the bottom while streaming and opts out of
+        # following. Extra pauses drain any pending follow-scroll callbacks.
+        transcript._follow_output = False
+        transcript.scroll_to(
+            y=max(0, transcript.max_scroll_y - 5),
+            animate=False,
+            immediate=True,
+        )
+        for _ in range(6):
+            await pilot.pause()
+        scrollback_y = transcript.scroll_y
+        assert not transcript.is_vertical_scroll_end
+        assert transcript._follow_output is False
+
+        app.action_toggle_thinking()
+        for _ in range(6):
+            await pilot.pause()
+        assert app.state.show_thinking is True
+        # Scrollback position is preserved; the viewport did not jump to bottom.
+        assert transcript.scroll_y == scrollback_y
+        assert not transcript.is_vertical_scroll_end
+        assert transcript._follow_output is False
+
+        # More streaming after the toggle stays out of follow mode.
+        await transcript.append_assistant_delta("more line\n" * 20, theme=theme)
+        for _ in range(6):
+            await pilot.pause()
+        assert not transcript.is_vertical_scroll_end
+        assert transcript.scroll_y == scrollback_y
+
+
+@pytest.mark.anyio
+async def test_tui_thinking_toggle_during_stream_keeps_all_thinking_blocks() -> None:
+    """Toggling thinking mid-stream must render every thinking block, not just the live one.
+
+    A turn can carry several ``thinking`` blocks (one per reasoning segment
+    across tool calls). Showing thinking must mount a widget for each block in
+    order ahead of the assistant widget, and the live thinking stream must keep
+    appending to the final thinking widget without losing earlier blocks.
+    """
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(40, 16)) as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+        transcript.follow_output()
+        await pilot.pause()
+
+        app.state.running = True
+        # Two distinct thinking blocks plus an assistant block accumulate in state.
+        app.state.add_item("thinking", "first reasoning")
+        app.state.add_item("assistant", "interim answer")
+        app.state.add_item("thinking", "second reasoning")
+        app._refresh()
+        await pilot.pause()
+
+        first_text = "first reasoning"
+        second_text = "second reasoning"
+
+        # Start with thinking hidden: both blocks collapse to a single placeholder.
+        assert app.state.show_thinking is False
+        text = "\n".join(line.text for line in transcript.lines)
+        assert "Thinking… Press Ctrl+T to show thinking tokens." in text
+        assert first_text not in text
+        assert second_text not in text
+
+        # Show thinking: every block re-renders, ordered before assistant.
+        app.action_toggle_thinking()
+        await pilot.pause()
+        assert app.state.show_thinking is True
+        text = "\n".join(line.text for line in transcript.lines)
+        assert first_text in text
+        assert second_text in text
+        assert "interim answer" in text
+        assert "Thinking… Press Ctrl+T to show thinking tokens." not in text
+
+        # Hide thinking again: both blocks collapse back to one placeholder.
+        app.action_toggle_thinking()
+        await pilot.pause()
+        assert app.state.show_thinking is False
+        text = "\n".join(line.text for line in transcript.lines)
+        assert "Thinking… Press Ctrl+T to show thinking tokens." in text
+        assert first_text not in text
+        assert second_text not in text
+        assert "interim answer" in text
+
+
+@pytest.mark.anyio
+async def test_tui_thinking_toggle_via_event_stream_preserves_assistant_widget() -> None:
+    """End-to-end: toggling thinking through the streaming event path keeps the
+    active assistant widget so deltas continue without a remount/jump.
+
+    Regression for #175: previously ``action_toggle_thinking`` always called
+    ``_refresh`` even mid-stream, remounting every transcript block. Here the
+    toggle is applied while streaming and the same assistant widget must keep
+    receiving the following deltas.
+    """
+    session = FakeSession(
+        events=[
+            AgentStartEvent(),
+            MessageStartEvent(),
+            ThinkingDeltaEvent(delta="thinking alpha\n" * 4),
+            MessageDeltaEvent(delta="answer alpha\n" * 4),
+        ]
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(60, 18)) as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+        transcript.follow_output()
+        await pilot.pause()
+
+        # Consume events up to the assistant deltas via the real streaming path.
+        await app._run_prompt("stream")
+        await pilot.pause()
+
+        assert transcript._active_assistant_widget is not None
+        assistant_before = transcript._active_assistant_widget
+
+        # Toggle thinking on mid-stream through the keybinding action.
+        app.action_toggle_thinking()
+        await pilot.pause()
+        assert app.state.show_thinking is True
+
+        # The assistant streaming widget survives the toggle (no remount).
+        assert transcript._active_assistant_widget is assistant_before
+
+        # Subsequent assistant deltas continue into the same widget.
+        await transcript.append_assistant_delta("continued\n" * 4)
+        await pilot.pause()
+        assert transcript._active_assistant_widget is assistant_before
+        assert "continued" in assistant_before.selection_text
+
+        # Toggling back off also preserves the assistant widget.
+        app.action_toggle_thinking()
+        await pilot.pause()
+        assert app.state.show_thinking is False
+        assert transcript._active_assistant_widget is assistant_before
 
 
 @pytest.mark.anyio
