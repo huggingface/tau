@@ -4,7 +4,15 @@ from json import loads
 import httpx
 import pytest
 
-from tau_agent import AgentTool, AgentToolResult, SimpleCancellationToken, ToolCall, UserMessage
+from tau_agent import (
+    AgentTool,
+    AgentToolResult,
+    AssistantMessage,
+    SimpleCancellationToken,
+    ToolCall,
+    ToolResultMessage,
+    UserMessage,
+)
 from tau_agent.types import JSONValue
 from tau_ai import (
     AnthropicConfig,
@@ -203,7 +211,7 @@ async def test_openai_compatible_provider_includes_configured_reasoning_effort()
 
 
 @pytest.mark.anyio
-async def test_openai_compatible_provider_can_send_responses_reasoning_effort() -> None:
+async def test_openai_compatible_provider_supports_nested_reasoning_effort_parameter() -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -225,15 +233,18 @@ async def test_openai_compatible_provider_can_send_responses_reasoning_effort() 
             client=client,
         )
 
+        # A model served over /chat/completions (not gpt-5.5/5.4/codex, which
+        # route to /v1/responses) exercises the nested reasoning.effort payload.
         await _collect(
             provider.stream_response(
-                model="gpt-5.5",
+                model="custom-reasoner",
                 system="You are Tau.",
                 messages=[UserMessage(content="Say ok")],
                 tools=[],
             )
         )
 
+    assert requests[0].url == "https://example.test/v1/chat/completions"
     assert loads(requests[0].content)["reasoning"] == {"effort": "high"}
     assert "reasoning_effort" not in loads(requests[0].content)
 
@@ -1086,3 +1097,449 @@ async def test_anthropic_provider_retries_transient_status_with_event() -> None:
         "text_delta",
         "response_end",
     ]
+
+
+def _weather_tool() -> AgentTool:
+    async def executor(
+        arguments: Mapping[str, JSONValue],
+        signal: SimpleCancellationToken | None = None,
+    ) -> AgentToolResult:
+        del signal
+        return AgentToolResult(
+            tool_call_id="call_1", name="get_weather", ok=True, content=str(arguments)
+        )
+
+    return AgentTool(
+        name="get_weather",
+        description="Get current weather for a city.",
+        input_schema={"type": "object", "properties": {"city": {"type": "string"}}},
+        executor=executor,
+    )
+
+
+def test_use_responses_api_routes_only_restricted_models() -> None:
+    from tau_ai.openai_compatible import _use_responses_api
+
+    assert _use_responses_api("gpt-5.5") is True
+    assert _use_responses_api("gpt-5.5-pro") is True
+    assert _use_responses_api("gpt-5.4") is True
+    assert _use_responses_api("gpt-5.3-codex") is True
+    assert _use_responses_api("GPT-5.5") is True
+    assert _use_responses_api("gpt-5.1") is False
+    assert _use_responses_api("gpt-5") is False
+    assert _use_responses_api("gpt-4o") is False
+    assert _use_responses_api("test-model") is False
+
+
+@pytest.mark.anyio
+async def test_responses_api_formats_request_for_restricted_model() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.output_text.delta","delta":"Sun"}\n\n'
+                'data: {"type":"response.output_text.delta","delta":"ny"}\n\n'
+                'data: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    messages = [
+        UserMessage(content="weather in Paris?"),
+        AssistantMessage(
+            content="",
+            tool_calls=[
+                ToolCall(id="call_1", name="get_weather", arguments={"city": "Paris"})
+            ],
+        ),
+        ToolResultMessage(
+            tool_call_id="call_1", name="get_weather", content='{"temp_c": 19}'
+        ),
+        UserMessage(content="summarize"),
+    ]
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+                reasoning_effort="medium",
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=messages,
+                tools=[_weather_tool()],
+            )
+        )
+
+    assert [event.type for event in events] == [
+        "response_start",
+        "text_delta",
+        "text_delta",
+        "response_end",
+    ]
+    assert isinstance(events[-1], ProviderResponseEndEvent)
+    assert events[-1].message.content == "Sunny"
+    assert events[-1].finish_reason == "stop"
+
+    request = requests[0]
+    assert request.url == "https://example.test/v1/responses"
+
+    payload = loads(request.content)
+    assert payload["model"] == "gpt-5.5"
+    assert payload["stream"] is True
+    assert payload["store"] is False
+    assert payload["instructions"] == "You are Tau."
+    assert payload["reasoning"] == {"effort": "medium", "summary": "auto"}
+    # Responses-API tools are flat (no nested "function" object).
+    assert payload["tools"] == [
+        {
+            "type": "function",
+            "name": "get_weather",
+            "description": "Get current weather for a city.",
+            "parameters": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+            },
+        }
+    ]
+    # The assistant turn has empty content, so only its function_call appears.
+    assert payload["input"][0] == {"role": "user", "content": "weather in Paris?"}
+    function_call = payload["input"][1]
+    assert function_call["type"] == "function_call"
+    assert function_call["call_id"] == "call_1"
+    assert function_call["name"] == "get_weather"
+    assert loads(function_call["arguments"]) == {"city": "Paris"}
+    assert payload["input"][2] == {
+        "type": "function_call_output",
+        "call_id": "call_1",
+        "output": '{"temp_c": 19}',
+    }
+    assert payload["input"][3] == {"role": "user", "content": "summarize"}
+
+
+@pytest.mark.anyio
+async def test_responses_api_parses_streamed_tool_call() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.output_item.added","output_index":0,'
+                '"item":{"id":"fc_1","type":"function_call","call_id":"call_abc",'
+                '"name":"get_weather","arguments":""}}\n\n'
+                'data: {"type":"response.function_call_arguments.delta",'
+                '"item_id":"fc_1","delta":"{\\"city\\":"}\n\n'
+                'data: {"type":"response.function_call_arguments.delta",'
+                '"item_id":"fc_1","delta":"\\"Paris\\"}"}\n\n'
+                'data: {"type":"response.function_call_arguments.done",'
+                '"item_id":"fc_1","arguments":"{\\"city\\":\\"Paris\\"}"}\n\n'
+                'data: {"type":"response.output_item.done","output_index":0,'
+                '"item":{"id":"fc_1","type":"function_call","call_id":"call_abc",'
+                '"name":"get_weather","arguments":"{\\"city\\":\\"Paris\\"}"}}\n\n'
+                'data: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="weather?")],
+                tools=[_weather_tool()],
+            )
+        )
+
+    tool_call_events = [e for e in events if isinstance(e, ProviderToolCallEvent)]
+    assert len(tool_call_events) == 1
+    assert tool_call_events[0].tool_call.id == "call_abc"
+    assert tool_call_events[0].tool_call.name == "get_weather"
+    assert tool_call_events[0].tool_call.arguments == {"city": "Paris"}
+
+    end = events[-1]
+    assert isinstance(end, ProviderResponseEndEvent)
+    assert len(end.message.tool_calls) == 1
+    assert end.message.tool_calls[0].id == "call_abc"
+    assert end.message.tool_calls[0].arguments == {"city": "Paris"}
+    assert end.finish_reason == "tool_calls"
+
+
+@pytest.mark.anyio
+async def test_responses_api_streams_refusal_as_text() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.refusal.delta","delta":"I can"}\n\n'
+                'data: {"type":"response.refusal.delta","delta":"not help with that."}\n\n'
+                'data: {"type":"response.refusal.done",'
+                '"refusal":"I cannot help with that."}\n\n'
+                'data: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="unsafe request")],
+                tools=[],
+            )
+        )
+
+    assert [event.type for event in events] == [
+        "response_start",
+        "text_delta",
+        "text_delta",
+        "response_end",
+    ]
+    text_deltas = [e.delta for e in events if isinstance(e, ProviderTextDeltaEvent)]
+    assert text_deltas == ["I can", "not help with that."]
+    end = events[-1]
+    assert isinstance(end, ProviderResponseEndEvent)
+    assert end.message.content == "I cannot help with that."
+    assert end.finish_reason == "stop"
+
+
+@pytest.mark.anyio
+async def test_responses_api_streams_reasoning_summary_as_thinking() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.reasoning_summary_text.delta",'
+                '"delta":"Considering"}\n\n'
+                'data: {"type":"response.output_text.delta","delta":"Answer"}\n\n'
+                'data: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+                reasoning_effort="high",
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="think")],
+                tools=[],
+            )
+        )
+
+    assert [event.type for event in events] == [
+        "response_start",
+        "thinking_delta",
+        "text_delta",
+        "response_end",
+    ]
+    thinking = next(e for e in events if isinstance(e, ProviderThinkingDeltaEvent))
+    assert thinking.delta == "Considering"
+
+
+@pytest.mark.anyio
+async def test_responses_api_omits_reasoning_when_effort_is_none() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"type":"response.completed","response":{"status":"completed"}}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+                reasoning_effort="none",
+            ),
+            client=client,
+        )
+
+        await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="hi")],
+                tools=[_weather_tool()],
+            )
+        )
+
+    payload = loads(requests[0].content)
+    # gpt-5.5 rejects tools + reasoning on /chat/completions; with thinking off
+    # the reasoning field is dropped entirely so tools still work over /responses.
+    assert "reasoning" not in payload
+    assert "tools" in payload
+
+
+@pytest.mark.anyio
+async def test_responses_api_surfaces_stream_failure() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.failed","response":{"status":"failed",'
+                '"error":{"message":"model exploded"}}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="hi")],
+                tools=[],
+            )
+        )
+
+    error_events = [e for e in events if isinstance(e, ProviderErrorEvent)]
+    assert len(error_events) == 1
+    assert error_events[0].message == "model exploded"
+    # The raw event is preserved for debugging (code/param/type, etc.).
+    assert error_events[0].data is not None
+    assert error_events[0].data["event"]["type"] == "response.failed"
+
+
+@pytest.mark.anyio
+async def test_responses_api_orders_parallel_tool_calls_by_output_index() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.output_item.added","output_index":0,'
+                '"item":{"id":"fc_a","type":"function_call","call_id":"call_a",'
+                '"name":"get_weather","arguments":"{\\"city\\":\\"A\\"}"}}\n\n'
+                'data: {"type":"response.output_item.added","output_index":1,'
+                '"item":{"id":"fc_b","type":"function_call","call_id":"call_b",'
+                '"name":"get_weather","arguments":"{\\"city\\":\\"B\\"}"}}\n\n'
+                # Done events arrive out of order to prove sorting by output_index.
+                'data: {"type":"response.output_item.done","output_index":1,'
+                '"item":{"id":"fc_b","type":"function_call","call_id":"call_b",'
+                '"name":"get_weather","arguments":"{\\"city\\":\\"B\\"}"}}\n\n'
+                'data: {"type":"response.output_item.done","output_index":0,'
+                '"item":{"id":"fc_a","type":"function_call","call_id":"call_a",'
+                '"name":"get_weather","arguments":"{\\"city\\":\\"A\\"}"}}\n\n'
+                'data: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="weather?")],
+                tools=[_weather_tool()],
+            )
+        )
+
+    end = events[-1]
+    assert isinstance(end, ProviderResponseEndEvent)
+    assert [tc.id for tc in end.message.tool_calls] == ["call_a", "call_b"]
+    assert [tc.arguments["city"] for tc in end.message.tool_calls] == ["A", "B"]
+
+
+@pytest.mark.anyio
+async def test_responses_api_surfaces_top_level_error_event() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text='data: {"type":"error","message":"rate limited"}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="hi")],
+                tools=[],
+            )
+        )
+
+    error_events = [e for e in events if isinstance(e, ProviderErrorEvent)]
+    assert len(error_events) == 1
+    assert error_events[0].message == "rate limited"
+
+
+@pytest.mark.anyio
+async def test_responses_api_maps_incomplete_status_to_length() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.output_text.delta","delta":"partial"}\n\n'
+                'data: {"type":"response.incomplete","response":{"status":"incomplete"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="hi")],
+                tools=[],
+            )
+        )
+
+    end = events[-1]
+    assert isinstance(end, ProviderResponseEndEvent)
+    assert end.message.content == "partial"
+    assert end.finish_reason == "length"
