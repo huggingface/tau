@@ -87,18 +87,3 @@ line. Variables are filled from the arguments you pass when invoking it.
 Keep personal, cross-project helpers in `~/.agents/`. Keep project-specific ones
 in the repo's `.tau/` or `.agents/` so they're shared with collaborators.
 :::
-
-## Shared contributor prompts
-
-Repositories can include prompt templates for common contribution workflows. Tau
-itself includes project-level templates for drafting structured issues and pull
-requests:
-
-```text
-/issue describe the bug or feature request
-/pr add any reviewer context for the current branch
-```
-
-Good shared prompts should not assume every contributor has the same local setup.
-If `gh`, GitHub authentication, remotes, or dependencies are unavailable, the
-prompt should still produce copy/paste-ready Markdown and manual next steps.

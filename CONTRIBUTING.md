@@ -112,20 +112,6 @@ release trigger such as a published GitHub Release or manual workflow dispatch.
 See [dev-notes/release-process.md](dev-notes/release-process.md) for the full
 process.
 
-## Contributor prompts
-
-Tau includes shared prompt templates to help contributors draft complete issues
-and pull requests from inside the TUI:
-
-```text
-/issue describe the bug or feature request
-/pr add any reviewer context for the current branch
-```
-
-These prompts can use `gh` when it is installed and authenticated, but they also
-fall back to copy/paste-ready Markdown and manual GitHub instructions when a
-local environment is not fully configured.
-
 ## Pull request guidelines
 
 Good Tau pull requests are small, focused, and easy to review. Please include:
