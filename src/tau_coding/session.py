@@ -893,7 +893,13 @@ class CodingSession:
             return
         previous_settings = self._provider_settings
         previous_thinking_level = self._thinking_level
-        self._provider_settings = load_provider_settings(self._resource_paths.paths)
+        try:
+            self._provider_settings = load_provider_settings(
+                self._resource_paths.paths,
+                cwd=self.cwd,
+            )
+        except TypeError:
+            self._provider_settings = load_provider_settings(self._resource_paths.paths)
         try:
             self._sync_thinking_level_to_active_model()
             self._refresh_runtime_provider()

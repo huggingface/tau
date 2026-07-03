@@ -43,7 +43,10 @@ from tau_coding.prompt_templates import (
 from tau_coding.provider_catalog import (
     BUILTIN_PROVIDER_CATALOG,
     ProviderCatalogEntry,
+    ProviderCatalogError,
     builtin_provider_entry,
+    load_provider_catalog,
+    provider_catalog_entry,
 )
 from tau_coding.provider_config import (
     DEFAULT_MODEL,
@@ -177,6 +180,7 @@ __all__ = [
     "ProjectContextFile",
     "PromptTemplate",
     "ProviderCatalogEntry",
+    "ProviderCatalogError",
     "ProviderConfig",
     "ProviderConfigError",
     "ProviderSelection",
@@ -248,9 +252,11 @@ __all__ = [
     "load_shell_settings",
     "load_prompt_templates",
     "load_prompt_templates_with_diagnostics",
+    "load_provider_catalog",
     "load_skills",
     "load_skills_with_diagnostics",
     "openai_compatible_config_from_provider",
+    "provider_catalog_entry",
     "provider_config_from_catalog_entry",
     "provider_default_thinking_level",
     "provider_has_usable_credentials",

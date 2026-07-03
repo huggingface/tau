@@ -23,7 +23,12 @@ from tau_ai import (
 from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL
 from tau_coding.credentials import FileCredentialStore, credentials_path
 from tau_coding.paths import TauPaths
-from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG, ProviderKind
+from tau_coding.provider_catalog import (
+    BUILTIN_PROVIDER_CATALOG,
+    ProviderCatalogEntry,
+    ProviderKind,
+    provider_catalog_from_paths,
+)
 from tau_coding.thinking import (
     DEFAULT_THINKING_LEVEL,
     ThinkingLevel,
@@ -282,47 +287,30 @@ class ProviderSelection:
 
 
 def builtin_provider_configs() -> tuple[ProviderConfig, ...]:
-    """Return Tau's built-in provider configs."""
-    return tuple(
-        provider_config_from_catalog_entry(entry.name) for entry in BUILTIN_PROVIDER_CATALOG
-    )
+    """Return Tau's bundled provider configs."""
+    return provider_configs_from_catalog(BUILTIN_PROVIDER_CATALOG)
+
+
+def provider_configs_from_catalog(
+    catalog: tuple[ProviderCatalogEntry, ...],
+) -> tuple[ProviderConfig, ...]:
+    """Create durable provider configs from catalog entries."""
+    return tuple(_provider_config_from_catalog_entry(entry) for entry in catalog)
 
 
 def provider_config_from_catalog_entry(name: str) -> ProviderConfig:
-    """Create a durable provider config from a built-in catalog entry."""
+    """Create a durable provider config from a bundled catalog entry."""
     for entry in BUILTIN_PROVIDER_CATALOG:
-        if entry.name != name:
-            continue
-        context_windows = dict(entry.context_windows or {})
-        if entry.kind == "anthropic":
-            return AnthropicProviderConfig(
-                name=entry.name,
-                base_url=entry.base_url,
-                api_key_env=entry.api_key_env,
-                credential_name=entry.credential_name,
-                models=entry.models,
-                default_model=entry.default_model,
-                context_windows=context_windows,
-                thinking_levels=entry.thinking_levels,
-                thinking_models=entry.thinking_models,
-                thinking_default=entry.thinking_default,
-                thinking_parameter=entry.thinking_parameter,
-            )
-        if entry.kind == "openai-codex":
-            return OpenAICodexProviderConfig(
-                name=entry.name,
-                base_url=entry.base_url,
-                api_key_env=entry.api_key_env,
-                credential_name=entry.credential_name,
-                models=entry.models,
-                default_model=entry.default_model,
-                context_windows=context_windows,
-                thinking_levels=entry.thinking_levels,
-                thinking_models=entry.thinking_models,
-                thinking_default=entry.thinking_default,
-                thinking_parameter=entry.thinking_parameter,
-            )
-        return OpenAICompatibleProviderConfig(
+        if entry.name == name:
+            return _provider_config_from_catalog_entry(entry)
+    raise ProviderConfigError(f"Unknown built-in provider: {name}")
+
+
+def _provider_config_from_catalog_entry(entry: ProviderCatalogEntry) -> ProviderConfig:
+    """Create a durable provider config from one catalog entry."""
+    context_windows = dict(entry.context_windows or {})
+    if entry.kind == "anthropic":
+        return AnthropicProviderConfig(
             name=entry.name,
             base_url=entry.base_url,
             api_key_env=entry.api_key_env,
@@ -335,7 +323,33 @@ def provider_config_from_catalog_entry(name: str) -> ProviderConfig:
             thinking_default=entry.thinking_default,
             thinking_parameter=entry.thinking_parameter,
         )
-    raise ProviderConfigError(f"Unknown built-in provider: {name}")
+    if entry.kind == "openai-codex":
+        return OpenAICodexProviderConfig(
+            name=entry.name,
+            base_url=entry.base_url,
+            api_key_env=entry.api_key_env,
+            credential_name=entry.credential_name,
+            models=entry.models,
+            default_model=entry.default_model,
+            context_windows=context_windows,
+            thinking_levels=entry.thinking_levels,
+            thinking_models=entry.thinking_models,
+            thinking_default=entry.thinking_default,
+            thinking_parameter=entry.thinking_parameter,
+        )
+    return OpenAICompatibleProviderConfig(
+        name=entry.name,
+        base_url=entry.base_url,
+        api_key_env=entry.api_key_env,
+        credential_name=entry.credential_name,
+        models=entry.models,
+        default_model=entry.default_model,
+        context_windows=context_windows,
+        thinking_levels=entry.thinking_levels,
+        thinking_models=entry.thinking_models,
+        thinking_default=entry.thinking_default,
+        thinking_parameter=entry.thinking_parameter,
+    )
 
 
 def default_openai_provider_config() -> OpenAICompatibleProviderConfig:
@@ -351,15 +365,23 @@ def provider_settings_path(paths: TauPaths | None = None) -> Path:
     return (paths or TauPaths()).home / "providers.json"
 
 
-def load_provider_settings(paths: TauPaths | None = None) -> ProviderSettings:
-    """Load durable provider settings, falling back to env-compatible defaults."""
+def load_provider_settings(
+    paths: TauPaths | None = None,
+    *,
+    cwd: Path | None = None,
+) -> ProviderSettings:
+    """Load durable provider settings, falling back to config-driven defaults."""
+    paths = paths or TauPaths()
+    catalog = provider_catalog_from_paths(paths.home, cwd=cwd)
     path = provider_settings_path(paths)
     if not path.exists():
-        return ProviderSettings()
+        return ProviderSettings(providers=provider_configs_from_catalog(catalog))
     raw = loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ProviderConfigError("Provider settings must be a JSON object")
-    return _with_builtin_catalog_models(provider_settings_from_json(raw), paths=paths)
+    return _with_builtin_catalog_models(
+        provider_settings_from_json(raw), paths=paths, catalog=catalog
+    )
 
 
 def save_provider_settings(settings: ProviderSettings, paths: TauPaths | None = None) -> Path:
@@ -495,13 +517,11 @@ def _with_builtin_catalog_models(
     settings: ProviderSettings,
     *,
     paths: TauPaths | None = None,
+    catalog: tuple[ProviderCatalogEntry, ...] = BUILTIN_PROVIDER_CATALOG,
 ) -> ProviderSettings:
-    """Return settings with current built-in model catalogs merged in."""
+    """Return settings with current catalog models merged in."""
     builtin_configs = {
-        provider.name: provider
-        for provider in (
-            provider_config_from_catalog_entry(entry.name) for entry in BUILTIN_PROVIDER_CATALOG
-        )
+        provider.name: provider for provider in provider_configs_from_catalog(catalog)
     }
     providers = tuple(
         _merge_provider_config(provider, builtin_configs[provider.name])
@@ -509,7 +529,12 @@ def _with_builtin_catalog_models(
         else provider
         for provider in settings.providers
     )
-    providers = _append_credentialed_builtin_providers(providers, builtin_configs, paths=paths)
+    providers = _append_credentialed_builtin_providers(
+        providers,
+        builtin_configs,
+        paths=paths,
+        catalog=catalog,
+    )
     default_provider = settings.default_provider
     if default_provider not in {provider.name for provider in providers}:
         default_provider = providers[0].name if providers else DEFAULT_PROVIDER_NAME
@@ -525,12 +550,13 @@ def _append_credentialed_builtin_providers(
     builtin_configs: dict[str, ProviderConfig],
     *,
     paths: TauPaths | None,
+    catalog: tuple[ProviderCatalogEntry, ...],
 ) -> tuple[ProviderConfig, ...]:
-    """Append built-in providers that already have stored Tau credentials."""
+    """Append catalog providers that already have stored Tau credentials."""
     credential_store = FileCredentialStore(credentials_path(paths) if paths else None)
     provider_names = {provider.name for provider in providers}
     appended = list(providers)
-    for entry in BUILTIN_PROVIDER_CATALOG:
+    for entry in catalog:
         provider = builtin_configs[entry.name]
         if provider.name in provider_names:
             continue

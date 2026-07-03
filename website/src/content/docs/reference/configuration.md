@@ -11,8 +11,9 @@ those locations and file formats.
 
 ```text
 ~/.tau/
-├── providers.json      # configured providers
-├── credentials.json    # saved API keys / OAuth tokens (private permissions)
+├── providers.json          # provider/model preferences
+├── provider-catalog.json   # optional provider definitions / overrides
+├── credentials.json        # saved API keys / OAuth tokens (private permissions)
 ├── settings.json       # general settings (e.g. shell command prefix)
 ├── tui.json            # TUI theme + keybindings
 ├── sessions/           # saved sessions, per project
@@ -31,7 +32,43 @@ Startup update checks cache their latest PyPI result in
 
 ## Providers
 
-Provider metadata lives in `~/.tau/providers.json`:
+Tau loads provider definitions from a bundled catalog plus optional local catalog
+files:
+
+```text
+~/.tau/provider-catalog.json          # user-level provider definitions
+<project>/.tau/provider-catalog.json  # project-level overrides
+```
+
+Project catalog entries override user catalog entries with the same `name`; user
+entries override bundled provider definitions. This lets you add OpenAI-compatible
+providers or override model lists without changing Tau source.
+
+Example catalog entry:
+
+```json
+{
+  "providers": [
+    {
+      "name": "local-gateway",
+      "display_name": "Local Gateway",
+      "kind": "openai-compatible",
+      "base_url": "http://localhost:11434/v1",
+      "api_key_env": "LOCAL_GATEWAY_API_KEY",
+      "credential_name": "local-gateway",
+      "models": ["qwen-coder"],
+      "default_model": "qwen-coder",
+      "docs_url": "https://example.test/local-gateway",
+      "context_windows": { "qwen-coder": 64000 }
+    }
+  ]
+}
+```
+
+Catalog entries support `kind` values of `openai-compatible`, `anthropic`, and
+`openai-codex`. For most custom services, start with `openai-compatible`.
+
+Provider preferences and scoped models live in `~/.tau/providers.json`:
 
 ```json
 {
@@ -63,9 +100,13 @@ Provider metadata lives in `~/.tau/providers.json`:
   `~/.tau/credentials.json`. Resolution order: stored credential, then the env
   var named by `api_key_env`.
 - `scoped_models` are favorites for the **Ctrl+P** quick-cycle.
-- Custom models can declare thinking support with `thinking_levels`,
-  `thinking_default`, `thinking_models`, and `thinking_parameter`
-  (`"reasoning_effort"`, `"reasoning.effort"`, or `"anthropic.thinking"`).
+- Provider definitions can also be placed directly in `providers.json` for local
+  preferences. For reusable additions and overrides, prefer
+  `provider-catalog.json`.
+- Custom models can declare thinking support in either file with
+  `thinking_levels`, `thinking_default`, `thinking_models`, and
+  `thinking_parameter` (`"reasoning_effort"`, `"reasoning.effort"`, or
+  `"anthropic.thinking"`).
 
 Writes after `/login`, `/model`, or scoped-model changes reload the file first,
 apply only the requested change, write atomically, and keep a `.bak` backup.

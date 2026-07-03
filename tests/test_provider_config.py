@@ -5,6 +5,7 @@ import pytest
 
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.paths import TauPaths
+from tau_coding.provider_catalog import ProviderCatalogError, load_provider_catalog
 from tau_coding.provider_config import (
     DEFAULT_MODEL,
     AnthropicProviderConfig,
@@ -16,6 +17,7 @@ from tau_coding.provider_config import (
     anthropic_config_from_provider,
     load_provider_settings,
     openai_compatible_config_from_provider,
+    provider_configs_from_catalog,
     provider_default_thinking_level,
     provider_has_usable_credentials,
     provider_settings_from_json,
@@ -42,6 +44,151 @@ def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path)
     assert settings.get_provider("anthropic").api_key_env == "ANTHROPIC_API_KEY"
     assert settings.get_provider("openrouter").api_key_env == "OPENROUTER_API_KEY"
     assert settings.get_provider("huggingface").api_key_env == "HF_TOKEN"
+
+
+def test_provider_catalog_loads_user_defined_provider_without_code_changes(tmp_path: Path) -> None:
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    (tau_home / "provider-catalog.json").write_text(
+        json.dumps(
+            {
+                "providers": [
+                    {
+                        "name": "local-gateway",
+                        "display_name": "Local Gateway",
+                        "kind": "openai-compatible",
+                        "base_url": "http://localhost:11434/v1",
+                        "api_key_env": "LOCAL_GATEWAY_API_KEY",
+                        "credential_name": "local-gateway",
+                        "models": ["qwen-coder"],
+                        "default_model": "qwen-coder",
+                        "docs_url": "https://example.test/local-gateway",
+                        "context_windows": {"qwen-coder": 64000},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_provider_settings(TauPaths(home=tau_home))
+
+    provider = settings.get_provider("local-gateway")
+    assert isinstance(provider, OpenAICompatibleProviderConfig)
+    assert provider.base_url == "http://localhost:11434/v1"
+    assert provider.api_key_env == "LOCAL_GATEWAY_API_KEY"
+    assert provider.default_model == "qwen-coder"
+    assert provider.context_windows == {"qwen-coder": 64000}
+
+
+def test_project_provider_catalog_overrides_user_catalog(tmp_path: Path) -> None:
+    tau_home = tmp_path / ".tau"
+    project = tmp_path / "project"
+    tau_home.mkdir()
+    (project / ".tau").mkdir(parents=True)
+    (tau_home / "provider-catalog.json").write_text(
+        json.dumps(
+            {
+                "providers": [
+                    {
+                        "name": "gateway",
+                        "display_name": "Gateway",
+                        "kind": "openai-compatible",
+                        "base_url": "https://user.example/v1",
+                        "api_key_env": "GATEWAY_API_KEY",
+                        "credential_name": "gateway",
+                        "models": ["user-model"],
+                        "default_model": "user-model",
+                        "docs_url": "https://example.test/gateway",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (project / ".tau" / "provider-catalog.json").write_text(
+        json.dumps(
+            {
+                "providers": [
+                    {
+                        "name": "gateway",
+                        "base_url": "https://project.example/v1",
+                        "models": ["project-model"],
+                        "default_model": "project-model",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_provider_settings(TauPaths(home=tau_home), cwd=project)
+
+    provider = settings.get_provider("gateway")
+    assert provider.base_url == "https://project.example/v1"
+    assert provider.models == ("project-model",)
+    assert provider.default_model == "project-model"
+    assert provider.api_key_env == "GATEWAY_API_KEY"
+
+
+def test_provider_catalog_rejects_invalid_provider(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "provider-catalog.json"
+    catalog_path.write_text(
+        json.dumps(
+            {
+                "providers": [
+                    {
+                        "name": "broken",
+                        "display_name": "Broken",
+                        "kind": "openai-compatible",
+                        "base_url": "https://example.test/v1",
+                        "api_key_env": "BROKEN_API_KEY",
+                        "credential_name": "broken",
+                        "models": [],
+                        "default_model": "broken-model",
+                        "docs_url": "https://example.test/broken",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ProviderCatalogError, match="string list"):
+        load_provider_catalog(user_catalog_path=catalog_path)
+
+
+def test_provider_configs_from_catalog_converts_config_entries(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "provider-catalog.json"
+    catalog_path.write_text(
+        json.dumps(
+            {
+                "providers": [
+                    {
+                        "name": "anthropic-alt",
+                        "display_name": "Anthropic Alt",
+                        "kind": "anthropic",
+                        "base_url": "https://anthropic.example/v1",
+                        "api_key_env": "ANTHROPIC_ALT_API_KEY",
+                        "credential_name": "anthropic-alt",
+                        "models": ["claude-alt"],
+                        "default_model": "claude-alt",
+                        "docs_url": "https://example.test/anthropic-alt",
+                        "thinking_levels": ["off", "low"],
+                        "thinking_parameter": "anthropic.thinking",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    providers = provider_configs_from_catalog(load_provider_catalog(user_catalog_path=catalog_path))
+    provider = next(item for item in providers if item.name == "anthropic-alt")
+
+    assert isinstance(provider, AnthropicProviderConfig)
+    assert provider.name == "anthropic-alt"
+    assert provider.thinking_levels == ("off", "low")
 
 
 def test_builtin_openai_declares_model_scoped_thinking_capabilities() -> None:

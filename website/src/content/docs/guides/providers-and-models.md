@@ -62,7 +62,7 @@ access tokens automatically. It's separate from the API-key `openai` provider.
 ## Adding a custom / local provider
 
 Any OpenAI-compatible endpoint works — including local servers like Ollama or
-llama.cpp. Register one with `tau setup`:
+llama.cpp. For one-off local setup, register one with `tau setup`:
 
 ```bash
 tau --provider local \
@@ -73,7 +73,34 @@ tau --provider local \
 ```
 
 This writes an entry to `~/.tau/providers.json` and (by default) makes it the
-default provider. Run it with:
+default provider.
+
+For reusable provider definitions, add `~/.tau/provider-catalog.json` or a
+project-local `.tau/provider-catalog.json` instead:
+
+```json
+{
+  "providers": [
+    {
+      "name": "local-gateway",
+      "display_name": "Local Gateway",
+      "kind": "openai-compatible",
+      "base_url": "http://localhost:11434/v1",
+      "api_key_env": "LOCAL_GATEWAY_API_KEY",
+      "credential_name": "local-gateway",
+      "models": ["qwen-coder"],
+      "default_model": "qwen-coder",
+      "docs_url": "https://example.test/local-gateway"
+    }
+  ]
+}
+```
+
+Tau loads bundled providers first, then user catalog entries, then project
+catalog entries. A later entry with the same `name` overrides the earlier one,
+so projects can pin endpoints or model lists without a PR.
+
+Run it with:
 
 ```bash
 tau --provider local

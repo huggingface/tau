@@ -3791,7 +3791,10 @@ async def run_tui_app(
     if new_session and session_id is not None:
         raise RuntimeError("--resume and --new-session cannot be used together")
 
-    provider_settings = load_provider_settings()
+    try:
+        provider_settings = load_provider_settings(cwd=cwd)
+    except TypeError:
+        provider_settings = load_provider_settings()
     shell_settings = load_shell_settings()
     manager = session_manager or SessionManager()
     record = _explicit_resume_record(

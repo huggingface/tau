@@ -63,7 +63,10 @@ app = typer.Typer(
 
 def providers_command() -> None:
     """List configured model providers."""
-    render_provider_settings(load_provider_settings(), credential_reader=FileCredentialStore())
+    render_provider_settings(
+        load_provider_settings(cwd=Path.cwd()),
+        credential_reader=FileCredentialStore(),
+    )
 
 
 def setup_command(
@@ -78,7 +81,7 @@ def setup_command(
     set_default: bool = True,
 ) -> None:
     """Create or update an OpenAI-compatible provider entry."""
-    settings = load_provider_settings()
+    settings = load_provider_settings(cwd=Path.cwd())
     provider = OpenAICompatibleProviderConfig(
         name=provider_name,
         base_url=base_url.rstrip("/"),
@@ -439,7 +442,7 @@ async def run_openai_print_mode(
     session_manager: SessionManager | None = None,
 ) -> bool:
     """Run print mode with the OpenAI-compatible provider configured from the environment."""
-    settings = load_provider_settings()
+    settings = load_provider_settings(cwd=cwd)
     shell_settings = load_shell_settings()
     selection = resolve_provider_selection(settings, provider_name=provider_name, model=model)
     provider = create_model_provider(
