@@ -2569,6 +2569,66 @@ async def test_session_new_session_is_indexed_after_first_message(
 
 
 @pytest.mark.anyio
+async def test_session_name_indexes_pending_session_without_prompt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    current_record = manager.create_session(cwd=tmp_path, model="fake", provider_name="fake")
+    settings = ProviderSettings(
+        default_provider="openai",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="openai",
+                models=("gpt-5",),
+                default_model="gpt-5",
+            ),
+        ),
+    )
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+    ) -> FakeProvider:
+        del provider_config, credential_store, model, thinking_level
+        return FakeProvider([])
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(current_record.path),
+            cwd=current_record.cwd,
+            session_id=current_record.id,
+            session_manager=manager,
+            provider_name="fake",
+            provider_settings=settings,
+        )
+    )
+
+    _message = await session.new_session()
+    pending_id = session.session_id
+
+    assert pending_id is not None
+    assert manager.get_session(pending_id) is None
+
+    result = session.handle_command("/name Customer bugfix")
+
+    indexed = manager.get_session(pending_id)
+    assert result.message == "Session renamed: Customer bugfix"
+    assert indexed is not None
+    assert indexed.title == "Customer bugfix"
+    assert indexed.provider_name == "openai"
+    assert indexed.model == "gpt-5"
+    assert indexed.path.exists()
+    assert await JsonlSessionStorage(indexed.path).read_all()
+
+
+@pytest.mark.anyio
 async def test_session_resume_uses_target_session_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

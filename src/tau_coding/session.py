@@ -30,6 +30,7 @@ from tau_agent.session import (
     ThinkingLevelChangeEntry,
 )
 from tau_agent.session.entries import SessionEntry
+from tau_agent.session.jsonl import entry_to_json_line
 from tau_agent.session.tree import SessionTreeError, path_to_entry
 from tau_agent.tools import AgentTool
 from tau_ai import ModelProvider
@@ -1055,6 +1056,20 @@ class CodingSession:
             return CommandResult(handled=False)
         return self._command_registry.execute(self, text)
 
+    def ensure_session_indexed(self) -> None:
+        """Persist pending session metadata and add this session to the resume index."""
+        if self._config.session_id is None or self._config.session_manager is None:
+            return
+        if self._config.session_manager.get_session(self._config.session_id) is None:
+            self._config.session_manager.create_session(
+                cwd=self.cwd,
+                model=self.model,
+                provider_name=self.provider_name,
+                session_id=self._config.session_id,
+            )
+        self._config = replace(self._config, index_on_first_persist=False)
+        self._ensure_session_file_initialized()
+
     def expand_prompt_text(self, text: str) -> str:
         """Expand prompt text using loaded markdown resources."""
         expanded_prompt = expand_prompt_template_command(text, self._prompt_templates)
@@ -1258,11 +1273,21 @@ class CodingSession:
     async def _ensure_session_initialized(self) -> None:
         if not self._pending_initial_entries:
             return
+        await self._write_pending_initial_entries()
+        if self._config.index_on_first_persist:
+            self._index_current_session()
+
+    async def _write_pending_initial_entries(self) -> None:
         for entry in self._pending_initial_entries:
             await self._config.storage.append(entry)
         self._pending_initial_entries = ()
-        if self._config.index_on_first_persist:
-            self._index_current_session()
+
+    def _ensure_session_file_initialized(self) -> None:
+        if not self._pending_initial_entries:
+            return
+        for entry in self._pending_initial_entries:
+            _append_session_entry_sync(self._config.storage, entry)
+        self._pending_initial_entries = ()
 
     def _index_current_session(self) -> None:
         if self._config.session_id is None or self._config.session_manager is None:
@@ -1864,3 +1889,13 @@ def default_session_path(cwd: Path) -> Path:
 def jsonl_session_storage(path: str | Path) -> JsonlSessionStorage:
     """Convenience factory for local JSONL coding-session storage."""
     return JsonlSessionStorage(path)
+
+
+def _append_session_entry_sync(storage: SessionStorage, entry: SessionEntry) -> None:
+    """Append an entry synchronously for slash commands that cannot await storage."""
+    if isinstance(storage, JsonlSessionStorage):
+        storage.path.parent.mkdir(parents=True, exist_ok=True)
+        with storage.path.open("a", encoding="utf-8") as file:
+            file.write(entry_to_json_line(entry))
+        return
+    raise RuntimeError("Session storage does not support synchronous initialization")
