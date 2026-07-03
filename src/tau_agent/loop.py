@@ -1,5 +1,7 @@
 """Pure provider/tool agent loop."""
 
+from __future__ import annotations
+
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 
 from tau_agent.events import (

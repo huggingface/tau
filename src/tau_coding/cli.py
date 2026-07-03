@@ -1,5 +1,7 @@
 """Command-line entry point for Tau."""
 
+from __future__ import annotations
+
 from os import environ
 from pathlib import Path
 from typing import Annotated
@@ -178,6 +180,9 @@ def main(
 
     if ctx.invoked_subcommand is not None:
         return
+
+    if resume is not None and new_session:
+        raise typer.BadParameter("--resume and --new-session cannot be used together")
 
     positional_args = prompt_args or []
     command = positional_args[0] if positional_args else None

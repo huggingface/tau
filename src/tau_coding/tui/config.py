@@ -1,5 +1,7 @@
 """Durable Textual TUI configuration for Tau."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from json import dumps, loads
 from pathlib import Path

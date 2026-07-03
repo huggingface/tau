@@ -1,5 +1,7 @@
 """Reload summary types for Tau coding-session resources."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 

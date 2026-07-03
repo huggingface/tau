@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,12 @@ from tau_coding.resources import TauResourcePaths
 from tau_coding.system_prompt import BuildSystemPromptOptions, build_system_prompt
 from tau_coding.tools import create_coding_tools
 from tau_coding.update_check import UpdateNotice
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _strip_ansi(value: str) -> str:
+    return _ANSI_ESCAPE_RE.sub("", value)
 
 
 def test_version_command() -> None:
@@ -542,26 +549,7 @@ def test_default_tui_invokes_tui_runner_with_flags(
     assert calls == [("fake", tmp_path, "session-1", False, "local", 1000, None)]
 
 
-def test_default_tui_rejects_resume_with_new_session(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    async def fake_run_openai_tui(
-        model: str | None,
-        cwd: Path,
-        session_id: str | None,
-        new_session: bool,
-        provider_name: str | None,
-        auto_compact_token_threshold: int | None,
-        initial_prompt: str | None,
-        update_notice: object | None = None,
-    ) -> None:
-        del model, cwd, session_id, new_session, provider_name, auto_compact_token_threshold
-        del initial_prompt, update_notice
-        raise RuntimeError("--resume and --new-session cannot be used together")
-
-    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
-    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
-
+def test_default_tui_rejects_resume_with_new_session(tmp_path: Path) -> None:
     result = CliRunner().invoke(
         app,
         [
@@ -574,7 +562,7 @@ def test_default_tui_rejects_resume_with_new_session(
     )
 
     assert result.exit_code != 0
-    assert "--resume and --new-session cannot be used together" in result.output
+    assert "--resume and --new-session cannot be used together" in _strip_ansi(result.output)
 
 
 def test_sessions_command_lists_indexed_sessions(

@@ -55,13 +55,22 @@ or rendering. Frontends consume events.
 ## Install
 
 Tau is published on PyPI as `tau-ai` and installs a `tau` command.
+It requires Python 3.12 or newer.
 
 ```bash
 uv tool install tau-ai
 tau --version
 ```
 
-Don't have `uv`?
+Don't have `uv`? Install with `pipx` or `pip` instead:
+
+```bash
+pipx install tau-ai
+# or
+python -m pip install tau-ai
+```
+
+If you prefer `uv`, install it with:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh

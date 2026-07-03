@@ -1,5 +1,7 @@
 """Session storage protocols and JSONL implementation."""
 
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Protocol
 

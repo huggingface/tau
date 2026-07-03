@@ -1,5 +1,7 @@
 """Local credential storage for Tau provider credentials."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from json import dumps, loads
 from pathlib import Path

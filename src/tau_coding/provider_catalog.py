@@ -1,5 +1,7 @@
 """Built-in provider catalog for Tau login/setup flows."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Literal
 
