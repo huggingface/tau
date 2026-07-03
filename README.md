@@ -167,6 +167,8 @@ can drive the built-in TUI, print mode, or a frontend you build yourself.
 
 ## Development
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for project philosophy, layer boundaries, testing expectations, and pull request guidelines.
+
 ```bash
 uv sync --dev
 uv run pytest
@@ -208,3 +210,7 @@ Useful entry points:
 
 Tau is under active development. The implementation roadmap is tracked in
 [GitHub issue #1](https://github.com/alejandro-ao/tau/issues/1).
+
+## License
+
+Tau is released under the [MIT License](LICENSE).

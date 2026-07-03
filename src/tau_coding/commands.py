@@ -67,6 +67,9 @@ class CommandSession(Protocol):
     def resource_diagnostics(self) -> Sequence[ResourceDiagnostic]: ...
 
     @property
+    def system_prompt(self) -> str: ...
+
+    @property
     def session_id(self) -> str | None: ...
 
     @property
@@ -199,6 +202,7 @@ def create_default_command_registry() -> CommandRegistry:
             usage="/quit",
             description="Exit the current session.",
             handler=_exit_command,
+            aliases=("exit",),
         )
     )
     registry.register(
@@ -233,6 +237,15 @@ def create_default_command_registry() -> CommandRegistry:
             description="Show session info and stats.",
             handler=_status_command,
             search_terms=("info",),
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="system",
+            usage="/system",
+            description="Show the active system prompt without saving it.",
+            handler=_system_command,
+            search_terms=("prompt", "instructions"),
         )
     )
     registry.register(
@@ -397,6 +410,12 @@ def _status_command(context: CommandContext) -> CommandResult:
     if session.session_title:
         lines.append(f"Session name: {session.session_title}")
     return CommandResult(handled=True, message="\n".join(lines))
+
+
+def _system_command(context: CommandContext) -> CommandResult:
+    if context.args:
+        return CommandResult(handled=True, message="Usage: /system")
+    return CommandResult(handled=True, message=context.session.system_prompt)
 
 
 def _hotkeys_command(context: CommandContext) -> CommandResult:

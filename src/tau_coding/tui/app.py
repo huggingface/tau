@@ -48,7 +48,7 @@ from tau_agent import (
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
 )
-from tau_agent.messages import AgentMessage
+from tau_agent.messages import AgentMessage, UserMessage
 from tau_agent.tools import AgentTool
 from tau_ai import ProviderErrorEvent, ProviderEvent
 from tau_ai.provider import CancellationToken
@@ -199,6 +199,7 @@ class PromptInput(TextArea):
         tui_keybindings: TuiKeybindings | None = None,
         **kwargs: Any,
     ) -> None:
+        kwargs.setdefault("highlight_cursor_line", False)
         super().__init__(**kwargs)
         self.tui_keybindings = tui_keybindings or TuiKeybindings()
         self._base_bindings = self._bindings.copy()
@@ -1477,8 +1478,9 @@ class TauTuiApp(App[None]):
         border: none;
         background: $tau-transcript-background;
         padding: 0 0 0 2;
+        overflow-x: auto;
         scrollbar-size-vertical: 0;
-        scrollbar-size-horizontal: 0;
+        scrollbar-size-horizontal: 1;
     }
 
     #queued-messages {
@@ -1766,16 +1768,21 @@ class TauTuiApp(App[None]):
         *,
         tui_settings: TuiSettings | None = None,
         startup_message: str | None = None,
+        startup_notice: str | None = None,
         initial_prompt: str | None = None,
     ) -> None:
         self.tui_settings = tui_settings or TuiSettings()
         self.startup_message = startup_message
+        self.startup_notice = startup_notice
         self.initial_prompt = initial_prompt
         super().__init__()
         self._bindings = BindingsMap(_app_bindings(self.tui_settings.keybindings))
         self.session = session
         self.state = TuiState(skills=session.skills)
-        self.state.load_messages(session.messages)
+        if startup_notice:
+            self.state.add_item("status", startup_notice)
+        self._prompt_history: tuple[str, ...] = ()
+        self._load_session_messages_from_session()
         self.adapter = TuiEventAdapter(self.state)
         self._prompt_worker: Worker[None] | None = None
         self._compaction_worker: Worker[None] | None = None
@@ -1785,6 +1792,13 @@ class TauTuiApp(App[None]):
         self._activity_timer: Timer | None = None
         self._active_notification_keys: set[tuple[str, str]] = set()
         self._supports_pyperclip: bool | None = None
+
+    def _sync_text_selection_state(self) -> None:
+        """Disable native text selection while the transcript is mutating."""
+        self.ALLOW_SELECT = not self.state.running
+        if self.state.running and self.screen_stack:
+            with suppress(Exception):
+                self.screen.clear_selection()
 
     def copy_to_clipboard(self, text: str) -> None:
         """Copy text using pyperclip when available, then Textual's fallback."""
@@ -1840,6 +1854,7 @@ class TauTuiApp(App[None]):
         prompt.focus()
         self._update_responsive_layout(self.size.width, self.size.height)
         self._refresh()
+        self._sync_text_selection_state()
         self._refresh_completions()
         if self.startup_message:
             self._notify(self.startup_message, severity="warning")
@@ -1951,7 +1966,8 @@ class TauTuiApp(App[None]):
                     prompt.text = raw_text
                     prompt.move_cursor(_text_end_location(raw_text))
                     self._notify(
-                        "Wait for the current agent turn and queued messages to finish before compacting.",
+                        "Wait for the current agent turn and queued messages to finish "
+                        "before compacting.",
                         severity="warning",
                     )
                     return
@@ -2007,10 +2023,27 @@ class TauTuiApp(App[None]):
             return
 
         if self.state.running:
+            self._remember_prompt(text)
             await self._queue_prompt(text, streaming_behavior=streaming_behavior)
             return
 
+        self._remember_prompt(text)
         self._submit_prompt(text)
+
+    def _remember_prompt(self, text: str) -> None:
+        """Remember a submitted user prompt for lightweight input recall."""
+        if not text.strip():
+            return
+        self._prompt_history = (*self._prompt_history, text)
+
+    def _load_session_messages_from_session(self) -> None:
+        """Load visible session messages and reseed prompt history from them."""
+        self.state.load_messages(self.session.messages)
+        self._prompt_history = tuple(
+            message.content
+            for message in self.session.messages
+            if isinstance(message, UserMessage) and message.content.strip()
+        )
 
     def _is_compaction_active(self) -> bool:
         """Return whether a manual compaction worker is still running."""
@@ -2023,7 +2056,12 @@ class TauTuiApp(App[None]):
         worker = self._prompt_worker
         is_worker_active = worker is not None and not worker.is_finished and not worker.is_cancelled
         is_session_running = bool(getattr(self.session, "is_running", False))
-        return self.state.running or is_session_running or is_worker_active or self.state.queued_message_count > 0
+        return (
+            self.state.running
+            or is_session_running
+            or is_worker_active
+            or self.state.queued_message_count > 0
+        )
 
     async def _run_compaction(self, summary: str) -> None:
         """Run manual compaction without disabling prompt editing."""
@@ -2041,7 +2079,7 @@ class TauTuiApp(App[None]):
             self._compaction_worker = None
         self.state.clear()
         self.state.set_skills(self.session.skills)
-        self.state.load_messages(self.session.messages)
+        self._load_session_messages_from_session()
         self._notify(compact_message)
         self._refresh()
 
@@ -2134,6 +2172,7 @@ class TauTuiApp(App[None]):
                 if active_run_id != self._prompt_run_id:
                     return
                 self.adapter.apply(event)
+                self._sync_text_selection_state()
                 if isinstance(event, ErrorEvent) and not event.recoverable:
                     _attach_diagnostic_log_path_to_error(self.state, self.session)
                 await self._apply_streaming_transcript_event(event)
@@ -2144,6 +2183,7 @@ class TauTuiApp(App[None]):
             self.state.error = message
             self.state.add_item("error", message)
             self.state.running = False
+            self._sync_text_selection_state()
             self._refresh()
         finally:
             if active_run_id == self._prompt_run_id:
@@ -2233,7 +2273,7 @@ class TauTuiApp(App[None]):
         self._compaction_worker = None
         self.state.clear()
         self.state.set_skills(self.session.skills)
-        self.state.load_messages(self.session.messages)
+        self._load_session_messages_from_session()
         self._refresh()
         if notify:
             self._notify("Cancelled compaction.")
@@ -2257,6 +2297,7 @@ class TauTuiApp(App[None]):
         self._prompt_worker = None
         self.state.running = False
         self.state.assistant_buffer = ""
+        self._sync_text_selection_state()
         self._refresh()
         if notify:
             self._notify("Interrupted current operation.")
@@ -2326,10 +2367,26 @@ class TauTuiApp(App[None]):
         if not self._completion_state.items:
             if self.action_edit_queued_follow_up():
                 return
+            if self.action_recall_previous_prompt():
+                return
             self.query_one("#prompt", PromptInput).action_cursor_up()
             return
         self._completion_state = self._completion_state.select_previous()
         self._refresh_completions()
+
+    def action_recall_previous_prompt(self) -> bool:
+        """Recall the most recent submitted prompt into an empty prompt input."""
+        prompt = self.query_one("#prompt", PromptInput)
+        # Only recall into an empty input so an accidental Up press does not
+        # erase a prompt the user is still writing.
+        if prompt.text.strip() or not self._prompt_history:
+            return False
+        previous_prompt = self._prompt_history[-1]
+        prompt.text = previous_prompt
+        prompt.move_cursor(_text_end_location(previous_prompt))
+        self._completion_state = self._build_completion_state(prompt.text)
+        self._refresh_completions()
+        return True
 
     def action_edit_queued_follow_up(self) -> bool:
         """Move the latest queued follow-up back into the prompt for editing."""
@@ -2406,7 +2463,7 @@ class TauTuiApp(App[None]):
             resume_message = await self.session.resume(session_id)
             self.state.clear()
             self.state.set_skills(self.session.skills)
-            self.state.load_messages(self.session.messages)
+            self._load_session_messages_from_session()
             self._notify(resume_message)
         except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
             self._notify(f"Error: {exc}", severity="error")
@@ -2468,7 +2525,7 @@ class TauTuiApp(App[None]):
                 result = await result
             self.state.clear()
             self.state.set_skills(self.session.skills)
-            self.state.load_messages(self.session.messages)
+            self._load_session_messages_from_session()
             if isinstance(result, SessionTreeBranchResult):
                 if result.input_prefill is not None:
                     prompt = self.query_one("#prompt", PromptInput)
@@ -2492,7 +2549,7 @@ class TauTuiApp(App[None]):
             await new_session()
             self.state.clear()
             self.state.set_skills(self.session.skills)
-            self.state.load_messages(self.session.messages)
+            self._load_session_messages_from_session()
         except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
             self._notify(f"Error: {exc}", severity="error")
         self._refresh()
@@ -2818,6 +2875,7 @@ class TauTuiApp(App[None]):
     def _refresh_chrome(self, *, theme: TuiTheme | None = None) -> None:
         """Refresh non-transcript chrome without remounting transcript blocks."""
         theme = theme or self.tui_settings.resolved_theme
+        self._sync_text_selection_state()
         self._sync_queue_state()
         sidebar = self.query_one("#sidebar", SessionSidebar)
         sidebar.update_from_session(self.session, theme=theme)
@@ -2889,7 +2947,7 @@ class TauTuiApp(App[None]):
             render_completion_suggestions(
                 _visible_completion_state(
                     self._completion_state,
-                    max_lines=COMPLETION_MAX_VISIBLE_LINES,
+                    max_lines=_completion_visible_line_limit(suggestions),
                     width=max(suggestions.content_size.width or suggestions.size.width, 1),
                 ),
                 theme=self.tui_settings.resolved_theme,
@@ -3013,6 +3071,13 @@ def _hex_to_rgb(color: str) -> tuple[int, int, int]:
     if len(value) != 6:
         raise ValueError(f"Expected #rrggbb color, got {color!r}")
     return (int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16))
+
+
+def _completion_visible_line_limit(suggestions: Static) -> int:
+    """Return the number of completion render lines that fit in the widget body."""
+    if suggestions.size.height > 0:
+        return max(min(COMPLETION_MAX_VISIBLE_LINES, suggestions.size.height), 1)
+    return COMPLETION_MAX_VISIBLE_LINES
 
 
 def _visible_completion_state(
@@ -3291,7 +3356,7 @@ def _filter_model_choices(choices: Sequence[ModelChoice], query: str) -> tuple[M
 def _command_message_uses_transcript(command_text: str) -> bool:
     """Return whether slash-command output should appear inline in the transcript."""
     command_name = command_text.split(maxsplit=1)[0].casefold()
-    return command_name == "/reload"
+    return command_name in {"/reload", "/system"}
 
 
 def _command_message_uses_notification(command_text: str, message: str) -> bool:
@@ -3659,6 +3724,7 @@ async def run_tui_app(
     auto_compact_token_threshold: int | None = None,
     initial_prompt: str | None = None,
     session_manager: SessionManager | None = None,
+    startup_notice: str | None = None,
 ) -> None:
     """Create the default provider/session and run the Textual app."""
     if new_session and session_id is not None:
@@ -3687,10 +3753,11 @@ async def run_tui_app(
             thinking_level=DEFAULT_THINKING_LEVEL,
         )
     except RuntimeError:
-        startup_message = (
+        login_required_message = (
             "Login required. Run /login to choose a provider, "
             f"or /login {selection.provider.name} to continue with the current provider."
         )
+        startup_message = login_required_message
         provider = LoginRequiredProvider(startup_message)
         runtime_provider_config = None
     session: CodingSession | None = None
@@ -3724,6 +3791,7 @@ async def run_tui_app(
             session,
             tui_settings=load_tui_settings(),
             startup_message=startup_message,
+            startup_notice=startup_notice,
             initial_prompt=initial_prompt,
         )
         await app.run_async()

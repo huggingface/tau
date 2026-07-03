@@ -271,7 +271,7 @@
     ctx.fillStyle = BLUE;
     ctx.font = "13px 'JetBrains Mono', monospace";
     ctx.textAlign = "left"; ctx.textBaseline = "top";
-    ctx.fillText("turns: " + (theta/TAU).toFixed(2) + "  ·  edge ≈ " + (theta).toFixed(2) + " r", startX, 8);
+    ctx.fillText("turns: " + (theta/TAU).toFixed(2) + "  ·  edge ≈ " + (theta).toFixed(2) + " r", startX, 38);
   }, 360);
 
   // ---- 2. One full turn = tau. Fractions of a turn read straight off ----

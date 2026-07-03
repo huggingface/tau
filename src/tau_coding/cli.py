@@ -49,6 +49,7 @@ from tau_coding.session_manager import CodingSessionRecord, SessionManager
 from tau_coding.shell_config import load_shell_settings
 from tau_coding.thinking import DEFAULT_THINKING_LEVEL
 from tau_coding.tui import run_tui_app
+from tau_coding.update_check import UpdateNotice, startup_update_notice
 
 app = typer.Typer(
     name="tau",
@@ -221,6 +222,7 @@ def main(
         raise typer.Exit()
 
     if prompt_option is None:
+        notice = _startup_update_notice()
         try:
             anyio.run(
                 run_openai_tui,
@@ -231,6 +233,7 @@ def main(
                 provider,
                 auto_compact_threshold,
                 initial_prompt,
+                notice,
             )
         except RuntimeError as exc:
             raise typer.BadParameter(str(exc)) from exc
@@ -239,6 +242,10 @@ def main(
     prompt = prompt_option
     if prompt is None:
         raise AssertionError("prompt option should be set outside TUI mode")
+
+    notice = _startup_update_notice()
+    if notice is not None and output is PrintOutputMode.text:
+        typer.echo(notice.message, err=True)
 
     try:
         ok = anyio.run(run_openai_print_mode, prompt, model, cwd or Path.cwd(), output, provider)
@@ -256,6 +263,7 @@ async def run_openai_tui(
     provider_name: str | None = None,
     auto_compact_token_threshold: int | None = None,
     initial_prompt: str | None = None,
+    update_notice: UpdateNotice | None = None,
 ) -> None:
     """Run the Textual TUI with the default OpenAI-compatible provider."""
     await run_tui_app(
@@ -266,7 +274,12 @@ async def run_openai_tui(
         provider_name=provider_name,
         auto_compact_token_threshold=auto_compact_token_threshold,
         initial_prompt=initial_prompt,
+        startup_notice=update_notice.message if update_notice is not None else None,
     )
+
+
+def _startup_update_notice() -> UpdateNotice | None:
+    return startup_update_notice(__version__)
 
 
 def render_session_list(records: list[CodingSessionRecord]) -> None:
@@ -496,6 +509,11 @@ async def run_print_mode(
             )
             typer.echo(_format_terminal_command_result(result))
             return result.ok
+        command = session.handle_command(prompt)
+        if command.handled:
+            if command.message:
+                typer.echo(command.message)
+            return True
         async for event in session.prompt(prompt):
             renderer.render(event)
         return renderer.finish()

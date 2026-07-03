@@ -117,6 +117,17 @@ class NonSelectableStatic(Static):
 class TauMarkdownBlock(MarkdownBlock):
     """Markdown block that applies Tau's themed inline link color."""
 
+    @property
+    def allow_select(self) -> bool:
+        """Only allow native selection once Textual has mounted the block.
+
+        Textual may hit freshly-created Markdown blocks during a mouse-down before
+        they have a parent. Its selection startup path assumes selected content
+        widgets have a parent container, so an unmounted selectable Markdown block
+        can crash with ``container is None``.
+        """
+        return self.parent is not None and super().allow_select
+
     def _token_to_content(self, token: Any) -> Any:
         content = super()._token_to_content(token)
         markdown = self._markdown
@@ -160,6 +171,8 @@ class ThemedMarkdownWidget(TextualMarkdown):
 
     ThemedMarkdownWidget MarkdownFence {
         background: $tau-markdown-code-block-background;
+        overflow-x: auto;
+        scrollbar-size-horizontal: 1;
     }
 
     ThemedMarkdownWidget MarkdownTableContent {
@@ -286,6 +299,10 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
     StreamingTranscriptMessageWidget > MarkdownParagraph {
         margin: 0 0 1 0;
     }
+
+    StreamingTranscriptMessageWidget MarkdownFence {
+        scrollbar-size-horizontal: 1;
+    }
     """
 
     def __init__(self, item: ChatItem, *, theme: TuiTheme) -> None:
@@ -344,19 +361,39 @@ class TranscriptView(VerticalScroll):
         self._active_assistant_widget: StreamingTranscriptMessageWidget | None = None
         self._active_thinking_widget: StreamingTranscriptMessageWidget | None = None
         self._hidden_thinking_placeholder_visible = False
+        self._follow_output = True
 
     def on_mount(self) -> None:
         """Follow new transcript content until the user scrolls away."""
-        self.anchor()
+        self.follow_output()
 
     def follow_output(self) -> None:
         """Return to follow mode for a user-driven turn or explicit jump to bottom."""
-        self.anchor()
+        self._follow_output = True
+        self.anchor(False)
+        self._request_follow_scroll(force=True)
+
+    def _request_follow_scroll(self, *, force: bool = False) -> None:
+        """Scroll to the bottom after layout if follow mode is still active."""
+
+        def scroll_if_still_following() -> None:
+            if force or self._follow_output or self.is_vertical_scroll_end:
+                self.scroll_end(animate=False, immediate=True)
+
+        self.call_after_refresh(scroll_if_still_following)
 
     @property
     def _should_follow_output(self) -> bool:
         """Return whether new content should keep the viewport pinned to the bottom."""
-        return self.is_vertical_scroll_end or (self.is_anchored and not self._anchor_released)
+        return self._follow_output or self.is_vertical_scroll_end
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Track whether user scrollback has opted out of transcript following."""
+        super().watch_scroll_y(old_value, new_value)
+        if new_value < old_value:
+            self._follow_output = False
+        elif new_value >= self.max_scroll_y:
+            self._follow_output = True
 
     def update_from_state(
         self,
@@ -431,7 +468,7 @@ class TranscriptView(VerticalScroll):
             )
         self.refresh(layout=True)
         if scroll_end:
-            self.scroll_end(animate=False)
+            self._request_follow_scroll()
 
     async def append_item(
         self,
@@ -442,6 +479,7 @@ class TranscriptView(VerticalScroll):
         scroll_end: bool = False,
     ) -> TranscriptMessageWidget | StreamingTranscriptMessageWidget:
         """Append one transcript item without rebuilding previous blocks."""
+        should_follow = self._should_follow_output if not scroll_end else True
         self._render_theme = theme
         widget = _transcript_widget(
             item,
@@ -454,8 +492,8 @@ class TranscriptView(VerticalScroll):
         self._hidden_thinking_placeholder_visible = False
         self._last_render_width = self.scrollable_content_region.width
         self.refresh(layout=True)
-        if scroll_end:
-            self.scroll_end(animate=False)
+        if should_follow:
+            self._request_follow_scroll(force=scroll_end)
         return widget
 
     async def start_assistant_message(
@@ -467,6 +505,7 @@ class TranscriptView(VerticalScroll):
         """Create the active assistant message widget if needed."""
         if self._active_assistant_widget is not None:
             return self._active_assistant_widget
+        should_follow = self._should_follow_output if not scroll_end else True
         widget = StreamingTranscriptMessageWidget(
             ChatItem(role="assistant", text=""),
             theme=theme,
@@ -475,8 +514,8 @@ class TranscriptView(VerticalScroll):
         await self.mount(widget)
         self._active_assistant_widget = widget
         self._last_render_width = self.scrollable_content_region.width
-        if scroll_end:
-            self.scroll_end(animate=False)
+        if should_follow:
+            self._request_follow_scroll(force=scroll_end)
         return widget
 
     async def append_assistant_delta(
@@ -489,10 +528,11 @@ class TranscriptView(VerticalScroll):
         """Append streamed assistant text to the active message widget."""
         self._active_thinking_widget = None
         self._hidden_thinking_placeholder_visible = False
+        should_follow = self._should_follow_output if not scroll_end else True
         widget = await self.start_assistant_message(theme=theme, scroll_end=scroll_end)
         await widget.append_fragment(delta)
-        if scroll_end:
-            self.scroll_end(animate=False)
+        if should_follow:
+            self._request_follow_scroll(force=scroll_end)
 
     async def append_thinking_delta(
         self,
@@ -503,6 +543,7 @@ class TranscriptView(VerticalScroll):
         scroll_end: bool = False,
     ) -> None:
         """Append streamed thinking text or one hidden-thinking placeholder."""
+        should_follow = self._should_follow_output if not scroll_end else True
         if not show_thinking:
             if self._hidden_thinking_placeholder_visible:
                 return
@@ -512,7 +553,7 @@ class TranscriptView(VerticalScroll):
                     text="Thinking… Press Ctrl+T to show thinking tokens.",
                 ),
                 theme=theme,
-                scroll_end=scroll_end,
+                scroll_end=should_follow,
             )
             self._hidden_thinking_placeholder_visible = True
             return
@@ -524,8 +565,8 @@ class TranscriptView(VerticalScroll):
             )
             await self.mount(self._active_thinking_widget)
         await self._active_thinking_widget.append_fragment(delta)
-        if scroll_end:
-            self.scroll_end(animate=False)
+        if should_follow:
+            self._request_follow_scroll(force=scroll_end)
 
     async def finish_assistant_message(self, text: str | None = None) -> None:
         """Finalize the active assistant widget after the provider sends the full message."""
@@ -992,7 +1033,7 @@ class ThemedCodeBlock(CodeBlock):
     """Rich Markdown code block with Tau's themed background color."""
 
     @classmethod
-    def create(cls, markdown: Markdown, token: Any) -> "ThemedCodeBlock":
+    def create(cls, markdown: Markdown, token: Any) -> ThemedCodeBlock:
         node_info = token.info or ""
         lexer_name = node_info.partition(" ")[0]
         code_block_background = getattr(markdown, "code_block_background", "default")

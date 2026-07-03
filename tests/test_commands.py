@@ -43,6 +43,7 @@ class FakeSession:
         self.thinking_unavailable_reason: str | None = None
         self.tui_theme = "tau-dark"
         self.resource_diagnostics = ()
+        self.system_prompt = "You are Tau.\nFollow project instructions."
         self.session_id = "session-1"
         self.session_title: str | None = None
         self.session_manager: SessionManager | None = manager
@@ -109,9 +110,21 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
         "scoped-models",
         "session",
         "skill",
+        "system",
         "theme",
         "tree",
     ]
+
+
+def test_system_command_returns_active_prompt(tmp_path: Path) -> None:
+    registry = create_default_command_registry()
+    session = FakeSession(tmp_path)
+
+    result = registry.execute(session, "/system")
+
+    assert result.handled is True
+    assert result.message == "You are Tau.\nFollow project instructions."
+    assert registry.execute(session, "/system extra").message == "Usage: /system"
 
 
 def test_quit_and_new_return_control_flags(tmp_path: Path) -> None:
@@ -119,7 +132,7 @@ def test_quit_and_new_return_control_flags(tmp_path: Path) -> None:
     session = FakeSession(tmp_path)
 
     assert registry.execute(session, "/quit").exit_requested is True
-    assert registry.execute(session, "/exit").message == "Unknown command: /exit"
+    assert registry.execute(session, "/exit").exit_requested is True
     assert registry.execute(session, "/q").message == "Unknown command: /q"
     assert registry.execute(session, "/new").new_session_requested is True
     assert registry.execute(session, "/clear").message == "Unknown command: /clear"
