@@ -225,7 +225,7 @@ BUILTIN_PROVIDER_CATALOG: tuple[ProviderCatalogEntry, ...] = (
             "openai/gpt-oss-20b": 131_072,
             "Qwen/Qwen3-Coder-480B-A35B-Instruct": 262_144,
         },
-        thinking_levels=("low", "medium", "high"),
+        thinking_levels=("off", "low", "medium", "high"),
         thinking_models=(
             "openai/gpt-oss-120b",
             "openai/gpt-oss-20b",

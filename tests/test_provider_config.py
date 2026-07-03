@@ -87,11 +87,18 @@ def test_builtin_openai_declares_model_scoped_thinking_capabilities() -> None:
         == "openrouter:anthropic/claude-sonnet-4.6 is not declared in thinking_models"
     )
     assert provider_thinking_levels(huggingface, model="openai/gpt-oss-120b") == (
+        "off",
         "low",
         "medium",
         "high",
     )
+    assert provider_default_thinking_level(huggingface, model="openai/gpt-oss-120b") == "medium"
     assert provider_thinking_unavailable_reason(huggingface, model="openai/gpt-oss-120b") is None
+    assert provider_thinking_levels(huggingface, model="Qwen/Qwen3-Coder-Next") == ()
+    assert (
+        provider_thinking_unavailable_reason(huggingface, model="Qwen/Qwen3-Coder-Next")
+        == "huggingface:Qwen/Qwen3-Coder-Next is not declared in thinking_models"
+    )
     assert provider_thinking_levels(codex, model="gpt-5.5") == (
         "off",
         "minimal",
@@ -539,6 +546,34 @@ def test_openai_compatible_config_from_provider_sets_reasoning_parameter(
 
     assert config.reasoning_effort == "high"
     assert config.reasoning_effort_parameter == expected
+
+
+def test_huggingface_config_maps_thinking_modes_to_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HF_TOKEN", "test-key")
+    provider = ProviderSettings().get_provider("huggingface")
+
+    off_config = openai_compatible_config_from_provider(
+        provider,
+        model="openai/gpt-oss-120b",
+        thinking_level="off",
+    )
+    high_config = openai_compatible_config_from_provider(
+        provider,
+        model="openai/gpt-oss-120b",
+        thinking_level="high",
+    )
+    unsupported_config = openai_compatible_config_from_provider(
+        provider,
+        model="Qwen/Qwen3-Coder-Next",
+        thinking_level="high",
+    )
+
+    assert off_config.reasoning_effort == "none"
+    assert high_config.reasoning_effort == "high"
+    assert high_config.reasoning_effort_parameter == "reasoning_effort"
+    assert unsupported_config.reasoning_effort is None
 
 
 def test_provider_settings_from_json_loads_headers() -> None:

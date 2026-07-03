@@ -85,6 +85,16 @@ Provider entries support `headers`, `timeout_seconds`, `max_retries`, and
 `max_retry_delay_seconds`. For the full JSON shape (and `thinking_levels` for
 custom models), see [Configuration](../reference/configuration.md#providers).
 
+## Thinking modes
+
+For models that declare reasoning support, Tau exposes thinking mode switching
+through the TUI and slash-command flow. The built-in Hugging Face Inference
+Providers entry enables `off`, `low`, `medium`, and `high` for supported
+reasoning models such as `openai/gpt-oss-120b`, `openai/gpt-oss-20b`,
+`Qwen/Qwen3-235B-A22B-Thinking-2507`, and `deepseek-ai/DeepSeek-R1`. Other
+Hugging Face models stay hidden from thinking controls until they are declared
+as supporting reasoning.
+
 :::tip[Org billing example]
 Hugging Face organization billing is just a header on the provider entry:
 
