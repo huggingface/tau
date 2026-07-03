@@ -457,6 +457,24 @@ async def test_tool_call_hook_can_rewrite_arguments(tmp_path: Path) -> None:
     assert seen == [{"who": "tau"}]
 
 
+async def test_tool_call_hook_can_clear_arguments(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _register_inline_extension(runtime, "clearer")
+    api.on("tool_call", lambda event: ToolCallHookResult(arguments={}))
+
+    seen: list[dict[str, object]] = []
+
+    async def executor(arguments: object, signal: object = None) -> AgentToolResult:
+        seen.append(dict(arguments))  # type: ignore[call-overload]
+        return AgentToolResult(tool_call_id="", name="echo", ok=True, content="ok")
+
+    tool = AgentTool(name="echo", description="d", input_schema={}, executor=executor)
+    wrapped = runtime.compose_tools([tool])[0]
+    await wrapped.execute({"who": "world"})
+
+    assert seen == [{}]
+
+
 async def test_raising_tool_call_hook_blocks_fail_safe(tmp_path: Path) -> None:
     runtime = ExtensionRuntime()
     api = _register_inline_extension(runtime, "raiser")

@@ -294,6 +294,9 @@ def setup(tau: ExtensionAPI) -> None:
                 content=f"Unknown agent_id: {agent_id}. Known agents: {known}",
             )
         if bool(arguments.get("wait", False)) and run.task is not None and not run.task.done():
+            # Claim the result before waiting so the background completion
+            # path skips its redundant follow-up notification.
+            run.result_consumed = True
             await asyncio.wait({run.task})
         if run.task is not None and not run.task.done():
             return _tool_result(

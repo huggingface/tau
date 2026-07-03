@@ -374,7 +374,9 @@ class ExtensionRuntime:
                     content=message,
                     error=message,
                 )
-            effective_arguments = call_outcome.arguments or arguments
+            effective_arguments = (
+                call_outcome.arguments if call_outcome.arguments is not None else arguments
+            )
             result = await tool.execute(effective_arguments, signal=signal)
             return await self._run_tool_result_hooks(tool.name, effective_arguments, result)
 

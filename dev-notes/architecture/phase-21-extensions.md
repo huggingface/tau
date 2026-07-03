@@ -270,7 +270,11 @@ swap. `aclose` emits `session_shutdown(reason="quit")`.
 on a fresh runtime registration set, rebuilds the wrapped tool list in
 place (`harness.config.tools` is mutable by design), rebuilds the session
 command registry, and re-subscribes the fan-out listener. The summary gains
-an `extensions` category in `CodingReloadSummary`.
+an `extensions` category in `CodingReloadSummary`. Reload emits no
+`session_shutdown`/`session_start` pair (it runs on the sync command path,
+so async handlers could not be awaited); extension state is simply rebuilt,
+and background work started before the reload is orphaned. The `"reload"`
+lifecycle reason is reserved for when the command path becomes async.
 
 Extension diagnostics (load-time and runtime handler failures) merge into
 `resource_diagnostics`, so `/session` and `/reload` surface them with no

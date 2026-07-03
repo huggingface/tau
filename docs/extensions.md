@@ -56,7 +56,9 @@ Names starting with `_` are skipped.
 Extensions load project-first; on name conflicts (extension names, tool
 names, command names) the first registration wins. `--no-extensions`
 disables directory discovery entirely (explicit `-x` paths still load).
-`/reload` re-imports all extensions.
+`/reload` re-imports all extensions and re-runs `setup`; it does not emit
+`session_shutdown`, so background work an extension started before the
+reload is orphaned — treat `/reload` as a restart of extension state.
 
 > **Security.** Extensions execute arbitrary Python inside your session.
 > Project extensions are therefore off by default — enable them with
