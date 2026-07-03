@@ -25,7 +25,12 @@ from tau_coding.rendering import PrintOutputMode
 from tau_coding.resources import TauResourcePaths
 from tau_coding.system_prompt import BuildSystemPromptOptions, build_system_prompt
 from tau_coding.tools import create_coding_tools
-from tau_coding.update_check import UpdateNotice
+from tau_coding.update_check import (
+    ReleaseNoteSection,
+    ReleaseNotesEntry,
+    ReleaseNotesNotice,
+    UpdateNotice,
+)
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
@@ -38,7 +43,7 @@ def test_version_command() -> None:
     result = CliRunner().invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == "tau 0.1.1"
+    assert result.stdout.strip() == "tau 0.1.2"
 
 
 def test_version_command_does_not_check_for_updates(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -51,7 +56,7 @@ def test_version_command_does_not_check_for_updates(monkeypatch: pytest.MonkeyPa
     result = CliRunner().invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == "tau 0.1.1"
+    assert result.stdout.strip() == "tau 0.1.2"
 
 
 def test_print_mode_writes_update_notice_to_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -190,6 +195,47 @@ def test_cli_positional_prompt_invokes_tui_runner(
 
     assert result.exit_code == 0
     assert calls == [(None, tmp_path, None, False, None, None, "explain this repo")]
+
+
+@pytest.mark.anyio
+async def test_run_openai_tui_combines_release_notes_and_update_notice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_run_tui_app(**kwargs: object) -> None:
+        calls.append(kwargs["startup_notices"])  # type: ignore[arg-type]
+
+    monkeypatch.setattr(cli, "run_tui_app", fake_run_tui_app)
+    monkeypatch.setattr(
+        cli,
+        "startup_release_notes_notice",
+        lambda version: ReleaseNotesNotice(
+            current_version=version,
+            previous_version="0.1.1",
+            entries=(
+                ReleaseNotesEntry(
+                    version=version,
+                    date=None,
+                    sections=(ReleaseNoteSection(title="New", items=("Release note",)),),
+                ),
+            ),
+        ),
+    )
+
+    await cli.run_openai_tui(
+        model=None,
+        cwd=tmp_path,
+        update_notice=UpdateNotice(current_version="0.1.2", latest_version="0.1.3"),
+    )
+
+    assert calls == [
+        (
+            "Tau updated to 0.1.2\n\n**New**\n- Release note",
+            "Tau 0.1.3 is available (installed: 0.1.2). "
+            "Update with: uv tool upgrade tau-ai",
+        )
+    ]
 
 
 @pytest.mark.anyio

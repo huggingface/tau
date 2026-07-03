@@ -17,7 +17,8 @@ tau [OPTIONS] [PROMPT] [COMMAND] [ARGS]
 On TUI and text print-mode startup, Tau may show a non-blocking notice when a
 newer `tau-ai` release is available on PyPI. Disable it with
 `TAU_NO_UPDATE_CHECK=1`; utility commands such as `tau --version`, `tau sessions`,
-and `tau export` do not run the check.
+and `tau export` do not run the check. After an upgrade, the TUI also adds a
+one-time release-notes message to the transcript with the new features and fixes.
 
 ## Commands
 

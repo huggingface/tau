@@ -51,7 +51,11 @@ from tau_coding.session_manager import CodingSessionRecord, SessionManager
 from tau_coding.shell_config import load_shell_settings
 from tau_coding.thinking import DEFAULT_THINKING_LEVEL
 from tau_coding.tui import run_tui_app
-from tau_coding.update_check import UpdateNotice, startup_update_notice
+from tau_coding.update_check import (
+    UpdateNotice,
+    startup_release_notes_notice,
+    startup_update_notice,
+)
 
 app = typer.Typer(
     name="tau",
@@ -271,6 +275,15 @@ async def run_openai_tui(
     update_notice: UpdateNotice | None = None,
 ) -> None:
     """Run the Textual TUI with the default OpenAI-compatible provider."""
+    release_notes_notice = startup_release_notes_notice(__version__)
+    startup_notices = [
+        notice
+        for notice in (
+            release_notes_notice.message if release_notes_notice is not None else None,
+            update_notice.message if update_notice is not None else None,
+        )
+        if notice is not None
+    ]
     await run_tui_app(
         model=model,
         cwd=cwd,
@@ -279,7 +292,7 @@ async def run_openai_tui(
         provider_name=provider_name,
         auto_compact_token_threshold=auto_compact_token_threshold,
         initial_prompt=initial_prompt,
-        startup_notice=update_notice.message if update_notice is not None else None,
+        startup_notices=tuple(startup_notices),
     )
 
 

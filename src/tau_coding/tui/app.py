@@ -1774,18 +1774,20 @@ class TauTuiApp(App[None]):
         tui_settings: TuiSettings | None = None,
         startup_message: str | None = None,
         startup_notice: str | None = None,
+        startup_notices: Sequence[str] = (),
         initial_prompt: str | None = None,
     ) -> None:
         self.tui_settings = tui_settings or TuiSettings()
         self.startup_message = startup_message
-        self.startup_notice = startup_notice
+        legacy_notices = (startup_notice,) if startup_notice else ()
+        self.startup_notices = tuple((*startup_notices, *legacy_notices))
         self.initial_prompt = initial_prompt
         super().__init__()
         self._bindings = BindingsMap(_app_bindings(self.tui_settings.keybindings))
         self.session = session
         self.state = TuiState(skills=session.skills)
-        if startup_notice:
-            self.state.add_item("status", startup_notice)
+        for notice in self.startup_notices:
+            self.state.add_item("status", notice)
         self._prompt_history: tuple[str, ...] = ()
         self._load_session_messages_from_session()
         self.adapter = TuiEventAdapter(self.state)
@@ -3799,6 +3801,7 @@ async def run_tui_app(
     initial_prompt: str | None = None,
     session_manager: SessionManager | None = None,
     startup_notice: str | None = None,
+    startup_notices: Sequence[str] = (),
 ) -> None:
     """Create the default provider/session and run the Textual app."""
     if new_session and session_id is not None:
@@ -3861,11 +3864,13 @@ async def run_tui_app(
                 shell_command_prefix=shell_settings.shell_command_prefix,
             )
         )
+        legacy_notices = (startup_notice,) if startup_notice else ()
+        all_startup_notices = tuple((*startup_notices, *legacy_notices))
         app = TauTuiApp(
             session,
             tui_settings=load_tui_settings(),
             startup_message=startup_message,
-            startup_notice=startup_notice,
+            startup_notices=all_startup_notices,
             initial_prompt=initial_prompt,
         )
         await app.run_async()

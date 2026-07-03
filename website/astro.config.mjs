@@ -122,6 +122,7 @@ export default defineConfig({
             { label: "Build your own frontend", slug: "internals/custom-frontend" },
           ],
         },
+        { label: "Release notes", link: "/releases/" },
         { label: "Contributing", slug: "contributing" },
       ],
     }),

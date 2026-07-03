@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tau-ai"
-version = "0.1.1"
+version = "0.1.2"
 description = "A Python implementation of a minimalist Pi-style coding-agent harness."
 readme = "README.md"
 license = "MIT"
@@ -38,6 +38,7 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tau_ai", "src/tau_agent", "src/tau_coding"]
+artifacts = ["release-notes/releases.json"]
 
 [tool.ruff]
 line-length = 100

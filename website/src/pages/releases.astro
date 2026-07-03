@@ -1,0 +1,311 @@
+---
+import Landing from "../layouts/Landing.astro";
+import releases from "../../../release-notes/releases.json";
+
+const base = import.meta.env.BASE_URL;
+---
+
+<Landing
+  title="Tau release notes"
+  description="New features, fixes, and changes in each Tau release."
+>
+  <div class="tau-landing">
+    <div class="wrap">
+      <nav>
+        <a class="brand" href={base} aria-label="Tau home">
+          <span class="glyph">&#964;</span>
+          <span class="name">tau</span>
+          <span class="ver">v0.1</span>
+        </a>
+        <div class="navlinks">
+          <a href={`${base}why-tau/`}>Why &#964;?</a>
+          <a href={`${base}quickstart/`}>Docs</a>
+          <a href={`${base}internals/architecture/`}>Lessons</a>
+          <a href={`${base}releases/`}>Releases</a>
+          <a class="gh" href="https://github.com/alejandro-ao/tau">GitHub &#8599;</a>
+        </div>
+      </nav>
+
+      <header class="release-header">
+        <div class="release-hero">
+          <p class="eyebrow">Changelog</p>
+          <h1>Release notes.</h1>
+          <p class="lede">
+            Every release is structured data in the repo &mdash; the same notes
+            Tau shows in the TUI after an upgrade and publishes here.
+          </p>
+        </div>
+
+        <div class="release-meta-row">
+          <div class="meta-cell">
+            <span class="meta-num">v{releases[0]?.version}</span>
+            <span class="meta-cap">latest release</span>
+          </div>
+          <div class="meta-cell">
+            <span class="meta-num">{releases.length}</span>
+            <span class="meta-cap">releases published</span>
+          </div>
+          <div class="meta-cell">
+            <span class="meta-num">{releases[0]?.date}</span>
+            <span class="meta-cap">shipped</span>
+          </div>
+        </div>
+      </header>
+    </div>
+
+    <div class="wrap">
+      <section>
+        <div class="sec-head">
+          <span class="mark">01</span>
+          <h2>All releases</h2>
+        </div>
+
+        <div class="release-list">
+          {releases.map((release, i) => (
+            <details class="release-card" id={`v${release.version}`} open={i === 0}>
+              <summary class="release-card-head">
+                <span class="release-version">
+                  <span class="chevron" aria-hidden="true">&rsaquo;</span>
+                  v{release.version}
+                </span>
+                <span class="release-head-right">
+                  {i === 0 && <span class="badge">Latest</span>}
+                  {release.date && <time datetime={release.date}>{release.date}</time>}
+                </span>
+              </summary>
+
+              <div class="release-sections">
+                {Object.entries(release.sections).map(([section, items]) => (
+                  <section class="release-section">
+                    <h4>{section}</h4>
+                    <ul>
+                      {items.map((item) => <li>{item}</li>)}
+                    </ul>
+                  </section>
+                ))}
+              </div>
+            </details>
+          ))}
+        </div>
+      </section>
+
+      <footer>
+        <div class="brand">
+          <span class="glyph" style="font-size:20px;">&#964;</span>
+          <span class="name">tau</span>
+        </div>
+        <div class="l">
+          <a href={`${base}quickstart/`}>Docs</a>
+          <a href={`${base}internals/architecture/`}>Architecture</a>
+          <a href={`${base}releases/`}>Releases</a>
+          <a href="https://github.com/alejandro-ao/tau">GitHub</a>
+        </div>
+        <span>An educational project &middot; inspired by Pi</span>
+      </footer>
+    </div>
+  </div>
+</Landing>
+
+<style>
+  .release-header {
+    padding-top: 8px;
+  }
+
+  .release-hero {
+    max-width: 640px;
+  }
+
+  .release-hero h1 {
+    margin: 8px 0 0;
+    font-family: var(--serif);
+    font-size: clamp(40px, 6vw, 60px);
+    font-weight: 400;
+    letter-spacing: -0.01em;
+  }
+
+  .release-hero .lede {
+    margin-top: 16px;
+  }
+
+  .release-meta-row {
+    display: flex;
+    gap: 0;
+    margin-top: 40px;
+    border-top: 1px solid var(--grid-strong);
+    border-bottom: 1px solid var(--grid-strong);
+  }
+
+  .meta-cell {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 20px 24px;
+    border-right: 1px solid var(--grid-strong);
+  }
+
+  .meta-cell:last-child {
+    border-right: none;
+  }
+
+  .meta-num {
+    font-family: var(--mono);
+    font-size: 22px;
+    color: var(--accent);
+  }
+
+  .meta-cap {
+    font-family: var(--grotesk);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+
+  @media (max-width: 640px) {
+    .release-meta-row {
+      flex-direction: column;
+    }
+
+    .meta-cell {
+      border-right: none;
+      border-bottom: 1px solid var(--grid-strong);
+    }
+
+    .meta-cell:last-child {
+      border-bottom: none;
+    }
+  }
+
+  .release-list {
+    display: grid;
+    gap: 1px;
+    border: 1px solid var(--grid-strong);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--grid-strong);
+  }
+
+  .release-card {
+    background: rgba(255, 255, 255, 0.86);
+  }
+
+  .release-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 22px 32px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    transition: background-color 0.15s;
+  }
+
+  .release-card-head::-webkit-details-marker {
+    display: none;
+  }
+
+  .release-card-head:hover {
+    background: rgba(27, 63, 160, 0.045);
+  }
+
+  .release-version {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--serif);
+    font-size: clamp(22px, 3vw, 28px);
+    font-weight: 400;
+    color: var(--accent);
+    letter-spacing: -0.01em;
+  }
+
+  .chevron {
+    display: inline-block;
+    font-family: var(--serif);
+    font-size: 22px;
+    color: var(--ink-soft);
+    transition: transform 0.2s ease;
+  }
+
+  .release-card[open] .chevron {
+    transform: rotate(90deg);
+  }
+
+  .release-head-right {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .badge {
+    font-family: var(--grotesk);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #fff;
+    background: var(--red);
+    padding: 3px 9px;
+    border-radius: 999px;
+  }
+
+  .release-card time {
+    font-family: var(--mono);
+    color: var(--ink-soft);
+    font-size: 13px;
+  }
+
+  .release-sections {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 28px;
+    padding: 4px 32px 32px;
+    border-top: 1px solid var(--grid-strong);
+    padding-top: 24px;
+  }
+
+  .release-section {
+    padding: 0;
+  }
+
+  .release-section h4 {
+    margin: 0 0 10px;
+    font-family: var(--grotesk);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--red);
+  }
+
+  .release-section ul {
+    margin: 0;
+    padding-left: 20px;
+    color: var(--ink-soft);
+    font-size: 16.5px;
+    line-height: 1.6;
+  }
+
+  .release-section li + li {
+    margin-top: 8px;
+  }
+
+  @media (max-width: 860px) {
+    .release-sections {
+      grid-template-columns: 1fr;
+      gap: 22px;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .release-card-head {
+      padding: 18px 20px;
+    }
+
+    .release-sections {
+      padding: 4px 20px 24px;
+    }
+  }
+</style>

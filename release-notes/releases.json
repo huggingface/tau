@@ -1,0 +1,47 @@
+[
+  {
+    "version": "0.1.2",
+    "date": "2026-07-03",
+    "sections": {
+      "New": [
+        "Show one-time release highlights in the TUI transcript after Tau is upgraded.",
+        "Show the active session name in the TUI header."
+      ],
+      "Changed": [
+        "Render assistant and thinking messages without role blocks for a cleaner transcript.",
+        "Apply role foreground colors to streaming transcript messages.",
+        "Clarify the PyPI release process in the developer notes."
+      ],
+      "Fixed": [
+        "Fix autocomplete suggestion window shrinking.",
+        "Keep pre-branch context when branching with a summary.",
+        "Keep session state on the active branch when persisting messages."
+      ]
+    }
+  },
+  {
+    "version": "0.1.1",
+    "date": "2026-06-26",
+    "sections": {
+      "New": [
+        "Check PyPI for Tau updates on startup.",
+        "Route OpenAI gpt-5.5, gpt-5.4, and codex models to the /v1/responses API.",
+        "Add the /system command for viewing the active system prompt.",
+        "Add prompt history recall with the Up key."
+      ],
+      "Changed": [
+        "Lower the Python requirement to 3.12.",
+        "Render transcript messages as full-height role blocks."
+      ],
+      "Fixed": [
+        "Restore streaming transcript scrollback.",
+        "Fix TUI code block horizontal scrolling.",
+        "Fix autocomplete suggestion viewport sizing.",
+        "Disable TUI text selection while streaming.",
+        "Guard Markdown selection until blocks are mounted.",
+        "Validate conflicting session flags in the CLI.",
+        "Stabilize CI checks."
+      ]
+    }
+  }
+]
