@@ -308,6 +308,11 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
         self._stream: MarkdownStream | None = None
         super().__init__(item.text, theme=theme)
         self.add_class("transcript-message")
+        # Apply the role foreground so streamed text matches the finalized block
+        # (e.g. dimmed thinking) instead of shifting color on the next redraw.
+        foreground, _ = _split_rich_style_colors(_chat_item_role_style(item, theme).body)
+        if foreground:
+            self.styles.color = foreground
 
     @property
     def stream(self) -> MarkdownStream:

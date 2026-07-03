@@ -1108,6 +1108,36 @@ async def test_transcript_message_widget_renders_full_height_role_block() -> Non
 
 
 @pytest.mark.anyio
+async def test_streaming_transcript_applies_role_foreground() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+
+        thinking_fg, _ = _split_rich_style_colors(TAU_DARK_THEME.role_styles["thinking"].body)
+        assistant_fg, _ = _split_rich_style_colors(TAU_DARK_THEME.role_styles["assistant"].body)
+
+        # Streamed thinking is dimmed immediately, matching the finalized block
+        # instead of shifting color on the next redraw.
+        await transcript.append_thinking_delta(
+            "reasoning", theme=TAU_DARK_THEME, show_thinking=True
+        )
+        await pilot.pause()
+        thinking = next(
+            w for w in app.query(StreamingTranscriptMessageWidget) if w.item.role == "thinking"
+        )
+        assert thinking.styles.color == Color.parse(thinking_fg)
+
+        await transcript.append_assistant_delta("answer", theme=TAU_DARK_THEME)
+        await pilot.pause()
+        assistant = next(
+            w for w in app.query(StreamingTranscriptMessageWidget) if w.item.role == "assistant"
+        )
+        assert assistant.styles.color == Color.parse(assistant_fg)
+
+
+@pytest.mark.anyio
 async def test_streaming_transcript_deltas_do_not_force_scroll_end_during_scrollback() -> None:
     app = TauTuiApp(
         FakeSession(
