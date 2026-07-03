@@ -28,6 +28,10 @@ class ToolUpdateCallback(Protocol):
     payload is deliberately lighter than Pi's full-`AgentToolResult` partial:
     Tau's update event carries only a human-readable ``message`` and optional
     structured ``data`` (no ``content``/``details`` echo).
+
+    Must be called from the event-loop thread. The bridge enqueues onto an
+    ``asyncio.Queue``, which is not thread-safe; an executor that does work
+    in a worker thread must hop back to the loop before reporting progress.
     """
 
     def __call__(self, message: str, data: dict[str, JSONValue] | None = None) -> None:
