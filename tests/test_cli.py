@@ -232,8 +232,7 @@ async def test_run_openai_tui_combines_release_notes_and_update_notice(
     assert calls == [
         (
             "Tau updated to 0.1.2\n\n**New**\n- Release note",
-            "Tau 0.1.3 is available (installed: 0.1.2). "
-            "Update with: uv tool upgrade tau-ai",
+            "Tau 0.1.3 is available (installed: 0.1.2). Update with: uv tool upgrade tau-ai",
         )
     ]
 
