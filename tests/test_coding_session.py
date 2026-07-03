@@ -1074,6 +1074,47 @@ async def test_session_branch_restores_model_from_selected_path(tmp_path: Path) 
 
 
 @pytest.mark.anyio
+async def test_session_branch_with_summary_keeps_pre_branch_model_and_messages(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    first_model = ModelChangeEntry(id="model-a", model="first-model")
+    left = MessageEntry(
+        id="left",
+        parent_id="model-a",
+        message=UserMessage(content="Before switch"),
+    )
+    second_model = ModelChangeEntry(
+        id="model-b",
+        parent_id="left",
+        model="second-model",
+    )
+    right = MessageEntry(
+        id="right",
+        parent_id="model-b",
+        message=AssistantMessage(content="After switch"),
+    )
+    await storage.append(first_model)
+    await storage.append(left)
+    await storage.append(second_model)
+    await storage.append(right)
+    await storage.append(LeafEntry(entry_id="right"))
+    session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
+
+    assert session.model == "second-model"
+
+    await session.branch_to_entry("left", summarize=True)
+
+    assert session.state.model == "first-model"
+    assert session.model == "first-model"
+    assert len(session.messages) == 2
+    assert session.messages[0] == UserMessage(content="Before switch")
+    assert session.messages[1].content.startswith(
+        "The following is a summary of a branch that this conversation came back from:"
+    )
+
+
+@pytest.mark.anyio
 async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(
@@ -1115,13 +1156,14 @@ async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> N
     assert "<conversation>" in provider.calls[0][2][0].content
     assert "Use this EXACT format:" in provider.calls[0][2][0].content
     assert "Abandoned follow-up" in provider.calls[0][2][0].content
-    assert len(session.messages) == 1
-    assert session.messages[0].role == "user"
-    assert isinstance(session.messages[0].content, str)
-    assert session.messages[0].content.startswith(
+    assert len(session.messages) == 2
+    assert session.messages[0] == UserMessage(content="Root")
+    assert session.messages[1].role == "user"
+    assert isinstance(session.messages[1].content, str)
+    assert session.messages[1].content.startswith(
         "The following is a summary of a branch that this conversation came back from:"
     )
-    assert "The abandoned branch went left." in session.messages[0].content
+    assert "The abandoned branch went left." in session.messages[1].content
 
 
 @pytest.mark.anyio
@@ -1220,8 +1262,9 @@ async def test_session_branch_with_summary_falls_back_when_model_summary_is_unav
     assert summary.type == "branch_summary"
     assert "Automatically compacted 2 prior message(s)." in summary.summary
     assert "Abandoned follow-up" in summary.summary
-    assert len(session.messages) == 1
-    assert "Abandoned follow-up" in session.messages[0].content
+    assert len(session.messages) == 2
+    assert session.messages[0] == UserMessage(content="Root")
+    assert "Abandoned follow-up" in session.messages[1].content
 
 
 @pytest.mark.anyio
