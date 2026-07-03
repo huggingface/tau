@@ -119,34 +119,12 @@ and pull requests from inside the TUI:
 
 ```text
 /issue describe the bug or feature request
-/worktree implement issue 123
 /pr add any reviewer context for the current branch
 ```
 
 These prompts can use `gh` when it is installed and authenticated, but they also
 fall back to copy/paste-ready Markdown and manual GitHub instructions when a
 local environment is not fully configured.
-
-## Worktree workflow
-
-For focused issue work, create an isolated worktree outside the repository so
-your main checkout can stay on its current branch:
-
-```bash
-git fetch origin main
-git worktree add -b feat/my-change ~/.agents/worktrees/tau/my-change origin/main
-cd ~/.agents/worktrees/tau/my-change
-```
-
-Use a short kebab-case slug for the directory and a branch prefix such as
-`feat/`, `fix/`, `docs/`, or `chore/`. Run Tau's checks from inside the worktree
-with `uv`, then push the branch and open a PR. When the PR is merged or
-abandoned, clean up from the original repository:
-
-```bash
-git worktree remove ~/.agents/worktrees/tau/my-change
-git branch -d feat/my-change
-```
 
 ## Pull request guidelines
 

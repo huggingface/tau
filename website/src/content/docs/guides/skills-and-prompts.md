@@ -96,13 +96,8 @@ requests:
 
 ```text
 /issue describe the bug or feature request
-/worktree implement issue 123
 /pr add any reviewer context for the current branch
 ```
-
-The `/worktree` prompt guides contributors through creating an isolated git
-worktree outside the repository, implementing a focused change, running checks
-with `uv`, and preparing a PR.
 
 Good shared prompts should not assume every contributor has the same local setup.
 If `gh`, GitHub authentication, remotes, or dependencies are unavailable, the

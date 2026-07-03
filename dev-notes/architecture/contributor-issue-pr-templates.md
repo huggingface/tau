@@ -6,11 +6,10 @@ This note documents the shared contributor templates added for issues and pull r
 
 ## What was added
 
-Tau now includes three project-level prompt templates:
+Tau now includes two project-level prompt templates:
 
 ```text
 .agents/prompts/issue.md
-.agents/prompts/worktree.md
 .agents/prompts/pr.md
 ```
 
@@ -30,9 +29,8 @@ These appear in GitHub's web UI and help contributors who are not using Tau.
 ## Why it exists
 
 Maintainers often have private prompt templates for creating well-structured
-issues, implementing changes in isolated worktrees, and opening PRs.
-Project-level templates move that process into the repository so contributors
-get the same structure without copying local dotfiles.
+issues and PRs. Project-level templates move that process into the repository so
+contributors get the same structure without copying local dotfiles.
 
 The prompts are deliberately tolerant of partial local setup. A contributor may
 not have:
@@ -61,12 +59,6 @@ In Tau's TUI, run:
 
 ```text
 /issue describe the bug or feature request
-```
-
-then:
-
-```text
-/worktree implement issue 123
 ```
 
 or:
