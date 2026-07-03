@@ -151,6 +151,7 @@ class FakeSession:
         self.resource_diagnostics = ()
         self.system_prompt = "You are Tau."
         self.session_manager = None
+        self._session_title: str | None = None
         self.compact_summaries: list[str] = []
         self.resumed_session_ids: list[str] = []
         self.tree_branch_requests: list[tuple[str, bool, str | None]] = []
@@ -164,6 +165,10 @@ class FakeSession:
         self.terminal_commands: list[tuple[str, bool]] = []
         self.cancel_count = 0
         self.export_calls: list[tuple[Path | None, str | None]] = []
+
+    @property
+    def session_title(self) -> str | None:
+        return self._session_title
 
     def handle_command(self, text: str) -> CommandResult:
         if text == "/session":
@@ -226,9 +231,10 @@ class FakeSession:
         if text.startswith("/theme "):
             return CommandResult(handled=True, theme=text.removeprefix("/theme "))
         if text.startswith("/name "):
+            self._session_title = text.removeprefix("/name ")
             return CommandResult(
                 handled=True,
-                message=f"Session renamed: {text.removeprefix('/name ')}",
+                message=f"Session renamed: {self._session_title}",
             )
         return CommandResult(handled=False)
 
@@ -3108,6 +3114,39 @@ async def test_tui_app_system_appends_command_output_to_transcript() -> None:
 
         assert not isinstance(app.screen, CommandOutputScreen)
         assert app.state.items == [ChatItem(role="status", text="/system\nYou are Tau.")]
+
+
+@pytest.mark.anyio
+async def test_tui_app_uses_session_name_in_header() -> None:
+    session = FakeSession()
+    session._session_title = "Customer bugfix"
+    app = TauTuiApp(session)
+
+    async with app.run_test():
+        assert app.title == "Tau"
+        assert app.sub_title == "Customer bugfix"
+
+
+@pytest.mark.anyio
+async def test_tui_app_uses_default_header_for_unnamed_session() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test():
+        assert app.title == "Tau"
+        assert app.sub_title == "Untitled session"
+
+
+@pytest.mark.anyio
+async def test_tui_app_name_updates_header() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/name Customer bugfix"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.sub_title == "Customer bugfix"
 
 
 @pytest.mark.anyio
