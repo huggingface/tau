@@ -80,6 +80,8 @@ class CommandSession(Protocol):
     @property
     def session_manager(self) -> SessionManager | None: ...
 
+    def ensure_session_indexed(self) -> None: ...
+
     def set_model(self, model: str) -> None: ...
 
     def reload(self) -> CodingReloadSummary: ...
@@ -535,12 +537,11 @@ def _name_command(context: CommandContext) -> CommandResult:
     if manager is None or session_id is None:
         return CommandResult(handled=True, message="Session manager is not available.")
 
-    record = manager.get_session(session_id)
-    if record is None:
-        return CommandResult(handled=True, message=f"Unknown current session: {session_id}")
-
     if not context.args:
-        title = record.title or "Untitled session"
+        record = manager.get_session(session_id)
+        title = (
+            record.title if record is not None else context.session.session_title
+        ) or "Untitled session"
         return CommandResult(
             handled=True,
             message=f"Current session name: {title}\nUsage: /name <new name>",
@@ -550,6 +551,9 @@ def _name_command(context: CommandContext) -> CommandResult:
         name = _validated_session_name(context.args)
     except ValueError as exc:
         return CommandResult(handled=True, message=str(exc))
+
+    if manager.get_session(session_id) is None:
+        context.session.ensure_session_indexed()
 
     updated = manager.touch_session(
         session_id,

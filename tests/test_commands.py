@@ -47,8 +47,19 @@ class FakeSession:
         self.session_id = "session-1"
         self.session_title: str | None = None
         self.session_manager: SessionManager | None = manager
+        self.ensure_session_indexed_called = False
         self.reload_called = False
         self.provider_reload_called = False
+
+    def ensure_session_indexed(self) -> None:
+        self.ensure_session_indexed_called = True
+        if self.session_manager is not None:
+            self.session_manager.create_session(
+                cwd=self.cwd,
+                model=self.model,
+                provider_name=self.provider_name,
+                session_id=self.session_id,
+            )
 
     def set_model(self, model: str) -> None:
         self.model = model
@@ -419,6 +430,20 @@ def test_name_command_renames_current_session(tmp_path: Path) -> None:
     assert renamed.title == "Customer bugfix"
     assert renamed.model == "fake-model"
     assert renamed.updated_at >= record.updated_at
+
+
+def test_name_command_indexes_pending_session_before_renaming(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    session = FakeSession(tmp_path, manager=manager)
+    session.session_id = "pending-session"
+
+    result = create_default_command_registry().execute(session, "/name Customer bugfix")
+
+    assert result.message == "Session renamed: Customer bugfix"
+    assert session.ensure_session_indexed_called is True
+    record = manager.get_session("pending-session")
+    assert record is not None
+    assert record.title == "Customer bugfix"
 
 
 def test_name_command_reports_missing_session_manager(tmp_path: Path) -> None:

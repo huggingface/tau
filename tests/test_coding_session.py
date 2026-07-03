@@ -947,6 +947,60 @@ async def test_session_branches_to_previous_entry_without_destroying_history(
 
 
 @pytest.mark.anyio
+async def test_persist_after_branch_keeps_state_on_active_branch(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    provider = FakeProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="New answer")),
+            ],
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="Branch summary")),
+            ],
+        ]
+    )
+    root = MessageEntry(id="root", message=UserMessage(content="Root"))
+    answer = MessageEntry(id="answer", parent_id="root", message=AssistantMessage(content="Answer"))
+    abandoned = MessageEntry(
+        id="abandoned",
+        parent_id="answer",
+        message=UserMessage(content="Abandoned follow-up"),
+    )
+    abandoned_answer = MessageEntry(
+        id="abandoned-answer",
+        parent_id="abandoned",
+        message=AssistantMessage(content="Abandoned answer"),
+    )
+    await storage.append(root)
+    await storage.append(answer)
+    await storage.append(abandoned)
+    await storage.append(abandoned_answer)
+    await storage.append(LeafEntry(entry_id="abandoned-answer"))
+    session = await CodingSession.load(_config(tmp_path, provider, storage))
+
+    await session.branch_to_entry("answer")
+    _events = await _collect_session_events(session.prompt("New follow-up"))
+
+    assert session.state.messages == (
+        UserMessage(content="Root"),
+        AssistantMessage(content="Answer"),
+        UserMessage(content="New follow-up"),
+        AssistantMessage(content="New answer"),
+    )
+    assert "abandoned" not in session.state.context_entry_ids
+    assert "abandoned-answer" not in session.state.context_entry_ids
+
+    await session.compact()
+    compactions = [entry for entry in await storage.read_all() if entry.type == "compaction"]
+    assert len(compactions) == 1
+    assert "abandoned" not in compactions[0].replaces_entry_ids
+    assert "abandoned-answer" not in compactions[0].replaces_entry_ids
+    assert "Abandoned" not in provider.calls[1][2][0].content
+
+
+@pytest.mark.anyio
 async def test_session_branches_to_before_selected_user_message_with_prefill(
     tmp_path: Path,
 ) -> None:
@@ -1020,6 +1074,47 @@ async def test_session_branch_restores_model_from_selected_path(tmp_path: Path) 
 
 
 @pytest.mark.anyio
+async def test_session_branch_with_summary_keeps_pre_branch_model_and_messages(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    first_model = ModelChangeEntry(id="model-a", model="first-model")
+    left = MessageEntry(
+        id="left",
+        parent_id="model-a",
+        message=UserMessage(content="Before switch"),
+    )
+    second_model = ModelChangeEntry(
+        id="model-b",
+        parent_id="left",
+        model="second-model",
+    )
+    right = MessageEntry(
+        id="right",
+        parent_id="model-b",
+        message=AssistantMessage(content="After switch"),
+    )
+    await storage.append(first_model)
+    await storage.append(left)
+    await storage.append(second_model)
+    await storage.append(right)
+    await storage.append(LeafEntry(entry_id="right"))
+    session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
+
+    assert session.model == "second-model"
+
+    await session.branch_to_entry("left", summarize=True)
+
+    assert session.state.model == "first-model"
+    assert session.model == "first-model"
+    assert len(session.messages) == 2
+    assert session.messages[0] == UserMessage(content="Before switch")
+    assert session.messages[1].content.startswith(
+        "The following is a summary of a branch that this conversation came back from:"
+    )
+
+
+@pytest.mark.anyio
 async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(
@@ -1061,13 +1156,14 @@ async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> N
     assert "<conversation>" in provider.calls[0][2][0].content
     assert "Use this EXACT format:" in provider.calls[0][2][0].content
     assert "Abandoned follow-up" in provider.calls[0][2][0].content
-    assert len(session.messages) == 1
-    assert session.messages[0].role == "user"
-    assert isinstance(session.messages[0].content, str)
-    assert session.messages[0].content.startswith(
+    assert len(session.messages) == 2
+    assert session.messages[0] == UserMessage(content="Root")
+    assert session.messages[1].role == "user"
+    assert isinstance(session.messages[1].content, str)
+    assert session.messages[1].content.startswith(
         "The following is a summary of a branch that this conversation came back from:"
     )
-    assert "The abandoned branch went left." in session.messages[0].content
+    assert "The abandoned branch went left." in session.messages[1].content
 
 
 @pytest.mark.anyio
@@ -1166,8 +1262,9 @@ async def test_session_branch_with_summary_falls_back_when_model_summary_is_unav
     assert summary.type == "branch_summary"
     assert "Automatically compacted 2 prior message(s)." in summary.summary
     assert "Abandoned follow-up" in summary.summary
-    assert len(session.messages) == 1
-    assert "Abandoned follow-up" in session.messages[0].content
+    assert len(session.messages) == 2
+    assert session.messages[0] == UserMessage(content="Root")
+    assert "Abandoned follow-up" in session.messages[1].content
 
 
 @pytest.mark.anyio
@@ -2512,6 +2609,66 @@ async def test_session_new_session_is_indexed_after_first_message(
     assert indexed.provider_name == "openai"
     assert indexed.model == "gpt-5"
     assert indexed.path.exists()
+
+
+@pytest.mark.anyio
+async def test_session_name_indexes_pending_session_without_prompt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    current_record = manager.create_session(cwd=tmp_path, model="fake", provider_name="fake")
+    settings = ProviderSettings(
+        default_provider="openai",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="openai",
+                models=("gpt-5",),
+                default_model="gpt-5",
+            ),
+        ),
+    )
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+    ) -> FakeProvider:
+        del provider_config, credential_store, model, thinking_level
+        return FakeProvider([])
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(current_record.path),
+            cwd=current_record.cwd,
+            session_id=current_record.id,
+            session_manager=manager,
+            provider_name="fake",
+            provider_settings=settings,
+        )
+    )
+
+    _message = await session.new_session()
+    pending_id = session.session_id
+
+    assert pending_id is not None
+    assert manager.get_session(pending_id) is None
+
+    result = session.handle_command("/name Customer bugfix")
+
+    indexed = manager.get_session(pending_id)
+    assert result.message == "Session renamed: Customer bugfix"
+    assert indexed is not None
+    assert indexed.title == "Customer bugfix"
+    assert indexed.provider_name == "openai"
+    assert indexed.model == "gpt-5"
+    assert indexed.path.exists()
+    assert await JsonlSessionStorage(indexed.path).read_all()
 
 
 @pytest.mark.anyio

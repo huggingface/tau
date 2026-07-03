@@ -1798,6 +1798,12 @@ class TauTuiApp(App[None]):
         self._activity_timer: Timer | None = None
         self._active_notification_keys: set[tuple[str, str]] = set()
         self._supports_pyperclip: bool | None = None
+        self._sync_header_title()
+
+    def _sync_header_title(self) -> None:
+        """Reflect the active session name in Textual's header state."""
+        self.title = "Tau"
+        self.sub_title = _session_header_sub_title(self.session)
 
     def _sync_text_selection_state(self) -> None:
         """Disable native text selection while the transcript is mutating."""
@@ -2883,6 +2889,7 @@ class TauTuiApp(App[None]):
     def _refresh_chrome(self, *, theme: TuiTheme | None = None) -> None:
         """Refresh non-transcript chrome without remounting transcript blocks."""
         theme = theme or self.tui_settings.resolved_theme
+        self._sync_header_title()
         self._sync_text_selection_state()
         self._sync_queue_state()
         sidebar = self.query_one("#sidebar", SessionSidebar)
@@ -3343,6 +3350,12 @@ def _named_session_title(title: str | None) -> str | None:
     if not stripped or stripped.lower() == "untitled session":
         return None
     return stripped
+
+
+def _session_header_sub_title(session: CodingSession) -> str:
+    """Return the session label shown beside Tau in the TUI header."""
+    title = _named_session_title(getattr(session, "session_title", None))
+    return title or "Untitled session"
 
 
 def _login_provider_label(provider: ProviderCatalogEntry) -> str:
