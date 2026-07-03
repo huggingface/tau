@@ -243,7 +243,14 @@ async def test_prompt_logs_error_event_diagnostic_data(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
     provider = FakeProvider(
-        [[ProviderErrorEvent(message="provider failed", data={"status_code": 400, "body": "bad request"})]]
+        [
+            [
+                ProviderErrorEvent(
+                    message="provider failed",
+                    data={"status_code": 400, "body": "bad request"},
+                )
+            ]
+        ]
     )
     session = await CodingSession.load(
         CodingSessionConfig(

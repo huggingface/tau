@@ -1795,7 +1795,7 @@ class TauTuiApp(App[None]):
 
     def _sync_text_selection_state(self) -> None:
         """Disable native text selection while the transcript is mutating."""
-        self.ALLOW_SELECT = not self.state.running
+        type(self).ALLOW_SELECT = not self.state.running
         if self.state.running and self.screen_stack:
             with suppress(Exception):
                 self.screen.clear_selection()

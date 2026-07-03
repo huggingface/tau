@@ -82,8 +82,8 @@ from tau_coding.tui.config import (
 from tau_coding.tui.state import ChatItem
 from tau_coding.tui.widgets import (
     LeftAlignedMarkdownHeading,
-    TauMarkdownBlock,
     StreamingTranscriptMessageWidget,
+    TauMarkdownBlock,
     ThemedMarkdownWidget,
     TranscriptMessageWidget,
     TranscriptView,

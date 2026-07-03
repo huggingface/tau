@@ -35,8 +35,7 @@ def provider_retry_event(
         max_attempts=max_attempts,
         delay_seconds=delay_seconds,
         message=(
-            f"Retrying provider request {next_attempt}/{max_attempts} "
-            f"after {reason}{delay_suffix}."
+            f"Retrying provider request {next_attempt}/{max_attempts} after {reason}{delay_suffix}."
         ),
         data=data,
     )

@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,12 @@ from tau_coding.resources import TauResourcePaths
 from tau_coding.system_prompt import BuildSystemPromptOptions, build_system_prompt
 from tau_coding.tools import create_coding_tools
 from tau_coding.update_check import UpdateNotice
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _strip_ansi(value: str) -> str:
+    return _ANSI_ESCAPE_RE.sub("", value)
 
 
 def test_version_command() -> None:
@@ -555,7 +562,7 @@ def test_default_tui_rejects_resume_with_new_session(tmp_path: Path) -> None:
     )
 
     assert result.exit_code != 0
-    assert "--resume and --new-session cannot be used together" in result.output
+    assert "--resume and --new-session cannot be used together" in _strip_ansi(result.output)
 
 
 def test_sessions_command_lists_indexed_sessions(

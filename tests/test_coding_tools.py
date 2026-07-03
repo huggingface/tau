@@ -183,8 +183,7 @@ async def test_bash_tool_applies_opt_in_shell_command_prefix(tmp_path: Path) -> 
     rc_path = tmp_path / ".zshrc"
     marker = tmp_path / "sourced"
     rc_path.write_text(
-        "alias greet='printf alias-output'\n"
-        f"touch {shlex.quote(str(marker))}\n",
+        f"alias greet='printf alias-output'\ntouch {shlex.quote(str(marker))}\n",
         encoding="utf-8",
     )
     prefix = f"shopt -s expand_aliases\neval \"$(grep '^alias ' {shlex.quote(str(rc_path))})\""
@@ -217,9 +216,7 @@ async def test_bash_tool_timeout_kills_shell_children(tmp_path: Path) -> None:
     marker = tmp_path / "marker"
 
     start = monotonic()
-    result = await tool.execute(
-        {"command": "(sleep 0.25; touch marker) & wait", "timeout": 0.01}
-    )
+    result = await tool.execute({"command": "(sleep 0.25; touch marker) & wait", "timeout": 0.01})
     duration = monotonic() - start
     await asyncio.sleep(0.35)
 

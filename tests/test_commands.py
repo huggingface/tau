@@ -223,10 +223,7 @@ def test_session_command_explains_unavailable_thinking_controls(tmp_path: Path) 
 
     assert result.message is not None
     assert "Thinking mode: unavailable" in result.message
-    assert (
-        "Thinking unavailable: Provider local does not declare thinking_levels"
-        in result.message
-    )
+    assert "Thinking unavailable: Provider local does not declare thinking_levels" in result.message
     assert "Thinking mode: medium" not in result.message
 
 

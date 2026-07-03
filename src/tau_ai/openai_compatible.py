@@ -198,8 +198,7 @@ class OpenAICompatibleProvider:
                                 continue
                             yield ProviderErrorEvent(
                                 message=(
-                                    "Provider request failed with status "
-                                    f"{response.status_code}"
+                                    f"Provider request failed with status {response.status_code}"
                                 ),
                                 data={
                                     "body": body.decode(errors="replace"),
@@ -337,8 +336,7 @@ class _ChatStreamParser:
 
     def finalize(self) -> list[ProviderEvent]:
         tool_calls = [
-            builder.build(index)
-            for index, builder in sorted(self._tool_call_builders.items())
+            builder.build(index) for index, builder in sorted(self._tool_call_builders.items())
         ]
         events: list[ProviderEvent] = [
             ProviderToolCallEvent(tool_call=tool_call) for tool_call in tool_calls
@@ -404,18 +402,14 @@ class _ResponsesStreamParser:
         elif chunk_type == "response.function_call_arguments.delta":
             item_id = chunk.get("item_id")
             if isinstance(item_id, str):
-                builder = self._tool_call_builders.setdefault(
-                    item_id, _ResponsesToolCallBuilder()
-                )
+                builder = self._tool_call_builders.setdefault(item_id, _ResponsesToolCallBuilder())
                 builder.add_arguments_delta(chunk.get("delta"))
                 self.emitted_content = True
 
         elif chunk_type == "response.function_call_arguments.done":
             item_id = chunk.get("item_id")
             if isinstance(item_id, str):
-                builder = self._tool_call_builders.setdefault(
-                    item_id, _ResponsesToolCallBuilder()
-                )
+                builder = self._tool_call_builders.setdefault(item_id, _ResponsesToolCallBuilder())
                 builder.set_final(arguments=chunk.get("arguments"))
 
         elif chunk_type == "response.output_item.done":
@@ -436,9 +430,7 @@ class _ResponsesStreamParser:
         elif chunk_type == "error":
             self.fatal = True
             return [
-                ProviderErrorEvent(
-                    message=_responses_error_message(chunk), data={"event": chunk}
-                )
+                ProviderErrorEvent(message=_responses_error_message(chunk), data={"event": chunk})
             ], True
 
         return [], False
@@ -451,9 +443,7 @@ class _ResponsesStreamParser:
         events: list[ProviderEvent] = [
             ProviderToolCallEvent(tool_call=tool_call) for tool_call in tool_calls
         ]
-        finish_reason = _normalize_finish_reason(
-            self._status, has_tool_calls=bool(tool_calls)
-        )
+        finish_reason = _normalize_finish_reason(self._status, has_tool_calls=bool(tool_calls))
         events.append(
             ProviderResponseEndEvent(
                 message=AssistantMessage(
@@ -705,10 +695,7 @@ def _ordered_builders(
     builders: dict[str, _ResponsesToolCallBuilder],
 ) -> list[_ResponsesToolCallBuilder]:
     return [
-        builder
-        for _, builder in sorted(
-            builders.items(), key=lambda pair: pair[1].output_index
-        )
+        builder for _, builder in sorted(builders.items(), key=lambda pair: pair[1].output_index)
     ]
 
 

@@ -517,8 +517,7 @@ async def test_openai_codex_provider_includes_http_error_detail_in_message() -> 
 
     assert isinstance(events[-1], ProviderErrorEvent)
     assert events[-1].message == (
-        "OpenAI Codex request failed with status 400: "
-        "The requested model does not exist."
+        "OpenAI Codex request failed with status 400: The requested model does not exist."
     )
     assert events[-1].data == {
         "status_code": 400,
@@ -1151,13 +1150,9 @@ async def test_responses_api_formats_request_for_restricted_model() -> None:
         UserMessage(content="weather in Paris?"),
         AssistantMessage(
             content="",
-            tool_calls=[
-                ToolCall(id="call_1", name="get_weather", arguments={"city": "Paris"})
-            ],
+            tool_calls=[ToolCall(id="call_1", name="get_weather", arguments={"city": "Paris"})],
         ),
-        ToolResultMessage(
-            tool_call_id="call_1", name="get_weather", content='{"temp_c": 19}'
-        ),
+        ToolResultMessage(tool_call_id="call_1", name="get_weather", content='{"temp_c": 19}'),
         UserMessage(content="summarize"),
     ]
 

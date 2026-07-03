@@ -103,8 +103,7 @@ class AnthropicProvider:
                                 continue
                             yield ProviderErrorEvent(
                                 message=(
-                                    "Provider request failed with status "
-                                    f"{response.status_code}"
+                                    f"Provider request failed with status {response.status_code}"
                                 ),
                                 data={
                                     "body": body.decode(errors="replace"),
@@ -172,8 +171,7 @@ class AnthropicProvider:
                                 delta = chunk.get("delta")
                                 if isinstance(delta, Mapping):
                                     finish_reason = (
-                                        _string_or_empty(delta.get("stop_reason"))
-                                        or finish_reason
+                                        _string_or_empty(delta.get("stop_reason")) or finish_reason
                                     )
                             elif event_type == "error":
                                 error = chunk.get("error")
@@ -184,8 +182,7 @@ class AnthropicProvider:
                                 return
 
                         tool_calls = [
-                            builder.build(index)
-                            for index, builder in sorted(tool_builders.items())
+                            builder.build(index) for index, builder in sorted(tool_builders.items())
                         ]
                         for tool_call in tool_calls:
                             yield ProviderToolCallEvent(tool_call=tool_call)
