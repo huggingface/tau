@@ -1314,7 +1314,7 @@ async def test_reload_picks_up_guideline_changes(tmp_path: Path) -> None:
     assert "Prefer uv over pip" in session.system_prompt
 
 
-async def test_session_start_event_fires_on_load(tmp_path: Path) -> None:
+async def test_session_start_deferred_until_host_emits(tmp_path: Path) -> None:
     body = (
         "EVENTS = []\n\n\n"
         "def setup(tau):\n"
@@ -1323,11 +1323,39 @@ async def test_session_start_event_fires_on_load(tmp_path: Path) -> None:
     session = await CodingSession.load(
         _session_config(tmp_path, FakeProvider([]), extension_body=body)
     )
-
     module = _loaded_extension_module("integration")
-    assert module.EVENTS == ["startup"]
+
+    # load defers session_start so hosts can attach a UI bridge first.
+    assert module.EVENTS == []  # type: ignore[attr-defined]
+
+    await session.emit_pending_session_start()
+    assert module.EVENTS == ["startup"]  # type: ignore[attr-defined]
+
+    # Idempotent: a second host call must not re-fire the event.
+    await session.emit_pending_session_start()
+    assert module.EVENTS == ["startup"]  # type: ignore[attr-defined]
+
     await session.aclose()
     assert module.EVENTS == ["startup", "quit"] or module.EVENTS == ["startup"]
+
+
+async def test_session_start_handler_can_notify_through_attached_bridge(
+    tmp_path: Path,
+) -> None:
+    body = (
+        "def setup(tau):\n"
+        "    tau.on('session_start', lambda event: tau.notify('loaded', 'info'))\n"
+    )
+    session = await CodingSession.load(
+        _session_config(tmp_path, FakeProvider([]), extension_body=body)
+    )
+    ui = RecordingUiBridge()
+    session.extension_runtime.set_ui_bridge(ui)
+
+    await session.emit_pending_session_start()
+
+    assert ui.notifications == [("loaded", "info")]
+    await session.aclose()
 
 
 async def test_input_handled_prevents_agent_run(tmp_path: Path) -> None:

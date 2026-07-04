@@ -2474,6 +2474,9 @@ class TauTuiApp(App[None]):
         self._refresh_completions()
         if self.startup_message:
             self._notify(self.startup_message, severity="warning")
+        # UI is live and the bridge is installed (__init__) — release the
+        # deferred session_start so handlers can notify / open dialogs.
+        await self.session.emit_pending_session_start()
         if self.initial_prompt and self.initial_prompt.strip():
             await self._submit_prompt(self.initial_prompt.strip())
 

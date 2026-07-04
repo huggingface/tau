@@ -251,6 +251,7 @@ class CodingSession:
         self._state = state
         self._harness = harness
         self._extension_runtime = extension_runtime or ExtensionRuntime()
+        self._session_start_pending = False
         self._last_parent_id = last_parent_id
         self._pending_initial_entries = pending_initial_entries
         self._skills = skills
@@ -376,7 +377,11 @@ class CodingSession:
         if fresh_extension_runtime:
             extension_runtime.bind(session)
             extension_runtime.attach_harness_listener(harness.subscribe)
-            await extension_runtime.emit_session_start("startup")
+            # session_start is deferred: hosts emit it via
+            # emit_pending_session_start() after installing their UI bridge,
+            # so handlers can use notifications and dialogs (Pi starts the UI
+            # before initializing extensions for the same reason).
+            session._session_start_pending = True
         return session
 
     @property
@@ -657,6 +662,19 @@ class CodingSession:
     def extension_runtime(self) -> ExtensionRuntime:
         """Return the extension runtime bound to this session."""
         return self._extension_runtime
+
+    async def emit_pending_session_start(self) -> None:
+        """Emit the `session_start` deferred by `load`, once per session.
+
+        Hosts call this after installing their UI bridge so `session_start`
+        handlers can use notifications and dialogs (Pi's ordering: the UI
+        starts before extensions initialize). Idempotent; a no-op for
+        sessions that adopted an already-started extension runtime.
+        """
+        if not self._session_start_pending:
+            return
+        self._session_start_pending = False
+        await self._extension_runtime.emit_session_start("startup")
 
     def queue_steering_message(
         self,

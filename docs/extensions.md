@@ -209,6 +209,9 @@ Lifecycle and intercepting hooks:
 | `tool_call` | `ToolCallHookEvent(tool_name, arguments)` | `ToolCallHookResult(block, reason, arguments)` |
 | `tool_result` | `ToolResultHookEvent(tool_name, arguments, result)` | `ToolResultHookResult(content, ok, details)` |
 
+- `session_start` fires once the host frontend is attached (Pi's ordering:
+  the UI starts before extensions initialize), so handlers can call
+  `tau.notify(...)` or open dialogs and they will actually be seen.
 - `input` runs on the raw prompt text before skill/template expansion.
   `action="transform"` rewrites it (transforms chain), `action="handled"`
   consumes it without an agent run and shows `message` as a notification.

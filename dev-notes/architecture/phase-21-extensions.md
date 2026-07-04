@@ -116,6 +116,20 @@ and the extension is skipped.
 `tau --no-extensions` disables directory discovery entirely (explicit
 `--extension` paths still load, matching Pi's CLI-survives semantics).
 
+**Ruling:** `session_start` is emitted by the **host**, not by
+`CodingSession.load`. Pi starts the UI before initializing extensions
+precisely so `session_start` handlers can use dialogs and notifications
+(`interactive-mode.ts`: "Start the UI before initializing extensions…");
+Tau's load originally emitted before any UI bridge existed, silently
+dropping `notify` and cancelling dialogs from `session_start` handlers.
+`load` now marks the event pending and hosts release it with
+`session.emit_pending_session_start()` (idempotent) after
+`set_ui_bridge(...)` — the TUI in `on_mount`, print mode right after
+installing `StderrUiBridge`. The adopt-replacement paths (`new`/`resume`/
+`branch` and `/reload`) still emit directly: they reuse the long-lived
+runtime whose bridge is already attached. A host that never calls it gets
+no `session_start` — host responsibility, same as Pi.
+
 ## Package layout
 
 ```text

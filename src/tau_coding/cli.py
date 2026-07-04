@@ -605,6 +605,7 @@ async def run_print_mode(
         )
     )
     session.extension_runtime.set_ui_bridge(StderrUiBridge())
+    await session.emit_pending_session_start()
     renderer = create_event_renderer(
         output,
         custom_message_renderer=session.extension_runtime.render_custom_message,
