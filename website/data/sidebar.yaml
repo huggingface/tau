@@ -24,6 +24,8 @@
       path: /guides/context/
     - label: Print mode & scripting
       path: /guides/print-mode/
+    - label: Extensions
+      path: /guides/extensions/
 - label: Reference
   items:
     - label: CLI

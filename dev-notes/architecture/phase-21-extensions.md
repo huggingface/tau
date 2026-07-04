@@ -582,26 +582,34 @@ follow-up that can flip the project default.
 
 The subagents extension lives in its own repository
 (`rian-dolphin/tau-subagents`, private) rather than in this repo. It ports
-the core of `tintinweb/pi-subagents`:
+the core of `tintinweb/pi-subagents` and doubles as the reference consumer
+of the newer API seams (manifest, dialogs, renderers, `on_update`,
+`context.transcript`), feature-detecting each so it loads on older builds:
 
+- a `src/`-layout package whose `pyproject.toml` declares
+  `[tool.tau] extensions = ["src/tau_subagents/extension.py"]` — the
+  manifest's reference user;
 - registers an `agent` tool (`prompt`, `description`, `subagent_type`,
-  `run_in_background`) plus `get_subagent_result`;
+  `run_in_background`, plus `model`/`thinking`/`max_turns`/`resume`/
+  `isolation`/`inherit_context`/`schedule`), `get_subagent_result`,
+  `steer_subagent`, and an `/agents` command that opens a `context.ui`
+  dialog menu when a UI is attached;
 - agent types come from `.tau/agents/*.md` / `~/.tau/agents/*.md` files
-  with frontmatter (`description`, `tools`, `model`) — same shape as Pi's
-  agent definitions (a new convention owned by the example, alongside the
-  existing `.agents/` resource dirs);
+  with frontmatter (`description`, `tools`, `model`, `thinking`,
+  `max_turns`, `prompt_mode`, `memory`, `isolation`, …) — same shape as
+  Pi's agent definitions (a new convention owned by the example, alongside
+  the existing `.agents/` resource dirs);
 - spawns subagents **in-process** by constructing a scoped `CodingSession`
   (in-memory storage, tool allow-list, own system prompt,
   `extensions_enabled=False` so subagents cannot recursively spawn) — the
   Python analog of Pi's `createAgentSession`, no CLI subprocess needed;
-- foreground runs block and return the subagent's final assistant text
-  (the example does not yet report inline progress, though the `on_update`
-  seam and `ToolExecutionUpdateEvent` emission now exist in `tau_agent` — see
-  the live-progress Ruling above — so wiring child activity into `on_update`
-  is now possible);
-  background runs return an id immediately and deliver completion through
-  `send_user_message(deliver_as="follow_up")`, which also exercises the
-  idle `turn_requested` path.
+- foreground runs block, stream child activity through the `on_update`
+  seam, and return the subagent's final assistant text; background runs
+  return an id immediately and deliver completion through
+  `send_custom_message(custom_type="subagent-notification",
+  deliver_as="follow_up")` — rendered by its registered message renderer,
+  falling back to `send_user_message` on older builds — which also
+  exercises the idle `turn_requested` path.
 
 Smaller examples: `hello_tool.py` (minimal tool) and `permission_gate.py`
 (`tool_call` blocking for dangerous bash commands).

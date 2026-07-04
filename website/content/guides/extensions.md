@@ -1,4 +1,7 @@
-# Tau extensions
+---
+title: Extensions
+description: Extend Tau with plain Python — custom tools, slash commands, hooks, dialogs, and message rendering.
+---
 
 Extensions are Python modules that customize a Tau session: they add tools
 and slash commands, observe the agent event stream, and intercept tool
@@ -97,7 +100,7 @@ def setup(tau):
     # message rendering (register in setup; send once running)
     tau.register_message_renderer("my-ext:status", render_status)
 
-    # actions — valid once the session is running, not during setup
+    # actions — valid once the session is bound, not during setup
     tau.send_user_message("text", deliver_as="follow_up")  # or "steer"
     tau.send_custom_message("text", custom_type="my-ext:status", details={...})
     await tau.append_entry("my-ext:records", {"key": "value"})
@@ -107,6 +110,7 @@ def setup(tau):
     tau.context.cwd, tau.context.model, tau.context.provider_name
     tau.context.session_id, tau.context.system_prompt
     tau.context.is_running, tau.context.has_ui
+    tau.context.transcript   # parent conversation, deep-copied AgentMessages
 
     # interactive UI dialogs (async; see "UI dialogs" below)
     await tau.context.ui.select("Title", ["a", "b"])   # -> str | None
@@ -128,6 +132,12 @@ executor `(arguments, signal=None) -> AgentToolResult`. Give the tool a
 section, and `prompt_guidelines` for usage guidance tied to the tool.
 Registering a tool with a built-in's name (`read`, `write`, `edit`,
 `bash`) replaces the built-in.
+
+A long-running tool can stream progress: an executor that additionally
+declares an `on_update` parameter receives a callback
+`(message: str, data: dict | None = None)`; each call becomes a
+`tool_execution_update` event and drives the TUI's live progress line.
+Executors without the parameter are unaffected.
 
 For behavioral guidance not tied to any tool, `add_prompt_guideline(text)`
 adds a line to the system prompt's Guidelines section (de-duplicated at
@@ -197,7 +207,8 @@ Observation events mirror the agent event stream — subscribe by the event's
 `tool_execution_start`, `tool_execution_update`, `tool_execution_end`,
 `retry`, `queue_update`, `error` — or `agent_event` for everything (fires
 per streamed token; prefer specific events). Handlers must be fast; they run
-on the session's event loop.
+on the session's event loop. `message_end` carries provider token usage at
+`event.message.usage` (`None` when the provider reported none).
 
 Lifecycle and intercepting hooks:
 
@@ -328,7 +339,7 @@ runtime only sees the former.
 
 ## Example extensions
 
-See [`examples/extensions/`](../examples/extensions):
+See [`examples/extensions/`](https://github.com/huggingface/tau/tree/main/examples/extensions):
 
 - **`hello_tool.py`** — minimal custom tool.
 - **`permission_gate.py`** — blocks dangerous bash commands with the
@@ -339,7 +350,10 @@ A larger, real-world extension lives in its own repository:
 ports [pi-subagents](https://github.com/tintinweb/pi-subagents) — an `agent`
 tool that spawns autonomous subagents in-process with their own tools and
 system prompts, foreground and background modes, agent types defined in
-`.tau/agents/*.md`, a `get_subagent_result` tool, and an `/agents` command.
+`.tau/agents/*.md`, `get_subagent_result` and `steer_subagent` tools, an
+`/agents` command, and a custom renderer for completion notifications. It is
+also the reference for the `[tool.tau]` manifest shape above (a `src/` layout
+package that feature-detects newer API seams).
 
 ```bash
 git clone git@github.com:rian-dolphin/tau-subagents.git

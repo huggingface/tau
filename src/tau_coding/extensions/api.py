@@ -103,7 +103,7 @@ class SessionShutdownEvent:
 
 @dataclass(frozen=True, slots=True)
 class InputEvent:
-    """Payload for the `input` hook: user prompt text after expansion."""
+    """Payload for the `input` hook: raw user prompt text, before expansion."""
 
     text: str
 
