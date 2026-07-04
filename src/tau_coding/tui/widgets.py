@@ -422,7 +422,18 @@ class TranscriptView(VerticalScroll):
         *,
         theme: TuiTheme = TAU_DARK_THEME,
     ) -> None:
-        """Toggle thinking-token visibility without rebuilding the whole transcript."""
+        """Toggle thinking-token visibility without rebuilding the whole transcript.
+
+        Falls back to a full redraw when streaming state is active, because
+        the DOM surgery helpers only target finalized TranscriptMessageWidget
+        instances.  StreamingTranscriptMessageWidget instances produced during
+        live thinking or hidden-placeholder streaming are invisible to those
+        helpers and must be handled by the full redraw path.
+        """
+        if self._active_thinking_widget is not None or self._hidden_thinking_placeholder_visible:
+            self.update_from_state(state, theme=theme)
+            return
+
         self._render_state = state
         self._render_theme = theme
         was_at_end = self.is_vertical_scroll_end

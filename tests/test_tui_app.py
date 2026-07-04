@@ -4377,6 +4377,57 @@ async def test_tui_thinking_toggle_preserves_scrollback_position() -> None:
         assert transcript.scroll_y == 10.0
 
 
+
+@pytest.mark.anyio
+async def test_tui_thinking_toggle_mid_stream_falls_back_to_full_redraw() -> None:
+    """Toggling thinking visibility while streaming must not leave a stale widget."""
+    app = TauTuiApp(FakeSession())
+
+    def transcript_text() -> str:
+        transcript = app.query_one("#transcript", TranscriptView)
+        return "\n".join(line.text for line in transcript.lines)
+
+    async with app.run_test() as pilot:
+        transcript = app.query_one("#transcript", TranscriptView)
+        theme = app.tui_settings.resolved_theme
+
+        # Simulate streaming a thinking token (real usage updates state first, then widget)
+        app.state.show_thinking = True
+        app.state.add_thinking_delta("live thoughts")
+        await transcript.append_thinking_delta("live thoughts", show_thinking=True, theme=theme)
+        await pilot.pause()
+
+        assert transcript._active_thinking_widget is not None
+        assert "live thoughts" in transcript_text()
+
+        # Press Ctrl+T while thinking is actively streaming.
+        # The guard must detect the active streaming widget and fall back to a full
+        # redraw, which removes the streaming widget and shows the placeholder.
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+
+        assert app.state.show_thinking is False
+        assert "live thoughts" not in transcript_text()
+        assert "Thinking… Press Ctrl+T to show thinking tokens." in transcript_text()
+        assert transcript._active_thinking_widget is None
+
+        # Simulate the hidden-placeholder path: delta arrives while show_thinking=False
+        app.state.add_thinking_delta("more thoughts")
+        await transcript.append_thinking_delta("more thoughts", show_thinking=False, theme=theme)
+        await pilot.pause()
+
+        assert transcript._hidden_thinking_placeholder_visible is True
+
+        # Press Ctrl+T again — guard detects _hidden_thinking_placeholder_visible
+        # and falls back to full redraw, which shows all thinking items from state.
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+
+        assert app.state.show_thinking is True
+        assert "live thoughts" in transcript_text()
+        assert "more thoughts" in transcript_text()
+        assert "Thinking… Press Ctrl+T to show thinking tokens." not in transcript_text()
+        assert transcript._hidden_thinking_placeholder_visible is False
 @pytest.mark.anyio
 async def test_tui_prompt_ctrl_c_clears_text() -> None:
     app = TauTuiApp(FakeSession(messages=(UserMessage(content="User prompt"),)))
