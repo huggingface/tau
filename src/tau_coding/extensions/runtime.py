@@ -149,6 +149,7 @@ class ExtensionRuntime:
         self._commands: dict[str, ExtensionCommand] = {}
         self._prompt_guidelines: list[tuple[str, str]] = []
         self._message_renderers: dict[str, tuple[str, MessageRenderer]] = {}
+        self._renderer_failures_reported: set[str] = set()
         self._load_diagnostics: list[ResourceDiagnostic] = []
         self._runtime_diagnostics: list[ResourceDiagnostic] = []
         self._session: BoundSession | None = None
@@ -187,6 +188,7 @@ class ExtensionRuntime:
         self._commands.clear()
         self._prompt_guidelines.clear()
         self._message_renderers.clear()
+        self._renderer_failures_reported.clear()
         self._load_diagnostics.clear()
         self._runtime_diagnostics.clear()
         unload_extension_modules()
@@ -329,6 +331,8 @@ class ExtensionRuntime:
         Installed into every render path (TUI state, print transcript). A missing
         renderer or a renderer that raises or returns a non-string yields
         ``None`` so the frontend renders the raw ``content`` instead of crashing.
+        Failures are diagnosed once per ``custom_type`` (render paths re-run on
+        every redraw, which would otherwise grow diagnostics without bound).
         """
         registration = self._message_renderers.get(custom_type)
         if registration is None:
@@ -339,10 +343,18 @@ class ExtensionRuntime:
         try:
             markup = renderer(view, options)
         except Exception as exc:  # noqa: BLE001 - a renderer must never crash the frontend
-            self._record_runtime_failure(extension_name, f"message_renderer:{custom_type}", exc)
+            if custom_type not in self._renderer_failures_reported:
+                self._renderer_failures_reported.add(custom_type)
+                self._record_runtime_failure(
+                    extension_name, f"message_renderer:{custom_type}", exc
+                )
             return None
         if not isinstance(markup, str):
-            self._record_bad_result(extension_name, f"message_renderer:{custom_type}", markup)
+            if custom_type not in self._renderer_failures_reported:
+                self._renderer_failures_reported.add(custom_type)
+                self._record_bad_result(
+                    extension_name, f"message_renderer:{custom_type}", markup
+                )
             return None
         return markup
 

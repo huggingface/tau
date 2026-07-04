@@ -385,24 +385,64 @@ than a separate `custom` message role (deviation from Pi's `CustomMessageEntry`
 content-block arrays converted to a user message for the LLM anyway
 (`convertToLlm`); Tau's transcript is plain-string, so metadata on `UserMessage`
 achieves identical LLM-context semantics with a far smaller wire/replay
-footprint — no new entry in the `AgentMessage` union, no discriminator or
-persistence-format change. Both fields default to `None`, so sessions persisted
-before this change still load under the models' `extra="forbid"` config, and
-sessions written with the fields round-trip through `MessageEntry` and render
-correctly after resume.
+footprint — no new entry in the `AgentMessage` union, no discriminator change.
+
+Wire behavior (the actual compatibility contract):
+
+- **Reading old files:** both fields default to `None`, so sessions persisted
+  before this change load under the models' `extra="forbid"` config.
+- **Writing new files:** the fields are **omitted from serialization when
+  unset** (a targeted `model_serializer` on `UserMessage`, not a global
+  `exclude_none`, so no other field's wire semantics change). A session that
+  never uses custom messages is therefore **byte-identical** to the
+  pre-metadata format and remains readable by older binaries.
+- **Downgrade with custom messages present is unsupported:** once a session
+  contains a message sent via `send_custom_message`, its JSONL lines carry
+  `custom_type`/`details` keys, and an older binary's `extra="forbid"`
+  `UserMessage` will reject that file. This is the one real
+  persistence-format extension this feature makes.
+- Sessions written with the fields round-trip through `MessageEntry` and
+  render correctly after resume.
 
 **Ruling:** the resolver **never raises** into a render path. A missing
 renderer, a renderer that throws, or one that returns a non-string all yield
-`None` (recorded as a runtime diagnostic for the last two), and the frontend
-renders the raw `content`. First-registration-per-`custom_type` wins, matching
-Tau's other extension registries; the registry is cleared on `/reload`.
+`None` (recorded as a runtime diagnostic for the last two — deduplicated to
+one diagnostic per `custom_type`, since render paths re-run on every redraw
+and a persistently-broken renderer would otherwise grow diagnostics without
+bound), and the frontend renders the raw `content`.
+First-registration-per-`custom_type` wins, matching Tau's other extension
+registries; the registry (and the failure-dedupe set) is cleared on `/reload`.
 
 **Ruling:** Pi's `sendMessage` `display` (hide from TUI while keeping in
-context) and `triggerTurn` are **partly** ported: `trigger_turn` is honored
-(`False` queues without starting an idle turn); `display=false` is **not**
-implemented — custom messages are always shown (the tau-subagents extension only
-ever sends `display:true`). Pi's parallel `registerEntryRenderer`/`appendEntry`
+context) and `triggerTurn` are **partly** ported, with weaker durability on
+the no-turn path: with `trigger_turn=False` (or when no turn callback is
+installed), Tau queues the message **in-memory** on the harness follow-up
+queue — it is not yet visible in the transcript and is **silently lost if the
+session exits before the next run**. Pi, by contrast, persists the message to
+the session file and emits `message_start`/`message_end` immediately even
+without triggering a turn (`agent-session.ts:1357-1370`). Extensions that need
+a durable no-turn record should use `append_entry` alongside, or accept the
+default turn-triggering delivery. `display=false` is **not** implemented —
+custom messages are always shown (the tau-subagents extension only ever sends
+`display:true`). Pi's parallel `registerEntryRenderer`/`appendEntry`
 (non-LLM-context cards) stays out of scope.
+
+**Ruling:** delivery **defaults deviate from Pi**, deliberately matching Tau's
+existing `send_user_message` semantics instead: Pi's `sendMessage` defaults to
+`triggerTurn: false` and `deliverAs: "steer"` while streaming; Tau's
+`send_custom_message` defaults to `trigger_turn=True` and
+`deliver_as="follow_up"`. The tau-subagents notification path wants exactly
+follow-up + turn-trigger (it passes `deliverAs: "followUp", triggerTurn: true`
+explicitly in Pi too), and keeping one default across both send methods is
+less surprising for extension authors. Callers can pass
+`deliver_as="steer"`/`trigger_turn=False` for Pi-shaped behavior.
+
+Note: two surfaces intentionally show a custom message's raw `content` rather
+than its rendered markup: the session **HTML export**
+(`session_export.py` renders messages from the persisted transcript without
+the extension runtime) and the **queued-message preview**
+(`harness.py` `queue_update_event` reports queued content strings). Both are
+raw-text views by design; only live transcripts (TUI + print mode) render.
 
 ## Hook wiring (how interception works without touching tau_agent)
 

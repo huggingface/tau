@@ -242,7 +242,10 @@ tau.send_custom_message(
   deliver_as="follow_up", trigger_turn=True)` behaves like
   `send_user_message` (the `content` still enters the model's context), but the
   transcript renders it through the matching renderer. `trigger_turn=False`
-  only queues it for the next run instead of starting one when idle.
+  queues it **in-memory** for the next run instead of starting one when idle —
+  the message is not shown or persisted until that run happens, and is lost if
+  the session exits first. Use `append_entry` alongside if you need a durable
+  record without triggering a turn.
 - First registration per `custom_type` wins. If no renderer is registered, or a
   renderer raises or returns a non-string, the message falls back to its raw
   `content` — a broken renderer never crashes the UI.

@@ -1330,6 +1330,24 @@ def test_render_custom_message_swallows_renderer_errors(tmp_path: Path) -> None:
     assert any("message_renderer:boom" in d.message for d in runtime.diagnostics)
 
 
+def test_render_custom_message_reports_failure_once_per_custom_type(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "boom")
+
+    def render(view: CustomMessageView, options: MessageRenderOptions) -> str:
+        raise RuntimeError("renderer exploded")
+
+    api.register_message_renderer("boom", render)
+
+    # Render paths re-run on every redraw; a persistently-broken renderer must
+    # not grow the diagnostics list without bound.
+    for _ in range(5):
+        assert runtime.render_custom_message("boom", "raw", None, False) is None
+
+    failures = [d for d in runtime.diagnostics if "message_renderer:boom" in d.message]
+    assert len(failures) == 1
+
+
 def test_render_custom_message_rejects_non_string_result(tmp_path: Path) -> None:
     runtime = ExtensionRuntime()
     api = _inline_api(runtime, "wrong")

@@ -24,12 +24,9 @@ from tau_agent.types import JSONValue
 def test_user_message_serializes_with_role() -> None:
     message = UserMessage(content="hello")
 
-    assert message.model_dump() == {
-        "role": "user",
-        "content": "hello",
-        "custom_type": None,
-        "details": None,
-    }
+    # custom_type/details are omitted when unset, so plain messages keep the
+    # pre-metadata wire shape (forward compat with older binaries).
+    assert message.model_dump() == {"role": "user", "content": "hello"}
 
 
 def test_user_message_custom_metadata_round_trips() -> None:
