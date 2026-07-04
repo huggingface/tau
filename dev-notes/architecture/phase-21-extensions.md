@@ -69,8 +69,26 @@ Within a directory, one level deep, matching Pi:
 - `*.py` files are extension modules
 - a subdirectory containing `extension.py` is an extension (the analog of
   Pi's `index.ts` convention)
+- a directory (subdirectory or explicit `-x` path) whose `pyproject.toml`
+  declares `[tool.tau] extensions = ["src/pkg/extension.py", ...]` loads the
+  declared entries instead — the analog of Pi's `package.json`
+  `pi.extensions` manifest ("complex packages must use package.json
+  manifest"), so src-layout repos need no root shim
 
 Names starting with `_` or `.` are skipped. Symlinked files are followed.
+
+**Ruling:** the manifest lives under `[tool.tau]` in `pyproject.toml` — the
+Python-ecosystem home for tool config — rather than a bespoke manifest file.
+It takes precedence over a sibling `extension.py` (Pi's order); each declared
+entry loads as a package rooted at the entry's parent directory (siblings
+stay relatively importable — the manifest's whole purpose is structured
+layouts), named after that parent (or the file stem when the entry is not
+`extension.py`). Deviation from Pi: a declared-but-missing entry emits an
+`error` diagnostic instead of being silently skipped — a manifest is an
+explicit claim, and Tau already surfaces discovery diagnostics. A manifest
+that yields no usable entries falls back to the `extension.py` convention;
+an unparseable `pyproject.toml` is a `warning` (scanned directories may
+contain unrelated projects).
 
 Each module is imported with `importlib` under a unique synthetic module name
 (`tau_extension_<slug>_<n>`), so project and user extensions with the same

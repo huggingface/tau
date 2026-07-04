@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import tomllib
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from importlib.util import module_from_spec, spec_from_file_location
@@ -100,12 +101,17 @@ def discover_extensions(
 
     if include_resource_dirs:
         for directory in extension_dirs(paths, include_project_dir=include_project_dir):
-            for entry in _discover_in_dir(directory):
+            for entry in _discover_in_dir(directory, diagnostics):
                 add(entry)
 
     for path in extra_paths:
         expanded = path.expanduser()
         if expanded.is_dir():
+            manifest_entries = _manifest_entries(expanded, diagnostics)
+            if manifest_entries:
+                for entry in manifest_entries:
+                    add(entry)
+                continue
             entry_file = expanded / "extension.py"
             if entry_file.is_file():
                 add(
@@ -115,7 +121,7 @@ def discover_extensions(
                 )
                 continue
             found_any = False
-            for entry in _discover_in_dir(expanded):
+            for entry in _discover_in_dir(expanded, diagnostics):
                 found_any = True
                 add(entry)
             if not found_any:
@@ -168,7 +174,9 @@ def load_extensions(
     )
 
 
-def _discover_in_dir(directory: Path) -> Iterator[DiscoveredExtension]:
+def _discover_in_dir(
+    directory: Path, diagnostics: list[ResourceDiagnostic]
+) -> Iterator[DiscoveredExtension]:
     if not directory.is_dir():
         return
     for path in sorted(directory.iterdir(), key=lambda item: item.name):
@@ -177,9 +185,77 @@ def _discover_in_dir(directory: Path) -> Iterator[DiscoveredExtension]:
         if path.is_file() and path.suffix == ".py":
             yield DiscoveredExtension(name=path.stem, path=path)
         elif path.is_dir():
+            manifest_entries = _manifest_entries(path, diagnostics)
+            if manifest_entries:
+                yield from manifest_entries
+                continue
             entry_file = path / "extension.py"
             if entry_file.is_file():
                 yield DiscoveredExtension(name=path.name, path=entry_file, package_dir=path)
+
+
+def _manifest_entries(
+    directory: Path, diagnostics: list[ResourceDiagnostic]
+) -> list[DiscoveredExtension]:
+    """Resolve entry files declared in `<dir>/pyproject.toml` under `[tool.tau]`.
+
+    Pi's loader resolves a directory's `package.json` `pi.extensions` field
+    before falling back to the `index.ts` convention ("complex packages must
+    use package.json manifest"); `tool.tau.extensions` is the Python-shaped
+    equivalent. An empty result means "no usable manifest" and callers fall
+    back to the `extension.py` convention.
+    """
+    manifest = directory / "pyproject.toml"
+    if not manifest.is_file():
+        return []
+    try:
+        with manifest.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        diagnostics.append(
+            ResourceDiagnostic(
+                kind="extension",
+                path=manifest,
+                message=f"could not parse pyproject.toml: {exc}",
+            )
+        )
+        return []
+    tool_table = data.get("tool")
+    tau_table = tool_table.get("tau") if isinstance(tool_table, dict) else None
+    declared = tau_table.get("extensions") if isinstance(tau_table, dict) else None
+    if declared is None:
+        return []
+    if not isinstance(declared, list) or not all(isinstance(item, str) for item in declared):
+        diagnostics.append(
+            ResourceDiagnostic(
+                kind="extension",
+                path=manifest,
+                message="`tool.tau.extensions` must be a list of file paths",
+                severity="error",
+            )
+        )
+        return []
+    entries: list[DiscoveredExtension] = []
+    for item in declared:
+        entry_file = (directory / item).resolve()
+        if not entry_file.is_file():
+            diagnostics.append(
+                ResourceDiagnostic(
+                    kind="extension",
+                    path=manifest,
+                    message=f"declared extension entry does not exist: {item}",
+                    severity="error",
+                )
+            )
+            continue
+        # Manifest entries always load as packages: the manifest exists to
+        # point at structured layouts (e.g. src/<pkg>/extension.py), where
+        # sibling modules must stay reachable through relative imports.
+        name = entry_file.parent.name if entry_file.stem == "extension" else entry_file.stem
+        entries.append(
+            DiscoveredExtension(name=name, path=entry_file, package_dir=entry_file.parent)
+        )
+    return entries
 
 
 def _load_extension(

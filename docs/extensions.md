@@ -53,6 +53,21 @@ containing `extension.py` is a package-style extension — its sibling
 modules are imported with relative imports (`from . import helper`).
 Names starting with `_` are skipped.
 
+Larger extensions that keep their code in a package (e.g. a `src/`
+layout) can declare their entry files in `pyproject.toml` instead of
+placing `extension.py` at the directory root:
+
+```toml
+[tool.tau]
+extensions = ["src/my_ext/extension.py"]
+```
+
+The manifest takes precedence over an `extension.py` in the same
+directory; each declared file loads as a package rooted at its parent
+directory, so sibling modules stay importable with relative imports. The
+extension is named after the entry's parent directory (or after the file
+itself when it isn't named `extension.py`).
+
 Extensions load project-first; on name conflicts (extension names, tool
 names, command names) the first registration wins. `--no-extensions`
 disables directory discovery entirely (explicit `-x` paths still load).

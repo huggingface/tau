@@ -210,6 +210,153 @@ def test_package_extension_loads_with_relative_import(tmp_path: Path) -> None:
     assert result.extensions[0].setup.value == 42  # type: ignore[attr-defined]
 
 
+def _write_src_layout_extension(repo: Path, *, entry_name: str = "extension") -> Path:
+    package_dir = repo / "src" / "my_ext"
+    package_dir.mkdir(parents=True)
+    (package_dir / "helper.py").write_text("VALUE = 41\n", encoding="utf-8")
+    entry = package_dir / f"{entry_name}.py"
+    entry.write_text(
+        "from . import helper\n\n\ndef setup(tau):\n    setup.value = helper.VALUE + 1\n",
+        encoding="utf-8",
+    )
+    return entry
+
+
+def test_manifest_declares_src_layout_entry(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    repo = tmp_path / "repo"
+    _write_src_layout_extension(repo)
+    (repo / "pyproject.toml").write_text(
+        '[tool.tau]\nextensions = ["src/my_ext/extension.py"]\n', encoding="utf-8"
+    )
+
+    result = load_extensions(paths, extra_paths=(repo,), include_resource_dirs=False)
+
+    assert [ext.name for ext in result.extensions] == ["my_ext"]
+    assert result.diagnostics == ()
+    result.extensions[0].setup(object())
+    assert result.extensions[0].setup.value == 42  # type: ignore[attr-defined]
+
+
+def test_manifest_wins_over_root_extension_py(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    repo = tmp_path / "repo"
+    _write_src_layout_extension(repo)
+    (repo / "extension.py").write_text("def setup(tau):\n    pass\n", encoding="utf-8")
+    (repo / "pyproject.toml").write_text(
+        '[tool.tau]\nextensions = ["src/my_ext/extension.py"]\n', encoding="utf-8"
+    )
+
+    discovered, _ = discover_extensions(
+        paths, extra_paths=(repo,), include_resource_dirs=False
+    )
+
+    assert [entry.name for entry in discovered] == ["my_ext"]
+    assert discovered[0].path == repo / "src" / "my_ext" / "extension.py"
+
+
+def test_manifest_entry_named_after_file_when_not_extension_py(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    repo = tmp_path / "repo"
+    _write_src_layout_extension(repo, entry_name="main")
+    (repo / "pyproject.toml").write_text(
+        '[tool.tau]\nextensions = ["src/my_ext/main.py"]\n', encoding="utf-8"
+    )
+
+    discovered, _ = discover_extensions(
+        paths, extra_paths=(repo,), include_resource_dirs=False
+    )
+
+    assert [entry.name for entry in discovered] == ["main"]
+    assert discovered[0].package_dir == repo / "src" / "my_ext"
+
+
+def test_manifest_discovered_in_extensions_dir(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    repo = _user_extensions_dir(paths) / "my-ext-repo"
+    _write_src_layout_extension(repo)
+    (repo / "pyproject.toml").write_text(
+        '[tool.tau]\nextensions = ["src/my_ext/extension.py"]\n', encoding="utf-8"
+    )
+
+    discovered, diagnostics = discover_extensions(paths)
+
+    assert [entry.name for entry in discovered] == ["my_ext"]
+    assert diagnostics == ()
+
+
+def test_manifest_missing_entry_is_error_with_extension_py_fallback(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "extension.py").write_text("def setup(tau):\n    pass\n", encoding="utf-8")
+    (repo / "pyproject.toml").write_text(
+        '[tool.tau]\nextensions = ["src/gone/extension.py"]\n', encoding="utf-8"
+    )
+
+    discovered, diagnostics = discover_extensions(
+        paths, extra_paths=(repo,), include_resource_dirs=False
+    )
+
+    assert [entry.name for entry in discovered] == ["repo"]
+    assert any(
+        diag.severity == "error" and "does not exist" in diag.message for diag in diagnostics
+    )
+
+
+def test_manifest_without_tau_table_falls_back_to_extension_py(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "extension.py").write_text("def setup(tau):\n    pass\n", encoding="utf-8")
+    (repo / "pyproject.toml").write_text('[project]\nname = "x"\n', encoding="utf-8")
+
+    discovered, diagnostics = discover_extensions(
+        paths, extra_paths=(repo,), include_resource_dirs=False
+    )
+
+    assert [entry.name for entry in discovered] == ["repo"]
+    assert diagnostics == ()
+
+
+def test_manifest_invalid_declarations_are_error_diagnostics(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "extension.py").write_text("def setup(tau):\n    pass\n", encoding="utf-8")
+    (repo / "pyproject.toml").write_text(
+        "[tool.tau]\nextensions = 3\n", encoding="utf-8"
+    )
+
+    discovered, diagnostics = discover_extensions(
+        paths, extra_paths=(repo,), include_resource_dirs=False
+    )
+
+    assert [entry.name for entry in discovered] == ["repo"]
+    assert any(
+        diag.severity == "error" and "list of file paths" in diag.message
+        for diag in diagnostics
+    )
+
+
+def test_manifest_parse_failure_is_warning_with_fallback(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "extension.py").write_text("def setup(tau):\n    pass\n", encoding="utf-8")
+    (repo / "pyproject.toml").write_text("not [ valid toml", encoding="utf-8")
+
+    discovered, diagnostics = discover_extensions(
+        paths, extra_paths=(repo,), include_resource_dirs=False
+    )
+
+    assert [entry.name for entry in discovered] == ["repo"]
+    assert any(
+        diag.severity == "warning" and "could not parse" in diag.message
+        for diag in diagnostics
+    )
+
+
 def test_helper_modules_stay_namespaced_in_sys_modules(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     package_dir = _user_extensions_dir(paths) / "pkg_ns"
