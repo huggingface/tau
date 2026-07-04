@@ -251,8 +251,14 @@ class _TuiExtensionUiBridge:
         try:
             return await asyncio.wait_for(future, timeout)
         except TimeoutError:
-            with suppress(Exception):
-                screen.dismiss(default)
+            # `Screen.dismiss` only works while the dialog is the top screen.
+            # Known limitation: if another screen was pushed on top before the
+            # timeout fired, the stale dialog stays on the stack (its future
+            # result is discarded by `_resolve` racing `future.done()`) until
+            # the covering screen closes and the user dismisses it manually.
+            if screen.is_current:
+                with suppress(Exception):
+                    screen.dismiss(default)
             return default
 
 
@@ -568,13 +574,20 @@ class PromptInput(TextArea):
 
 
 class ExtensionSelectScreen(ModalScreen[str | None]):
-    """Modal option picker backing `context.ui.select`."""
+    """Modal option picker backing `context.ui.select`.
+
+    Binding/key wiring mirrors `SessionPickerScreen`. Note: the app binds
+    Up/Down globally with priority (completion navigation), so this screen
+    must also be listed in the `action_completion_next/previous` and
+    `action_accept_completion` screen allowlists for arrow keys to reach
+    the option list.
+    """
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
-        Binding("escape", "cancel", "Cancel", priority=True),
-        Binding("up", "cursor_up", "Up", show=False, priority=True),
-        Binding("down", "cursor_down", "Down", show=False, priority=True),
-        Binding("enter", "select_cursor", "Select", show=False, priority=True),
+        Binding("escape", "cancel", "Cancel"),
+        Binding("up", "cursor_up", "Up", show=False),
+        Binding("down", "cursor_down", "Down", show=False),
+        Binding("enter", "select_cursor", "Select", show=False),
     ]
 
     def __init__(
@@ -639,13 +652,17 @@ class ExtensionSelectScreen(ModalScreen[str | None]):
 
 
 class ExtensionConfirmScreen(ModalScreen[bool]):
-    """Modal yes/no confirmation backing `context.ui.confirm`."""
+    """Modal yes/no confirmation backing `context.ui.confirm`.
+
+    Binding/key wiring mirrors `SessionPickerScreen`; see
+    `ExtensionSelectScreen` for the app-level Up/Down allowlist requirement.
+    """
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
-        Binding("escape", "cancel", "Cancel", priority=True),
-        Binding("up", "cursor_up", "Up", show=False, priority=True),
-        Binding("down", "cursor_down", "Down", show=False, priority=True),
-        Binding("enter", "select_cursor", "Select", show=False, priority=True),
+        Binding("escape", "cancel", "Cancel"),
+        Binding("up", "cursor_up", "Up", show=False),
+        Binding("down", "cursor_down", "Down", show=False),
+        Binding("enter", "select_cursor", "Select", show=False),
     ]
 
     def __init__(self, title: str, message: str, *, theme: TuiTheme) -> None:
@@ -3000,7 +3017,9 @@ class TauTuiApp(App[None]):
             | TreePickerScreen
             | LoginMethodPickerScreen
             | LoginProviderPickerScreen
-            | ThemePickerScreen,
+            | ThemePickerScreen
+            | ExtensionSelectScreen
+            | ExtensionConfirmScreen,
         ):
             self.screen.action_select_cursor()
             return
@@ -3025,7 +3044,9 @@ class TauTuiApp(App[None]):
             | LoginMethodPickerScreen
             | LoginProviderPickerScreen
             | ThemePickerScreen
-            | ModelPickerScreen,
+            | ModelPickerScreen
+            | ExtensionSelectScreen
+            | ExtensionConfirmScreen,
         ):
             self.screen.action_cursor_down()
             return
@@ -3047,7 +3068,9 @@ class TauTuiApp(App[None]):
             | LoginMethodPickerScreen
             | LoginProviderPickerScreen
             | ThemePickerScreen
-            | ModelPickerScreen,
+            | ModelPickerScreen
+            | ExtensionSelectScreen
+            | ExtensionConfirmScreen,
         ):
             self.screen.action_cursor_up()
             return

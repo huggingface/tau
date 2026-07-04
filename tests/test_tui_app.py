@@ -2383,11 +2383,10 @@ async def test_extension_select_dialog_returns_choice() -> None:
         task = asyncio.ensure_future(bridge.select("Pick", ["alpha", "beta"]))
         await pilot.pause()
 
-        screen = app.screen
-        assert isinstance(screen, ExtensionSelectScreen)
-        # Move the highlight to the second option, then confirm with Enter.
-        screen.action_cursor_down()
-        await pilot.pause()
+        assert isinstance(app.screen, ExtensionSelectScreen)
+        # Arrow down to the second option, then confirm with Enter — real
+        # key presses, exercising the app-level Up/Down routing.
+        await pilot.press("down")
         await pilot.press("enter")
         result = await task
 
@@ -2425,10 +2424,8 @@ async def test_extension_confirm_dialog_yes_and_cancel() -> None:
 
         no_task = asyncio.ensure_future(bridge.confirm("Ship?", "to prod"))
         await pilot.pause()
-        no_screen = app.screen
-        assert isinstance(no_screen, ExtensionConfirmScreen)
-        no_screen.action_cursor_down()  # move highlight to "No"
-        await pilot.pause()
+        assert isinstance(app.screen, ExtensionConfirmScreen)
+        await pilot.press("down")  # arrow highlight to "No"
         await pilot.press("enter")
         assert await no_task is False
 
