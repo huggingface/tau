@@ -92,7 +92,7 @@ from tau_coding.tui.config import (
     TuiSettings,
     tui_settings_path,
 )
-from tau_coding.tui.state import ChatItem
+from tau_coding.tui.state import ChatItem, TuiState
 from tau_coding.tui.terminal_title import TerminalTitleController
 from tau_coding.tui.widgets import (
     LeftAlignedMarkdownHeading,
@@ -388,6 +388,8 @@ class FakeSession:
         text: str,
         *,
         streaming_behavior: str | None = None,
+        custom_type: str | None = None,
+        details: dict[str, object] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         self.prompt_texts.append(text)
         self.streaming_behaviors.append(streaming_behavior)
@@ -504,6 +506,94 @@ def test_compact_session_info_wraps_to_available_width() -> None:
     lines = console.export_text().splitlines()
     assert len(lines) > 1
     assert max(len(line) for line in lines) <= 36
+
+
+def test_render_chat_item_custom_uses_markup() -> None:
+    console = Console(record=True, width=60)
+    item = ChatItem(
+        role="custom",
+        text="<task-notification>raw</task-notification>",
+        custom_type="subagent-notification",
+    )
+
+    console.print(render_chat_item(item, custom_markup="[bold]research complete[/bold]"))
+    output = console.export_text()
+
+    assert "research complete" in output
+    assert "raw" not in output
+
+
+def test_render_chat_item_custom_falls_back_to_raw_without_markup() -> None:
+    console = Console(record=True, width=60)
+    item = ChatItem(
+        role="custom",
+        text="raw notification body",
+        custom_type="subagent-notification",
+    )
+
+    console.print(render_chat_item(item, custom_markup=None))
+    output = console.export_text()
+
+    assert "raw notification body" in output
+
+
+def test_render_chat_item_custom_survives_malformed_markup() -> None:
+    console = Console(record=True, width=60)
+    item = ChatItem(role="custom", text="raw", custom_type="c")
+
+    # Malformed Rich markup must not raise; it renders literally instead.
+    console.print(render_chat_item(item, custom_markup="[bold unterminated"))
+    output = console.export_text()
+
+    assert "unterminated" in output
+
+
+def test_state_add_user_message_with_custom_type_creates_custom_item() -> None:
+    state = TuiState()
+
+    state.add_user_message("raw body", custom_type="subagent-notification", details={"id": "x"})
+
+    assert len(state.items) == 1
+    item = state.items[0]
+    assert item.role == "custom"
+    assert item.custom_type == "subagent-notification"
+    assert item.details == {"id": "x"}
+    assert item.text == "raw body"
+
+
+def test_state_resolve_custom_markup_uses_installed_renderer() -> None:
+    state = TuiState()
+    state.custom_renderer = lambda ct, content, details, expanded: f"[{ct}]{content}"
+    state.add_user_message("hi", custom_type="c")
+
+    markup = state.resolve_custom_markup(state.items[0], expanded=False)
+
+    assert markup == "[c]hi"
+
+
+def test_state_resolve_custom_markup_none_without_renderer() -> None:
+    state = TuiState()
+    state.add_user_message("hi", custom_type="c")
+
+    assert state.resolve_custom_markup(state.items[0], expanded=False) is None
+
+
+def test_state_load_messages_projects_custom_type_on_resume() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            UserMessage(content="hello"),
+            UserMessage(
+                content="<task-notification/>",
+                custom_type="subagent-notification",
+                details={"id": "run-1"},
+            ),
+        ]
+    )
+
+    assert [item.role for item in state.items] == ["user", "custom"]
+    assert state.items[1].custom_type == "subagent-notification"
+    assert state.items[1].details == {"id": "run-1"}
 
 
 def test_chat_items_render_as_unlabeled_blocks() -> None:
@@ -5152,7 +5242,7 @@ async def test_tui_prompt_worker_shows_diagnostic_log_path_on_failure(tmp_path: 
             super().__init__()
             self.last_diagnostic_log_path = tmp_path / "tau-home" / "logs" / "agent-calls.jsonl"
 
-        async def prompt(self, text: str) -> AsyncIterator[AgentEvent]:
+        async def prompt(self, text: str, **kwargs: object) -> AsyncIterator[AgentEvent]:
             self.prompt_texts.append(text)
             raise EmptyMessageError()
             yield  # pragma: no cover
@@ -5172,7 +5262,7 @@ async def test_tui_prompt_worker_shows_diagnostic_log_path_on_failure(tmp_path: 
 @pytest.mark.anyio
 async def test_tui_prompt_worker_refreshes_context_after_message_changes() -> None:
     class ContextChangingSession(FakeSession):
-        async def prompt(self, text: str) -> AsyncIterator[AgentEvent]:
+        async def prompt(self, text: str, **kwargs: object) -> AsyncIterator[AgentEvent]:
             self.prompt_texts.append(text)
             self.context_token_estimate = 10
             yield AgentStartEvent()

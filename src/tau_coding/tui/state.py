@@ -10,6 +10,7 @@ from typing import Literal
 from tau_agent.messages import AgentMessage
 from tau_agent.tools import AgentToolResult, ToolCall
 from tau_agent.types import JSONValue
+from tau_coding.extensions.api import CustomMessageMarkup
 from tau_coding.skills import Skill, parse_skill_invocation
 
 ChatItemRole = Literal[
@@ -22,6 +23,7 @@ ChatItemRole = Literal[
     "skill",
     "branch_summary",
     "compaction_summary",
+    "custom",
 ]
 TOOL_RESULT_PREVIEW_LINES = 8
 TOOL_PATCH_PREVIEW_LINES = 32
@@ -38,6 +40,8 @@ class ChatItem:
     tool_call_id: str | None = None
     tool_result_text: str | None = None
     always_show_tool_result: bool = False
+    custom_type: str | None = None
+    details: dict[str, JSONValue] | None = None
 
 
 @dataclass(slots=True)
@@ -53,6 +57,7 @@ class TuiState:
     queued_steering: tuple[str, ...] = ()
     queued_follow_up: tuple[str, ...] = ()
     skills: tuple[Skill, ...] = ()
+    custom_renderer: CustomMessageMarkup | None = None
 
     def add_item(
         self,
@@ -62,6 +67,8 @@ class TuiState:
         tool_call_id: str | None = None,
         tool_result_text: str | None = None,
         always_show_tool_result: bool = False,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
     ) -> None:
         """Append a transcript item."""
         self.items.append(
@@ -71,8 +78,21 @@ class TuiState:
                 tool_call_id=tool_call_id,
                 tool_result_text=tool_result_text,
                 always_show_tool_result=always_show_tool_result,
+                custom_type=custom_type,
+                details=details,
             )
         )
+
+    def resolve_custom_markup(self, item: ChatItem, *, expanded: bool) -> str | None:
+        """Render a custom item's markup via the installed resolver, or ``None``.
+
+        Returns ``None`` when the item is not custom, no resolver is installed,
+        or the resolver declines/fails to render (the caller then falls back to
+        the raw ``item.text``).
+        """
+        if item.role != "custom" or item.custom_type is None or self.custom_renderer is None:
+            return None
+        return self.custom_renderer(item.custom_type, item.text, item.details, expanded)
 
     def add_tool_call(self, tool_call: ToolCall) -> None:
         """Append a collapsed tool-call item."""
@@ -90,8 +110,23 @@ class TuiState:
             tool_call_id=tool_call.id,
         )
 
-    def add_user_message(self, content: str) -> None:
-        """Append a user-authored message, compacting skill and summary messages."""
+    def add_user_message(
+        self,
+        content: str,
+        *,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None:
+        """Append a user-authored message, compacting skill and summary messages.
+
+        A message carrying ``custom_type`` is stored as a ``"custom"`` item so
+        the transcript can render it through a registered custom renderer; the
+        raw ``content`` is retained as the fallback and LLM-context text.
+        """
+        if custom_type is not None:
+            self.add_item("custom", content, custom_type=custom_type, details=details)
+            return
+
         branch_summary = _parse_branch_summary_message(content)
         if branch_summary is not None:
             self.add_item(
@@ -178,7 +213,11 @@ class TuiState:
         """Populate the transcript from restored session messages."""
         for message in messages:
             if message.role == "user":
-                self.add_user_message(message.content)
+                self.add_user_message(
+                    message.content,
+                    custom_type=message.custom_type,
+                    details=message.details,
+                )
             elif message.role == "assistant":
                 if message.content:
                     self.add_item("assistant", message.content)

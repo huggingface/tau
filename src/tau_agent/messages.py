@@ -49,12 +49,21 @@ class Usage(BaseModel):
 
 
 class UserMessage(BaseModel):
-    """A message authored by the user."""
+    """A message authored by the user.
+
+    ``custom_type``/``details`` are optional presentation metadata attached by
+    an extension via ``send_custom_message``. They are benign for the model
+    (which still reads ``content``) and let a frontend render the message with a
+    registered custom renderer instead of the raw content. Both default to
+    ``None`` so sessions persisted before these fields existed still load.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     role: Literal["user"] = "user"
     content: str
+    custom_type: str | None = None
+    details: dict[str, JSONValue] | None = None
 
 
 class AssistantMessage(BaseModel):

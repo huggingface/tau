@@ -52,6 +52,7 @@ from tau_agent import (
 )
 from tau_agent.messages import AgentMessage, UserMessage
 from tau_agent.tools import AgentTool
+from tau_agent.types import JSONValue
 from tau_ai import ProviderErrorEvent, ProviderEvent
 from tau_ai.provider import CancellationToken
 from tau_coding.catalog_loader import save_user_catalog_entries
@@ -2711,14 +2712,23 @@ class TauTuiApp(App[None]):
         self._notify(compact_message)
         self._refresh()
 
-    async def _submit_prompt(self, text: str) -> None:
+    async def _submit_prompt(
+        self,
+        text: str,
+        *,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None:
         """Add a prompt to the transcript and start the agent worker."""
         self._prompt_run_id += 1
         run_id = self._prompt_run_id
         if _should_optimistically_render_prompt(text):
             self._optimistic_user_messages.append((run_id, text))
             await self._append_optimistic_user_message(text)
-        self._prompt_worker = self.run_worker(self._run_prompt(text, run_id), exclusive=True)
+        self._prompt_worker = self.run_worker(
+            self._run_prompt(text, run_id, custom_type=custom_type, details=details),
+            exclusive=True,
+        )
 
     async def _append_optimistic_user_message(self, text: str) -> None:
         """Render a submitted user message immediately without rebuilding the transcript."""
@@ -2773,19 +2783,31 @@ class TauTuiApp(App[None]):
             return
         runtime.set_ui_bridge(_TuiExtensionUiBridge(self))
         runtime.set_turn_requested_callback(self._on_extension_turn_requested)
+        # Let the transcript render custom messages via registered renderers.
+        self.state.custom_renderer = runtime.render_custom_message
 
-    def _on_extension_turn_requested(self, content: str) -> None:
+    def _on_extension_turn_requested(
+        self,
+        content: str,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None:
         """Deliver an extension message through the serialized prompt path."""
-        self.call_later(self._deliver_extension_message, content)
+        self.call_later(self._deliver_extension_message, content, custom_type, details)
 
-    async def _deliver_extension_message(self, content: str) -> None:
+    async def _deliver_extension_message(
+        self,
+        content: str,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None:
         if self.session.is_running or self._prompt_worker is not None:
             # A run started while the delivery was in flight; drain with it.
             queue_follow_up = getattr(self.session, "queue_follow_up_message", None)
             if callable(queue_follow_up):
-                queue_follow_up(content)
+                queue_follow_up(content, custom_type=custom_type, details=details)
             return
-        await self._submit_prompt(content)
+        await self._submit_prompt(content, custom_type=custom_type, details=details)
 
     def _follow_transcript_output(self) -> None:
         """Put the transcript back in follow mode for explicit user actions."""
@@ -2861,11 +2883,20 @@ class TauTuiApp(App[None]):
             return
         self._refresh()
 
-    async def _run_prompt(self, text: str, run_id: int | None = None) -> None:
+    async def _run_prompt(
+        self,
+        text: str,
+        run_id: int | None = None,
+        *,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None:
         """Run one prompt and stream session events into the TUI state."""
         active_run_id = self._prompt_run_id if run_id is None else run_id
         try:
-            async for event in self.session.prompt(text):
+            async for event in self.session.prompt(
+                text, custom_type=custom_type, details=details
+            ):
                 if active_run_id != self._prompt_run_id:
                     return
                 if self._consume_optimistic_user_event(event, run_id=active_run_id):

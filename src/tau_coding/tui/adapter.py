@@ -57,7 +57,11 @@ class TuiEventAdapter:
 
         if isinstance(event, MessageEndEvent):
             if event.message.role == "user":
-                self.state.add_user_message(event.message.content)
+                self.state.add_user_message(
+                    event.message.content,
+                    custom_type=event.message.custom_type,
+                    details=event.message.details,
+                )
                 return
             if event.message.role == "tool":
                 return

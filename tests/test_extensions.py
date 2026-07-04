@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -13,9 +14,12 @@ from tau_agent.types import JSONValue
 from tau_ai import FakeProvider, ProviderResponseEndEvent, ProviderResponseStartEvent
 from tau_coding import CodingSession, CodingSessionConfig, TauResourcePaths
 from tau_coding.extensions import (
+    CustomMessageView,
+    ExtensionAPI,
     ExtensionError,
     ExtensionRuntime,
     InputHookResult,
+    MessageRenderOptions,
     ToolCallHookResult,
     ToolResultHookResult,
     discover_extensions,
@@ -104,12 +108,27 @@ class RecordingSession:
         self.steered: list[str] = []
         self.followed_up: list[str] = []
         self.custom_entries: list[tuple[str, dict[str, JSONValue]]] = []
+        self.queued_custom: list[tuple[str, str | None, dict[str, JSONValue] | None]] = []
 
-    def queue_steering_message(self, content: str) -> None:
+    def queue_steering_message(
+        self,
+        content: str,
+        *,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None:
         self.steered.append(content)
+        self.queued_custom.append((content, custom_type, details))
 
-    def queue_follow_up_message(self, content: str) -> None:
+    def queue_follow_up_message(
+        self,
+        content: str,
+        *,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None:
         self.followed_up.append(content)
+        self.queued_custom.append((content, custom_type, details))
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         self.custom_entries.append((namespace, data))
@@ -720,12 +739,20 @@ def test_send_user_message_idle_uses_turn_callback(tmp_path: Path) -> None:
     api = _register_inline_extension(runtime, "sender")
     session = RecordingSession(tmp_path, running=False)
     runtime.bind(session)
-    delivered: list[str] = []
-    runtime.set_turn_requested_callback(delivered.append)
+    delivered: list[tuple[str, str | None, dict[str, JSONValue] | None]] = []
+
+    def record_turn(
+        content: str,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None:
+        delivered.append((content, custom_type, details))
+
+    runtime.set_turn_requested_callback(record_turn)
 
     api.send_user_message("run now")
 
-    assert delivered == ["run now"]
+    assert delivered == [("run now", None, None)]
     assert session.followed_up == []
 
 
@@ -1148,6 +1175,39 @@ async def test_extension_tool_call_block_reaches_model(tmp_path: Path) -> None:
     assert "no shell today" in tool_results[0].content
 
 
+async def test_custom_message_metadata_survives_session_reload(tmp_path: Path) -> None:
+    provider = FakeProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="ack")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(_session_config(tmp_path, provider))
+
+    # A custom message that starts an idle session's turn persists its metadata.
+    [
+        event
+        async for event in session.prompt(
+            "<task-notification/>",
+            custom_type="subagent-notification",
+            details={"id": "run-1"},
+        )
+    ]
+    await session.aclose()
+
+    reopened = await CodingSession.load(_session_config(tmp_path, FakeProvider([])))
+    custom = [
+        message
+        for message in reopened.messages
+        if isinstance(message, UserMessage) and message.custom_type == "subagent-notification"
+    ]
+
+    assert len(custom) == 1
+    assert custom[0].details == {"id": "run-1"}
+
+
 async def test_append_entry_persists_on_active_path(tmp_path: Path) -> None:
     body = HELLO_TOOL_EXTENSION
     provider = FakeProvider([])
@@ -1210,6 +1270,145 @@ async def test_runtime_survives_new_session_swap(tmp_path: Path) -> None:
     assert session.extension_runtime is runtime_before
     assert ("stop", "new") in module.EVENTS
     assert ("start", "new") in module.EVENTS
+
+
+# -- custom message renderers -------------------------------------------------
+
+
+def _inline_api(runtime: ExtensionRuntime, name: str) -> ExtensionAPI:
+    return cast(ExtensionAPI, _register_inline_extension(runtime, name))
+
+
+def test_render_custom_message_uses_registered_renderer(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "notifier")
+    seen: list[tuple[CustomMessageView, MessageRenderOptions]] = []
+
+    def render(view: CustomMessageView, options: MessageRenderOptions) -> str:
+        seen.append((view, options))
+        return f"[bold]{view.details['label'] if view.details else view.content}[/bold]"
+
+    api.register_message_renderer("subagent-notification", render)
+
+    markup = runtime.render_custom_message(
+        "subagent-notification", "raw", {"label": "done"}, True
+    )
+
+    assert markup == "[bold]done[/bold]"
+    assert seen[0][0].custom_type == "subagent-notification"
+    assert seen[0][0].content == "raw"
+    assert seen[0][1].expanded is True
+
+
+def test_render_custom_message_returns_none_when_unregistered(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    _inline_api(runtime, "notifier")
+
+    assert runtime.render_custom_message("unknown", "raw", None, False) is None
+
+
+def test_register_message_renderer_first_registration_wins(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    first = _inline_api(runtime, "first")
+    second = _inline_api(runtime, "second")
+    first.register_message_renderer("shared", lambda view, options: "first")
+    second.register_message_renderer("shared", lambda view, options: "second")
+
+    assert runtime.render_custom_message("shared", "x", None, False) == "first"
+
+
+def test_render_custom_message_swallows_renderer_errors(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "boom")
+
+    def render(view: CustomMessageView, options: MessageRenderOptions) -> str:
+        raise RuntimeError("renderer exploded")
+
+    api.register_message_renderer("boom", render)
+
+    assert runtime.render_custom_message("boom", "raw content", None, False) is None
+    assert any("message_renderer:boom" in d.message for d in runtime.diagnostics)
+
+
+def test_render_custom_message_rejects_non_string_result(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "wrong")
+    # A renderer that returns a non-string (e.g. a widget) must not reach the UI.
+    api.register_message_renderer(
+        "wrong",
+        cast("object", lambda view, options: 123),  # type: ignore[arg-type]
+    )
+
+    assert runtime.render_custom_message("wrong", "raw", None, False) is None
+
+
+def test_message_renderers_cleared_on_reload(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "notifier")
+    api.register_message_renderer("t", lambda view, options: "rendered")
+    assert runtime.render_custom_message("t", "x", None, False) == "rendered"
+
+    runtime.reset_for_reload()
+
+    assert runtime.render_custom_message("t", "x", None, False) is None
+
+
+def test_send_custom_message_queues_metadata_while_running(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "notifier")
+    session = RecordingSession(tmp_path, running=True)
+    runtime.bind(session)
+
+    api.send_custom_message(
+        "<task-notification/>",
+        custom_type="subagent-notification",
+        details={"id": "run-1"},
+    )
+
+    assert session.queued_custom == [
+        ("<task-notification/>", "subagent-notification", {"id": "run-1"})
+    ]
+
+
+def test_send_custom_message_idle_delivers_metadata_via_turn_callback(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "notifier")
+    session = RecordingSession(tmp_path, running=False)
+    runtime.bind(session)
+    delivered: list[tuple[str, str | None, dict[str, JSONValue] | None]] = []
+
+    def record_turn(
+        content: str,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None:
+        delivered.append((content, custom_type, details))
+
+    runtime.set_turn_requested_callback(record_turn)
+
+    api.send_custom_message("body", custom_type="c", details={"n": 1})
+
+    assert delivered == [("body", "c", {"n": 1})]
+
+
+def test_send_custom_message_without_trigger_turn_queues(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "notifier")
+    session = RecordingSession(tmp_path, running=False)
+    runtime.bind(session)
+
+    def record_turn(
+        content: str,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None:
+        raise AssertionError("turn callback should not fire when trigger_turn=False")
+
+    runtime.set_turn_requested_callback(record_turn)
+
+    api.send_custom_message("body", custom_type="c", trigger_turn=False)
+
+    assert session.queued_custom == [("body", "c", None)]
 
 
 def _loaded_extension_module(name: str) -> object:

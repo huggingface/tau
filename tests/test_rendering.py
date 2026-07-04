@@ -16,6 +16,7 @@ from tau_agent import (
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
+    UserMessage,
 )
 from tau_coding.rendering import FinalTextRenderer, JsonEventRenderer, TranscriptRenderer
 
@@ -59,6 +60,57 @@ def test_transcript_renderer_streams_text_and_tool_events(
     assert "… reading" in captured.err
     assert "✓ read" in captured.err
     assert "done" in captured.err
+
+
+def test_transcript_renderer_renders_custom_message_via_renderer(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def render(custom_type: str, content: str, details: object, expanded: bool) -> str | None:
+        assert custom_type == "subagent-notification"
+        assert expanded is False
+        return "[bold]✓ research done[/bold]"
+
+    renderer = TranscriptRenderer(custom_message_renderer=render)
+    renderer.render(
+        MessageEndEvent(
+            message=UserMessage(
+                content="<task-notification>raw xml</task-notification>",
+                custom_type="subagent-notification",
+                details={"id": "run-1"},
+            )
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert "✓ research done" in captured.err
+    assert "raw xml" not in captured.err
+
+
+def test_transcript_renderer_falls_back_to_raw_for_unregistered_custom_type(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def render(custom_type: str, content: str, details: object, expanded: bool) -> str | None:
+        return None
+
+    renderer = TranscriptRenderer(custom_message_renderer=render)
+    renderer.render(
+        MessageEndEvent(
+            message=UserMessage(content="raw notification body", custom_type="unknown-type")
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert "raw notification body" in captured.err
+
+
+def test_transcript_renderer_ignores_plain_user_messages(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    renderer = TranscriptRenderer()
+    renderer.render(MessageEndEvent(message=UserMessage(content="a plain user message")))
+
+    captured = capsys.readouterr()
+    assert "a plain user message" not in captured.err
 
 
 def test_transcript_renderer_fails_on_non_recoverable_error(

@@ -50,6 +50,39 @@ DeliverAs = Literal["steer", "follow_up"]
 NotifyLevel = Literal["info", "warning", "error"]
 
 
+@dataclass(frozen=True, slots=True)
+class CustomMessageView:
+    """Read-only view of a custom message handed to a message renderer.
+
+    Ports Pi's ``CustomMessage``: ``custom_type`` selects the renderer,
+    ``content`` is the LLM-context text, and ``details`` carries arbitrary
+    structured data the renderer formats.
+    """
+
+    custom_type: str
+    content: str
+    details: Mapping[str, JSONValue] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MessageRenderOptions:
+    """Options passed to a message renderer (ports Pi's ``MessageRenderOptions``)."""
+
+    expanded: bool = False
+
+
+# A message renderer returns a Rich-markup (or plain) string, NOT a Textual
+# widget, so extensions never import the TUI toolkit (deviation from Pi's
+# ``Component`` return; see the phase-21 custom-renderer Ruling).
+MessageRenderer = Callable[[CustomMessageView, MessageRenderOptions], str]
+
+# Host-side resolver installed into render paths: given a custom message's
+# fields and whether it is expanded, return rendered markup or ``None`` to fall
+# back to the raw content. Errors are swallowed by the resolver, never raised
+# into the frontend.
+CustomMessageMarkup = Callable[[str, str, "Mapping[str, JSONValue] | None", bool], "str | None"]
+
+
 class ExtensionError(RuntimeError):
     """Raised when an extension misuses the API (e.g. actions before binding)."""
 
@@ -453,6 +486,45 @@ class ExtensionAPI:
     ) -> None:
         """Queue a user message for the active or next agent run."""
         self._runtime.send_user_message(content, deliver_as=deliver_as)
+
+    def register_message_renderer(
+        self,
+        custom_type: str,
+        renderer: MessageRenderer,
+    ) -> None:
+        """Register a renderer for custom messages with this ``custom_type``.
+
+        Ports Pi's ``registerMessageRenderer``: the first registration per
+        ``custom_type`` wins. The renderer receives a :class:`CustomMessageView`
+        and :class:`MessageRenderOptions` and returns a Rich-markup string; it
+        must not return a Textual widget (that keeps extensions TUI-free).
+        """
+        self._runtime.register_message_renderer(self._extension_name, custom_type, renderer)
+
+    def send_custom_message(
+        self,
+        content: str,
+        *,
+        custom_type: str,
+        details: dict[str, JSONValue] | None = None,
+        deliver_as: DeliverAs = "follow_up",
+        trigger_turn: bool = True,
+    ) -> None:
+        """Send a custom message that renders via a registered renderer.
+
+        Ports Pi's ``sendMessage``: ``content`` still enters LLM context, while
+        ``custom_type``/``details`` let a registered renderer format the
+        transcript block. With ``trigger_turn`` (the default) the message starts
+        a turn when the session is idle, mirroring ``send_user_message``; set it
+        to ``False`` to only queue for the next run.
+        """
+        self._runtime.send_custom_message(
+            content,
+            custom_type=custom_type,
+            details=details,
+            deliver_as=deliver_as,
+            trigger_turn=trigger_turn,
+        )
 
     async def append_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         """Persist extension-owned data to the session as a custom entry."""

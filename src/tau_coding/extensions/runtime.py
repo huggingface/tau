@@ -28,6 +28,7 @@ from tau_coding.extensions.api import (
     AGENT_EVENT_TYPES,
     AGENT_EVENT_WILDCARD,
     LIFECYCLE_EVENT_TYPES,
+    CustomMessageView,
     ExtensionAPI,
     ExtensionCommandContext,
     ExtensionCommandHandler,
@@ -35,6 +36,8 @@ from tau_coding.extensions.api import (
     ExtensionHandler,
     InputEvent,
     InputHookResult,
+    MessageRenderer,
+    MessageRenderOptions,
     NullUiBridge,
     RegisteredExtension,
     SessionLifecycleReason,
@@ -52,6 +55,12 @@ from tau_coding.extensions.loader import (
     unload_extension_modules,
 )
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
+
+# Host callback that delivers a message through the frontend's serialized run
+# path when the session is idle. Carries the same presentation metadata as a
+# queued message so custom messages render correctly whether they trigger a new
+# turn or are injected into a running one.
+TurnRequestedCallback = Callable[[str, "str | None", "dict[str, JSONValue] | None"], None]
 
 
 class BoundSession(Protocol):
@@ -78,9 +87,21 @@ class BoundSession(Protocol):
     @property
     def messages(self) -> tuple[AgentMessage, ...]: ...
 
-    def queue_steering_message(self, content: str) -> None: ...
+    def queue_steering_message(
+        self,
+        content: str,
+        *,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None: ...
 
-    def queue_follow_up_message(self, content: str) -> None: ...
+    def queue_follow_up_message(
+        self,
+        content: str,
+        *,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None: ...
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None: ...
 
@@ -127,11 +148,12 @@ class ExtensionRuntime:
         self._tools: dict[str, RegisteredExtensionTool] = {}
         self._commands: dict[str, ExtensionCommand] = {}
         self._prompt_guidelines: list[tuple[str, str]] = []
+        self._message_renderers: dict[str, tuple[str, MessageRenderer]] = {}
         self._load_diagnostics: list[ResourceDiagnostic] = []
         self._runtime_diagnostics: list[ResourceDiagnostic] = []
         self._session: BoundSession | None = None
         self._ui: UiBridge = ui or NullUiBridge()
-        self._turn_requested: Callable[[str], None] | None = None
+        self._turn_requested: TurnRequestedCallback | None = None
         self._harness_unsubscribe: Callable[[], None] | None = None
 
     # -- loading -----------------------------------------------------------
@@ -164,6 +186,7 @@ class ExtensionRuntime:
         self._tools.clear()
         self._commands.clear()
         self._prompt_guidelines.clear()
+        self._message_renderers.clear()
         self._load_diagnostics.clear()
         self._runtime_diagnostics.clear()
         unload_extension_modules()
@@ -203,6 +226,11 @@ class ExtensionRuntime:
             for extension, guideline in self._prompt_guidelines
             if extension != extension_name
         ]
+        self._message_renderers = {
+            custom_type: registration
+            for custom_type, registration in self._message_renderers.items()
+            if registration[0] != extension_name
+        }
 
     # -- registration (called through ExtensionAPI) -------------------------
 
@@ -256,6 +284,67 @@ class ExtensionRuntime:
             aliases=aliases,
             handler=handler,
         )
+
+    def register_message_renderer(
+        self,
+        extension_name: str,
+        custom_type: str,
+        renderer: MessageRenderer,
+    ) -> None:
+        """Register a custom-message renderer; first registration per type wins."""
+        normalized = custom_type.strip()
+        if not normalized:
+            self._load_diagnostics.append(
+                ResourceDiagnostic(
+                    kind="extension",
+                    name=extension_name,
+                    message="empty custom_type for message renderer ignored",
+                )
+            )
+            return
+        existing = self._message_renderers.get(normalized)
+        if existing is not None:
+            self._load_diagnostics.append(
+                ResourceDiagnostic(
+                    kind="extension",
+                    name=extension_name,
+                    message=(
+                        f"message renderer for `{normalized}` already registered by"
+                        f" extension `{existing[0]}`; ignoring duplicate"
+                    ),
+                )
+            )
+            return
+        self._message_renderers[normalized] = (extension_name, renderer)
+
+    def render_custom_message(
+        self,
+        custom_type: str,
+        content: str,
+        details: Mapping[str, JSONValue] | None,
+        expanded: bool,
+    ) -> str | None:
+        """Render a custom message to markup, or ``None`` to fall back to raw text.
+
+        Installed into every render path (TUI state, print transcript). A missing
+        renderer or a renderer that raises or returns a non-string yields
+        ``None`` so the frontend renders the raw ``content`` instead of crashing.
+        """
+        registration = self._message_renderers.get(custom_type)
+        if registration is None:
+            return None
+        extension_name, renderer = registration
+        view = CustomMessageView(custom_type=custom_type, content=content, details=details)
+        options = MessageRenderOptions(expanded=expanded)
+        try:
+            markup = renderer(view, options)
+        except Exception as exc:  # noqa: BLE001 - a renderer must never crash the frontend
+            self._record_runtime_failure(extension_name, f"message_renderer:{custom_type}", exc)
+            return None
+        if not isinstance(markup, str):
+            self._record_bad_result(extension_name, f"message_renderer:{custom_type}", markup)
+            return None
+        return markup
 
     def register_prompt_guideline(self, extension_name: str, guideline: str) -> None:
         """Register a standalone system-prompt guideline line."""
@@ -311,12 +400,13 @@ class ExtensionRuntime:
         """Install the frontend UI bridge (TUI, print-mode fallback, or test)."""
         self._ui = ui
 
-    def set_turn_requested_callback(self, callback: Callable[[str], None] | None) -> None:
+    def set_turn_requested_callback(self, callback: TurnRequestedCallback | None) -> None:
         """Install the host callback used to deliver messages while idle.
 
-        The callback receives the message content and is expected to submit it
-        through the host's serialized run path (the TUI uses the same exclusive
-        worker as user submissions, so extension turns cannot race user runs).
+        The callback receives the message content plus optional custom-message
+        metadata and is expected to submit it through the host's serialized run
+        path (the TUI uses the same exclusive worker as user submissions, so
+        extension turns cannot race user runs).
         """
         self._turn_requested = callback
 
@@ -359,19 +449,48 @@ class ExtensionRuntime:
 
     def send_user_message(self, content: str, *, deliver_as: str = "follow_up") -> None:
         """Deliver a user message into the active run, or start one when idle."""
+        self._deliver_message(content, deliver_as=deliver_as, trigger_turn=True)
+
+    def send_custom_message(
+        self,
+        content: str,
+        *,
+        custom_type: str,
+        details: dict[str, JSONValue] | None = None,
+        deliver_as: str = "follow_up",
+        trigger_turn: bool = True,
+    ) -> None:
+        """Deliver a custom message carrying render metadata through the pipeline."""
+        self._deliver_message(
+            content,
+            deliver_as=deliver_as,
+            trigger_turn=trigger_turn,
+            custom_type=custom_type,
+            details=details,
+        )
+
+    def _deliver_message(
+        self,
+        content: str,
+        *,
+        deliver_as: str,
+        trigger_turn: bool,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None:
         session = self.session_view
         if session.is_running:
             if deliver_as == "steer":
-                session.queue_steering_message(content)
+                session.queue_steering_message(content, custom_type=custom_type, details=details)
             else:
-                session.queue_follow_up_message(content)
+                session.queue_follow_up_message(content, custom_type=custom_type, details=details)
             return
-        if self._turn_requested is not None:
-            self._turn_requested(content)
+        if trigger_turn and self._turn_requested is not None:
+            self._turn_requested(content, custom_type, details)
             return
-        # No host run-path registered (print mode, tests): queue for whichever
-        # run happens next.
-        session.queue_follow_up_message(content)
+        # No host run-path registered (print mode, tests) or trigger_turn=False:
+        # queue for whichever run happens next.
+        session.queue_follow_up_message(content, custom_type=custom_type, details=details)
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         """Persist a `CustomEntry` through the bound session."""

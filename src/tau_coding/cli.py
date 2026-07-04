@@ -605,7 +605,10 @@ async def run_print_mode(
         )
     )
     session.extension_runtime.set_ui_bridge(StderrUiBridge())
-    renderer = create_event_renderer(output)
+    renderer = create_event_renderer(
+        output,
+        custom_message_renderer=session.extension_runtime.render_custom_message,
+    )
     try:
         terminal_command = parse_terminal_command(prompt)
         if terminal_command is not None:

@@ -32,11 +32,19 @@ are called out inline as **Ruling:** notes.
 ## Non-goals (this phase)
 
 - npm-style package management (`pi install`), provider registration,
-  custom TUI components/widgets/renderers, shortcut and flag registration,
-  system-prompt replacement, `context`/`before_provider_request` rewriting,
-  and a project trust store.
+  custom TUI components/widgets (extension-authored Textual widgets),
+  custom **entry** renderers (`registerEntryRenderer`/`appendEntry`-rendered,
+  non-LLM-context cards), shortcut and flag registration, system-prompt
+  replacement, `context`/`before_provider_request` rewriting, and a project
+  trust store.
   These have reserved names and documented extension points but no
   implementation yet.
+
+  **Implemented since:** custom **message** renderers
+  (`register_message_renderer` + `send_custom_message`) — the subset of Pi's
+  renderer surface that formats messages which *do* participate in LLM context.
+  See "Custom message rendering" below. Extension-authored widgets and custom
+  entry renderers remain out of scope.
 
 When any of these lands, design it from Pi's implementation first
 (`packages/coding-agent/src/core/extensions/` and `docs/extensions.md` in
@@ -327,6 +335,75 @@ loop. Converting the command path to async (the faithful Pi port) is the clean
 long-term option but is deferred — it ripples through `CommandRegistry.execute`
 → `handle_command` → the TUI submit handler.
 
+## Custom message rendering
+
+Extensions can format their injected messages instead of leaving them as raw
+text. The tau-subagents extension uses this so a background agent's
+`<task-notification>` renders as a compact status block rather than raw XML.
+
+API (ports Pi's `registerMessageRenderer` + `sendMessage`):
+
+```python
+def setup(tau):
+    tau.register_message_renderer("subagent-notification", render_notification)
+
+# later, from a tool executor / event handler:
+tau.send_custom_message(
+    "<task-notification>...</task-notification>",
+    custom_type="subagent-notification",
+    details={"id": run_id, "status": "completed", ...},
+)
+```
+
+A renderer is `Callable[[CustomMessageView, MessageRenderOptions], str]`:
+`CustomMessageView(custom_type, content, details)` plus
+`MessageRenderOptions(expanded)`. It returns a **Rich-markup string**
+(e.g. `"[bold]✓ done[/bold]"`).
+
+Data flow: `send_custom_message` → the message rides the normal user-message
+pipeline as a `UserMessage` carrying `custom_type`/`details` metadata (it still
+enters LLM context via `content`) → `MessageEndEvent(message=...)` → the TUI
+adapter projects it to a `ChatItem(role="custom")` → the render path calls
+`runtime.render_custom_message(...)`, which looks up the registered renderer,
+builds the view/options, and returns markup (or `None` to fall back to raw
+`content`). The resolver is installed into every render path: the live TUI
+(`state.custom_renderer`, consumed by `TranscriptView._redraw` /
+`TranscriptMessageWidget` / `render_chat_item`), session **resume**
+(`TuiState.load_messages` projects `custom_type` off replayed `UserMessage`s),
+and the **print-mode** transcript (`TranscriptRenderer`, wired in `cli.py`).
+
+**Ruling:** custom-message renderers return **markup strings, not Textual
+widgets** (deviation from Pi's `Component` return). This keeps extensions
+free of any TUI-toolkit import — an extension only ever produces a string,
+and the host decides how to display it (Rich markup in the TUI, Rich `Text`
+in print mode). Malformed markup never crashes the frontend: `Text.from_markup`
+is called under a guard that falls back to literal text.
+
+**Ruling:** `custom_type`/`details` ride on **`UserMessage` metadata** rather
+than a separate `custom` message role (deviation from Pi's `CustomMessageEntry`
+/ `role:"custom"`). Pi needs a distinct role because its messages are
+content-block arrays converted to a user message for the LLM anyway
+(`convertToLlm`); Tau's transcript is plain-string, so metadata on `UserMessage`
+achieves identical LLM-context semantics with a far smaller wire/replay
+footprint — no new entry in the `AgentMessage` union, no discriminator or
+persistence-format change. Both fields default to `None`, so sessions persisted
+before this change still load under the models' `extra="forbid"` config, and
+sessions written with the fields round-trip through `MessageEntry` and render
+correctly after resume.
+
+**Ruling:** the resolver **never raises** into a render path. A missing
+renderer, a renderer that throws, or one that returns a non-string all yield
+`None` (recorded as a runtime diagnostic for the last two), and the frontend
+renders the raw `content`. First-registration-per-`custom_type` wins, matching
+Tau's other extension registries; the registry is cleared on `/reload`.
+
+**Ruling:** Pi's `sendMessage` `display` (hide from TUI while keeping in
+context) and `triggerTurn` are **partly** ported: `trigger_turn` is honored
+(`False` queues without starting an idle turn); `display=false` is **not**
+implemented — custom messages are always shown (the tau-subagents extension only
+ever sends `display:true`). Pi's parallel `registerEntryRenderer`/`appendEntry`
+(non-LLM-context cards) stays out of scope.
+
 ## Hook wiring (how interception works without touching tau_agent)
 
 - **Observation** — the runtime subscribes one listener via
@@ -346,17 +423,23 @@ long-term option but is deferred — it ripples through `CommandRegistry.execute
   consumes the input: the prompt generator returns without yielding run
   events, and the optional `message` is delivered through the UI bridge
   notification channel.
-- **`send_user_message`** — maps to `harness.steer` / `harness.follow_up`
-  when a run is active. When idle, the runtime invokes a
-  `turn_requested(content)` callback carrying the message text (queuing a
+- **`send_user_message` / `send_custom_message`** — both funnel through one
+  `_deliver_message` path. When a run is active, they map to
+  `queue_steering_message` / `queue_follow_up_message` (which build a
+  `UserMessage` carrying any `custom_type`/`details`). When idle, the runtime
+  invokes a `turn_requested(content, custom_type, details)` callback (queuing a
   follow-up and calling `continue_()` would hit the provider with a stale
   transcript first, because the loop drains queues only after a turn). The
-  TUI implements the callback by submitting the content through its
-  existing exclusive prompt worker — the same serialization used for user
-  submissions, so an extension turn can never race a user-initiated run; if
-  a run starts while delivery is in flight, the text is queued as a
-  follow-up instead. Print mode and tests may leave the callback unset;
-  messages then queue as follow-ups for the next run.
+  TUI implements the callback by submitting through its existing exclusive
+  prompt worker — the same serialization used for user submissions, so an
+  extension turn can never race a user-initiated run; if a run starts while
+  delivery is in flight, the message is queued as a follow-up instead. The
+  custom metadata threads all the way to `CodingSession.prompt` →
+  `harness.prompt`, so a custom message that starts an idle turn still renders
+  and persists with its `custom_type`. Print mode and tests may leave the
+  callback unset; messages then queue as follow-ups for the next run.
+  `send_custom_message`'s `trigger_turn=False` forces the follow-up-queue path
+  even when idle.
 - **`append_entry`** — async; persists a `CustomEntry(namespace=..., data=...)`
   through the session's append path with proper parent linkage so the entry
   sits on the active root-to-leaf path (off-path custom entries are

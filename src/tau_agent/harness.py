@@ -13,6 +13,7 @@ from tau_agent.events import AgentEvent, MessageEndEvent, MessageStartEvent, Que
 from tau_agent.loop import run_agent_loop
 from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
 from tau_agent.tools import AgentTool
+from tau_agent.types import JSONValue
 from tau_ai.provider import ModelProvider
 
 EventListener = Callable[[AgentEvent], Awaitable[None] | None]
@@ -180,12 +181,23 @@ class AgentHarness:
             follow_up=tuple(message.content for message in self._follow_up_queue),
         )
 
-    def prompt(self, content: str) -> AsyncIterator[AgentEvent]:
-        """Append a user message and run the agent loop."""
+    def prompt(
+        self,
+        content: str,
+        *,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> AsyncIterator[AgentEvent]:
+        """Append a user message and run the agent loop.
+
+        ``custom_type``/``details`` ride along as presentation metadata on the
+        appended ``UserMessage`` (see ``send_custom_message``); they do not
+        change how the model reads ``content``.
+        """
         self._ensure_not_running()
         self._append_interrupted_tool_results()
         self._running = True
-        message = UserMessage(content=content)
+        message = UserMessage(content=content, custom_type=custom_type, details=details)
         self._messages.append(message)
         return self._run(prompt_message=message)
 

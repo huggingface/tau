@@ -74,8 +74,12 @@ def setup(tau):
     tau.add_prompt_guideline("Never commit directly to main")
     tau.on("event_name", handler)            # or @tau.on("event_name")
 
+    # message rendering (register in setup; send once running)
+    tau.register_message_renderer("my-ext:status", render_status)
+
     # actions — valid once the session is running, not during setup
     tau.send_user_message("text", deliver_as="follow_up")  # or "steer"
+    tau.send_custom_message("text", custom_type="my-ext:status", details={...})
     await tau.append_entry("my-ext:records", {"key": "value"})
     tau.notify("message", "info")            # "info" | "warning" | "error"
 
@@ -204,6 +208,48 @@ starts a new turn with it — this is how background work reports back.
 `append_entry(namespace, data)` persists extension-owned data as a durable
 session entry replayed on resume.
 
+### Custom message rendering
+
+To format an injected message instead of showing it as raw text, register a
+renderer in `setup` and send with `send_custom_message`:
+
+```python
+from tau_coding.extensions import CustomMessageView, MessageRenderOptions
+
+def render_status(view: CustomMessageView, options: MessageRenderOptions) -> str:
+    icon = "[green]✓[/green]" if view.details and view.details.get("ok") else "[red]✗[/red]"
+    line = f"{icon} [bold]{view.content}[/bold]"
+    if options.expanded and view.details:
+        line += f"\n[dim]{view.details}[/dim]"
+    return line  # a Rich-markup string, never a widget
+
+def setup(tau):
+    tau.register_message_renderer("my-ext:status", render_status)
+
+# once the session is running:
+tau.send_custom_message(
+    "build finished",
+    custom_type="my-ext:status",
+    details={"ok": True, "duration_ms": 1200},
+)
+```
+
+- The renderer receives a `CustomMessageView(custom_type, content, details)`
+  and `MessageRenderOptions(expanded)`, and returns a **Rich-markup string**
+  (e.g. `"[bold]text[/bold]"`). Returning a Textual widget is not supported —
+  this keeps extensions free of any TUI toolkit.
+- `send_custom_message(content, *, custom_type, details=None,
+  deliver_as="follow_up", trigger_turn=True)` behaves like
+  `send_user_message` (the `content` still enters the model's context), but the
+  transcript renders it through the matching renderer. `trigger_turn=False`
+  only queues it for the next run instead of starting one when idle.
+- First registration per `custom_type` wins. If no renderer is registered, or a
+  renderer raises or returns a non-string, the message falls back to its raw
+  `content` — a broken renderer never crashes the UI.
+- Custom rendering works in the interactive TUI and the `-p` print transcript,
+  and survives `/resume` (the `custom_type`/`details` are persisted with the
+  message).
+
 ## Example extensions
 
 See [`examples/extensions/`](../examples/extensions):
@@ -229,8 +275,10 @@ tau -x ./tau-subagents
 
 Compared to Pi's extension system, v1 does not yet include: package
 management (`pi install`-style), custom providers, extension-authored TUI
-widgets/renderers (the host-provided `context.ui` dialogs *are* supported),
-keyboard shortcuts, CLI flag registration, system-prompt replacement, context
-rewriting, partial tool-result streaming, or a project trust store. The
+widgets (custom *message* rendering via `register_message_renderer` *is*
+supported; the host-provided `context.ui` dialogs *are* supported), custom
+entry renderers (non-context cards), keyboard shortcuts, CLI flag
+registration, system-prompt replacement, context rewriting, or a project trust
+store. The
 architecture document
 (`dev-notes/architecture/phase-21-extensions.md`) tracks these.
