@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
-from contextlib import suppress
 from dataclasses import dataclass
 from inspect import isawaitable
 from pathlib import Path
@@ -48,9 +47,6 @@ from tau_coding.extensions.api import (
     ToolCallHookResult,
     ToolResultHookEvent,
     ToolResultHookResult,
-    TranscriptSource,
-    TranscriptSourceProvider,
-    TranscriptSourcesChangedCallback,
     UiBridge,
 )
 from tau_coding.extensions.loader import (
@@ -159,8 +155,6 @@ class ExtensionRuntime:
         self._session: BoundSession | None = None
         self._ui: UiBridge = ui or NullUiBridge()
         self._turn_requested: TurnRequestedCallback | None = None
-        self._transcript_source_providers: dict[str, TranscriptSourceProvider] = {}
-        self._transcript_sources_changed: TranscriptSourcesChangedCallback | None = None
         self._harness_unsubscribe: Callable[[], None] | None = None
 
     # -- loading -----------------------------------------------------------
@@ -194,7 +188,6 @@ class ExtensionRuntime:
         self._commands.clear()
         self._prompt_guidelines.clear()
         self._message_renderers.clear()
-        self._transcript_source_providers.clear()
         self._renderer_failures_reported.clear()
         self._load_diagnostics.clear()
         self._runtime_diagnostics.clear()
@@ -240,7 +233,6 @@ class ExtensionRuntime:
             for custom_type, registration in self._message_renderers.items()
             if registration[0] != extension_name
         }
-        self._transcript_source_providers.pop(extension_name, None)
 
     # -- registration (called through ExtensionAPI) -------------------------
 
@@ -459,51 +451,6 @@ class ExtensionRuntime:
         extension turns cannot race user runs).
         """
         self._turn_requested = callback
-
-    def set_transcript_source_provider(
-        self,
-        extension_name: str,
-        provider: TranscriptSourceProvider,
-    ) -> None:
-        """Store an extension's transcript-source provider (one per extension)."""
-        self._transcript_source_providers[extension_name] = provider
-
-    def set_transcript_sources_changed_callback(
-        self,
-        callback: TranscriptSourcesChangedCallback | None,
-    ) -> None:
-        """Install the host callback fired when transcript sources change."""
-        self._transcript_sources_changed = callback
-
-    def notify_transcript_sources_changed(self) -> None:
-        """Relay an extension's sources-changed signal to the host, if any."""
-        callback = self._transcript_sources_changed
-        if callback is None:
-            return
-        # A host refresh hiccup must never surface into extensions.
-        with suppress(Exception):
-            callback()
-
-    def transcript_sources(self) -> tuple[TranscriptSource, ...]:
-        """Aggregate all extensions' transcript sources, provider order.
-
-        A provider that raises or returns bad data is skipped and diagnosed
-        once per extension (the host calls this on every strip refresh).
-        """
-        sources: list[TranscriptSource] = []
-        for extension_name, provider in self._transcript_source_providers.items():
-            try:
-                provided = tuple(provider())
-            except Exception as exc:  # noqa: BLE001 - a provider must never crash the frontend
-                key = f"transcript_sources:{extension_name}"
-                if key not in self._renderer_failures_reported:
-                    self._renderer_failures_reported.add(key)
-                    self._record_runtime_failure(extension_name, "transcript_sources", exc)
-                continue
-            sources.extend(
-                source for source in provided if isinstance(source, TranscriptSource)
-            )
-        return tuple(sources)
 
     @property
     def ui(self) -> UiBridge:

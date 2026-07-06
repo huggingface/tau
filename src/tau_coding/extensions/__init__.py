@@ -31,10 +31,6 @@ from tau_coding.extensions.api import (
     ToolCallHookResult,
     ToolResultHookEvent,
     ToolResultHookResult,
-    TranscriptSource,
-    TranscriptSourceProvider,
-    TranscriptSourcesChangedCallback,
-    TranscriptSourceStatus,
     UiBridge,
 )
 from tau_coding.extensions.loader import (
@@ -88,10 +84,6 @@ __all__ = [
     "ToolCallHookResult",
     "ToolResultHookEvent",
     "ToolResultHookResult",
-    "TranscriptSource",
-    "TranscriptSourceProvider",
-    "TranscriptSourceStatus",
-    "TranscriptSourcesChangedCallback",
     "UiBridge",
     "discover_extensions",
     "extension_dirs",

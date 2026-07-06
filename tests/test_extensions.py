@@ -22,7 +22,6 @@ from tau_coding.extensions import (
     MessageRenderOptions,
     ToolCallHookResult,
     ToolResultHookResult,
-    TranscriptSource,
     discover_extensions,
     load_extensions,
 )
@@ -1747,65 +1746,6 @@ def test_render_tool_call_rejects_non_string_result(tmp_path: Path) -> None:
 
     assert runtime.render_tool_call("agent", {}) is None
     assert any("render_call:agent" in d.message for d in runtime.diagnostics)
-
-
-# -- transcript sources ---------------------------------------------------------
-
-
-def _transcript_source(source_id: str = "agent-1", status: str = "running") -> TranscriptSource:
-    return TranscriptSource(
-        id=source_id,
-        label="explore",
-        detail="Codebase survey",
-        status=status,  # type: ignore[arg-type]
-        messages=lambda: (UserMessage(content="child prompt"),),
-        revision=1,
-    )
-
-
-def test_transcript_sources_aggregates_providers(tmp_path: Path) -> None:
-    runtime = ExtensionRuntime()
-    api = _inline_api(runtime, "subagents")
-    source = _transcript_source()
-    api.set_transcript_source_provider(lambda: (source,))
-
-    assert runtime.transcript_sources() == (source,)
-
-
-def test_transcript_sources_skips_broken_provider(tmp_path: Path) -> None:
-    runtime = ExtensionRuntime()
-    healthy = _inline_api(runtime, "healthy")
-    broken = _inline_api(runtime, "broken")
-    source = _transcript_source()
-    healthy.set_transcript_source_provider(lambda: (source,))
-
-    def explode() -> tuple[TranscriptSource, ...]:
-        raise RuntimeError("provider exploded")
-
-    broken.set_transcript_source_provider(explode)
-
-    for _ in range(3):
-        assert runtime.transcript_sources() == (source,)
-
-    failures = [d for d in runtime.diagnostics if "transcript_sources" in d.message]
-    assert len(failures) == 1
-
-
-def test_transcript_sources_changed_callback_roundtrip(tmp_path: Path) -> None:
-    runtime = ExtensionRuntime()
-    api = _inline_api(runtime, "subagents")
-    fired: list[int] = []
-    runtime.set_transcript_sources_changed_callback(lambda: fired.append(1))
-
-    api.notify_transcript_sources_changed()
-    assert fired == [1]
-
-    # A raising host callback must never surface into the extension.
-    def explode() -> None:
-        raise RuntimeError("host refresh exploded")
-
-    runtime.set_transcript_sources_changed_callback(explode)
-    api.notify_transcript_sources_changed()
 
 
 def test_render_custom_message_rejects_non_string_result(tmp_path: Path) -> None:

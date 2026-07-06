@@ -5,8 +5,8 @@ reusing the fakes/helpers that already back the broader TUI suite in
 ``test_tui_app`` (pytest's prepend import mode puts the tests directory on
 ``sys.path``, so a sibling test module is importable). They close the gaps the
 seam's code review flagged: slot placement/ordering, main-view re-open, host
-exceptions staying un-swallowed, and coexistence with the legacy
-transcript-source view.
+exceptions staying un-swallowed, and main-view open/close restoring the main
+transcript.
 """
 
 import pytest
@@ -18,8 +18,6 @@ from tau_coding.tui.widgets import TranscriptView
 from test_tui_app import (  # noqa: E402 - sibling test module (see docstring)
     FakeSession,
     _component_bridge,
-    _strip_source,
-    _StripRuntime,
 )
 
 
@@ -119,48 +117,28 @@ async def test_component_host_exception_is_not_swallowed() -> None:
 
 
 @pytest.mark.anyio
-async def test_component_main_view_coexists_with_legacy_agent_view() -> None:
-    runtime = _StripRuntime([_strip_source()])
-    session = FakeSession()
-    session.extension_runtime = runtime  # type: ignore[attr-defined]
-    app = TauTuiApp(session)  # type: ignore[arg-type]
+async def test_component_main_view_open_close_restores_transcript() -> None:
+    app = TauTuiApp(FakeSession())
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        assert runtime.changed_callback is not None
-        runtime.changed_callback()
-        await pilot.pause()
-
-        # Enter the legacy transcript-source view: #transcript hidden, the
-        # #agent-transcript-pane shown.
-        await pilot.press("left")
-        await pilot.press("down")
-        await pilot.press("enter")
-        await pilot.pause()
-        assert app._active_source_id == "agent-1"
-        assert app.query_one("#agent-transcript-pane", TranscriptView).display
-        assert not app.query_one("#transcript", TranscriptView).display
-
-        # Opening a component main view must hide the pane that is actually up
-        # (the legacy one), not blindly #transcript. Exactly one of the three
-        # panes stays displayed.
         bridge = _component_bridge(app)
+
+        # Opening a main view hides #transcript and shows only #main-slot.
         handle = bridge.open_main_view(
-            lambda h, theme: Static("main", id="ext-coexist-view")
+            lambda h, theme: Static("main", id="ext-main-view")
         )
         await pilot.pause()
-
         displayed = [
             pane_id
-            for pane_id in ("#transcript", "#agent-transcript-pane", "#main-slot")
+            for pane_id in ("#transcript", "#main-slot")
             if app.query_one(pane_id).display
         ]
         assert displayed == ["#main-slot"]
 
-        # Closing restores the legacy pane that was displaced, not #transcript.
+        # Closing restores #transcript, hides the slot, and refocuses the prompt.
         handle.close()
         await pilot.pause()
-        assert app.query_one("#agent-transcript-pane", TranscriptView).display
-        assert not app.query_one("#transcript", TranscriptView).display
+        assert app.query_one("#transcript", TranscriptView).display
         assert not app.query_one("#main-slot", Container).display
         assert app.query_one("#prompt", PromptInput).has_focus

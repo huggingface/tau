@@ -65,7 +65,6 @@ from tau_coding.extensions.api import (
     MainViewHandle,
     Placement,
     SlotWidgetFactory,
-    TranscriptSource,
 )
 from tau_coding.oauth import OAuthAuthInfo, OAuthPrompt, login_openai_codex
 from tau_coding.provider_catalog import (
@@ -138,16 +137,7 @@ COMPLETION_MAX_VISIBLE_LINES = 16
 COMPLETION_INITIAL_TERMINAL_FRACTION = 3
 COMPLETION_MIN_TRANSCRIPT_LINES = 4
 COMPLETION_WIDGET_CHROME_LINES = 3
-AGENT_STRIP_MAX_ROWS = 4
-AGENT_VIEW_POLL_SECONDS = 0.5
 PROMPT_PLACEHOLDER = "Ask Tau…  Enter submits, Shift+Enter inserts a newline"
-AGENT_STRIP_STATUS_GLYPHS = {
-    "queued": "◌",
-    "running": "○",
-    "done": "✓",
-    "error": "✗",
-    "cancelled": "∅",
-}
 NO_STORED_CREDENTIALS_MESSAGE = (
     "No stored credentials to remove. /logout only removes credentials saved by /login; "
     "environment variables and providers.json config are unchanged."
@@ -245,10 +235,6 @@ class _TuiExtensionUiBridge:
         )
         return await self._run_dialog(screen, default=None, timeout=timeout)
 
-    async def view_transcript(self, source_id: str) -> bool:
-        """Swap the main transcript to a registered source, in place."""
-        return self._app._activate_source_by_id(source_id)
-
     # -- component seam (experimental) -- pass-through to the app ------------
 
     @property
@@ -341,10 +327,6 @@ class _MainViewHandle:
         self._app = app
         self._open = True
         self.widget: Widget | None = None
-        # Which transcript pane this view displaced, so close() restores exactly
-        # that one (the legacy #agent-transcript-pane still coexists with the
-        # component seam on this branch).
-        self.restored_pane_id: str = "#transcript"
 
     def close(self) -> None:
         """Close the view (safe to call more than once)."""
@@ -395,8 +377,6 @@ class CompletionActionTarget(Protocol):
     def action_toggle_thinking(self) -> None: ...
 
     def action_edit_queued_message(self) -> bool: ...
-
-    def focus_agent_strip(self) -> bool: ...
 
     async def action_submit_prompt(self) -> None: ...
 
@@ -623,8 +603,7 @@ class PromptInput(TextArea):
         # bindings, so an interceptor that consumes `escape` preempts
         # action_cancel without any extension branch in core. The host guards
         # each call; a raising interceptor is treated as "not consumed". When no
-        # extension registers one this is a no-op, so the legacy strip's
-        # left-arrow entry below is untouched.
+        # extension registers one this is a no-op.
         if cast("TauTuiApp", self.app)._run_extension_key_interceptors(event, self.text):
             event.stop()
             event.prevent_default()
@@ -683,12 +662,6 @@ class PromptInput(TextArea):
         elif event.key == keybindings.completion_previous:
             event.stop()
             self.action_completion_previous()
-        elif event.key == "left":
-            # In an empty prompt, left enters the agents strip (a cursor
-            # move at (0,0) is a no-op anyway); otherwise leave it alone.
-            if not self.text and self._completion_target().focus_agent_strip():
-                event.stop()
-                event.prevent_default()
         elif event.key == keybindings.quit:
             event.stop()
             await self.action_quit()
@@ -1250,17 +1223,6 @@ class CommandOutputScreen(ModalScreen[None]):
     def action_scroll_down(self) -> None:
         """Scroll command output down."""
         self.query_one("#command-output-scroll", CommandOutputScroll).action_scroll_down()
-
-
-class AgentStrip(Static):
-    """The agents strip: clickable rows for main plus each transcript source."""
-
-    def on_click(self, event: events.Click) -> None:
-        """Activate the row under the mouse (same as arrows + Enter)."""
-        handler = getattr(self.app, "_strip_click", None)
-        if callable(handler):
-            event.stop()
-            handler(int(event.y))
 
 
 class LoginProviderPickerScreen(ModalScreen[str | None]):
@@ -2151,27 +2113,6 @@ class TauTuiApp(App[None]):
         scrollbar-size-horizontal: 1;
     }
 
-    #agent-transcript-pane {
-        display: none;
-        height: 1fr;
-        border: none;
-        background: $tau-transcript-background;
-        padding: 0 0 0 2;
-        overflow-x: auto;
-        scrollbar-size-vertical: 0;
-        scrollbar-size-horizontal: 1;
-    }
-
-    #agent-strip {
-        display: none;
-        height: auto;
-        max-height: 8;
-        margin: 0 1 0 1;
-        padding: 0 1;
-        background: $tau-screen-background;
-        color: $tau-muted-text;
-    }
-
     /* Component seam (experimental): generic extension mount points. */
     #main-slot {
         display: none;
@@ -2585,14 +2526,6 @@ class TauTuiApp(App[None]):
         self._activity_frame = 0
         self._activity_timer: Timer | None = None
         self._terminal_title = TerminalTitleController()
-        self._agent_strip_sources: tuple[TranscriptSource, ...] = ()
-        self._strip_focused = False
-        self._strip_index = 0
-        self._active_source_id: str | None = None
-        self._agent_view_state: TuiState | None = None
-        self._agent_view_revision: int | None = None
-        self._agent_view_status: str | None = None
-        self._agent_view_timer: Timer | None = None
         self._active_notification_keys: set[tuple[str, str]] = set()
         self._supports_pyperclip: bool | None = None
         self._sync_header_title()
@@ -2652,13 +2585,6 @@ class TauTuiApp(App[None]):
                     highlight=True,
                     markup=False,
                 )
-                yield TranscriptView(
-                    id="agent-transcript-pane",
-                    min_width=1,
-                    wrap=True,
-                    highlight=True,
-                    markup=False,
-                )
                 # Component seam (experimental): host-managed mount points for
                 # extension widgets. Empty until an extension mounts into them.
                 yield Container(id="main-slot")
@@ -2674,7 +2600,6 @@ class TauTuiApp(App[None]):
                 yield CompactSessionInfo(id="compact-session-info")
                 yield Static("", id="autocomplete")
                 yield Container(id="below-prompt-slot")
-                yield AgentStrip("", id="agent-strip")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -2736,25 +2661,16 @@ class TauTuiApp(App[None]):
             return
         prompt = self.query_one("#prompt", PromptInput)
         prompt.sync_pending_paste()
-        if self._strip_focused and event.text_area.text:
-            # Typing means the user is back to prompting; leave strip mode.
-            self._strip_exit()
         self._sync_prompt_shell_mode(event.text_area.text)
         self._completion_state = self._build_completion_state(event.text_area.text)
         self._refresh_completions()
 
     async def action_submit_prompt(self) -> None:
         """Submit the current prompt text or slash command."""
-        if self._strip_focused:
-            self._strip_select()
-            return
         await self._submit_prompt_from_editor(streaming_behavior="steer")
 
     async def action_submit_follow_up(self) -> None:
         """Submit the current prompt as a queued follow-up while running."""
-        if self._strip_focused:
-            self._strip_select()
-            return
         await self._submit_prompt_from_editor(streaming_behavior="follow_up")
 
     async def _submit_prompt_from_editor(
@@ -2779,15 +2695,6 @@ class TauTuiApp(App[None]):
             prompt._clear_pending_paste()
             self._completion_state = CompletionState()
             self._refresh_completions()
-            return
-
-        if self._active_source_id is not None:
-            # The input talks to whoever is being viewed: while an agent view
-            # is open, submissions steer that agent instead of prompting main.
-            if self._steer_viewed_agent(text):
-                prompt.text = ""
-                self._completion_state = CompletionState()
-                self._refresh_completions()
             return
 
         if self._is_compaction_active():
@@ -3026,11 +2933,6 @@ class TauTuiApp(App[None]):
         self._clear_extension_components()
         runtime.set_ui_bridge(_TuiExtensionUiBridge(self))
         runtime.set_turn_requested_callback(self._on_extension_turn_requested)
-        set_sources_changed = getattr(
-            runtime, "set_transcript_sources_changed_callback", None
-        )
-        if callable(set_sources_changed):
-            set_sources_changed(self._on_transcript_sources_changed)
         # Let the transcript render custom messages via registered renderers.
         self.state.custom_renderer = runtime.render_custom_message
         # Let tool calls render through their tool's render_call, if any.
@@ -3149,31 +3051,13 @@ class TauTuiApp(App[None]):
             self._record_extension_component_failure("main_view", exc, notify=True)
             return _DeadMainViewHandle()
         self._extension_main_view = handle
-        # Record and hide only the pane that is actually up. The legacy
-        # transcript-source seam (#agent-transcript-pane) coexists with the
-        # component seam on this branch: when an agent view is active it is the
-        # visible 1fr pane and #transcript is already hidden. Toggling only
-        # #transcript here would leave the legacy pane and #main-slot both
-        # displayed (two stacked panes) and would restore the wrong one on close.
-        handle.restored_pane_id = self._visible_transcript_pane_id()
         with suppress(NoMatches):
-            self.query_one(handle.restored_pane_id, Widget).display = False
+            self.query_one("#transcript", TranscriptView).display = False
         slot.display = True
         return handle
 
-    def _visible_transcript_pane_id(self) -> str:
-        """Return the id selector of the transcript pane currently displayed.
-
-        Falls back to ``#transcript`` when neither pane is up (or the legacy
-        pane is absent), so the main view always has a sane pane to restore.
-        """
-        with suppress(NoMatches):
-            if self.query_one("#agent-transcript-pane", TranscriptView).display:
-                return "#agent-transcript-pane"
-        return "#transcript"
-
     def _close_extension_main_view(self, handle: _MainViewHandle) -> None:
-        """Unmount a main view and restore whichever transcript pane it displaced."""
+        """Unmount a main view and restore the main transcript."""
         if self._extension_main_view is not handle:
             return
         self._extension_main_view = None
@@ -3182,15 +3066,12 @@ class TauTuiApp(App[None]):
                 handle.widget.remove()
         with suppress(NoMatches):
             self.query_one("#main-slot", Container).display = False
-        pane_id = handle.restored_pane_id or "#transcript"
         with suppress(NoMatches):
-            pane = self.query_one(pane_id, Widget)
+            pane = self.query_one("#transcript", TranscriptView)
             pane.display = True
-            # Re-anchor a restored main transcript so returning to a live
+            # Re-anchor the restored main transcript so returning to a live
             # conversation lands at the bottom (mirrors _follow_transcript_output).
-            # The legacy pane is driven by its own poll loop, so leave it alone.
-            if pane_id == "#transcript" and isinstance(pane, TranscriptView):
-                pane.follow_output()
+            pane.follow_output()
         with suppress(NoMatches):
             self.query_one("#prompt", PromptInput).focus()
 
@@ -3511,252 +3392,8 @@ class TauTuiApp(App[None]):
             return
         self._refresh_chrome()
 
-    # -- agents strip and in-place agent views ------------------------------
-
-    def _on_transcript_sources_changed(self) -> None:
-        """Refresh the agents strip when an extension signals a change."""
-        self.call_later(self._refresh_agent_strip)
-
-    def _transcript_sources(self) -> tuple[TranscriptSource, ...]:
-        """Return the extension runtime's current transcript sources."""
-        runtime = getattr(self.session, "extension_runtime", None)
-        sources = getattr(runtime, "transcript_sources", None)
-        if not callable(sources):
-            return ()
-        try:
-            return tuple(sources())
-        except Exception:  # noqa: BLE001 - a seam hiccup must never break the TUI
-            return ()
-
-    def _current_source(self) -> TranscriptSource | None:
-        """Return the freshly-fetched source backing the active agent view."""
-        if self._active_source_id is None:
-            return None
-        for source in self._transcript_sources():
-            if source.id == self._active_source_id:
-                return source
-        return None
-
-    def _refresh_agent_strip(self) -> None:
-        """Redraw the agents strip from the current transcript sources."""
-        if not self.screen_stack:
-            return
-        try:
-            strip = self.query_one("#agent-strip", AgentStrip)
-        except NoMatches:
-            return
-        sources = self._transcript_sources()
-        live_ids = {source.id for source in sources}
-        if self._active_source_id is not None and self._active_source_id not in live_ids:
-            self._activate_main()
-            self._notify("The viewed agent is no longer available.", severity="warning")
-        # Finished agents leave the strip (they stay reachable via /agents);
-        # the one being viewed stays listed until the user returns to main.
-        strip_sources = tuple(
-            source
-            for source in sources
-            if source.status in ("queued", "running")
-            or source.id == self._active_source_id
-        )
-        self._agent_strip_sources = strip_sources
-        if not strip_sources:
-            self._strip_focused = False
-            strip.display = False
-            return
-        visible_rows = 1 + min(len(strip_sources), AGENT_STRIP_MAX_ROWS)
-        self._strip_index = min(self._strip_index, visible_rows - 1)
-        strip.display = True
-        strip.update(
-            _render_agent_strip(
-                strip_sources,
-                selected_index=self._strip_index if self._strip_focused else None,
-                active_id=self._active_source_id,
-                focused=self._strip_focused,
-                theme=self.tui_settings.resolved_theme,
-            )
-        )
-
-    def focus_agent_strip(self) -> bool:
-        """Enter strip navigation (left arrow in an empty prompt)."""
-        if not self._agent_strip_sources:
-            return False
-        if not self._strip_focused:
-            self._strip_focused = True
-            self._strip_index = 0
-            if self._active_source_id is not None:
-                for index, source in enumerate(
-                    self._agent_strip_sources[:AGENT_STRIP_MAX_ROWS]
-                ):
-                    if source.id == self._active_source_id:
-                        self._strip_index = index + 1
-                        break
-            self._refresh_agent_strip()
-        return True
-
-    def _strip_move(self, delta: int) -> None:
-        visible_rows = 1 + min(len(self._agent_strip_sources), AGENT_STRIP_MAX_ROWS)
-        self._strip_index = max(0, min(visible_rows - 1, self._strip_index + delta))
-        self._refresh_agent_strip()
-
-    def _strip_exit(self) -> None:
-        self._strip_focused = False
-        self._refresh_agent_strip()
-
-    def _strip_select(self) -> None:
-        """Switch the transcript to the row highlighted in the strip."""
-        self._strip_focused = False
-        if self._strip_index == 0:
-            self._activate_main()
-        else:
-            index = self._strip_index - 1
-            if index < len(self._agent_strip_sources):
-                self._activate_source(self._agent_strip_sources[index])
-        self._refresh_agent_strip()
-
-    def _strip_click(self, row: int) -> None:
-        """Activate the strip row under a mouse click."""
-        visible_rows = 1 + min(len(self._agent_strip_sources), AGENT_STRIP_MAX_ROWS)
-        if row >= visible_rows:
-            return
-        self._strip_index = row
-        self._strip_select()
-
-    def _activate_source_by_id(self, source_id: str) -> bool:
-        """Open the agent view for a source id (used by /agents jump-in)."""
-        for source in self._transcript_sources():
-            if source.id == source_id:
-                if not self._activate_source(source):
-                    return False
-                self._refresh_agent_strip()
-                return True
-        return False
-
-    def _activate_source(self, source: TranscriptSource) -> bool:
-        """Swap the transcript area to an agent's conversation, in place."""
-        try:
-            messages = source.messages()
-        except Exception:  # noqa: BLE001 - a source must never crash the TUI
-            messages = None
-        if messages is None:
-            self._notify(
-                "That agent's transcript is no longer available.", severity="warning"
-            )
-            return False
-        self._active_source_id = source.id
-        state = TuiState()
-        state.custom_renderer = self.state.custom_renderer
-        state.tool_call_renderer = self.state.tool_call_renderer
-        state.load_messages(tuple(messages))
-        self._agent_view_state = state
-        self._agent_view_revision = source.revision
-        self._agent_view_status = source.status
-        pane = self.query_one("#agent-transcript-pane", TranscriptView)
-        pane.update_from_state(state, theme=self.tui_settings.resolved_theme)
-        self.query_one("#transcript", TranscriptView).display = False
-        pane.display = True
-        self._sync_prompt_identity()
-        if self._agent_view_timer is None:
-            self._agent_view_timer = self.set_interval(
-                AGENT_VIEW_POLL_SECONDS,
-                self._tick_agent_view,
-                name="agent-view-poll",
-            )
-        else:
-            self._agent_view_timer.resume()
-        return True
-
-    def _activate_main(self) -> None:
-        """Return the transcript area to the main conversation."""
-        if self._active_source_id is None:
-            return
-        self._active_source_id = None
-        self._agent_view_state = None
-        self._agent_view_revision = None
-        self._agent_view_status = None
-        if self._agent_view_timer is not None:
-            self._agent_view_timer.pause()
-        with suppress(NoMatches):
-            self.query_one("#agent-transcript-pane", TranscriptView).display = False
-            self.query_one("#transcript", TranscriptView).display = True
-        self._sync_prompt_identity()
-        self._refresh_agent_strip()
-
-    def _tick_agent_view(self) -> None:
-        """Re-render the open agent view when its source has new content."""
-        source = self._current_source()
-        if source is None:
-            # The strip refresh handles a vanished source; nothing to do here.
-            return
-        if source.status != self._agent_view_status:
-            self._agent_view_status = source.status
-            self._sync_prompt_identity()
-            self._refresh_agent_strip()
-        if source.revision == self._agent_view_revision:
-            return
-        try:
-            messages = source.messages()
-        except Exception:  # noqa: BLE001 - a source must never crash the TUI
-            messages = None
-        if messages is None:
-            return
-        self._agent_view_revision = source.revision
-        state = self._agent_view_state
-        if state is None:
-            return
-        state.clear()
-        state.load_messages(tuple(messages))
-        with suppress(NoMatches):
-            pane = self.query_one("#agent-transcript-pane", TranscriptView)
-            pane.update_from_state(state, theme=self.tui_settings.resolved_theme)
-
-    def _sync_prompt_identity(self) -> None:
-        """Make the prompt say who is listening: main, or the viewed agent."""
-        try:
-            prompt = self.query_one("#prompt", PromptInput)
-            prefix = self.query_one("#prompt-prefix", Static)
-        except NoMatches:
-            return
-        if self._active_source_id is None:
-            prefix.update("τ")
-            prompt.placeholder = PROMPT_PLACEHOLDER
-            return
-        source = self._current_source()
-        prefix.update("▸")
-        if source is not None and source.status in ("queued", "running") and source.steer:
-            prompt.placeholder = f"Steer {source.label}…  Esc returns to main"
-        else:
-            label = source.label if source is not None else "Agent"
-            prompt.placeholder = f"{label} finished · Esc returns to main"
-
-    def _steer_viewed_agent(self, text: str) -> bool:
-        """Deliver prompt text to the viewed agent; False if it can't hear."""
-        source = self._current_source()
-        if source is None:
-            self._activate_main()
-            self._notify("That agent is no longer available.", severity="warning")
-            return False
-        if source.status not in ("queued", "running") or source.steer is None:
-            self._notify(
-                f"{source.label} has finished — press Esc to return to main.",
-                severity="warning",
-            )
-            return False
-        try:
-            source.steer(text)
-        except Exception as exc:  # noqa: BLE001 - surface steer failures in the TUI
-            self._notify(f"Could not steer {source.label}: {exc}", severity="error")
-            return False
-        self._notify(f"Steering sent to {source.label}.")
-        return True
-
     def action_cancel(self) -> None:
         """Cancel the active compaction or agent turn."""
-        if self._strip_focused:
-            self._strip_exit()
-            return
-        if self._active_source_id is not None:
-            self._activate_main()
-            return
         if self._cancel_active_compaction(notify=True):
             return
         self._cancel_active_prompt(notify=True)
@@ -3844,9 +3481,6 @@ class TauTuiApp(App[None]):
         ):
             self.screen.action_cursor_down()
             return
-        if self._strip_focused:
-            self._strip_move(1)
-            return
         if not self._completion_state.items:
             self.query_one("#prompt", PromptInput).action_cursor_down()
             return
@@ -3870,9 +3504,6 @@ class TauTuiApp(App[None]):
             | ExtensionConfirmScreen,
         ):
             self.screen.action_cursor_up()
-            return
-        if self._strip_focused:
-            self._strip_move(-1)
             return
         if not self._completion_state.items:
             if self.action_edit_queued_message():
@@ -4484,7 +4115,6 @@ class TauTuiApp(App[None]):
         queued_messages = self.query_one("#queued-messages", Static)
         queued_messages.display = self.state.queued_message_count > 0
         queued_messages.update(_render_queued_messages(self.state, theme=theme))
-        self._refresh_agent_strip()
         self._sync_activity_indicator()
         self._refresh_footer_bindings()
 
@@ -4655,10 +4285,6 @@ class TauTuiApp(App[None]):
             self.add_class("-hide-sidebar")
 
     def _build_completion_state(self, text: str) -> CompletionState:
-        if self._active_source_id is not None:
-            # While an agent view is open the input steers that agent, so
-            # main-oriented completions (slash commands, files) don't apply.
-            return CompletionState()
         registry = _session_command_registry(self.session)
         return build_completion_state(
             text,
@@ -5125,85 +4751,6 @@ def _theme_css_variables(theme: TuiTheme) -> dict[str, str]:
         "footer-key-foreground": theme.accent,
         "footer-item-background": theme.chrome_background,
     }
-
-
-def _render_agent_strip(
-    sources: tuple[TranscriptSource, ...],
-    *,
-    selected_index: int | None,
-    active_id: str | None,
-    focused: bool,
-    theme: TuiTheme,
-) -> Group:
-    """Render the agents strip: main plus one row per transcript source."""
-    rows: list[Text] = []
-
-    def add_row(
-        index: int,
-        glyph: str,
-        glyph_style: str,
-        label: str,
-        label_style: str,
-        detail: str = "",
-    ) -> None:
-        # One line per row, always: mouse clicks map rows by line offset.
-        row = Text(no_wrap=True, overflow="ellipsis")
-        selected = selected_index is not None and index == selected_index
-        row.append("❯ " if selected else "  ", style=theme.accent)
-        row.append(f"{glyph} ", style=glyph_style)
-        row.append(label, style=f"bold {label_style}" if selected else label_style)
-        if detail:
-            row.append(f"  {detail}", style=theme.muted_text)
-        rows.append(row)
-
-    # Exactly one filled accent dot: the row whose transcript is being viewed.
-    main_active = active_id is None
-    add_row(
-        0,
-        "●" if main_active else "○",
-        theme.accent if main_active else theme.muted_text,
-        "main",
-        theme.prompt_text if main_active else theme.muted_text,
-    )
-    for index, source in enumerate(sources[:AGENT_STRIP_MAX_ROWS]):
-        viewing = source.id == active_id
-        if viewing:
-            glyph = "●"
-            glyph_style = theme.accent
-        else:
-            glyph = AGENT_STRIP_STATUS_GLYPHS.get(source.status, "○")
-            glyph_style = (
-                theme.role_styles["error"].border
-                if source.status == "error"
-                else theme.muted_text
-            )
-        add_row(
-            index + 1,
-            glyph,
-            glyph_style,
-            source.label,
-            theme.prompt_text if viewing else theme.muted_text,
-            detail=source.detail,
-        )
-    overflow = len(sources) - AGENT_STRIP_MAX_ROWS
-    if overflow > 0:
-        rows.append(
-            Text(
-                f"    … {overflow} more — /agents",
-                style=theme.muted_text,
-                no_wrap=True,
-                overflow="ellipsis",
-            )
-        )
-    hint = (
-        "↑ ↓ select · enter view · esc back"
-        if focused
-        else "← agents"
-    )
-    rows.append(
-        Text(f"    {hint}", style=theme.muted_text, no_wrap=True, overflow="ellipsis")
-    )
-    return Group(*rows)
 
 
 def _render_queued_messages(state: TuiState, *, theme: TuiTheme) -> Group:
