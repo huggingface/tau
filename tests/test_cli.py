@@ -48,11 +48,14 @@ def _panel_text(value: str) -> str:
     """Strip ANSI escapes and Rich/Click panel borders, then collapse whitespace.
 
     Typer renders ``BadParameter`` errors inside a bordered panel whose box-drawing
-    characters and line-wrapping can split a single message across lines, so
-    contiguous-substring assertions need the borders and extra whitespace removed.
+    characters and line-wrapping can split a single message across lines. On CI
+    (no real TTY) Rich/Click also emit ANSI color codes around the wrapped border,
+    so the ANSI escapes must be removed *before* the border characters, otherwise
+    leftover escapes keep "Available" and "models: qwen" from being contiguous.
     """
+    no_ansi = _strip_ansi(value)
     borders = str.maketrans({ch: " " for ch in "│╭╮╰╯─"})
-    return _collapse_ws(value.translate(borders))
+    return _collapse_ws(no_ansi.translate(borders))
 
 
 def test_version_command() -> None:
@@ -640,6 +643,28 @@ def _constrained_provider_settings() -> ProviderSettings:
             ),
         ),
     )
+
+
+def test_panel_text_strips_ansi_and_borders() -> None:
+    """``_panel_text`` must strip ANSI escapes *and* panel borders before matching.
+
+    On CI (no real TTY) Rich/Click emit ANSI color codes around the wrapped panel
+    border, so ``Available`` and ``models: qwen`` get split by escape sequences.
+    This guards the helper used by the bad-model regression tests regardless of
+    the local CliRunner's rendering mode. See issue #265.
+    """
+    ci_style = (
+        "\x1b[33mUsage: \x1b[0mtau [OPTIONS] ...\n"
+        "\x1b[31m╭─\x1b[0m\x1b[31m Error \x1b[0m\x1b[31m─╮\x1b[0m\n"
+        "\x1b[31m│\x1b[0m Invalid value: Model is not configured for provider local: "
+        "llama. Available \x1b[31m│\x1b[0m\n"
+        "\x1b[31m│\x1b[0m models: qwen \x1b[31m│\x1b[0m\n"
+        "\x1b[31m╰╯\x1b[0m"
+    )
+    out = _panel_text(ci_style)
+    assert "Model is not configured for provider local: llama" in out
+    assert "Available models: qwen" in out
+    assert "\x1b" not in out
 
 
 def test_tui_surfaces_bad_model_as_clean_error(
