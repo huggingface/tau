@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import tomllib
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from contextlib import suppress
 from functools import cache
 from importlib.resources import files
@@ -12,10 +12,25 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StringConstraints, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StringConstraints,
+    ValidationError,
+)
 
+from tau_agent.types import JSONValue
 from tau_coding.paths import TauPaths
-from tau_coding.provider_catalog import ProviderCatalogEntry, ProviderKind
+from tau_coding.provider_catalog import (
+    ModelCatalogMetadata,
+    ModelInput,
+    ProviderApi,
+    ProviderCatalogEntry,
+    ProviderKind,
+)
 from tau_coding.thinking import ThinkingLevel, ThinkingParameter
 
 CATALOG_SCHEMA_VERSION = 1
@@ -31,10 +46,28 @@ _NonEmptyString = Annotated[
 ]
 _NonEmptyStringTuple = Annotated[tuple[_NonEmptyString, ...], Field(min_length=1)]
 _PositiveInt = Annotated[StrictInt, Field(gt=0)]
+_NonNegativeFloat = Annotated[float, Field(ge=0)]
 
 
 class CatalogError(ValueError):
     """Raised when a Tau catalog file is invalid."""
+
+
+class _CatalogModelMetadata(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: _NonEmptyString | None = None
+    api: ProviderApi | None = None
+    base_url: _NonEmptyString | None = None
+    reasoning: StrictBool | None = None
+    input: tuple[ModelInput, ...] = ()
+    cost: dict[_NonEmptyString, _NonNegativeFloat] | None = None
+    context_window: _PositiveInt | None = None
+    max_tokens: _PositiveInt | None = None
+    headers: dict[_NonEmptyString, _NonEmptyString] = {}
+    compat: dict[_NonEmptyString, Any] = {}
+    thinking_level_map: dict[ThinkingLevel, _NonEmptyString] = {}
+    unsupported_thinking_levels: tuple[ThinkingLevel, ...] = ()
 
 
 class _CatalogProvider(BaseModel):
@@ -49,7 +82,11 @@ class _CatalogProvider(BaseModel):
     models: _NonEmptyStringTuple
     default_model: _NonEmptyString
     docs_url: _NonEmptyString
+    api: ProviderApi | None = None
     context_windows: dict[_NonEmptyString, _PositiveInt] | None = None
+    headers: dict[_NonEmptyString, _NonEmptyString] = {}
+    compat: dict[_NonEmptyString, Any] = {}
+    model_metadata: dict[_NonEmptyString, _CatalogModelMetadata] = {}
     thinking_levels: tuple[ThinkingLevel, ...] | None = None
     thinking_models: tuple[_NonEmptyString, ...] = ()
     thinking_default: ThinkingLevel | None = None
@@ -176,16 +213,40 @@ def _merge_raw_provider(base: dict[str, Any], overlay: dict[str, Any]) -> dict[s
     overlay_models = overlay.get("models", [])
     if isinstance(base_models, list) and isinstance(overlay_models, list):
         merged["models"] = list(dict.fromkeys([*overlay_models, *base_models]))
-    base_windows = base.get("context_windows")
-    overlay_windows = overlay.get("context_windows")
-    if isinstance(base_windows, dict) and isinstance(overlay_windows, dict):
-        merged["context_windows"] = {**base_windows, **overlay_windows}
+    for key in ("context_windows", "headers", "compat"):
+        base_mapping = base.get(key)
+        overlay_mapping = overlay.get(key)
+        if isinstance(base_mapping, dict) and isinstance(overlay_mapping, dict):
+            merged[key] = {**base_mapping, **overlay_mapping}
+    base_metadata = base.get("model_metadata")
+    overlay_metadata = overlay.get("model_metadata")
+    if isinstance(base_metadata, dict) and isinstance(overlay_metadata, dict):
+        merged["model_metadata"] = _merge_model_metadata(base_metadata, overlay_metadata)
     if "thinking_levels" in overlay:
         for field in _THINKING_FIELDS:
             if field in overlay:
                 merged[field] = overlay[field]
             else:
                 merged.pop(field, None)
+    return merged
+
+
+def _merge_model_metadata(
+    base: dict[str, Any], overlay: dict[str, Any]
+) -> dict[str, Any]:
+    merged: dict[str, Any] = {**base}
+    for model, overlay_metadata in overlay.items():
+        base_metadata = merged.get(model)
+        if isinstance(base_metadata, dict) and isinstance(overlay_metadata, dict):
+            next_metadata = {**base_metadata, **overlay_metadata}
+            for key in ("headers", "compat", "thinking_level_map"):
+                base_mapping = base_metadata.get(key)
+                overlay_mapping = overlay_metadata.get(key)
+                if isinstance(base_mapping, dict) and isinstance(overlay_mapping, dict):
+                    next_metadata[key] = {**base_mapping, **overlay_mapping}
+            merged[model] = next_metadata
+        else:
+            merged[model] = overlay_metadata
     return merged
 
 
@@ -226,6 +287,9 @@ def _entry_from_provider(provider: _CatalogProvider, *, source: str) -> Provider
     for model in provider.context_windows or {}:
         if model not in provider.models:
             raise CatalogError(f"{prefix}.context_windows: {model!r} is not in models")
+    for model in provider.model_metadata:
+        if model not in provider.models:
+            raise CatalogError(f"{prefix}.model_metadata: {model!r} is not in models")
     if provider.thinking_default is not None and (
         provider.thinking_levels is None
         or provider.thinking_default not in provider.thinking_levels
@@ -233,6 +297,16 @@ def _entry_from_provider(provider: _CatalogProvider, *, source: str) -> Provider
         raise CatalogError(
             f"{prefix}.thinking_default: {provider.thinking_default!r} is not in thinking_levels"
         )
+
+    model_metadata = {
+        model: _model_metadata_from_provider(metadata)
+        for model, metadata in provider.model_metadata.items()
+    }
+    context_windows = dict(provider.context_windows or {})
+    for model, metadata in model_metadata.items():
+        if metadata.context_window is not None and model not in context_windows:
+            context_windows[model] = metadata.context_window
+
     return ProviderCatalogEntry(
         name=provider.name,
         display_name=provider.display_name,
@@ -243,12 +317,54 @@ def _entry_from_provider(provider: _CatalogProvider, *, source: str) -> Provider
         models=provider.models,
         default_model=provider.default_model,
         docs_url=provider.docs_url,
-        context_windows=dict(provider.context_windows) if provider.context_windows else None,
+        api=provider.api,
+        context_windows=context_windows or None,
+        headers=dict(provider.headers),
+        compat=_json_object(provider.compat, f"{prefix}.compat"),
+        model_metadata=model_metadata,
         thinking_levels=provider.thinking_levels,
         thinking_models=provider.thinking_models,
         thinking_default=provider.thinking_default,
         thinking_parameter=provider.thinking_parameter,
     )
+
+
+def _model_metadata_from_provider(metadata: _CatalogModelMetadata) -> ModelCatalogMetadata:
+    thinking_level_map: dict[ThinkingLevel, str | None] = dict(metadata.thinking_level_map)
+    for level in metadata.unsupported_thinking_levels:
+        thinking_level_map[level] = None
+    return ModelCatalogMetadata(
+        name=metadata.name,
+        api=metadata.api,
+        base_url=metadata.base_url,
+        reasoning=metadata.reasoning,
+        input=metadata.input,
+        cost=dict(metadata.cost) if metadata.cost else None,
+        context_window=metadata.context_window,
+        max_tokens=metadata.max_tokens,
+        headers=dict(metadata.headers),
+        compat=_json_object(metadata.compat, "model_metadata.compat"),
+        thinking_level_map=thinking_level_map,
+    )
+
+
+def _json_object(value: Mapping[str, Any], field_name: str) -> dict[str, JSONValue]:
+    return {key: _json_value(item, f"{field_name}.{key}") for key, item in value.items()}
+
+
+def _json_value(value: Any, field_name: str) -> JSONValue:
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, list):
+        return [_json_value(item, field_name) for item in value]
+    if isinstance(value, dict):
+        output: dict[str, JSONValue] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise CatalogError(f"{field_name}: object keys must be strings")
+            output[key] = _json_value(item, f"{field_name}.{key}")
+        return output
+    raise CatalogError(f"{field_name}: unsupported value {value!r}")
 
 
 def _format_validation_error(raw: dict[str, Any], error: ValidationError) -> str:
@@ -286,10 +402,21 @@ def _raw_provider_from_entry(entry: ProviderCatalogEntry) -> dict[str, Any]:
         "default_model": entry.default_model,
         "docs_url": entry.docs_url,
     }
+    if entry.api is not None:
+        raw["api"] = entry.api
     if entry.credential_name is not None:
         raw["credential_name"] = entry.credential_name
     if entry.context_windows:
         raw["context_windows"] = dict(entry.context_windows)
+    if entry.headers:
+        raw["headers"] = dict(entry.headers)
+    if entry.compat:
+        raw["compat"] = dict(entry.compat)
+    if entry.model_metadata:
+        raw["model_metadata"] = {
+            model: _raw_model_metadata_from_entry(metadata)
+            for model, metadata in entry.model_metadata.items()
+        }
     if entry.thinking_levels is not None:
         raw["thinking_levels"] = list(entry.thinking_levels)
     if entry.thinking_models:
@@ -298,6 +425,39 @@ def _raw_provider_from_entry(entry: ProviderCatalogEntry) -> dict[str, Any]:
         raw["thinking_default"] = entry.thinking_default
     if entry.thinking_parameter is not None:
         raw["thinking_parameter"] = entry.thinking_parameter
+    return raw
+
+
+def _raw_model_metadata_from_entry(metadata: ModelCatalogMetadata) -> dict[str, Any]:
+    raw: dict[str, Any] = {}
+    if metadata.name is not None:
+        raw["name"] = metadata.name
+    if metadata.api is not None:
+        raw["api"] = metadata.api
+    if metadata.base_url is not None:
+        raw["base_url"] = metadata.base_url
+    if metadata.reasoning is not None:
+        raw["reasoning"] = metadata.reasoning
+    if metadata.input:
+        raw["input"] = list(metadata.input)
+    if metadata.cost:
+        raw["cost"] = dict(metadata.cost)
+    if metadata.context_window is not None:
+        raw["context_window"] = metadata.context_window
+    if metadata.max_tokens is not None:
+        raw["max_tokens"] = metadata.max_tokens
+    if metadata.headers:
+        raw["headers"] = dict(metadata.headers)
+    if metadata.compat:
+        raw["compat"] = dict(metadata.compat)
+    thinking_level_map = {
+        level: value for level, value in metadata.thinking_level_map.items() if value is not None
+    }
+    unsupported = [level for level, value in metadata.thinking_level_map.items() if value is None]
+    if thinking_level_map:
+        raw["thinking_level_map"] = thinking_level_map
+    if unsupported:
+        raw["unsupported_thinking_levels"] = unsupported
     return raw
 
 
@@ -315,6 +475,9 @@ def _catalog_to_toml(raw: dict[str, Any]) -> str:
             "models",
             "default_model",
             "docs_url",
+            "api",
+            "headers",
+            "compat",
             "thinking_levels",
             "thinking_models",
             "thinking_default",
@@ -328,6 +491,15 @@ def _catalog_to_toml(raw: dict[str, Any]) -> str:
             lines.append("[providers.context_windows]")
             for model, context_window in context_windows.items():
                 lines.append(f"{_toml_key(model)} = {_toml_value(context_window)}")
+        model_metadata = provider.get("model_metadata")
+        if isinstance(model_metadata, dict) and model_metadata:
+            for model, metadata in model_metadata.items():
+                if not isinstance(metadata, dict):
+                    continue
+                lines.append("")
+                lines.append(f"[providers.model_metadata.{_toml_key(model)}]")
+                for key, value in metadata.items():
+                    lines.append(f"{key} = {_toml_value(value)}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -347,6 +519,10 @@ def _toml_value(value: object) -> str:
         return str(value)
     if isinstance(value, list | tuple):
         return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    if isinstance(value, dict):
+        return "{ " + ", ".join(
+            f"{_toml_key(str(key))} = {_toml_value(item)}" for key, item in value.items()
+        ) + " }"
     raise TypeError(f"Unsupported TOML value: {value!r}")
 
 

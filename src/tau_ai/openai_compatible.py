@@ -78,7 +78,7 @@ class OpenAICompatibleProvider:
         signal: CancellationToken | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Stream one model response as provider-neutral events."""
-        if _use_responses_api(model):
+        if self._config.api == "openai-responses" or _use_responses_api(model):
             return self._stream_responses(
                 model=model,
                 system=system,
@@ -111,6 +111,10 @@ class OpenAICompatibleProvider:
             tools=tools,
             reasoning_effort=self._config.reasoning_effort,
             reasoning_effort_parameter=self._config.reasoning_effort_parameter,
+            thinking_format=self._config.thinking_format,
+            compat=self._config.compat,
+            max_tokens=self._config.max_tokens,
+            include_reasoning_effort_none=self._config.include_reasoning_effort_none,
         )
         return self._stream(
             model=model,
@@ -136,6 +140,7 @@ class OpenAICompatibleProvider:
             messages=messages,
             tools=tools,
             reasoning_effort=self._config.reasoning_effort,
+            max_tokens=self._config.max_tokens,
         )
         return self._stream(
             model=model,
@@ -559,7 +564,18 @@ def _build_chat_payload(
     tools: list[AgentTool],
     reasoning_effort: str | None = None,
     reasoning_effort_parameter: str = "reasoning_effort",
+    thinking_format: str = "openai",
+    compat: Mapping[str, JSONValue] | None = None,
+    max_tokens: int | None = None,
+    include_reasoning_effort_none: bool = False,
 ) -> dict[str, JSONValue]:
+    resolved_compat = dict(compat or {})
+    supports_store = bool(resolved_compat.get("supportsStore", True))
+    supports_usage = bool(resolved_compat.get("supportsUsageInStreaming", True))
+    supports_reasoning_effort = bool(resolved_compat.get("supportsReasoningEffort", True))
+    max_tokens_field = _string_compat(
+        resolved_compat.get("maxTokensField"), default="max_completion_tokens"
+    )
     payload: dict[str, JSONValue] = {
         "model": model,
         "stream": True,
@@ -568,14 +584,68 @@ def _build_chat_payload(
             *[_message_to_openai(message) for message in messages],
         ],
     }
-    if reasoning_effort is not None:
-        if reasoning_effort_parameter == "reasoning.effort":
-            payload["reasoning"] = {"effort": reasoning_effort}
-        else:
-            payload["reasoning_effort"] = reasoning_effort
+    if supports_usage:
+        payload["stream_options"] = {"include_usage": True}
+    if supports_store:
+        payload["store"] = False
+    if max_tokens is not None:
+        payload[
+            "max_tokens" if max_tokens_field == "max_tokens" else "max_completion_tokens"
+        ] = max_tokens
+    _apply_chat_reasoning(
+        payload,
+        reasoning_effort=reasoning_effort if supports_reasoning_effort else None,
+        reasoning_effort_parameter=reasoning_effort_parameter,
+        thinking_format=thinking_format,
+        include_reasoning_effort_none=include_reasoning_effort_none,
+    )
     if tools:
         payload["tools"] = [_tool_to_openai(tool) for tool in tools]
+        if resolved_compat.get("zaiToolStream") is True:
+            payload["tool_stream"] = True
     return payload
+
+
+def _apply_chat_reasoning(
+    payload: dict[str, JSONValue],
+    *,
+    reasoning_effort: str | None,
+    reasoning_effort_parameter: str,
+    thinking_format: str,
+    include_reasoning_effort_none: bool,
+) -> None:
+    reasoning_enabled = reasoning_effort is not None and reasoning_effort != "none"
+    if thinking_format in {"zai", "qwen"}:
+        payload["enable_thinking"] = reasoning_enabled
+        return
+    if thinking_format == "qwen-chat-template":
+        payload["chat_template_kwargs"] = {
+            "enable_thinking": reasoning_enabled,
+            "preserve_thinking": True,
+        }
+        return
+    if thinking_format == "deepseek":
+        payload["thinking"] = {"type": "enabled" if reasoning_enabled else "disabled"}
+        if reasoning_enabled:
+            payload["reasoning_effort"] = reasoning_effort
+        return
+    if thinking_format == "openrouter" or reasoning_effort_parameter == "reasoning.effort":
+        if reasoning_enabled:
+            payload["reasoning"] = {"effort": reasoning_effort}
+        elif include_reasoning_effort_none:
+            payload["reasoning"] = {"effort": "none"}
+        return
+    if thinking_format == "together":
+        payload["reasoning"] = {"enabled": reasoning_enabled}
+        if reasoning_enabled:
+            payload["reasoning_effort"] = reasoning_effort
+        return
+    if reasoning_enabled or include_reasoning_effort_none:
+        payload["reasoning_effort"] = reasoning_effort or "none"
+
+
+def _string_compat(value: object, *, default: str) -> str:
+    return value if isinstance(value, str) and value else default
 
 
 def _build_responses_payload(
@@ -585,6 +655,7 @@ def _build_responses_payload(
     messages: list[AgentMessage],
     tools: list[AgentTool],
     reasoning_effort: str | None = None,
+    max_tokens: int | None = None,
 ) -> dict[str, JSONValue]:
     payload: dict[str, JSONValue] = {
         "model": model,
@@ -596,6 +667,8 @@ def _build_responses_payload(
         "instructions": system,
         "input": _messages_to_responses_input(messages),
     }
+    if max_tokens is not None:
+        payload["max_output_tokens"] = max_tokens
     effort = _normalize_responses_effort(reasoning_effort)
     if effort is not None:
         # ``summary: auto`` streams ``response.reasoning_summary_text.delta``

@@ -7,6 +7,8 @@ from typing import Protocol
 
 from tau_ai import (
     AnthropicProvider,
+    GoogleGenerativeAIProvider,
+    MistralConversationsProvider,
     ModelProvider,
     OpenAICodexConfig,
     OpenAICodexCredentials,
@@ -22,6 +24,7 @@ from tau_coding.oauth import (
 from tau_coding.provider_config import (
     AnthropicProviderConfig,
     OpenAICodexProviderConfig,
+    OpenAICompatibleProviderConfig,
     ProviderConfig,
     ProviderConfigError,
     anthropic_config_from_provider,
@@ -56,6 +59,7 @@ def create_model_provider(
             anthropic_config_from_provider(
                 provider,
                 credential_reader=credentials,
+                model=model,
                 thinking_level=thinking_level,
             )
         )
@@ -79,14 +83,19 @@ def create_model_provider(
                 ),
             )
         )
-    return OpenAICompatibleProvider(
-        openai_compatible_config_from_provider(
+    if isinstance(provider, OpenAICompatibleProviderConfig):
+        config = openai_compatible_config_from_provider(
             provider,
             credential_reader=credentials,
             model=model,
             thinking_level=thinking_level,
         )
-    )
+        if provider.api == "google-generative-ai":
+            return GoogleGenerativeAIProvider(config)
+        if provider.api == "mistral-conversations":
+            return MistralConversationsProvider(config)
+        return OpenAICompatibleProvider(config)
+    raise ProviderConfigError(f"Unsupported provider config: {provider.name}")
 
 
 def _codex_reasoning_effort(
