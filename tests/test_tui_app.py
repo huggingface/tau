@@ -4289,6 +4289,70 @@ async def test_tui_app_toggles_thinking_tokens_from_keybinding_while_running() -
 
 
 @pytest.mark.anyio
+async def test_tui_app_thinking_toggle_preserves_unrelated_widgets() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        app.state.add_item("user", "first prompt")
+        app.state.add_thinking_delta("plan one")
+        app.state.add_item("assistant", "first answer")
+        app.state.add_item("user", "second prompt")
+        app.state.add_thinking_delta("plan two")
+        app.state.add_item("assistant", "second answer")
+        app._refresh()
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        stable_widgets = [
+            widget
+            for widget in transcript.children
+            if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+            and widget.item.role != "thinking"
+        ]
+        assert len(stable_widgets) == 4
+        assert sum(
+            1
+            for widget in transcript.children
+            if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+            and widget.item.role == "thinking"
+        ) == 2
+
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+        assert [
+            widget
+            for widget in transcript.children
+            if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+            and widget.item.role != "thinking"
+        ] == stable_widgets
+        assert [line.text for line in transcript.lines] == [
+            "first prompt",
+            "plan one",
+            "first answer",
+            "second prompt",
+            "plan two",
+            "second answer",
+        ]
+
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+        assert [
+            widget
+            for widget in transcript.children
+            if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+            and widget.item.role != "thinking"
+        ] == stable_widgets
+        assert [line.text for line in transcript.lines] == [
+            "first prompt",
+            "Thinking… Press Ctrl+T to show thinking tokens.",
+            "first answer",
+            "second prompt",
+            "Thinking… Press Ctrl+T to show thinking tokens.",
+            "second answer",
+        ]
+
+
+@pytest.mark.anyio
 async def test_tui_prompt_ctrl_c_clears_text() -> None:
     app = TauTuiApp(FakeSession(messages=(UserMessage(content="User prompt"),)))
 

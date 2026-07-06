@@ -25,6 +25,7 @@ from textual.content import Style as TextualStyle  # type: ignore[attr-defined]
 from textual.events import Resize
 from textual.geometry import Offset
 from textual.selection import Selection
+from textual.widget import Widget
 from textual.widgets import Markdown as TextualMarkdown
 from textual.widgets import Static
 from textual.widgets.markdown import MarkdownBlock, MarkdownStream
@@ -195,6 +196,7 @@ class ThemedMarkdownWidget(TextualMarkdown):
 # Roles rendered as free-flowing text with no left accent or role background,
 # matching how they appear while streaming.
 _BORDERLESS_TRANSCRIPT_ROLES = frozenset({"assistant", "thinking"})
+_HIDDEN_THINKING_PLACEHOLDER = "Thinking… Press Ctrl+T to show thinking tokens."
 
 
 class TranscriptMessageWidget(Horizontal):
@@ -430,6 +432,90 @@ class TranscriptView(VerticalScroll):
         self._render_theme = theme
         self._redraw(scroll_end=self._should_follow_output)
 
+    def update_thinking_visibility(
+        self,
+        state: TuiState,
+        *,
+        theme: TuiTheme = TAU_DARK_THEME,
+    ) -> None:
+        """Update only thinking-token widgets after visibility changes."""
+        self._render_state = state
+        self._render_theme = theme
+        should_follow = self._should_follow_output
+        previous_scroll_y = self.scroll_y
+
+        message_children = [
+            child
+            for child in self.children
+            if isinstance(child, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+        ]
+        thinking_children = [
+            child for child in message_children if child.item.role == "thinking"
+        ]
+        if thinking_children:
+            self.remove_children(thinking_children)
+
+        non_thinking_children = [
+            child for child in message_children if child.item.role != "thinking"
+        ]
+        non_thinking_index = 0
+        pending_thinking: list[TranscriptMessageWidget] = []
+        hidden_thinking_placeholder = False
+
+        def flush_pending(
+            *, before: TranscriptMessageWidget | StreamingTranscriptMessageWidget | None
+        ) -> None:
+            nonlocal pending_thinking
+            for widget in pending_thinking:
+                self.mount(widget, before=before)
+            pending_thinking = []
+
+        for item in state.items:
+            if item.role == "thinking":
+                if state.show_thinking:
+                    pending_thinking.append(
+                        TranscriptMessageWidget(
+                            item,
+                            theme=theme,
+                            show_tool_results=state.show_tool_results,
+                        )
+                    )
+                elif not hidden_thinking_placeholder:
+                    pending_thinking.append(
+                        TranscriptMessageWidget(
+                            ChatItem(role="thinking", text=_HIDDEN_THINKING_PLACEHOLDER),
+                            theme=theme,
+                            show_tool_results=state.show_tool_results,
+                        )
+                    )
+                    hidden_thinking_placeholder = True
+                continue
+
+            hidden_thinking_placeholder = False
+            target = None
+            while non_thinking_index < len(non_thinking_children):
+                candidate = non_thinking_children[non_thinking_index]
+                non_thinking_index += 1
+                if candidate.item is item:
+                    target = candidate
+                    break
+            if target is not None:
+                flush_pending(before=target)
+
+        flush_pending(before=None)
+        self._active_thinking_widget = None
+        self._hidden_thinking_placeholder_visible = (
+            _last_transcript_child_is_hidden_thinking_placeholder(self.children)
+        )
+        self._last_render_width = self.scrollable_content_region.width
+        self.refresh(layout=True)
+        if should_follow:
+            self._request_follow_scroll()
+        else:
+            self.call_after_refresh(
+                lambda: self.scroll_to(y=previous_scroll_y, animate=False, immediate=True)
+            )
+
     def on_resize(self, event: Resize) -> None:
         """Re-render transcript entries when the terminal width changes."""
         del event
@@ -466,7 +552,7 @@ class TranscriptView(VerticalScroll):
                         TranscriptMessageWidget(
                             ChatItem(
                                 role="thinking",
-                                text="Thinking… Press Ctrl+T to show thinking tokens.",
+                                text=_HIDDEN_THINKING_PLACEHOLDER,
                             ),
                             theme=theme,
                             show_tool_results=state.show_tool_results,
@@ -574,7 +660,7 @@ class TranscriptView(VerticalScroll):
             await self.append_item(
                 ChatItem(
                     role="thinking",
-                    text="Thinking… Press Ctrl+T to show thinking tokens.",
+                    text=_HIDDEN_THINKING_PLACEHOLDER,
                 ),
                 theme=theme,
                 scroll_end=should_follow,
@@ -618,6 +704,16 @@ class TranscriptView(VerticalScroll):
             for message in messages
             for line in message.selection_text.splitlines()
         )
+
+
+def _last_transcript_child_is_hidden_thinking_placeholder(children: Sequence[Widget]) -> bool:
+    for child in reversed(children):
+        if isinstance(child, TranscriptMessageWidget | StreamingTranscriptMessageWidget):
+            return (
+                child.item.role == "thinking"
+                and child.selection_text == _HIDDEN_THINKING_PLACEHOLDER
+            )
+    return False
 
 
 def _transcript_widget(
