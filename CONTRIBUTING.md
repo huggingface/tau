@@ -56,13 +56,12 @@ uv run ruff format --check .
 uv run mypy
 ```
 
-For the documentation site:
+For the documentation site (a [Hugo](https://gohugo.io/) project):
 
 ```bash
 cd website
-bun install
-bun run dev
-bun run build
+hugo server -D
+hugo --minify
 ```
 
 ## Where changes belong

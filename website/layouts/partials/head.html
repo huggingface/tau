@@ -1,0 +1,30 @@
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{ if .IsHome }}{{ .Site.Title }}{{ else }}{{ .Title }} · {{ .Site.Title }}{{ end }}</title>
+<meta name="description" content="{{ with .Description }}{{ . }}{{ else }}{{ .Site.Params.description }}{{ end }}" />
+<link rel="icon" type="image/svg+xml" href="{{ "favicon.svg" | relURL }}" />
+<link rel="canonical" href="{{ .Permalink }}" />
+
+{{ $css := resources.Get "css/main.css" }}
+{{ if hugo.IsProduction }}
+  {{ $css = $css | resources.Minify | fingerprint }}
+  <link rel="stylesheet" href="{{ $css.RelPermalink }}" integrity="{{ $css.Data.Integrity }}" />
+{{ else }}
+  <link rel="stylesheet" href="{{ $css.RelPermalink }}" />
+{{ end }}
+
+{{ if .Params.mathjax }}
+<script>
+  window.MathJax = {
+    tex: {
+      inlineMath: [["\\(", "\\)"]],
+      displayMath: [["\\[", "\\]"]],
+      processEscapes: true,
+      processEnvironments: true,
+    },
+  };
+</script>
+<script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
+{{ end }}
+
+{{ block "head-extra" . }}{{ end }}

@@ -193,20 +193,19 @@ uv run tau
 uv run tau -p "explain this repo"
 ```
 
-Run the Astro/Starlight documentation site:
+Run the Hugo documentation site:
 
 ```bash
 cd website
-bun install
-bun run dev
+hugo server -D
 ```
 
-Open <http://localhost:4321/>. Build with `bun run build`.
+Open <http://localhost:1313/>. Build with `hugo --minify`.
 
 ## Documentation
 
 User docs are published at <https://twotimespi.dev/> and live in
-`website/src/content/docs/`.
+`website/content/`.
 
 Useful entry points:
 

@@ -1,0 +1,16 @@
+{{ define "main" }}
+<div class="wrap">
+  <div class="not-found">
+    <span class="turn">&#964;</span>
+    <h1>Page not found</h1>
+    <p class="lede" style="margin:0 auto;">This page wandered off the circle. Let's get you back.</p>
+    <div class="cta-row" style="justify-content:center;">
+      <a class="ghost" href="{{ "/" | relURL }}">Back home <span class="arr">&rarr;</span></a>
+      <a class="ghost" href="{{ "/quickstart/" | relURL }}">Read the docs <span class="arr">&rarr;</span></a>
+    </div>
+  </div>
+</div>
+{{ end }}
+{{ define "head-extra" }}
+<meta name="robots" content="noindex" />
+{{ end }}

@@ -1,0 +1,27 @@
+{{ $current := .RelPermalink }}
+{{ $flat := slice }}
+{{ range $group := site.Data.sidebar }}
+  {{ if $group.items }}
+    {{ range $item := $group.items }}
+      {{ $flat = $flat | append $item }}
+    {{ end }}
+  {{ end }}
+{{ end }}
+{{ $idx := -1 }}
+{{ range $i, $item := $flat }}
+  {{ if eq ($item.path | relURL) $current }}{{ $idx = $i }}{{ end }}
+{{ end }}
+{{ if ge $idx 0 }}
+<div class="docs-prevnext">
+  {{ if gt $idx 0 }}
+    {{ $prev := index $flat (sub $idx 1) }}
+    <a class="prev" href="{{ $prev.path | relURL }}"><span class="dir">&larr; Previous</span>{{ $prev.label }}</a>
+  {{ else }}
+    <span></span>
+  {{ end }}
+  {{ if lt $idx (sub (len $flat) 1) }}
+    {{ $next := index $flat (add $idx 1) }}
+    <a class="next" href="{{ $next.path | relURL }}"><span class="dir">Next &rarr;</span>{{ $next.label }}</a>
+  {{ end }}
+</div>
+{{ end }}
