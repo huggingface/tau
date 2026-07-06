@@ -800,6 +800,13 @@ class CodingSession:
             current=self._thinking_level,
         )
 
+    def _validate_provider_model(self, provider_name: str, model: str) -> None:
+        if self._provider_settings is None:
+            return
+        provider = self._provider_settings.get_provider(provider_name)
+        if model not in provider.models:
+            raise ProviderConfigError(f"Model is not configured: {provider_name}:{model}")
+
     def _persist_default_model_choice(self) -> None:
         if self._provider_settings is None:
             return
@@ -912,24 +919,29 @@ class CodingSession:
 
         provider_name = self._provider_name
         runtime_provider_config = self._runtime_provider_config
+        model = self.model
+        restore_record_model = False
         if record.provider_name:
             if self._provider_settings is None:
-                raise ValueError(
+                raise ProviderConfigError(
                     "Cannot resume session provider without provider settings: "
                     f"{record.provider_name}"
                 )
             try:
                 runtime_provider_config = self._provider_settings.get_provider(record.provider_name)
             except ProviderConfigError as exc:
-                raise ValueError(
+                raise ProviderConfigError(
                     f"Session provider is not configured: {record.provider_name}"
                 ) from exc
             provider_name = runtime_provider_config.name
+            model = record.model
+            restore_record_model = True
+            self._validate_provider_model(provider_name, model)
 
         replacement = await type(self).load(
             CodingSessionConfig(
                 provider=self._harness.config.provider,
-                model=record.model or self.model,
+                model=model,
                 cwd=record.cwd,
                 storage=jsonl_session_storage(record.path),
                 system=self._config.system,
@@ -949,6 +961,12 @@ class CodingSession:
                 shell_command_prefix=self._config.shell_command_prefix,
             )
         )
+        if restore_record_model:
+            self._validate_provider_model(provider_name, replacement.model)
+        else:
+            replacement._harness.config.model = self.model
+            replacement._sync_thinking_level_to_active_model()
+            replacement._refresh_runtime_provider()
         self._config = replacement._config
         self._state = replacement._state
         self._harness = replacement._harness

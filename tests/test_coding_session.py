@@ -39,6 +39,7 @@ from tau_coding import (
     ModelChoice,
     OpenAICodexProviderConfig,
     OpenAICompatibleProviderConfig,
+    ProviderConfigError,
     ProviderSettings,
     ScopedModelConfig,
     SessionManager,
@@ -2779,6 +2780,152 @@ async def test_session_resume_uses_target_session_provider_model(
     assert session.provider_name == "local"
     assert session.model == "qwen"
     assert created == [("local", "qwen")]
+
+
+@pytest.mark.anyio
+async def test_session_resume_missing_provider_preserves_active_provider_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    first_record = manager.create_session(
+        cwd=tmp_path / "first",
+        model="gpt-5",
+        provider_name="openai",
+        title="First",
+    )
+    second_cwd = tmp_path / "second"
+    second_cwd.mkdir(parents=True)
+    second_record = manager.create_session(
+        cwd=second_cwd,
+        model="qwen",
+        provider_name=None,
+        title="Legacy second",
+    )
+    settings = ProviderSettings(
+        default_provider="openai",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="openai",
+                models=("gpt-5",),
+                default_model="gpt-5",
+            ),
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                models=("qwen",),
+                default_model="qwen",
+            ),
+        ),
+    )
+    created: list[tuple[str, str | None]] = []
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+    ) -> SwitchableFakeProvider:
+        del credential_store, thinking_level
+        created.append((provider_config.name, model))  # type: ignore[attr-defined]
+        return SwitchableFakeProvider(provider_config)
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    second_storage = JsonlSessionStorage(second_record.path)
+    await second_storage.append(SessionInfoEntry(cwd=str(second_record.cwd)))
+    await second_storage.append(ModelChangeEntry(model="qwen"))
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="gpt-5",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(first_record.path),
+            cwd=first_record.cwd,
+            session_id=first_record.id,
+            session_manager=manager,
+            provider_name="openai",
+            provider_settings=settings,
+            runtime_provider_config=settings.get_provider("openai"),
+        )
+    )
+    created.clear()
+
+    await session.resume(second_record.id)
+
+    assert session.provider_name == "openai"
+    assert session.model == "gpt-5"
+    assert created == [("openai", "qwen"), ("openai", "gpt-5")]
+
+
+@pytest.mark.anyio
+async def test_session_resume_rejects_incompatible_provider_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    first_record = manager.create_session(
+        cwd=tmp_path / "first",
+        model="gpt-5",
+        provider_name="openai",
+        title="First",
+    )
+    second_cwd = tmp_path / "second"
+    second_cwd.mkdir(parents=True)
+    second_record = manager.create_session(
+        cwd=second_cwd,
+        model="gpt-5.5",
+        provider_name="local",
+        title="Bad second",
+    )
+    settings = ProviderSettings(
+        default_provider="openai",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="openai",
+                models=("gpt-5",),
+                default_model="gpt-5",
+            ),
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                models=("qwen",),
+                default_model="qwen",
+            ),
+        ),
+    )
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+    ) -> SwitchableFakeProvider:
+        del credential_store, model, thinking_level
+        return SwitchableFakeProvider(provider_config)
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="gpt-5",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(first_record.path),
+            cwd=first_record.cwd,
+            session_id=first_record.id,
+            session_manager=manager,
+            provider_name="openai",
+            provider_settings=settings,
+            runtime_provider_config=settings.get_provider("openai"),
+        )
+    )
+
+    with pytest.raises(ProviderConfigError, match="Model is not configured: local:gpt-5.5"):
+        await session.resume(second_record.id)
+
+    assert session.provider_name == "openai"
+    assert session.model == "gpt-5"
 
 
 @pytest.mark.anyio
