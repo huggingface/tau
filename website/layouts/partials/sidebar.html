@@ -1,0 +1,21 @@
+{{ $current := .RelPermalink }}
+<nav class="docs-sidebar" aria-label="Documentation">
+  {{ range $group := site.Data.sidebar }}
+    {{ $link := "" }}
+    {{ if $group.link }}{{ $link = $group.link }}{{ else if $group.path }}{{ $link = $group.path }}{{ end }}
+    {{ if $group.items }}
+      <div class="sidebar-group">
+        <p class="sidebar-group-label">{{ $group.label }}</p>
+        <ul>
+          {{ range $item := $group.items }}
+            {{ $href := $item.path | relURL }}
+            <li><a href="{{ $href }}" {{ if eq $current $href }}class="active"{{ end }}>{{ $item.label }}</a></li>
+          {{ end }}
+        </ul>
+      </div>
+    {{ else }}
+      {{ $href := $link | relURL }}
+      <a class="sidebar-toplink {{ if eq $current $href }}active{{ end }}" href="{{ $href }}">{{ $group.label }}</a>
+    {{ end }}
+  {{ end }}
+</nav>

@@ -1,0 +1,54 @@
+- label: Home
+  link: /
+- label: 'Why "Tau"?'
+  link: /why-tau/
+- label: Use Tau
+  items:
+    - label: What is Tau?
+      path: /what-is-tau/
+    - label: Quickstart
+      path: /quickstart/
+    - label: Core concepts
+      path: /concepts/
+- label: Guides
+  items:
+    - label: The interactive session
+      path: /guides/tui/
+    - label: Sessions
+      path: /guides/sessions/
+    - label: Providers & models
+      path: /guides/providers-and-models/
+    - label: Skills & prompt templates
+      path: /guides/skills-and-prompts/
+    - label: Project instructions
+      path: /guides/project-instructions/
+    - label: Managing context
+      path: /guides/context/
+    - label: Print mode & scripting
+      path: /guides/print-mode/
+- label: Reference
+  items:
+    - label: CLI
+      path: /reference/cli/
+    - label: Slash commands
+      path: /reference/slash-commands/
+    - label: Keyboard shortcuts
+      path: /reference/keybindings/
+    - label: Configuration & files
+      path: /reference/configuration/
+    - label: Built-in tools
+      path: /reference/tools/
+- label: How Tau works
+  items:
+    - label: Architecture overview
+      path: /internals/architecture/
+    - label: The agent loop & events
+      path: /internals/agent-loop/
+    - label: Design principles
+      path: /internals/design-principles/
+    - label: Build your own frontend
+      path: /internals/custom-frontend/
+- label: Release notes
+  link: /releases/
+- label: Contributing
+  path: /contributing/

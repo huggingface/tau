@@ -26,21 +26,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Setup Hugo
+        uses: peaceiris/actions-hugo@v3
         with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+          hugo-version: "0.152.2"
+          extended: true
 
       - name: Build documentation
-        run: bun run build
+        run: hugo --minify
+
+      - name: Build search index
+        run: npx --yes pagefind@latest --site public
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: website/dist
+          path: website/public
 
   deploy:
     environment:
