@@ -3604,7 +3604,7 @@ def _session_header_sub_title(session: CodingSession) -> str:
 
 
 def _login_provider_label(provider: ProviderCatalogEntry) -> str:
-    return f"{provider.display_name}\n  {provider.name}"
+    return f"{provider.display_name} — {provider.name}"
 
 
 def _subscription_login_providers(

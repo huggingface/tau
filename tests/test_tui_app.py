@@ -3804,7 +3804,7 @@ async def test_tui_logout_opens_stored_credential_provider_picker(
         assert str(title.render()) == "Logout"
         provider_list = app.screen.query_one("#login-provider-list", ListView)
         labels = [str(item.query_one(Label).render()) for item in provider_list.children]
-        assert labels == ["Anthropic\n  anthropic"]
+        assert labels == ["Anthropic — anthropic"]
 
 
 @pytest.mark.anyio
@@ -3859,7 +3859,7 @@ async def test_tui_login_method_picker_supports_arrow_keys() -> None:
         assert isinstance(app.screen, LoginProviderPickerScreen)
         provider_list = app.screen.query_one("#login-provider-list", ListView)
         labels = [str(item.query_one(Label).render()) for item in provider_list.children]
-        assert labels[0] == "OpenAI\n  openai"
+        assert labels[0] == "OpenAI — openai"
 
 
 @pytest.mark.anyio
@@ -3879,7 +3879,7 @@ async def test_tui_login_subscription_opens_oauth_provider_picker() -> None:
         assert isinstance(app.screen, LoginProviderPickerScreen)
         provider_list = app.screen.query_one("#login-provider-list", ListView)
         labels = [str(item.query_one(Label).render()) for item in provider_list.children]
-        assert labels == ["OpenAI Codex subscription\n  openai-codex"]
+        assert labels == ["OpenAI Codex subscription — openai-codex"]
         assert "gpt-5.5" not in "\n".join(labels)
 
 
@@ -3901,8 +3901,8 @@ async def test_tui_login_api_key_opens_api_provider_picker() -> None:
         assert isinstance(app.screen, LoginProviderPickerScreen)
         provider_list = app.screen.query_one("#login-provider-list", ListView)
         labels = [str(item.query_one(Label).render()) for item in provider_list.children]
-        assert labels[0] == "OpenAI\n  openai"
-        assert "OpenAI Codex subscription\n  openai-codex" not in labels
+        assert labels[0] == "OpenAI — openai"
+        assert "OpenAI Codex subscription — openai-codex" not in labels
 
         await pilot.press("down")
         await pilot.press("enter")
