@@ -72,6 +72,7 @@ class OpenAICompatibleProviderConfig:
     thinking_models: tuple[str, ...] = ()
     thinking_default: ThinkingLevel | None = None
     thinking_parameter: ThinkingParameter | None = None
+    thinking_defaults: dict[str, ThinkingLevel] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_provider_numbers(
@@ -86,6 +87,7 @@ class OpenAICompatibleProviderConfig:
             thinking_default=self.thinking_default,
             thinking_parameter=self.thinking_parameter,
         )
+        _validate_thinking_defaults(self.thinking_defaults)
 
     def to_json(self) -> dict[str, Any]:
         """Serialize this provider config to JSON-compatible data."""
@@ -108,6 +110,7 @@ class OpenAICompatibleProviderConfig:
             "thinking_models": list(self.thinking_models),
             "thinking_default": self.thinking_default,
             "thinking_parameter": self.thinking_parameter,
+            "thinking_defaults": dict(self.thinking_defaults),
         }
 
 
@@ -130,6 +133,7 @@ class AnthropicProviderConfig:
     thinking_models: tuple[str, ...] = ()
     thinking_default: ThinkingLevel | None = None
     thinking_parameter: ThinkingParameter | None = None
+    thinking_defaults: dict[str, ThinkingLevel] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_provider_numbers(
@@ -144,6 +148,7 @@ class AnthropicProviderConfig:
             thinking_default=self.thinking_default,
             thinking_parameter=self.thinking_parameter,
         )
+        _validate_thinking_defaults(self.thinking_defaults)
 
     def to_json(self) -> dict[str, Any]:
         """Serialize this provider config to JSON-compatible data."""
@@ -166,6 +171,7 @@ class AnthropicProviderConfig:
             "thinking_models": list(self.thinking_models),
             "thinking_default": self.thinking_default,
             "thinking_parameter": self.thinking_parameter,
+            "thinking_defaults": dict(self.thinking_defaults),
         }
 
 
@@ -195,6 +201,7 @@ class OpenAICodexProviderConfig:
     thinking_models: tuple[str, ...] = ()
     thinking_default: ThinkingLevel | None = None
     thinking_parameter: ThinkingParameter | None = None
+    thinking_defaults: dict[str, ThinkingLevel] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_provider_numbers(
@@ -209,6 +216,7 @@ class OpenAICodexProviderConfig:
             thinking_default=self.thinking_default,
             thinking_parameter=self.thinking_parameter,
         )
+        _validate_thinking_defaults(self.thinking_defaults)
 
     def to_json(self) -> dict[str, Any]:
         """Serialize this provider config to JSON-compatible data."""
@@ -231,6 +239,7 @@ class OpenAICodexProviderConfig:
             "thinking_models": list(self.thinking_models),
             "thinking_default": self.thinking_default,
             "thinking_parameter": self.thinking_parameter,
+            "thinking_defaults": dict(self.thinking_defaults),
         }
 
 
@@ -319,6 +328,7 @@ def provider_config_from_entry(entry: ProviderCatalogEntry) -> ProviderConfig:
             thinking_models=entry.thinking_models,
             thinking_default=entry.thinking_default,
             thinking_parameter=entry.thinking_parameter,
+            thinking_defaults={},
         )
     if entry.kind == "openai-codex":
         return OpenAICodexProviderConfig(
@@ -333,6 +343,7 @@ def provider_config_from_entry(entry: ProviderCatalogEntry) -> ProviderConfig:
             thinking_models=entry.thinking_models,
             thinking_default=entry.thinking_default,
             thinking_parameter=entry.thinking_parameter,
+            thinking_defaults={},
         )
     return OpenAICompatibleProviderConfig(
         name=entry.name,
@@ -346,6 +357,7 @@ def provider_config_from_entry(entry: ProviderCatalogEntry) -> ProviderConfig:
         thinking_models=entry.thinking_models,
         thinking_default=entry.thinking_default,
         thinking_parameter=entry.thinking_parameter,
+        thinking_defaults={},
     )
 
 
@@ -398,6 +410,26 @@ def save_default_provider_model(
     """Reload settings, persist one default provider/model change, and return them."""
     settings = _load_provider_settings_for_write(paths, fallback_settings=fallback_settings)
     updated = set_default_provider_model(settings, provider_name=provider_name, model=model)
+    save_provider_settings(updated, paths)
+    return updated
+
+
+def save_provider_thinking_level(
+    *,
+    provider_name: str,
+    model: str,
+    thinking_level: ThinkingLevel,
+    paths: TauPaths | None = None,
+    fallback_settings: ProviderSettings | None = None,
+) -> ProviderSettings:
+    """Reload settings, persist one provider/model thinking preference, and return them."""
+    settings = _load_provider_settings_for_write(paths, fallback_settings=fallback_settings)
+    updated = set_provider_thinking_level(
+        settings,
+        provider_name=provider_name,
+        model=model,
+        thinking_level=thinking_level,
+    )
     save_provider_settings(updated, paths)
     return updated
 
@@ -469,6 +501,38 @@ def set_default_provider_model(
     )
     return ProviderSettings(
         default_provider=provider_name,
+        providers=providers,
+        scoped_models=settings.scoped_models,
+    )
+
+
+def set_provider_thinking_level(
+    settings: ProviderSettings,
+    *,
+    provider_name: str,
+    model: str,
+    thinking_level: ThinkingLevel,
+) -> ProviderSettings:
+    """Return settings with a remembered thinking level for one provider/model."""
+    provider = settings.get_provider(provider_name)
+    validate_provider_model(provider, model)
+    normalized = normalize_thinking_level(thinking_level)
+    available = provider_thinking_levels(provider, model=model)
+    if normalized not in available:
+        modes = ", ".join(available) or "none"
+        raise ProviderConfigError(
+            f"Thinking mode {normalized} is not available for "
+            f"{provider_name}:{model}. Available modes: {modes}"
+        )
+    updated_provider = replace(
+        provider,
+        thinking_defaults={**provider.thinking_defaults, model: normalized},
+    )
+    providers = tuple(
+        updated_provider if item.name == provider_name else item for item in settings.providers
+    )
+    return ProviderSettings(
+        default_provider=settings.default_provider,
         providers=providers,
         scoped_models=settings.scoped_models,
     )
@@ -604,6 +668,7 @@ def _merge_provider_config(existing: ProviderConfig, incoming: ProviderConfig) -
         thinking_models=thinking_models,
         thinking_default=thinking_default,
         thinking_parameter=thinking_parameter,
+        thinking_defaults=existing.thinking_defaults,
     )
 
 
@@ -643,6 +708,7 @@ def _provider_preference_to_json(provider: ProviderConfig) -> dict[str, Any]:
         "timeout_seconds": provider.timeout_seconds,
         "max_retries": provider.max_retries,
         "max_retry_delay_seconds": provider.max_retry_delay_seconds,
+        "thinking_defaults": dict(provider.thinking_defaults),
     }
 
 
@@ -797,6 +863,7 @@ def _apply_provider_preference(
         "timeout_seconds",
         "max_retries",
         "max_retry_delay_seconds",
+        "thinking_defaults",
     }
     unknown = sorted(set(value) - allowed)
     if unknown:
@@ -840,6 +907,15 @@ def _apply_provider_preference(
         if "max_retry_delay_seconds" in value
         else provider.max_retry_delay_seconds
     )
+    thinking_defaults = (
+        _thinking_defaults_dict(
+            value.get("thinking_defaults"),
+            provider,
+            f"provider_preferences.{provider.name}.thinking_defaults",
+        )
+        if "thinking_defaults" in value
+        else provider.thinking_defaults
+    )
     return replace(
         provider,
         models=models,
@@ -848,7 +924,39 @@ def _apply_provider_preference(
         timeout_seconds=timeout_seconds,
         max_retries=max_retries,
         max_retry_delay_seconds=max_retry_delay_seconds,
+        thinking_defaults=thinking_defaults,
     )
+
+
+def _thinking_defaults_dict(
+    value: object,
+    provider: ProviderConfig,
+    field_name: str,
+) -> dict[str, ThinkingLevel]:
+    raw = _raw_thinking_defaults_dict(value, field_name)
+    for model, thinking_level in raw.items():
+        validate_provider_model(provider, model)
+        available = provider_thinking_levels(provider, model=model)
+        if thinking_level not in available:
+            modes = ", ".join(available) or "none"
+            raise ProviderConfigError(
+                f"Provider thinking default {thinking_level} is not available for "
+                f"{provider.name}:{model}. Available modes: {modes}"
+            )
+    return raw
+
+
+def _raw_thinking_defaults_dict(value: object, field_name: str) -> dict[str, ThinkingLevel]:
+    if not isinstance(value, dict):
+        raise ProviderConfigError(f"Provider field must be a thinking mode object: {field_name}")
+    defaults: dict[str, ThinkingLevel] = {}
+    for key, item in value.items():
+        model = _string(key, field_name)
+        thinking_level = _optional_thinking_level(item, f"{field_name}.{model}")
+        if thinking_level is None:
+            raise ProviderConfigError(f"Provider field must be a thinking mode: {field_name}")
+        defaults[model] = thinking_level
+    return defaults
 
 
 def _scoped_models_from_json(value: object) -> tuple[ScopedModelConfig, ...]:
@@ -1119,6 +1227,9 @@ def _provider_from_json(data: object) -> ProviderConfig:
     thinking_parameter = _optional_thinking_parameter(
         data.get("thinking_parameter"), f"providers[{name}].thinking_parameter"
     )
+    thinking_defaults = _raw_thinking_defaults_dict(
+        data.get("thinking_defaults", {}), f"providers[{name}].thinking_defaults"
+    )
     if default_model not in models:
         models = (*models, default_model)
     if provider_type == "anthropic":
@@ -1138,6 +1249,7 @@ def _provider_from_json(data: object) -> ProviderConfig:
             thinking_models=thinking_models,
             thinking_default=thinking_default,
             thinking_parameter=thinking_parameter,
+            thinking_defaults=thinking_defaults,
         )
     if provider_type == "openai-codex":
         return OpenAICodexProviderConfig(
@@ -1156,6 +1268,7 @@ def _provider_from_json(data: object) -> ProviderConfig:
             thinking_models=thinking_models,
             thinking_default=thinking_default,
             thinking_parameter=thinking_parameter,
+            thinking_defaults=thinking_defaults,
         )
     return OpenAICompatibleProviderConfig(
         name=name,
@@ -1173,6 +1286,7 @@ def _provider_from_json(data: object) -> ProviderConfig:
         thinking_models=thinking_models,
         thinking_default=thinking_default,
         thinking_parameter=thinking_parameter,
+        thinking_defaults=thinking_defaults,
     )
 
 
@@ -1221,6 +1335,16 @@ def _validate_context_windows(context_windows: dict[str, int]) -> None:
             or context_window <= 0
         ):
             raise ProviderConfigError("Provider context_windows values must be positive integers")
+
+
+def _validate_thinking_defaults(thinking_defaults: dict[str, ThinkingLevel]) -> None:
+    for model, thinking_level in thinking_defaults.items():
+        if not isinstance(model, str) or not model.strip():
+            raise ProviderConfigError("Provider thinking_defaults keys must be non-empty strings")
+        try:
+            normalize_thinking_level(thinking_level)
+        except ValueError as exc:
+            raise ProviderConfigError(str(exc)) from exc
 
 
 def _validate_thinking_config(

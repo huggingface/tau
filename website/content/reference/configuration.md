@@ -95,6 +95,7 @@ Provider preferences live in `~/.tau/providers.json`:
     "local-gateway": {
       "default_model": "qwen-coder",
       "headers": { "X-Provider-Header": "value" },
+      "thinking_defaults": { "qwen-coder": "low" },
       "timeout_seconds": 120,
       "max_retries": 2,
       "max_retry_delay_seconds": 0.5
@@ -110,9 +111,10 @@ Provider preferences live in `~/.tau/providers.json`:
   (`src/tau_coding/data/catalog.toml` plus `~/.tau/catalog.toml`).
 - `headers` is optional (string→string). For example, Hugging Face organization
   billing can be configured with `"headers": { "X-HF-Bill-To": "my-org" }` on
-  the `huggingface` provider preference. `timeout_seconds` defaults to `60`
-  (> 0); `max_retries` defaults to `2`; `max_retry_delay_seconds` defaults to `1`
-  (both ≥ 0).
+  the `huggingface` provider preference. `thinking_defaults` remembers the
+  preferred thinking level per model for new sessions; resumed sessions still use
+  their session history. `timeout_seconds` defaults to `60` (> 0); `max_retries`
+  defaults to `2`; `max_retry_delay_seconds` defaults to `1` (both ≥ 0).
 - API keys and OAuth credentials are **not** stored here — they live in
   `~/.tau/credentials.json`. Resolution order: stored credential, then the env
   var named by `api_key_env`.

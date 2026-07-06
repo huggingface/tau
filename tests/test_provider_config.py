@@ -24,6 +24,7 @@ from tau_coding.provider_config import (
     resolve_provider_selection,
     save_provider_settings,
     set_default_provider_model,
+    set_provider_thinking_level,
     upsert_openai_compatible_provider,
 )
 
@@ -678,6 +679,7 @@ def test_provider_settings_from_json_loads_custom_thinking_capabilities() -> Non
                     "thinking_models": ["reasoner"],
                     "thinking_default": "low",
                     "thinking_parameter": "reasoning_effort",
+                    "thinking_defaults": {"reasoner": "high"},
                 }
             ],
         }
@@ -689,7 +691,33 @@ def test_provider_settings_from_json_loads_custom_thinking_capabilities() -> Non
     assert provider_thinking_levels(provider, model="reasoner") == ("off", "low", "high")
     assert provider_thinking_levels(provider, model="plain") == ()
     assert provider_default_thinking_level(provider, model="reasoner") == "low"
+    assert provider.thinking_defaults == {"reasoner": "high"}
     assert provider.to_json()["thinking_parameter"] == "reasoning_effort"
+
+
+def test_set_provider_thinking_level_updates_preference() -> None:
+    provider = OpenAICompatibleProviderConfig(
+        name="local",
+        models=("reasoner",),
+        default_model="reasoner",
+        thinking_levels=("low", "high"),
+        thinking_models=("reasoner",),
+        thinking_default="low",
+        thinking_parameter="reasoning_effort",
+    )
+    settings = ProviderSettings(default_provider="local", providers=(provider,))
+
+    updated = set_provider_thinking_level(
+        settings,
+        provider_name="local",
+        model="reasoner",
+        thinking_level="high",
+    )
+
+    assert updated.get_provider("local").thinking_defaults == {"reasoner": "high"}
+    assert updated.to_json()["provider_preferences"]["local"]["thinking_defaults"] == {
+        "reasoner": "high"
+    }
 
 
 def test_provider_settings_from_json_loads_openai_codex_provider() -> None:

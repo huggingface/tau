@@ -46,6 +46,7 @@ from tau_coding import (
     SessionTreeBranchResult,
     TauPaths,
     TauResourcePaths,
+    load_provider_settings,
     save_provider_settings,
 )
 from tau_coding import session as coding_session_module
@@ -784,6 +785,95 @@ async def test_session_uses_active_model_thinking_capabilities(
     assert session.available_thinking_levels == ("off", "low", "high")
     assert session.thinking_level == "high"
     assert session.thinking_unavailable_reason is None
+
+
+@pytest.mark.anyio
+async def test_session_persists_thinking_preference_for_new_sessions(tmp_path: Path) -> None:
+    tau_paths = TauPaths(home=tmp_path / ".tau")
+    provider_config = OpenAICodexProviderConfig(
+        thinking_levels=("off", "minimal", "low", "medium", "high", "xhigh"),
+        thinking_models=("gpt-5.5",),
+        thinking_default="medium",
+        thinking_parameter="reasoning.effort",
+    )
+    settings = ProviderSettings(
+        default_provider="openai-codex",
+        providers=(provider_config,),
+    )
+    storage = JsonlSessionStorage(tmp_path / "codex-session.jsonl")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="gpt-5.5",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            provider_name="openai-codex",
+            provider_settings=settings,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    assert session.thinking_level == "medium"
+    assert await session.set_thinking_level("low") == "Thinking mode: low"
+
+    saved = load_provider_settings(tau_paths)
+    assert saved.get_provider("openai-codex").thinking_defaults == {"gpt-5.5": "low"}
+
+    new_session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="gpt-5.5",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "new-codex-session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai-codex",
+            provider_settings=saved,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    assert new_session.thinking_level == "low"
+
+
+@pytest.mark.anyio
+async def test_resumed_session_history_overrides_saved_thinking_preference(
+    tmp_path: Path,
+) -> None:
+    provider_config = OpenAICompatibleProviderConfig(
+        name="openai",
+        models=("reasoner",),
+        default_model="reasoner",
+        thinking_levels=("low", "high"),
+        thinking_default="low",
+        thinking_parameter="reasoning_effort",
+        thinking_defaults={"reasoner": "low"},
+    )
+    storage = JsonlSessionStorage(tmp_path / "resume-thinking-session.jsonl")
+    info = SessionInfoEntry(id="info", cwd=str(tmp_path))
+    model = ModelChangeEntry(id="model", parent_id="info", model="reasoner")
+    thinking = ThinkingLevelChangeEntry(
+        id="thinking",
+        parent_id="model",
+        thinking_level="high",
+    )
+    leaf = LeafEntry(id="leaf", parent_id="thinking", entry_id="thinking")
+    for entry in (info, model, thinking, leaf):
+        await storage.append(entry)
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="reasoner",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            provider_name="openai",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+        )
+    )
+
+    assert session.thinking_level == "high"
 
 
 @pytest.mark.anyio

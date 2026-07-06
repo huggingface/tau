@@ -73,6 +73,7 @@ from tau_coding.provider_config import (
     provider_thinking_unavailable_reason,
     resolve_provider_selection,
     save_default_provider_model,
+    save_provider_thinking_level,
     toggle_saved_scoped_model,
     validate_provider_model,
 )
@@ -236,7 +237,10 @@ class CodingSession:
         self._resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
         self._auto_compact_token_threshold = config.auto_compact_token_threshold
         self._auto_compact_enabled = config.auto_compact_enabled
-        self._thinking_level = _state_thinking_level(state, config.thinking_level)
+        self._thinking_level = _state_thinking_level(
+            state,
+            default=_default_thinking_level_for_active_model(self),
+        )
         self._context_usage_cache: ContextUsageEstimate | None = None
         self._owned_providers: list[ClosableModelProvider] = []
         self._diagnostic_logger = AgentCallDiagnosticLogger.from_paths(self._resource_paths.paths)
@@ -252,13 +256,14 @@ class CodingSession:
         pending_initial_entries: tuple[SessionEntry, ...] = ()
         if not entries:
             info = SessionInfoEntry(cwd=str(config.cwd))
+            initial_model = _initial_model_for_config(config)
             model = ModelChangeEntry(
                 parent_id=info.id,
-                model=_initial_model_for_config(config),
+                model=initial_model,
             )
             thinking = ThinkingLevelChangeEntry(
                 parent_id=model.id,
-                thinking_level=config.thinking_level,
+                thinking_level=_initial_thinking_level_for_config(config, model=initial_model),
             )
             entries = [info, model, thinking]
             pending_initial_entries = (info, model, thinking)
@@ -463,7 +468,10 @@ class CodingSession:
         await self._refresh_persisted_state(leaf_id=target_id)
         self._harness.replace_messages(self._state.messages)
         self._invalidate_context_usage_cache()
-        self._thinking_level = _state_thinking_level(self._state, self._config.thinking_level)
+        self._thinking_level = _state_thinking_level(
+            self._state,
+            default=_default_thinking_level_for_active_model(self),
+        )
         self._sync_thinking_level_to_active_model()
         self._refresh_runtime_provider()
         suffix = " with branch summary" if summary_entry is not None else ""
@@ -802,6 +810,7 @@ class CodingSession:
         await self._append_session_entry(leaf)
         self._last_parent_id = entry.id
 
+        self._persist_thinking_level_choice()
         await self._refresh_persisted_state(leaf_id=entry.id)
         return f"Thinking mode: {normalized}"
 
@@ -830,6 +839,7 @@ class CodingSession:
             provider,
             model=self.model,
             current=self._thinking_level,
+            preferred=provider.thinking_defaults.get(self.model),
         )
 
     def _persist_default_model_choice(self) -> None:
@@ -842,6 +852,26 @@ class CodingSession:
             fallback_settings=self._provider_settings,
         )
         self._sync_thinking_level_to_active_model()
+
+    def _persist_thinking_level_choice(self) -> None:
+        if self._provider_settings is None:
+            return
+        provider = self._active_provider_config()
+        if provider is None or self._thinking_level not in provider_thinking_levels(
+            provider,
+            model=self.model,
+        ):
+            return
+        try:
+            self._provider_settings = save_provider_thinking_level(
+                provider_name=self.provider_name,
+                model=self.model,
+                thinking_level=self._thinking_level,
+                paths=self._resource_paths.paths,
+                fallback_settings=self._provider_settings,
+            )
+        except ProviderConfigError:
+            return
 
     def _refresh_runtime_provider(self) -> None:
         if self._runtime_provider_config is None:
@@ -1865,6 +1895,21 @@ def _runtime_model_for_state(config: CodingSessionConfig, state: SessionState) -
     return state_model
 
 
+def _initial_thinking_level_for_config(
+    config: CodingSessionConfig,
+    *,
+    model: str,
+) -> ThinkingLevel:
+    provider = _provider_config_for_name(config, config.provider_name)
+    if provider is None:
+        return config.thinking_level
+    return _preferred_thinking_level_for_model(
+        provider,
+        model=model,
+        fallback=config.thinking_level,
+    )
+
+
 def _provider_config_for_name(
     config: CodingSessionConfig,
     provider_name: str,
@@ -1889,15 +1934,45 @@ def _state_thinking_level(
     return normalize_thinking_level(thinking_level)
 
 
+def _default_thinking_level_for_active_model(session: CodingSession) -> ThinkingLevel:
+    provider = session._active_provider_config()
+    if provider is None:
+        return session._config.thinking_level
+    return _preferred_thinking_level_for_model(
+        provider,
+        model=session.model,
+        fallback=session._config.thinking_level,
+    )
+
+
+def _preferred_thinking_level_for_model(
+    provider: ProviderConfig,
+    *,
+    model: str,
+    fallback: ThinkingLevel,
+) -> ThinkingLevel:
+    levels = provider_thinking_levels(provider, model=model)
+    preferred = provider.thinking_defaults.get(model)
+    if preferred in levels:
+        return preferred
+    if fallback in levels or not levels:
+        return fallback
+    default = provider_default_thinking_level(provider, model=model)
+    return default or levels[0]
+
+
 def _coerced_thinking_level(
     provider: ProviderConfig,
     *,
     model: str,
     current: ThinkingLevel,
+    preferred: ThinkingLevel | None = None,
 ) -> ThinkingLevel:
     levels = provider_thinking_levels(provider, model=model)
     if not levels or current in levels:
         return current
+    if preferred in levels:
+        return preferred
     default = provider_default_thinking_level(provider, model=model)
     return default or levels[0]
 

@@ -151,6 +151,7 @@ catalog, then add the header to the matching provider preference in
     "huggingface": {
       "default_model": "openai/gpt-oss-120b",
       "headers": { "X-HF-Bill-To": "my-org" },
+      "thinking_defaults": { "openai/gpt-oss-120b": "low" },
       "timeout_seconds": 60,
       "max_retries": 2,
       "max_retry_delay_seconds": 1
