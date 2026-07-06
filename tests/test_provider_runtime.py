@@ -3,7 +3,11 @@ import pytest
 from tau_ai import OpenAICodexProvider
 from tau_coding import provider_runtime
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
-from tau_coding.provider_config import OpenAICodexProviderConfig
+from tau_coding.provider_config import (
+    OpenAICodexProviderConfig,
+    OpenAICompatibleProviderConfig,
+    ProviderConfigError,
+)
 from tau_coding.provider_runtime import OpenAICodexCredentialResolver, create_model_provider
 
 
@@ -16,6 +20,21 @@ def test_create_model_provider_returns_openai_codex_provider(tmp_path) -> None:
     )
 
     assert isinstance(provider, OpenAICodexProvider)
+
+
+def test_create_model_provider_rejects_model_not_declared_for_provider(tmp_path) -> None:
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    provider_config = OpenAICompatibleProviderConfig(
+        name="local",
+        models=("qwen",),
+        default_model="qwen",
+    )
+
+    with pytest.raises(
+        ProviderConfigError,
+        match="Model is not configured for provider local: llama",
+    ):
+        create_model_provider(provider_config, credential_store=store, model="llama")
 
 
 def test_create_model_provider_maps_codex_reasoning_effort_like_pi(tmp_path) -> None:

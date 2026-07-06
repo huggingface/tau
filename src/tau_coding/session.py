@@ -73,6 +73,7 @@ from tau_coding.provider_config import (
     resolve_provider_selection,
     save_default_provider_model,
     toggle_saved_scoped_model,
+    validate_provider_model,
 )
 from tau_coding.provider_runtime import ClosableModelProvider, create_model_provider
 from tau_coding.reload import CodingReloadSummary, ReloadCategorySummary
@@ -249,7 +250,10 @@ class CodingSession:
         pending_initial_entries: tuple[SessionEntry, ...] = ()
         if not entries:
             info = SessionInfoEntry(cwd=str(config.cwd))
-            model = ModelChangeEntry(parent_id=info.id, model=config.model)
+            model = ModelChangeEntry(
+                parent_id=info.id,
+                model=_initial_model_for_config(config),
+            )
             thinking = ThinkingLevelChangeEntry(
                 parent_id=model.id,
                 thinking_level=config.thinking_level,
@@ -293,7 +297,7 @@ class CodingSession:
         harness = AgentHarness(
             AgentHarnessConfig(
                 provider=config.provider,
-                model=state.model or config.model,
+                model=_runtime_model_for_state(config, state),
                 system=system,
                 tools=tools,
             ),
@@ -647,6 +651,9 @@ class CodingSession:
 
     def set_model(self, model: str) -> None:
         """Switch the active model for future turns and make it the default."""
+        provider = self._active_provider_config()
+        if provider is not None:
+            validate_provider_model(provider, model)
         self._harness.config.model = model
         self._sync_thinking_level_to_active_model()
         self._refresh_runtime_provider()
@@ -834,6 +841,7 @@ class CodingSession:
         if self._runtime_provider_config is None:
             return
         provider_config = self._active_provider_config() or self._runtime_provider_config
+        validate_provider_model(provider_config, self.model)
         try:
             provider = create_model_provider(
                 provider_config,
@@ -931,24 +939,29 @@ class CodingSession:
 
         provider_name = self._provider_name
         runtime_provider_config = self._runtime_provider_config
+        model = self.model
+        restore_record_model = False
         if record.provider_name:
             if self._provider_settings is None:
-                raise ValueError(
+                raise ProviderConfigError(
                     "Cannot resume session provider without provider settings: "
                     f"{record.provider_name}"
                 )
             try:
                 runtime_provider_config = self._provider_settings.get_provider(record.provider_name)
             except ProviderConfigError as exc:
-                raise ValueError(
+                raise ProviderConfigError(
                     f"Session provider is not configured: {record.provider_name}"
                 ) from exc
             provider_name = runtime_provider_config.name
+            model = record.model
+            restore_record_model = True
+            validate_provider_model(runtime_provider_config, model)
 
         replacement = await type(self).load(
             CodingSessionConfig(
                 provider=self._harness.config.provider,
-                model=record.model or self.model,
+                model=model,
                 cwd=record.cwd,
                 storage=jsonl_session_storage(record.path),
                 system=self._config.system,
@@ -968,6 +981,14 @@ class CodingSession:
                 shell_command_prefix=self._config.shell_command_prefix,
             )
         )
+        if restore_record_model:
+            if runtime_provider_config is None:
+                raise ProviderConfigError(f"Session provider is not configured: {provider_name}")
+            validate_provider_model(runtime_provider_config, replacement.model)
+        else:
+            replacement._harness.config.model = self.model
+            replacement._sync_thinking_level_to_active_model()
+            replacement._refresh_runtime_provider()
         self._config = replacement._config
         self._state = replacement._state
         self._harness = replacement._harness
@@ -1750,6 +1771,47 @@ def _session_export_title(session: CodingSession) -> str:
         if record is not None and record.title:
             return record.title
     return f"Tau session {session_id}" if session_id is not None else "Tau Session Export"
+
+
+def _initial_model_for_config(config: CodingSessionConfig) -> str:
+    if config.provider_settings is None or config.runtime_provider_config is None:
+        return config.model
+    provider = _provider_config_for_name(config, config.provider_name)
+    if provider is None:
+        return config.model
+    try:
+        validate_provider_model(provider, config.model)
+    except ProviderConfigError:
+        return provider.default_model
+    return config.model
+
+
+def _runtime_model_for_state(config: CodingSessionConfig, state: SessionState) -> str:
+    state_model = state.model or config.model
+    if config.provider_settings is None or config.runtime_provider_config is None:
+        return state_model
+    provider = _provider_config_for_name(config, config.provider_name)
+    if provider is None:
+        return state_model
+    try:
+        validate_provider_model(provider, state_model)
+    except ProviderConfigError:
+        return config.model if config.model in provider.models else provider.default_model
+    return state_model
+
+
+def _provider_config_for_name(
+    config: CodingSessionConfig,
+    provider_name: str,
+) -> ProviderConfig | None:
+    if config.provider_settings is not None:
+        try:
+            return config.provider_settings.get_provider(provider_name)
+        except ProviderConfigError:
+            pass
+    if config.runtime_provider_config is not None:
+        return config.runtime_provider_config
+    return None
 
 
 def _state_thinking_level(

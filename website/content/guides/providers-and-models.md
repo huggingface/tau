@@ -59,6 +59,11 @@ access tokens automatically. It's separate from the API-key `openai` provider.
   Build the list with `/scoped-models`, or press `Space` on a model in the
   `/model` picker.
 
+Tau validates the selected model against the active provider's configured model
+list before creating or refreshing a runtime provider. This prevents accidental
+provider/model mismatches, such as trying to send an API-only OpenAI model to the
+separate `openai-codex` subscription provider.
+
 ## Adding a custom / local provider
 
 Any OpenAI-compatible endpoint works — including local servers like Ollama or

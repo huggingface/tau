@@ -3772,9 +3772,13 @@ def _selection_from_session_record(settings: Any, record: Any | None) -> Provide
                 model=choice.model,
             )
 
+    credential_store = FileCredentialStore()
     for provider in settings.providers:
-        if record_model in provider.models:
-            return ProviderSelection(provider=provider, model=record_model)
+        if record_model not in provider.models:
+            continue
+        if not provider_has_usable_credentials(provider, credential_reader=credential_store):
+            continue
+        return ProviderSelection(provider=provider, model=record_model)
     return None
 
 

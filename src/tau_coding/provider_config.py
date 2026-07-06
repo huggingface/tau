@@ -446,8 +446,8 @@ def set_default_provider_model(
 ) -> ProviderSettings:
     """Return settings with the default provider/model preference updated."""
     provider = settings.get_provider(provider_name)
-    models = provider.models if model in provider.models else (*provider.models, model)
-    updated_provider = replace(provider, models=models, default_model=model)
+    validate_provider_model(provider, model)
+    updated_provider = replace(provider, default_model=model)
     providers = tuple(
         updated_provider if item.name == provider_name else item for item in settings.providers
     )
@@ -544,7 +544,10 @@ def _merge_provider_config(existing: ProviderConfig, incoming: ProviderConfig) -
     """Merge a replacement provider config without losing local customizations."""
     if type(existing) is not type(incoming):
         return incoming
-    models = _unique_strings((*incoming.models, *existing.models))
+    if isinstance(incoming, OpenAICodexProviderConfig):
+        models = incoming.models
+    else:
+        models = _unique_strings((*incoming.models, *existing.models))
     default_model = (
         existing.default_model if existing.default_model in models else incoming.default_model
     )
@@ -659,7 +662,19 @@ def resolve_provider_selection(
     selected_model = model or provider.default_model
     if not selected_model:
         raise ProviderConfigError(f"Provider {provider.name} does not define a default model")
+    validate_provider_model(provider, selected_model)
     return ProviderSelection(provider=provider, model=selected_model)
+
+
+def validate_provider_model(provider: ProviderConfig, model: str) -> None:
+    """Raise when ``model`` is not declared by ``provider``."""
+    if model in provider.models:
+        return
+    available = ", ".join(sorted(provider.models)) or "none"
+    raise ProviderConfigError(
+        f"Model is not configured for provider {provider.name}: {model}. "
+        f"Available models: {available}"
+    )
 
 
 def provider_thinking_levels(
@@ -731,6 +746,7 @@ def openai_compatible_config_from_provider(
     )
     return OpenAICompatibleConfig(
         api_key=api_key,
+        provider_name=provider.name,
         base_url=base_url.rstrip("/"),
         headers=provider.headers,
         timeout_seconds=provider.timeout_seconds,
@@ -755,6 +771,7 @@ def anthropic_config_from_provider(
     )
     return AnthropicConfig(
         api_key=api_key,
+        provider_name=provider.name,
         base_url=provider.base_url.rstrip("/"),
         headers=provider.headers,
         timeout_seconds=provider.timeout_seconds,
