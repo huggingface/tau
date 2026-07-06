@@ -720,6 +720,8 @@ class CommandOutputScroll(VerticalScroll):
 class CommandOutputScreen(ModalScreen[None]):
     """Dismissible modal for slash-command output."""
 
+    auto_copy_selection: bool = False
+
     BINDINGS: ClassVar[list[BindingEntry]] = [
         Binding("escape", "close", "Close"),
         Binding("enter", "close", "Close"),
@@ -727,11 +729,19 @@ class CommandOutputScreen(ModalScreen[None]):
         Binding("down", "scroll_down", "Scroll down", show=False, priority=True),
     ]
 
-    def __init__(self, title: str, message: str, *, theme: TuiTheme) -> None:
+    def __init__(
+        self,
+        title: str,
+        message: str,
+        *,
+        theme: TuiTheme,
+        auto_copy_selection: bool = False,
+    ) -> None:
         super().__init__()
         self.title_text = title
         self.message = message
         self.theme = theme
+        self.auto_copy_selection = auto_copy_selection
 
     def compose(self) -> ComposeResult:
         """Compose command output."""
@@ -739,7 +749,7 @@ class CommandOutputScreen(ModalScreen[None]):
             yield Static(self.title_text, id="command-output-title")
             with CommandOutputScroll(id="command-output-scroll"):
                 yield Static(self.message, id="command-output-body", markup=False)
-            yield Static("Enter or Escape closes", id="command-output-help")
+            yield Static(self._help_text(), id="command-output-help")
 
     def on_mount(self) -> None:
         """Focus the scroll area so arrow keys navigate long output."""
@@ -757,6 +767,11 @@ class CommandOutputScreen(ModalScreen[None]):
     def action_close(self) -> None:
         """Close the command output modal."""
         self.dismiss(None)
+
+    def _help_text(self) -> str:
+        if self.auto_copy_selection:
+            return "Select text to copy - Enter or Escape closes"
+        return "Enter or Escape closes"
 
     def action_scroll_up(self) -> None:
         """Scroll command output up."""
@@ -2066,10 +2081,14 @@ class TauTuiApp(App[None]):
 
     @on(events.TextSelected)
     async def on_text_selected(self) -> None:
-        """Optionally copy selected transcript text automatically."""
-        if not self.tui_settings.auto_copy_selection:
+        """Optionally copy selected text automatically."""
+        active_screen = self.screen
+        if not (
+            self.tui_settings.auto_copy_selection
+            or getattr(active_screen, "auto_copy_selection", False)
+        ):
             return
-        selection = self.screen.get_selected_text()
+        selection = active_screen.get_selected_text()
         if selection:
             self.copy_to_clipboard(selection)
             self._notify("Copied selection to clipboard.")
@@ -2763,6 +2782,7 @@ class TauTuiApp(App[None]):
                 _command_output_title(command_text),
                 message,
                 theme=self.tui_settings.resolved_theme,
+                auto_copy_selection=command_text.strip().split(maxsplit=1)[0] == "/session",
             )
         )
 
