@@ -301,7 +301,13 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
         margin: 0 0 1 0;
     }
 
-    StreamingTranscriptMessageWidget MarkdownFence {
+    StreamingTranscriptMessageWidget.-streaming MarkdownFence {
+        overflow-x: hidden;
+        scrollbar-size-horizontal: 0;
+    }
+
+    StreamingTranscriptMessageWidget.-finalized MarkdownFence {
+        overflow-x: auto;
         scrollbar-size-horizontal: 1;
     }
     """
@@ -312,8 +318,10 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
         self.item = item
         self.selection_text = item.text
         self._stream: MarkdownStream | None = None
+        self._is_streaming = True
         super().__init__(item.text, theme=theme)
         self.add_class("transcript-message")
+        self.add_class("-streaming")
         # Apply the role foreground so streamed text matches the finalized block
         # (e.g. dimmed thinking) instead of shifting color on the next redraw.
         foreground, _ = _split_rich_style_colors(_chat_item_role_style(item, theme).body)
@@ -341,6 +349,16 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
         self.selection_text = text
         self._stream = None
         await self.update(text)
+
+    async def finalize(self, text: str | None = None) -> None:
+        """Mark the streamed message complete and restore finalized Markdown chrome."""
+        if text is not None:
+            await self.replace_text(text)
+        elif self._is_streaming:
+            await self.update(self.item.text)
+        self._is_streaming = False
+        self.remove_class("-streaming")
+        self.add_class("-finalized")
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
         """Return selected text from this streamed message block."""
@@ -584,8 +602,7 @@ class TranscriptView(VerticalScroll):
                     theme=self._render_theme,
                 )
             return
-        if text is not None:
-            await widget.replace_text(text)
+        await widget.finalize(text)
         self._active_assistant_widget = None
 
     @property
