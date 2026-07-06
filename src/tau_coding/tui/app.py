@@ -341,6 +341,10 @@ class _MainViewHandle:
         self._app = app
         self._open = True
         self.widget: Widget | None = None
+        # Which transcript pane this view displaced, so close() restores exactly
+        # that one (the legacy #agent-transcript-pane still coexists with the
+        # component seam on this branch).
+        self.restored_pane_id: str = "#transcript"
 
     def close(self) -> None:
         """Close the view (safe to call more than once)."""
@@ -3088,7 +3092,12 @@ class TauTuiApp(App[None]):
                 if interceptor(event, text):
                     return True
             except Exception as exc:  # noqa: BLE001 - isolation boundary
-                self._record_extension_component_failure("key_interceptor", exc)
+                # Notify like the other failure classes so a broken interceptor
+                # is not silently invisible, and dedup per-interceptor so a
+                # second faulty handler still gets diagnosed.
+                self._record_extension_component_failure(
+                    f"key_interceptor:{id(interceptor)}", exc, notify=True
+                )
         return False
 
     def _set_extension_slot_widget(
@@ -3140,13 +3149,31 @@ class TauTuiApp(App[None]):
             self._record_extension_component_failure("main_view", exc, notify=True)
             return _DeadMainViewHandle()
         self._extension_main_view = handle
+        # Record and hide only the pane that is actually up. The legacy
+        # transcript-source seam (#agent-transcript-pane) coexists with the
+        # component seam on this branch: when an agent view is active it is the
+        # visible 1fr pane and #transcript is already hidden. Toggling only
+        # #transcript here would leave the legacy pane and #main-slot both
+        # displayed (two stacked panes) and would restore the wrong one on close.
+        handle.restored_pane_id = self._visible_transcript_pane_id()
         with suppress(NoMatches):
-            self.query_one("#transcript", TranscriptView).display = False
+            self.query_one(handle.restored_pane_id, Widget).display = False
         slot.display = True
         return handle
 
+    def _visible_transcript_pane_id(self) -> str:
+        """Return the id selector of the transcript pane currently displayed.
+
+        Falls back to ``#transcript`` when neither pane is up (or the legacy
+        pane is absent), so the main view always has a sane pane to restore.
+        """
+        with suppress(NoMatches):
+            if self.query_one("#agent-transcript-pane", TranscriptView).display:
+                return "#agent-transcript-pane"
+        return "#transcript"
+
     def _close_extension_main_view(self, handle: _MainViewHandle) -> None:
-        """Unmount a main view and restore the main transcript."""
+        """Unmount a main view and restore whichever transcript pane it displaced."""
         if self._extension_main_view is not handle:
             return
         self._extension_main_view = None
@@ -3155,7 +3182,15 @@ class TauTuiApp(App[None]):
                 handle.widget.remove()
         with suppress(NoMatches):
             self.query_one("#main-slot", Container).display = False
-            self.query_one("#transcript", TranscriptView).display = True
+        pane_id = handle.restored_pane_id or "#transcript"
+        with suppress(NoMatches):
+            pane = self.query_one(pane_id, Widget)
+            pane.display = True
+            # Re-anchor a restored main transcript so returning to a live
+            # conversation lands at the bottom (mirrors _follow_transcript_output).
+            # The legacy pane is driven by its own poll loop, so leave it alone.
+            if pane_id == "#transcript" and isinstance(pane, TranscriptView):
+                pane.follow_output()
         with suppress(NoMatches):
             self.query_one("#prompt", PromptInput).focus()
 

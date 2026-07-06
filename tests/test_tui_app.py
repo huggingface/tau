@@ -6716,7 +6716,12 @@ async def test_component_key_interceptor_failure_degrades_to_typing() -> None:
         await pilot.press("z")
         assert prompt.text == "z"  # broken interceptor never blocks typing
         assert app.is_running
-        assert "key_interceptor" in app._extension_component_failures_reported
+        # Failures are keyed per-interceptor now (so a second faulty handler
+        # still gets diagnosed) and notify like the other failure classes.
+        assert any(
+            key.startswith("key_interceptor:")
+            for key in app._extension_component_failures_reported
+        )
 
 
 @pytest.mark.anyio
