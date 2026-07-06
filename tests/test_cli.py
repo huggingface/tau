@@ -39,6 +39,22 @@ def _strip_ansi(value: str) -> str:
     return _ANSI_ESCAPE_RE.sub("", value)
 
 
+def _collapse_ws(value: str) -> str:
+    """Collapse all runs of whitespace to single spaces (Rich panel wrapping)."""
+    return re.sub(r"\s+", " ", value)
+
+
+def _panel_text(value: str) -> str:
+    """Strip ANSI escapes and Rich/Click panel borders, then collapse whitespace.
+
+    Typer renders ``BadParameter`` errors inside a bordered panel whose box-drawing
+    characters and line-wrapping can split a single message across lines, so
+    contiguous-substring assertions need the borders and extra whitespace removed.
+    """
+    borders = str.maketrans({ch: " " for ch in "│╭╮╰╯─"})
+    return _collapse_ws(value.translate(borders))
+
+
 def test_version_command() -> None:
     result = CliRunner().invoke(app, ["--version"])
 
@@ -608,6 +624,79 @@ def test_default_tui_rejects_resume_with_new_session(tmp_path: Path) -> None:
 
     assert result.exit_code != 0
     assert "--resume and --new-session cannot be used together" in _strip_ansi(result.output)
+
+
+def _constrained_provider_settings() -> ProviderSettings:
+    """Settings with a single provider that only declares ``qwen``."""
+    return ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                models=("qwen",),
+                default_model="qwen",
+            ),
+        ),
+    )
+
+
+def test_tui_surfaces_bad_model_as_clean_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regression: ``tau --model <bad>`` must exit with a clean error, not a traceback.
+
+    See https://github.com/alejandro-ao/tau/issues/265. The TUI startup path
+    previously only caught ``RuntimeError``, so a ``ProviderConfigError`` (a
+    ``ValueError`` subclass) raised while resolving the provider/model selection
+    escaped the ``anyio`` event loop as an unhandled traceback.
+    """
+    import tau_coding.tui.app as tui_app
+
+    settings = _constrained_provider_settings()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "load_provider_settings", lambda *args, **kwargs: settings)
+    monkeypatch.setattr(tui_app, "load_provider_settings", lambda *args, **kwargs: settings)
+
+    result = CliRunner().invoke(app, ["--model", "llama", "--provider", "local"])
+
+    # A clean BadParameter exits 2 (Typer's convention) and includes the
+    # actionable message listing valid models for the provider.
+    assert result.exit_code == 2
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    out = _panel_text(result.output)
+    assert "Model is not configured for provider local: llama" in out
+    assert "Available models: qwen" in out
+
+
+def test_print_mode_surfaces_bad_model_as_clean_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The print-mode ``--model <bad>`` path must also surface a clean error.
+
+    Companion regression to the TUI path (issue #265): the print-mode handler
+    likewise only caught ``RuntimeError``, so it also dumped a
+    ``ProviderConfigError`` traceback instead of a friendly message.
+    """
+    import tau_coding.tui.app as tui_app
+
+    settings = _constrained_provider_settings()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "load_provider_settings", lambda *args, **kwargs: settings)
+    monkeypatch.setattr(tui_app, "load_provider_settings", lambda *args, **kwargs: settings)
+
+    result = CliRunner().invoke(app, ["--model", "llama", "--provider", "local", "-p", "hello"])
+
+    assert result.exit_code == 2
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    out = _panel_text(result.output)
+    assert "Model is not configured for provider local: llama" in out
+    assert "Available models: qwen" in out
 
 
 def test_sessions_command_lists_indexed_sessions(
