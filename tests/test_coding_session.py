@@ -2904,3 +2904,30 @@ def test_minimal_commands_are_handled(tmp_path: Path) -> None:
     assert session.handle_command("/quit").exit_requested is True
     assert session.handle_command("/exit").exit_requested is True
     assert session.handle_command("/unknown").message == "Unknown command: /unknown"
+
+
+def test_branch_summary_hides_raw_argument_fallbacks() -> None:
+    from tau_coding.branch_summary import _format_assistant_summary_source
+
+    summary = _format_assistant_summary_source(
+        AssistantMessage(
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="call-raw",
+                    name="read",
+                    arguments={"_raw_arguments": "{not valid json"},
+                ),
+                ToolCall(
+                    id="call-partial",
+                    name="custom",
+                    arguments={"path": "README.md", "_raw_arguments": "{not valid json"},
+                ),
+            ],
+        )
+    )
+
+    assert "_raw_arguments" not in summary
+    assert "{not valid json" not in summary
+    assert "read()" in summary
+    assert 'custom(path="README.md")' in summary

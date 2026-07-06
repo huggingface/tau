@@ -275,9 +275,15 @@ def _read_line_suffix(arguments: dict[str, JSONValue]) -> str:
 
 
 def _fallback_tool_call_invocation(tool_call: ToolCall) -> str:
-    if tool_call.arguments:
-        return f"{tool_call.name} {tool_call.arguments}"
+    display_arguments = _display_tool_arguments(tool_call.arguments)
+    if display_arguments:
+        return f"{tool_call.name} {display_arguments}"
     return tool_call.name
+
+
+def _display_tool_arguments(arguments: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    """Return human-facing tool arguments without parser-internal fallback data."""
+    return {key: value for key, value in arguments.items() if key != "_raw_arguments"}
 
 
 def _string_argument(arguments: dict[str, JSONValue], key: str) -> str | None:

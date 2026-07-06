@@ -238,7 +238,8 @@ def serialize_messages_for_compaction(messages: tuple[AgentMessage, ...]) -> str
                 if message.tool_calls:
                     lines.append("<tool-calls>")
                     for call in message.tool_calls:
-                        lines.append(f"- {call.name}: {call.arguments}")
+                        arguments = _public_tool_arguments(call.arguments)
+                        lines.append(f"- {call.name}: {arguments}")
                     lines.append("</tool-calls>")
                 lines.append("</message>")
             case "tool":
@@ -248,6 +249,11 @@ def serialize_messages_for_compaction(messages: tuple[AgentMessage, ...]) -> str
                 lines.append(message.content)
                 lines.append("</message>")
     return "\n".join(lines)
+
+
+def _public_tool_arguments(arguments: dict[str, object]) -> dict[str, object]:
+    return {key: value for key, value in arguments.items() if key != "_raw_arguments"}
+
 
 
 def _message_text(message: AgentMessage) -> str:

@@ -536,7 +536,7 @@ def _render_message_entry(entry: MessageEntry) -> str:
                     "<li>"
                     f"<code>{_escape(call.name)}</code> "
                     f"<code>{_escape(call.id)}</code>"
-                    f"<pre>{_escape(_json_dump(call.arguments))}</pre>"
+                    f"<pre>{_escape(_json_dump(_public_tool_arguments(call.arguments)))}</pre>"
                     "</li>"
                     for call in message.tool_calls
                 )
@@ -646,6 +646,11 @@ def _summarize_text(text: str, *, limit: int = 92) -> str:
     if len(summary) <= limit:
         return summary
     return summary[: limit - 3].rstrip() + "..."
+
+
+def _public_tool_arguments(arguments: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    return {key: value for key, value in arguments.items() if key != "_raw_arguments"}
+
 
 
 def _json_dump(value: dict[str, JSONValue]) -> str:

@@ -204,6 +204,29 @@ def test_tool_call_blocks_use_human_readable_invocations() -> None:
     )
 
 
+def test_tool_call_blocks_hide_raw_argument_fallbacks() -> None:
+    assert (
+        format_tool_call_block(
+            ToolCall(
+                id="call-raw",
+                name="read",
+                arguments={"_raw_arguments": "{not valid json"},
+            )
+        )
+        == "→ read"
+    )
+    assert (
+        format_tool_call_block(
+            ToolCall(
+                id="call-partial",
+                name="custom",
+                arguments={"path": "README.md", "_raw_arguments": "{not valid json"},
+            )
+        )
+        == "→ custom {'path': 'README.md'}"
+    )
+
+
 def test_tui_adapter_records_tool_updates_and_results() -> None:
     state = TuiState()
     adapter = TuiEventAdapter(state)

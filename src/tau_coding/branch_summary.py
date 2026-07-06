@@ -158,8 +158,12 @@ def _format_assistant_summary_source(message: AssistantMessage) -> str:
 
 
 def _format_tool_call_arguments(arguments: Mapping[str, object]) -> str:
+    public_arguments = {
+        key: value for key, value in arguments.items() if key != "_raw_arguments"
+    }
     return ", ".join(
-        f"{key}={json.dumps(value, sort_keys=True)}" for key, value in sorted(arguments.items())
+        f"{key}={json.dumps(value, sort_keys=True)}"
+        for key, value in sorted(public_arguments.items())
     )
 
 
