@@ -88,11 +88,6 @@ CustomMessageMarkup = Callable[[str, str, "Mapping[str, JSONValue] | None", bool
 # resolver, never raised into the frontend.
 ToolCallMarkup = Callable[[str, "Mapping[str, JSONValue]"], "str | None"]
 
-# Live source for a transcript view: called periodically while the view is
-# open, it returns the current messages, or ``None`` when the underlying
-# session is gone (the view then keeps its last snapshot and stops polling).
-TranscriptPoll = Callable[[], "Sequence[AgentMessage] | None"]
-
 TranscriptSourceStatus = Literal["queued", "running", "done", "error", "cancelled"]
 
 
@@ -279,17 +274,6 @@ class UiBridge(Protocol):
         """Show a text prompt; return the entered text, or None on cancel."""
         ...
 
-    async def show_transcript(
-        self,
-        title: str,
-        messages: Sequence[AgentMessage],
-        *,
-        poll: TranscriptPoll | None = None,
-        timeout: float | None = None,
-    ) -> bool:
-        """Show a scrollable transcript of messages; True if accepted (Enter)."""
-        ...
-
     async def view_transcript(self, source_id: str) -> bool:
         """Swap the main transcript to a registered source; True on success."""
         ...
@@ -335,17 +319,6 @@ class NullUiBridge:
     ) -> str | None:
         """Return None: no UI to enter text into (Pi no-op default)."""
         return None
-
-    async def show_transcript(
-        self,
-        title: str,
-        messages: Sequence[AgentMessage],
-        *,
-        poll: TranscriptPoll | None = None,
-        timeout: float | None = None,
-    ) -> bool:
-        """Return False: no UI to show a transcript in."""
-        return False
 
     async def view_transcript(self, source_id: str) -> bool:
         """Return False: no UI to swap a transcript view in."""
@@ -418,24 +391,6 @@ class ExtensionUi:
     ) -> str | None:
         """Prompt the user for text; None on cancel/no UI."""
         return await self._runtime.ui.input(title, placeholder, timeout=timeout)
-
-    async def show_transcript(
-        self,
-        title: str,
-        messages: Sequence[AgentMessage],
-        *,
-        poll: TranscriptPoll | None = None,
-        timeout: float | None = None,
-    ) -> bool:
-        """Show a scrollable transcript view of agent messages.
-
-        ``messages`` is the initial snapshot. ``poll``, if given, is called
-        periodically while the view is open so a still-running session
-        re-renders live; it returns the current messages or ``None`` once the
-        source is gone (the view keeps its last snapshot). Returns True when
-        the user accepts (Enter), False on dismiss (Escape) or without a UI.
-        """
-        return await self._runtime.ui.show_transcript(title, messages, poll=poll, timeout=timeout)
 
     async def view_transcript(self, source_id: str) -> bool:
         """Swap the host's main transcript to a registered transcript source.

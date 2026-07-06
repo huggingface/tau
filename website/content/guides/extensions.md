@@ -116,7 +116,6 @@ def setup(tau):
     await tau.context.ui.select("Title", ["a", "b"])   # -> str | None
     await tau.context.ui.confirm("Title", "message")   # -> bool
     await tau.context.ui.input("Title", "placeholder") # -> str | None
-    await tau.context.ui.show_transcript("Title", messages)  # -> bool
     tau.context.ui.notify("message", "info")           # same as tau.notify
 ```
 
@@ -182,19 +181,11 @@ name   = await tau.context.ui.input("Release name", "e.g. v1.2.0")
 - `input(title, placeholder="", *, timeout=None) -> str | None` — a text
   prompt; returns the text (empty string on an empty submit), or `None` if
   cancelled.
-- `show_transcript(title, messages, *, poll=None, timeout=None) -> bool` — a
-  full-screen scrollable transcript of `AgentMessage`s (a subagent's
-  conversation, rendered like the main chat; Ctrl+O expands tool results).
-  Pass `poll` — `() -> Sequence[AgentMessage] | None` — to re-render live
-  while the source session is still running; return `None` from it once the
-  source is gone and the view keeps its last snapshot. Returns `True` when
-  the user accepts with Enter (e.g. to open a follow-up menu), `False` on
-  Escape.
 - `view_transcript(source_id) -> bool` — swap the main transcript to a
   registered transcript source (see "Transcript sources" below), in place.
   Returns `True` when the view switched.
 - `timeout` is in **seconds**; when it elapses the dialog auto-dismisses and
-  returns the cancel default (`None`/`False`/`None`/`False`).
+  returns the cancel default (`None`/`False`/`None`).
 
 Without an interactive frontend (print mode, `-p`, tests) every dialog
 returns its cancel default immediately, so extensions can call them
