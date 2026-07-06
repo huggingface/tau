@@ -2461,7 +2461,72 @@ async def test_session_set_model_choice_persists_default_provider_model(
     saved = coding_session_module.load_provider_settings(tau_paths)
     assert saved.default_provider == "local"
     assert saved.get_provider("local").default_model == "llama"
-    assert created == [("local", "qwen"), ("local", "llama")]
+    assert created == [("local", "llama")]
+
+
+@pytest.mark.anyio
+async def test_session_set_model_choice_switches_provider_model_directly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("LOCAL_API_KEY", "local-key")
+    tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    settings = ProviderSettings(
+        default_provider="openai",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="openai",
+                models=("gpt-5",),
+                default_model="gpt-5",
+            ),
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                models=("qwen", "llama"),
+                default_model="qwen",
+            ),
+        ),
+        scoped_models=(
+            ScopedModelConfig(provider="openai", model="gpt-5"),
+            ScopedModelConfig(provider="local", model="llama"),
+        ),
+    )
+    created: list[tuple[str, str | None]] = []
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+    ) -> SwitchableFakeProvider:
+        del credential_store, thinking_level
+        created.append((provider_config.name, model))  # type: ignore[attr-defined]
+        return SwitchableFakeProvider(provider_config)
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="gpt-5",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai",
+            provider_settings=settings,
+            runtime_provider_config=settings.get_provider("openai"),
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+    created.clear()
+
+    choice = session.cycle_scoped_model()
+
+    assert choice == ModelChoice(provider_name="local", model="llama")
+    assert session.provider_name == "local"
+    assert session.model == "llama"
+    assert created == [("local", "llama")]
 
 
 @pytest.mark.anyio

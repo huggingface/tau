@@ -660,9 +660,10 @@ class CodingSession:
 
     def set_model_choice(self, choice: ModelChoice) -> None:
         """Switch provider/model as one operation."""
-        if choice.provider_name != self.provider_name:
-            self.set_provider(choice.provider_name)
-        self.set_model(choice.model)
+        if choice.provider_name == self.provider_name:
+            self.set_model(choice.model)
+            return
+        self._set_provider_model(choice.provider_name, choice.model)
 
     def is_scoped_model(self, choice: ModelChoice) -> bool:
         """Return whether a provider/model pair is in the scoped model list."""
@@ -706,9 +707,27 @@ class CodingSession:
         """Switch the active provider and reset to that provider's default model."""
         if self._provider_settings is None:
             raise ProviderConfigError("Provider settings are not available for this session")
+        provider_config = self._provider_settings.get_provider(provider_name)
+        self._set_provider_model(
+            provider_name,
+            provider_config.default_model,
+            persist_default=persist_default,
+        )
+
+    def _set_provider_model(
+        self,
+        provider_name: str,
+        model: str,
+        *,
+        persist_default: bool = True,
+    ) -> None:
+        """Switch active provider/model without constructing an intermediate provider."""
+        if self._provider_settings is None:
+            raise ProviderConfigError("Provider settings are not available for this session")
 
         provider_config = self._provider_settings.get_provider(provider_name)
-        model = provider_config.default_model
+        if model not in provider_config.models:
+            raise ProviderConfigError(f"Model is not configured: {provider_name}:{model}")
         thinking_level = _coerced_thinking_level(
             provider_config,
             model=model,
