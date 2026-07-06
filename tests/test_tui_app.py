@@ -2948,6 +2948,57 @@ async def test_agent_view_rerenders_on_revision_change() -> None:
 
 
 @pytest.mark.anyio
+async def test_agent_strip_drops_finished_agents() -> None:
+    running = _strip_source(source_id="agent-1")
+    done = _strip_source(source_id="agent-2", status="done")
+    runtime = _StripRuntime([running, done])
+    session = FakeSession()
+    session.extension_runtime = runtime
+    app = TauTuiApp(session)  # type: ignore[arg-type]
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        runtime.changed_callback()
+        await pilot.pause()
+
+        # Finished agents leave the strip; /agents still reaches them.
+        assert [source.id for source in app._agent_strip_sources] == ["agent-1"]
+
+        # A finished agent being viewed stays listed until Esc returns to main.
+        assert app._activate_source_by_id("agent-2")
+        await pilot.pause()
+        runtime.changed_callback()
+        await pilot.pause()
+        assert "agent-2" in [source.id for source in app._agent_strip_sources]
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert [source.id for source in app._agent_strip_sources] == ["agent-1"]
+
+
+@pytest.mark.anyio
+async def test_agent_strip_click_switches_view() -> None:
+    runtime = _StripRuntime([_strip_source()])
+    session = FakeSession()
+    session.extension_runtime = runtime
+    app = TauTuiApp(session)  # type: ignore[arg-type]
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        runtime.changed_callback()
+        await pilot.pause()
+
+        # Clicking an agent row opens its view; clicking main returns.
+        await pilot.click("#agent-strip", offset=(2, 1))
+        await pilot.pause()
+        assert app._active_source_id == "agent-1"
+
+        await pilot.click("#agent-strip", offset=(2, 0))
+        await pilot.pause()
+        assert app._active_source_id is None
+
+
+@pytest.mark.anyio
 async def test_agent_view_activation_degrades_when_messages_gone() -> None:
     runtime = _StripRuntime([_strip_source(messages=lambda: None)])
     session = FakeSession()

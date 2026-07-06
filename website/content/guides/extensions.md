@@ -222,10 +222,13 @@ tau.context.ui...` directly.)
 
 An extension that runs its own conversations (e.g. subagents) can publish
 them so the TUI lists them in an *agents strip* under the prompt: `← ` in an
-empty prompt enters the strip, ↑/↓ select, Enter swaps the main transcript to
-that agent's conversation in place, Esc returns to main. While an agent view
-is open the input talks to that agent — submissions become steering messages
-(the prompt's placeholder and prefix make this explicit).
+empty prompt enters the strip, ↑/↓ select (or click a row), Enter swaps the
+main transcript to that agent's conversation in place, Esc returns to main.
+While an agent view is open the input talks to that agent — submissions
+become steering messages (the prompt's placeholder and prefix make this
+explicit). The strip shows queued and running sources only; finished ones
+leave it (keep publishing them — jump-in via `/agents` and `view_transcript`
+still needs them).
 
 ```python
 from tau_coding.extensions import TranscriptSource

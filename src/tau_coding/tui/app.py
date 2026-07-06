@@ -1161,6 +1161,17 @@ class CommandOutputScreen(ModalScreen[None]):
         self.query_one("#command-output-scroll", CommandOutputScroll).action_scroll_down()
 
 
+class AgentStrip(Static):
+    """The agents strip: clickable rows for main plus each transcript source."""
+
+    def on_click(self, event: events.Click) -> None:
+        """Activate the row under the mouse (same as arrows + Enter)."""
+        handler = getattr(self.app, "_strip_click", None)
+        if callable(handler):
+            event.stop()
+            handler(int(event.y))
+
+
 class TranscriptScreen(ModalScreen[bool]):
     """Modal transcript viewer for a list of agent messages.
 
@@ -2613,8 +2624,6 @@ class TauTuiApp(App[None]):
         self._activity_timer: Timer | None = None
         self._terminal_title = TerminalTitleController()
         self._agent_strip_sources: tuple[TranscriptSource, ...] = ()
-        self._agent_strip_statuses: dict[str, str] = {}
-        self._agent_unviewed: set[str] = set()
         self._strip_focused = False
         self._strip_index = 0
         self._active_source_id: str | None = None
@@ -2698,7 +2707,7 @@ class TauTuiApp(App[None]):
                     )
                 yield CompactSessionInfo(id="compact-session-info")
                 yield Static("", id="autocomplete")
-                yield Static("", id="agent-strip")
+                yield AgentStrip("", id="agent-strip")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -3305,43 +3314,35 @@ class TauTuiApp(App[None]):
         if not self.screen_stack:
             return
         try:
-            strip = self.query_one("#agent-strip", Static)
+            strip = self.query_one("#agent-strip", AgentStrip)
         except NoMatches:
             return
         sources = self._transcript_sources()
         live_ids = {source.id for source in sources}
-        for source in sources:
-            previous = self._agent_strip_statuses.get(source.id)
-            if (
-                previous in ("queued", "running")
-                and source.status in ("done", "error", "cancelled")
-                and self._active_source_id != source.id
-            ):
-                self._agent_unviewed.add(source.id)
-            self._agent_strip_statuses[source.id] = source.status
-        self._agent_unviewed &= live_ids
-        self._agent_strip_statuses = {
-            source_id: status
-            for source_id, status in self._agent_strip_statuses.items()
-            if source_id in live_ids
-        }
-        self._agent_strip_sources = sources
         if self._active_source_id is not None and self._active_source_id not in live_ids:
             self._activate_main()
             self._notify("The viewed agent is no longer available.", severity="warning")
-        if not sources:
+        # Finished agents leave the strip (they stay reachable via /agents);
+        # the one being viewed stays listed until the user returns to main.
+        strip_sources = tuple(
+            source
+            for source in sources
+            if source.status in ("queued", "running")
+            or source.id == self._active_source_id
+        )
+        self._agent_strip_sources = strip_sources
+        if not strip_sources:
             self._strip_focused = False
             strip.display = False
             return
-        visible_rows = 1 + min(len(sources), AGENT_STRIP_MAX_ROWS)
+        visible_rows = 1 + min(len(strip_sources), AGENT_STRIP_MAX_ROWS)
         self._strip_index = min(self._strip_index, visible_rows - 1)
         strip.display = True
         strip.update(
             _render_agent_strip(
-                sources,
+                strip_sources,
                 selected_index=self._strip_index if self._strip_focused else None,
                 active_id=self._active_source_id,
-                unviewed=self._agent_unviewed,
                 focused=self._strip_focused,
                 theme=self.tui_settings.resolved_theme,
             )
@@ -3384,6 +3385,14 @@ class TauTuiApp(App[None]):
                 self._activate_source(self._agent_strip_sources[index])
         self._refresh_agent_strip()
 
+    def _strip_click(self, row: int) -> None:
+        """Activate the strip row under a mouse click."""
+        visible_rows = 1 + min(len(self._agent_strip_sources), AGENT_STRIP_MAX_ROWS)
+        if row >= visible_rows:
+            return
+        self._strip_index = row
+        self._strip_select()
+
     def _activate_source_by_id(self, source_id: str) -> bool:
         """Open the agent view for a source id (used by /agents jump-in)."""
         for source in self._transcript_sources():
@@ -3405,7 +3414,6 @@ class TauTuiApp(App[None]):
                 "That agent's transcript is no longer available.", severity="warning"
             )
             return False
-        self._agent_unviewed.discard(source.id)
         self._active_source_id = source.id
         state = TuiState()
         state.custom_renderer = self.state.custom_renderer
@@ -4866,7 +4874,6 @@ def _render_agent_strip(
     *,
     selected_index: int | None,
     active_id: str | None,
-    unviewed: set[str],
     focused: bool,
     theme: TuiTheme,
 ) -> Group:
@@ -4880,17 +4887,15 @@ def _render_agent_strip(
         label: str,
         label_style: str,
         detail: str = "",
-        marker: bool = False,
     ) -> None:
-        row = Text()
+        # One line per row, always: mouse clicks map rows by line offset.
+        row = Text(no_wrap=True, overflow="ellipsis")
         selected = selected_index is not None and index == selected_index
         row.append("❯ " if selected else "  ", style=theme.accent)
         row.append(f"{glyph} ", style=glyph_style)
         row.append(label, style=f"bold {label_style}" if selected else label_style)
         if detail:
             row.append(f"  {detail}", style=theme.muted_text)
-        if marker:
-            row.append(" •", style=theme.accent)
         rows.append(row)
 
     main_active = active_id is None
@@ -4917,17 +4922,25 @@ def _render_agent_strip(
             source.label,
             theme.prompt_text if viewing else theme.muted_text,
             detail=source.detail,
-            marker=source.id in unviewed,
         )
     overflow = len(sources) - AGENT_STRIP_MAX_ROWS
     if overflow > 0:
-        rows.append(Text(f"    … {overflow} more — /agents", style=theme.muted_text))
+        rows.append(
+            Text(
+                f"    … {overflow} more — /agents",
+                style=theme.muted_text,
+                no_wrap=True,
+                overflow="ellipsis",
+            )
+        )
     hint = (
         "↑ ↓ select · enter view · esc back"
         if focused
         else "← agents"
     )
-    rows.append(Text(f"    {hint}", style=theme.muted_text))
+    rows.append(
+        Text(f"    {hint}", style=theme.muted_text, no_wrap=True, overflow="ellipsis")
+    )
     return Group(*rows)
 
 
