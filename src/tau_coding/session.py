@@ -69,6 +69,9 @@ from tau_coding.provider_config import (
     load_provider_settings,
     provider_default_thinking_level,
     provider_has_usable_credentials,
+    provider_thinking_is_always_on,
+    provider_thinking_level_from_label,
+    provider_thinking_level_label,
     provider_thinking_levels,
     provider_thinking_unavailable_reason,
     resolve_provider_selection,
@@ -498,6 +501,36 @@ class CodingSession:
         return provider_thinking_levels(provider, model=self.model)
 
     @property
+    def thinking_is_always_on(self) -> bool:
+        """Return whether the active model's reasoning cannot be disabled."""
+        provider = self._active_provider_config()
+        return provider is not None and provider_thinking_is_always_on(
+            provider,
+            model=self.model,
+        )
+
+    @property
+    def thinking_level_label(self) -> str:
+        """Return the provider-facing label for the active thinking state."""
+        if self.thinking_is_always_on:
+            return "always on"
+        provider = self._active_provider_config()
+        if provider is None:
+            return self._thinking_level
+        return provider_thinking_level_label(
+            provider,
+            self._thinking_level,
+            model=self.model,
+        )
+
+    def resolve_thinking_level(self, value: str) -> ThinkingLevel:
+        """Resolve a provider-facing label to Tau's canonical thinking state."""
+        provider = self._active_provider_config()
+        if provider is None:
+            return normalize_thinking_level(value)
+        return provider_thinking_level_from_label(provider, value, model=self.model)
+
+    @property
     def thinking_unavailable_reason(self) -> str | None:
         """Return why thinking controls are unavailable for the active model."""
         if self.available_thinking_levels:
@@ -780,7 +813,7 @@ class CodingSession:
 
     async def set_thinking_level(self, level: str) -> str:
         """Persist and activate a thinking mode for future turns."""
-        normalized = normalize_thinking_level(level)
+        normalized = self.resolve_thinking_level(level)
         available = self.available_thinking_levels
         if not available:
             raise ValueError(_unavailable_thinking_message(self))
@@ -791,7 +824,7 @@ class CodingSession:
                 f"{self._provider_name}:{self.model}. Available modes: {modes}"
             )
         if normalized == self._thinking_level:
-            return f"Thinking mode: {normalized}"
+            return f"Thinking mode: {self.thinking_level_label}"
 
         previous = self._thinking_level
         self._thinking_level = normalized
@@ -812,7 +845,7 @@ class CodingSession:
 
         self._persist_thinking_level_choice()
         await self._refresh_persisted_state(leaf_id=entry.id)
-        return f"Thinking mode: {normalized}"
+        return f"Thinking mode: {self.thinking_level_label}"
 
     async def cycle_thinking_level(self) -> str:
         """Cycle to the next supported thinking mode and persist it."""

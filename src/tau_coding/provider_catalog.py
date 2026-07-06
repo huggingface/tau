@@ -2,12 +2,40 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
 from tau_coding.thinking import ThinkingLevel, ThinkingParameter
 
 ProviderKind = Literal["openai-compatible", "anthropic", "openai-codex"]
+
+
+@dataclass(frozen=True, slots=True)
+class ThinkingMode:
+    """A canonical Tau thinking level's provider-specific behavior."""
+
+    api_value: str | None = None
+    label: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderModelOverride:
+    """Built-in model behavior that differs from its provider defaults.
+
+    Some aggregators (for example OpenCode Go) expose models with heterogeneous
+    thinking APIs behind a single provider entry: some models take OpenAI's
+    ``reasoning_effort`` parameter, some are served through Anthropic's Messages
+    API thinking types, and some cannot disable reasoning at all. The
+    declarative TOML catalog describes one thinking configuration per provider,
+    so these per-model behaviors live here as a lookup keyed by
+    ``(provider_name, model)``.
+    """
+
+    kind: ProviderKind | None = None
+    thinking_modes: Mapping[ThinkingLevel, ThinkingMode] | None = None
+    thinking_default: ThinkingLevel | None = None
+    always_thinking: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +56,7 @@ class ProviderCatalogEntry:
     thinking_models: tuple[str, ...] = ()
     thinking_default: ThinkingLevel | None = None
     thinking_parameter: ThinkingParameter | None = None
+    model_overrides: dict[str, ProviderModelOverride] | None = None
 
 
 def _load_builtin_catalog() -> tuple[ProviderCatalogEntry, ...]:
@@ -46,3 +75,13 @@ def builtin_provider_entry(name: str) -> ProviderCatalogEntry | None:
         if entry.name == name:
             return entry
     return None
+
+
+def catalog_model_override(provider_name: str, model: str | None) -> ProviderModelOverride | None:
+    """Return built-in per-model metadata for a provider/model pair."""
+    if model is None:
+        return None
+    entry = builtin_provider_entry(provider_name)
+    if entry is None or entry.model_overrides is None:
+        return None
+    return entry.model_overrides.get(model)

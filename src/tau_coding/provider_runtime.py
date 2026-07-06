@@ -19,6 +19,7 @@ from tau_coding.oauth import (
     oauth_credential_is_expired,
     refresh_openai_codex_token,
 )
+from tau_coding.provider_catalog import catalog_model_override
 from tau_coding.provider_config import (
     AnthropicProviderConfig,
     OpenAICodexProviderConfig,
@@ -51,11 +52,16 @@ def create_model_provider(
     if model is not None:
         validate_provider_model(provider, model)
     credentials = credential_store or FileCredentialStore()
+    selected_model = model or provider.default_model
+    override = catalog_model_override(provider.name, selected_model)
+    if override is not None and override.kind == "anthropic":
+        provider = _anthropic_provider_config_for_model(provider, selected_model)
     if isinstance(provider, AnthropicProviderConfig):
         return AnthropicProvider(
             anthropic_config_from_provider(
                 provider,
                 credential_reader=credentials,
+                model=selected_model,
                 thinking_level=thinking_level,
             )
         )
@@ -83,9 +89,35 @@ def create_model_provider(
         openai_compatible_config_from_provider(
             provider,
             credential_reader=credentials,
-            model=model,
+            model=selected_model,
             thinking_level=thinking_level,
         )
+    )
+
+
+def _anthropic_provider_config_for_model(
+    provider: ProviderConfig,
+    model: str,
+) -> AnthropicProviderConfig:
+    """Adapt shared connection settings for a model served via Messages API."""
+    if isinstance(provider, AnthropicProviderConfig):
+        return provider
+    return AnthropicProviderConfig(
+        name=provider.name,
+        base_url=provider.base_url,
+        api_key_env=provider.api_key_env,
+        credential_name=provider.credential_name,
+        models=provider.models,
+        default_model=model,
+        context_windows=provider.context_windows,
+        headers=provider.headers,
+        timeout_seconds=provider.timeout_seconds,
+        max_retries=provider.max_retries,
+        max_retry_delay_seconds=provider.max_retry_delay_seconds,
+        thinking_levels=provider.thinking_levels,
+        thinking_models=provider.thinking_models,
+        thinking_default=provider.thinking_default,
+        thinking_parameter="anthropic.thinking",
     )
 
 

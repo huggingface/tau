@@ -5,12 +5,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from os import environ
+from typing import Literal
 
 DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
 DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS = 60.0
 DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES = 2
 DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS = 1.0
+
+AnthropicThinkingType = Literal["adaptive", "disabled"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +42,7 @@ class AnthropicConfig:
     max_retries: int = DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES
     max_retry_delay_seconds: float = DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS
     thinking_budget_tokens: int | None = None
+    thinking_type: AnthropicThinkingType | None = None
     provider_name: str = "Anthropic"
 
 

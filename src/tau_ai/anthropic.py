@@ -11,7 +11,7 @@ import httpx
 from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
-from tau_ai.env import AnthropicConfig
+from tau_ai.env import AnthropicConfig, AnthropicThinkingType
 from tau_ai.events import (
     ProviderErrorEvent,
     ProviderEvent,
@@ -67,6 +67,7 @@ class AnthropicProvider:
                 messages=messages,
                 tools=tools,
                 thinking_budget_tokens=self._config.thinking_budget_tokens,
+                thinking_type=self._config.thinking_type,
             )
             headers = {
                 **(dict(self._config.headers or {})),
@@ -267,9 +268,10 @@ def _build_messages_payload(
     messages: list[AgentMessage],
     tools: list[AgentTool],
     thinking_budget_tokens: int | None = None,
+    thinking_type: AnthropicThinkingType | None = None,
 ) -> dict[str, JSONValue]:
     max_tokens = DEFAULT_MAX_TOKENS
-    if thinking_budget_tokens is not None:
+    if thinking_budget_tokens is not None and thinking_type is None:
         max_tokens = max(max_tokens, thinking_budget_tokens + 1024)
     payload: dict[str, JSONValue] = {
         "model": model,
@@ -278,7 +280,9 @@ def _build_messages_payload(
         "system": system,
         "messages": [_anthropic_message(message) for message in messages],
     }
-    if thinking_budget_tokens is not None:
+    if thinking_type is not None:
+        payload["thinking"] = {"type": thinking_type}
+    elif thinking_budget_tokens is not None:
         payload["thinking"] = {
             "type": "enabled",
             "budget_tokens": thinking_budget_tokens,

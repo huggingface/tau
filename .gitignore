@@ -14,3 +14,9 @@ wheels/
 website/public/
 website/resources/
 website/.hugo_build.lock
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
