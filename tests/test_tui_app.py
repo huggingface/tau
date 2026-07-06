@@ -3326,6 +3326,48 @@ async def test_tui_app_command_modal_uses_centered_picker_style() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_app_session_modal_auto_copies_selected_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(auto_copy_selection=False))
+    copied: list[str] = []
+    monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
+
+    async with app.run_test() as pilot:
+        app._show_command_message("/session", "Session info")
+        await pilot.pause()
+
+        assert isinstance(app.screen, CommandOutputScreen)
+        body = app.screen.query_one("#command-output-body")
+        app.screen.selections = {body: SELECT_ALL}
+
+        await app.on_text_selected()
+
+    assert copied == ["Session info"]
+
+
+@pytest.mark.anyio
+async def test_tui_app_non_session_modal_uses_global_auto_copy_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(auto_copy_selection=False))
+    copied: list[str] = []
+    monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
+
+    async with app.run_test() as pilot:
+        app._show_command_message("/hotkeys", "Shortcut info")
+        await pilot.pause()
+
+        assert isinstance(app.screen, CommandOutputScreen)
+        body = app.screen.query_one("#command-output-body")
+        app.screen.selections = {body: SELECT_ALL}
+
+        await app.on_text_selected()
+
+    assert copied == []
+
+
+@pytest.mark.anyio
 async def test_tui_app_escape_cancels_running_session_from_prompt() -> None:
     class RunningSession(FakeSession):
         @property

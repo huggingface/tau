@@ -34,7 +34,7 @@ While the agent is working you don't have to wait:
 In-session commands start with `/`. Open the **command palette** with **Ctrl+K**
 to search and run them. Common ones:
 
-- `/session` — show model, tools, skills, and context usage for the session
+- `/session` — show model, tools, skills, and context usage for the session. Text selected in this modal is copied to the clipboard automatically.
 - `/model` — pick the active model
 - `/compact` — summarize and shrink the context
 - `/resume`, `/tree` — open previous sessions or branch from history
