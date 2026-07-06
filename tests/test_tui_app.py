@@ -13,6 +13,7 @@ from textual.geometry import Offset
 from textual.selection import SELECT_ALL, Selection
 from textual.widgets import Footer, Input, Label, ListItem, ListView, Static, TextArea
 from textual.widgets import Markdown as TextualMarkdown
+from textual.widgets.markdown import MarkdownStream
 
 from tau_agent import (
     AgentEndEvent,
@@ -1478,7 +1479,23 @@ async def test_tui_streaming_deltas_update_active_message_without_full_refresh()
     )
     app = TauTuiApp(session)
     stream_replacements: list[str] = []
+    stream_writes: list[str] = []
+    full_stream_updates: list[str] = []
     original_replace_text = StreamingTranscriptMessageWidget.replace_text
+    original_stream_update = StreamingTranscriptMessageWidget.update
+    original_stream_write = MarkdownStream.write
+
+    def tracking_stream_update(
+        self: StreamingTranscriptMessageWidget,
+        markdown: str,
+    ) -> object:
+        if markdown:
+            full_stream_updates.append(markdown)
+        return original_stream_update(self, markdown)
+
+    async def tracking_stream_write(self: MarkdownStream, fragment: str) -> None:
+        stream_writes.append(fragment)
+        await original_stream_write(self, fragment)
 
     async def tracking_replace_text(
         self: StreamingTranscriptMessageWidget,
@@ -1488,6 +1505,8 @@ async def test_tui_streaming_deltas_update_active_message_without_full_refresh()
         await original_replace_text(self, text)
 
     StreamingTranscriptMessageWidget.replace_text = tracking_replace_text  # type: ignore[method-assign]
+    StreamingTranscriptMessageWidget.update = tracking_stream_update  # type: ignore[method-assign]
+    MarkdownStream.write = tracking_stream_write  # type: ignore[method-assign]
     full_refreshes = 0
 
     original_refresh = app._refresh
@@ -1509,9 +1528,13 @@ async def test_tui_streaming_deltas_update_active_message_without_full_refresh()
             transcript_text = "\n".join(line.text for line in transcript.lines)
     finally:
         StreamingTranscriptMessageWidget.replace_text = original_replace_text  # type: ignore[method-assign]
+        StreamingTranscriptMessageWidget.update = original_stream_update  # type: ignore[method-assign]
+        MarkdownStream.write = original_stream_write  # type: ignore[method-assign]
 
     assert full_refreshes == 1
-    assert stream_replacements == ["alpha beta"]
+    assert stream_writes == ["alpha ", "beta"]
+    assert stream_replacements == []
+    assert full_stream_updates == []
     assert streamed.selection_text == "alpha beta"
     assert "alpha beta" in transcript_text
 

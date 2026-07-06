@@ -337,30 +337,44 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
         return self._stream
 
     async def append_fragment(self, fragment: str) -> None:
-        """Append streamed markdown using the same renderer as finalized messages."""
+        """Append streamed markdown without reparsing the full accumulated message."""
         if not fragment:
             return
         self.item.text += fragment
         self.selection_text += fragment
+        await self.stream.write(fragment)
+
+    async def _stop_stream(self) -> None:
+        """Stop the Textual markdown stream, flushing pending fragments first."""
+        stream = self._stream
+        if stream is None:
+            return
         self._stream = None
-        await self.update(self.item.text)
+        await stream.stop()
 
     async def replace_text(self, text: str) -> None:
-        """Replace the current markdown text, usually with the final provider message."""
+        """Replace the current markdown text, usually with corrected final content."""
+        await self._stop_stream()
         self.item.text = text
         self.selection_text = text
-        self._stream = None
         await self.update(text)
 
     async def finalize(self, text: str | None = None) -> None:
         """Mark the streamed message complete and restore finalized Markdown chrome."""
-        if text is not None:
+        if text is not None and text != self.selection_text:
             await self.replace_text(text)
-        elif self._is_streaming:
-            await self.update(self.item.text)
+        else:
+            if text is not None:
+                self.item.text = text
+                self.selection_text = text
+            await self._stop_stream()
         self._is_streaming = False
         self.remove_class("-streaming")
         self.add_class("-finalized")
+
+    async def on_unmount(self) -> None:
+        """Cancel the markdown stream task if the widget is removed mid-stream."""
+        await self._stop_stream()
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
         """Return selected text from this streamed message block."""
@@ -388,6 +402,7 @@ class TranscriptView(VerticalScroll):
         self._active_thinking_widget: StreamingTranscriptMessageWidget | None = None
         self._hidden_thinking_placeholder_visible = False
         self._follow_output = True
+        self._follow_scroll_pending = False
 
     def on_mount(self) -> None:
         """Follow new transcript content until the user scrolls away."""
@@ -396,13 +411,17 @@ class TranscriptView(VerticalScroll):
     def follow_output(self) -> None:
         """Return to follow mode for a user-driven turn or explicit jump to bottom."""
         self._follow_output = True
-        self.anchor(False)
+        self.anchor(True)
         self._request_follow_scroll(force=True)
 
     def _request_follow_scroll(self, *, force: bool = False) -> None:
         """Scroll to the bottom after layout if follow mode is still active."""
+        if self._follow_scroll_pending and not force:
+            return
+        self._follow_scroll_pending = True
 
         def scroll_if_still_following() -> None:
+            self._follow_scroll_pending = False
             if force or self._follow_output or self.is_vertical_scroll_end:
                 self.scroll_end(animate=False, immediate=True)
 
@@ -420,6 +439,22 @@ class TranscriptView(VerticalScroll):
             self._follow_output = False
         elif new_value >= self.max_scroll_y:
             self._follow_output = True
+
+    async def _finalize_active_thinking_message(self) -> None:
+        """Stop streaming for a completed thinking block before another block starts."""
+        widget = self._active_thinking_widget
+        if widget is None:
+            return
+        await widget.finalize()
+        self._active_thinking_widget = None
+
+    async def _finalize_active_assistant_message(self) -> None:
+        """Stop streaming for a completed assistant block before another block starts."""
+        widget = self._active_assistant_widget
+        if widget is None:
+            return
+        await widget.finalize()
+        self._active_assistant_widget = None
 
     def update_from_state(
         self,
@@ -590,6 +625,8 @@ class TranscriptView(VerticalScroll):
     ) -> TranscriptMessageWidget | StreamingTranscriptMessageWidget:
         """Append one transcript item without rebuilding previous blocks."""
         should_follow = self._should_follow_output if not scroll_end else True
+        await self._finalize_active_assistant_message()
+        await self._finalize_active_thinking_message()
         self._render_theme = theme
         widget = _transcript_widget(
             item,
@@ -615,6 +652,7 @@ class TranscriptView(VerticalScroll):
         """Create the active assistant message widget if needed."""
         if self._active_assistant_widget is not None:
             return self._active_assistant_widget
+        await self._finalize_active_thinking_message()
         should_follow = self._should_follow_output if not scroll_end else True
         widget = StreamingTranscriptMessageWidget(
             ChatItem(role="assistant", text=""),
@@ -636,7 +674,6 @@ class TranscriptView(VerticalScroll):
         scroll_end: bool = False,
     ) -> None:
         """Append streamed assistant text to the active message widget."""
-        self._active_thinking_widget = None
         self._hidden_thinking_placeholder_visible = False
         should_follow = self._should_follow_output if not scroll_end else True
         widget = await self.start_assistant_message(theme=theme, scroll_end=scroll_end)
