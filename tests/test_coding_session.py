@@ -588,6 +588,29 @@ async def test_tree_branching_preserves_active_model(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
+async def test_context_usage_is_cached_until_session_context_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
+    calls = 0
+    original_estimate = coding_session_module.estimate_context_usage
+
+    def wrapped_estimate(*args: object, **kwargs: object):
+        nonlocal calls
+        calls += 1
+        return original_estimate(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(coding_session_module, "estimate_context_usage", wrapped_estimate)
+
+    initial_usage = session.context_usage
+    cached_usage = session.context_usage
+
+    assert cached_usage is initial_usage
+    assert calls == 1
+
+
+@pytest.mark.anyio
 async def test_context_usage_recalculates_after_prompt_and_compaction(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(

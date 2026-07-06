@@ -15,6 +15,7 @@ from tau_agent import (
     MessageEndEvent,
     QueuedMessages,
     QueueUpdateEvent,
+    ToolExecutionEndEvent,
 )
 from tau_agent.messages import AgentMessage, AssistantMessage, UserMessage
 from tau_agent.session import (
@@ -236,6 +237,7 @@ class CodingSession:
         self._auto_compact_token_threshold = config.auto_compact_token_threshold
         self._auto_compact_enabled = config.auto_compact_enabled
         self._thinking_level = _state_thinking_level(state, config.thinking_level)
+        self._context_usage_cache: ContextUsageEstimate | None = None
         self._owned_providers: list[ClosableModelProvider] = []
         self._diagnostic_logger = AgentCallDiagnosticLogger.from_paths(self._resource_paths.paths)
         self._credential_store = FileCredentialStore(
@@ -459,6 +461,7 @@ class CodingSession:
 
         await self._refresh_persisted_state(leaf_id=target_id)
         self._harness.replace_messages(self._state.messages)
+        self._invalidate_context_usage_cache()
         self._thinking_level = _state_thinking_level(self._state, self._config.thinking_level)
         self._sync_thinking_level_to_active_model()
         self._refresh_runtime_provider()
@@ -549,11 +552,13 @@ class CodingSession:
     @property
     def context_usage(self) -> ContextUsageEstimate:
         """Return structured context accounting for the active provider context."""
-        return estimate_context_usage(
-            system=self._harness.config.system,
-            messages=self._harness.messages,
-            tools=tuple(self._harness.config.tools),
-        )
+        if self._context_usage_cache is None:
+            self._context_usage_cache = estimate_context_usage(
+                system=self._harness.config.system,
+                messages=self._harness.messages,
+                tools=tuple(self._harness.config.tools),
+            )
+        return self._context_usage_cache
 
     @property
     def system_prompt(self) -> str:
@@ -901,6 +906,7 @@ class CodingSession:
         self._resource_diagnostics = resources.diagnostics
         if rebuilt_system_prompt is not None:
             self._harness.config.system = rebuilt_system_prompt
+            self._invalidate_context_usage_cache()
 
         return CodingReloadSummary(
             skills=_category_summary(before_skills, after_skills),
@@ -992,6 +998,7 @@ class CodingSession:
         self._config = replacement._config
         self._state = replacement._state
         self._harness = replacement._harness
+        self._invalidate_context_usage_cache()
         self._last_parent_id = replacement._last_parent_id
         self._skills = replacement._skills
         self._prompt_templates = replacement._prompt_templates
@@ -1051,6 +1058,7 @@ class CodingSession:
         self._config = replacement._config
         self._state = replacement._state
         self._harness = replacement._harness
+        self._invalidate_context_usage_cache()
         self._last_parent_id = replacement._last_parent_id
         self._skills = replacement._skills
         self._prompt_templates = replacement._prompt_templates
@@ -1148,6 +1156,7 @@ class CodingSession:
                     )
                 )
             )
+            self._invalidate_context_usage_cache()
             await self._persist_messages_since(before_count)
 
         return TerminalCommandResult(
@@ -1193,9 +1202,13 @@ class CodingSession:
         persisted_count = len(self._harness.messages)
         overflow_event: ErrorEvent | None = None
         try:
-            async for event in self._harness.prompt(expanded_content):
+            events = self._harness.prompt(expanded_content)
+            self._invalidate_context_usage_cache()
+            async for event in events:
                 if isinstance(event, MessageEndEvent):
                     persisted_count = await self._persist_messages_since(persisted_count)
+                if isinstance(event, ToolExecutionEndEvent):
+                    self._invalidate_context_usage_cache()
                 if isinstance(event, ErrorEvent) and not event.recoverable:
                     self._last_diagnostic_log_path = self._diagnostic_logger.log_error_event(
                         context=context,
@@ -1210,11 +1223,15 @@ class CodingSession:
                 compacted = await self._try_overflow_compact(context=context)
                 if compacted:
                     retry_persisted_count = len(self._harness.messages)
-                    async for retry_event in self._harness.continue_():
+                    retry_events = self._harness.continue_()
+                    self._invalidate_context_usage_cache()
+                    async for retry_event in retry_events:
                         if isinstance(retry_event, MessageEndEvent):
                             retry_persisted_count = await self._persist_messages_since(
                                 retry_persisted_count
                             )
+                        if isinstance(retry_event, ToolExecutionEndEvent):
+                            self._invalidate_context_usage_cache()
                         if isinstance(retry_event, ErrorEvent) and not retry_event.recoverable:
                             self._last_diagnostic_log_path = (
                                 self._diagnostic_logger.log_error_event(
@@ -1240,9 +1257,13 @@ class CodingSession:
         context = self._diagnostic_context()
         persisted_count = len(self._harness.messages)
         try:
-            async for event in self._harness.continue_():
+            events = self._harness.continue_()
+            self._invalidate_context_usage_cache()
+            async for event in events:
                 if isinstance(event, MessageEndEvent):
                     persisted_count = await self._persist_messages_since(persisted_count)
+                if isinstance(event, ToolExecutionEndEvent):
+                    self._invalidate_context_usage_cache()
                 if isinstance(event, ErrorEvent) and not event.recoverable:
                     self._last_diagnostic_log_path = self._diagnostic_logger.log_error_event(
                         context=context,
@@ -1288,7 +1309,12 @@ class CodingSession:
             await self._append_session_entry(leaf)
 
         await self._refresh_persisted_state(leaf_id=self._last_parent_id)
+        self._invalidate_context_usage_cache()
         return persisted_count + len(new_messages)
+
+    def _invalidate_context_usage_cache(self) -> None:
+        """Mark context accounting dirty after transcript/system/tool changes."""
+        self._context_usage_cache = None
 
     async def _refresh_persisted_state(self, *, leaf_id: str | None) -> None:
         entries = await self._read_session_entries()
@@ -1511,6 +1537,7 @@ class CodingSession:
 
         await self._refresh_persisted_state(leaf_id=compaction.id)
         self._harness.replace_messages(self._state.messages)
+        self._invalidate_context_usage_cache()
         return compaction
 
 

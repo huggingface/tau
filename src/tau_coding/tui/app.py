@@ -2795,7 +2795,7 @@ class TauTuiApp(App[None]):
 
     def _handle_scoped_models_picker_result(self, choice: ModelChoice | None) -> None:
         del choice
-        self._refresh()
+        self._refresh_chrome()
 
     def _handle_model_picker_result(self, choice: ModelChoice | None) -> None:
         if choice is None:
@@ -2811,7 +2811,7 @@ class TauTuiApp(App[None]):
         except Exception as exc:  # noqa: BLE001 - surface model switch failures in the TUI
             self._notify(f"Could not switch model: {exc}", severity="error")
             return
-        self._refresh()
+        self._refresh_chrome()
 
     def _open_theme_picker(self) -> None:
         self.push_screen(
@@ -2839,7 +2839,7 @@ class TauTuiApp(App[None]):
         except Exception as exc:  # noqa: BLE001 - surface session state failures in the TUI
             self._notify(f"Could not change thinking mode: {exc}", severity="error")
             return
-        self._refresh()
+        self._refresh_chrome()
 
     async def _cycle_thinking_level(self) -> None:
         cycler = getattr(self.session, "cycle_thinking_level", None)
@@ -2853,7 +2853,7 @@ class TauTuiApp(App[None]):
         except Exception as exc:  # noqa: BLE001 - surface session state failures in the TUI
             self._notify(f"Could not change thinking mode: {exc}", severity="error")
             return
-        self._refresh()
+        self._refresh_chrome()
 
     async def _cycle_scoped_model(self) -> None:
         cycler = getattr(self.session, "cycle_scoped_model", None)
@@ -2867,7 +2867,7 @@ class TauTuiApp(App[None]):
         except Exception as exc:  # noqa: BLE001 - surface session state failures in the TUI
             self._notify(f"Could not switch scoped model: {exc}", severity="error")
             return
-        self._refresh()
+        self._refresh_chrome()
 
     def _notify(
         self,

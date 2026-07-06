@@ -4499,6 +4499,35 @@ async def test_tui_app_cycles_scoped_model_from_keybinding() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_app_cycles_scoped_model_without_redrawing_transcript() -> None:
+    session = FakeSession(
+        messages=[UserMessage(content=f"Earlier prompt {index}") for index in range(120)]
+    )
+    session.scoped_model_choices = (
+        ModelChoice(provider_name="openai", model="fake-model"),
+        ModelChoice(provider_name="openai", model="other-model"),
+    )
+    app = TauTuiApp(session)
+    transcript_refreshes = 0
+
+    async with app.run_test() as pilot:
+        transcript = app.query_one("#transcript", TranscriptView)
+
+        def fake_update_from_state(*args: object, **kwargs: object) -> None:
+            del args, kwargs
+            nonlocal transcript_refreshes
+            transcript_refreshes += 1
+
+        transcript.update_from_state = fake_update_from_state  # type: ignore[method-assign]
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+
+    assert session.provider_name == "openai"
+    assert session.model == "other-model"
+    assert transcript_refreshes == 0
+
+
+@pytest.mark.anyio
 async def test_tui_app_uses_configured_thinking_keybinding() -> None:
     session = FakeSession()
     app = TauTuiApp(
