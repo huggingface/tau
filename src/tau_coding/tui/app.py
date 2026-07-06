@@ -849,7 +849,8 @@ class CustomProviderLoginResult:
     display_name: str
     base_url: str
     api_key_env: str
-    model: str
+    models: tuple[str, ...]
+    default_model: str
     api_key: str
 
 
@@ -874,15 +875,15 @@ class LoginMethodPickerScreen(ModalScreen[str | None]):
             yield Static("Choose how to authenticate.", id="login-method-intro")
             yield LoginMethodListView(
                 ListItem(
-                    Label("Subscription\n  Sign in with an OAuth account.", markup=False),
+                    Label("Subscription — OAuth account", markup=False),
                     id="login-method-subscription",
                 ),
                 ListItem(
-                    Label("API key\n  Save a built-in provider API key.", markup=False),
+                    Label("API key — built-in provider", markup=False),
                     id="login-method-api-key",
                 ),
                 ListItem(
-                    Label("Custom provider\n  Add an OpenAI-compatible provider.", markup=False),
+                    Label("Custom provider — OpenAI-compatible", markup=False),
                     id="login-method-custom",
                 ),
                 id="login-method-list",
@@ -1324,7 +1325,8 @@ class CustomProviderLoginScreen(ModalScreen[CustomProviderLoginResult | None]):
         "custom-provider-display-name",
         "custom-provider-base-url",
         "custom-provider-api-key-env",
-        "custom-provider-model",
+        "custom-provider-models",
+        "custom-provider-default-model",
         "custom-provider-api-key",
     )
 
@@ -1336,23 +1338,33 @@ class CustomProviderLoginScreen(ModalScreen[CustomProviderLoginResult | None]):
         """Compose the custom provider prompt."""
         with Vertical(id="login-screen"):
             yield Static("Add custom provider", id="login-title")
-            yield Static("Enter OpenAI-compatible provider details.", id="custom-provider-help")
-            yield Input(placeholder="Provider name, e.g. nebius", id="custom-provider-name")
+            yield Static(
+                "Short provider name is used in commands/config.",
+                id="custom-provider-help",
+            )
+            yield Input(placeholder="Provider name/id, e.g. nebius", id="custom-provider-name")
             yield Input(
-                placeholder="Display name, e.g. Nebius AI Studio",
+                placeholder="Display name shown in UI, e.g. Nebius AI Studio",
                 id="custom-provider-display-name",
             )
             yield Input(
-                placeholder="Base URL, e.g. https://api.studio.nebius.ai/v1",
+                placeholder="OpenAI-compatible base URL, e.g. https://api.studio.nebius.ai/v1",
                 id="custom-provider-base-url",
             )
             yield Input(
-                placeholder="API key env, e.g. NEBIUS_API_KEY",
+                placeholder="API key environment variable fallback, e.g. NEBIUS_API_KEY",
                 id="custom-provider-api-key-env",
             )
-            yield Input(placeholder="Default model", id="custom-provider-model")
             yield Input(
-                placeholder="Paste API key",
+                placeholder="Model ids, comma-separated, e.g. model-a, model-b",
+                id="custom-provider-models",
+            )
+            yield Input(
+                placeholder="Default model id, must be listed above",
+                id="custom-provider-default-model",
+            )
+            yield Input(
+                placeholder="Paste API key to save for this provider",
                 password=True,
                 id="custom-provider-api-key",
             )
@@ -1389,8 +1401,26 @@ class CustomProviderLoginScreen(ModalScreen[CustomProviderLoginResult | None]):
         api_key_env = self._field("custom-provider-api-key-env", "API key environment variable")
         if api_key_env is None:
             return None
-        model = self._field("custom-provider-model", "Default model")
-        if model is None:
+        models_text = self._field("custom-provider-models", "Model ids")
+        if models_text is None:
+            return None
+        models = tuple(
+            dict.fromkeys(item.strip() for item in models_text.split(",") if item.strip())
+        )
+        if not models:
+            self.query_one("#custom-provider-help", Static).update(
+                "At least one model id is required."
+            )
+            self.query_one("#custom-provider-models", Input).focus()
+            return None
+        default_model = self._field("custom-provider-default-model", "Default model")
+        if default_model is None:
+            return None
+        if default_model not in models:
+            self.query_one("#custom-provider-help", Static).update(
+                "Default model must be included in the model list."
+            )
+            self.query_one("#custom-provider-default-model", Input).focus()
             return None
         api_key = self._field("custom-provider-api-key", "API key")
         if api_key is None:
@@ -1401,7 +1431,8 @@ class CustomProviderLoginScreen(ModalScreen[CustomProviderLoginResult | None]):
             display_name=display_name or provider_name,
             base_url=base_url,
             api_key_env=api_key_env,
-            model=model,
+            models=models,
+            default_model=default_model,
             api_key=api_key,
         )
 
@@ -1828,7 +1859,8 @@ class TauTuiApp(App[None]):
     }
 
     #login-method-list {
-        max-height: 6;
+        height: auto;
+        max-height: 10;
     }
 
     #model-picker-search {
@@ -1883,7 +1915,8 @@ class TauTuiApp(App[None]):
     #custom-provider-display-name,
     #custom-provider-base-url,
     #custom-provider-api-key-env,
-    #custom-provider-model,
+    #custom-provider-models,
+    #custom-provider-default-model,
     #custom-provider-api-key {
         background: $tau-prompt-background;
         color: $tau-prompt-text;
@@ -2785,8 +2818,8 @@ class TauTuiApp(App[None]):
             base_url=result.base_url.rstrip("/"),
             api_key_env=result.api_key_env,
             credential_name=result.provider_name,
-            models=(result.model,),
-            default_model=result.model,
+            models=result.models,
+            default_model=result.default_model,
         )
         catalog_entry = ProviderCatalogEntry(
             name=provider.name,

@@ -3595,7 +3595,8 @@ async def test_tui_login_custom_provider_writes_catalog_and_preferences(
                 display_name="Nebius AI Studio",
                 base_url="https://api.studio.nebius.ai/v1/",
                 api_key_env="NEBIUS_API_KEY",
-                model="deepseek-ai/DeepSeek-V4-Pro",
+                models=("deepseek-ai/DeepSeek-V4-Pro", "Qwen/Qwen3-Coder"),
+                default_model="deepseek-ai/DeepSeek-V4-Pro",
                 api_key="stored-nebius-key",
             )
         )
@@ -3607,6 +3608,7 @@ async def test_tui_login_custom_provider_writes_catalog_and_preferences(
     assert 'name = "nebius"' in catalog
     assert 'display_name = "Nebius AI Studio"' in catalog
     assert 'base_url = "https://api.studio.nebius.ai/v1"' in catalog
+    assert 'models = ["deepseek-ai/DeepSeek-V4-Pro", "Qwen/Qwen3-Coder"]' in catalog
     assert settings.get_provider("nebius").default_model == "deepseek-ai/DeepSeek-V4-Pro"
     assert FileCredentialStore(tmp_path / ".tau" / "credentials.json").get("nebius") == (
         "stored-nebius-key"
@@ -3819,9 +3821,9 @@ async def test_tui_login_opens_method_picker() -> None:
         method_list = app.screen.query_one("#login-method-list", ListView)
         labels = [str(item.query_one(Label).render()) for item in method_list.children]
         assert labels == [
-            "Subscription\n  Sign in with an OAuth account.",
-            "API key\n  Save a built-in provider API key.",
-            "Custom provider\n  Add an OpenAI-compatible provider.",
+            "Subscription — OAuth account",
+            "API key — built-in provider",
+            "Custom provider — OpenAI-compatible",
         ]
         assert app.screen.focused is method_list
         assert method_list.index == 0
