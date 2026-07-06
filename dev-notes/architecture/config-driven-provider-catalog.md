@@ -22,6 +22,16 @@ At runtime, Tau can also overlay a user catalog:
 The overlay is optional. It can add a new provider or partially override a
 built-in provider.
 
+Provider runtime preferences remain separate in:
+
+```text
+~/.tau/providers.json
+```
+
+That file now stores references/preferences such as the default provider,
+per-provider default model, headers, timeout/retry settings, and scoped models.
+It does not need to duplicate provider definitions.
+
 ## Why it exists
 
 Before this change, adding a provider or updating a model list required editing
@@ -77,6 +87,32 @@ provider:
 Tau intentionally supports only a user-level catalog overlay in this phase. It
 does not read project-local catalog files, so cloning a repository cannot
 silently redirect a built-in provider's `base_url`.
+
+## Runtime preferences
+
+`~/.tau/providers.json` intentionally stores runtime preferences, not provider
+metadata:
+
+```json
+{
+  "default_provider": "local-gateway",
+  "provider_preferences": {
+    "local-gateway": {
+      "default_model": "qwen-coder",
+      "headers": {},
+      "timeout_seconds": 60,
+      "max_retries": 2,
+      "max_retry_delay_seconds": 1
+    }
+  },
+  "scoped_models": []
+}
+```
+
+Older `providers.json` files with full `providers` entries are still accepted.
+When Tau saves settings again, custom provider definitions are written to
+`~/.tau/catalog.toml` and `providers.json` is rewritten to the preference-only
+shape.
 
 ## Validation
 

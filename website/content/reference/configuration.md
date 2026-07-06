@@ -39,6 +39,11 @@ Tau separates provider metadata from runtime preferences:
 - `~/.tau/providers.json` stores runtime preferences such as the default provider,
   default model, scoped models, headers, and timeout/retry settings.
 
+Tau intentionally reads catalog overlays only from the user-level
+`~/.tau/catalog.toml`. There is no project-level `.tau/catalog.toml`, so cloning a
+repository cannot silently redirect a provider's `base_url` or credentials to an
+unexpected service.
+
 ### Provider catalog overlays
 
 Add reusable custom provider definitions to `~/.tau/catalog.toml`:
@@ -70,6 +75,10 @@ models first, `context_windows` are merged, and the thinking fields
 (`thinking_levels`, `thinking_models`, `thinking_default`, `thinking_parameter`)
 replace as a group when `thinking_levels` is present.
 
+`catalog.toml` does not store runtime request options such as custom HTTP
+headers, timeouts, or retry settings. Put those in `~/.tau/providers.json` on the
+matching provider entry.
+
 Invalid catalog files fail loudly. Tau rejects unknown keys, empty required
 strings, empty model names, unsupported provider kinds, default models that are
 not listed in `models`, `thinking_models` or `context_windows` entries for
@@ -81,28 +90,27 @@ Provider preferences live in `~/.tau/providers.json`:
 
 ```json
 {
-  "default_provider": "local",
-  "providers": [
-    {
-      "name": "local",
-      "type": "openai-compatible",
-      "base_url": "http://localhost:11434/v1",
-      "api_key_env": "LOCAL_API_KEY",
-      "models": ["qwen", "llama"],
-      "default_model": "qwen",
+  "default_provider": "local-gateway",
+  "provider_preferences": {
+    "local-gateway": {
+      "default_model": "qwen-coder",
       "headers": { "X-Provider-Header": "value" },
       "timeout_seconds": 120,
       "max_retries": 2,
       "max_retry_delay_seconds": 0.5
     }
-  ],
+  },
   "scoped_models": [
-    { "provider": "local", "model": "qwen" }
+    { "provider": "local-gateway", "model": "qwen-coder" }
   ]
 }
 ```
 
-- `headers` is optional (string→string). `timeout_seconds` defaults to `60`
+- `provider_preferences` keys must refer to providers from the effective catalog
+  (`src/tau_coding/data/catalog.toml` plus `~/.tau/catalog.toml`).
+- `headers` is optional (string→string). For example, Hugging Face organization
+  billing can be configured with `"headers": { "X-HF-Bill-To": "my-org" }` on
+  the `huggingface` provider preference. `timeout_seconds` defaults to `60`
   (> 0); `max_retries` defaults to `2`; `max_retry_delay_seconds` defaults to `1`
   (both ≥ 0).
 - API keys and OAuth credentials are **not** stored here — they live in
@@ -112,9 +120,11 @@ Provider preferences live in `~/.tau/providers.json`:
   custom or local model names to `models` before using them as defaults,
   CLI/TUI selections, or scoped models.
 - `scoped_models` are favorites for the **Ctrl+P** quick-cycle.
-- Provider definitions can also be placed directly in `providers.json` for local
-  preferences. For reusable additions and overrides, prefer `catalog.toml`.
-- Custom models can declare thinking support in either file with
+- Older `providers.json` files that contain full `providers` entries are still
+  accepted for compatibility. When Tau saves settings again, provider definitions
+  are moved to `~/.tau/catalog.toml` and `providers.json` is rewritten as runtime
+  preferences.
+- Custom models declare thinking support in `catalog.toml` with
   `thinking_levels`, `thinking_default`, `thinking_models`, and
   `thinking_parameter` (`"reasoning_effort"`, `"reasoning.effort"`, or
   `"anthropic.thinking"`).
