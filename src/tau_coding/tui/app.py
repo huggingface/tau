@@ -2336,9 +2336,7 @@ class TauTuiApp(App[None]):
     def _clear_optimistic_user_messages(self, *, run_id: int) -> None:
         """Drop unconfirmed optimistic messages once their run is no longer active."""
         self._optimistic_user_messages = [
-            pending
-            for pending in self._optimistic_user_messages
-            if pending[0] != run_id
+            pending for pending in self._optimistic_user_messages if pending[0] != run_id
         ]
 
     async def _append_confirmed_user_message(self, message: AgentMessage) -> None:
