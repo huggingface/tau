@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    {{ partial "head.html" . }}
+  </head>
+  <body>
+    {{ partial "navbar.html" . }}
+    {{ block "main" . }}{{ end }}
+    {{ partial "footer.html" . }}
+
+    {{ $navJs := resources.Get "js/nav-toggle.js" }}
+    {{ if hugo.IsProduction }}
+      {{ $navJs = $navJs | js.Build | minify | fingerprint }}
+    {{ end }}
+    <script src="{{ $navJs.RelPermalink }}"></script>
+    {{ block "scripts" . }}{{ end }}
+  </body>
+</html>

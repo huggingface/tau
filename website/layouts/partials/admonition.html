@@ -1,0 +1,7 @@
+{{ $kind := .kind }}
+{{ $title := .title }}
+{{ $inner := .inner }}
+<div class="admonition admonition-{{ $kind }}">
+  {{ with $title }}<p class="admonition-title">{{ . }}</p>{{ end }}
+  <div class="admonition-body">{{ $inner | markdownify }}</div>
+</div>

@@ -1,0 +1,26 @@
+<nav class="site-nav" data-pagefind-ignore>
+  <a class="brand" href="{{ "/" | relURL }}" aria-label="Tau home">
+    <span class="glyph">&#964;</span>
+    <span class="name">tau</span>
+    <span class="ver">v0.1</span>
+  </a>
+  <button class="nav-toggle" id="navToggle" type="button" aria-expanded="false" aria-controls="navlinks" aria-label="Toggle menu">
+    <span class="bar"></span><span class="bar"></span><span class="bar"></span>
+  </button>
+  <div class="navlinks" id="navlinks">
+    <a href="{{ "/why-tau/" | relURL }}">Why &#964;?</a>
+    <a href="{{ "/quickstart/" | relURL }}">Docs</a>
+    <a href="{{ "/internals/architecture/" | relURL }}">Lessons</a>
+    <a href="{{ "/releases/" | relURL }}">Releases</a>
+    <button class="search-trigger" id="searchTrigger" type="button" aria-label="Search docs">Search</button>
+    <a class="gh" href="{{ .Site.Params.githubUrl }}">GitHub &#8599;</a>
+  </div>
+</nav>
+<div class="search-modal" id="searchModal" data-pagefind-ignore hidden>
+  <div class="search-modal-inner">
+    <button class="search-close" id="searchClose" type="button" aria-label="Close search">&times;</button>
+    <div id="search"></div>
+  </div>
+</div>
+<link href="{{ "pagefind/pagefind-ui.css" | relURL }}" rel="stylesheet">
+<script src="{{ "pagefind/pagefind-ui.js" | relURL }}"></script>
