@@ -535,7 +535,12 @@ class TranscriptView(VerticalScroll):
             if target is not None:
                 flush_pending(before=target)
 
-        flush_pending(before=None)
+        tail_child = (
+            non_thinking_children[non_thinking_index]
+            if non_thinking_index < len(non_thinking_children)
+            else None
+        )
+        flush_pending(before=tail_child)
         self._active_thinking_widget = None
         self._hidden_thinking_placeholder_visible = (
             _last_transcript_child_is_hidden_thinking_placeholder(self.children)
@@ -672,7 +677,6 @@ class TranscriptView(VerticalScroll):
         scroll_end: bool = False,
     ) -> None:
         """Append streamed assistant text to the active message widget."""
-        self._hidden_thinking_placeholder_visible = False
         should_follow = self._should_follow_output if not scroll_end else True
         widget = await self.start_assistant_message(theme=theme, scroll_end=scroll_end)
         await widget.append_fragment(delta)
@@ -692,15 +696,21 @@ class TranscriptView(VerticalScroll):
         if not show_thinking:
             if self._hidden_thinking_placeholder_visible:
                 return
-            await self.append_item(
+            widget = TranscriptMessageWidget(
                 ChatItem(
                     role="thinking",
                     text=_HIDDEN_THINKING_PLACEHOLDER,
                 ),
                 theme=theme,
-                scroll_end=should_follow,
+                show_tool_results=False,
             )
+            await self.mount(widget, before=self._active_assistant_widget)
+            self._active_thinking_widget = None
             self._hidden_thinking_placeholder_visible = True
+            self._last_render_width = self.scrollable_content_region.width
+            self.refresh(layout=True)
+            if should_follow:
+                self._request_follow_scroll(force=scroll_end)
             return
         self._hidden_thinking_placeholder_visible = False
         if self._active_thinking_widget is None:
@@ -708,7 +718,10 @@ class TranscriptView(VerticalScroll):
                 ChatItem(role="thinking", text=""),
                 theme=theme,
             )
-            await self.mount(self._active_thinking_widget)
+            await self.mount(
+                self._active_thinking_widget,
+                before=self._active_assistant_widget,
+            )
         await self._active_thinking_widget.append_fragment(delta)
         if should_follow:
             self._request_follow_scroll(force=scroll_end)
@@ -725,6 +738,7 @@ class TranscriptView(VerticalScroll):
             return
         await widget.finalize(text)
         self._active_assistant_widget = None
+        self._hidden_thinking_placeholder_visible = False
 
     @property
     def lines(self) -> tuple[TranscriptLine, ...]:

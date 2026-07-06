@@ -26,6 +26,7 @@ from tau_agent import (
     MessageEndEvent,
     MessageStartEvent,
     QueueUpdateEvent,
+    ThinkingDeltaEvent,
     ToolCall,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
@@ -4312,6 +4313,31 @@ async def test_tui_app_toggles_thinking_tokens_from_keybinding_while_running() -
 
 
 @pytest.mark.anyio
+async def test_tui_app_hidden_thinking_placeholder_stays_before_streamed_answer() -> None:
+    session = FakeSession(
+        events=[
+            AgentStartEvent(),
+            ThinkingDeltaEvent(delta="private plan"),
+            MessageStartEvent(message_role="assistant"),
+            MessageDeltaEvent(delta="public answer"),
+            MessageEndEvent(message=AssistantMessage(content="public answer")),
+            AgentEndEvent(),
+        ]
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        await app._run_prompt("stream")
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert [line.text for line in transcript.lines] == [
+            "Thinking… Press Ctrl+T to show thinking tokens.",
+            "public answer",
+        ]
+
+
+@pytest.mark.anyio
 async def test_tui_app_thinking_toggle_preserves_unrelated_widgets() -> None:
     app = TauTuiApp(FakeSession())
 
@@ -4360,6 +4386,18 @@ async def test_tui_app_thinking_toggle_preserves_unrelated_widgets() -> None:
             "second answer",
         ]
 
+        app.state.add_item("status", "late status")
+        await transcript.append_item(app.state.items[-1])
+        await pilot.pause()
+        stable_widgets.append(
+            next(
+                widget
+                for widget in reversed(transcript.children)
+                if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+                and widget.item.role == "status"
+            )
+        )
+
         await pilot.press("ctrl+t")
         await pilot.pause()
         assert [
@@ -4375,6 +4413,7 @@ async def test_tui_app_thinking_toggle_preserves_unrelated_widgets() -> None:
             "second prompt",
             "Thinking… Press Ctrl+T to show thinking tokens.",
             "second answer",
+            "late status",
         ]
 
 
