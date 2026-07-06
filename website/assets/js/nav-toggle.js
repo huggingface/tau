@@ -17,15 +17,13 @@ document.addEventListener("DOMContentLoaded", function () {
   var searchTrigger = document.getElementById("searchTrigger");
   var searchModal = document.getElementById("searchModal");
   var searchClose = document.getElementById("searchClose");
-  if (!searchTrigger || !searchModal || !searchClose) return;
+  var searchBox = document.getElementById("search");
+  if (!searchTrigger || !searchModal || !searchClose || !searchBox) return;
   var initialized = false;
+  var unavailableNoticeShown = false;
   function focusInput() {
     var input = searchModal.querySelector("input");
-    if (input) {
-      input.focus();
-    } else {
-      requestAnimationFrame(focusInput);
-    }
+    if (input) input.focus();
   }
   function openSearch() {
     searchModal.hidden = false;
@@ -33,8 +31,18 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!initialized && window.PagefindUI) {
       new window.PagefindUI({ element: "#search", showSubResults: true });
       initialized = true;
+      requestAnimationFrame(focusInput);
+    } else if (!initialized && !unavailableNoticeShown) {
+      // pagefind-ui.js only exists after a real `hugo` build + the pagefind
+      // postbuild step — `hugo server` never runs that, so this is expected
+      // in local dev. Run `hugo --minify && npx pagefind@latest --site public
+      // && npx serve public` to test search for real.
+      searchBox.innerHTML =
+        '<p class="search-unavailable">Search index not built. Run <code>hugo --minify &amp;&amp; npx pagefind@latest --site public</code>, then serve <code>public/</code>, to test search locally.</p>';
+      unavailableNoticeShown = true;
+    } else if (initialized) {
+      requestAnimationFrame(focusInput);
     }
-    requestAnimationFrame(focusInput);
   }
   function closeSearch() {
     searchModal.hidden = true;

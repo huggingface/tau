@@ -170,6 +170,14 @@ body.search-open{ overflow:hidden; }
   .navlinks.is-open{ display:flex; }
 }
 
+.search-unavailable{
+  margin:0; font-family:var(--grotesk); font-size:14px; color:var(--ink-soft); line-height:1.6;
+}
+.search-unavailable code{
+  font-family:var(--mono); font-size:.9em; background:var(--paper-edge);
+  border:1px solid var(--grid-strong); border-radius:3px; padding:1px 5px;
+}
+
 /* ---- pagefind theme ---- */
 .pagefind-ui{
   --pagefind-ui-primary: var(--accent);
