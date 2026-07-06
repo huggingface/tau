@@ -18,6 +18,7 @@ from tau_ai import (
 )
 from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL
 from tau_coding import __version__
+from tau_coding.catalog_loader import user_catalog_path
 from tau_coding.credentials import FileCredentialStore
 from tau_coding.provider_config import (
     DEFAULT_MODEL,
@@ -95,7 +96,9 @@ def setup_command(
     )
     updated = upsert_openai_compatible_provider(settings, provider, set_default=set_default)
     path = save_provider_settings(updated)
-    typer.echo(f"Saved provider '{provider.name}' to {path}")
+    typer.echo(
+        f"Saved provider '{provider.name}' to {user_catalog_path()} and preferences to {path}"
+    )
     if provider.api_key_env not in environ:
         typer.echo(f"Set {provider.api_key_env} before running Tau with this provider.", err=True)
 

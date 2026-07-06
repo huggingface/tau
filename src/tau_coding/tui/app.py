@@ -716,8 +716,6 @@ class CommandOutputScroll(VerticalScroll):
 class CommandOutputScreen(ModalScreen[None]):
     """Dismissible modal for slash-command output."""
 
-    auto_copy_selection: bool = False
-
     BINDINGS: ClassVar[list[BindingEntry]] = [
         Binding("escape", "close", "Close"),
         Binding("enter", "close", "Close"),
@@ -725,19 +723,11 @@ class CommandOutputScreen(ModalScreen[None]):
         Binding("down", "scroll_down", "Scroll down", show=False, priority=True),
     ]
 
-    def __init__(
-        self,
-        title: str,
-        message: str,
-        *,
-        theme: TuiTheme,
-        auto_copy_selection: bool = False,
-    ) -> None:
+    def __init__(self, title: str, message: str, *, theme: TuiTheme) -> None:
         super().__init__()
         self.title_text = title
         self.message = message
         self.theme = theme
-        self.auto_copy_selection = auto_copy_selection
 
     def compose(self) -> ComposeResult:
         """Compose command output."""
@@ -745,7 +735,7 @@ class CommandOutputScreen(ModalScreen[None]):
             yield Static(self.title_text, id="command-output-title")
             with CommandOutputScroll(id="command-output-scroll"):
                 yield Static(self.message, id="command-output-body", markup=False)
-            yield Static(self._help_text(), id="command-output-help")
+            yield Static("Enter or Escape closes", id="command-output-help")
 
     def on_mount(self) -> None:
         """Focus the scroll area so arrow keys navigate long output."""
@@ -763,11 +753,6 @@ class CommandOutputScreen(ModalScreen[None]):
     def action_close(self) -> None:
         """Close the command output modal."""
         self.dismiss(None)
-
-    def _help_text(self) -> str:
-        if self.auto_copy_selection:
-            return "Select text to copy - Enter or Escape closes"
-        return "Enter or Escape closes"
 
     def action_scroll_up(self) -> None:
         """Scroll command output up."""
@@ -1910,14 +1895,10 @@ class TauTuiApp(App[None]):
 
     @on(events.TextSelected)
     async def on_text_selected(self) -> None:
-        """Optionally copy selected text automatically."""
-        active_screen = self.screen
-        if not (
-            self.tui_settings.auto_copy_selection
-            or getattr(active_screen, "auto_copy_selection", False)
-        ):
+        """Optionally copy selected transcript text automatically."""
+        if not self.tui_settings.auto_copy_selection:
             return
-        selection = active_screen.get_selected_text()
+        selection = self.screen.get_selected_text()
         if selection:
             self.copy_to_clipboard(selection)
             self._notify("Copied selection to clipboard.")
@@ -2609,7 +2590,6 @@ class TauTuiApp(App[None]):
                 _command_output_title(command_text),
                 message,
                 theme=self.tui_settings.resolved_theme,
-                auto_copy_selection=_is_session_command(command_text),
             )
         )
 
@@ -2666,7 +2646,7 @@ class TauTuiApp(App[None]):
             return
         if entry.credential_name is None:
             self._notify(
-                f"Provider {entry.display_name} does not support stored logins.",
+                f"Provider {entry.name} does not support saved credentials.",
                 severity="error",
             )
             return
@@ -2694,7 +2674,7 @@ class TauTuiApp(App[None]):
             return
         if entry.credential_name is None:
             self._notify(
-                f"Provider {entry.display_name} does not support stored logins.",
+                f"Provider {entry.name} does not support saved credentials.",
                 severity="error",
             )
             return
@@ -2738,10 +2718,11 @@ class TauTuiApp(App[None]):
             self._notify(f"Unknown provider: {provider_name}", severity="error")
             return
 
+        if entry.credential_name is None:
+            self._notify(NO_STORED_CREDENTIALS_MESSAGE, severity="warning")
+            return
         credential_store = FileCredentialStore()
-        if entry.credential_name is None or not _credential_store_has_entry(
-            credential_store, entry.credential_name
-        ):
+        if not _credential_store_has_entry(credential_store, entry.credential_name):
             self._notify(NO_STORED_CREDENTIALS_MESSAGE, severity="warning")
             return
 
@@ -3483,11 +3464,6 @@ def _command_message_uses_notification(command_text: str, message: str) -> bool:
 def _command_output_title(command_text: str) -> str:
     command_name = command_text.split(maxsplit=1)[0].removeprefix("/")
     return f"/{command_name or 'help'}"
-
-
-def _is_session_command(command_text: str) -> bool:
-    """Return whether command output is the /session details modal."""
-    return command_text.split(maxsplit=1)[0].casefold() == "/session"
 
 
 def _is_thinking_cycle_key(key: str, configured_key: str) -> bool:

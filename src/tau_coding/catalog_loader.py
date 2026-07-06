@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import tomllib
+from collections.abc import Iterable
+from contextlib import suppress
 from functools import cache
 from importlib.resources import files
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StringConstraints, ValidationError
@@ -41,7 +45,7 @@ class _CatalogProvider(BaseModel):
     kind: ProviderKind
     base_url: _NonEmptyString
     api_key_env: _NonEmptyString
-    credential_name: _NonEmptyString
+    credential_name: _NonEmptyString | None = None
     models: _NonEmptyStringTuple
     default_model: _NonEmptyString
     docs_url: _NonEmptyString
@@ -81,8 +85,42 @@ def effective_catalog(paths: TauPaths | None = None) -> tuple[ProviderCatalogEnt
     if not path.exists():
         return builtin_catalog()
     overlay_raw = _parse_catalog_text(path.read_text(encoding="utf-8"), source=str(path))
+    _validate_catalog_root(overlay_raw, source=str(path))
     merged = _merge_raw_catalogs(_builtin_raw(), overlay_raw)
     return _entries_from_raw(merged, source=str(path))
+
+
+def save_user_catalog_entries(
+    entries: Iterable[ProviderCatalogEntry],
+    paths: TauPaths | None = None,
+) -> Path:
+    """Upsert full provider definitions into the user-level catalog file."""
+    path = user_catalog_path(paths)
+    if path.exists():
+        raw = _parse_catalog_text(path.read_text(encoding="utf-8"), source=str(path))
+        _validate_catalog_root(raw, source=str(path))
+    else:
+        raw = {"schema_version": CATALOG_SCHEMA_VERSION, "providers": []}
+
+    providers = list(_raw_providers(raw))
+    provider_indexes = {
+        _raw_provider_name(provider): index for index, provider in enumerate(providers)
+    }
+    for entry in entries:
+        raw_provider = _raw_provider_from_entry(entry)
+        if entry.name in provider_indexes:
+            providers[provider_indexes[entry.name]] = raw_provider
+        else:
+            provider_indexes[entry.name] = len(providers)
+            providers.append(raw_provider)
+
+    updated = {
+        "schema_version": raw.get("schema_version", CATALOG_SCHEMA_VERSION),
+        "providers": providers,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write_text(path, _catalog_to_toml(updated))
+    return path
 
 
 @cache
@@ -95,6 +133,18 @@ def _parse_catalog_text(text: str, *, source: str) -> dict[str, Any]:
         return tomllib.loads(text)
     except tomllib.TOMLDecodeError as error:
         raise CatalogError(f"{source}: invalid TOML: {error}") from error
+
+
+def _validate_catalog_root(raw: dict[str, Any], *, source: str) -> None:
+    allowed = {"schema_version", "providers"}
+    unknown = sorted(set(raw) - allowed)
+    if unknown:
+        raise CatalogError(f"{source}: unknown catalog keys: {', '.join(unknown)}")
+    if "schema_version" not in raw:
+        raise CatalogError(f"{source}: schema_version is required")
+    if raw["schema_version"] != CATALOG_SCHEMA_VERSION:
+        raise CatalogError(f"{source}: unsupported schema_version: {raw['schema_version']!r}")
+    _raw_providers(raw)
 
 
 def _merge_raw_catalogs(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
@@ -223,3 +273,100 @@ def _dotted_location(raw: dict[str, Any], location: tuple[int | str, ...]) -> li
         else:
             parts.append(str(part))
     return parts
+
+
+def _raw_provider_from_entry(entry: ProviderCatalogEntry) -> dict[str, Any]:
+    raw: dict[str, Any] = {
+        "name": entry.name,
+        "display_name": entry.display_name,
+        "kind": entry.kind,
+        "base_url": entry.base_url,
+        "api_key_env": entry.api_key_env,
+        "models": list(entry.models),
+        "default_model": entry.default_model,
+        "docs_url": entry.docs_url,
+    }
+    if entry.credential_name is not None:
+        raw["credential_name"] = entry.credential_name
+    if entry.context_windows:
+        raw["context_windows"] = dict(entry.context_windows)
+    if entry.thinking_levels is not None:
+        raw["thinking_levels"] = list(entry.thinking_levels)
+    if entry.thinking_models:
+        raw["thinking_models"] = list(entry.thinking_models)
+    if entry.thinking_default is not None:
+        raw["thinking_default"] = entry.thinking_default
+    if entry.thinking_parameter is not None:
+        raw["thinking_parameter"] = entry.thinking_parameter
+    return raw
+
+
+def _catalog_to_toml(raw: dict[str, Any]) -> str:
+    lines = [f"schema_version = {raw.get('schema_version', CATALOG_SCHEMA_VERSION)}", ""]
+    for provider in _raw_providers(raw):
+        lines.append("[[providers]]")
+        for key in (
+            "name",
+            "display_name",
+            "kind",
+            "base_url",
+            "api_key_env",
+            "credential_name",
+            "models",
+            "default_model",
+            "docs_url",
+            "thinking_levels",
+            "thinking_models",
+            "thinking_default",
+            "thinking_parameter",
+        ):
+            if key in provider:
+                lines.append(f"{key} = {_toml_value(provider[key])}")
+        context_windows = provider.get("context_windows")
+        if isinstance(context_windows, dict) and context_windows:
+            lines.append("")
+            lines.append("[providers.context_windows]")
+            for model, context_window in context_windows.items():
+                lines.append(f"{_toml_key(model)} = {_toml_value(context_window)}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _toml_key(value: str) -> str:
+    if value.replace("_", "").replace("-", "").isalnum() and not value[0].isdigit():
+        return value
+    return json.dumps(value)
+
+
+def _toml_value(value: object) -> str:
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return str(value)
+    if isinstance(value, list | tuple):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    raise TypeError(f"Unsupported TOML value: {value!r}")
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    temp_path: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            "w",
+            dir=path.parent,
+            encoding="utf-8",
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(text)
+            temp_file.flush()
+        temp_path.replace(path)
+    except Exception:
+        if temp_path is not None:
+            with suppress(OSError):
+                temp_path.unlink()
+        raise
