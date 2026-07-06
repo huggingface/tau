@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from os import environ
+from typing import Literal
 
 from tau_agent.types import JSONValue
 
@@ -13,6 +14,8 @@ DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
 DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS = 60.0
 DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES = 2
 DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS = 1.0
+
+AnthropicThinkingType = Literal["adaptive", "disabled"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +52,7 @@ class AnthropicConfig:
     thinking_budget_tokens: int | None = None
     thinking_effort: str | None = None
     thinking_mode: str = "budget"
+    thinking_type: AnthropicThinkingType | None = None
     provider_name: str = "Anthropic"
 
 

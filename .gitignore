@@ -15,8 +15,10 @@ website/public/
 website/resources/
 website/.hugo_build.lock
 
-# System files
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
 
 # Agent tools
 .firecrawl/

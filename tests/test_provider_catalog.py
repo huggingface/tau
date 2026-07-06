@@ -11,10 +11,18 @@ from tau_coding.catalog_loader import (
     builtin_catalog,
     builtin_catalog_resource_text,
     effective_catalog,
+    save_user_catalog_entries,
     user_catalog_path,
 )
 from tau_coding.paths import TauPaths
-from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG, builtin_provider_entry
+from tau_coding.provider_catalog import (
+    BUILTIN_PROVIDER_CATALOG,
+    ProviderCatalogEntry,
+    ProviderModelOverride,
+    ThinkingMode,
+    builtin_provider_entry,
+    catalog_model_override,
+)
 from tau_coding.provider_config import load_provider_settings
 
 VALID_PROVIDER = """
@@ -72,6 +80,7 @@ def test_builtin_catalog_matches_expected_providers() -> None:
         "xiaomi-token-plan-cn",
         "xiaomi-token-plan-ams",
         "xiaomi-token-plan-sgp",
+        "opencode-go",
     ]
 
 
@@ -176,9 +185,128 @@ def test_builtin_catalog_entries_are_internally_consistent() -> None:
         assert entry.default_model in entry.models
         assert set(entry.thinking_models) <= set(entry.models)
         assert set(entry.context_windows or {}) <= set(entry.models)
+        assert set(entry.model_overrides or {}) <= set(entry.models)
         if entry.thinking_default is not None:
             assert entry.thinking_levels is not None
             assert entry.thinking_default in entry.thinking_levels
+
+
+_LOCAL_OVERRIDE_PROVIDER = """
+[[providers]]
+name = "opencode-go"
+display_name = "OpenCode Go"
+kind = "openai-compatible"
+base_url = "https://opencode.ai/zen/go/v1"
+api_key_env = "OPENCODE_API_KEY"
+credential_name = "opencode-go"
+models = ["glm-5.2", "minimax-m3"]
+default_model = "glm-5.2"
+docs_url = "https://opencode.ai/docs/go"
+thinking_levels = ["off", "low", "medium", "high", "xhigh"]
+thinking_models = ["glm-5.2"]
+thinking_default = "medium"
+thinking_parameter = "reasoning_effort"
+
+[providers.context_windows]
+"glm-5.2" = 1000000
+"minimax-m3" = 1000000
+
+[providers.model_overrides."glm-5.2"]
+thinking_default = "high"
+thinking_modes = {high = {api_value = "high"}, xhigh = {api_value = "max", label = "max"}}
+
+[providers.model_overrides."minimax-m3"]
+kind = "anthropic"
+always_thinking = true
+"""
+
+
+def test_builtin_catalog_golden_opencode_go_overrides() -> None:
+    entry = builtin_provider_entry("opencode-go")
+    assert entry is not None
+    assert entry.kind == "openai-compatible"
+    assert entry.base_url == "https://opencode.ai/zen/go/v1"
+    assert entry.api_key_env == "OPENCODE_API_KEY"
+    assert entry.default_model == "deepseek-v4-pro"
+    assert entry.model_overrides is not None
+    assert set(entry.model_overrides) == set(entry.models)
+
+    glm = catalog_model_override("opencode-go", "glm-5.2")
+    assert glm is not None
+    assert glm.thinking_default == "high"
+    assert glm.thinking_modes == {
+        "high": ThinkingMode(api_value="high"),
+        "xhigh": ThinkingMode(api_value="max", label="max"),
+    }
+
+    assert catalog_model_override("opencode-go", "glm-5.1").always_thinking is True
+    assert catalog_model_override("opencode-go", "kimi-k2.7-code").thinking_modes is None
+
+    minimax = catalog_model_override("opencode-go", "minimax-m3")
+    assert minimax.kind == "anthropic"
+    assert minimax.thinking_default == "high"
+    assert minimax.thinking_modes == {
+        "off": ThinkingMode(api_value="disabled"),
+        "high": ThinkingMode(api_value="adaptive", label="on"),
+    }
+
+    qwen = catalog_model_override("opencode-go", "qwen3.7-max")
+    assert qwen.kind == "anthropic"
+    assert qwen.thinking_default == "medium"
+    assert qwen.thinking_modes == {
+        "off": ThinkingMode(api_value="disabled"),
+        "low": ThinkingMode(),
+        "medium": ThinkingMode(),
+        "high": ThinkingMode(),
+        "xhigh": ThinkingMode(),
+    }
+
+    # Unknown provider/model pairs resolve to None.
+    assert catalog_model_override("opencode-go", "unknown-model") is None
+    assert catalog_model_override("not-a-provider", "glm-5.2") is None
+    assert catalog_model_override("opencode-go", None) is None
+
+
+def test_user_catalog_model_overrides_round_trip(tmp_path: Path) -> None:
+    paths = _write_user_catalog(tmp_path / ".tau", _LOCAL_OVERRIDE_PROVIDER)
+    catalog = effective_catalog(paths)
+    entry = next(e for e in catalog if e.name == "opencode-go")
+    assert entry.model_overrides is not None
+    assert set(entry.model_overrides) == {"glm-5.2", "minimax-m3"}
+    assert entry.model_overrides["glm-5.2"].thinking_modes == {
+        "high": ThinkingMode(api_value="high"),
+        "xhigh": ThinkingMode(api_value="max", label="max"),
+    }
+    assert entry.model_overrides["minimax-m3"].kind == "anthropic"
+    assert entry.model_overrides["minimax-m3"].always_thinking is True
+
+    # Saving an entry with overrides and reloading preserves them exactly.
+    saved_override = ProviderModelOverride(
+        kind="anthropic",
+        thinking_modes={"off": ThinkingMode(api_value="disabled")},
+        thinking_default="medium",
+    )
+    save_path = save_user_catalog_entries(
+        (
+            ProviderCatalogEntry(
+                name="custom-aggregator",
+                display_name="Custom Aggregator",
+                kind="openai-compatible",
+                base_url="https://example.test/v1",
+                api_key_env="CUSTOM_API_KEY",
+                credential_name="custom-aggregator",
+                models=("a-model", "b-model"),
+                default_model="a-model",
+                docs_url="https://example.test/docs",
+                model_overrides={"a-model": saved_override},
+            ),
+        ),
+        paths=paths,
+    )
+    reloaded = effective_catalog(paths)
+    custom = next(e for e in reloaded if e.name == "custom-aggregator")
+    assert custom.model_overrides == {"a-model": saved_override}
+    assert save_path.exists()
 
 
 def test_builtin_catalog_resource_is_packaged() -> None:

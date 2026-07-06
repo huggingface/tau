@@ -20,7 +20,7 @@ from tau_ai import (
     AnthropicConfig,
     OpenAICompatibleConfig,
 )
-from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL
+from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL, AnthropicThinkingType
 from tau_coding.catalog_loader import effective_catalog, save_user_catalog_entries
 from tau_coding.credentials import FileCredentialStore, credentials_path
 from tau_coding.paths import TauPaths
@@ -30,9 +30,12 @@ from tau_coding.provider_catalog import (
     ProviderApi,
     ProviderCatalogEntry,
     ProviderKind,
+    ThinkingMode,
+    catalog_model_override,
 )
 from tau_coding.thinking import (
     DEFAULT_THINKING_LEVEL,
+    THINKING_LEVELS,
     ThinkingLevel,
     ThinkingParameter,
     anthropic_thinking_budget_for_level,
@@ -1269,6 +1272,13 @@ def provider_thinking_levels(
 ) -> tuple[ThinkingLevel, ...]:
     """Return thinking levels supported by a provider/model pair."""
     selected_model = model or provider.default_model
+    override = catalog_model_override(provider.name, selected_model)
+    if override is not None:
+        if override.always_thinking:
+            return ()
+        if override.thinking_modes is not None:
+            return tuple(level for level in THINKING_LEVELS if level in override.thinking_modes)
+
     metadata = _metadata_for_model(provider, selected_model)
     if metadata is not None and metadata.reasoning is False:
         return ()
@@ -1285,6 +1295,46 @@ def provider_thinking_levels(
     )
 
 
+def provider_thinking_is_always_on(
+    provider: ProviderConfig,
+    *,
+    model: str | None = None,
+) -> bool:
+    """Return whether built-in metadata declares reasoning as always enabled."""
+    selected_model = model or provider.default_model
+    override = catalog_model_override(provider.name, selected_model)
+    return override.always_thinking if override is not None else False
+
+
+def provider_thinking_level_label(
+    provider: ProviderConfig,
+    level: str,
+    *,
+    model: str | None = None,
+) -> str:
+    """Return the provider-facing display label for a canonical Tau level."""
+    normalized = normalize_thinking_level(level)
+    mode = _thinking_mode(provider, model=model, level=normalized)
+    return mode.label if mode is not None and mode.label is not None else normalized
+
+
+def provider_thinking_level_from_label(
+    provider: ProviderConfig,
+    value: str,
+    *,
+    model: str | None = None,
+) -> ThinkingLevel:
+    """Resolve a provider-facing input label to a canonical Tau level."""
+    selected_model = model or provider.default_model
+    override = catalog_model_override(provider.name, selected_model)
+    if override is not None and override.thinking_modes is not None:
+        label = value.strip().lower()
+        for level, mode in override.thinking_modes.items():
+            if mode.label == label:
+                return level
+    return normalize_thinking_level(value)
+
+
 def provider_thinking_unavailable_reason(
     provider: ProviderConfig,
     *,
@@ -1293,6 +1343,8 @@ def provider_thinking_unavailable_reason(
     """Explain why a provider/model pair has no configurable thinking modes."""
     selected_model = model or provider.default_model
     metadata = _metadata_for_model(provider, selected_model)
+    if provider_thinking_is_always_on(provider, model=selected_model):
+        return f"Reasoning is always enabled for {selected_model}"
     if metadata is not None and metadata.reasoning is False:
         return f"{provider.name}:{selected_model} is not a reasoning model"
     if provider.thinking_levels is None:
@@ -1418,6 +1470,10 @@ def provider_default_thinking_level(
     levels = provider_thinking_levels(provider, model=model)
     if not levels:
         return None
+    selected_model = model or provider.default_model
+    override = catalog_model_override(provider.name, selected_model)
+    if override is not None and override.thinking_default in levels:
+        return override.thinking_default
     if provider.thinking_default in levels:
         return provider.thinking_default
     if DEFAULT_THINKING_LEVEL in levels:
@@ -1475,10 +1531,19 @@ def anthropic_config_from_provider(
     """Build Anthropic runtime config from durable settings."""
     api_key = _api_key_from_provider(provider, credential_reader=credential_reader)
     selected_model = model or provider.default_model
-    thinking_budget_tokens = _anthropic_thinking_budget_from_provider(
+    thinking_type = _anthropic_thinking_type_from_provider(
         provider,
         model=selected_model,
         thinking_level=thinking_level,
+    )
+    thinking_budget_tokens = (
+        None
+        if thinking_type is not None
+        else _anthropic_thinking_budget_from_provider(
+            provider,
+            model=selected_model,
+            thinking_level=thinking_level,
+        )
     )
     return AnthropicConfig(
         api_key=api_key,
@@ -1495,6 +1560,7 @@ def anthropic_config_from_provider(
             thinking_level=thinking_level,
         ),
         thinking_mode=_anthropic_thinking_mode(provider, selected_model),
+        thinking_type=thinking_type,
     )
 
 
@@ -1552,6 +1618,9 @@ def _reasoning_effort_from_provider(
             f"Thinking mode {normalized} is not available for "
             f"{provider.name}:{selected_model}. Available modes: {available}"
         )
+    api_value = _thinking_api_value(provider, model=model, level=normalized)
+    if api_value is not None:
+        return api_value
     mapped = _metadata_thinking_value(provider, selected_model, normalized)
     if mapped is not None:
         return mapped
@@ -1565,7 +1634,7 @@ def _reasoning_effort_from_provider(
 def _anthropic_thinking_budget_from_provider(
     provider: AnthropicProviderConfig,
     *,
-    model: str | None,
+    model: str | None = None,
     thinking_level: ThinkingLevel | None,
 ) -> int | None:
     if thinking_level is None or provider.thinking_parameter != "anthropic.thinking":
@@ -1581,6 +1650,7 @@ def _anthropic_thinking_budget_from_provider(
 
     normalized = normalize_thinking_level(thinking_level)
     if normalized not in levels:
+        selected_model = model or provider.default_model
         available = ", ".join(levels)
         raise ProviderConfigError(
             f"Thinking mode {normalized} is not available for "
@@ -1589,6 +1659,7 @@ def _anthropic_thinking_budget_from_provider(
     return anthropic_thinking_budget_for_level(normalized)
 
 
+<<<<<<< HEAD
 def _metadata_thinking_value(
     provider: ProviderConfig,
     model: str,
@@ -1663,6 +1734,53 @@ def _normalize_anthropic_base_url(base_url: str) -> str:
     if normalized.endswith("/v1"):
         return normalized
     return f"{normalized}/v1"
+=======
+def _anthropic_thinking_type_from_provider(
+    provider: AnthropicProviderConfig,
+    *,
+    model: str | None,
+    thinking_level: ThinkingLevel | None,
+) -> AnthropicThinkingType | None:
+    if thinking_level is None or provider.thinking_parameter != "anthropic.thinking":
+        return None
+    normalized = normalize_thinking_level(thinking_level)
+    levels = provider_thinking_levels(provider, model=model)
+    if not levels:
+        return None
+    if normalized not in levels:
+        selected_model = model or provider.default_model
+        available = ", ".join(levels)
+        raise ProviderConfigError(
+            f"Thinking mode {normalized} is not available for "
+            f"{provider.name}:{selected_model}. Available modes: {available}"
+        )
+    api_value = _thinking_api_value(provider, model=model, level=normalized)
+    if api_value == "adaptive":
+        return "adaptive"
+    if api_value == "disabled":
+        return "disabled"
+    return None
+
+
+def _thinking_api_value(
+    provider: ProviderConfig,
+    *,
+    model: str | None,
+    level: ThinkingLevel,
+) -> str | None:
+    mode = _thinking_mode(provider, model=model, level=level)
+    return mode.api_value if mode is not None else None
+
+
+def _thinking_mode(
+    provider: ProviderConfig, *, model: str | None, level: ThinkingLevel
+) -> ThinkingMode | None:
+    selected_model = model or provider.default_model
+    override = catalog_model_override(provider.name, selected_model)
+    if override is None or override.thinking_modes is None:
+        return None
+    return override.thinking_modes.get(level)
+>>>>>>> b0ac299 (rewrote the OpenCode Go provider support to use the new toml files, verified model overrides against OpenCode source code, added a design doc)
 
 
 def _provider_from_json(data: object) -> ProviderConfig:

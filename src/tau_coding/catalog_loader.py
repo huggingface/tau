@@ -30,6 +30,8 @@ from tau_coding.provider_catalog import (
     ProviderApi,
     ProviderCatalogEntry,
     ProviderKind,
+    ProviderModelOverride,
+    ThinkingMode,
 )
 from tau_coding.thinking import ThinkingLevel, ThinkingParameter
 
@@ -70,6 +72,22 @@ class _CatalogModelMetadata(BaseModel):
     unsupported_thinking_levels: tuple[ThinkingLevel, ...] = ()
 
 
+class _CatalogThinkingMode(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    api_value: str | None = None
+    label: str | None = None
+
+
+class _CatalogModelOverride(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: ProviderKind | None = None
+    thinking_modes: dict[ThinkingLevel, _CatalogThinkingMode] | None = None
+    thinking_default: ThinkingLevel | None = None
+    always_thinking: bool = False
+
+
 class _CatalogProvider(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -91,6 +109,7 @@ class _CatalogProvider(BaseModel):
     thinking_models: tuple[_NonEmptyString, ...] = ()
     thinking_default: ThinkingLevel | None = None
     thinking_parameter: ThinkingParameter | None = None
+    model_overrides: dict[_NonEmptyString, _CatalogModelOverride] | None = None
 
 
 class _CatalogFile(BaseModel):
@@ -275,6 +294,35 @@ def _entries_from_raw(raw: dict[str, Any], *, source: str) -> tuple[ProviderCata
     return entries
 
 
+def _model_overrides_from_catalog(
+    overrides: dict[str, _CatalogModelOverride] | None,
+) -> dict[str, ProviderModelOverride] | None:
+    """Convert catalog model overrides into runtime dataclass values."""
+    if not overrides:
+        return None
+    return {
+        model: ProviderModelOverride(
+            kind=override.kind,
+            thinking_modes=_thinking_modes_from_catalog(override.thinking_modes),
+            thinking_default=override.thinking_default,
+            always_thinking=override.always_thinking,
+        )
+        for model, override in overrides.items()
+    }
+
+
+def _thinking_modes_from_catalog(
+    modes: dict[ThinkingLevel, _CatalogThinkingMode] | None,
+) -> dict[ThinkingLevel, ThinkingMode] | None:
+    """Convert catalog thinking modes into runtime dataclass values."""
+    if not modes:
+        return None
+    return {
+        level: ThinkingMode(api_value=mode.api_value, label=mode.label)
+        for level, mode in modes.items()
+    }
+
+
 def _entry_from_provider(provider: _CatalogProvider, *, source: str) -> ProviderCatalogEntry:
     prefix = f"{source}: providers.{provider.name}"
     if provider.default_model not in provider.models:
@@ -288,6 +336,9 @@ def _entry_from_provider(provider: _CatalogProvider, *, source: str) -> Provider
     for model in provider.model_metadata:
         if model not in provider.models:
             raise CatalogError(f"{prefix}.model_metadata: {model!r} is not in models")
+    for model in provider.model_overrides or {}:
+        if model not in provider.models:
+            raise CatalogError(f"{prefix}.model_overrides: {model!r} is not in models")
     if provider.thinking_default is not None and (
         provider.thinking_levels is None
         or provider.thinking_default not in provider.thinking_levels
@@ -324,6 +375,7 @@ def _entry_from_provider(provider: _CatalogProvider, *, source: str) -> Provider
         thinking_models=provider.thinking_models,
         thinking_default=provider.thinking_default,
         thinking_parameter=provider.thinking_parameter,
+        model_overrides=_model_overrides_from_catalog(provider.model_overrides),
     )
 
 
@@ -423,6 +475,40 @@ def _raw_provider_from_entry(entry: ProviderCatalogEntry) -> dict[str, Any]:
         raw["thinking_default"] = entry.thinking_default
     if entry.thinking_parameter is not None:
         raw["thinking_parameter"] = entry.thinking_parameter
+    if entry.model_overrides:
+        raw["model_overrides"] = _raw_model_overrides_from_entry(entry.model_overrides)
+    return raw
+
+
+def _raw_model_overrides_from_entry(
+    overrides: dict[str, ProviderModelOverride],
+) -> dict[str, Any]:
+    """Serialize model overrides back into the raw catalog shape."""
+    raw: dict[str, Any] = {}
+    for model, override in overrides.items():
+        entry: dict[str, Any] = {}
+        if override.kind is not None:
+            entry["kind"] = override.kind
+        if override.thinking_modes:
+            entry["thinking_modes"] = {
+                level: _raw_thinking_mode_from_entry(mode)
+                for level, mode in override.thinking_modes.items()
+            }
+        if override.thinking_default is not None:
+            entry["thinking_default"] = override.thinking_default
+        if override.always_thinking:
+            entry["always_thinking"] = True
+        raw[model] = entry
+    return raw
+
+
+def _raw_thinking_mode_from_entry(mode: ThinkingMode) -> dict[str, Any]:
+    """Serialize a thinking mode, dropping ``None`` fields for compact output."""
+    raw: dict[str, Any] = {}
+    if mode.api_value is not None:
+        raw["api_value"] = mode.api_value
+    if mode.label is not None:
+        raw["label"] = mode.label
     return raw
 
 
@@ -498,6 +584,16 @@ def _catalog_to_toml(raw: dict[str, Any]) -> str:
                 lines.append(f"[providers.model_metadata.{_toml_key(model)}]")
                 for key, value in metadata.items():
                     lines.append(f"{key} = {_toml_value(value)}")
+        model_overrides = provider.get("model_overrides")
+        if isinstance(model_overrides, dict) and model_overrides:
+            lines.append("")
+            for model in sorted(model_overrides):
+                override = model_overrides[model]
+                lines.append(f"[providers.model_overrides.{_toml_key(model)}]")
+                for key in ("kind", "thinking_default", "always_thinking", "thinking_modes"):
+                    if key in override:
+                        lines.append(f"{key} = {_toml_value(override[key])}")
+                lines.append("")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -515,6 +611,9 @@ def _toml_value(value: object) -> str:
         return "true" if value else "false"
     if isinstance(value, int | float):
         return str(value)
+    if isinstance(value, dict):
+        items = [(str(k), v) for k, v in value.items() if v is not None]
+        return "{" + ", ".join(f"{_toml_key(k)} = {_toml_value(v)}" for k, v in sorted(items)) + "}"
     if isinstance(value, list | tuple):
         return "[" + ", ".join(_toml_value(item) for item in value) + "]"
     if isinstance(value, dict):
