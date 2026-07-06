@@ -33,8 +33,10 @@ from tau_agent import (
     ToolResultMessage,
     UserMessage,
 )
+from tau_coding.catalog_loader import user_catalog_path
 from tau_coding.commands import CommandResult
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
+from tau_coding.paths import TauPaths
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_config import (
     OpenAICodexProviderConfig,
@@ -57,6 +59,8 @@ from tau_coding.tui import app as tui_app
 from tau_coding.tui.app import (
     COMPLETION_MAX_VISIBLE_LINES,
     CommandOutputScreen,
+    CustomProviderLoginResult,
+    CustomProviderLoginScreen,
     LoginMethodPickerScreen,
     LoginProviderPickerScreen,
     LoginScreen,
@@ -216,6 +220,8 @@ class FakeSession:
             return CommandResult(handled=True, tree_picker_requested=True)
         if text == "/login":
             return CommandResult(handled=True, login_picker_requested=True)
+        if text in {"/login custom", "/login new", "/login add"}:
+            return CommandResult(handled=True, custom_provider_login_requested=True)
         if text.startswith("/login "):
             return CommandResult(handled=True, login_provider=text.removeprefix("/login "))
         if text == "/logout":
@@ -3574,6 +3580,56 @@ async def test_tui_login_openai_codex_saves_oauth_credentials(
 
 
 @pytest.mark.anyio
+async def test_tui_login_custom_provider_writes_catalog_and_preferences(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    session = FakeSession()
+    app = TauTuiApp(session)
+
+    async with app.run_test():
+        app._handle_custom_provider_login_result(
+            CustomProviderLoginResult(
+                provider_name="nebius",
+                display_name="Nebius AI Studio",
+                base_url="https://api.studio.nebius.ai/v1/",
+                api_key_env="NEBIUS_API_KEY",
+                model="deepseek-ai/DeepSeek-V4-Pro",
+                api_key="stored-nebius-key",
+            )
+        )
+
+    paths = TauPaths(home=tmp_path / ".tau")
+    catalog = user_catalog_path(paths).read_text(encoding="utf-8")
+    settings = tui_app.load_provider_settings(paths)
+
+    assert 'name = "nebius"' in catalog
+    assert 'display_name = "Nebius AI Studio"' in catalog
+    assert 'base_url = "https://api.studio.nebius.ai/v1"' in catalog
+    assert settings.get_provider("nebius").default_model == "deepseek-ai/DeepSeek-V4-Pro"
+    assert FileCredentialStore(tmp_path / ".tau" / "credentials.json").get("nebius") == (
+        "stored-nebius-key"
+    )
+    assert session.provider_reload_count == 1
+    assert session.provider_name == "nebius"
+
+
+@pytest.mark.anyio
+async def test_tui_login_custom_provider_opens_from_slash_command() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/login custom"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, CustomProviderLoginScreen)
+        assert app.screen.query_one("#custom-provider-name", Input).has_focus
+
+
+@pytest.mark.anyio
 async def test_tui_login_preserves_existing_scoped_models_and_providers(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3764,7 +3820,8 @@ async def test_tui_login_opens_method_picker() -> None:
         labels = [str(item.query_one(Label).render()) for item in method_list.children]
         assert labels == [
             "Subscription\n  Sign in with an OAuth account.",
-            "API key\n  Save a provider API key.",
+            "API key\n  Save a built-in provider API key.",
+            "Custom provider\n  Add an OpenAI-compatible provider.",
         ]
         assert app.screen.focused is method_list
         assert method_list.index == 0

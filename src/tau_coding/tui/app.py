@@ -54,6 +54,7 @@ from tau_agent.messages import AgentMessage, UserMessage
 from tau_agent.tools import AgentTool
 from tau_ai import ProviderErrorEvent, ProviderEvent
 from tau_ai.provider import CancellationToken
+from tau_coding.catalog_loader import save_user_catalog_entries
 from tau_coding.commands import CommandRegistry, create_default_command_registry
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.oauth import OAuthAuthInfo, OAuthPrompt, login_openai_codex
@@ -63,12 +64,15 @@ from tau_coding.provider_catalog import (
     builtin_provider_entry,
 )
 from tau_coding.provider_config import (
+    OpenAICompatibleProviderConfig,
     ProviderConfig,
     ProviderSelection,
     load_provider_settings,
     provider_config_from_catalog_entry,
     provider_has_usable_credentials,
     resolve_provider_selection,
+    save_provider_settings,
+    upsert_openai_compatible_provider,
     upsert_saved_provider,
 )
 from tau_coding.provider_runtime import create_model_provider
@@ -837,6 +841,18 @@ class LoginProviderPickerScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+@dataclass(frozen=True, slots=True)
+class CustomProviderLoginResult:
+    """Provider details collected by the custom-provider login flow."""
+
+    provider_name: str
+    display_name: str
+    base_url: str
+    api_key_env: str
+    model: str
+    api_key: str
+
+
 class LoginMethodPickerScreen(ModalScreen[str | None]):
     """Login method picker for the TUI login flow."""
 
@@ -862,8 +878,12 @@ class LoginMethodPickerScreen(ModalScreen[str | None]):
                     id="login-method-subscription",
                 ),
                 ListItem(
-                    Label("API key\n  Save a provider API key.", markup=False),
+                    Label("API key\n  Save a built-in provider API key.", markup=False),
                     id="login-method-api-key",
+                ),
+                ListItem(
+                    Label("Custom provider\n  Add an OpenAI-compatible provider.", markup=False),
+                    id="login-method-custom",
                 ),
                 id="login-method-list",
             )
@@ -893,6 +913,8 @@ class LoginMethodPickerScreen(ModalScreen[str | None]):
             self.dismiss("subscription")
         elif event.button.id == "login-method-api-key":
             self.dismiss("api-key")
+        elif event.button.id == "login-method-custom":
+            self.dismiss("custom")
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Dismiss with the selected login method."""
@@ -900,6 +922,8 @@ class LoginMethodPickerScreen(ModalScreen[str | None]):
             self.dismiss("subscription")
         elif event.item.id == "login-method-api-key":
             self.dismiss("api-key")
+        elif event.item.id == "login-method-custom":
+            self.dismiss("custom")
 
     def action_cancel(self) -> None:
         """Close without selecting a login method."""
@@ -1286,6 +1310,112 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
                 else "Scoped models - Enter selects active model - Tab switches tabs"
             )
         self.query_one("#model-picker-help", Static).update(help_text)
+
+
+class CustomProviderLoginScreen(ModalScreen[CustomProviderLoginResult | None]):
+    """Prompt for adding an OpenAI-compatible custom provider."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Cancel"),
+    ]
+
+    _INPUT_ORDER: ClassVar[tuple[str, ...]] = (
+        "custom-provider-name",
+        "custom-provider-display-name",
+        "custom-provider-base-url",
+        "custom-provider-api-key-env",
+        "custom-provider-model",
+        "custom-provider-api-key",
+    )
+
+    def __init__(self, *, theme: TuiTheme) -> None:
+        super().__init__()
+        self.theme = theme
+
+    def compose(self) -> ComposeResult:
+        """Compose the custom provider prompt."""
+        with Vertical(id="login-screen"):
+            yield Static("Add custom provider", id="login-title")
+            yield Static("Enter OpenAI-compatible provider details.", id="custom-provider-help")
+            yield Input(placeholder="Provider name, e.g. nebius", id="custom-provider-name")
+            yield Input(
+                placeholder="Display name, e.g. Nebius AI Studio",
+                id="custom-provider-display-name",
+            )
+            yield Input(
+                placeholder="Base URL, e.g. https://api.studio.nebius.ai/v1",
+                id="custom-provider-base-url",
+            )
+            yield Input(
+                placeholder="API key env, e.g. NEBIUS_API_KEY",
+                id="custom-provider-api-key-env",
+            )
+            yield Input(placeholder="Default model", id="custom-provider-model")
+            yield Input(
+                placeholder="Paste API key",
+                password=True,
+                id="custom-provider-api-key",
+            )
+            yield Static("Enter advances/saves - Escape closes", id="login-footer")
+
+    def on_mount(self) -> None:
+        """Focus the first provider-detail field."""
+        self.query_one("#custom-provider-name", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Advance through fields, then dismiss with provider details."""
+        input_id = event.input.id
+        if input_id not in self._INPUT_ORDER:
+            return
+        event.stop()
+        if input_id != self._INPUT_ORDER[-1]:
+            self._focus_next(input_id)
+            return
+        result = self._collect_result()
+        if result is not None:
+            self.dismiss(result)
+
+    def _focus_next(self, input_id: str) -> None:
+        index = self._INPUT_ORDER.index(input_id)
+        self.query_one(f"#{self._INPUT_ORDER[index + 1]}", Input).focus()
+
+    def _collect_result(self) -> CustomProviderLoginResult | None:
+        provider_name = self._field("custom-provider-name", "Provider name")
+        if provider_name is None:
+            return None
+        base_url = self._field("custom-provider-base-url", "Base URL")
+        if base_url is None:
+            return None
+        api_key_env = self._field("custom-provider-api-key-env", "API key environment variable")
+        if api_key_env is None:
+            return None
+        model = self._field("custom-provider-model", "Default model")
+        if model is None:
+            return None
+        api_key = self._field("custom-provider-api-key", "API key")
+        if api_key is None:
+            return None
+        display_name = self.query_one("#custom-provider-display-name", Input).value.strip()
+        return CustomProviderLoginResult(
+            provider_name=provider_name,
+            display_name=display_name or provider_name,
+            base_url=base_url,
+            api_key_env=api_key_env,
+            model=model,
+            api_key=api_key,
+        )
+
+    def _field(self, input_id: str, label: str) -> str | None:
+        value = self.query_one(f"#{input_id}", Input).value.strip()
+        if value:
+            return value
+        self.query_one("#custom-provider-help", Static).update(f"{label} is required.")
+        self.query_one(f"#{input_id}", Input).focus()
+        return None
+
+    def action_cancel(self) -> None:
+        """Close without adding a provider."""
+        self.dismiss(None)
 
 
 class LoginScreen(ModalScreen[str | None]):
@@ -1718,6 +1848,7 @@ class TauTuiApp(App[None]):
         color: $tau-muted-text;
     }
 
+    CustomProviderLoginScreen,
     LoginScreen,
     OAuthLoginScreen {
         align: center middle;
@@ -1739,14 +1870,21 @@ class TauTuiApp(App[None]):
         margin-bottom: 1;
     }
 
-    #login-help {
+    #login-help,
+    #custom-provider-help {
         height: 1;
         color: $tau-muted-text;
         margin-bottom: 1;
     }
 
     #login-api-key,
-    #login-oauth-code {
+    #login-oauth-code,
+    #custom-provider-name,
+    #custom-provider-display-name,
+    #custom-provider-base-url,
+    #custom-provider-api-key-env,
+    #custom-provider-model,
+    #custom-provider-api-key {
         background: $tau-prompt-background;
         color: $tau-prompt-text;
         border: tall $tau-prompt-border;
@@ -2009,6 +2147,8 @@ class TauTuiApp(App[None]):
                 await self._open_tree_picker()
             if command.login_picker_requested:
                 self._open_login_picker()
+            if command.custom_provider_login_requested:
+                self._open_custom_provider_login()
             if command.login_provider is not None:
                 self._open_login(command.login_provider)
             if command.logout_picker_requested:
@@ -2606,6 +2746,9 @@ class TauTuiApp(App[None]):
             providers = _subscription_login_providers(BUILTIN_PROVIDER_CATALOG)
         elif method == "api-key":
             providers = _api_key_login_providers(BUILTIN_PROVIDER_CATALOG)
+        elif method == "custom":
+            self._open_custom_provider_login()
+            return
         else:
             self._notify(f"Unknown login method: {method}", severity="error")
             return
@@ -2624,6 +2767,54 @@ class TauTuiApp(App[None]):
         if provider_name is None:
             return
         self._open_login(provider_name)
+
+    def _open_custom_provider_login(self) -> None:
+        self.push_screen(
+            CustomProviderLoginScreen(theme=self.tui_settings.resolved_theme),
+            callback=self._handle_custom_provider_login_result,
+        )
+
+    def _handle_custom_provider_login_result(
+        self,
+        result: CustomProviderLoginResult | None,
+    ) -> None:
+        if result is None:
+            return
+        provider = OpenAICompatibleProviderConfig(
+            name=result.provider_name,
+            base_url=result.base_url.rstrip("/"),
+            api_key_env=result.api_key_env,
+            credential_name=result.provider_name,
+            models=(result.model,),
+            default_model=result.model,
+        )
+        catalog_entry = ProviderCatalogEntry(
+            name=provider.name,
+            display_name=result.display_name,
+            kind="openai-compatible",
+            base_url=provider.base_url,
+            api_key_env=provider.api_key_env,
+            credential_name=provider.credential_name,
+            models=provider.models,
+            default_model=provider.default_model,
+            docs_url=provider.base_url,
+        )
+        try:
+            save_user_catalog_entries((catalog_entry,))
+            FileCredentialStore().set(provider.credential_name or provider.name, result.api_key)
+            settings = load_provider_settings()
+            updated = upsert_openai_compatible_provider(settings, provider, set_default=False)
+            save_provider_settings(updated)
+            self.session.reload_provider_settings()
+            try:
+                self.session.set_provider(provider.name, persist_default=False)
+            except TypeError:
+                self.session.set_provider(provider.name)
+        except Exception as exc:  # noqa: BLE001 - surface login failures in the TUI
+            self._notify(f"Could not save custom provider: {exc}", severity="error")
+            return
+        self._notify(f"Saved custom provider {result.display_name}.")
+        self._refresh()
 
     def _open_login(self, provider_name: str) -> None:
         entry = builtin_provider_entry(provider_name)

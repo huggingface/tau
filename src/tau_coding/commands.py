@@ -105,6 +105,7 @@ class CommandResult:
     resume_picker_requested: bool = False
     tree_picker_requested: bool = False
     login_picker_requested: bool = False
+    custom_provider_login_requested: bool = False
     login_provider: str | None = None
     logout_picker_requested: bool = False
     logout_provider: str | None = None
@@ -680,6 +681,8 @@ def _theme_command(context: CommandContext) -> CommandResult:
 
 def _login_command(context: CommandContext) -> CommandResult:
     provider_name = context.args.strip()
+    if provider_name in {"custom", "new", "add"}:
+        return CommandResult(handled=True, custom_provider_login_requested=True)
     if provider_name:
         entry = builtin_provider_entry(provider_name)
         if entry is None:

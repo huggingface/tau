@@ -332,6 +332,13 @@ def test_login_command_requests_provider_login(tmp_path: Path) -> None:
     assert result.login_provider == "openai"
 
 
+def test_login_command_requests_custom_provider_login(tmp_path: Path) -> None:
+    result = create_default_command_registry().execute(FakeSession(tmp_path), "/login custom")
+
+    assert result.handled is True
+    assert result.custom_provider_login_requested is True
+
+
 def test_logout_command_requests_provider_picker(tmp_path: Path) -> None:
     result = create_default_command_registry().execute(FakeSession(tmp_path), "/logout")
 
