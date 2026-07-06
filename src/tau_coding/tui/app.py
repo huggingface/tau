@@ -17,11 +17,12 @@ from rich.text import Text
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingsMap
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.events import Key, Resize
 from textual.screen import ModalScreen
 from textual.timer import Timer
+from textual.widget import Widget
 from textual.widgets import (
     Button,
     Footer,
@@ -58,7 +59,14 @@ from tau_ai.provider import CancellationToken
 from tau_coding.catalog_loader import save_user_catalog_entries
 from tau_coding.commands import CommandRegistry, create_default_command_registry
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
-from tau_coding.extensions.api import TranscriptSource
+from tau_coding.extensions.api import (
+    KeyInterceptor,
+    MainViewFactory,
+    MainViewHandle,
+    Placement,
+    SlotWidgetFactory,
+    TranscriptSource,
+)
 from tau_coding.oauth import OAuthAuthInfo, OAuthPrompt, login_openai_codex
 from tau_coding.provider_catalog import (
     BUILTIN_PROVIDER_CATALOG,
@@ -241,6 +249,46 @@ class _TuiExtensionUiBridge:
         """Swap the main transcript to a registered source, in place."""
         return self._app._activate_source_by_id(source_id)
 
+    # -- component seam (experimental) -- pass-through to the app ------------
+
+    @property
+    def supports_components(self) -> bool:
+        """Return True: a Textual TUI can host extension widgets."""
+        return True
+
+    @property
+    def theme(self) -> TuiTheme:
+        """Return the live TUI theme handed to widget factories."""
+        return self._app.tui_settings.resolved_theme
+
+    def get_prompt_text(self) -> str:
+        """Return the current prompt-editor text (for interceptor gating)."""
+        return self._app._current_prompt_text()
+
+    def request_render(self) -> None:
+        """Re-render mounted extension widgets (analog of Pi's requestRender)."""
+        self._app._refresh_extension_components()
+
+    def set_slot_widget(
+        self,
+        key: str,
+        factory: SlotWidgetFactory | None,
+        *,
+        placement: Placement = "below_prompt",
+    ) -> None:
+        """Mount or remove an extension slot widget by key."""
+        self._app._set_extension_slot_widget(key, factory, placement)
+
+    def open_main_view(self, factory: MainViewFactory) -> MainViewHandle:
+        """Open a full main-area extension view (display-toggled, not modal)."""
+        return self._app._open_extension_main_view(factory)
+
+    def register_key_interceptor(
+        self, handler: KeyInterceptor
+    ) -> Callable[[], None]:
+        """Register a pre-editor key hook; return an unsubscribe callable."""
+        return self._app._register_extension_key_interceptor(handler)
+
     async def _run_dialog(
         self,
         screen: ModalScreen[_DialogResult],
@@ -280,6 +328,43 @@ class _TuiExtensionUiBridge:
                 with suppress(Exception):
                     screen.dismiss(default)
             return default
+
+
+class _MainViewHandle:
+    """Host-side handle to an open extension main view (experimental seam).
+
+    ``close()`` is idempotent and routes back to the app, which unmounts the
+    widget and restores the main transcript.
+    """
+
+    def __init__(self, app: TauTuiApp) -> None:
+        self._app = app
+        self._open = True
+        self.widget: Widget | None = None
+
+    def close(self) -> None:
+        """Close the view (safe to call more than once)."""
+        if not self._open:
+            return
+        self._open = False
+        self._app._close_extension_main_view(self)
+
+    @property
+    def is_open(self) -> bool:
+        """Return whether the view is still open."""
+        return self._open
+
+
+class _DeadMainViewHandle:
+    """A no-op main-view handle returned when a view could not be opened."""
+
+    def close(self) -> None:
+        """Do nothing: there is no view to close."""
+
+    @property
+    def is_open(self) -> bool:
+        """Return False: a dead handle is never open."""
+        return False
 
 
 class CompletionActionTarget(Protocol):
@@ -529,6 +614,17 @@ class PromptInput(TextArea):
 
     async def on_key(self, event: Key) -> None:
         """Route completion and submission keys before default input handling."""
+        # Pre-editor extension key interceptors (ports Pi's onTerminalInput):
+        # they see the key before any built-in handling here or app-level
+        # bindings, so an interceptor that consumes `escape` preempts
+        # action_cancel without any extension branch in core. The host guards
+        # each call; a raising interceptor is treated as "not consumed". When no
+        # extension registers one this is a no-op, so the legacy strip's
+        # left-arrow entry below is untouched.
+        if cast("TauTuiApp", self.app)._run_extension_key_interceptors(event, self.text):
+            event.stop()
+            event.prevent_default()
+            return
         keybindings = self.tui_keybindings
         if event.key == keybindings.queue_follow_up:
             event.stop()
@@ -2072,6 +2168,34 @@ class TauTuiApp(App[None]):
         color: $tau-muted-text;
     }
 
+    /* Component seam (experimental): generic extension mount points. */
+    #main-slot {
+        display: none;
+        height: 1fr;
+        border: none;
+        background: $tau-transcript-background;
+        padding: 0 0 0 2;
+        overflow-x: auto;
+        scrollbar-size-vertical: 0;
+        scrollbar-size-horizontal: 1;
+    }
+
+    #above-prompt-slot {
+        height: auto;
+        max-height: 8;
+        margin: 0 1 0 1;
+        padding: 0;
+        background: $tau-screen-background;
+    }
+
+    #below-prompt-slot {
+        height: auto;
+        max-height: 8;
+        margin: 0 1 0 1;
+        padding: 0;
+        background: $tau-screen-background;
+    }
+
     #queued-messages {
         height: auto;
         max-height: 8;
@@ -2439,6 +2563,14 @@ class TauTuiApp(App[None]):
         self._prompt_history: tuple[str, ...] = ()
         self._load_session_messages_from_session()
         self.adapter = TuiEventAdapter(self.state)
+        # Component seam (experimental): host-owned tracking of extension
+        # widgets so a reload/rebind can force-clear them and a crash can
+        # quarantine them. Must exist before _connect_extension_runtime, which
+        # clears them on every bind.
+        self._extension_slot_widgets: dict[str, Widget] = {}
+        self._extension_key_interceptors: list[KeyInterceptor] = []
+        self._extension_main_view: _MainViewHandle | None = None
+        self._extension_component_failures_reported: set[str] = set()
         self._connect_extension_runtime(session)
         self._prompt_worker: Worker[None] | None = None
         self._compaction_worker: Worker[None] | None = None
@@ -2523,6 +2655,10 @@ class TauTuiApp(App[None]):
                     highlight=True,
                     markup=False,
                 )
+                # Component seam (experimental): host-managed mount points for
+                # extension widgets. Empty until an extension mounts into them.
+                yield Container(id="main-slot")
+                yield Container(id="above-prompt-slot")
                 yield Static("", id="queued-messages")
                 with Horizontal(id="prompt-row"):
                     yield Static("τ", id="prompt-prefix")
@@ -2533,6 +2669,7 @@ class TauTuiApp(App[None]):
                     )
                 yield CompactSessionInfo(id="compact-session-info")
                 yield Static("", id="autocomplete")
+                yield Container(id="below-prompt-slot")
                 yield AgentStrip("", id="agent-strip")
         yield Footer()
 
@@ -2556,11 +2693,12 @@ class TauTuiApp(App[None]):
             await self._submit_prompt(self.initial_prompt.strip())
 
     def on_unmount(self) -> None:
-        """Stop activity animations when the app is torn down."""
+        """Stop activity animations and drop extension widgets on teardown."""
         if self._activity_timer is not None:
             self._activity_timer.stop()
             self._activity_timer = None
         self._terminal_title.restore()
+        self._clear_extension_components()
 
     def on_resize(self, event: Resize) -> None:
         """Update responsive chrome when the terminal changes size."""
@@ -2877,6 +3015,11 @@ class TauTuiApp(App[None]):
         runtime = getattr(session, "extension_runtime", None)
         if runtime is None:
             return
+        # Force-clear any extension widgets before installing the new bridge.
+        # This runs on every bind (startup, /resume, new, branch); each session
+        # carries its own runtime, so widgets a previous session's extension
+        # mounted into these host-owned slots must not survive the switch.
+        self._clear_extension_components()
         runtime.set_ui_bridge(_TuiExtensionUiBridge(self))
         runtime.set_turn_requested_callback(self._on_extension_turn_requested)
         set_sources_changed = getattr(
@@ -2911,6 +3054,230 @@ class TauTuiApp(App[None]):
                 queue_follow_up(content, custom_type=custom_type, details=details)
             return
         await self._submit_prompt(content, custom_type=custom_type, details=details)
+
+    # -- component seam (experimental) --------------------------------------
+
+    def _current_prompt_text(self) -> str:
+        """Return the prompt-editor text, or "" before the prompt exists."""
+        try:
+            return self.query_one("#prompt", PromptInput).text
+        except NoMatches:
+            return ""
+
+    def _register_extension_key_interceptor(
+        self, handler: KeyInterceptor
+    ) -> Callable[[], None]:
+        """Register a pre-editor key interceptor; return an unsubscribe fn."""
+        self._extension_key_interceptors.append(handler)
+
+        def unsubscribe() -> None:
+            with suppress(ValueError):
+                self._extension_key_interceptors.remove(handler)
+
+        return unsubscribe
+
+    def _run_extension_key_interceptors(self, event: Key, text: str) -> bool:
+        """Consult interceptors; return True if one consumed the key.
+
+        Each call is guarded: a raising interceptor is diagnosed once and
+        treated as "not consumed", so a broken interceptor degrades to normal
+        typing rather than a dead prompt.
+        """
+        for interceptor in tuple(self._extension_key_interceptors):
+            try:
+                if interceptor(event, text):
+                    return True
+            except Exception as exc:  # noqa: BLE001 - isolation boundary
+                self._record_extension_component_failure("key_interceptor", exc)
+        return False
+
+    def _set_extension_slot_widget(
+        self,
+        key: str,
+        factory: SlotWidgetFactory | None,
+        placement: Placement,
+    ) -> None:
+        """Mount ``factory(theme)`` into a prompt-adjacent slot, or unmount it."""
+        existing = self._extension_slot_widgets.pop(key, None)
+        if existing is not None:
+            with suppress(Exception):
+                existing.remove()
+        if factory is None:
+            return
+        try:
+            widget = factory(self.tui_settings.resolved_theme)
+        except Exception as exc:  # noqa: BLE001 - isolation boundary
+            self._record_extension_component_failure(f"slot:{key}", exc, notify=True)
+            return
+        slot_id = "above-prompt-slot" if placement == "above_prompt" else "below-prompt-slot"
+        try:
+            self.query_one(f"#{slot_id}", Container).mount(widget)
+        except Exception as exc:  # noqa: BLE001 - isolation boundary
+            self._record_extension_component_failure(f"slot:{key}", exc, notify=True)
+            return
+        self._extension_slot_widgets[key] = widget
+
+    def _open_extension_main_view(self, factory: MainViewFactory) -> MainViewHandle:
+        """Open a display-toggled main-area view mounting ``factory(handle, theme)``.
+
+        Prompt focus is intentionally left where it is (the extension widget can
+        focus its own composer), so a registered key interceptor keeps firing
+        while the prompt is focused and can close the view on Esc.
+        """
+        if self._extension_main_view is not None:
+            self._extension_main_view.close()
+        handle = _MainViewHandle(self)
+        try:
+            widget = factory(handle, self.tui_settings.resolved_theme)
+        except Exception as exc:  # noqa: BLE001 - isolation boundary
+            self._record_extension_component_failure("main_view", exc, notify=True)
+            return _DeadMainViewHandle()
+        handle.widget = widget
+        try:
+            slot = self.query_one("#main-slot", Container)
+            slot.mount(widget)
+        except Exception as exc:  # noqa: BLE001 - isolation boundary
+            self._record_extension_component_failure("main_view", exc, notify=True)
+            return _DeadMainViewHandle()
+        self._extension_main_view = handle
+        with suppress(NoMatches):
+            self.query_one("#transcript", TranscriptView).display = False
+        slot.display = True
+        return handle
+
+    def _close_extension_main_view(self, handle: _MainViewHandle) -> None:
+        """Unmount a main view and restore the main transcript."""
+        if self._extension_main_view is not handle:
+            return
+        self._extension_main_view = None
+        if handle.widget is not None:
+            with suppress(Exception):
+                handle.widget.remove()
+        with suppress(NoMatches):
+            self.query_one("#main-slot", Container).display = False
+            self.query_one("#transcript", TranscriptView).display = True
+        with suppress(NoMatches):
+            self.query_one("#prompt", PromptInput).focus()
+
+    def _refresh_extension_components(self) -> None:
+        """Re-render all mounted extension widgets (analog of requestRender)."""
+        for widget in tuple(self._extension_slot_widgets.values()):
+            with suppress(Exception):
+                widget.refresh()
+        handle = self._extension_main_view
+        if handle is not None and handle.widget is not None:
+            with suppress(Exception):
+                handle.widget.refresh()
+
+    def _clear_extension_components(self) -> None:
+        """Force-clear every tracked extension widget, view, and interceptor.
+
+        Called before installing a new UI bridge (rebind / resume) and on
+        teardown so a leaked extension widget never survives a session switch.
+        """
+        for widget in tuple(self._extension_slot_widgets.values()):
+            with suppress(Exception):
+                widget.remove()
+        self._extension_slot_widgets.clear()
+        if self._extension_main_view is not None:
+            self._extension_main_view.close()
+        self._extension_key_interceptors.clear()
+
+    def _tracked_extension_widgets(self) -> tuple[Widget, ...]:
+        """Return every extension widget the host currently has mounted."""
+        widgets = list(self._extension_slot_widgets.values())
+        handle = self._extension_main_view
+        if handle is not None and handle.widget is not None:
+            widgets.append(handle.widget)
+        return tuple(widgets)
+
+    def _extension_root_for(
+        self, widget: Widget, tracked: tuple[Widget, ...]
+    ) -> Widget | None:
+        """Return the tracked extension root that owns ``widget``, if any."""
+        node: Widget | None = widget
+        while node is not None:
+            for root in tracked:
+                if node is root:
+                    return root
+            node = node.parent if isinstance(node.parent, Widget) else None
+        return None
+
+    def _quarantine_extension_widget(self, error: BaseException) -> bool:
+        """Remove the tracked extension widget implicated in ``error``.
+
+        Returns True when a culprit was found and torn down (so the app can
+        swallow the exception and stay alive), False otherwise (so core bugs
+        still surface). Textual runs ``render`` on the compositor's own reflow
+        loop, so a child's render/compose/on_mount crash cannot be caught at the
+        mount site; walking the traceback for a frame owned by a tracked widget
+        is the only handle we get.
+        """
+        tracked = self._tracked_extension_widgets()
+        if not tracked:
+            return False
+        tb = error.__traceback__
+        culprit: Widget | None = None
+        while tb is not None:
+            candidate = tb.tb_frame.f_locals.get("self")
+            if isinstance(candidate, Widget):
+                root = self._extension_root_for(candidate, tracked)
+                if root is not None:
+                    culprit = root
+                    break
+            tb = tb.tb_next
+        if culprit is None:
+            return False
+        # Suppress the ghost first: a widget that crashed in on_mount never
+        # finished mounting, so remove() cannot fully prune it, but hiding and
+        # disabling it makes it inert and invisible. A render-crash widget
+        # removes cleanly. Either way the app keeps running.
+        with suppress(Exception):
+            culprit.display = False
+        with suppress(Exception):
+            culprit.disabled = True
+        if self._extension_main_view is not None and self._extension_main_view.widget is culprit:
+            self._extension_main_view.close()
+        else:
+            key = next(
+                (k for k, w in self._extension_slot_widgets.items() if w is culprit),
+                None,
+            )
+            if key is not None:
+                self._extension_slot_widgets.pop(key, None)
+            with suppress(Exception):
+                culprit.remove()
+        self._record_extension_component_failure(
+            f"render:{id(culprit)}", error, notify=True
+        )
+        return True
+
+    def _handle_exception(self, error: Exception) -> None:
+        """Quarantine a crashing extension widget instead of tearing down.
+
+        Overrides Textual's private ``App._handle_exception`` (there is no
+        public error hook — ``hasattr(App, "on_exception")`` is False on the
+        pinned Textual). If the traceback touches a tracked extension widget we
+        remove it and keep running; otherwise we defer to Textual's default so
+        core's own bugs still surface. This private-API coupling is a contract
+        cost the component-seam experiment deliberately accepts.
+        """
+        if self._quarantine_extension_widget(error):
+            return
+        super()._handle_exception(error)
+
+    def _record_extension_component_failure(
+        self, context: str, error: BaseException, *, notify: bool = False
+    ) -> None:
+        """Diagnose an extension-component failure once per context."""
+        if context in self._extension_component_failures_reported:
+            return
+        self._extension_component_failures_reported.add(context)
+        if notify:
+            self._notify(
+                f"An extension component failed ({context}) and was removed.",
+                severity="error",
+            )
 
     def _follow_transcript_output(self) -> None:
         """Put the transcript back in follow mode for explicit user actions."""

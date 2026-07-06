@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.panel import Panel
 from textual import events
 from textual.color import Color
-from textual.containers import VerticalScroll
+from textual.containers import Container, VerticalScroll
 from textual.geometry import Offset
 from textual.selection import SELECT_ALL, Selection
 from textual.widgets import Footer, Input, Label, ListItem, ListView, Static, TextArea
@@ -6546,3 +6546,268 @@ class _FakeSessionManager:
     def list_sessions(self, cwd: Path | None = None) -> list[CodingSessionRecord]:
         del cwd
         return self._records
+
+
+# --- component seam (experimental) pilot tests -----------------------------
+# These drive the generic widget-hosting seam on the real TauTuiApp via the
+# host bridge, using an in-test caller with no subagents vocabulary. They
+# coexist with the legacy agents-strip tests above (Step 1 is additive).
+
+
+def _component_bridge(app: TauTuiApp) -> _TuiExtensionUiBridge:
+    """Return a host component bridge bound to a running app."""
+    return _TuiExtensionUiBridge(app)
+
+
+class _CrashOnRender(Static):
+    def render(self):  # noqa: ANN201
+        raise RuntimeError("boom-in-render")
+
+
+class _CrashOnMount(Static):
+    def on_mount(self) -> None:
+        raise RuntimeError("boom-in-on-mount")
+
+
+@pytest.mark.anyio
+async def test_component_slot_widget_mounts_and_unmounts() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+
+        bridge.set_slot_widget(
+            "demo",
+            lambda theme: Static("slot-content", id="ext-slot-demo"),
+            placement="below_prompt",
+        )
+        await pilot.pause()
+
+        slot = app.query_one("#below-prompt-slot", Container)
+        assert slot.query("#ext-slot-demo")
+        assert "demo" in app._extension_slot_widgets
+
+        bridge.set_slot_widget("demo", None, placement="below_prompt")
+        await pilot.pause()
+        assert not slot.query("#ext-slot-demo")
+        assert "demo" not in app._extension_slot_widgets
+
+
+@pytest.mark.anyio
+async def test_component_slot_widget_replace_reregisters() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+
+        bridge.set_slot_widget("k", lambda theme: Static("one", id="ext-one"))
+        await pilot.pause()
+        bridge.set_slot_widget("k", lambda theme: Static("two", id="ext-two"))
+        await pilot.pause()
+
+        slot = app.query_one("#below-prompt-slot", Container)
+        assert not slot.query("#ext-one")
+        assert slot.query("#ext-two")
+        assert len(app._extension_slot_widgets) == 1
+
+
+@pytest.mark.anyio
+async def test_component_main_view_open_and_close_restores_transcript() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+
+        handle = bridge.open_main_view(
+            lambda handle, theme: Static("main-view", id="ext-main-view")
+        )
+        await pilot.pause()
+
+        assert handle.is_open
+        assert app.query_one("#main-slot", Container).display
+        assert not app.query_one("#transcript", TranscriptView).display
+        assert app.query("#ext-main-view")
+
+        handle.close()
+        await pilot.pause()
+
+        assert not handle.is_open
+        assert not app.query_one("#main-slot", Container).display
+        assert app.query_one("#transcript", TranscriptView).display
+        assert not app.query("#ext-main-view")
+        assert app.query_one("#prompt", PromptInput).has_focus
+
+
+@pytest.mark.anyio
+async def test_component_key_interceptor_consumes_and_gates_on_prompt_text() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+        seen: list[tuple[str, str]] = []
+
+        def interceptor(event, text: str) -> bool:  # noqa: ANN001
+            seen.append((event.key, text))
+            return event.key == "j" and text == ""
+
+        bridge.register_key_interceptor(interceptor)
+
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.focus()
+        await pilot.pause()
+
+        # Empty prompt: interceptor consumes "j" (nothing typed).
+        await pilot.press("j")
+        assert prompt.text == ""
+        # Non-empty prompt: interceptor declines, so "j" types normally.
+        await pilot.press("a")
+        await pilot.press("j")
+        assert prompt.text == "aj"
+        assert ("j", "") in seen
+
+
+@pytest.mark.anyio
+async def test_component_consumed_escape_preempts_cancel() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+        cancels: list[int] = []
+        app.action_cancel = lambda: cancels.append(1)  # type: ignore[method-assign]
+
+        unsubscribe = bridge.register_key_interceptor(
+            lambda event, text: event.key == "escape"
+        )
+        app.query_one("#prompt", PromptInput).focus()
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert cancels == []  # interceptor consumed escape before action_cancel
+
+        # With no interceptor consuming it, escape falls through to cancel.
+        unsubscribe()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert cancels == [1]
+
+
+@pytest.mark.anyio
+async def test_component_key_interceptor_failure_degrades_to_typing() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+
+        def boom(event, text: str) -> bool:  # noqa: ANN001
+            raise RuntimeError("interceptor exploded")
+
+        bridge.register_key_interceptor(boom)
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.focus()
+        await pilot.pause()
+
+        await pilot.press("z")
+        assert prompt.text == "z"  # broken interceptor never blocks typing
+        assert app.is_running
+        assert "key_interceptor" in app._extension_component_failures_reported
+
+
+@pytest.mark.anyio
+async def test_component_factory_crash_is_isolated() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+
+        def exploding_factory(theme):  # noqa: ANN001, ANN202
+            raise RuntimeError("factory exploded")
+
+        bridge.set_slot_widget("bad", exploding_factory, placement="below_prompt")
+        await pilot.pause()
+
+        assert app.is_running
+        assert "bad" not in app._extension_slot_widgets
+        assert not app.query_one("#below-prompt-slot", Container).children
+        assert "slot:bad" in app._extension_component_failures_reported
+
+
+@pytest.mark.anyio
+async def test_component_render_crash_is_quarantined() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+
+        bridge.set_slot_widget(
+            "crash", lambda theme: _CrashOnRender("x", id="ext-crash")
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        # The app survives the render exception and the widget is quarantined.
+        assert app.is_running
+        assert "crash" not in app._extension_slot_widgets
+        assert not app.query("#ext-crash")
+
+
+@pytest.mark.anyio
+async def test_component_mount_crash_is_quarantined() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+
+        bridge.set_slot_widget(
+            "crash", lambda theme: _CrashOnMount("x", id="ext-crash-mount")
+        )
+        # A widget that crashes in on_mount never finishes mounting, so its
+        # pending message never drains (pilot.pause would time out); sleep to
+        # let _handle_exception run instead. The app must stay alive and the
+        # widget must be untracked and made inert.
+        await asyncio.sleep(0.3)
+
+        assert app.is_running
+        assert "crash" not in app._extension_slot_widgets
+        ghosts = app.query("#ext-crash-mount")
+        assert all(not widget.display for widget in ghosts)
+
+
+@pytest.mark.anyio
+async def test_component_rebind_clears_slots_and_interceptors() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+
+        bridge.set_slot_widget("k", lambda theme: Static("x", id="ext-rebind"))
+        bridge.register_key_interceptor(lambda event, text: False)
+        handle = bridge.open_main_view(lambda h, theme: Static("v", id="ext-view"))
+        await pilot.pause()
+        assert app._extension_slot_widgets
+        assert app._extension_key_interceptors
+        assert handle.is_open
+
+        # Rebinding a session force-clears everything before the new bridge.
+        session = FakeSession()
+        session.extension_runtime = _RenderCallRuntime()  # type: ignore[attr-defined]
+        app._connect_extension_runtime(session)  # type: ignore[arg-type]
+        await pilot.pause()
+
+        assert app._extension_slot_widgets == {}
+        assert app._extension_key_interceptors == []
+        assert app._extension_main_view is None
+        assert not handle.is_open
+        assert app.query_one("#transcript", TranscriptView).display
+        assert not app.query("#ext-rebind")
+        assert not app.query("#ext-view")

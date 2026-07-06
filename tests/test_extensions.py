@@ -1066,10 +1066,42 @@ class RecordingUiBridge:
         self._has_ui = has_ui
         self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
         self.notifications: list[tuple[str, str]] = []
+        self.interceptors: list[object] = []
 
     @property
     def has_ui(self) -> bool:
         return self._has_ui
+
+    # -- component seam (experimental) ---------------------------------------
+
+    @property
+    def supports_components(self) -> bool:
+        return self._has_ui
+
+    @property
+    def theme(self):  # noqa: ANN202 - TuiTheme, imported lazily by the default
+        from tau_coding.tui.config import TAU_DARK_THEME
+
+        return TAU_DARK_THEME
+
+    def get_prompt_text(self) -> str:
+        return ""
+
+    def request_render(self) -> None:
+        self.calls.append(("request_render", (), {}))
+
+    def set_slot_widget(self, key, factory, *, placement="below_prompt"):  # noqa: ANN001
+        self.calls.append(("set_slot_widget", (key,), {"placement": placement}))
+
+    def open_main_view(self, factory):  # noqa: ANN001
+        self.calls.append(("open_main_view", (), {}))
+        from tau_coding.extensions.api import _DeadMainViewHandle
+
+        return _DeadMainViewHandle()
+
+    def register_key_interceptor(self, handler):  # noqa: ANN001
+        self.interceptors.append(handler)
+        return lambda: self.interceptors.remove(handler)
 
     def notify(self, message: str, level: str = "info") -> None:
         self.notifications.append((message, level))
@@ -1151,6 +1183,56 @@ async def test_headless_ui_bridges_return_pi_defaults(tmp_path: Path) -> None:
         assert await bridge.select("t", ["x"]) is None
         assert await bridge.confirm("t", "m") is False
         assert await bridge.input("t") is None
+
+
+async def test_headless_ui_bridges_component_seam_are_noops(tmp_path: Path) -> None:
+    from tau_coding.extensions import NullUiBridge, StderrUiBridge
+
+    for bridge in (NullUiBridge(), StderrUiBridge()):
+        assert bridge.supports_components is False
+        # theme must return a usable default, never raise (print-mode may read).
+        assert bridge.theme is not None
+        assert bridge.theme.name
+        assert bridge.get_prompt_text() == ""
+        bridge.request_render()  # no-op, must not raise
+        bridge.set_slot_widget("k", lambda theme: None, placement="above_prompt")
+        handle = bridge.open_main_view(lambda h, theme: None)
+        assert handle.is_open is False
+        handle.close()  # idempotent no-op
+        unsubscribe = bridge.register_key_interceptor(lambda event, text: False)
+        unsubscribe()  # must not raise
+
+
+async def test_context_ui_components_pass_through(tmp_path: Path) -> None:
+    from typing import cast
+
+    from tau_coding.extensions.api import ExtensionAPI
+
+    ui = RecordingUiBridge()
+    runtime = ExtensionRuntime(ui=ui)
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "components"))
+
+    components = api.context.ui.components
+    assert components is ui  # straight pass-through to the installed bridge
+    assert components.supports_components is True
+
+    components.set_slot_widget("fleet", lambda theme: None, placement="below_prompt")
+    unsubscribe = components.register_key_interceptor(lambda event, text: False)
+    assert ("set_slot_widget", ("fleet",), {"placement": "below_prompt"}) in ui.calls
+    assert len(ui.interceptors) == 1
+    unsubscribe()
+    assert ui.interceptors == []
+
+
+async def test_context_ui_components_headless_reports_unsupported(tmp_path: Path) -> None:
+    from typing import cast
+
+    from tau_coding.extensions.api import ExtensionAPI
+
+    runtime = ExtensionRuntime()  # defaults to NullUiBridge
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "headless-components"))
+
+    assert api.context.ui.components.supports_components is False
 
 
 async def test_default_runtime_ui_is_headless(tmp_path: Path) -> None:

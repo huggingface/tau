@@ -255,6 +255,66 @@ host polls an *open* view's `messages()` only when `revision` changes; it
 never polls for membership — fire `notify_transcript_sources_changed()` on
 spawn, completion, and teardown instead.
 
+### Component widgets (experimental)
+
+> **Experimental.** This seam lets an extension mount its own **Textual
+> widgets** into the TUI instead of publishing string data. It deliberately
+> couples extensions to Textual (the "component" type *is*
+> `textual.widget.Widget`) and pins both repos to a shared Textual version, so
+> it is offered alongside — not in place of — the transcript-source seam above.
+> The API may change.
+
+`tau.context.ui.components` (a `ComponentBridge`) hosts extension widgets.
+Always gate on `supports_components` first — it is `False` in print mode and on
+any host without this seam, where every call below is a safe no-op:
+
+```python
+def setup(tau):
+    components = tau.context.ui.components
+    if not components.supports_components:
+        return  # print mode / older host: stay widget-less but functional
+
+    # A persistent widget above or below the prompt. The factory runs on the UI
+    # thread and receives the live theme (re-invoked on theme change).
+    def build_strip(theme):
+        return MyStripWidget(theme)          # a textual.widget.Widget
+
+    components.set_slot_widget("my-widget", build_strip, placement="below_prompt")
+    # set_slot_widget("my-widget", None) removes it again.
+
+    # A pre-editor key hook (ports Pi's onTerminalInput): it sees keys before
+    # the prompt editor and app bindings, so returning True for "escape"
+    # preempts the turn-cancel. Self-gate on the prompt text (empty-prompt nav).
+    def on_key(event, prompt_text):
+        if prompt_text == "" and event.key == "down":
+            ...            # activate your widget
+            return True     # consume the key
+        return False        # let it through
+    unsubscribe = components.register_key_interceptor(on_key)
+```
+
+- `set_slot_widget(key, factory, *, placement="below_prompt")` mounts
+  `factory(theme)` into a prompt-adjacent slot (`"above_prompt"` or
+  `"below_prompt"`); passing `factory=None` removes that key. Multiple keys per
+  placement mount in call order.
+- `open_main_view(factory) -> handle` mounts `factory(handle, theme)` as a
+  full main-area view *in place of* the transcript (a display-toggled sibling,
+  **not** a modal screen), so your slot widgets stay visible and the prompt
+  keeps focus — embed your own composer if you want one. `handle.close()`
+  restores the transcript; `handle.is_open` reports its state.
+- `register_key_interceptor(handler) -> unsubscribe` — return `True` to consume
+  a key. A raising interceptor is treated as "not consumed".
+- `theme` is the live `TuiTheme`; `get_prompt_text()` reads the prompt editor
+  (for interceptor gating); `request_render()` re-renders your mounted widgets.
+  Push live updates by calling your widget's own `refresh()` (Textual) — the
+  seam does not poll.
+
+The host is defensive: a factory that raises, a widget that crashes in
+`render`/`on_mount`, or a throwing interceptor is isolated (quarantined and
+diagnosed) so a broken component never takes the TUI down. All mounted widgets
+are force-cleared on session rebind (`/resume`, `/new`) and teardown; also clear
+your own on `session_shutdown`.
+
 ### Events
 
 Observation events mirror the agent event stream — subscribe by the event's

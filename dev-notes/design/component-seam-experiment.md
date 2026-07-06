@@ -258,6 +258,32 @@ pane. Textual screens already own focus/Esc/return semantics that the old
 > key interceptor (2e) closes the view — no core special case. This drops the
 > ModalScreen focus-restoration and live-refresh-into-modal risks.
 
+> **Implementation note (Step 1 — API shape as landed):** Step 1 is purely
+> additive; the new seam sits *alongside* the still-present `#agent-transcript-
+> pane` / `#agent-strip` and the transcript-source seam (removals are Step 3).
+> Concrete choices:
+> - **Main view, not overlay.** `open_overlay`/`OverlayHandle` (the ModalScreen
+>   shape in §2b) landed instead as `open_main_view(factory) -> MainViewHandle`
+>   (renamed to reflect the in-tree reality). The factory is
+>   `(handle, theme) -> Widget`; the host mounts it into a generic `#main-slot`
+>   container (display-toggled sibling of `#transcript`, the generic form of
+>   `#agent-transcript-pane`), hides `#transcript`, and `handle.close()` reverses
+>   it and refocuses the prompt. This is the "explicit method" arm of the
+>   orchestrator's option (b), chosen over `placement="main"` because the viewer
+>   is per-open and needs a handle + theme at open time (mirrors Pi's
+>   `custom({overlay:true})`), which a slot key + separate show/hide call could
+>   not carry cleanly. Consequently **`Placement` is only `above_prompt` /
+>   `below_prompt`** — there is no `"main"` placement.
+> - **Focus stays on the prompt** when a main view opens (the host does not steal
+>   it), so a registered key interceptor keeps firing and can `handle.close()` on
+>   Esc. Step 2's viewer must `focus()` its own embedded composer if it wants
+>   typing, and wire that composer's Esc/close back to `handle.close()` (the
+>   interceptor only fires while the *prompt* is focused).
+> - **`runtime.py` was not touched.** `ExtensionUi.components` is a pure
+>   pass-through returning the installed `UiBridge` narrowed to `ComponentBridge`
+>   (the bridge already reaches extensions via `runtime.ui`), so no runtime
+>   aggregation/registration was needed.
+
 ### 2e. The pre-editor input hook and Esc precedence
 
 Pi's `onTerminalInput` fires before the focused editor. Textual delivers keys to
@@ -376,6 +402,21 @@ runtime's existing "swallow + diagnose once" discipline (runtime.py
 >    Guard #2's "wrapper catches" wording should be deleted and replaced by this
 >    app-level `_handle_exception` policy; without it the experiment's headline
 >    "a throwing extension component never crashes the TUI" is unmet.
+> **Implementation note (Step 1 — quarantine as landed):** `TauTuiApp.
+> _handle_exception` is overridden (private-API coupling recorded in a code
+> comment there). It walks the incoming traceback for a frame whose
+> `f_locals["self"]` is — or is a descendant of — a tracked extension widget
+> (slot widgets + the open main view). Found → that tracked root is quarantined
+> and the exception swallowed; not found → `super()._handle_exception(error)` so
+> core bugs still surface. Verified against Textual 8.2.7: a **render** crash
+> quarantines cleanly (widget fully removed). An **on_mount** crash cannot be
+> fully pruned (the widget never finished mounting, so `remove()`'s prune never
+> drains — a bare `pilot.pause()` after one will time out), so the quarantine
+> additionally sets `display=False`/`disabled=True` to make the ghost inert; the
+> app stays `is_running` and can still mount new widgets. The headline
+> guarantee ("a throwing extension component never crashes the TUI") holds for
+> render/mount/interceptor crashes.
+
 3. **Key interception** — each interceptor is called inside `try/except` in
    `PromptInput.on_key`; an exception is treated as "not consumed" and diagnosed
    once (so a broken interceptor degrades to normal typing, never a dead prompt).

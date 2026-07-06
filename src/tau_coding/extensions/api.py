@@ -6,14 +6,18 @@ import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from tau_agent.messages import AgentMessage
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
 
 if TYPE_CHECKING:
+    from textual import events
+    from textual.widget import Widget
+
     from tau_coding.extensions.runtime import ExtensionRuntime
+    from tau_coding.tui.config import TuiTheme
 
 AGENT_EVENT_TYPES: frozenset[str] = frozenset(
     {
@@ -125,6 +129,115 @@ TranscriptSourceProvider = Callable[[], "Sequence[TranscriptSource]"]
 # `ExtensionAPI.notify_transcript_sources_changed`) when their source list or
 # statuses change, so the host refreshes its strip without polling.
 TranscriptSourcesChangedCallback = Callable[[], None]
+
+
+# --- component seam (experimental) -----------------------------------------
+# Widget-hosting capability that lets an extension mount its own Textual widgets
+# into host-owned slots and a main-area view, and intercept keys before the
+# prompt editor. This is the deliberately Textual-coupled seam explored on the
+# component-seam-experiment branch: the "component" type is Textual's own
+# ``Widget`` (referenced only under TYPE_CHECKING so print-mode stays
+# import-clean). Marked experimental; the older transcript-source seam still
+# coexists with it.
+
+Placement = Literal["above_prompt", "below_prompt"]
+
+# Factories run on the UI thread and receive the live theme (theme handoff,
+# mirrors Pi's ``(tui, theme) => Component``).
+SlotWidgetFactory = Callable[["TuiTheme"], "Widget"]
+# The main-view factory also receives the handle so the widget can close itself.
+MainViewFactory = Callable[["MainViewHandle", "TuiTheme"], "Widget"]
+
+# Pre-editor key hook (ports Pi's ``onTerminalInput``). Returns True to consume
+# the key. The host passes the Textual ``Key`` event and the current prompt text
+# so the handler can self-gate (Pi gates on ``getEditorText() === ""``).
+KeyInterceptor = Callable[["events.Key", str], bool]
+
+
+_DEFAULT_THEME: TuiTheme | None = None
+
+
+def _default_theme() -> TuiTheme:
+    """Return a shared default theme without importing the TUI at module load.
+
+    The import is deferred (and cached) so merely importing the extensions API
+    stays free of the Textual/TUI dependency graph; only an extension that
+    actually reads ``theme`` in print mode pays for it, and it never raises.
+    """
+    global _DEFAULT_THEME
+    if _DEFAULT_THEME is None:
+        from tau_coding.tui.config import TAU_DARK_THEME
+
+        _DEFAULT_THEME = TAU_DARK_THEME
+    return _DEFAULT_THEME
+
+
+class MainViewHandle(Protocol):
+    """Handle to an open main-area view (ports Pi's ``OverlayHandle``, trimmed).
+
+    ``close()`` unmounts the view and restores the main transcript. It is safe
+    to call more than once.
+    """
+
+    def close(self) -> None: ...
+
+    @property
+    def is_open(self) -> bool: ...
+
+
+class ComponentBridge(Protocol):
+    """Host widget-hosting capability, exposed via ``context.ui.components``.
+
+    Part of what a :class:`UiBridge` provides when a TUI is attached;
+    :class:`NullUiBridge`/:class:`StderrUiBridge` implement it as no-ops so an
+    extension stays fully functional (just widget-less) in print mode. Check
+    :attr:`supports_components` before building widgets.
+    """
+
+    @property
+    def supports_components(self) -> bool:
+        """Return whether the frontend can host extension widgets."""
+        ...
+
+    @property
+    def theme(self) -> TuiTheme:
+        """Return the live TUI theme handed to widget factories."""
+        ...
+
+    def get_prompt_text(self) -> str:
+        """Return the current prompt-editor text (for key-interceptor gating)."""
+        ...
+
+    def request_render(self) -> None:
+        """Ask the host to re-render mounted extension widgets (Pi's requestRender)."""
+        ...
+
+    def set_slot_widget(
+        self,
+        key: str,
+        factory: SlotWidgetFactory | None,
+        *,
+        placement: Placement = "below_prompt",
+    ) -> None:
+        """Mount ``factory(theme)`` into a prompt-adjacent slot under ``key``.
+
+        Passing ``factory=None`` unmounts and forgets that key. Multiple keys
+        per placement mount in call order.
+        """
+        ...
+
+    def open_main_view(self, factory: MainViewFactory) -> MainViewHandle:
+        """Mount ``factory(handle, theme)`` as a full main-area view.
+
+        The widget replaces the main transcript in place (a display-toggled
+        sibling, not a modal screen), so prompt-adjacent widgets such as slot
+        widgets stay visible. ``handle.close()`` restores the transcript.
+        """
+        ...
+
+    def register_key_interceptor(self, handler: KeyInterceptor) -> Callable[[], None]:
+        """Register a pre-editor key hook; return an unsubscribe callable."""
+        ...
 
 
 class ExtensionError(RuntimeError):
@@ -278,6 +391,56 @@ class UiBridge(Protocol):
         """Swap the main transcript to a registered source; True on success."""
         ...
 
+    # -- component seam (experimental) -- see ComponentBridge for docs --------
+
+    @property
+    def supports_components(self) -> bool:
+        """Return whether the frontend can host extension widgets."""
+        ...
+
+    @property
+    def theme(self) -> TuiTheme:
+        """Return the live TUI theme handed to widget factories."""
+        ...
+
+    def get_prompt_text(self) -> str:
+        """Return the current prompt-editor text."""
+        ...
+
+    def request_render(self) -> None:
+        """Ask the host to re-render mounted extension widgets."""
+        ...
+
+    def set_slot_widget(
+        self,
+        key: str,
+        factory: SlotWidgetFactory | None,
+        *,
+        placement: Placement = "below_prompt",
+    ) -> None:
+        """Mount or remove an extension slot widget."""
+        ...
+
+    def open_main_view(self, factory: MainViewFactory) -> MainViewHandle:
+        """Open a full main-area extension view."""
+        ...
+
+    def register_key_interceptor(self, handler: KeyInterceptor) -> Callable[[], None]:
+        """Register a pre-editor key hook; return an unsubscribe callable."""
+        ...
+
+
+class _DeadMainViewHandle:
+    """A no-op main-view handle returned when no UI can host a view."""
+
+    def close(self) -> None:
+        """Do nothing: there is no view to close."""
+
+    @property
+    def is_open(self) -> bool:
+        """Return False: a dead handle is never open."""
+        return False
+
 
 class NullUiBridge:
     """UI bridge used when no interactive frontend is attached."""
@@ -323,6 +486,42 @@ class NullUiBridge:
     async def view_transcript(self, source_id: str) -> bool:
         """Return False: no UI to swap a transcript view in."""
         return False
+
+    # -- component seam (experimental) ---------------------------------------
+
+    @property
+    def supports_components(self) -> bool:
+        """Return False: print mode cannot host widgets."""
+        return False
+
+    @property
+    def theme(self) -> TuiTheme:
+        """Return a usable default theme (never raise; print-mode may read it)."""
+        return _default_theme()
+
+    def get_prompt_text(self) -> str:
+        """Return an empty prompt: there is no editor in print mode."""
+        return ""
+
+    def request_render(self) -> None:
+        """Do nothing: there is no frontend to re-render."""
+
+    def set_slot_widget(
+        self,
+        key: str,
+        factory: SlotWidgetFactory | None,
+        *,
+        placement: Placement = "below_prompt",
+    ) -> None:
+        """Do nothing: there is no slot to mount into."""
+
+    def open_main_view(self, factory: MainViewFactory) -> MainViewHandle:
+        """Return a dead handle: there is no main area to host a view."""
+        return _DeadMainViewHandle()
+
+    def register_key_interceptor(self, handler: KeyInterceptor) -> Callable[[], None]:
+        """Return a no-op unsubscribe: no key stream to intercept."""
+        return lambda: None
 
 
 class StderrUiBridge(NullUiBridge):
@@ -401,6 +600,17 @@ class ExtensionUi:
         view), ``False`` when the source is unknown or there is no UI.
         """
         return await self._runtime.ui.view_transcript(source_id)
+
+    @property
+    def components(self) -> ComponentBridge:
+        """Return the host widget-hosting capability (experimental).
+
+        Straight pass-through to the installed UI bridge, which implements the
+        :class:`ComponentBridge` members (the TUI hosts real widgets; the
+        print-mode bridges are no-ops with ``supports_components == False``).
+        Gate widget work on ``context.ui.components.supports_components``.
+        """
+        return cast("ComponentBridge", self._runtime.ui)
 
     def notify(self, message: str, level: NotifyLevel = "info") -> None:
         """Show a notification in the UI, if one is attached."""
