@@ -298,7 +298,7 @@ h1 .big-tau{
 }
 
 /* ---- section scaffolding ---- */
-.tau-landing section, main.landing section{ padding:88px 0; }
+section{ padding:88px 0; }
 .sec-head{ display:flex; align-items:baseline; gap:18px; margin-bottom:44px; }
 .sec-head .mark{
   font-family:var(--mono); font-size:13px; color:var(--red);
