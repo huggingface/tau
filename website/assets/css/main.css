@@ -488,7 +488,6 @@ section{ padding:88px 0; }
   grid-template-columns:240px minmax(0,1fr);
   gap:56px;
   padding:48px 0 100px;
-  align-items:start;
 }
 @media (max-width:860px){
   .docs-layout{ grid-template-columns:1fr; gap:28px; padding:32px 0 70px; }
