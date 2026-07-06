@@ -25,6 +25,7 @@ class OpenAICompatibleConfig:
     max_retry_delay_seconds: float = DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS
     reasoning_effort: str | None = None
     reasoning_effort_parameter: str = "reasoning_effort"
+    provider_name: str = "OpenAI-compatible provider"
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +39,7 @@ class AnthropicConfig:
     max_retries: int = DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES
     max_retry_delay_seconds: float = DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS
     thinking_budget_tokens: int | None = None
+    provider_name: str = "Anthropic"
 
 
 def openai_compatible_config_from_env(

@@ -75,6 +75,7 @@ from tau_coding.provider_config import (
     upsert_openai_compatible_provider,
     upsert_provider,
     upsert_saved_provider,
+    validate_provider_model,
 )
 from tau_coding.rendering import (
     EventRenderer,
@@ -272,4 +273,5 @@ __all__ = [
     "upsert_provider",
     "upsert_openai_compatible_provider",
     "upsert_saved_provider",
+    "validate_provider_model",
 ]

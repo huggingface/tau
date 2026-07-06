@@ -2375,6 +2375,82 @@ async def test_session_toggle_scoped_model_preserves_newer_provider_file_changes
 
 
 @pytest.mark.anyio
+async def test_session_set_model_rejects_model_not_declared_for_provider(tmp_path: Path) -> None:
+    provider_config = OpenAICompatibleProviderConfig(
+        name="openai",
+        models=("gpt-5",),
+        default_model="gpt-5",
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="gpt-5",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+        )
+    )
+
+    with pytest.raises(
+        coding_session_module.ProviderConfigError,
+        match="Model is not configured for provider openai: gpt-5.5",
+    ):
+        session.set_model("gpt-5.5")
+
+    assert session.model == "gpt-5"
+
+
+@pytest.mark.anyio
+async def test_session_load_falls_back_when_persisted_model_does_not_match_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    created: list[tuple[str, str | None]] = []
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+    ) -> SwitchableFakeProvider:
+        del credential_store, thinking_level
+        created.append((provider_config.name, model))  # type: ignore[attr-defined]
+        return SwitchableFakeProvider(provider_config)
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    await storage.append(SessionInfoEntry(cwd=str(tmp_path)))
+    await storage.append(ModelChangeEntry(model="gpt-5"))
+    provider_config = OpenAICodexProviderConfig(
+        models=("gpt-5.5",),
+        default_model="gpt-5.5",
+    )
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="gpt-5.5",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            provider_name="openai-codex",
+            provider_settings=ProviderSettings(
+                default_provider="openai-codex",
+                providers=(provider_config,),
+            ),
+            runtime_provider_config=provider_config,
+        )
+    )
+
+    assert session.state.model == "gpt-5"
+    assert session.model == "gpt-5.5"
+    assert created == [("openai-codex", "gpt-5.5")]
+
+
+@pytest.mark.anyio
 async def test_session_set_model_persists_default_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2855,7 +2931,7 @@ async def test_session_resume_missing_provider_preserves_active_provider_model(
 
     assert session.provider_name == "openai"
     assert session.model == "gpt-5"
-    assert created == [("openai", "qwen"), ("openai", "gpt-5")]
+    assert created == [("openai", "gpt-5"), ("openai", "gpt-5")]
 
 
 @pytest.mark.anyio
@@ -2921,7 +2997,10 @@ async def test_session_resume_rejects_incompatible_provider_model(
         )
     )
 
-    with pytest.raises(ProviderConfigError, match="Model is not configured: local:gpt-5.5"):
+    with pytest.raises(
+        ProviderConfigError,
+        match="Model is not configured for provider local: gpt-5.5",
+    ):
         await session.resume(second_record.id)
 
     assert session.provider_name == "openai"

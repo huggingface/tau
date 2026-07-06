@@ -62,6 +62,9 @@ Provider metadata lives in `~/.tau/providers.json`:
 - API keys and OAuth credentials are **not** stored here — they live in
   `~/.tau/credentials.json`. Resolution order: stored credential, then the env
   var named by `api_key_env`.
+- The selected model must be present in that provider's `models` list. Add
+  custom or local model names to `models` before using them as defaults,
+  CLI/TUI selections, or scoped models.
 - `scoped_models` are favorites for the **Ctrl+P** quick-cycle.
 - Custom models can declare thinking support with `thinking_levels`,
   `thinking_default`, `thinking_models`, and `thinking_parameter`

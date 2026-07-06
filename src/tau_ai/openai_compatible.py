@@ -29,6 +29,7 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 
@@ -177,6 +178,7 @@ class OpenAICompatibleProvider:
                     ) as response:
                         if response.status_code >= 400:
                             body = await response.aread()
+                            body_text = body.decode(errors="replace")
                             if self._should_retry(attempt, status_code=response.status_code):
                                 delay = retry_delay_seconds(
                                     attempt,
@@ -189,7 +191,7 @@ class OpenAICompatibleProvider:
                                     reason=f"HTTP {response.status_code}",
                                     data={
                                         "status_code": response.status_code,
-                                        "body": body.decode(errors="replace"),
+                                        "body": body_text,
                                     },
                                 )
                                 attempt += 1
@@ -197,11 +199,15 @@ class OpenAICompatibleProvider:
                                     return
                                 continue
                             yield ProviderErrorEvent(
-                                message=(
-                                    f"Provider request failed with status {response.status_code}"
+                                message=provider_http_error_message(
+                                    provider_name=self._config.provider_name,
+                                    status_code=response.status_code,
+                                    body=body_text,
+                                    model=model,
                                 ),
                                 data={
-                                    "body": body.decode(errors="replace"),
+                                    "status_code": response.status_code,
+                                    "body": body_text,
                                     "attempts": attempt + 1,
                                 },
                             )

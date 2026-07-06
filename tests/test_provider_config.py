@@ -23,6 +23,7 @@ from tau_coding.provider_config import (
     provider_thinking_unavailable_reason,
     resolve_provider_selection,
     save_provider_settings,
+    set_default_provider_model,
     upsert_openai_compatible_provider,
 )
 
@@ -269,6 +270,48 @@ def test_resolve_provider_selection_rejects_unknown_provider() -> None:
         resolve_provider_selection(ProviderSettings(), provider_name="missing")
 
 
+def test_resolve_provider_selection_rejects_model_not_declared_for_provider() -> None:
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                models=("qwen",),
+                default_model="qwen",
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        ProviderConfigError,
+        match="Model is not configured for provider local: llama",
+    ):
+        resolve_provider_selection(settings, model="llama")
+
+
+def test_set_default_provider_model_rejects_model_not_declared_for_provider() -> None:
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                models=("qwen",),
+                default_model="qwen",
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        ProviderConfigError,
+        match="Model is not configured for provider local: llama",
+    ):
+        set_default_provider_model(settings, provider_name="local", model="llama")
+
+
 def test_openai_compatible_config_from_provider_uses_configured_env_var(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -284,6 +327,7 @@ def test_openai_compatible_config_from_provider_uses_configured_env_var(
     config = openai_compatible_config_from_provider(provider)
 
     assert config.api_key == "test-key"
+    assert config.provider_name == "local"
     assert config.base_url == "http://localhost:11434/v1"
     assert config.headers == {}
     assert config.timeout_seconds == 60.0
@@ -651,6 +695,45 @@ def test_provider_settings_from_json_loads_anthropic_thinking_provider() -> None
         "high",
     )
     assert provider.thinking_parameter == "anthropic.thinking"
+
+
+def test_load_provider_settings_does_not_restore_stale_codex_builtin_models(
+    tmp_path: Path,
+) -> None:
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    (tau_home / "providers.json").write_text(
+        """
+{
+  "default_provider": "openai-codex",
+  "providers": [
+    {
+      "type": "openai-codex",
+      "name": "openai-codex",
+      "base_url": "https://chatgpt.com/backend-api",
+      "api_key_env": "OPENAI_CODEX_ACCESS_TOKEN",
+      "credential_name": "openai-codex",
+      "models": ["gpt-5", "gpt-5.5"],
+      "default_model": "gpt-5"
+    }
+  ]
+}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    settings = load_provider_settings(TauPaths(home=tau_home))
+    provider = settings.get_provider("openai-codex")
+
+    assert provider.models == (
+        "gpt-5.5",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.3-codex",
+        "gpt-5.3-codex-spark",
+        "gpt-5.2",
+    )
+    assert provider.default_model == "gpt-5.5"
 
 
 def test_load_provider_settings_merges_builtin_model_catalog(tmp_path: Path) -> None:

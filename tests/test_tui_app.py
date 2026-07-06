@@ -5187,6 +5187,7 @@ async def test_run_tui_app_resumes_explicit_session(
         title=None,
         created_at=1.0,
         updated_at=1.0,
+        provider_name="local",
     )
 
     class FakeProvider:
@@ -5210,6 +5211,8 @@ async def test_run_tui_app_resumes_explicit_session(
     class FakeCodingSession:
         @classmethod
         async def load(cls, config: object) -> str:
+            assert config.provider_name == "local"  # type: ignore[attr-defined]
+            assert config.model == "fake-model"  # type: ignore[attr-defined]
             calls.append("load")
             return "session"
 
@@ -5221,25 +5224,143 @@ async def test_run_tui_app_resumes_explicit_session(
         async def run_async(self) -> None:
             calls.append("run")
 
-    settings = ProviderSettings()
+    settings = ProviderSettings(
+        default_provider="openai",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="openai",
+                models=("gpt-5.5",),
+                default_model="gpt-5.5",
+            ),
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                models=("fake-model",),
+                default_model="fake-model",
+            ),
+        ),
+    )
     monkeypatch.setattr(tui_app, "load_provider_settings", lambda: settings)
     monkeypatch.setattr(
         tui_app,
         "create_model_provider",
-        lambda provider, **kwargs: FakeProvider(),
+        lambda provider, **kwargs: (
+            calls.append(f"provider:{provider.name}:{kwargs['model']}") or FakeProvider()
+        ),
     )
     monkeypatch.setattr(tui_app, "CodingSession", FakeCodingSession)
     monkeypatch.setattr(tui_app, "TauTuiApp", FakeApp)
     monkeypatch.setattr(tui_app, "load_tui_settings", lambda: TuiSettings())
 
     await tui_app.run_tui_app(
-        model="fake-model",
+        model=None,
         cwd=tmp_path,
         session_id="session-1",
         session_manager=FakeManager(),
     )
 
-    assert calls == ["get:session-1", "load", "run", "provider_closed"]
+    assert calls == [
+        "get:session-1",
+        "provider:local:fake-model",
+        "load",
+        "run",
+        "provider_closed",
+    ]
+
+
+@pytest.mark.anyio
+async def test_run_tui_app_ignores_uncredentialed_provider_when_matching_resume_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[str] = []
+    record = CodingSessionRecord(
+        id="session-1",
+        path=tmp_path / "session-1.jsonl",
+        cwd=tmp_path,
+        model="shared-model",
+        title=None,
+        created_at=1.0,
+        updated_at=1.0,
+    )
+
+    class FakeCredentialStore:
+        def get(self, name: str) -> str | None:
+            return "stored-key" if name == "openai" else None
+
+        def get_oauth(self, name: str) -> object | None:
+            return None
+
+    class FakeProvider:
+        async def aclose(self) -> None:
+            calls.append("provider_closed")
+
+    class FakeManager:
+        def get_session(self, session_id: str) -> CodingSessionRecord | None:
+            calls.append(f"get:{session_id}")
+            return record
+
+    class FakeCodingSession:
+        @classmethod
+        async def load(cls, config: object) -> str:
+            assert config.provider_name == "openai"  # type: ignore[attr-defined]
+            calls.append("load")
+            return "session"
+
+    class FakeApp:
+        def __init__(self, session: str, **kwargs: object) -> None:
+            assert session == "session"
+
+        async def run_async(self) -> None:
+            calls.append("run")
+
+    settings = ProviderSettings(
+        default_provider="openai",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("shared-model",),
+                default_model="shared-model",
+            ),
+            OpenAICompatibleProviderConfig(
+                name="openai",
+                credential_name="openai",
+                models=("shared-model",),
+                default_model="shared-model",
+            ),
+        ),
+    )
+    monkeypatch.delenv("LOCAL_API_KEY", raising=False)
+    monkeypatch.setattr(tui_app, "FileCredentialStore", lambda: FakeCredentialStore())
+    monkeypatch.setattr(tui_app, "load_provider_settings", lambda: settings)
+    monkeypatch.setattr(tui_app, "load_tui_settings", lambda: TuiSettings())
+    monkeypatch.setattr(
+        tui_app,
+        "create_model_provider",
+        lambda provider, **kwargs: (
+            calls.append(f"provider:{provider.name}:{kwargs['model']}") or FakeProvider()
+        ),
+    )
+    monkeypatch.setattr(tui_app, "CodingSession", FakeCodingSession)
+    monkeypatch.setattr(tui_app, "TauTuiApp", FakeApp)
+
+    await tui_app.run_tui_app(
+        model=None,
+        cwd=tmp_path,
+        session_id="session-1",
+        session_manager=FakeManager(),
+    )
+
+    assert calls == [
+        "get:session-1",
+        "provider:openai:shared-model",
+        "load",
+        "run",
+        "provider_closed",
+    ]
 
 
 class _FakeSessionManager:
