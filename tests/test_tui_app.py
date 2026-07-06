@@ -13,6 +13,7 @@ from textual.geometry import Offset
 from textual.selection import SELECT_ALL, Selection
 from textual.widgets import Footer, Input, Label, ListItem, ListView, Static, TextArea
 from textual.widgets import Markdown as TextualMarkdown
+from textual.widgets.markdown import MarkdownStream
 
 from tau_agent import (
     AgentEndEvent,
@@ -25,6 +26,7 @@ from tau_agent import (
     MessageEndEvent,
     MessageStartEvent,
     QueueUpdateEvent,
+    ThinkingDeltaEvent,
     ToolCall,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
@@ -1478,7 +1480,23 @@ async def test_tui_streaming_deltas_update_active_message_without_full_refresh()
     )
     app = TauTuiApp(session)
     stream_replacements: list[str] = []
+    stream_writes: list[str] = []
+    full_stream_updates: list[str] = []
     original_replace_text = StreamingTranscriptMessageWidget.replace_text
+    original_stream_update = StreamingTranscriptMessageWidget.update
+    original_stream_write = MarkdownStream.write
+
+    def tracking_stream_update(
+        self: StreamingTranscriptMessageWidget,
+        markdown: str,
+    ) -> object:
+        if markdown:
+            full_stream_updates.append(markdown)
+        return original_stream_update(self, markdown)
+
+    async def tracking_stream_write(self: MarkdownStream, fragment: str) -> None:
+        stream_writes.append(fragment)
+        await original_stream_write(self, fragment)
 
     async def tracking_replace_text(
         self: StreamingTranscriptMessageWidget,
@@ -1488,6 +1506,8 @@ async def test_tui_streaming_deltas_update_active_message_without_full_refresh()
         await original_replace_text(self, text)
 
     StreamingTranscriptMessageWidget.replace_text = tracking_replace_text  # type: ignore[method-assign]
+    StreamingTranscriptMessageWidget.update = tracking_stream_update  # type: ignore[method-assign]
+    MarkdownStream.write = tracking_stream_write  # type: ignore[method-assign]
     full_refreshes = 0
 
     original_refresh = app._refresh
@@ -1509,9 +1529,13 @@ async def test_tui_streaming_deltas_update_active_message_without_full_refresh()
             transcript_text = "\n".join(line.text for line in transcript.lines)
     finally:
         StreamingTranscriptMessageWidget.replace_text = original_replace_text  # type: ignore[method-assign]
+        StreamingTranscriptMessageWidget.update = original_stream_update  # type: ignore[method-assign]
+        MarkdownStream.write = original_stream_write  # type: ignore[method-assign]
 
     assert full_refreshes == 1
-    assert stream_replacements == ["alpha beta"]
+    assert stream_writes == ["alpha ", "beta"]
+    assert stream_replacements == []
+    assert full_stream_updates == []
     assert streamed.selection_text == "alpha beta"
     assert "alpha beta" in transcript_text
 
@@ -4286,6 +4310,111 @@ async def test_tui_app_toggles_thinking_tokens_from_keybinding_while_running() -
         assert "internal plan" not in transcript_text()
 
     assert notifications == []
+
+
+@pytest.mark.anyio
+async def test_tui_app_hidden_thinking_placeholder_stays_before_streamed_answer() -> None:
+    session = FakeSession(
+        events=[
+            AgentStartEvent(),
+            ThinkingDeltaEvent(delta="private plan"),
+            MessageStartEvent(message_role="assistant"),
+            MessageDeltaEvent(delta="public answer"),
+            MessageEndEvent(message=AssistantMessage(content="public answer")),
+            AgentEndEvent(),
+        ]
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        await app._run_prompt("stream")
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert [line.text for line in transcript.lines] == [
+            "Thinking… Press Ctrl+T to show thinking tokens.",
+            "public answer",
+        ]
+
+
+@pytest.mark.anyio
+async def test_tui_app_thinking_toggle_preserves_unrelated_widgets() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        app.state.add_item("user", "first prompt")
+        app.state.add_thinking_delta("plan one")
+        app.state.add_item("assistant", "first answer")
+        app.state.add_item("user", "second prompt")
+        app.state.add_thinking_delta("plan two")
+        app.state.add_item("assistant", "second answer")
+        app._refresh()
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        stable_widgets = [
+            widget
+            for widget in transcript.children
+            if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+            and widget.item.role != "thinking"
+        ]
+        assert len(stable_widgets) == 4
+        assert (
+            sum(
+                1
+                for widget in transcript.children
+                if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+                and widget.item.role == "thinking"
+            )
+            == 2
+        )
+
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+        assert [
+            widget
+            for widget in transcript.children
+            if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+            and widget.item.role != "thinking"
+        ] == stable_widgets
+        assert [line.text for line in transcript.lines] == [
+            "first prompt",
+            "plan one",
+            "first answer",
+            "second prompt",
+            "plan two",
+            "second answer",
+        ]
+
+        app.state.add_item("status", "late status")
+        await transcript.append_item(app.state.items[-1])
+        await pilot.pause()
+        stable_widgets.append(
+            next(
+                widget
+                for widget in reversed(transcript.children)
+                if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+                and widget.item.role == "status"
+            )
+        )
+
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+        assert [
+            widget
+            for widget in transcript.children
+            if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+            and widget.item.role != "thinking"
+        ] == stable_widgets
+        assert [line.text for line in transcript.lines] == [
+            "first prompt",
+            "Thinking… Press Ctrl+T to show thinking tokens.",
+            "first answer",
+            "second prompt",
+            "Thinking… Press Ctrl+T to show thinking tokens.",
+            "second answer",
+            "late status",
+        ]
 
 
 @pytest.mark.anyio
