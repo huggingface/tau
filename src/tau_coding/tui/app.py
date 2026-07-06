@@ -1980,6 +1980,7 @@ class TauTuiApp(App[None]):
         self._prompt_worker: Worker[None] | None = None
         self._compaction_worker: Worker[None] | None = None
         self._prompt_run_id = 0
+        self._optimistic_user_messages: list[tuple[int, str]] = []
         self._completion_state = CompletionState()
         self._completion_visible_line_budget: int | None = None
         self._activity_frame = 0
@@ -2059,7 +2060,7 @@ class TauTuiApp(App[None]):
         if self.startup_message:
             self._notify(self.startup_message, severity="warning")
         if self.initial_prompt and self.initial_prompt.strip():
-            self._submit_prompt(self.initial_prompt.strip())
+            await self._submit_prompt(self.initial_prompt.strip())
 
     def on_unmount(self) -> None:
         """Stop the activity timer when the app is torn down."""
@@ -2236,7 +2237,7 @@ class TauTuiApp(App[None]):
             return
 
         self._remember_prompt(text)
-        self._submit_prompt(text)
+        await self._submit_prompt(text)
 
     def _remember_prompt(self, text: str) -> None:
         """Remember a submitted user prompt for lightweight input recall."""
@@ -2291,13 +2292,61 @@ class TauTuiApp(App[None]):
         self._notify(compact_message)
         self._refresh()
 
-    def _submit_prompt(self, text: str) -> None:
+    async def _submit_prompt(self, text: str) -> None:
         """Add a prompt to the transcript and start the agent worker."""
         self._prompt_run_id += 1
         run_id = self._prompt_run_id
-        self._follow_transcript_output()
-        self._refresh()
+        self._optimistic_user_messages.append((run_id, text))
+        await self._append_optimistic_user_message(text)
         self._prompt_worker = self.run_worker(self._run_prompt(text, run_id), exclusive=True)
+
+    async def _append_optimistic_user_message(self, text: str) -> None:
+        """Render a submitted user message immediately without rebuilding the transcript."""
+        start_index = len(self.state.items)
+        self.state.add_user_message(text)
+        self._follow_transcript_output()
+        if not self.screen_stack:
+            self._refresh()
+            return
+        theme = self.tui_settings.resolved_theme
+        try:
+            transcript = self.query_one("#transcript", TranscriptView)
+        except NoMatches:
+            self._refresh()
+            return
+        for item in self.state.items[start_index:]:
+            await transcript.append_item(
+                item,
+                theme=theme,
+                show_tool_results=self.state.show_tool_results,
+                scroll_end=True,
+            )
+        self._refresh_chrome(theme=theme)
+
+    def _consume_optimistic_user_event(self, event: AgentEvent, *, run_id: int) -> bool:
+        """Return whether a user event confirms an already-rendered optimistic message."""
+        if not isinstance(event, MessageEndEvent) or not isinstance(event.message, UserMessage):
+            return False
+        for index, (pending_run_id, pending_text) in enumerate(self._optimistic_user_messages):
+            if pending_run_id == run_id and pending_text == event.message.content:
+                del self._optimistic_user_messages[index]
+                return True
+        return False
+
+    def _clear_optimistic_user_messages(self, *, run_id: int) -> None:
+        """Drop unconfirmed optimistic messages once their run is no longer active."""
+        self._optimistic_user_messages = [
+            pending
+            for pending in self._optimistic_user_messages
+            if pending[0] != run_id
+        ]
+
+    async def _append_confirmed_user_message(self, message: AgentMessage) -> None:
+        """Render a non-optimistic user event incrementally when possible."""
+        if not isinstance(message, UserMessage):
+            self._refresh()
+            return
+        await self._append_optimistic_user_message(message.content)
 
     def _follow_transcript_output(self) -> None:
         """Put the transcript back in follow mode for explicit user actions."""
@@ -2379,6 +2428,10 @@ class TauTuiApp(App[None]):
             async for event in self.session.prompt(text):
                 if active_run_id != self._prompt_run_id:
                     return
+                if self._consume_optimistic_user_event(event, run_id=active_run_id):
+                    self._sync_text_selection_state()
+                    self._refresh_chrome()
+                    continue
                 self.adapter.apply(event)
                 self._sync_text_selection_state()
                 if isinstance(event, ErrorEvent) and not event.recoverable:
@@ -2394,6 +2447,7 @@ class TauTuiApp(App[None]):
             self._sync_text_selection_state()
             self._refresh()
         finally:
+            self._clear_optimistic_user_messages(run_id=active_run_id)
             if active_run_id == self._prompt_run_id:
                 self._prompt_worker = None
 
@@ -2431,7 +2485,7 @@ class TauTuiApp(App[None]):
             return
         if isinstance(event, MessageEndEvent):
             if event.message.role == "user":
-                self._refresh()
+                await self._append_confirmed_user_message(event.message)
                 return
             if event.message.role == "assistant":
                 await transcript.finish_assistant_message(event.message.content)

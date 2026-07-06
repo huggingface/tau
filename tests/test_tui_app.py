@@ -1547,6 +1547,43 @@ async def test_tui_streaming_deltas_update_active_message_without_full_refresh()
 
 
 @pytest.mark.anyio
+async def test_tui_submit_prompt_optimistically_appends_user_message_without_full_refresh() -> None:
+    session = FakeSession(
+        messages=[UserMessage(content=f"Earlier {index}") for index in range(3)],
+        events=[
+            AgentStartEvent(),
+            MessageEndEvent(message=UserMessage(content="New prompt")),
+            AgentEndEvent(),
+        ],
+    )
+    app = TauTuiApp(session)
+    full_refreshes = 0
+    original_refresh = app._refresh
+
+    def tracking_refresh() -> None:
+        nonlocal full_refreshes
+        full_refreshes += 1
+        original_refresh()
+
+    app._refresh = tracking_refresh  # type: ignore[method-assign]
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        full_refreshes = 0
+        await app._submit_prompt("New prompt")
+        await pilot.pause()
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        user_messages = [item.text for item in app.state.items if item.role == "user"]
+        transcript_lines = [line.text for line in transcript.lines]
+
+    assert full_refreshes == 0
+    assert session.prompt_texts == ["New prompt"]
+    assert user_messages == ["Earlier 0", "Earlier 1", "Earlier 2", "New prompt"]
+    assert transcript_lines.count("New prompt") == 1
+
+
+@pytest.mark.anyio
 async def test_tui_app_mounts_sidebar_and_transcript() -> None:
     app = TauTuiApp(FakeSession())
 
