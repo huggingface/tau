@@ -1,7 +1,5 @@
 - label: Home
   link: /
-- label: 'Why "Tau"?'
-  link: /why-tau/
 - label: Use Tau
   items:
     - label: What is Tau?
