@@ -1837,6 +1837,32 @@ async def test_tui_transcript_code_block_scrollbar_matches_overflow(
         assert fence.show_horizontal_scrollbar is has_horizontal_overflow
 
 
+@pytest.mark.anyio
+async def test_streaming_code_block_hides_horizontal_scrollbar_until_finalized() -> None:
+    app = TauTuiApp(FakeSession())
+    long_code_line = "value = '" + ("x" * 140) + "'"
+
+    async with app.run_test(size=(64, 30)) as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+
+        await transcript.append_assistant_delta("```python\n" + long_code_line)
+        await pilot.pause()
+
+        streaming_fence = app.query_one("MarkdownFence")
+        assert streaming_fence.max_scroll_x > 0
+        assert streaming_fence.styles.scrollbar_size_horizontal == 0
+        assert streaming_fence.show_horizontal_scrollbar is False
+
+        await transcript.finish_assistant_message("```python\n" + long_code_line + "\n```")
+        await pilot.pause()
+
+        finalized_fence = app.query_one("MarkdownFence")
+        assert finalized_fence.max_scroll_x > 0
+        assert finalized_fence.styles.scrollbar_size_horizontal == 1
+        assert finalized_fence.show_horizontal_scrollbar is True
+
+
 def test_tui_app_uses_configured_theme_css_variables() -> None:
     app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(theme="high-contrast"))
 
