@@ -281,7 +281,7 @@ async def test_prompt_logs_error_event_diagnostic_data(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_prompt_repairs_loaded_session_with_interrupted_tool_call(
+async def test_load_persists_repair_for_session_with_interrupted_tail_tool_call(
     tmp_path: Path,
 ) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
@@ -313,7 +313,59 @@ async def test_prompt_repairs_loaded_session_with_interrupted_tool_call(
         )
     )
 
-    await _collect_session_events(session.prompt("What happened?"))
+    expected_repair = ToolResultMessage(
+        tool_call_id="call-1",
+        name="read",
+        content="Tool call interrupted by user",
+        ok=False,
+        error="Tool call interrupted by user",
+    )
+    assert provider.calls == []
+    assert session.messages == (
+        UserMessage(content="Read README.md"),
+        AssistantMessage(content="I'll read it.", tool_calls=[tool_call]),
+        expected_repair,
+    )
+
+    entries = await storage.read_all()
+    message_entries = [entry for entry in entries if entry.type == "message"]
+    assert [entry.message for entry in message_entries] == [
+        UserMessage(content="Read README.md"),
+        AssistantMessage(content="I'll read it.", tool_calls=[tool_call]),
+        expected_repair,
+    ]
+
+
+@pytest.mark.anyio
+async def test_load_persists_repair_for_historical_interrupted_tool_call(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    user_entry = MessageEntry(message=UserMessage(content="Read README.md"))
+    await storage.append(user_entry)
+    tool_call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
+    assistant_entry = MessageEntry(
+        parent_id=user_entry.id,
+        message=AssistantMessage(content="I'll read it.", tool_calls=[tool_call]),
+    )
+    await storage.append(assistant_entry)
+    continued_entry = MessageEntry(
+        parent_id=assistant_entry.id,
+        message=UserMessage(content="continue"),
+    )
+    await storage.append(continued_entry)
+    await storage.append(LeafEntry(parent_id=continued_entry.id, entry_id=continued_entry.id))
+
+    provider = FakeProvider([])
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
 
     expected_repair = ToolResultMessage(
         tool_call_id="call-1",
@@ -322,22 +374,31 @@ async def test_prompt_repairs_loaded_session_with_interrupted_tool_call(
         ok=False,
         error="Tool call interrupted by user",
     )
-    assert provider.calls[0][2] == [
+    assert provider.calls == []
+    assert session.messages == (
         UserMessage(content="Read README.md"),
         AssistantMessage(content="I'll read it.", tool_calls=[tool_call]),
         expected_repair,
-        UserMessage(content="What happened?"),
-    ]
+        UserMessage(content="continue"),
+    )
 
     entries = await storage.read_all()
     message_entries = [entry for entry in entries if entry.type == "message"]
-    assert [entry.message for entry in message_entries] == [
-        UserMessage(content="Read README.md"),
-        AssistantMessage(content="I'll read it.", tool_calls=[tool_call]),
+    assert [entry.message for entry in message_entries[-2:]] == [
         expected_repair,
-        UserMessage(content="What happened?"),
-        AssistantMessage(content="Recovered."),
+        UserMessage(content="continue"),
     ]
+
+    restored = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+    assert restored.messages == session.messages
 
 
 @pytest.mark.anyio

@@ -244,7 +244,7 @@ def main(
                 initial_prompt,
                 notice,
             )
-        except RuntimeError as exc:
+        except (RuntimeError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
         raise typer.Exit()
 
@@ -258,7 +258,7 @@ def main(
 
     try:
         ok = anyio.run(run_openai_print_mode, prompt, model, cwd or Path.cwd(), output, provider)
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     if not ok:
         raise typer.Exit(1)
