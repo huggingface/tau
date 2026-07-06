@@ -250,50 +250,43 @@ class AgentHarness:
             return messages
         return (queue.popleft(),)
 
+    def append_interrupted_tool_results(self) -> int:
+        """Repair a transcript left mid-tool-call by an interrupted run.
+
+        Returns the number of synthetic tool results that were appended.
+        """
+        before_count = len(self._messages)
+        self._append_interrupted_tool_results()
+        return len(self._messages) - before_count
+
     def _append_interrupted_tool_results(self) -> None:
         """Repair a transcript left mid-tool-call by an interrupted run.
 
         OpenAI-compatible providers reject a transcript where an assistant tool
-        call is not followed by a matching tool result. If the UI cancels the
-        worker while a tool is still running, the normal loop may not get a
-        chance to append the cancellation result, so repair that gap before the
-        next model request.
+        call has no matching tool result anywhere in the submitted history. If
+        the UI cancels the worker while a tool is still running, the normal loop
+        may not get a chance to append the cancellation result, so repair that
+        gap before the next model request.
         """
-        assistant_index = _latest_open_tool_call_assistant_index(self._messages)
-        if assistant_index is None:
-            return
-
-        assistant = self._messages[assistant_index]
-        if not isinstance(assistant, AssistantMessage):
-            return
-
         returned_ids = {
             message.tool_call_id
-            for message in self._messages[assistant_index + 1 :]
+            for message in self._messages
             if isinstance(message, ToolResultMessage)
         }
-        for tool_call in assistant.tool_calls:
-            if tool_call.id in returned_ids:
+        for message in tuple(self._messages):
+            if not isinstance(message, AssistantMessage):
                 continue
-            message = "Tool call interrupted by user"
-            self._messages.append(
-                ToolResultMessage(
-                    tool_call_id=tool_call.id,
-                    name=tool_call.name,
-                    content=message,
-                    ok=False,
-                    error=message,
+            for tool_call in message.tool_calls:
+                if tool_call.id in returned_ids:
+                    continue
+                returned_ids.add(tool_call.id)
+                content = "Tool call interrupted by user"
+                self._messages.append(
+                    ToolResultMessage(
+                        tool_call_id=tool_call.id,
+                        name=tool_call.name,
+                        content=content,
+                        ok=False,
+                        error=content,
+                    )
                 )
-            )
-
-
-def _latest_open_tool_call_assistant_index(messages: Sequence[AgentMessage]) -> int | None:
-    for index in range(len(messages) - 1, -1, -1):
-        message = messages[index]
-        if isinstance(message, UserMessage):
-            return None
-        if isinstance(message, AssistantMessage):
-            if message.tool_calls:
-                return index
-            return None
-    return None
