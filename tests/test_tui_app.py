@@ -2723,6 +2723,18 @@ async def test_pending_tool_row_shows_spinner_while_running() -> None:
         assert "▸" not in widget.selection_text
         assert "Summarize codebase" in widget.selection_text
 
+        # Ticks must update the mounted widget in place — remounting every
+        # frame reads as transcript flicker.
+        first_frame = widget.selection_text[0]
+        app._tick_activity()
+        await pilot.pause()
+        same_widget = next(
+            w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool"
+        )
+        assert same_widget is widget
+        assert same_widget.selection_text[0] in TOOL_SPINNER_FRAMES
+        assert same_widget.selection_text[0] != first_frame
+
         # Once the result lands the static marker returns.
         await stream(
             ToolExecutionEndEvent(

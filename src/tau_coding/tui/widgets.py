@@ -22,6 +22,7 @@ from rich.text import Text
 from rich.theme import Theme
 from textual.containers import Horizontal, VerticalScroll
 from textual.content import Style as TextualStyle  # type: ignore[attr-defined]
+from textual.css.query import NoMatches
 from textual.events import Resize
 from textual.geometry import Offset
 from textual.selection import Selection
@@ -305,6 +306,44 @@ class TranscriptMessageWidget(Horizontal):
         if not selected_text:
             return None
         return selected_text, "\n"
+
+    def refresh_invocation(
+        self,
+        *,
+        show_tool_results: bool,
+        invocation: str | None = None,
+    ) -> bool:
+        """Re-render a plain-body row's text in place; False when unsupported.
+
+        Used for high-frequency updates (spinner frames, live tool progress)
+        where remounting the widget causes visible layout flicker.
+        """
+        if self.item.role == "custom" or not _use_plain_transcript_body(self.item):
+            return False
+        self._invocation = invocation if self.item.role == "tool" else None
+        self.selection_text = transcript_item_selection_text(
+            self.item,
+            show_tool_results=show_tool_results,
+            invocation=self._invocation,
+        )
+        self._markdown_text = _transcript_item_markdown(
+            self.item,
+            show_tool_results=show_tool_results,
+            invocation=self._invocation,
+        )
+        try:
+            body = self.query_one(".transcript-plain-body", Static)
+        except NoMatches:
+            return False
+        body.update(
+            _transcript_plain_body_text(
+                self.item,
+                text=self.selection_text,
+                body_style=self._role_style.body,
+                theme=self._theme,
+            )
+        )
+        return True
 
 
 class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
@@ -685,6 +724,14 @@ class TranscriptView(VerticalScroll):
         """Re-render one already-mounted transcript item in place."""
         for child in self.children:
             if isinstance(child, TranscriptMessageWidget) and child.item is item:
+                # Prefer updating the mounted widget's content: remounting
+                # forces a layout pass and follow-scroll on every call, which
+                # reads as transcript flicker at spinner-tick frequency.
+                if child.refresh_invocation(
+                    show_tool_results=show_tool_results,
+                    invocation=invocation,
+                ):
+                    return True
                 replacement = _transcript_widget(
                     item,
                     theme=theme,
