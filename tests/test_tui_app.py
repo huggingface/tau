@@ -4333,12 +4333,15 @@ async def test_tui_app_thinking_toggle_preserves_unrelated_widgets() -> None:
             and widget.item.role != "thinking"
         ]
         assert len(stable_widgets) == 4
-        assert sum(
-            1
-            for widget in transcript.children
-            if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
-            and widget.item.role == "thinking"
-        ) == 2
+        assert (
+            sum(
+                1
+                for widget in transcript.children
+                if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+                and widget.item.role == "thinking"
+            )
+            == 2
+        )
 
         await pilot.press("ctrl+t")
         await pilot.pause()

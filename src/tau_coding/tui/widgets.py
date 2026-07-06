@@ -484,9 +484,7 @@ class TranscriptView(VerticalScroll):
             for child in self.children
             if isinstance(child, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
         ]
-        thinking_children = [
-            child for child in message_children if child.item.role == "thinking"
-        ]
+        thinking_children = [child for child in message_children if child.item.role == "thinking"]
         if thinking_children:
             self.remove_children(thinking_children)
 
