@@ -231,9 +231,7 @@ def _merge_raw_provider(base: dict[str, Any], overlay: dict[str, Any]) -> dict[s
     return merged
 
 
-def _merge_model_metadata(
-    base: dict[str, Any], overlay: dict[str, Any]
-) -> dict[str, Any]:
+def _merge_model_metadata(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
     merged: dict[str, Any] = {**base}
     for model, overlay_metadata in overlay.items():
         base_metadata = merged.get(model)
@@ -520,9 +518,13 @@ def _toml_value(value: object) -> str:
     if isinstance(value, list | tuple):
         return "[" + ", ".join(_toml_value(item) for item in value) + "]"
     if isinstance(value, dict):
-        return "{ " + ", ".join(
-            f"{_toml_key(str(key))} = {_toml_value(item)}" for key, item in value.items()
-        ) + " }"
+        return (
+            "{ "
+            + ", ".join(
+                f"{_toml_key(str(key))} = {_toml_value(item)}" for key, item in value.items()
+            )
+            + " }"
+        )
     raise TypeError(f"Unsupported TOML value: {value!r}")
 
 

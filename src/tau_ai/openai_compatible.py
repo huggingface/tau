@@ -589,9 +589,9 @@ def _build_chat_payload(
     if supports_store:
         payload["store"] = False
     if max_tokens is not None:
-        payload[
-            "max_tokens" if max_tokens_field == "max_tokens" else "max_completion_tokens"
-        ] = max_tokens
+        payload["max_tokens" if max_tokens_field == "max_tokens" else "max_completion_tokens"] = (
+            max_tokens
+        )
     openrouter_provider = resolved_compat.get("openrouterProvider")
     if isinstance(openrouter_provider, dict):
         payload["provider"] = openrouter_provider
