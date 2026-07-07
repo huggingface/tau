@@ -1659,7 +1659,6 @@ def _anthropic_thinking_budget_from_provider(
     return anthropic_thinking_budget_for_level(normalized)
 
 
-<<<<<<< HEAD
 def _metadata_thinking_value(
     provider: ProviderConfig,
     model: str,
@@ -1734,7 +1733,8 @@ def _normalize_anthropic_base_url(base_url: str) -> str:
     if normalized.endswith("/v1"):
         return normalized
     return f"{normalized}/v1"
-=======
+
+
 def _anthropic_thinking_type_from_provider(
     provider: AnthropicProviderConfig,
     *,
@@ -1780,7 +1780,6 @@ def _thinking_mode(
     if override is None or override.thinking_modes is None:
         return None
     return override.thinking_modes.get(level)
->>>>>>> b0ac299 (rewrote the OpenCode Go provider support to use the new toml files, verified model overrides against OpenCode source code, added a design doc)
 
 
 def _provider_from_json(data: object) -> ProviderConfig:
