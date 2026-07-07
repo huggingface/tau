@@ -1,5 +1,26 @@
 [
   {
+    "version": "0.1.3",
+    "date": "2026-07-07",
+    "sections": {
+      "New": [
+        "Add a config-driven Pi API provider catalog with user overlay support."
+      ],
+      "Changed": [
+        "Optimistically render ordinary TUI prompt submissions to reduce perceived latency.",
+        "Improve scoped provider/model switching performance and responsiveness.",
+        "Migrate the documentation site to Hugo."
+      ],
+      "Fixed": [
+        "Prevent custom prompt slash commands from appearing twice in the TUI transcript.",
+        "Persist interrupted tool repairs correctly when resuming sessions.",
+        "Show bad --model values as clean errors instead of tracebacks.",
+        "Fix provider/model selection and resume mismatch edge cases.",
+        "Hide code block scrollbars while assistant messages are streaming."
+      ]
+    }
+  },
+  {
     "version": "0.1.2",
     "date": "2026-07-03",
     "sections": {
