@@ -18,6 +18,7 @@ from tau_ai import (
     AnthropicConfig,
     AnthropicProvider,
     FakeProvider,
+    GoogleGenerativeAIProvider,
     OpenAICodexConfig,
     OpenAICodexCredentials,
     OpenAICodexProvider,
@@ -211,6 +212,40 @@ async def test_openai_compatible_provider_includes_configured_reasoning_effort()
 
 
 @pytest.mark.anyio
+async def test_openai_compatible_provider_includes_openrouter_provider_routing() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://openrouter.ai/api/v1",
+                compat={"openrouterProvider": {"ignore": ["Nebius"]}},
+            ),
+            client=client,
+        )
+
+        await _collect(
+            provider.stream_response(
+                model="nvidia/nemotron-3-super-120b-a12b",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert loads(requests[0].content)["provider"] == {"ignore": ["Nebius"]}
+
+
+@pytest.mark.anyio
 async def test_openai_compatible_provider_supports_nested_reasoning_effort_parameter() -> None:
     requests: list[httpx.Request] = []
 
@@ -247,6 +282,49 @@ async def test_openai_compatible_provider_supports_nested_reasoning_effort_param
     assert requests[0].url == "https://example.test/v1/chat/completions"
     assert loads(requests[0].content)["reasoning"] == {"effort": "high"}
     assert "reasoning_effort" not in loads(requests[0].content)
+
+
+@pytest.mark.anyio
+async def test_google_provider_sends_system_instruction_at_top_level() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},'
+                '"finishReason":"STOP"}]}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = GoogleGenerativeAIProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://generativelanguage.googleapis.com/v1beta",
+                reasoning_effort="low",
+            ),
+            client=client,
+        )
+
+        await _collect(
+            provider.stream_response(
+                model="gemini-2.5-flash",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    payload = loads(requests[0].content)
+    assert payload["systemInstruction"] == {"parts": [{"text": "You are Tau."}]}
+    assert "systemInstruction" not in payload["generationConfig"]
+    assert payload["generationConfig"]["thinkingConfig"] == {
+        "includeThoughts": True,
+        "thinkingBudget": 2048,
+    }
 
 
 @pytest.mark.anyio

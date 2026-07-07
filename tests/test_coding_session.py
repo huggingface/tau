@@ -2353,7 +2353,7 @@ async def test_available_model_choices_include_stored_credentials(
     )
 
     assert session.available_providers == ("openai",)
-    assert ("openai", "gpt-5.5") in [
+    assert ("openai", "gpt-5.4") in [
         (choice.provider_name, choice.model) for choice in session.available_model_choices
     ]
 

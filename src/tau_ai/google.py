@@ -233,19 +233,21 @@ def _build_google_payload(
     max_tokens: int | None,
 ) -> dict[str, JSONValue]:
     config: dict[str, JSONValue] = {}
+    payload: dict[str, JSONValue] = {
+        "contents": [_message_to_google(message) for message in messages],
+    }
     if system:
-        config["systemInstruction"] = {"parts": [{"text": system}]}
+        payload["systemInstruction"] = {"parts": [{"text": system}]}
     if max_tokens is not None:
         config["maxOutputTokens"] = max_tokens
     thinking_config = _google_thinking_config(model, reasoning_effort)
     if thinking_config is not None:
         config["thinkingConfig"] = thinking_config
+    if config:
+        payload["generationConfig"] = config
     if tools:
-        config["tools"] = [{"functionDeclarations": [_tool_to_google(tool) for tool in tools]}]
-    return {
-        "contents": [_message_to_google(message) for message in messages],
-        "generationConfig": config,
-    }
+        payload["tools"] = [{"functionDeclarations": [_tool_to_google(tool) for tool in tools]}]
+    return payload
 
 
 def _google_thinking_config(

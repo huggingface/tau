@@ -902,11 +902,11 @@ def test_providers_command_lists_default_provider(
     result = CliRunner().invoke(app, ["providers"])
 
     assert result.exit_code == 0
-    assert "*\topenai\topenai-compatible\tgpt-5.5" in result.stdout
+    assert "*\topenai\topenai-compatible\tgpt-5.4" in result.stdout
     assert " \topenai-codex\topenai-codex\tgpt-5.5" in result.stdout
     assert " \tanthropic\tanthropic\tclaude-sonnet-4-6" in result.stdout
-    assert " \topenrouter\topenai-compatible\topenai/gpt-5.5" in result.stdout
-    assert " \thuggingface\topenai-compatible\topenai/gpt-oss-120b" in result.stdout
+    assert " \topenrouter\topenai-compatible\tqwen/qwen3.7-max" in result.stdout
+    assert " \thuggingface\topenai-compatible\tmoonshotai/Kimi-K2.6" in result.stdout
 
 
 def test_render_provider_settings_shows_credential_source(
@@ -944,7 +944,7 @@ def test_render_provider_settings_shows_credential_source(
     cli.render_provider_settings(settings, credential_reader=FakeCredentials())
 
     output = capsys.readouterr().out
-    assert "*\tstored\topenai-compatible\tgpt-5.5" in output
+    assert "*\tstored\topenai-compatible\tgpt-5.4" in output
     assert "\tSTORED_API_KEY\tstored:stored\t" in output
     assert "\tENV_API_KEY\tenv:ENV_API_KEY\t" in output
     assert "\tMISSING_API_KEY\tmissing\t" in output

@@ -592,6 +592,9 @@ def _build_chat_payload(
         payload[
             "max_tokens" if max_tokens_field == "max_tokens" else "max_completion_tokens"
         ] = max_tokens
+    openrouter_provider = resolved_compat.get("openrouterProvider")
+    if isinstance(openrouter_provider, dict):
+        payload["provider"] = openrouter_provider
     _apply_chat_reasoning(
         payload,
         reasoning_effort=reasoning_effort if supports_reasoning_effort else None,

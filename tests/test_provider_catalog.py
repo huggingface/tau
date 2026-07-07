@@ -47,7 +47,31 @@ def _write_user_catalog(tau_home: Path, body: str) -> TauPaths:
 
 def test_builtin_catalog_matches_expected_providers() -> None:
     names = [entry.name for entry in BUILTIN_PROVIDER_CATALOG]
-    assert names == ["openai", "openai-codex", "anthropic", "openrouter", "huggingface"]
+    assert names == [
+        "openai",
+        "openai-codex",
+        "anthropic",
+        "google",
+        "deepseek",
+        "xai",
+        "groq",
+        "cerebras",
+        "openrouter",
+        "zai",
+        "mistral",
+        "minimax",
+        "minimax-cn",
+        "moonshotai",
+        "moonshotai-cn",
+        "huggingface",
+        "fireworks",
+        "together",
+        "vercel-ai-gateway",
+        "xiaomi",
+        "xiaomi-token-plan-cn",
+        "xiaomi-token-plan-ams",
+        "xiaomi-token-plan-sgp",
+    ]
 
 
 def test_builtin_catalog_golden_anthropic_entry() -> None:
@@ -55,19 +79,39 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
     assert entry is not None
     assert entry.display_name == "Anthropic"
     assert entry.kind == "anthropic"
-    assert entry.base_url == "https://api.anthropic.com/v1"
+    assert entry.base_url == "https://api.anthropic.com"
     assert entry.api_key_env == "ANTHROPIC_API_KEY"
     assert entry.credential_name == "anthropic"
-    assert entry.models == ("claude-sonnet-4-6", "claude-opus-4-8", "claude-haiku-4-5")
+    assert entry.models == (
+        "claude-haiku-4-5",
+        "claude-haiku-4-5-20251001",
+        "claude-opus-4-1",
+        "claude-opus-4-1-20250805",
+        "claude-opus-4-5",
+        "claude-opus-4-5-20251101",
+        "claude-opus-4-6",
+        "claude-opus-4-7",
+        "claude-sonnet-4-5",
+        "claude-sonnet-4-5-20250929",
+        "claude-sonnet-4-6",
+    )
     assert entry.default_model == "claude-sonnet-4-6"
     assert entry.docs_url == "https://docs.anthropic.com"
     assert entry.context_windows == {
-        "claude-sonnet-4-6": 1_000_000,
-        "claude-opus-4-8": 200_000,
         "claude-haiku-4-5": 200_000,
+        "claude-haiku-4-5-20251001": 200_000,
+        "claude-opus-4-1": 200_000,
+        "claude-opus-4-1-20250805": 200_000,
+        "claude-opus-4-5": 200_000,
+        "claude-opus-4-5-20251101": 200_000,
+        "claude-opus-4-6": 1_000_000,
+        "claude-opus-4-7": 1_000_000,
+        "claude-sonnet-4-5": 200_000,
+        "claude-sonnet-4-5-20250929": 200_000,
+        "claude-sonnet-4-6": 1_000_000,
     }
     assert entry.thinking_levels == ("off", "minimal", "low", "medium", "high", "xhigh")
-    assert entry.thinking_models == ("claude-sonnet-4-6", "claude-opus-4-8")
+    assert entry.thinking_models == ()
     assert entry.thinking_default == "medium"
     assert entry.thinking_parameter == "anthropic.thinking"
 
@@ -121,9 +165,9 @@ default_model = "claude-next-1"
     assert entry.default_model == "claude-next-1"
     assert entry.context_windows is not None
     assert entry.context_windows["claude-next-1"] == 500_000
-    assert entry.context_windows["claude-opus-4-8"] == 200_000
+    assert entry.context_windows["claude-opus-4-7"] == 1_000_000
     # Untouched fields come from the builtin entry.
-    assert entry.base_url == "https://api.anthropic.com/v1"
+    assert entry.base_url == "https://api.anthropic.com"
     assert entry.thinking_parameter == "anthropic.thinking"
 
 

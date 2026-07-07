@@ -5338,7 +5338,7 @@ async def test_run_tui_app_opens_when_provider_login_is_missing(
         startup_notice="Tau 0.2.0 is available",
     )
 
-    assert calls == [f"prepare:{tmp_path}:gpt-5.5:openai", "load:LoginRequiredProvider", "run"]
+    assert calls == [f"prepare:{tmp_path}:gpt-5.4:openai", "load:LoginRequiredProvider", "run"]
 
 
 @pytest.mark.anyio
