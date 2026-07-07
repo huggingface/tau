@@ -1551,6 +1551,10 @@ def _reasoning_effort_from_provider(
     mapped = _metadata_thinking_value(provider, selected_model, normalized)
     if mapped is not None:
         return mapped
+    if provider.name == "huggingface" and normalized == "minimal":
+        # Hugging Face's router currently accepts low/medium/high/xhigh/max/none
+        # for reasoning_effort, but rejects Pi/Tau's "minimal" label.
+        return "low"
     return reasoning_effort_for_level(normalized)
 
 
