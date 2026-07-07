@@ -163,6 +163,12 @@ def _load_skills_from_dir_with_diagnostics(
     if not skills_dir.exists() or not skills_dir.is_dir():
         return [], []
 
+    # In .agents/skills/ directories, bare .md files are ignored — only
+    # SKILL.md files inside subdirectories are valid (Agent Skills standard).
+    # In .tau/skills/ directories, any .md file is treated as a skill
+    # (preserving the current behavior).
+    agents_mode = skills_dir.parent.name == ".agents"
+
     skills: list[Skill] = []
     diagnostics: list[ResourceDiagnostic] = []
     seen: set[str] = set()
@@ -174,7 +180,7 @@ def _load_skills_from_dir_with_diagnostics(
             name = path.name
             if not skill_path.exists():
                 continue
-        elif path.is_file() and path.suffix.lower() == ".md":
+        elif path.is_file() and path.suffix.lower() == ".md" and not agents_mode:
             if path.name.upper() == "AGENTS.MD":
                 continue
             skill_path = path
