@@ -2296,8 +2296,9 @@ class TauTuiApp(App[None]):
         """Add a prompt to the transcript and start the agent worker."""
         self._prompt_run_id += 1
         run_id = self._prompt_run_id
-        self._optimistic_user_messages.append((run_id, text))
-        await self._append_optimistic_user_message(text)
+        if _should_optimistically_render_prompt(text):
+            self._optimistic_user_messages.append((run_id, text))
+            await self._append_optimistic_user_message(text)
         self._prompt_worker = self.run_worker(self._run_prompt(text, run_id), exclusive=True)
 
     async def _append_optimistic_user_message(self, text: str) -> None:
@@ -2430,7 +2431,8 @@ class TauTuiApp(App[None]):
                     self._sync_text_selection_state()
                     self._refresh_chrome()
                     continue
-                self.adapter.apply(event)
+                if not (_is_user_message_end_event(event) and self.screen_stack):
+                    self.adapter.apply(event)
                 self._sync_text_selection_state()
                 if isinstance(event, ErrorEvent) and not event.recoverable:
                     _attach_diagnostic_log_path_to_error(self.state, self.session)
@@ -3427,6 +3429,17 @@ def _render_activity_indicator(theme: TuiTheme, *, frame: int, running: bool) ->
 def _is_terminal_command_prompt(text: str) -> bool:
     """Return whether the prompt is currently in terminal-command mode."""
     return _terminal_command_prefix_span(text) is not None
+
+
+def _should_optimistically_render_prompt(text: str) -> bool:
+    """Return whether submitted text can be safely shown before session expansion."""
+    stripped = text.strip()
+    return bool(stripped) and not stripped.startswith("/")
+
+
+def _is_user_message_end_event(event: AgentEvent) -> bool:
+    """Return whether an agent event closes a user message."""
+    return isinstance(event, MessageEndEvent) and isinstance(event.message, UserMessage)
 
 
 def _terminal_command_prefix_span(text: str) -> tuple[int, int] | None:

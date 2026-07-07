@@ -1584,6 +1584,32 @@ async def test_tui_submit_prompt_optimistically_appends_user_message_without_ful
 
 
 @pytest.mark.anyio
+async def test_tui_submit_prompt_does_not_optimistically_append_slash_commands() -> None:
+    session = FakeSession(
+        events=[
+            AgentStartEvent(),
+            MessageEndEvent(message=UserMessage(content="Expanded prompt")),
+            AgentEndEvent(),
+        ],
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await app._submit_prompt("/review src/app.py")
+        await pilot.pause()
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        user_messages = [item.text for item in app.state.items if item.role == "user"]
+        transcript_lines = [line.text for line in transcript.lines]
+
+    assert session.prompt_texts == ["/review src/app.py"]
+    assert user_messages == ["Expanded prompt"]
+    assert "/review src/app.py" not in transcript_lines
+    assert transcript_lines.count("Expanded prompt") == 1
+
+
+@pytest.mark.anyio
 async def test_tui_app_mounts_sidebar_and_transcript() -> None:
     app = TauTuiApp(FakeSession())
 
