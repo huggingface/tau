@@ -2628,6 +2628,12 @@ class _RenderCallRuntime:
             return f"▸ agent · {arguments.get('description')}"
         return None
 
+    def render_tool_result(self, result, expanded):  # noqa: ANN001
+        if result.name == "agent" and result.details:
+            suffix = " · expanded" if expanded else ""
+            return f"[green]✓[/green] {result.details.get('description')} completed{suffix}"
+        return None
+
 
 @pytest.mark.anyio
 async def test_restored_tool_calls_render_via_render_call() -> None:
@@ -2687,6 +2693,91 @@ async def test_render_call_line_composes_with_live_update_text() -> None:
         widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool")
         assert "▸ agent · Summarize codebase" in widget.selection_text
         assert "agent-1: bash · turn 1" in widget.selection_text
+
+
+@pytest.mark.anyio
+async def test_tool_result_renders_via_render_result() -> None:
+    session = FakeSession()
+    session.extension_runtime = _RenderCallRuntime()
+    app = TauTuiApp(session)  # type: ignore[arg-type]
+
+    async def stream(event: AgentEvent) -> None:
+        app.adapter.apply(event)
+        await app._apply_streaming_transcript_event(event)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await stream(
+            ToolExecutionStartEvent(
+                tool_call=ToolCall(
+                    id="call-1",
+                    name="agent",
+                    arguments={"prompt": "x", "description": "Summarize codebase"},
+                )
+            )
+        )
+        await stream(
+            ToolExecutionEndEvent(
+                result=AgentToolResult(
+                    tool_call_id="call-1",
+                    name="agent",
+                    ok=True,
+                    content="the raw result body",
+                    details={"description": "Summarize codebase"},
+                )
+            )
+        )
+        await pilot.pause()
+
+        widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool")
+        # The tool's render_result markup replaces the generic result block on
+        # the collapsed row; the render_call invocation line stays above it.
+        assert "▸ agent · Summarize codebase" in widget.selection_text
+        assert "✓ Summarize codebase completed" in widget.selection_text
+        assert "the raw result body" not in widget.selection_text
+
+        # Expanding tool results re-renders through the expanded variant.
+        app.action_toggle_tool_results()
+        await pilot.pause()
+        widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool")
+        assert "✓ Summarize codebase completed · expanded" in widget.selection_text
+        assert "the raw result body" not in widget.selection_text
+
+
+@pytest.mark.anyio
+async def test_restored_tool_results_render_via_render_result() -> None:
+    # Real startup order: session messages load into TuiState BEFORE the
+    # extension runtime connects, so the card only appears if tool results
+    # resolve lazily at render time (not baked in at load).
+    session = FakeSession(
+        messages=[
+            AssistantMessage(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="agent",
+                        arguments={"prompt": "x", "description": "Summarize codebase"},
+                    )
+                ],
+            ),
+            ToolResultMessage(
+                tool_call_id="call-1",
+                name="agent",
+                ok=True,
+                content="the raw result body",
+                details={"description": "Summarize codebase"},
+            ),
+        ]
+    )
+    session.extension_runtime = _RenderCallRuntime()
+    app = TauTuiApp(session)  # type: ignore[arg-type]
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool")
+        assert "✓ Summarize codebase completed" in widget.selection_text
+        assert "the raw result body" not in widget.selection_text
 
 
 @pytest.mark.anyio

@@ -55,6 +55,7 @@ from tau_agent.tools import (
     ToolCall,
     ToolCallRenderer,
     ToolExecutor,
+    ToolResultRenderer,
     ToolUpdateCallback,
 )
 from tau_agent.types import JSONObject, JSONPrimitive, JSONValue
@@ -101,6 +102,7 @@ __all__ = [
     "ToolExecutionUpdateEvent",
     "ToolExecutor",
     "ToolResultMessage",
+    "ToolResultRenderer",
     "ToolUpdateCallback",
     "TurnEndEvent",
     "TurnStartEvent",

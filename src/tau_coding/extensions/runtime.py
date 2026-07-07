@@ -388,6 +388,42 @@ class ExtensionRuntime:
             return None
         return line
 
+    def render_tool_result(
+        self,
+        result: AgentToolResult,
+        expanded: bool,
+    ) -> str | None:
+        """Render a tool result via its tool's `render_result`, or ``None``.
+
+        Installed into frontends as the tool-result display resolver, the
+        counterpart of `render_tool_call` for the other end of the row's
+        lifecycle. A tool without a `render_result`, or a renderer that raises
+        or returns a non-string, yields ``None`` so the frontend falls back to
+        its generic result formatting. Failures are diagnosed once per tool
+        name (render paths re-run on every redraw).
+        """
+        registered = self._tools.get(result.name)
+        if registered is None or registered.tool.render_result is None:
+            return None
+        failure_key = f"render_result:{result.name}"
+        try:
+            markup = registered.tool.render_result(result, expanded=expanded)
+        except Exception as exc:  # noqa: BLE001 - a renderer must never crash the frontend
+            if failure_key not in self._renderer_failures_reported:
+                self._renderer_failures_reported.add(failure_key)
+                self._record_runtime_failure(
+                    registered.extension, f"render_result:{result.name}", exc
+                )
+            return None
+        if markup is not None and not isinstance(markup, str):
+            if failure_key not in self._renderer_failures_reported:
+                self._renderer_failures_reported.add(failure_key)
+                self._record_bad_result(
+                    registered.extension, f"render_result:{result.name}", markup
+                )
+            return None
+        return markup
+
     def register_prompt_guideline(self, extension_name: str, guideline: str) -> None:
         """Register a standalone system-prompt guideline line."""
         normalized = guideline.strip()

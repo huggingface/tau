@@ -54,6 +54,24 @@ class ToolCallRenderer(Protocol):
         ...
 
 
+class ToolResultRenderer(Protocol):
+    """Optional display hook: render a tool result for the transcript.
+
+    Mirrors Pi's `ToolDefinition.renderResult`, reduced to Tau's convention
+    that renderers return plain (Rich-markup) strings rather than UI
+    components. A frontend consults it once a result is attached to the tool
+    row; the returned markup replaces the generic result block, while the
+    invocation line (from `render_call`) stays. Running-state display
+    (spinner/timer) remains with the host. ``expanded`` distinguishes the
+    collapsed row from the expanded tool-results view. Returning ``None``
+    falls back to the generic result block.
+    """
+
+    def __call__(self, result: AgentToolResult, *, expanded: bool) -> str | None:
+        """Return display markup for this result, or ``None``."""
+        ...
+
+
 class ToolExecutor(Protocol):
     """Async callable used to execute a tool."""
 
@@ -124,6 +142,7 @@ class AgentTool:
     prompt_snippet: str | None = None
     prompt_guidelines: tuple[str, ...] = ()
     render_call: ToolCallRenderer | None = None
+    render_result: ToolResultRenderer | None = None
     _accepts_on_update: bool = field(init=False, repr=False, compare=False, default=False)
 
     def __post_init__(self) -> None:

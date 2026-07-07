@@ -1687,13 +1687,14 @@ async def _idle_executor(arguments, signal=None):  # noqa: ANN001, ANN202
     return AgentToolResult(tool_call_id="", name="idle", ok=True, content="")
 
 
-def _renderable_tool(name: str, render_call=None) -> AgentTool:  # noqa: ANN001
+def _renderable_tool(name: str, render_call=None, render_result=None) -> AgentTool:  # noqa: ANN001
     return AgentTool(
         name=name,
         description="a tool",
         input_schema={"type": "object"},
         executor=_idle_executor,
         render_call=render_call,
+        render_result=render_result,
     )
 
 
@@ -1745,6 +1746,91 @@ def test_render_tool_call_rejects_non_string_result(tmp_path: Path) -> None:
     api.register_tool(_renderable_tool("agent", lambda arguments: 42))
 
     assert runtime.render_tool_call("agent", {}) is None
+    assert any("render_call:agent" in d.message for d in runtime.diagnostics)
+
+
+def _tool_result(name: str, *, ok: bool = True) -> AgentToolResult:
+    return AgentToolResult(
+        tool_call_id="call-1",
+        name=name,
+        ok=ok,
+        content="raw result",
+        details={"description": "Summarize codebase"},
+    )
+
+
+def test_render_tool_result_uses_tool_renderer(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "subagents")
+    seen: list[tuple[str, bool]] = []
+
+    def render(result, *, expanded) -> str:  # noqa: ANN001
+        seen.append((str(result.details["description"]), expanded))
+        return "✓ completed · 3 tool uses"
+
+    api.register_tool(_renderable_tool("agent", render_result=render))
+
+    markup = runtime.render_tool_result(_tool_result("agent"), False)
+
+    assert markup == "✓ completed · 3 tool uses"
+    assert seen == [("Summarize codebase", False)]
+    assert runtime.render_tool_result(_tool_result("agent"), True) is not None
+    assert seen[-1] == ("Summarize codebase", True)
+
+
+def test_render_tool_result_returns_none_without_renderer(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "subagents")
+    api.register_tool(_renderable_tool("agent"))
+
+    assert runtime.render_tool_result(_tool_result("agent"), False) is None
+    assert runtime.render_tool_result(_tool_result("unregistered"), False) is None
+
+
+def test_render_tool_result_swallows_errors_and_reports_once(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "boom")
+
+    def render(result, *, expanded) -> str:  # noqa: ANN001
+        raise RuntimeError("renderer exploded")
+
+    api.register_tool(_renderable_tool("boom-tool", render_result=render))
+
+    for _ in range(5):
+        assert runtime.render_tool_result(_tool_result("boom-tool"), False) is None
+
+    failures = [d for d in runtime.diagnostics if "render_result:boom-tool" in d.message]
+    assert len(failures) == 1
+
+
+def test_render_tool_result_rejects_non_string_result(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "subagents")
+    api.register_tool(
+        _renderable_tool("agent", render_result=lambda result, *, expanded: 42)
+    )
+
+    assert runtime.render_tool_result(_tool_result("agent"), False) is None
+    assert any("render_result:agent" in d.message for d in runtime.diagnostics)
+
+
+def test_render_tool_result_failures_do_not_shadow_render_call(tmp_path: Path) -> None:
+    # The two renderers share the once-per-name dedup set; a broken
+    # render_result must not swallow the diagnostic for a broken render_call.
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "boom")
+
+    def bad_call(arguments) -> str:  # noqa: ANN001
+        raise RuntimeError("call renderer exploded")
+
+    def bad_result(result, *, expanded) -> str:  # noqa: ANN001
+        raise RuntimeError("result renderer exploded")
+
+    api.register_tool(_renderable_tool("agent", render_call=bad_call, render_result=bad_result))
+
+    assert runtime.render_tool_result(_tool_result("agent"), False) is None
+    assert runtime.render_tool_call("agent", {}) is None
+    assert any("render_result:agent" in d.message for d in runtime.diagnostics)
     assert any("render_call:agent" in d.message for d in runtime.diagnostics)
 
 

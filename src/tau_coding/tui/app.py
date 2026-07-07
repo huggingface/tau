@@ -2988,6 +2988,8 @@ class TauTuiApp(App[None]):
         self.state.custom_renderer = runtime.render_custom_message
         # Let tool calls render through their tool's render_call, if any.
         self.state.tool_call_renderer = runtime.render_tool_call
+        # And tool results through their tool's render_result, if any.
+        self.state.tool_result_renderer = runtime.render_tool_result
 
     def _on_extension_turn_requested(
         self,
@@ -3565,11 +3567,13 @@ class TauTuiApp(App[None]):
             await transcript.finish_assistant_message()
             item = self.state.find_tool_item(event.tool_call_id)
             if item is not None:
+                expanded = self.state.show_tool_results or item.always_show_tool_result
                 await transcript.update_item(
                     item,
                     theme=theme,
-                    show_tool_results=self.state.show_tool_results or item.always_show_tool_result,
+                    show_tool_results=expanded,
                     invocation=self.state.resolve_tool_invocation(item),
+                    result_markup=self.state.resolve_tool_result(item, expanded=expanded),
                 )
             self._refresh_chrome()
             return
@@ -4371,11 +4375,13 @@ class TauTuiApp(App[None]):
             transcript = self.query_one("#transcript", TranscriptView)
         except NoMatches:
             return
+        expanded = self.state.show_tool_results or item.always_show_tool_result
         await transcript.update_item(
             item,
             theme=self.tui_settings.resolved_theme,
-            show_tool_results=self.state.show_tool_results or item.always_show_tool_result,
+            show_tool_results=expanded,
             invocation=self.state.resolve_tool_invocation(item),
+            result_markup=self.state.resolve_tool_result(item, expanded=expanded),
         )
 
     def _apply_activity_indicator(self) -> None:

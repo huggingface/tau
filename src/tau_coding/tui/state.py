@@ -11,7 +11,7 @@ from typing import Literal
 from tau_agent.messages import AgentMessage
 from tau_agent.tools import AgentToolResult, ToolCall
 from tau_agent.types import JSONValue
-from tau_coding.extensions.api import CustomMessageMarkup, ToolCallMarkup
+from tau_coding.extensions.api import CustomMessageMarkup, ToolCallMarkup, ToolResultMarkup
 from tau_coding.skills import Skill, parse_skill_invocation
 
 ChatItemRole = Literal[
@@ -46,6 +46,9 @@ class ChatItem:
     text: str
     tool_call_id: str | None = None
     tool_result_text: str | None = None
+    # The raw result object, kept alongside the formatted text so the tool's
+    # `render_result` (resolved lazily, like `render_call`) can format it.
+    tool_result: AgentToolResult | None = None
     update_text: str | None = None
     tool_name: str | None = None
     tool_arguments: dict[str, JSONValue] | None = None
@@ -70,6 +73,7 @@ class TuiState:
     skills: tuple[Skill, ...] = ()
     custom_renderer: CustomMessageMarkup | None = None
     tool_call_renderer: ToolCallMarkup | None = None
+    tool_result_renderer: ToolResultMarkup | None = None
     tool_spinner: str | None = None
 
     def add_item(
@@ -130,6 +134,18 @@ class TuiState:
                     line = f"{line} ({format_elapsed(elapsed)})"
             return line
         return line
+
+    def resolve_tool_result(self, item: ChatItem, *, expanded: bool) -> str | None:
+        """Render a tool item's result via its tool's `render_result`, or ``None``.
+
+        Resolved lazily at render time (like `resolve_tool_invocation`) so
+        results restored before the extension runtime connects still pick up
+        their tool's `render_result` on the next redraw. ``None`` means "no
+        renderer" and the caller falls back to the generic result block.
+        """
+        if item.role != "tool" or item.tool_result is None or self.tool_result_renderer is None:
+            return None
+        return self.tool_result_renderer(item.tool_result, expanded)
 
     def add_tool_call(self, tool_call: ToolCall) -> None:
         """Append a collapsed tool-call item."""
@@ -228,13 +244,17 @@ class TuiState:
         for item in reversed(self.items):
             if item.role in {"tool", "skill"} and item.tool_call_id == result.tool_call_id:
                 item.tool_result_text = result_text
+                item.tool_result = result
                 item.update_text = None
                 return
-        self.add_item(
-            "tool",
-            format_tool_result_summary(name=result.name, ok=result.ok),
-            tool_call_id=result.tool_call_id,
-            tool_result_text=result_text,
+        self.items.append(
+            ChatItem(
+                role="tool",
+                text=format_tool_result_summary(name=result.name, ok=result.ok),
+                tool_call_id=result.tool_call_id,
+                tool_result_text=result_text,
+                tool_result=result,
+            )
         )
 
     def toggle_tool_results(self) -> bool:

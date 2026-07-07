@@ -92,6 +92,12 @@ CustomMessageMarkup = Callable[[str, str, "Mapping[str, JSONValue] | None", bool
 # resolver, never raised into the frontend.
 ToolCallMarkup = Callable[[str, "Mapping[str, JSONValue]"], "str | None"]
 
+# Host-side resolver installed into render paths: given a tool's result and
+# whether the row is expanded, return the display markup from the tool's
+# `render_result` or ``None`` to fall back to the generic result block. Errors
+# are swallowed by the resolver, never raised into the frontend.
+ToolResultMarkup = Callable[[AgentToolResult, bool], "str | None"]
+
 # --- component seam (experimental) -----------------------------------------
 # Widget-hosting capability that lets an extension mount its own Textual widgets
 # into host-owned slots and a main-area view, and intercept keys pre-dispatch

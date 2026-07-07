@@ -230,15 +230,18 @@ class TranscriptMessageWidget(Horizontal):
         show_tool_results: bool,
         custom_markup: str | None = None,
         invocation: str | None = None,
+        result_markup: str | None = None,
     ) -> None:
         self.item = item
         self._custom_markup = custom_markup if item.role == "custom" else None
         self._invocation = invocation if item.role == "tool" else None
+        self._result_markup = result_markup if item.role == "tool" else None
         self.selection_text = transcript_item_selection_text(
             item,
             show_tool_results=show_tool_results,
             custom_markup=self._custom_markup,
             invocation=self._invocation,
+            result_markup=self._result_markup,
         )
         self._markdown_text = _transcript_item_markdown(
             item,
@@ -282,6 +285,8 @@ class TranscriptMessageWidget(Horizontal):
                     text=self.selection_text,
                     body_style=self._role_style.body,
                     theme=self._theme,
+                    invocation=self._invocation,
+                    result_markup=self._result_markup,
                 ),
                 expand=True,
                 shrink=True,
@@ -312,6 +317,7 @@ class TranscriptMessageWidget(Horizontal):
         *,
         show_tool_results: bool,
         invocation: str | None = None,
+        result_markup: str | None = None,
     ) -> bool:
         """Re-render a plain-body row's text in place; False when unsupported.
 
@@ -321,10 +327,12 @@ class TranscriptMessageWidget(Horizontal):
         if self.item.role == "custom" or not _use_plain_transcript_body(self.item):
             return False
         self._invocation = invocation if self.item.role == "tool" else None
+        self._result_markup = result_markup if self.item.role == "tool" else None
         self.selection_text = transcript_item_selection_text(
             self.item,
             show_tool_results=show_tool_results,
             invocation=self._invocation,
+            result_markup=self._result_markup,
         )
         self._markdown_text = _transcript_item_markdown(
             self.item,
@@ -341,6 +349,8 @@ class TranscriptMessageWidget(Horizontal):
                 text=self.selection_text,
                 body_style=self._role_style.body,
                 theme=self._theme,
+                invocation=self._invocation,
+                result_markup=self._result_markup,
             )
         )
         return True
@@ -669,6 +679,10 @@ class TranscriptView(VerticalScroll):
                     show_tool_results=state.show_tool_results or item.always_show_tool_result,
                     custom_markup=custom_markup,
                     invocation=state.resolve_tool_invocation(item),
+                    result_markup=state.resolve_tool_result(
+                        item,
+                        expanded=state.show_tool_results or item.always_show_tool_result,
+                    ),
                 )
             )
         if state.assistant_buffer:
@@ -691,6 +705,7 @@ class TranscriptView(VerticalScroll):
         show_tool_results: bool = False,
         scroll_end: bool = False,
         invocation: str | None = None,
+        result_markup: str | None = None,
     ) -> TranscriptMessageWidget | StreamingTranscriptMessageWidget:
         """Append one transcript item without rebuilding previous blocks."""
         should_follow = self._should_follow_output if not scroll_end else True
@@ -702,6 +717,7 @@ class TranscriptView(VerticalScroll):
             theme=theme,
             show_tool_results=show_tool_results,
             invocation=invocation,
+            result_markup=result_markup,
         )
         await self.mount(widget)
         self._active_assistant_widget = None
@@ -720,6 +736,7 @@ class TranscriptView(VerticalScroll):
         theme: TuiTheme = TAU_DARK_THEME,
         show_tool_results: bool = False,
         invocation: str | None = None,
+        result_markup: str | None = None,
     ) -> bool:
         """Re-render one already-mounted transcript item in place."""
         for child in self.children:
@@ -730,6 +747,7 @@ class TranscriptView(VerticalScroll):
                 if child.refresh_invocation(
                     show_tool_results=show_tool_results,
                     invocation=invocation,
+                    result_markup=result_markup,
                 ):
                     return True
                 replacement = _transcript_widget(
@@ -737,6 +755,7 @@ class TranscriptView(VerticalScroll):
                     theme=theme,
                     show_tool_results=show_tool_results,
                     invocation=invocation,
+                    result_markup=result_markup,
                 )
                 await self.mount(replacement, after=child)
                 await child.remove()
@@ -871,6 +890,7 @@ def _transcript_widget(
     theme: TuiTheme,
     show_tool_results: bool,
     invocation: str | None = None,
+    result_markup: str | None = None,
 ) -> TranscriptMessageWidget | StreamingTranscriptMessageWidget:
     if item.role in {"assistant", "thinking"}:
         return StreamingTranscriptMessageWidget(item, theme=theme)
@@ -879,6 +899,7 @@ def _transcript_widget(
         theme=theme,
         show_tool_results=show_tool_results,
         invocation=invocation,
+        result_markup=result_markup,
     )
 
 
@@ -888,10 +909,16 @@ def transcript_item_selection_text(
     show_tool_results: bool = False,
     custom_markup: str | None = None,
     invocation: str | None = None,
+    result_markup: str | None = None,
 ) -> str:
     """Return the plain text represented by a selectable transcript item."""
     if item.role == "custom":
         return _custom_selection_text(custom_markup, item.text)
+    if item.role == "tool" and result_markup is not None:
+        # A tool-rendered result replaces the generic block: invocation line
+        # plus the markup-stripped card.
+        invocation_line = invocation if invocation else item.text
+        return f"{invocation_line}\n{_custom_markup_to_text(result_markup).plain}"
     return _visible_chat_text(item, show_tool_results=show_tool_results, invocation=invocation)
 
 
@@ -944,14 +971,29 @@ def _transcript_plain_body_text(
     text: str,
     body_style: str,
     theme: TuiTheme,
+    invocation: str | None = None,
+    result_markup: str | None = None,
 ) -> RenderableType:
     """Return styled transcript text for selectable plain rows."""
     if item.role != "tool":
         return Text(text, style=body_style, overflow="fold", no_wrap=False)
 
-    invocation, separator, result_text = text.partition("\n\n")
+    if result_markup is not None:
+        # The tool's `render_result` markup replaces the generic result block;
+        # the invocation line keeps its usual status-accented rendering.
+        invocation_text = _render_transcript_tool_invocation(
+            invocation if invocation else item.text,
+            body_style=body_style,
+            accent_style=_tool_accent_style(item, theme=theme),
+        )
+        markup_text = _custom_markup_to_text(result_markup)
+        markup_text.overflow = "fold"
+        markup_text.no_wrap = False
+        return Group(invocation_text, markup_text)
+
+    invocation_line, separator, result_text = text.partition("\n\n")
     invocation_text = _render_transcript_tool_invocation(
-        invocation,
+        invocation_line,
         body_style=body_style,
         accent_style=_tool_accent_style(item, theme=theme),
     )
