@@ -197,7 +197,15 @@ class ComponentBridge(Protocol):
         ...
 
     def register_key_interceptor(self, handler: KeyInterceptor) -> Callable[[], None]:
-        """Register a pre-editor key hook; return an unsubscribe callable."""
+        """Register a pre-dispatch key hook; return an unsubscribe callable.
+
+        Ports Pi's ``onTerminalInput``. The handler sees a key before the
+        host's app-level priority bindings and before the focused widget, so it
+        can own navigation keys the host otherwise reserves. It fires for EVERY
+        main-screen key regardless of focus (never while a modal screen is on
+        top), so the handler MUST self-gate and return ``True`` only for keys it
+        consumes.
+        """
         ...
 
 
@@ -383,7 +391,12 @@ class UiBridge(Protocol):
         ...
 
     def register_key_interceptor(self, handler: KeyInterceptor) -> Callable[[], None]:
-        """Register a pre-editor key hook; return an unsubscribe callable."""
+        """Register a pre-dispatch key hook; return an unsubscribe callable.
+
+        See the base bridge protocol: the handler is consulted before the
+        host's priority bindings and the focused widget, fires for every
+        main-screen key regardless of focus, and must self-gate.
+        """
         ...
 
 

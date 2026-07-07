@@ -272,7 +272,18 @@ class _TuiExtensionUiBridge:
     def register_key_interceptor(
         self, handler: KeyInterceptor
     ) -> Callable[[], None]:
-        """Register a pre-editor key hook; return an unsubscribe callable."""
+        """Register a pre-dispatch key hook; return an unsubscribe callable.
+
+        Ports Pi's ``onTerminalInput``. The handler is consulted in
+        ``TauTuiApp.on_event`` before Textual's app-level priority bindings and
+        before the focused widget receives the key, so it can own navigation
+        keys (``up``/``down``/``tab``/…) that tau otherwise binds with
+        ``priority=True``. Because it fires for EVERY main-screen key regardless
+        of which widget holds focus, the handler MUST self-gate (e.g. on the
+        prompt text and its own state) and return ``True`` only for keys it
+        actually consumes. It is never consulted while a modal screen (dialog,
+        picker, command palette) is on top.
+        """
         return self._app._register_extension_key_interceptor(handler)
 
     async def _run_dialog(
@@ -597,17 +608,12 @@ class PromptInput(TextArea):
         return text
 
     async def on_key(self, event: Key) -> None:
-        """Route completion and submission keys before default input handling."""
-        # Pre-editor extension key interceptors (ports Pi's onTerminalInput):
-        # they see the key before any built-in handling here or app-level
-        # bindings, so an interceptor that consumes `escape` preempts
-        # action_cancel without any extension branch in core. The host guards
-        # each call; a raising interceptor is treated as "not consumed". When no
-        # extension registers one this is a no-op.
-        if cast("TauTuiApp", self.app)._run_extension_key_interceptors(event, self.text):
-            event.stop()
-            event.prevent_default()
-            return
+        """Route completion and submission keys before default input handling.
+
+        Extension key interceptors are consulted upstream in
+        :meth:`TauTuiApp.on_event` (pre-dispatch, before app-level priority
+        bindings), so there is no interceptor splice here.
+        """
         keybindings = self.tui_keybindings
         if event.key == keybindings.queue_follow_up:
             event.stop()
@@ -2621,6 +2627,35 @@ class TauTuiApp(App[None]):
         if self.initial_prompt and self.initial_prompt.strip():
             await self._submit_prompt(self.initial_prompt.strip())
 
+    async def on_event(self, event: events.Event) -> None:
+        """Consult extension key interceptors before Textual's dispatch.
+
+        Ports Pi's ``onTerminalInput``: a registered interceptor sees a key at
+        the earliest point in key processing — before tau's app-level priority
+        bindings (``down``/``up``/``tab``/``alt+enter`` in ``_app_bindings``)
+        and before the focused widget. Textual's ``App.on_event`` runs
+        ``_check_bindings(key, priority=True)`` ahead of forwarding a key to the
+        focused widget, so a focused extension widget would otherwise never
+        receive those keys; this pre-dispatch hook is the only place an
+        extension can own them.
+
+        Interceptors are consulted only on the main screen (never while a modal
+        dialog/picker sits on the screen stack) and only when at least one is
+        registered, so the default path is untouched. Interceptors therefore
+        see EVERY main-screen key regardless of focus and must self-gate.
+        """
+        if (
+            isinstance(event, events.Key)
+            and not event.is_forwarded
+            and self._extension_key_interceptors
+            and len(self.screen_stack) <= 1
+            and self._run_extension_key_interceptors(event, self._current_prompt_text())
+        ):
+            event.stop()
+            event.prevent_default()
+            return
+        await super().on_event(event)
+
     def on_unmount(self) -> None:
         """Stop activity animations and drop extension widgets on teardown."""
         if self._activity_timer is not None:
@@ -2973,7 +3008,7 @@ class TauTuiApp(App[None]):
     def _register_extension_key_interceptor(
         self, handler: KeyInterceptor
     ) -> Callable[[], None]:
-        """Register a pre-editor key interceptor; return an unsubscribe fn."""
+        """Register a pre-dispatch key interceptor; return an unsubscribe fn."""
         self._extension_key_interceptors.append(handler)
 
         def unsubscribe() -> None:

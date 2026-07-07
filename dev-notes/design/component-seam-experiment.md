@@ -361,6 +361,34 @@ re-invokes slot factories (drop + remount, or call an optional
 > app-routed click today) — add that to §4a so click-to-switch does not silently
 > regress.
 
+> **Implementation note (post-experiment bug fix):** the `PromptInput.on_key`
+> splice point above turned out to be **too late and too narrow**. tau binds
+> `down`/`up`/`tab`/`alt+enter` on the *App* with `priority=True`
+> (`_app_bindings`), and Textual's `App.on_event` runs
+> `_check_bindings(key, priority=True)` **before** forwarding a `Key` to the
+> focused widget. So `PromptInput.on_key` never even sees those nav keys —
+> completion_next/previous/accept fire first. A widget-owned nav model (the
+> strip taking focus and handling its own `on_key`) is therefore impossible
+> under tau's app-priority bindings.
+>
+> The fix ports pi's `onTerminalInput` as a *true* pre-dispatch hook: the
+> interceptor consult moved to an override of `async def on_event` on
+> `TauTuiApp`, which for a non-forwarded `events.Key` consults
+> `_run_extension_key_interceptors(event, prompt_text)` **before** calling
+> `super().on_event` (hence before the priority bindings and before the focused
+> widget). Consequences, all deliberate:
+> - Interceptors now fire for **every** key regardless of which widget has
+>   focus. They are consulted **only** on the main screen (`len(screen_stack)
+>   <= 1`) — a modal dialog/picker/command-palette on top is never intercepted,
+>   so overlays keep owning their keys. Interceptors must self-gate (on prompt
+>   text and their own state); documented on `register_key_interceptor`.
+> - The Esc-precedence story is unchanged (an interceptor that consumes
+>   `escape` still preempts `action_cancel`), just relocated upstream.
+> - The extension's strip no longer takes Textual focus at all: the prompt
+>   keeps focus throughout and the controller's interceptor owns the whole nav
+>   state machine (pi's fleet-list model), now viable because the interceptor is
+>   pre-dispatch.
+
 ### 2f. Error-isolation guard points
 
 A throwing extension component must never crash the TUI. Guards, mirroring

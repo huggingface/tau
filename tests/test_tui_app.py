@@ -6423,6 +6423,68 @@ async def test_component_key_interceptor_failure_degrades_to_typing() -> None:
 
 
 @pytest.mark.anyio
+async def test_component_key_interceptor_preempts_priority_binding() -> None:
+    """A key bound with priority=True on the app (down) is still interceptable.
+
+    down/up/tab/alt+enter are app-level priority bindings, which Textual checks
+    before forwarding a key to the focused widget. The interceptor now runs in
+    TauTuiApp.on_event, ahead of that priority check, so it can own those keys.
+    """
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+        completion_next: list[int] = []
+        app.action_completion_next = lambda: completion_next.append(1)  # type: ignore[method-assign]
+
+        seen: list[str] = []
+
+        def interceptor(event, text: str) -> bool:  # noqa: ANN001
+            seen.append(event.key)
+            return event.key == "down"
+
+        bridge.register_key_interceptor(interceptor)
+        app.query_one("#prompt", PromptInput).focus()
+        await pilot.pause()
+
+        await pilot.press("down")
+        await pilot.pause()
+
+        assert "down" in seen  # interceptor saw the priority-bound key
+        assert completion_next == []  # completion_next preempted, not run
+
+
+@pytest.mark.anyio
+async def test_component_key_interceptor_skipped_while_modal_open() -> None:
+    """Interceptors see main-screen keys only; a modal on top is never intercepted."""
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+        seen: list[str] = []
+
+        # Consume everything — so if this fired while the modal is up, the modal
+        # could never be dismissed.
+        bridge.register_key_interceptor(lambda event, text: (seen.append(event.key), True)[1])
+
+        confirm_task = asyncio.ensure_future(bridge.confirm("Ship?", "to prod"))
+        await pilot.pause()
+        assert isinstance(app.screen, ExtensionConfirmScreen)
+
+        # A key while the modal is on top must NOT reach the interceptor.
+        await pilot.press("j")
+        await pilot.pause()
+        assert "j" not in seen
+
+        # And the modal still handles its own keys (escape dismisses -> False).
+        await pilot.press("escape")
+        assert await confirm_task is False
+        assert "escape" not in seen
+
+
+@pytest.mark.anyio
 async def test_component_factory_crash_is_isolated() -> None:
     app = TauTuiApp(FakeSession())
 
