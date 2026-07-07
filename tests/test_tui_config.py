@@ -164,3 +164,22 @@ def test_get_tui_theme_returns_builtin_theme() -> None:
     assert get_tui_theme("high-contrast").prompt_border == "#00ff66"
     assert get_tui_theme("tau-light").prompt_border == "#2563eb"
     assert get_tui_theme("tau-dark").screen_background == "#000000"
+
+
+def test_tui_sidebar_position_defaults_to_left() -> None:
+    assert TuiSettings().sidebar_position == "left"
+
+
+def test_tui_sidebar_position_roundtrips() -> None:
+    for value in ("left", "right", "off"):
+        settings = tui_settings_from_json({"sidebar_position": value})
+        assert settings.sidebar_position == value
+        assert settings.to_json()["sidebar_position"] == value
+
+
+def test_tui_sidebar_position_rejects_invalid() -> None:
+    with pytest.raises(TuiConfigError, match="sidebar_position"):
+        tui_settings_from_json({"sidebar_position": "top"})
+
+    with pytest.raises(TuiConfigError, match="sidebar_position"):
+        tui_settings_from_json({"sidebar_position": 123})

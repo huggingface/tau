@@ -86,6 +86,10 @@ On wide-enough terminals Tau shows a sidebar with the active provider/model,
 thinking mode, loaded tools, skills, prompt templates, and context files such as
 `AGENTS.md`. It hides automatically when the terminal is small.
 
+The sidebar can be moved to the **right** or turned **off** entirely by setting
+`sidebar_position` in `~/.tau/tui.json` — see
+[Configuration]({{< relref "../reference/configuration.md#tui-settings" >}}).
+
 ## Next
 
 - [Sessions]({{< relref "./sessions.md" >}}) — resume, branch, rename, export.

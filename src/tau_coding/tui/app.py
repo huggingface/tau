@@ -1649,6 +1649,12 @@ class TauTuiApp(App[None]):
         padding-left: 1;
     }
 
+    TauTuiApp.-sidebar-right #sidebar {
+        dock: right;
+        border-right: none;
+        border-left: tall $tau-border;
+    }
+
     #main-pane {
         width: 1fr;
         padding: 1 1 0 1;
@@ -2054,6 +2060,7 @@ class TauTuiApp(App[None]):
         self._sync_prompt_shell_mode(prompt.text)
         prompt.focus()
         self._update_responsive_layout(self.size.width, self.size.height)
+        self._apply_sidebar_position()
         self._refresh()
         self._sync_text_selection_state()
         self._refresh_completions()
@@ -3343,8 +3350,17 @@ class TauTuiApp(App[None]):
         )
 
     def _update_responsive_layout(self, width: int, height: int) -> None:
+        if self.tui_settings.sidebar_position == "off":
+            return
         show_sidebar = width >= SIDEBAR_MIN_WIDTH and height >= SIDEBAR_MIN_HEIGHT
         self.set_class(not show_sidebar, "-hide-sidebar")
+
+    def _apply_sidebar_position(self) -> None:
+        """Apply CSS classes for the configured sidebar position."""
+        pos = self.tui_settings.sidebar_position
+        self.set_class(pos == "right", "-sidebar-right")
+        if pos == "off":
+            self.add_class("-hide-sidebar")
 
     def _build_completion_state(self, text: str) -> CompletionState:
         registry = _session_command_registry(self.session)

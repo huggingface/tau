@@ -1878,6 +1878,50 @@ async def test_tui_sidebar_visibility_updates_on_resize() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_sidebar_shows_on_right_when_configured() -> None:
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(sidebar_position="right"))
+
+    async with app.run_test(size=(120, 30)):
+        sidebar = app.query_one("#sidebar")
+        assert sidebar.display is True
+        assert app.has_class("-sidebar-right")
+        assert not app.has_class("-sidebar-off")
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_is_hidden_when_off() -> None:
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(sidebar_position="off"))
+
+    async with app.run_test(size=(120, 30)):
+        sidebar = app.query_one("#sidebar")
+        assert sidebar.display is False
+        assert app.has_class("-hide-sidebar")
+        assert not app.has_class("-sidebar-right")
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_right_still_hides_on_small_windows() -> None:
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(sidebar_position="right"))
+
+    async with app.run_test(size=(80, 30)):
+        sidebar = app.query_one("#sidebar")
+        assert sidebar.display is False
+        assert app.has_class("-hide-sidebar")
+        assert app.has_class("-sidebar-right")
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_off_ignores_responsive_toggle() -> None:
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(sidebar_position="off"))
+
+    async with app.run_test(size=(120, 30)):
+        sidebar = app.query_one("#sidebar")
+        assert sidebar.display is False
+        assert app.has_class("-hide-sidebar")
+        assert not app.has_class("-sidebar-right")
+
+
+@pytest.mark.anyio
 async def test_tui_transcript_reflows_when_terminal_resizes() -> None:
     app = TauTuiApp(
         FakeSession(
