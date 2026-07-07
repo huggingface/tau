@@ -2407,6 +2407,7 @@ class TauTuiApp(App[None]):
             keybindings=self.tui_settings.keybindings,
             theme=theme,
             auto_copy_selection=self.tui_settings.auto_copy_selection,
+            sidebar_position=self.tui_settings.sidebar_position,
         )
         save_tui_settings(self.tui_settings)
         self.refresh_css(animate=False)
