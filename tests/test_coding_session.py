@@ -1613,7 +1613,7 @@ async def test_session_touches_session_manager_after_persisting_messages(tmp_pat
             [
                 ProviderResponseStartEvent(model="fake"),
                 ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
-            ]
+            ],
         ]
     )
     config = CodingSessionConfig(
@@ -3137,7 +3137,7 @@ async def test_session_new_session_is_indexed_after_first_message(
                 [
                     ProviderResponseStartEvent(model="gpt-5"),
                     ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
-                ]
+                ],
             ]
         )
 

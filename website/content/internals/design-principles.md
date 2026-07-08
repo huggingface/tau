@@ -38,6 +38,16 @@ you can resume and branch; compaction changes the *active* context without
 rewriting the record. The format is plain enough to read by hand.
 → [Sessions]({{< relref "../guides/sessions.md" >}})
 
+## Small product divergences are explicit
+
+Tau mostly follows Pi's minimalist separation of agent brain, coding session,
+and frontend. A few user-facing conveniences intentionally diverge from that
+baseline. One example is automatic session naming: Tau asks the active
+provider/model for a short title after the first user message is persisted, then
+stores that title as session metadata. This remains in `tau_coding`, not the
+portable `tau_agent` harness, because it is application workflow rather than
+agent-loop behavior.
+
 ## Documentation follows implementation
 
 Tau was built in small, documented phases so a reader can trace how the system
