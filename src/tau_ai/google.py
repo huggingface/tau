@@ -350,8 +350,24 @@ def _tool_to_google(tool: AgentTool) -> dict[str, JSONValue]:
     return {
         "name": tool.name,
         "description": tool.description,
-        "parameters": dict(tool.input_schema),
+        "parameters": _sanitize_google_schema(dict(tool.input_schema)),
     }
+
+
+_UNSUPPORTED_GOOGLE_SCHEMA_KEYS = frozenset({"additionalProperties", "$schema"})
+
+
+def _sanitize_google_schema(value: JSONValue) -> JSONValue:
+    """Strip JSON Schema keywords Gemini's OpenAPI-subset parser rejects."""
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_google_schema(subvalue)
+            for key, subvalue in value.items()
+            if key not in _UNSUPPORTED_GOOGLE_SCHEMA_KEYS
+        }
+    if isinstance(value, list):
+        return [_sanitize_google_schema(item) for item in value]
+    return value
 
 
 def _parse_sse_line(line: str) -> str | None:

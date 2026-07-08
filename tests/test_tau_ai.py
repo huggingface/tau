@@ -383,6 +383,66 @@ async def test_google_provider_round_trips_thought_signature() -> None:
 
 
 @pytest.mark.anyio
+async def test_google_provider_strips_unsupported_schema_keywords_from_tools() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},'
+                '"finishReason":"STOP"}]}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async def executor(_arguments: dict[str, JSONValue]) -> AgentToolResult:
+        return AgentToolResult(tool_call_id="", ok=True, content="")
+
+    tool = AgentTool(
+        name="bash",
+        description="Run a shell command.",
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "command": {"type": "string"},
+                "env": {
+                    "type": "array",
+                    "items": {"type": "string", "additionalProperties": False},
+                },
+            },
+        },
+        executor=executor,
+    )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = GoogleGenerativeAIProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://generativelanguage.googleapis.com/v1beta",
+            ),
+            client=client,
+        )
+
+        await _collect(
+            provider.stream_response(
+                model="gemini-2.5-flash",
+                system="",
+                messages=[UserMessage(content="List files")],
+                tools=[tool],
+            )
+        )
+
+    payload = loads(requests[0].content)
+    parameters = payload["tools"][0]["functionDeclarations"][0]["parameters"]
+    assert "additionalProperties" not in parameters
+    assert "additionalProperties" not in parameters["properties"]["env"]["items"]
+    assert parameters["properties"]["command"] == {"type": "string"}
+
+
+@pytest.mark.anyio
 async def test_openai_compatible_provider_streams_reasoning_content() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
