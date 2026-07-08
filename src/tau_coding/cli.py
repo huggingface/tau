@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import sys
 from os import environ
 from pathlib import Path
 from typing import Annotated
@@ -57,6 +59,30 @@ from tau_coding.update_check import (
     startup_release_notes_notice,
     startup_update_notice,
 )
+
+
+def _is_utf8_encoding(encoding: str | None) -> bool:
+    """Return whether a stream encoding name represents UTF-8."""
+    if encoding is None:
+        return False
+    return encoding.lower().replace("-", "").replace("_", "") == "utf8"
+
+
+def _force_utf8_streams() -> None:
+    """Reconfigure stdout/stderr to UTF-8 when they are not already UTF-8.
+
+    Windows consoles default these streams to the system codepage (e.g.
+    cp1252), which raises UnicodeEncodeError on model output containing
+    characters outside that codepage.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if _is_utf8_encoding(getattr(stream, "encoding", None)):
+            continue
+        with contextlib.suppress(AttributeError, ValueError):
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+
+
+_force_utf8_streams()
 
 app = typer.Typer(
     name="tau",
