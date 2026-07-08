@@ -2563,6 +2563,7 @@ class TauTuiApp(App[None]):
         if isinstance(event, MessageEndEvent):
             if event.message.role == "user":
                 await self._append_confirmed_user_message(event.message)
+                self._sync_header_title()
                 return
             if event.message.role == "assistant":
                 await transcript.finish_assistant_message(event.message.content)
