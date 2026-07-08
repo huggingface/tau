@@ -1094,6 +1094,31 @@ async def test_load_restores_active_leaf_branch(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
+async def test_session_tree_choices_handles_long_sessions_without_recursion_error(
+    tmp_path: Path,
+) -> None:
+    # Regression test for issue #277: /tree raised RecursionError once the
+    # entry chain grew past Python's recursion limit.
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    parent_id: str | None = None
+    for index in range(1500):
+        entry = MessageEntry(
+            id=f"entry-{index}",
+            parent_id=parent_id,
+            message=UserMessage(content=f"Message {index}"),
+        )
+        await storage.append(entry)
+        parent_id = entry.id
+    session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
+
+    choices = await session.tree_choices()
+
+    assert len(choices) == 1500
+    assert choices[0].label == "user: Message 0"
+    assert choices[-1].label == "user: Message 1499"
+
+
+@pytest.mark.anyio
 async def test_session_tree_choices_indent_only_diverged_branches(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     root = MessageEntry(id="root", message=UserMessage(content="Root"))

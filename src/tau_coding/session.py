@@ -1828,15 +1828,23 @@ def _ordered_tree_entries(entries: list[SessionEntry]) -> tuple[SessionEntry, ..
 
     ordered: list[SessionEntry] = []
     seen: set[str] = set()
+    visited_parents: set[str | None] = set()
 
     def append_descendants(parent_id: str | None) -> None:
-        children = children_by_parent.get(parent_id, [])
-        for child in children:
-            if child.id not in seen:
-                ordered.append(child)
-                seen.add(child.id)
-        for child in children:
-            append_descendants(child.id)
+        # Iterative traversal: recursion depth would equal the entry-chain
+        # length and overflow on long sessions (issue #277).
+        stack: list[str | None] = [parent_id]
+        while stack:
+            current = stack.pop()
+            if current in visited_parents:
+                continue
+            visited_parents.add(current)
+            children = children_by_parent.get(current, [])
+            for child in children:
+                if child.id not in seen:
+                    ordered.append(child)
+                    seen.add(child.id)
+            stack.extend(child.id for child in reversed(children))
 
     append_descendants(None)
     for entry in entries:
