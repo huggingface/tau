@@ -58,15 +58,19 @@ def _panel_text(value: str) -> str:
     return _collapse_ws(no_ansi.translate(borders))
 
 
-def test_force_utf8_streams_reconfigures_encodable_streams() -> None:
+def test_force_utf8_streams_reconfigures_non_utf8_streams() -> None:
     calls: list[tuple[str, str]] = []
 
     class FakeStream:
+        encoding = "cp1252"
+
         def reconfigure(self, *, encoding: str, errors: str) -> None:
             calls.append((encoding, errors))
 
     class UnreconfigurableStream:
         """Mimics streams (e.g. some test/CI capture streams) without reconfigure()."""
+
+        encoding = "cp437"
 
     fake_stdout = FakeStream()
     fake_stderr = UnreconfigurableStream()
@@ -77,6 +81,26 @@ def test_force_utf8_streams_reconfigures_encodable_streams() -> None:
         cli._force_utf8_streams()
 
     assert calls == [("utf-8", "replace")]
+
+
+def test_force_utf8_streams_leaves_utf8_streams_alone() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeStream:
+        encoding = "UTF_8"
+
+        def reconfigure(self, *, encoding: str, errors: str) -> None:
+            calls.append((encoding, errors))
+
+    fake_stdout = FakeStream()
+    fake_stderr = FakeStream()
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(cli.sys, "stdout", fake_stdout)
+        mp.setattr(cli.sys, "stderr", fake_stderr)
+        cli._force_utf8_streams()
+
+    assert calls == []
 
 
 def test_version_command() -> None:
