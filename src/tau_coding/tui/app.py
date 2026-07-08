@@ -216,8 +216,8 @@ class PromptInput(TextArea):
         self.tui_keybindings = tui_keybindings or TuiKeybindings()
         self._base_bindings = self._bindings.copy()
         self._footer_mode: Literal["normal", "completion", "running"] = "normal"
-        self._pending_paste_content: str | None = None
-        self._pending_paste_placeholder: str | None = None
+        self._pending_pastes: list[tuple[str, str]] = []
+        self._paste_placeholder_counter = 0
         self._apply_prompt_bindings()
 
     def set_footer_mode(self, mode: Literal["normal", "completion", "running"]) -> None:
@@ -362,12 +362,12 @@ class PromptInput(TextArea):
 
     def _show_large_paste_placeholder(self, content: str) -> None:
         """Store large pasted text and render a compact placeholder."""
-        placeholder = self._large_paste_placeholder(content)
-        self._pending_paste_content = content
-        self._pending_paste_placeholder = placeholder
+        self._paste_placeholder_counter += 1
+        placeholder = self._large_paste_placeholder(content, self._paste_placeholder_counter)
+        self._pending_pastes.append((placeholder, content))
         self.insert(placeholder)
 
-    def _large_paste_placeholder(self, content: str) -> str:
+    def _large_paste_placeholder(self, content: str, paste_number: int) -> str:
         """Build the display text for a large paste."""
         char_count = len(content)
         line_count = content.count("\n") + 1
@@ -377,27 +377,27 @@ class PromptInput(TextArea):
             parts.append(f"{line_count} lines")
         if kb >= 1:
             parts.append(f"{kb:.1f} KB")
-        return f"[Pasted content: {', '.join(parts)}]"
+        return f"[Pasted content #{paste_number}: {', '.join(parts)}]"
 
     def _clear_pending_paste(self) -> None:
         """Forget any stored large paste content."""
-        self._pending_paste_content = None
-        self._pending_paste_placeholder = None
+        self._pending_pastes.clear()
 
     def sync_pending_paste(self) -> None:
-        """Invalidate stored paste content when the placeholder is edited away."""
-        placeholder = self._pending_paste_placeholder
-        if placeholder is not None and placeholder not in self.text:
-            self._clear_pending_paste()
+        """Invalidate stored paste content when its placeholder is edited away."""
+        self._pending_pastes = [
+            (placeholder, content)
+            for placeholder, content in self._pending_pastes
+            if placeholder in self.text
+        ]
 
     def text_for_submission(self) -> str:
-        """Return the prompt text, expanding an intact large-paste placeholder."""
+        """Return the prompt text, expanding intact large-paste placeholders."""
         self.sync_pending_paste()
-        placeholder = self._pending_paste_placeholder
-        content = self._pending_paste_content
-        if placeholder is None or content is None:
-            return self.text
-        return self.text.replace(placeholder, content, 1)
+        text = self.text
+        for placeholder, content in self._pending_pastes:
+            text = text.replace(placeholder, content, 1)
+        return text
 
     async def on_key(self, event: Key) -> None:
         """Route completion and submission keys before default input handling."""

@@ -1617,7 +1617,7 @@ def test_prompt_input_shows_placeholder_for_large_paste() -> None:
 
     prompt.on_paste(events.Paste(pasted))
 
-    assert prompt.text.startswith("[Pasted content:")
+    assert prompt.text.startswith("[Pasted content #1:")
     assert f"{len(pasted):,} characters" in prompt.text
     assert "501 lines" in prompt.text
     assert prompt.text_for_submission() == pasted
@@ -1655,6 +1655,34 @@ def test_prompt_input_does_not_submit_deleted_large_paste() -> None:
     assert prompt.text_for_submission() == "replacement prompt"
 
 
+def test_prompt_input_expands_multiple_large_pastes() -> None:
+    prompt = PromptInput()
+    first = "a" * (PASTE_DISPLAY_THRESHOLD + 1)
+    second = "b" * (PASTE_DISPLAY_THRESHOLD + 2)
+
+    prompt.on_paste(events.Paste(first))
+    prompt.insert("\nbetween\n")
+    prompt.on_paste(events.Paste(second))
+
+    assert "[Pasted content #1:" in prompt.text
+    assert "[Pasted content #2:" in prompt.text
+    assert prompt.text_for_submission() == f"{first}\nbetween\n{second}"
+
+
+def test_prompt_input_drops_only_deleted_large_paste_placeholder() -> None:
+    prompt = PromptInput()
+    first = "a" * (PASTE_DISPLAY_THRESHOLD + 1)
+    second = "b" * (PASTE_DISPLAY_THRESHOLD + 2)
+
+    prompt.on_paste(events.Paste(first))
+    first_placeholder = prompt.text
+    prompt.insert("\n")
+    prompt.on_paste(events.Paste(second))
+    prompt.text = prompt.text.replace(first_placeholder, "removed", 1)
+
+    assert prompt.text_for_submission() == f"removed\n{second}"
+
+
 @pytest.mark.anyio
 async def test_tui_submit_large_paste_sends_full_content() -> None:
     session = FakeSession()
@@ -1684,6 +1712,24 @@ async def test_tui_submit_replaced_large_paste_does_not_send_stale_content() -> 
         await pilot.pause()
 
     assert session.prompt_texts == ["replacement prompt"]
+
+
+@pytest.mark.anyio
+async def test_tui_submit_multiple_large_pastes_sends_all_full_content() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+    first = "a" * (PASTE_DISPLAY_THRESHOLD + 1)
+    second = "b" * (PASTE_DISPLAY_THRESHOLD + 2)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.on_paste(events.Paste(first))
+        prompt.insert("\nthen\n")
+        prompt.on_paste(events.Paste(second))
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert session.prompt_texts == [f"{first}\nthen\n{second}"]
 
 
 @pytest.mark.anyio
