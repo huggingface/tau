@@ -2106,7 +2106,6 @@ class TauTuiApp(App[None]):
         if event.text_area.id != "prompt":
             return
         self._sync_prompt_shell_mode(event.text_area.text)
-        self._completion_visible_line_budget = None
         self._completion_state = self._build_completion_state(event.text_area.text)
         self._refresh_completions()
 

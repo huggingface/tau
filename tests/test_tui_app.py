@@ -3139,7 +3139,10 @@ async def test_tui_app_uses_terminal_space_for_initial_completion_window() -> No
 
 
 @pytest.mark.anyio
-async def test_tui_app_keeps_completion_window_height_stable_while_navigating() -> None:
+@pytest.mark.parametrize("edit_key", ["down", "r"])
+async def test_tui_app_keeps_completion_window_height_stable_after_edit(
+    edit_key: str,
+) -> None:
     session = FakeSession()
     session.prompt_templates = tuple(
         PromptTemplate(
@@ -3155,13 +3158,11 @@ async def test_tui_app_keeps_completion_window_height_stable_while_navigating() 
         prompt = app.query_one("#prompt")
         prompt.focus()
         prompt.value = "/"
-        app._completion_state = app._build_completion_state(prompt.value)
-        app._refresh_completions()
         await pilot.pause()
         autocomplete = app.query_one("#autocomplete", Static)
         initial_line_budget = app._completion_window_line_budget(autocomplete)
 
-        app.action_completion_next()
+        await pilot.press(edit_key)
         await pilot.pause()
 
         assert autocomplete.size.height < initial_line_budget
