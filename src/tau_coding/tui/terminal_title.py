@@ -11,6 +11,7 @@ from typing import TextIO, cast
 
 MAX_TERMINAL_TITLE_LENGTH = 120
 OSC_TERMINATOR = "\a"
+TAU_TITLE_MARK = "τ"
 RUNNING_TITLE_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
@@ -56,7 +57,11 @@ def build_terminal_title(
 ) -> str:
     """Return Tau's terminal tab title for the current session/running state."""
     title = sanitize_terminal_title(session_title)
-    title = "Tau" if not title or title.lower() == "untitled session" else f"{title} — Tau"
+    title = (
+        TAU_TITLE_MARK
+        if not title or title.lower() == "untitled session"
+        else f"{TAU_TITLE_MARK} | {title}"
+    )
     if not running:
         return title
     return f"{RUNNING_TITLE_FRAMES[frame % len(RUNNING_TITLE_FRAMES)]} {title}"
@@ -77,7 +82,7 @@ class TerminalTitleController:
         writer: Callable[[str], object] | None = None,
         stream: TextIO | None = None,
         environ: Mapping[str, str] | None = None,
-        exit_title: str = "Tau",
+        exit_title: str = TAU_TITLE_MARK,
     ) -> None:
         self._stream = cast(TextIO, sys.__stdout__) if stream is None else stream
         self.enabled = (

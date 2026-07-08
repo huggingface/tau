@@ -7,11 +7,11 @@ Issue: #260
 The Textual TUI now updates the terminal emulator's window/tab title with the
 active Tau session name and running state:
 
-- idle unnamed session: `Tau`
-- idle named session: `<session name> — Tau`
+- idle unnamed session: `τ`
+- idle named session: `τ | <session name>`
 - running session: an animated Braille spinner prefix plus the idle title
 
-On TUI shutdown Tau writes a neutral `Tau` title so the terminal is not left with
+On TUI shutdown Tau writes a neutral `τ` title so the terminal is not left with
 a stale running frame.
 
 ## Why it lives in `tau_coding`
@@ -60,10 +60,10 @@ deduplicated writes, and TUI running/name/idle transitions.
 Manual verification:
 
 1. Open `tau` in a real terminal tab.
-2. Confirm an unnamed idle TUI shows `Tau` in the tab title.
-3. Run `/name build notes` and confirm the tab changes to `build notes — Tau`.
+2. Confirm an unnamed idle TUI shows `τ` in the tab title.
+3. Run `/name build notes` and confirm the tab changes to `τ | build notes`.
 4. Submit a prompt that runs long enough to observe the animated spinner prefix.
 5. Cancel or let the run finish; confirm the spinner stops.
-6. Quit the TUI and confirm the tab is reset to `Tau`.
+6. Quit the TUI and confirm the tab is reset to `τ`.
 7. Repeat once with `TAU_TERMINAL_TITLE=0 tau` and confirm Tau does not manage
    the tab title.

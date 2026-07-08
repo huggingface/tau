@@ -13,7 +13,7 @@ Type into the prompt box at the bottom and press **Enter** to submit.
 **Shift+Enter** inserts a newline for multi-line prompts. Tau streams the
 assistant's reply above the prompt, showing tool calls as they run. In supported
 terminal emulators, Tau also updates the tab title: named sessions show as
-`<name> — Tau`, and active runs add an animated running indicator so you can see
+`τ | <name>`, and active runs add an animated running indicator so you can see
 work continuing from another tab.
 
 Clicking anywhere in the window returns focus to the prompt, so you can scroll

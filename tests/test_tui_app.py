@@ -2257,24 +2257,24 @@ async def test_tui_app_updates_terminal_title_for_running_and_named_session() ->
     app._terminal_title = TerminalTitleController(enabled=True, writer=writes.append)
 
     async with app.run_test():
-        assert writes[-1] == "\x1b]0;build notes — Tau\x07"
+        assert writes[-1] == "\x1b]0;τ | build notes\x07"
 
         app.adapter.apply(AgentStartEvent())
         app._refresh()
-        assert writes[-1] == "\x1b]0;⠋ build notes — Tau\x07"
+        assert writes[-1] == "\x1b]0;⠋ τ | build notes\x07"
 
         app._tick_activity()
-        assert writes[-1] == "\x1b]0;⠙ build notes — Tau\x07"
+        assert writes[-1] == "\x1b]0;⠙ τ | build notes\x07"
 
         session._session_title = "ship notes"
         app._refresh_chrome()
-        assert writes[-1] == "\x1b]0;⠙ ship notes — Tau\x07"
+        assert writes[-1] == "\x1b]0;⠙ τ | ship notes\x07"
 
         app.adapter.apply(AgentEndEvent())
         app._refresh()
-        assert writes[-1] == "\x1b]0;ship notes — Tau\x07"
+        assert writes[-1] == "\x1b]0;τ | ship notes\x07"
 
-    assert writes[-1] == "\x1b]0;Tau\x07"
+    assert writes[-1] == "\x1b]0;τ\x07"
 
 
 @pytest.mark.anyio
