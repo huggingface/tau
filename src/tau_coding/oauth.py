@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
+from tau_ai.http import create_async_client
 from tau_coding.credentials import OAuthCredential
 
 OPENAI_CODEX_OAUTH_PROVIDER = "openai-codex"
@@ -334,7 +335,7 @@ async def _post_openai_codex_token(
     action: str,
 ) -> dict[str, Any]:
     owns_client = client is None
-    active_client = client or httpx.AsyncClient(timeout=60)
+    active_client = client or create_async_client(timeout=60)
     try:
         response = await active_client.post(
             OPENAI_CODEX_TOKEN_URL,

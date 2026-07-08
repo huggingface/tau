@@ -10,9 +10,9 @@ from os import environ
 from pathlib import Path
 from typing import Any
 
-import httpx
 from packaging.version import InvalidVersion, Version
 
+from tau_ai.http import get_json
 from tau_coding.paths import TauPaths
 
 PYPI_PACKAGE_NAME = "tau-ai"
@@ -285,9 +285,7 @@ def _stable_release_versions(releases: dict[Any, Any]) -> list[Version]:
 
 
 def _httpx_fetch_json(url: str, timeout_seconds: float) -> dict[str, Any]:
-    response = httpx.get(url, timeout=timeout_seconds, follow_redirects=True)
-    response.raise_for_status()
-    data = response.json()
+    data = get_json(url, timeout=timeout_seconds, follow_redirects=True)
     if not isinstance(data, dict):
         raise ValueError("PyPI response must be a JSON object")
     return data
