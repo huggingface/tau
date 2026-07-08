@@ -437,7 +437,7 @@ kind = "anthropic"
 base_url = "https://api.anthropic.com"
 api_key_env = "ANTHROPIC_API_KEY"
 credential_name = "anthropic"
-models = ["claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-opus-4-1", "claude-opus-4-1-20250805", "claude-opus-4-5", "claude-opus-4-5-20251101", "claude-opus-4-6", "claude-opus-4-7", "claude-sonnet-4-5", "claude-sonnet-4-5-20250929", "claude-sonnet-4-6"]
+models = ["claude-fable-5", "claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-opus-4-1", "claude-opus-4-1-20250805", "claude-opus-4-5", "claude-opus-4-5-20251101", "claude-opus-4-6", "claude-opus-4-7", "claude-sonnet-4-5", "claude-sonnet-4-5-20250929", "claude-sonnet-4-6", "claude-sonnet-5"]
 default_model = "claude-sonnet-4-6"
 docs_url = "https://docs.anthropic.com"
 api = "anthropic-messages"
@@ -446,6 +446,7 @@ thinking_default = "medium"
 thinking_parameter = "anthropic.thinking"
 
 [providers.context_windows]
+claude-fable-5 = 1000000
 claude-haiku-4-5 = 200000
 claude-haiku-4-5-20251001 = 200000
 claude-opus-4-1 = 200000
@@ -457,6 +458,17 @@ claude-opus-4-7 = 1000000
 claude-sonnet-4-5 = 200000
 claude-sonnet-4-5-20250929 = 200000
 claude-sonnet-4-6 = 1000000
+claude-sonnet-5 = 1000000
+
+[providers.model_metadata.claude-fable-5]
+name = "Claude Fable 5"
+reasoning = true
+input = ["text", "image"]
+context_window = 1000000
+max_tokens = 128000
+compat = { forceAdaptiveThinking = true }
+cost = { input = 10, output = 50, cacheRead = 1, cacheWrite = 12.5 }
+unsupported_thinking_levels = ["minimal"]
 
 [providers.model_metadata.claude-haiku-4-5]
 name = "Claude Haiku 4.5 (latest)"
@@ -550,6 +562,16 @@ reasoning = true
 input = ["text", "image"]
 context_window = 1000000
 max_tokens = 64000
+compat = { forceAdaptiveThinking = true }
+cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75 }
+unsupported_thinking_levels = ["minimal"]
+
+[providers.model_metadata.claude-sonnet-5]
+name = "Claude Sonnet 5"
+reasoning = true
+input = ["text", "image"]
+context_window = 1000000
+max_tokens = 128000
 compat = { forceAdaptiveThinking = true }
 cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75 }
 unsupported_thinking_levels = ["minimal"]

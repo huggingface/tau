@@ -83,6 +83,7 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
     assert entry.api_key_env == "ANTHROPIC_API_KEY"
     assert entry.credential_name == "anthropic"
     assert entry.models == (
+        "claude-fable-5",
         "claude-haiku-4-5",
         "claude-haiku-4-5-20251001",
         "claude-opus-4-1",
@@ -94,10 +95,12 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
         "claude-sonnet-4-5",
         "claude-sonnet-4-5-20250929",
         "claude-sonnet-4-6",
+        "claude-sonnet-5",
     )
     assert entry.default_model == "claude-sonnet-4-6"
     assert entry.docs_url == "https://docs.anthropic.com"
     assert entry.context_windows == {
+        "claude-fable-5": 1_000_000,
         "claude-haiku-4-5": 200_000,
         "claude-haiku-4-5-20251001": 200_000,
         "claude-opus-4-1": 200_000,
@@ -109,6 +112,7 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
         "claude-sonnet-4-5": 200_000,
         "claude-sonnet-4-5-20250929": 200_000,
         "claude-sonnet-4-6": 1_000_000,
+        "claude-sonnet-5": 1_000_000,
     }
     assert entry.thinking_levels == ("off", "minimal", "low", "medium", "high", "xhigh")
     assert entry.thinking_models == ()
