@@ -82,9 +82,7 @@ def test_load_skills_with_diagnostics_reports_overrides(tmp_path: Path) -> None:
     agents_home = tmp_path / "home" / ".agents"
     cwd = tmp_path / "project"
     (tau_home / "skills" / "review").mkdir(parents=True)
-    (tau_home / "skills" / "review" / "SKILL.md").write_text(
-        "# User Tau Review", encoding="utf-8"
-    )
+    (tau_home / "skills" / "review" / "SKILL.md").write_text("# User Tau Review", encoding="utf-8")
     (cwd / ".tau" / "skills" / "review").mkdir(parents=True)
     (cwd / ".tau" / "skills" / "review" / "SKILL.md").write_text(
         "# Project Tau Review", encoding="utf-8"

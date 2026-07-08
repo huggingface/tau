@@ -1797,8 +1797,7 @@ async def test_session_loads_with_resource_diagnostics_instead_of_failing(
     assert [skill.name for skill in session.skills] == ["good"]
     assert len(session.resource_diagnostics) == 1
     assert (
-        "bare .md files are no longer treated as skills"
-        in session.resource_diagnostics[0].message
+        "bare .md files are no longer treated as skills" in session.resource_diagnostics[0].message
     )
     assert "Resource diagnostics: 1" in (session.handle_command("/session").message or "")
 
