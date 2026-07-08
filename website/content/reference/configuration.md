@@ -30,6 +30,9 @@ Startup update checks cache their latest PyPI result in
 `~/.tau/cache/update-check.json` and refresh at most once per day. Set
 `TAU_NO_UPDATE_CHECK=1` to disable the check; Tau also skips it when `CI` is set.
 
+If you already have a Pi config, `tau config import-pi <path>` can import its
+provider/model settings into Tau. See [Migrating from Pi]({{< relref "../guides/migrating-from-pi.md" >}}).
+
 ## Providers
 
 Tau separates provider metadata from runtime preferences:

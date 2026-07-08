@@ -29,6 +29,7 @@ one-time release-notes message to the transcript with the new features and fixes
 | `tau sessions` | List indexed sessions (id, title, model, cwd) |
 | `tau export <ref> [dest] [--format html\|jsonl]` | Export a session id or JSONL path (HTML default) |
 | `tau providers` | List configured providers and how each authenticates |
+| `tau config import-pi <path>` | Import provider/model settings from a Pi config |
 | `tau [setup options] setup` | Create/update an OpenAI-compatible provider |
 
 ## Options
@@ -44,6 +45,16 @@ one-time release-notes message to the transcript with the new features and fixes
 | `--new-session` | Start a new session instead of resuming the default |
 | `--auto-compact-threshold INT` | Auto-compact above this rough token estimate |
 | `--version` | Print the version and exit |
+
+### Pi config import options
+
+Put these flags before `config import-pi`:
+
+| Flag | Description |
+| --- | --- |
+| `--dry-run` | Print the resulting Tau provider settings without writing |
+| `--yes, -y` | Update an existing `~/.tau/providers.json` |
+| `--default-pi-config` | Search common Pi config paths when no path is provided |
 
 ### Provider setup options
 

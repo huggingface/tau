@@ -22,6 +22,12 @@ from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL
 from tau_coding import __version__
 from tau_coding.catalog_loader import user_catalog_path
 from tau_coding.credentials import FileCredentialStore
+from tau_coding.pi_config_import import (
+    PiConfigImportError,
+    default_pi_config_path,
+    import_pi_config,
+    plan_pi_config_import,
+)
 from tau_coding.provider_config import (
     DEFAULT_MODEL,
     DEFAULT_PROVIDER_NAME,
@@ -129,6 +135,40 @@ def setup_command(
         typer.echo(f"Set {provider.api_key_env} before running Tau with this provider.", err=True)
 
 
+def import_pi_config_command(
+    source: Path | None,
+    *,
+    use_default: bool = False,
+    dry_run: bool = False,
+    yes: bool = False,
+) -> None:
+    """Import a Pi provider/model config into Tau."""
+    resolved_source = source
+    if resolved_source is None:
+        if not use_default:
+            raise RuntimeError("Usage: tau config import-pi <path> [--dry-run] [--yes]")
+        resolved_source = default_pi_config_path()
+        if resolved_source is None:
+            raise RuntimeError("No Pi config found in a default location")
+
+    if dry_run:
+        plan = plan_pi_config_import(resolved_source)
+        typer.echo(plan.to_json_text(), nl=False)
+        _render_pi_import_warnings(plan.warnings)
+        return
+
+    plan, path = import_pi_config(resolved_source, overwrite_existing=yes)
+    typer.echo(
+        f"Imported Pi providers {', '.join(plan.imported_providers)} from {plan.source} to {path}"
+    )
+    _render_pi_import_warnings(plan.warnings)
+
+
+def _render_pi_import_warnings(warnings: tuple[str, ...]) -> None:
+    for warning in warnings:
+        typer.echo(f"Warning: {warning}", err=True)
+
+
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
@@ -178,6 +218,18 @@ def main(
         bool,
         typer.Option("--set-default/--no-set-default", help="Make setup provider the default."),
     ] = True,
+    config_import_default: Annotated[
+        bool,
+        typer.Option("--default-pi-config", help="Import from the first known Pi config path."),
+    ] = False,
+    config_import_dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Print imported Tau config without writing."),
+    ] = False,
+    config_import_yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Update existing Tau provider settings."),
+    ] = False,
     cwd: Annotated[
         Path | None,
         typer.Option("--cwd", help="Working directory for built-in coding tools."),
@@ -257,6 +309,19 @@ def main(
             max_retry_delay_seconds=setup_max_retry_delay_seconds,
             set_default=setup_default,
         )
+        raise typer.Exit()
+
+    if prompt_option is None and command == "config":
+        try:
+            config_source = _parse_config_import_cli_args(positional_args[1:])
+            import_pi_config_command(
+                config_source,
+                use_default=config_import_default,
+                dry_run=config_import_dry_run,
+                yes=config_import_yes,
+            )
+        except (RuntimeError, PiConfigImportError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
         raise typer.Exit()
 
     if prompt_option is None:
@@ -364,6 +429,18 @@ async def export_session_command(
         source=str(session_path),
         format=normalized_format,
     )
+
+
+def _parse_config_import_cli_args(args: list[str]) -> Path | None:
+    if not args:
+        raise RuntimeError("Usage: tau config import-pi <path> [--dry-run] [--yes]")
+    if args[0] != "import-pi":
+        raise RuntimeError("Usage: tau config import-pi <path> [--dry-run] [--yes]")
+    if len(args) == 1:
+        return None
+    if len(args) == 2:
+        return Path(args[1]).expanduser()
+    raise RuntimeError("Usage: tau config import-pi <path> [--dry-run] [--yes]")
 
 
 def _parse_export_cli_args(args: list[str]) -> tuple[str, Path | None, str | None]:
