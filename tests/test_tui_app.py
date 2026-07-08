@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 from rich.panel import Panel
+from textual import events
 from textual.color import Color
 from textual.containers import VerticalScroll
 from textual.geometry import Offset
@@ -58,6 +59,7 @@ from tau_coding.tools import create_coding_tools
 from tau_coding.tui import app as tui_app
 from tau_coding.tui.app import (
     COMPLETION_MAX_VISIBLE_LINES,
+    PASTE_DISPLAY_THRESHOLD,
     CommandOutputScreen,
     CustomProviderLoginResult,
     CustomProviderLoginScreen,
@@ -1607,6 +1609,81 @@ async def test_tui_submit_prompt_does_not_optimistically_append_slash_commands()
     assert user_messages == ["Expanded prompt"]
     assert "/review src/app.py" not in transcript_lines
     assert transcript_lines.count("Expanded prompt") == 1
+
+
+def test_prompt_input_shows_placeholder_for_large_paste() -> None:
+    prompt = PromptInput()
+    pasted = ("line\n" * 500) + "end"
+
+    prompt.on_paste(events.Paste(pasted))
+
+    assert prompt.text.startswith("[Pasted content:")
+    assert f"{len(pasted):,} characters" in prompt.text
+    assert "501 lines" in prompt.text
+    assert prompt.text_for_submission() == pasted
+
+
+def test_prompt_input_keeps_small_paste_default_behavior() -> None:
+    prompt = PromptInput()
+    event = events.Paste("x" * PASTE_DISPLAY_THRESHOLD)
+
+    prompt.on_paste(event)
+
+    assert prompt.text == ""
+    assert prompt.text_for_submission() == ""
+
+
+def test_prompt_input_preserves_edits_around_large_paste() -> None:
+    prompt = PromptInput()
+    pasted = "x" * (PASTE_DISPLAY_THRESHOLD + 1)
+    prompt.text = "before "
+    prompt.move_cursor((0, len(prompt.text)))
+
+    prompt.on_paste(events.Paste(pasted))
+    prompt.text = f"{prompt.text}\nafter"
+
+    assert prompt.text_for_submission() == f"before {pasted}\nafter"
+
+
+def test_prompt_input_does_not_submit_deleted_large_paste() -> None:
+    prompt = PromptInput()
+    pasted = "x" * (PASTE_DISPLAY_THRESHOLD + 1)
+    prompt.on_paste(events.Paste(pasted))
+
+    prompt.text = "replacement prompt"
+
+    assert prompt.text_for_submission() == "replacement prompt"
+
+
+@pytest.mark.anyio
+async def test_tui_submit_large_paste_sends_full_content() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+    pasted = "x" * (PASTE_DISPLAY_THRESHOLD + 1)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.on_paste(events.Paste(pasted))
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert session.prompt_texts == [pasted]
+
+
+@pytest.mark.anyio
+async def test_tui_submit_replaced_large_paste_does_not_send_stale_content() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+    pasted = "x" * (PASTE_DISPLAY_THRESHOLD + 1)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.on_paste(events.Paste(pasted))
+        prompt.text = "replacement prompt"
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert session.prompt_texts == ["replacement prompt"]
 
 
 @pytest.mark.anyio

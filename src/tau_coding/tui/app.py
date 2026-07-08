@@ -196,6 +196,9 @@ class SessionCompletionRecord(Protocol):
     updated_at: float
 
 
+PASTE_DISPLAY_THRESHOLD = 2_000
+
+
 class PromptInput(TextArea):
     """Multiline prompt input with completion key bindings."""
 
@@ -213,6 +216,8 @@ class PromptInput(TextArea):
         self.tui_keybindings = tui_keybindings or TuiKeybindings()
         self._base_bindings = self._bindings.copy()
         self._footer_mode: Literal["normal", "completion", "running"] = "normal"
+        self._pending_paste_content: str | None = None
+        self._pending_paste_placeholder: str | None = None
         self._apply_prompt_bindings()
 
     def set_footer_mode(self, mode: Literal["normal", "completion", "running"]) -> None:
@@ -309,6 +314,7 @@ class PromptInput(TextArea):
         if self.text:
             self.text = ""
             self.move_cursor((0, 0))
+            self._clear_pending_paste()
 
     def get_line(self, line_index: int) -> Text:
         """Retrieve one prompt line with shell prefixes highlighted."""
@@ -345,6 +351,53 @@ class PromptInput(TextArea):
     def action_scroll_up(self) -> None:
         """Use up arrow for completion selection while focused."""
         self.action_completion_previous()
+
+    def on_paste(self, event: events.Paste) -> None:
+        """Show a compact placeholder instead of rendering very large pasted text."""
+        if len(event.text) <= PASTE_DISPLAY_THRESHOLD:
+            return
+        event.stop()
+        event.prevent_default()
+        self._show_large_paste_placeholder(event.text)
+
+    def _show_large_paste_placeholder(self, content: str) -> None:
+        """Store large pasted text and render a compact placeholder."""
+        placeholder = self._large_paste_placeholder(content)
+        self._pending_paste_content = content
+        self._pending_paste_placeholder = placeholder
+        self.insert(placeholder)
+
+    def _large_paste_placeholder(self, content: str) -> str:
+        """Build the display text for a large paste."""
+        char_count = len(content)
+        line_count = content.count("\n") + 1
+        kb = char_count / 1024
+        parts: list[str] = [f"{char_count:,} characters"]
+        if line_count > 1:
+            parts.append(f"{line_count} lines")
+        if kb >= 1:
+            parts.append(f"{kb:.1f} KB")
+        return f"[Pasted content: {', '.join(parts)}]"
+
+    def _clear_pending_paste(self) -> None:
+        """Forget any stored large paste content."""
+        self._pending_paste_content = None
+        self._pending_paste_placeholder = None
+
+    def sync_pending_paste(self) -> None:
+        """Invalidate stored paste content when the placeholder is edited away."""
+        placeholder = self._pending_paste_placeholder
+        if placeholder is not None and placeholder not in self.text:
+            self._clear_pending_paste()
+
+    def text_for_submission(self) -> str:
+        """Return the prompt text, expanding an intact large-paste placeholder."""
+        self.sync_pending_paste()
+        placeholder = self._pending_paste_placeholder
+        content = self._pending_paste_content
+        if placeholder is None or content is None:
+            return self.text
+        return self.text.replace(placeholder, content, 1)
 
     async def on_key(self, event: Key) -> None:
         """Route completion and submission keys before default input handling."""
@@ -2105,6 +2158,8 @@ class TauTuiApp(App[None]):
         """Update prompt autocomplete when the prompt text changes."""
         if event.text_area.id != "prompt":
             return
+        prompt = self.query_one("#prompt", PromptInput)
+        prompt.sync_pending_paste()
         self._sync_prompt_shell_mode(event.text_area.text)
         self._completion_state = self._build_completion_state(event.text_area.text)
         self._refresh_completions()
@@ -2123,10 +2178,11 @@ class TauTuiApp(App[None]):
         streaming_behavior: Literal["steer", "follow_up"],
     ) -> None:
         prompt = self.query_one("#prompt", PromptInput)
-        raw_text = prompt.text
+        raw_text = prompt.text_for_submission()
         applied_completion = self._apply_selected_completion(raw_text)
         if applied_completion is not None and applied_completion != raw_text:
             prompt.text = applied_completion
+            prompt._clear_pending_paste()
             prompt.move_cursor(_text_end_location(applied_completion))
             self._completion_state = self._build_completion_state(applied_completion)
             self._refresh_completions()
@@ -2135,6 +2191,7 @@ class TauTuiApp(App[None]):
         text = raw_text.strip()
         if not text:
             prompt.text = ""
+            prompt._clear_pending_paste()
             self._completion_state = CompletionState()
             self._refresh_completions()
             return
@@ -2152,6 +2209,7 @@ class TauTuiApp(App[None]):
             return
 
         prompt.text = ""
+        prompt._clear_pending_paste()
         self._completion_state = CompletionState()
         self._refresh_completions()
 
