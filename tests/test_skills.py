@@ -247,6 +247,61 @@ def test_expand_skill_command_rejects_unknown_skill() -> None:
         expand_skill_command("/skill:missing", [])
 
 
+def test_load_skill_parses_disable_model_invocation(tmp_path: Path) -> None:
+    skills_dir = tmp_path / "skills"
+    (skills_dir / "user-only").mkdir(parents=True)
+    (skills_dir / "user-only" / "SKILL.md").write_text(
+        "---\ndescription: User-only skill\ndisable-model-invocation: true\n---\nBody",
+        encoding="utf-8",
+    )
+    (skills_dir / "normal").mkdir()
+    (skills_dir / "normal" / "SKILL.md").write_text("# Normal", encoding="utf-8")
+    (skills_dir / "explicit-false").mkdir()
+    (skills_dir / "explicit-false" / "SKILL.md").write_text(
+        "---\ndisable-model-invocation: false\n---\n# Explicit False",
+        encoding="utf-8",
+    )
+
+    skills = {
+        skill.name: skill for skill in load_skills(TauResourcePaths(root=tmp_path, agents_root=None))
+    }
+
+    assert skills["user-only"].disable_model_invocation is True
+    assert skills["normal"].disable_model_invocation is False
+    assert skills["explicit-false"].disable_model_invocation is False
+
+
+def test_expand_skill_command_works_for_disabled_model_invocation_skill(tmp_path: Path) -> None:
+    """`/skill:name` still expands skills the model cannot invoke."""
+    skills_dir = tmp_path / "skills" / "user-only"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "SKILL.md").write_text(
+        "---\ndisable-model-invocation: true\n---\n# User Only\nDo the thing.",
+        encoding="utf-8",
+    )
+    skills = load_skills(TauResourcePaths(root=tmp_path, agents_root=None))
+
+    expanded = expand_skill_command("/skill:user-only", skills)
+
+    assert expanded is not None
+    assert "Do the thing." in expanded
+
+
+def test_build_skill_index_omits_disabled_model_invocation_skills(tmp_path: Path) -> None:
+    skills = [
+        Skill(name="visible", path=tmp_path / "visible" / "SKILL.md", content="", description="A"),
+        Skill(
+            name="hidden",
+            path=tmp_path / "hidden" / "SKILL.md",
+            content="",
+            description="B",
+            disable_model_invocation=True,
+        ),
+    ]
+
+    assert build_skill_index(skills) == "Available skills:\n- visible: A"
+
+
 def test_build_skill_index(tmp_path: Path) -> None:
     skills_dir = tmp_path / "skills" / "testing"
     skills_dir.mkdir(parents=True)
