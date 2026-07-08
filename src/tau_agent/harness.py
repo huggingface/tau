@@ -167,6 +167,12 @@ class AgentHarness:
             return None
         return self._follow_up_queue.pop()
 
+    def pop_latest_steering(self) -> AgentMessage | None:
+        """Remove and return the most recently queued steering message."""
+        if not self._steering_queue:
+            return None
+        return self._steering_queue.pop()
+
     def queue_update_event(self) -> QueueUpdateEvent:
         """Return the current queue state as a portable agent event."""
         return QueueUpdateEvent(
