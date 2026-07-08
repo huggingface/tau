@@ -39,6 +39,9 @@ class ToolCall(BaseModel):
     id: str
     name: str
     arguments: dict[str, JSONValue] = Field(default_factory=dict)
+    # Opaque signature some providers (e.g. Gemini) require echoed back next
+    # turn; ignored by providers that don't use it.
+    thought_signature: str | None = None
 
 
 class AgentToolResult(BaseModel):
