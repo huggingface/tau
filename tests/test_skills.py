@@ -262,9 +262,8 @@ def test_load_skill_parses_disable_model_invocation(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    skills = {
-        skill.name: skill for skill in load_skills(TauResourcePaths(root=tmp_path, agents_root=None))
-    }
+    loaded = load_skills(TauResourcePaths(root=tmp_path, agents_root=None))
+    skills = {skill.name: skill for skill in loaded}
 
     assert skills["user-only"].disable_model_invocation is True
     assert skills["normal"].disable_model_invocation is False
