@@ -2526,6 +2526,7 @@ class TauTuiApp(App[None]):
         finally:
             self._clear_optimistic_user_messages(run_id=active_run_id)
             if active_run_id == self._prompt_run_id:
+                self._sync_header_title()
                 self._prompt_worker = None
 
     async def _apply_streaming_transcript_event(self, event: AgentEvent) -> None:

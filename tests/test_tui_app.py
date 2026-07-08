@@ -2315,6 +2315,36 @@ async def test_tui_app_updates_terminal_title_after_auto_session_naming() -> Non
 
 
 @pytest.mark.anyio
+async def test_tui_app_updates_terminal_title_after_background_auto_session_naming() -> None:
+    class BackgroundAutoNamingSession(FakeSession):
+        async def prompt(
+            self,
+            text: str,
+            *,
+            streaming_behavior: str | None = None,
+        ) -> AsyncIterator[AgentEvent]:
+            del streaming_behavior
+            self.prompt_texts.append(text)
+            yield AgentStartEvent()
+            yield MessageEndEvent(message=UserMessage(content=text))
+            yield MessageEndEvent(message=AssistantMessage(content="Done"))
+            self._session_title = "Debug login"
+            yield AgentEndEvent()
+
+    app = TauTuiApp(BackgroundAutoNamingSession())
+    writes: list[str] = []
+    app._terminal_title = TerminalTitleController(enabled=True, writer=writes.append)
+
+    async with app.run_test():
+        assert writes[-1] == "\x1b]0;τ\x07"
+
+        await app._run_prompt("debug the login flow")
+
+        assert app.sub_title == "Debug login"
+        assert writes[-1] == "\x1b]0;τ | Debug login\x07"
+
+
+@pytest.mark.anyio
 async def test_tui_app_clears_activity_status_on_error() -> None:
     app = TauTuiApp(FakeSession())
 
