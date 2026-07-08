@@ -42,5 +42,5 @@ publishDir = "public"
     source = "archetypes"
     target = "archetypes"
   [[module.mounts]]
-    source = "../release-notes"
+    source = "../src/tau_coding/data/release-notes"
     target = "data/release-notes"
