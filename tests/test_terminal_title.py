@@ -50,6 +50,10 @@ def test_osc_terminal_title_sequence_sanitizes_payload() -> None:
 
 def test_terminal_title_supported_requires_tty_and_allows_opt_out() -> None:
     assert terminal_title_supported(environ={"TERM": "xterm-256color"}, stream=TtyStringIO())
+    assert terminal_title_supported(
+        environ={"TERM": "xterm-256color", "NO_COLOR": "1"},
+        stream=TtyStringIO(),
+    )
     assert not terminal_title_supported(environ={"TERM": "xterm-256color"}, stream=PipeStringIO())
     assert not terminal_title_supported(
         environ={"TERM": "xterm-256color", "TAU_TERMINAL_TITLE": "0"},
@@ -82,3 +86,20 @@ def test_terminal_title_controller_noops_when_disabled() -> None:
     controller.restore()
 
     assert writes == []
+
+
+def test_terminal_title_controller_disables_itself_after_write_failure() -> None:
+    calls = 0
+
+    def failing_writer(sequence: str) -> None:
+        nonlocal calls
+        calls += 1
+        raise OSError("terminal is gone")
+
+    controller = TerminalTitleController(enabled=True, writer=failing_writer)
+
+    controller.update("build notes", running=False)
+    controller.update("other", running=False)
+
+    assert calls == 1
+    assert controller.enabled is False

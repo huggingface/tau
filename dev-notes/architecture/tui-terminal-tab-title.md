@@ -44,7 +44,9 @@ activity timer drives both the in-app prompt animation and the tab-title spinner
 Title writing is enabled only when stdout is a TTY, `TERM` is not `dumb`, and CI
 is not detected. Users can opt out with `TAU_TERMINAL_TITLE=0`; CI/no-TTY cases
 can opt in explicitly with `TAU_TERMINAL_TITLE=1` only where supported by the
-helper's rules.
+helper's rules. Title writes are best-effort: if the terminal stream raises while
+Tau is writing an OSC sequence, Tau disables further title writes for that TUI
+process instead of interrupting the session.
 
 Session names are sanitized before they enter an OSC payload: C0/C1 control
 characters, including BEL and ESC, are stripped and the title is capped to 120
