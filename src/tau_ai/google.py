@@ -201,10 +201,14 @@ class _GoogleStreamParser:
             if isinstance(function_call, Mapping):
                 self.emitted_content = True
                 default_id = f"tool-call-{len(self._tool_calls)}"
+                thought_signature = part.get("thoughtSignature")
                 tool_call = ToolCall(
                     id=_string_or_default(function_call.get("id"), default_id),
                     name=_string_or_default(function_call.get("name"), ""),
                     arguments=_object_or_empty(function_call.get("args")),
+                    thought_signature=thought_signature
+                    if isinstance(thought_signature, str)
+                    else None,
                 )
                 self._tool_calls.append(tool_call)
                 events.append(ProviderToolCallEvent(tool_call=tool_call))
@@ -322,15 +326,16 @@ def _message_to_google(message: AgentMessage) -> dict[str, JSONValue]:
         if message.content:
             parts.append({"text": message.content})
         for tool_call in message.tool_calls:
-            parts.append(
-                {
-                    "functionCall": {
-                        "id": tool_call.id,
-                        "name": tool_call.name,
-                        "args": dict(tool_call.arguments),
-                    }
+            part: dict[str, JSONValue] = {
+                "functionCall": {
+                    "id": tool_call.id,
+                    "name": tool_call.name,
+                    "args": dict(tool_call.arguments),
                 }
-            )
+            }
+            if tool_call.thought_signature is not None:
+                part["thoughtSignature"] = tool_call.thought_signature
+            parts.append(part)
         return {"role": "model", "parts": parts or [{"text": ""}]}
     response: dict[str, JSONValue] = {
         "name": message.name,
