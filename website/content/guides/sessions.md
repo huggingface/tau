@@ -52,7 +52,8 @@ If a summary request fails, Tau falls back to a deterministic summary.
 New sessions are automatically given a short name from the first message when
 Tau can generate one. The name appears anywhere session names are already shown,
 including the `/resume` picker and id completions. If naming fails, the session
-continues normally and Tau falls back to a short local name when possible.
+continues normally, is still saved for resume, and Tau falls back to a short
+local name when possible.
 
 ```text
 /name My refactor session

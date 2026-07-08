@@ -1717,6 +1717,100 @@ async def test_session_auto_name_falls_back_when_provider_fails(tmp_path: Path) 
 
 
 @pytest.mark.anyio
+async def test_session_persists_prepared_session_when_auto_naming_fails(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.prepare_session(cwd=tmp_path, model="fake")
+    provider = FakeProvider(
+        [
+            [
+                ProviderErrorEvent(message="naming failed"),
+            ],
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=record.cwd,
+            session_id=record.id,
+            session_manager=manager,
+            index_on_first_persist=True,
+        )
+    )
+
+    await _collect_session_events(session.prompt("Keep this resumable even if naming fails"))
+
+    indexed = manager.get_session(record.id)
+    assert indexed is not None
+    assert indexed.title == "Keep this resumable even"
+    assert indexed.path == record.path
+    assert session.messages == (
+        UserMessage(content="Keep this resumable even if naming fails"),
+        AssistantMessage(content="Done"),
+    )
+    assert await storage.read_all()
+
+
+@pytest.mark.anyio
+async def test_session_persists_when_auto_name_touch_fails(tmp_path: Path) -> None:
+    class FailingTitleSessionManager(SessionManager):
+        def touch_session(self, session_id: str, **kwargs: object):  # type: ignore[no-untyped-def]
+            if kwargs.get("title") is not None:
+                raise RuntimeError("title index update failed")
+            return super().touch_session(session_id, **kwargs)  # type: ignore[arg-type]
+
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    manager = FailingTitleSessionManager(
+        TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    )
+    record = manager.prepare_session(cwd=tmp_path, model="fake")
+    provider = FakeProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="Generated title")),
+            ],
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=record.cwd,
+            session_id=record.id,
+            session_manager=manager,
+            index_on_first_persist=True,
+        )
+    )
+
+    await _collect_session_events(session.prompt("Do not lose this session"))
+
+    indexed = manager.get_session(record.id)
+    assert indexed is not None
+    assert indexed.title is None
+    assert session.messages == (
+        UserMessage(content="Do not lose this session"),
+        AssistantMessage(content="Done"),
+    )
+    assert await storage.read_all()
+
+
+@pytest.mark.anyio
 async def test_session_auto_name_falls_back_when_provider_returns_unusable_title(
     tmp_path: Path,
 ) -> None:

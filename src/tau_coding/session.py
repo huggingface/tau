@@ -1401,12 +1401,7 @@ class CodingSession:
     async def _refresh_persisted_state(self, *, leaf_id: str | None) -> None:
         entries = await self._read_session_entries()
         self._state = SessionState.from_entries(entries, leaf_id=leaf_id)
-        if self._config.session_id is not None and self._config.session_manager is not None:
-            self._config.session_manager.touch_session(
-                self._config.session_id,
-                model=self.model,
-                provider_name=self.provider_name,
-            )
+        self._touch_or_index_session()
 
     async def _read_session_entries(self) -> list[SessionEntry]:
         """Read stored entries, detaching roots imported from external history."""
@@ -1437,17 +1432,27 @@ class CodingSession:
         self._pending_initial_entries = ()
 
     def _index_current_session(self) -> None:
+        self._touch_or_index_session(update_timestamp=False)
+        self._config = replace(self._config, index_on_first_persist=False)
+
+    def _touch_or_index_session(self, *, update_timestamp: bool = True) -> None:
         if self._config.session_id is None or self._config.session_manager is None:
             return
         existing = self._config.session_manager.get_session(self._config.session_id)
-        if existing is not None:
+        if existing is None:
+            self._config.session_manager.create_session(
+                cwd=self.cwd,
+                model=self.model,
+                provider_name=self.provider_name,
+                session_id=self._config.session_id,
+            )
             return
-        self._config.session_manager.create_session(
-            cwd=self.cwd,
-            model=self.model,
-            provider_name=self.provider_name,
-            session_id=self._config.session_id,
-        )
+        if update_timestamp:
+            self._config.session_manager.touch_session(
+                self._config.session_id,
+                model=self.model,
+                provider_name=self.provider_name,
+            )
 
     async def _try_auto_compact(
         self,
@@ -1491,22 +1496,32 @@ class CodingSession:
         *,
         context: AgentCallDiagnosticContext,
     ) -> None:
-        if not self._should_auto_name_session():
-            return
         try:
+            if not self._should_auto_name_session():
+                return
             title = await self._generate_session_name(first_message)
+            if title is None:
+                title = _fallback_session_name(first_message)
+            if title is None:
+                return
+            self._set_auto_session_title(title)
         except Exception as exc:  # noqa: BLE001 - naming must not interrupt the agent turn
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
                 phase="auto_name_session",
                 exc=exc,
             )
-            title = _fallback_session_name(first_message)
-        if title is None:
-            title = _fallback_session_name(first_message)
-        if title is None:
-            return
-        self._set_auto_session_title(title)
+            fallback_title = _fallback_session_name(first_message)
+            if fallback_title is None:
+                return
+            try:
+                self._set_auto_session_title(fallback_title)
+            except Exception as fallback_exc:  # noqa: BLE001 - title metadata is optional
+                self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
+                    context=context,
+                    phase="auto_name_session_fallback",
+                    exc=fallback_exc,
+                )
 
     def _should_auto_name_session(self) -> bool:
         if self._config.session_id is None or self._config.session_manager is None:

@@ -28,6 +28,8 @@ Tau uses the session's currently selected provider/model for the naming request.
 
 Naming happens only after the first user message has been persisted. This preserves deferred indexing for newly prepared sessions: a session that is cancelled before its first durable message should not appear in the resume index just because naming started.
 
+Persistence is intentionally independent from naming. The first durable message indexes the session before Tau attempts to write title metadata. If the provider naming call fails, returns unusable text, or even the title metadata update raises an error, Tau logs the metadata failure and keeps the transcript/session record resumable. Automatic names are helpful metadata, not a prerequisite for durability.
+
 ## How to test
 
 ```bash
