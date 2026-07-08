@@ -1,6 +1,6 @@
 # Startup release notes
 
-Tau now stores structured release notes in `release-notes/releases.json`.
+Tau now stores structured release notes in `src/tau_coding/data/release-notes/releases.json`.
 
 The same file is used by:
 

@@ -16,8 +16,8 @@ def test_python_version_floor_matches_package_metadata() -> None:
 
 def test_current_version_has_release_notes() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    release_notes = json.loads((ROOT / "release-notes" / "releases.json").read_text())
+    release_notes_path = ROOT / "src" / "tau_coding" / "data" / "release-notes" / "releases.json"
+    assert release_notes_path.is_file(), f"release notes not found at {release_notes_path}"
+    release_notes = json.loads(release_notes_path.read_text(encoding="utf-8"))
 
     assert any(entry["version"] == pyproject["project"]["version"] for entry in release_notes)
-    artifacts = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["artifacts"]
-    assert "release-notes/releases.json" in artifacts
