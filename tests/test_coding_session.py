@@ -79,6 +79,10 @@ class SwitchableFakeProvider:
 
 
 class RaisingProvider:
+    def __init__(self, fail_on_call: int = 1) -> None:
+        self.fail_on_call = fail_on_call
+        self.call_count = 0
+
     def stream_response(
         self,
         *,
@@ -89,10 +93,14 @@ class RaisingProvider:
         signal: CancellationToken | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         del model, system, messages, tools, signal
+        self.call_count += 1
+        should_fail = self.call_count == self.fail_on_call
 
         async def iterator() -> AsyncIterator[ProviderEvent]:
-            raise RuntimeError("provider exploded")
-            yield  # pragma: no cover
+            if should_fail:
+                raise RuntimeError("provider exploded")
+            yield ProviderResponseStartEvent(model="fake")
+            yield ProviderResponseEndEvent(message=AssistantMessage(content="Generated title"))
 
         return iterator()
 
@@ -1777,6 +1785,46 @@ async def test_session_auto_name_does_not_overwrite_manual_name(tmp_path: Path) 
     assert unchanged is not None
     assert unchanged.title == "Manual name"
     assert len(provider.calls) == 1
+
+
+@pytest.mark.anyio
+async def test_session_auto_name_does_not_index_new_session_before_first_persist(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.prepare_session(cwd=tmp_path, model="fake")
+    provider = FakeProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="Generated title")),
+            ],
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=record.cwd,
+            session_id=record.id,
+            session_manager=manager,
+            index_on_first_persist=True,
+        )
+    )
+
+    stream = session.prompt("Stop before the first persisted message")
+    _first_event = await anext(stream)
+    await stream.aclose()
+
+    assert manager.get_session(record.id) is None
+    assert await storage.read_all() == []
 
 
 @pytest.mark.anyio

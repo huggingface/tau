@@ -253,7 +253,6 @@ class CodingSession:
             credentials_path(self._resource_paths.paths) if self._resource_paths.paths else None
         )
         self._last_diagnostic_log_path: Path | None = None
-        self._pending_auto_session_title: str | None = None
 
     @classmethod
     async def load(cls, config: CodingSessionConfig) -> CodingSession:
@@ -1236,8 +1235,8 @@ class CodingSession:
             )
 
         await self._try_auto_compact(context=context, phase="auto_compact_before_prompt")
-        await self._try_auto_name_session(expanded_content, context=context)
         persisted_count = len(self._harness.messages)
+        auto_name_attempted = False
         overflow_event: ErrorEvent | None = None
         try:
             events = self._harness.prompt(expanded_content)
@@ -1245,6 +1244,9 @@ class CodingSession:
             async for event in events:
                 if isinstance(event, MessageEndEvent):
                     persisted_count = await self._persist_messages_since(persisted_count)
+                    if not auto_name_attempted and isinstance(event.message, UserMessage):
+                        auto_name_attempted = True
+                        await self._try_auto_name_session(event.message.content, context=context)
                 if isinstance(event, ToolExecutionEndEvent):
                     self._invalidate_context_usage_cache()
                 if isinstance(event, ErrorEvent) and not event.recoverable:
@@ -1439,10 +1441,8 @@ class CodingSession:
             cwd=self.cwd,
             model=self.model,
             provider_name=self.provider_name,
-            title=self._pending_auto_session_title,
             session_id=self._config.session_id,
         )
-        self._pending_auto_session_title = None
 
     async def _try_auto_compact(
         self,
@@ -1509,7 +1509,7 @@ class CodingSession:
         record = self._config.session_manager.get_session(self._config.session_id)
         if record is not None and record.title:
             return False
-        return not any(isinstance(message, UserMessage) for message in self._harness.messages)
+        return sum(isinstance(message, UserMessage) for message in self._harness.messages) == 1
 
     async def _generate_session_name(self, first_message: str) -> str | None:
         prompt = (
@@ -1538,9 +1538,6 @@ class CodingSession:
         if self._config.session_id is None or self._config.session_manager is None:
             return
         existing = self._config.session_manager.get_session(self._config.session_id)
-        if existing is None and self._config.index_on_first_persist:
-            self._pending_auto_session_title = title
-            return
         if existing is not None and existing.title:
             return
         self._config.session_manager.touch_session(
