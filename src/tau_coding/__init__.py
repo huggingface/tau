@@ -149,8 +149,9 @@ from tau_coding.tools import (
     create_write_tool,
     create_write_tool_definition,
 )
+from tau_coding.version import current_version
 
-__version__ = "0.1.2"
+__version__ = current_version()
 
 __all__ = [
     "__version__",

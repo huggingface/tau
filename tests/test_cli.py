@@ -103,14 +103,17 @@ def test_force_utf8_streams_leaves_utf8_streams_alone() -> None:
     assert calls == []
 
 
-def test_version_command() -> None:
+def test_version_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "_current_version", lambda: "1.2.3")
+
     result = CliRunner().invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == "tau 0.1.2"
+    assert result.stdout.strip() == "tau 1.2.3"
 
 
 def test_version_command_does_not_check_for_updates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "_current_version", lambda: "1.2.3")
     monkeypatch.setattr(
         cli,
         "_startup_update_notice",
@@ -120,7 +123,7 @@ def test_version_command_does_not_check_for_updates(monkeypatch: pytest.MonkeyPa
     result = CliRunner().invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == "tau 0.1.2"
+    assert result.stdout.strip() == "tau 1.2.3"
 
 
 def test_print_mode_writes_update_notice_to_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -271,6 +274,7 @@ async def test_run_openai_tui_combines_release_notes_and_update_notice(
         calls.append(kwargs["startup_notices"])  # type: ignore[arg-type]
 
     monkeypatch.setattr(cli, "run_tui_app", fake_run_tui_app)
+    monkeypatch.setattr(cli, "_current_version", lambda: "0.1.2")
     monkeypatch.setattr(
         cli,
         "startup_release_notes_notice",
