@@ -1,5 +1,7 @@
 """Append-only session tree primitives for Tau."""
 
+from __future__ import annotations
+
 from tau_agent.session.entries import (
     BaseSessionEntry,
     BranchSummaryEntry,

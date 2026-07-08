@@ -23,7 +23,7 @@ def test_load_shell_settings_accepts_pi_style_shell_command_prefix(tmp_path: Pat
     path = shell_settings_path(paths)
     path.parent.mkdir(parents=True)
     path.write_text(
-        '{"shellCommandPrefix": "shopt -s expand_aliases\\nalias gs=\\\"git status\\\""}',
+        '{"shellCommandPrefix": "shopt -s expand_aliases\\nalias gs=\\"git status\\""}',
         encoding="utf-8",
     )
 

@@ -1,15 +1,9 @@
 name: Publish Python package
 
 on:
-  push:
-    branches:
-      - main
-    tags:
-      - "v*"
   release:
     types:
       - published
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,49 +11,18 @@ permissions:
 
 jobs:
   publish:
+    name: Publish to PyPI
     runs-on: ubuntu-latest
     environment: pypi
     steps:
-      - name: Checkout
+      - name: Check out repository
         uses: actions/checkout@v5
 
-      - name: Install uv
+      - name: Set up uv
         uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version-file: .python-version
-
-      - name: Check whether version is already on PyPI
-        id: pypi
-        run: |
-          NAME=$(python - <<'PY'
-          import tomllib
-          print(tomllib.load(open('pyproject.toml', 'rb'))['project']['name'])
-          PY
-          )
-          VERSION=$(python - <<'PY'
-          import tomllib
-          print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])
-          PY
-          )
-          STATUS=$(curl -s -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/${NAME}/${VERSION}/json")
-          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          if [ "$STATUS" = "200" ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "${NAME} ${VERSION} already exists on PyPI; skipping publish."
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Build package
-        if: steps.pypi.outputs.exists != 'true'
         run: uv build
 
       - name: Publish package
-        if: steps.pypi.outputs.exists != 'true'
         run: uv publish

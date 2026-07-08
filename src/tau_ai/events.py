@@ -1,5 +1,7 @@
 """Provider-neutral streaming events emitted by model adapters."""
 
+from __future__ import annotations
+
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict

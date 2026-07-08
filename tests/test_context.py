@@ -24,9 +24,7 @@ def test_discovers_user_project_and_agents_context_files(tmp_path: Path) -> None
     (nested / ".tau").mkdir()
     (nested / ".agents").mkdir()
     (nested / ".tau" / "AGENTS.md").write_text("Project Tau instructions", encoding="utf-8")
-    (nested / ".agents" / "AGENTS.md").write_text(
-        "Project agents instructions", encoding="utf-8"
-    )
+    (nested / ".agents" / "AGENTS.md").write_text("Project agents instructions", encoding="utf-8")
 
     context_files = discover_project_context(
         TauResourcePaths(

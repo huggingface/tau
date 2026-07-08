@@ -5,11 +5,12 @@ build/
 dist/
 wheels/
 *.egg-info
+.mypy_cache/
 
 # Virtual environments
 .venv
 
-# Astro / Starlight docs site (website/)
-website/node_modules/
-website/dist/
-website/.astro/
+# Hugo docs site (website/)
+website/public/
+website/resources/
+website/.hugo_build.lock

@@ -1,5 +1,7 @@
 """Minimal Textual app for Tau coding sessions."""
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import suppress
@@ -48,10 +50,11 @@ from tau_agent import (
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
 )
-from tau_agent.messages import AgentMessage
+from tau_agent.messages import AgentMessage, UserMessage
 from tau_agent.tools import AgentTool
 from tau_ai import ProviderErrorEvent, ProviderEvent
 from tau_ai.provider import CancellationToken
+from tau_coding.catalog_loader import save_user_catalog_entries
 from tau_coding.commands import CommandRegistry, create_default_command_registry
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.oauth import OAuthAuthInfo, OAuthPrompt, login_openai_codex
@@ -61,12 +64,15 @@ from tau_coding.provider_catalog import (
     builtin_provider_entry,
 )
 from tau_coding.provider_config import (
+    OpenAICompatibleProviderConfig,
     ProviderConfig,
     ProviderSelection,
     load_provider_settings,
     provider_config_from_catalog_entry,
     provider_has_usable_credentials,
     resolve_provider_selection,
+    save_provider_settings,
+    upsert_openai_compatible_provider,
     upsert_saved_provider,
 )
 from tau_coding.provider_runtime import create_model_provider
@@ -114,6 +120,9 @@ ACTIVITY_TICK_SECONDS = 0.15
 ACTIVITY_COLOR_FADE_STEPS = 24
 ACTIVITY_INDICATOR_HEIGHT = 3
 COMPLETION_MAX_VISIBLE_LINES = 16
+COMPLETION_INITIAL_TERMINAL_FRACTION = 3
+COMPLETION_MIN_TRANSCRIPT_LINES = 4
+COMPLETION_WIDGET_CHROME_LINES = 3
 NO_STORED_CREDENTIALS_MESSAGE = (
     "No stored credentials to remove. /logout only removes credentials saved by /login; "
     "environment variables and providers.json config are unchanged."
@@ -199,6 +208,7 @@ class PromptInput(TextArea):
         tui_keybindings: TuiKeybindings | None = None,
         **kwargs: Any,
     ) -> None:
+        kwargs.setdefault("highlight_cursor_line", False)
         super().__init__(**kwargs)
         self.tui_keybindings = tui_keybindings or TuiKeybindings()
         self._base_bindings = self._bindings.copy()
@@ -710,6 +720,8 @@ class CommandOutputScroll(VerticalScroll):
 class CommandOutputScreen(ModalScreen[None]):
     """Dismissible modal for slash-command output."""
 
+    auto_copy_selection: bool = False
+
     BINDINGS: ClassVar[list[BindingEntry]] = [
         Binding("escape", "close", "Close"),
         Binding("enter", "close", "Close"),
@@ -717,11 +729,19 @@ class CommandOutputScreen(ModalScreen[None]):
         Binding("down", "scroll_down", "Scroll down", show=False, priority=True),
     ]
 
-    def __init__(self, title: str, message: str, *, theme: TuiTheme) -> None:
+    def __init__(
+        self,
+        title: str,
+        message: str,
+        *,
+        theme: TuiTheme,
+        auto_copy_selection: bool = False,
+    ) -> None:
         super().__init__()
         self.title_text = title
         self.message = message
         self.theme = theme
+        self.auto_copy_selection = auto_copy_selection
 
     def compose(self) -> ComposeResult:
         """Compose command output."""
@@ -729,7 +749,7 @@ class CommandOutputScreen(ModalScreen[None]):
             yield Static(self.title_text, id="command-output-title")
             with CommandOutputScroll(id="command-output-scroll"):
                 yield Static(self.message, id="command-output-body", markup=False)
-            yield Static("Enter or Escape closes", id="command-output-help")
+            yield Static(self._help_text(), id="command-output-help")
 
     def on_mount(self) -> None:
         """Focus the scroll area so arrow keys navigate long output."""
@@ -747,6 +767,11 @@ class CommandOutputScreen(ModalScreen[None]):
     def action_close(self) -> None:
         """Close the command output modal."""
         self.dismiss(None)
+
+    def _help_text(self) -> str:
+        if self.auto_copy_selection:
+            return "Select text to copy - Enter or Escape closes"
+        return "Enter or Escape closes"
 
     def action_scroll_up(self) -> None:
         """Scroll command output up."""
@@ -831,6 +856,19 @@ class LoginProviderPickerScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+@dataclass(frozen=True, slots=True)
+class CustomProviderLoginResult:
+    """Provider details collected by the custom-provider login flow."""
+
+    provider_name: str
+    display_name: str
+    base_url: str
+    api_key_env: str
+    models: tuple[str, ...]
+    default_model: str
+    api_key: str
+
+
 class LoginMethodPickerScreen(ModalScreen[str | None]):
     """Login method picker for the TUI login flow."""
 
@@ -852,12 +890,16 @@ class LoginMethodPickerScreen(ModalScreen[str | None]):
             yield Static("Choose how to authenticate.", id="login-method-intro")
             yield LoginMethodListView(
                 ListItem(
-                    Label("Subscription\n  Sign in with an OAuth account.", markup=False),
+                    Label("Subscription — OAuth account", markup=False),
                     id="login-method-subscription",
                 ),
                 ListItem(
-                    Label("API key\n  Save a provider API key.", markup=False),
+                    Label("API key — built-in provider", markup=False),
                     id="login-method-api-key",
+                ),
+                ListItem(
+                    Label("Custom provider — OpenAI-compatible", markup=False),
+                    id="login-method-custom",
                 ),
                 id="login-method-list",
             )
@@ -887,6 +929,8 @@ class LoginMethodPickerScreen(ModalScreen[str | None]):
             self.dismiss("subscription")
         elif event.button.id == "login-method-api-key":
             self.dismiss("api-key")
+        elif event.button.id == "login-method-custom":
+            self.dismiss("custom")
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Dismiss with the selected login method."""
@@ -894,6 +938,8 @@ class LoginMethodPickerScreen(ModalScreen[str | None]):
             self.dismiss("subscription")
         elif event.item.id == "login-method-api-key":
             self.dismiss("api-key")
+        elif event.item.id == "login-method-custom":
+            self.dismiss("custom")
 
     def action_cancel(self) -> None:
         """Close without selecting a login method."""
@@ -1282,6 +1328,142 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         self.query_one("#model-picker-help", Static).update(help_text)
 
 
+class CustomProviderLoginScreen(ModalScreen[CustomProviderLoginResult | None]):
+    """Prompt for adding an OpenAI-compatible custom provider."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Cancel"),
+    ]
+
+    _INPUT_ORDER: ClassVar[tuple[str, ...]] = (
+        "custom-provider-name",
+        "custom-provider-display-name",
+        "custom-provider-base-url",
+        "custom-provider-api-key-env",
+        "custom-provider-models",
+        "custom-provider-default-model",
+        "custom-provider-api-key",
+    )
+
+    def __init__(self, *, theme: TuiTheme) -> None:
+        super().__init__()
+        self.theme = theme
+
+    def compose(self) -> ComposeResult:
+        """Compose the custom provider prompt."""
+        with Vertical(id="login-screen"):
+            yield Static("Add custom provider", id="login-title")
+            yield Static(
+                "Short provider name is used in commands/config.",
+                id="custom-provider-help",
+            )
+            yield Input(placeholder="Provider name/id, e.g. nebius", id="custom-provider-name")
+            yield Input(
+                placeholder="Display name shown in UI, e.g. Nebius AI Studio",
+                id="custom-provider-display-name",
+            )
+            yield Input(
+                placeholder="OpenAI-compatible base URL, e.g. https://api.studio.nebius.ai/v1",
+                id="custom-provider-base-url",
+            )
+            yield Input(
+                placeholder="API key environment variable fallback, e.g. NEBIUS_API_KEY",
+                id="custom-provider-api-key-env",
+            )
+            yield Input(
+                placeholder="Model ids, comma-separated, e.g. model-a, model-b",
+                id="custom-provider-models",
+            )
+            yield Input(
+                placeholder="Default model id, must be listed above",
+                id="custom-provider-default-model",
+            )
+            yield Input(
+                placeholder="Paste API key to save for this provider",
+                password=True,
+                id="custom-provider-api-key",
+            )
+            yield Static("Enter advances/saves - Escape closes", id="login-footer")
+
+    def on_mount(self) -> None:
+        """Focus the first provider-detail field."""
+        self.query_one("#custom-provider-name", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Advance through fields, then dismiss with provider details."""
+        input_id = event.input.id
+        if input_id not in self._INPUT_ORDER:
+            return
+        event.stop()
+        if input_id != self._INPUT_ORDER[-1]:
+            self._focus_next(input_id)
+            return
+        result = self._collect_result()
+        if result is not None:
+            self.dismiss(result)
+
+    def _focus_next(self, input_id: str) -> None:
+        index = self._INPUT_ORDER.index(input_id)
+        self.query_one(f"#{self._INPUT_ORDER[index + 1]}", Input).focus()
+
+    def _collect_result(self) -> CustomProviderLoginResult | None:
+        provider_name = self._field("custom-provider-name", "Provider name")
+        if provider_name is None:
+            return None
+        base_url = self._field("custom-provider-base-url", "Base URL")
+        if base_url is None:
+            return None
+        api_key_env = self._field("custom-provider-api-key-env", "API key environment variable")
+        if api_key_env is None:
+            return None
+        models_text = self._field("custom-provider-models", "Model ids")
+        if models_text is None:
+            return None
+        models = tuple(
+            dict.fromkeys(item.strip() for item in models_text.split(",") if item.strip())
+        )
+        if not models:
+            self.query_one("#custom-provider-help", Static).update(
+                "At least one model id is required."
+            )
+            self.query_one("#custom-provider-models", Input).focus()
+            return None
+        default_model = self._field("custom-provider-default-model", "Default model")
+        if default_model is None:
+            return None
+        if default_model not in models:
+            self.query_one("#custom-provider-help", Static).update(
+                "Default model must be included in the model list."
+            )
+            self.query_one("#custom-provider-default-model", Input).focus()
+            return None
+        api_key = self._field("custom-provider-api-key", "API key")
+        if api_key is None:
+            return None
+        display_name = self.query_one("#custom-provider-display-name", Input).value.strip()
+        return CustomProviderLoginResult(
+            provider_name=provider_name,
+            display_name=display_name or provider_name,
+            base_url=base_url,
+            api_key_env=api_key_env,
+            models=models,
+            default_model=default_model,
+            api_key=api_key,
+        )
+
+    def _field(self, input_id: str, label: str) -> str | None:
+        value = self.query_one(f"#{input_id}", Input).value.strip()
+        if value:
+            return value
+        self.query_one("#custom-provider-help", Static).update(f"{label} is required.")
+        self.query_one(f"#{input_id}", Input).focus()
+        return None
+
+    def action_cancel(self) -> None:
+        """Close without adding a provider."""
+        self.dismiss(None)
+
+
 class LoginScreen(ModalScreen[str | None]):
     """Password prompt for saving a provider API key."""
 
@@ -1477,8 +1659,9 @@ class TauTuiApp(App[None]):
         border: none;
         background: $tau-transcript-background;
         padding: 0 0 0 2;
+        overflow-x: auto;
         scrollbar-size-vertical: 0;
-        scrollbar-size-horizontal: 0;
+        scrollbar-size-horizontal: 1;
     }
 
     #queued-messages {
@@ -1691,7 +1874,8 @@ class TauTuiApp(App[None]):
     }
 
     #login-method-list {
-        max-height: 6;
+        height: auto;
+        max-height: 10;
     }
 
     #model-picker-search {
@@ -1711,6 +1895,7 @@ class TauTuiApp(App[None]):
         color: $tau-muted-text;
     }
 
+    CustomProviderLoginScreen,
     LoginScreen,
     OAuthLoginScreen {
         align: center middle;
@@ -1732,14 +1917,22 @@ class TauTuiApp(App[None]):
         margin-bottom: 1;
     }
 
-    #login-help {
+    #login-help,
+    #custom-provider-help {
         height: 1;
         color: $tau-muted-text;
         margin-bottom: 1;
     }
 
     #login-api-key,
-    #login-oauth-code {
+    #login-oauth-code,
+    #custom-provider-name,
+    #custom-provider-display-name,
+    #custom-provider-base-url,
+    #custom-provider-api-key-env,
+    #custom-provider-models,
+    #custom-provider-default-model,
+    #custom-provider-api-key {
         background: $tau-prompt-background;
         color: $tau-prompt-text;
         border: tall $tau-prompt-border;
@@ -1766,25 +1959,47 @@ class TauTuiApp(App[None]):
         *,
         tui_settings: TuiSettings | None = None,
         startup_message: str | None = None,
+        startup_notice: str | None = None,
+        startup_notices: Sequence[str] = (),
         initial_prompt: str | None = None,
     ) -> None:
         self.tui_settings = tui_settings or TuiSettings()
         self.startup_message = startup_message
+        legacy_notices = (startup_notice,) if startup_notice else ()
+        self.startup_notices = tuple((*startup_notices, *legacy_notices))
         self.initial_prompt = initial_prompt
         super().__init__()
         self._bindings = BindingsMap(_app_bindings(self.tui_settings.keybindings))
         self.session = session
         self.state = TuiState(skills=session.skills)
-        self.state.load_messages(session.messages)
+        for notice in self.startup_notices:
+            self.state.add_item("status", notice)
+        self._prompt_history: tuple[str, ...] = ()
+        self._load_session_messages_from_session()
         self.adapter = TuiEventAdapter(self.state)
         self._prompt_worker: Worker[None] | None = None
         self._compaction_worker: Worker[None] | None = None
         self._prompt_run_id = 0
+        self._optimistic_user_messages: list[tuple[int, str]] = []
         self._completion_state = CompletionState()
+        self._completion_visible_line_budget: int | None = None
         self._activity_frame = 0
         self._activity_timer: Timer | None = None
         self._active_notification_keys: set[tuple[str, str]] = set()
         self._supports_pyperclip: bool | None = None
+        self._sync_header_title()
+
+    def _sync_header_title(self) -> None:
+        """Reflect the active session name in Textual's header state."""
+        self.title = "Tau"
+        self.sub_title = _session_header_sub_title(self.session)
+
+    def _sync_text_selection_state(self) -> None:
+        """Disable native text selection while the transcript is mutating."""
+        type(self).ALLOW_SELECT = not self.state.running
+        if self.state.running and self.screen_stack:
+            with suppress(Exception):
+                self.screen.clear_selection()
 
     def copy_to_clipboard(self, text: str) -> None:
         """Copy text using pyperclip when available, then Textual's fallback."""
@@ -1840,11 +2055,12 @@ class TauTuiApp(App[None]):
         prompt.focus()
         self._update_responsive_layout(self.size.width, self.size.height)
         self._refresh()
+        self._sync_text_selection_state()
         self._refresh_completions()
         if self.startup_message:
             self._notify(self.startup_message, severity="warning")
         if self.initial_prompt and self.initial_prompt.strip():
-            self._submit_prompt(self.initial_prompt.strip())
+            await self._submit_prompt(self.initial_prompt.strip())
 
     def on_unmount(self) -> None:
         """Stop the activity timer when the app is torn down."""
@@ -1854,6 +2070,7 @@ class TauTuiApp(App[None]):
 
     def on_resize(self, event: Resize) -> None:
         """Update responsive chrome when the terminal changes size."""
+        self._completion_visible_line_budget = None
         self._update_responsive_layout(event.size.width, event.size.height)
 
     def on_click(self, event: events.Click) -> None:
@@ -1865,10 +2082,14 @@ class TauTuiApp(App[None]):
 
     @on(events.TextSelected)
     async def on_text_selected(self) -> None:
-        """Optionally copy selected transcript text automatically."""
-        if not self.tui_settings.auto_copy_selection:
+        """Optionally copy selected text automatically."""
+        active_screen = self.screen
+        if not (
+            self.tui_settings.auto_copy_selection
+            or getattr(active_screen, "auto_copy_selection", False)
+        ):
             return
-        selection = self.screen.get_selected_text()
+        selection = active_screen.get_selected_text()
         if selection:
             self.copy_to_clipboard(selection)
             self._notify("Copied selection to clipboard.")
@@ -1878,6 +2099,7 @@ class TauTuiApp(App[None]):
         if event.text_area.id != "prompt":
             return
         self._sync_prompt_shell_mode(event.text_area.text)
+        self._completion_visible_line_budget = None
         self._completion_state = self._build_completion_state(event.text_area.text)
         self._refresh_completions()
 
@@ -1951,7 +2173,8 @@ class TauTuiApp(App[None]):
                     prompt.text = raw_text
                     prompt.move_cursor(_text_end_location(raw_text))
                     self._notify(
-                        "Wait for the current agent turn and queued messages to finish before compacting.",
+                        "Wait for the current agent turn and queued messages to finish "
+                        "before compacting.",
                         severity="warning",
                     )
                     return
@@ -1977,6 +2200,8 @@ class TauTuiApp(App[None]):
                 await self._open_tree_picker()
             if command.login_picker_requested:
                 self._open_login_picker()
+            if command.custom_provider_login_requested:
+                self._open_custom_provider_login()
             if command.login_provider is not None:
                 self._open_login(command.login_provider)
             if command.logout_picker_requested:
@@ -2007,10 +2232,27 @@ class TauTuiApp(App[None]):
             return
 
         if self.state.running:
+            self._remember_prompt(text)
             await self._queue_prompt(text, streaming_behavior=streaming_behavior)
             return
 
-        self._submit_prompt(text)
+        self._remember_prompt(text)
+        await self._submit_prompt(text)
+
+    def _remember_prompt(self, text: str) -> None:
+        """Remember a submitted user prompt for lightweight input recall."""
+        if not text.strip():
+            return
+        self._prompt_history = (*self._prompt_history, text)
+
+    def _load_session_messages_from_session(self) -> None:
+        """Load visible session messages and reseed prompt history from them."""
+        self.state.load_messages(self.session.messages)
+        self._prompt_history = tuple(
+            message.content
+            for message in self.session.messages
+            if isinstance(message, UserMessage) and message.content.strip()
+        )
 
     def _is_compaction_active(self) -> bool:
         """Return whether a manual compaction worker is still running."""
@@ -2023,7 +2265,12 @@ class TauTuiApp(App[None]):
         worker = self._prompt_worker
         is_worker_active = worker is not None and not worker.is_finished and not worker.is_cancelled
         is_session_running = bool(getattr(self.session, "is_running", False))
-        return self.state.running or is_session_running or is_worker_active or self.state.queued_message_count > 0
+        return (
+            self.state.running
+            or is_session_running
+            or is_worker_active
+            or self.state.queued_message_count > 0
+        )
 
     async def _run_compaction(self, summary: str) -> None:
         """Run manual compaction without disabling prompt editing."""
@@ -2041,17 +2288,64 @@ class TauTuiApp(App[None]):
             self._compaction_worker = None
         self.state.clear()
         self.state.set_skills(self.session.skills)
-        self.state.load_messages(self.session.messages)
+        self._load_session_messages_from_session()
         self._notify(compact_message)
         self._refresh()
 
-    def _submit_prompt(self, text: str) -> None:
+    async def _submit_prompt(self, text: str) -> None:
         """Add a prompt to the transcript and start the agent worker."""
         self._prompt_run_id += 1
         run_id = self._prompt_run_id
-        self._follow_transcript_output()
-        self._refresh()
+        if _should_optimistically_render_prompt(text):
+            self._optimistic_user_messages.append((run_id, text))
+            await self._append_optimistic_user_message(text)
         self._prompt_worker = self.run_worker(self._run_prompt(text, run_id), exclusive=True)
+
+    async def _append_optimistic_user_message(self, text: str) -> None:
+        """Render a submitted user message immediately without rebuilding the transcript."""
+        start_index = len(self.state.items)
+        self.state.add_user_message(text)
+        self._follow_transcript_output()
+        if not self.screen_stack:
+            self._refresh()
+            return
+        theme = self.tui_settings.resolved_theme
+        try:
+            transcript = self.query_one("#transcript", TranscriptView)
+        except NoMatches:
+            self._refresh()
+            return
+        for item in self.state.items[start_index:]:
+            await transcript.append_item(
+                item,
+                theme=theme,
+                show_tool_results=self.state.show_tool_results,
+                scroll_end=True,
+            )
+        self._refresh_chrome(theme=theme)
+
+    def _consume_optimistic_user_event(self, event: AgentEvent, *, run_id: int) -> bool:
+        """Return whether a user event confirms an already-rendered optimistic message."""
+        if not isinstance(event, MessageEndEvent) or not isinstance(event.message, UserMessage):
+            return False
+        for index, (pending_run_id, pending_text) in enumerate(self._optimistic_user_messages):
+            if pending_run_id == run_id and pending_text == event.message.content:
+                del self._optimistic_user_messages[index]
+                return True
+        return False
+
+    def _clear_optimistic_user_messages(self, *, run_id: int) -> None:
+        """Drop unconfirmed optimistic messages once their run is no longer active."""
+        self._optimistic_user_messages = [
+            pending for pending in self._optimistic_user_messages if pending[0] != run_id
+        ]
+
+    async def _append_confirmed_user_message(self, message: AgentMessage) -> None:
+        """Render a non-optimistic user event incrementally when possible."""
+        if not isinstance(message, UserMessage):
+            self._refresh()
+            return
+        await self._append_optimistic_user_message(message.content)
 
     def _follow_transcript_output(self) -> None:
         """Put the transcript back in follow mode for explicit user actions."""
@@ -2133,7 +2427,13 @@ class TauTuiApp(App[None]):
             async for event in self.session.prompt(text):
                 if active_run_id != self._prompt_run_id:
                     return
-                self.adapter.apply(event)
+                if self._consume_optimistic_user_event(event, run_id=active_run_id):
+                    self._sync_text_selection_state()
+                    self._refresh_chrome()
+                    continue
+                if not (_is_user_message_end_event(event) and self.screen_stack):
+                    self.adapter.apply(event)
+                self._sync_text_selection_state()
                 if isinstance(event, ErrorEvent) and not event.recoverable:
                     _attach_diagnostic_log_path_to_error(self.state, self.session)
                 await self._apply_streaming_transcript_event(event)
@@ -2144,8 +2444,10 @@ class TauTuiApp(App[None]):
             self.state.error = message
             self.state.add_item("error", message)
             self.state.running = False
+            self._sync_text_selection_state()
             self._refresh()
         finally:
+            self._clear_optimistic_user_messages(run_id=active_run_id)
             if active_run_id == self._prompt_run_id:
                 self._prompt_worker = None
 
@@ -2183,7 +2485,7 @@ class TauTuiApp(App[None]):
             return
         if isinstance(event, MessageEndEvent):
             if event.message.role == "user":
-                self._refresh()
+                await self._append_confirmed_user_message(event.message)
                 return
             if event.message.role == "assistant":
                 await transcript.finish_assistant_message(event.message.content)
@@ -2233,7 +2535,7 @@ class TauTuiApp(App[None]):
         self._compaction_worker = None
         self.state.clear()
         self.state.set_skills(self.session.skills)
-        self.state.load_messages(self.session.messages)
+        self._load_session_messages_from_session()
         self._refresh()
         if notify:
             self._notify("Cancelled compaction.")
@@ -2257,6 +2559,7 @@ class TauTuiApp(App[None]):
         self._prompt_worker = None
         self.state.running = False
         self.state.assistant_buffer = ""
+        self._sync_text_selection_state()
         self._refresh()
         if notify:
             self._notify("Interrupted current operation.")
@@ -2326,10 +2629,26 @@ class TauTuiApp(App[None]):
         if not self._completion_state.items:
             if self.action_edit_queued_follow_up():
                 return
+            if self.action_recall_previous_prompt():
+                return
             self.query_one("#prompt", PromptInput).action_cursor_up()
             return
         self._completion_state = self._completion_state.select_previous()
         self._refresh_completions()
+
+    def action_recall_previous_prompt(self) -> bool:
+        """Recall the most recent submitted prompt into an empty prompt input."""
+        prompt = self.query_one("#prompt", PromptInput)
+        # Only recall into an empty input so an accidental Up press does not
+        # erase a prompt the user is still writing.
+        if prompt.text.strip() or not self._prompt_history:
+            return False
+        previous_prompt = self._prompt_history[-1]
+        prompt.text = previous_prompt
+        prompt.move_cursor(_text_end_location(previous_prompt))
+        self._completion_state = self._build_completion_state(prompt.text)
+        self._refresh_completions()
+        return True
 
     def action_edit_queued_follow_up(self) -> bool:
         """Move the latest queued follow-up back into the prompt for editing."""
@@ -2394,7 +2713,11 @@ class TauTuiApp(App[None]):
     def action_toggle_thinking(self) -> None:
         """Toggle thinking-token display in the transcript."""
         self.state.toggle_thinking()
-        self._refresh()
+        transcript = self.query_one("#transcript", TranscriptView)
+        transcript.update_thinking_visibility(
+            self.state,
+            theme=self.tui_settings.resolved_theme,
+        )
 
     def _handle_session_picker_result(self, session_id: str | None) -> None:
         if session_id is None:
@@ -2406,7 +2729,7 @@ class TauTuiApp(App[None]):
             resume_message = await self.session.resume(session_id)
             self.state.clear()
             self.state.set_skills(self.session.skills)
-            self.state.load_messages(self.session.messages)
+            self._load_session_messages_from_session()
             self._notify(resume_message)
         except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
             self._notify(f"Error: {exc}", severity="error")
@@ -2468,7 +2791,7 @@ class TauTuiApp(App[None]):
                 result = await result
             self.state.clear()
             self.state.set_skills(self.session.skills)
-            self.state.load_messages(self.session.messages)
+            self._load_session_messages_from_session()
             if isinstance(result, SessionTreeBranchResult):
                 if result.input_prefill is not None:
                     prompt = self.query_one("#prompt", PromptInput)
@@ -2492,7 +2815,7 @@ class TauTuiApp(App[None]):
             await new_session()
             self.state.clear()
             self.state.set_skills(self.session.skills)
-            self.state.load_messages(self.session.messages)
+            self._load_session_messages_from_session()
         except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
             self._notify(f"Error: {exc}", severity="error")
         self._refresh()
@@ -2513,6 +2836,7 @@ class TauTuiApp(App[None]):
                 _command_output_title(command_text),
                 message,
                 theme=self.tui_settings.resolved_theme,
+                auto_copy_selection=command_text.strip().split(maxsplit=1)[0] == "/session",
             )
         )
 
@@ -2529,6 +2853,9 @@ class TauTuiApp(App[None]):
             providers = _subscription_login_providers(BUILTIN_PROVIDER_CATALOG)
         elif method == "api-key":
             providers = _api_key_login_providers(BUILTIN_PROVIDER_CATALOG)
+        elif method == "custom":
+            self._open_custom_provider_login()
+            return
         else:
             self._notify(f"Unknown login method: {method}", severity="error")
             return
@@ -2548,6 +2875,54 @@ class TauTuiApp(App[None]):
             return
         self._open_login(provider_name)
 
+    def _open_custom_provider_login(self) -> None:
+        self.push_screen(
+            CustomProviderLoginScreen(theme=self.tui_settings.resolved_theme),
+            callback=self._handle_custom_provider_login_result,
+        )
+
+    def _handle_custom_provider_login_result(
+        self,
+        result: CustomProviderLoginResult | None,
+    ) -> None:
+        if result is None:
+            return
+        provider = OpenAICompatibleProviderConfig(
+            name=result.provider_name,
+            base_url=result.base_url.rstrip("/"),
+            api_key_env=result.api_key_env,
+            credential_name=result.provider_name,
+            models=result.models,
+            default_model=result.default_model,
+        )
+        catalog_entry = ProviderCatalogEntry(
+            name=provider.name,
+            display_name=result.display_name,
+            kind="openai-compatible",
+            base_url=provider.base_url,
+            api_key_env=provider.api_key_env,
+            credential_name=provider.credential_name,
+            models=provider.models,
+            default_model=provider.default_model,
+            docs_url=provider.base_url,
+        )
+        try:
+            save_user_catalog_entries((catalog_entry,))
+            FileCredentialStore().set(provider.credential_name or provider.name, result.api_key)
+            settings = load_provider_settings()
+            updated = upsert_openai_compatible_provider(settings, provider, set_default=False)
+            save_provider_settings(updated)
+            self.session.reload_provider_settings()
+            try:
+                self.session.set_provider(provider.name, persist_default=False)
+            except TypeError:
+                self.session.set_provider(provider.name)
+        except Exception as exc:  # noqa: BLE001 - surface login failures in the TUI
+            self._notify(f"Could not save custom provider: {exc}", severity="error")
+            return
+        self._notify(f"Saved custom provider {result.display_name}.")
+        self._refresh()
+
     def _open_login(self, provider_name: str) -> None:
         entry = builtin_provider_entry(provider_name)
         if entry is None:
@@ -2566,6 +2941,12 @@ class TauTuiApp(App[None]):
 
     def _handle_login_result(self, entry: ProviderCatalogEntry, api_key: str | None) -> None:
         if api_key is None:
+            return
+        if entry.credential_name is None:
+            self._notify(
+                f"Provider {entry.name} does not support saved credentials.",
+                severity="error",
+            )
             return
         try:
             FileCredentialStore().set(entry.credential_name, api_key)
@@ -2588,6 +2969,12 @@ class TauTuiApp(App[None]):
         credential: OAuthCredential | None,
     ) -> None:
         if credential is None:
+            return
+        if entry.credential_name is None:
+            self._notify(
+                f"Provider {entry.name} does not support saved credentials.",
+                severity="error",
+            )
             return
         try:
             FileCredentialStore().set_oauth(entry.credential_name, credential)
@@ -2629,6 +3016,9 @@ class TauTuiApp(App[None]):
             self._notify(f"Unknown provider: {provider_name}", severity="error")
             return
 
+        if entry.credential_name is None:
+            self._notify(NO_STORED_CREDENTIALS_MESSAGE, severity="warning")
+            return
         credential_store = FileCredentialStore()
         if not _credential_store_has_entry(credential_store, entry.credential_name):
             self._notify(NO_STORED_CREDENTIALS_MESSAGE, severity="warning")
@@ -2718,7 +3108,7 @@ class TauTuiApp(App[None]):
 
     def _handle_scoped_models_picker_result(self, choice: ModelChoice | None) -> None:
         del choice
-        self._refresh()
+        self._refresh_chrome()
 
     def _handle_model_picker_result(self, choice: ModelChoice | None) -> None:
         if choice is None:
@@ -2734,7 +3124,7 @@ class TauTuiApp(App[None]):
         except Exception as exc:  # noqa: BLE001 - surface model switch failures in the TUI
             self._notify(f"Could not switch model: {exc}", severity="error")
             return
-        self._refresh()
+        self._refresh_chrome()
 
     def _open_theme_picker(self) -> None:
         self.push_screen(
@@ -2762,7 +3152,7 @@ class TauTuiApp(App[None]):
         except Exception as exc:  # noqa: BLE001 - surface session state failures in the TUI
             self._notify(f"Could not change thinking mode: {exc}", severity="error")
             return
-        self._refresh()
+        self._refresh_chrome()
 
     async def _cycle_thinking_level(self) -> None:
         cycler = getattr(self.session, "cycle_thinking_level", None)
@@ -2776,7 +3166,7 @@ class TauTuiApp(App[None]):
         except Exception as exc:  # noqa: BLE001 - surface session state failures in the TUI
             self._notify(f"Could not change thinking mode: {exc}", severity="error")
             return
-        self._refresh()
+        self._refresh_chrome()
 
     async def _cycle_scoped_model(self) -> None:
         cycler = getattr(self.session, "cycle_scoped_model", None)
@@ -2790,7 +3180,7 @@ class TauTuiApp(App[None]):
         except Exception as exc:  # noqa: BLE001 - surface session state failures in the TUI
             self._notify(f"Could not switch scoped model: {exc}", severity="error")
             return
-        self._refresh()
+        self._refresh_chrome()
 
     def _notify(
         self,
@@ -2818,6 +3208,8 @@ class TauTuiApp(App[None]):
     def _refresh_chrome(self, *, theme: TuiTheme | None = None) -> None:
         """Refresh non-transcript chrome without remounting transcript blocks."""
         theme = theme or self.tui_settings.resolved_theme
+        self._sync_header_title()
+        self._sync_text_selection_state()
         self._sync_queue_state()
         sidebar = self.query_one("#sidebar", SessionSidebar)
         sidebar.update_from_session(self.session, theme=theme)
@@ -2885,17 +3277,70 @@ class TauTuiApp(App[None]):
     def _refresh_completions(self) -> None:
         suggestions = self.query_one("#autocomplete", Static)
         suggestions.display = bool(self._completion_state.items)
+        if not self._completion_state.items:
+            self._completion_visible_line_budget = None
+            suggestions.update(
+                render_completion_suggestions(
+                    CompletionState(),
+                    theme=self.tui_settings.resolved_theme,
+                )
+            )
+            self._refresh_footer_bindings()
+            return
+        max_lines = self._completion_window_line_budget(suggestions)
         suggestions.update(
             render_completion_suggestions(
                 _visible_completion_state(
                     self._completion_state,
-                    max_lines=COMPLETION_MAX_VISIBLE_LINES,
+                    max_lines=max_lines,
                     width=max(suggestions.content_size.width or suggestions.size.width, 1),
                 ),
                 theme=self.tui_settings.resolved_theme,
             )
         )
         self._refresh_footer_bindings()
+
+    def _completion_window_line_budget(self, suggestions: Static) -> int:
+        """Return a stable completion window size for the current suggestion box.
+
+        The autocomplete widget has ``height: auto``. If we used its current
+        rendered height as the next render limit unconditionally, selecting an
+        item could render fewer rows, which would shrink the widget, which would
+        then make the next render limit smaller again. Keep the largest measured
+        height for the current completion session so navigation does not feed
+        back into progressively smaller boxes.
+        """
+        measured_limit = _completion_visible_line_limit(suggestions)
+        if suggestions.size.height <= 0:
+            if self._completion_visible_line_budget is None:
+                self._completion_visible_line_budget = self._initial_completion_line_budget()
+            return self._completion_visible_line_budget
+        self._completion_visible_line_budget = max(
+            self._completion_visible_line_budget or measured_limit,
+            measured_limit,
+        )
+        return self._completion_visible_line_budget
+
+    def _initial_completion_line_budget(self) -> int:
+        """Estimate the first completion window size before Textual lays it out."""
+        terminal_height = self.size.height
+        if terminal_height <= 0:
+            return COMPLETION_MAX_VISIBLE_LINES
+
+        reserved_rows = COMPLETION_MIN_TRANSCRIPT_LINES + COMPLETION_WIDGET_CHROME_LINES
+        reserved_rows += 2  # Header and footer.
+        for selector in ("#prompt-row", "#compact-session-info", "#queued-messages"):
+            with suppress(NoMatches):
+                widget = self.query_one(selector)
+                if widget.display:
+                    reserved_rows += widget.outer_size.height
+
+        available_rows = terminal_height - reserved_rows
+        terminal_fraction_rows = max(1, terminal_height // COMPLETION_INITIAL_TERMINAL_FRACTION)
+        return max(
+            1,
+            min(COMPLETION_MAX_VISIBLE_LINES, available_rows, terminal_fraction_rows),
+        )
 
     def _update_responsive_layout(self, width: int, height: int) -> None:
         show_sidebar = width >= SIDEBAR_MIN_WIDTH and height >= SIDEBAR_MIN_HEIGHT
@@ -2986,6 +3431,17 @@ def _is_terminal_command_prompt(text: str) -> bool:
     return _terminal_command_prefix_span(text) is not None
 
 
+def _should_optimistically_render_prompt(text: str) -> bool:
+    """Return whether submitted text can be safely shown before session expansion."""
+    stripped = text.strip()
+    return bool(stripped) and not stripped.startswith("/")
+
+
+def _is_user_message_end_event(event: AgentEvent) -> bool:
+    """Return whether an agent event closes a user message."""
+    return isinstance(event, MessageEndEvent) and isinstance(event.message, UserMessage)
+
+
 def _terminal_command_prefix_span(text: str) -> tuple[int, int] | None:
     """Return the input span for a leading ! or !! terminal-command prefix."""
     leading_whitespace = len(text) - len(text.lstrip())
@@ -3013,6 +3469,13 @@ def _hex_to_rgb(color: str) -> tuple[int, int, int]:
     if len(value) != 6:
         raise ValueError(f"Expected #rrggbb color, got {color!r}")
     return (int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16))
+
+
+def _completion_visible_line_limit(suggestions: Static) -> int:
+    """Return the number of completion render lines that fit in the widget body."""
+    if suggestions.size.height > 0:
+        return max(min(COMPLETION_MAX_VISIBLE_LINES, suggestions.size.height), 1)
+    return COMPLETION_MAX_VISIBLE_LINES
 
 
 def _visible_completion_state(
@@ -3219,8 +3682,14 @@ def _named_session_title(title: str | None) -> str | None:
     return stripped
 
 
+def _session_header_sub_title(session: CodingSession) -> str:
+    """Return the session label shown beside Tau in the TUI header."""
+    title = _named_session_title(getattr(session, "session_title", None))
+    return title or "Untitled session"
+
+
 def _login_provider_label(provider: ProviderCatalogEntry) -> str:
-    return f"{provider.display_name}\n  {provider.name}"
+    return f"{provider.display_name} — {provider.name}"
 
 
 def _subscription_login_providers(
@@ -3242,7 +3711,8 @@ def _stored_credential_providers(
     return tuple(
         provider
         for provider in providers
-        if _credential_store_has_entry(credential_store, provider.credential_name)
+        if provider.credential_name is not None
+        and _credential_store_has_entry(credential_store, provider.credential_name)
     )
 
 
@@ -3291,7 +3761,7 @@ def _filter_model_choices(choices: Sequence[ModelChoice], query: str) -> tuple[M
 def _command_message_uses_transcript(command_text: str) -> bool:
     """Return whether slash-command output should appear inline in the transcript."""
     command_name = command_text.split(maxsplit=1)[0].casefold()
-    return command_name == "/reload"
+    return command_name in {"/reload", "/system"}
 
 
 def _command_message_uses_notification(command_text: str, message: str) -> bool:
@@ -3627,9 +4097,13 @@ def _selection_from_session_record(settings: Any, record: Any | None) -> Provide
                 model=choice.model,
             )
 
+    credential_store = FileCredentialStore()
     for provider in settings.providers:
-        if record_model in provider.models:
-            return ProviderSelection(provider=provider, model=record_model)
+        if record_model not in provider.models:
+            continue
+        if not provider_has_usable_credentials(provider, credential_reader=credential_store):
+            continue
+        return ProviderSelection(provider=provider, model=record_model)
     return None
 
 
@@ -3659,6 +4133,8 @@ async def run_tui_app(
     auto_compact_token_threshold: int | None = None,
     initial_prompt: str | None = None,
     session_manager: SessionManager | None = None,
+    startup_notice: str | None = None,
+    startup_notices: Sequence[str] = (),
 ) -> None:
     """Create the default provider/session and run the Textual app."""
     if new_session and session_id is not None:
@@ -3687,10 +4163,11 @@ async def run_tui_app(
             thinking_level=DEFAULT_THINKING_LEVEL,
         )
     except RuntimeError:
-        startup_message = (
+        login_required_message = (
             "Login required. Run /login to choose a provider, "
             f"or /login {selection.provider.name} to continue with the current provider."
         )
+        startup_message = login_required_message
         provider = LoginRequiredProvider(startup_message)
         runtime_provider_config = None
     session: CodingSession | None = None
@@ -3720,10 +4197,13 @@ async def run_tui_app(
                 shell_command_prefix=shell_settings.shell_command_prefix,
             )
         )
+        legacy_notices = (startup_notice,) if startup_notice else ()
+        all_startup_notices = tuple((*startup_notices, *legacy_notices))
         app = TauTuiApp(
             session,
             tui_settings=load_tui_settings(),
             startup_message=startup_message,
+            startup_notices=all_startup_notices,
             initial_prompt=initial_prompt,
         )
         await app.run_async()

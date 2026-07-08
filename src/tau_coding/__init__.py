@@ -1,5 +1,7 @@
 """Tau coding-agent application package."""
 
+from __future__ import annotations
+
 from tau_coding.commands import (
     CommandRegistry,
     CommandResult,
@@ -73,6 +75,7 @@ from tau_coding.provider_config import (
     upsert_openai_compatible_provider,
     upsert_provider,
     upsert_saved_provider,
+    validate_provider_model,
 )
 from tau_coding.rendering import (
     EventRenderer,
@@ -147,7 +150,7 @@ from tau_coding.tools import (
     create_write_tool_definition,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.1.2"
 
 __all__ = [
     "__version__",
@@ -270,4 +273,5 @@ __all__ = [
     "upsert_provider",
     "upsert_openai_compatible_provider",
     "upsert_saved_provider",
+    "validate_provider_model",
 ]

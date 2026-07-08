@@ -1,5 +1,7 @@
 """Shared event-rendering primitives for Tau coding modes."""
 
+from __future__ import annotations
+
 from enum import StrEnum
 from typing import Protocol
 

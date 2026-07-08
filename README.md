@@ -55,13 +55,22 @@ or rendering. Frontends consume events.
 ## Install
 
 Tau is published on PyPI as `tau-ai` and installs a `tau` command.
+It requires Python 3.12 or newer.
 
 ```bash
 uv tool install tau-ai
 tau --version
 ```
 
-Don't have `uv`?
+Don't have `uv`? Install with `pipx` or `pip` instead:
+
+```bash
+pipx install tau-ai
+# or
+python -m pip install tau-ai
+```
+
+If you prefer `uv`, install it with:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -115,6 +124,10 @@ Tau ships with support for OpenAI, Anthropic, OpenAI Codex subscription auth,
 OpenRouter, Hugging Face, and custom OpenAI-compatible endpoints, including local
 models. See the [providers guide](https://twotimespi.dev/guides/providers-and-models/).
 
+The built-in catalog lives in `src/tau_coding/data/catalog.toml`; add your own
+providers and models by dropping a `~/.tau/catalog.toml` with the same schema —
+no code changes required.
+
 ## What Tau can do
 
 - Interactive Textual TUI and non-interactive print mode.
@@ -167,6 +180,8 @@ can drive the built-in TUI, print mode, or a frontend you build yourself.
 
 ## Development
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for project philosophy, layer boundaries, testing expectations, and pull request guidelines.
+
 ```bash
 uv sync --dev
 uv run pytest
@@ -182,20 +197,19 @@ uv run tau
 uv run tau -p "explain this repo"
 ```
 
-Run the Astro/Starlight documentation site:
+Run the Hugo documentation site:
 
 ```bash
 cd website
-bun install
-bun run dev
+hugo server -D
 ```
 
-Open <http://localhost:4321/>. Build with `bun run build`.
+Open <http://localhost:1313/>. Build with `hugo --minify`.
 
 ## Documentation
 
 User docs are published at <https://twotimespi.dev/> and live in
-`website/src/content/docs/`.
+`website/content/`.
 
 Useful entry points:
 

@@ -1,5 +1,7 @@
 """In-memory session state reconstruction."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Final, cast
 
@@ -63,10 +65,6 @@ class SessionState:
         custom_entries: list[CustomEntry] = []
         compaction_entries: list[CompactionEntry] = []
 
-        latest_branch_summary_index = _latest_branch_summary_index(replay_entries)
-        if latest_branch_summary_index is not None:
-            replay_entries = replay_entries[latest_branch_summary_index:]
-
         for entry in replay_entries:
             match entry.type:
                 case "message":
@@ -103,14 +101,6 @@ class SessionState:
             context_entry_ids=tuple(entry_id for entry_id, _message in message_rows),
             entries=tuple(replay_entries),
         )
-
-
-def _latest_branch_summary_index(entries: list[SessionEntry]) -> int | None:
-    """Return the index of the most recent branch summary on a replay path."""
-    for index in range(len(entries) - 1, -1, -1):
-        if entries[index].type == "branch_summary":
-            return index
-    return None
 
 
 def _apply_compaction(

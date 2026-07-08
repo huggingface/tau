@@ -1,5 +1,7 @@
 """Slash command registry for Tau coding sessions."""
 
+from __future__ import annotations
+
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,6 +69,9 @@ class CommandSession(Protocol):
     def resource_diagnostics(self) -> Sequence[ResourceDiagnostic]: ...
 
     @property
+    def system_prompt(self) -> str: ...
+
+    @property
     def session_id(self) -> str | None: ...
 
     @property
@@ -74,6 +79,8 @@ class CommandSession(Protocol):
 
     @property
     def session_manager(self) -> SessionManager | None: ...
+
+    def ensure_session_indexed(self) -> None: ...
 
     def set_model(self, model: str) -> None: ...
 
@@ -98,6 +105,7 @@ class CommandResult:
     resume_picker_requested: bool = False
     tree_picker_requested: bool = False
     login_picker_requested: bool = False
+    custom_provider_login_requested: bool = False
     login_provider: str | None = None
     logout_picker_requested: bool = False
     logout_provider: str | None = None
@@ -199,6 +207,7 @@ def create_default_command_registry() -> CommandRegistry:
             usage="/quit",
             description="Exit the current session.",
             handler=_exit_command,
+            aliases=("exit",),
         )
     )
     registry.register(
@@ -233,6 +242,15 @@ def create_default_command_registry() -> CommandRegistry:
             description="Show session info and stats.",
             handler=_status_command,
             search_terms=("info",),
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="system",
+            usage="/system",
+            description="Show the active system prompt without saving it.",
+            handler=_system_command,
+            search_terms=("prompt", "instructions"),
         )
     )
     registry.register(
@@ -399,6 +417,12 @@ def _status_command(context: CommandContext) -> CommandResult:
     return CommandResult(handled=True, message="\n".join(lines))
 
 
+def _system_command(context: CommandContext) -> CommandResult:
+    if context.args:
+        return CommandResult(handled=True, message="Usage: /system")
+    return CommandResult(handled=True, message=context.session.system_prompt)
+
+
 def _hotkeys_command(context: CommandContext) -> CommandResult:
     lines = [
         "Common keyboard shortcuts:",
@@ -514,12 +538,11 @@ def _name_command(context: CommandContext) -> CommandResult:
     if manager is None or session_id is None:
         return CommandResult(handled=True, message="Session manager is not available.")
 
-    record = manager.get_session(session_id)
-    if record is None:
-        return CommandResult(handled=True, message=f"Unknown current session: {session_id}")
-
     if not context.args:
-        title = record.title or "Untitled session"
+        record = manager.get_session(session_id)
+        title = (
+            record.title if record is not None else context.session.session_title
+        ) or "Untitled session"
         return CommandResult(
             handled=True,
             message=f"Current session name: {title}\nUsage: /name <new name>",
@@ -529,6 +552,9 @@ def _name_command(context: CommandContext) -> CommandResult:
         name = _validated_session_name(context.args)
     except ValueError as exc:
         return CommandResult(handled=True, message=str(exc))
+
+    if manager.get_session(session_id) is None:
+        context.session.ensure_session_indexed()
 
     updated = manager.touch_session(
         session_id,
@@ -655,6 +681,8 @@ def _theme_command(context: CommandContext) -> CommandResult:
 
 def _login_command(context: CommandContext) -> CommandResult:
     provider_name = context.args.strip()
+    if provider_name in {"custom", "new", "add"}:
+        return CommandResult(handled=True, custom_provider_login_requested=True)
     if provider_name:
         entry = builtin_provider_entry(provider_name)
         if entry is None:

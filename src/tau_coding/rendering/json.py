@@ -1,5 +1,7 @@
 """JSON event stream renderer."""
 
+from __future__ import annotations
+
 import typer
 
 from tau_agent import AgentEvent, ErrorEvent

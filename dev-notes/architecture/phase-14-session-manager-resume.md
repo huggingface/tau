@@ -138,6 +138,31 @@ The first implementation prints tab-separated rows:
 The richer modal session picker now uses the same project-scoped session records
 as `/resume`.
 
+## Interrupted tool-call repair on resume
+
+Tau repairs cancelled tool calls by adding a synthetic tool result:
+
+```text
+Tool call interrupted by user
+```
+
+This keeps OpenAI-compatible transcripts valid, because those providers reject
+any history where an assistant tool call has no matching tool output. A subtle
+resume bug existed in older builds: the repair could be added to the in-memory
+`AgentHarness`, letting the live session continue, but not written back to the
+append-only JSONL file. After `/resume`, Tau rebuilt the branch from disk without
+that synthetic tool result, so the next provider request failed with errors like:
+
+```text
+No tool output found for function call call_...
+```
+
+`CodingSession.load()` now checks the active branch for unmatched assistant tool
+calls before returning a resumed session. If it finds one, it appends durable
+repair entries and advances the leaf to the repaired branch. This also covers
+historical corrupted sessions where a user message was already appended after the
+dangling tool call.
+
 ## Tests
 
 The phase is covered by:
