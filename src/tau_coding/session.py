@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import string
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
@@ -112,6 +113,8 @@ SESSION_NAME_SYSTEM_PROMPT = (
     "You write concise coding-agent session names. Reply with only a short title, "
     "maximum four words, no quotes, no punctuation-only output."
 )
+# Auto-naming is optional metadata; a slow provider must not stall the first turn.
+SESSION_NAME_TIMEOUT_SECONDS = 10.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -1491,22 +1494,39 @@ class CodingSession:
         *,
         context: AgentCallDiagnosticContext,
     ) -> None:
-        if not self._should_auto_name_session():
-            return
         try:
-            title = await self._generate_session_name(first_message)
+            should_name = self._should_auto_name_session()
         except Exception as exc:  # noqa: BLE001 - naming must not interrupt the agent turn
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
                 phase="auto_name_session",
                 exc=exc,
             )
-            title = _fallback_session_name(first_message)
+            return
+        if not should_name:
+            return
+        title: str | None = None
+        try:
+            async with asyncio.timeout(SESSION_NAME_TIMEOUT_SECONDS):
+                title = await self._generate_session_name(first_message)
+        except Exception as exc:  # noqa: BLE001 - naming must not interrupt the agent turn
+            self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
+                context=context,
+                phase="auto_name_session",
+                exc=exc,
+            )
         if title is None:
             title = _fallback_session_name(first_message)
         if title is None:
             return
-        self._set_auto_session_title(title)
+        try:
+            self._set_auto_session_title(title)
+        except Exception as exc:  # noqa: BLE001 - the title is optional session metadata
+            self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
+                context=context,
+                phase="auto_name_session",
+                exc=exc,
+            )
 
     def _should_auto_name_session(self) -> bool:
         if self._config.session_id is None or self._config.session_manager is None:

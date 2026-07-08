@@ -1755,6 +1755,146 @@ async def test_session_auto_name_falls_back_when_provider_returns_unusable_title
 
 
 @pytest.mark.anyio
+async def test_session_auto_name_index_write_failure_does_not_break_turn(
+    tmp_path: Path,
+) -> None:
+    # Regression test for issue #306: an index failure while writing the
+    # generated title must not abort the turn or lose the assistant reply.
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(cwd=tmp_path, model="fake")
+    provider = FakeProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content='"Generated title"')),
+            ],
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+        )
+    )
+    original_touch = manager.touch_session
+
+    def failing_touch(session_id: str, **kwargs: object) -> object:
+        if kwargs.get("title") is not None:
+            raise OSError("index file is locked")
+        return original_touch(session_id, **kwargs)  # type: ignore[arg-type]
+
+    manager.touch_session = failing_touch  # type: ignore[method-assign]
+
+    await _collect_session_events(session.prompt("First message"))
+
+    assert session.messages == (
+        UserMessage(content="First message"),
+        AssistantMessage(content="Done"),
+    )
+    persisted = manager.get_session(record.id)
+    assert persisted is not None
+    assert persisted.title is None
+
+
+@pytest.mark.anyio
+async def test_session_auto_name_index_read_failure_does_not_break_turn(
+    tmp_path: Path,
+) -> None:
+    # Regression test for issue #306: an index failure while checking whether
+    # the session needs a name must not abort the turn.
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(cwd=tmp_path, model="fake")
+    provider = FakeProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+        )
+    )
+    def failing_get(session_id: str) -> object:
+        raise OSError("index file is unreadable")
+
+    manager.get_session = failing_get  # type: ignore[method-assign]
+
+    await session._try_auto_name_session(  # noqa: SLF001 - guard under test
+        "First message",
+        context=session._diagnostic_context(),  # noqa: SLF001
+    )
+
+
+@pytest.mark.anyio
+async def test_session_auto_name_times_out_and_falls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression test for issue #306: a hung naming request must not stall the
+    # turn; the session falls back to a title derived from the first message.
+    monkeypatch.setattr(coding_session_module, "SESSION_NAME_TIMEOUT_SECONDS", 0.05)
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(cwd=tmp_path, model="fake")
+
+    class HangingNamingProvider(FakeProvider):
+        def stream_response(self, **kwargs: object) -> AsyncIterator[ProviderEvent]:
+            if kwargs["system"] == coding_session_module.SESSION_NAME_SYSTEM_PROMPT:
+
+                async def hang() -> AsyncIterator[ProviderEvent]:
+                    await asyncio.Event().wait()
+                    yield ProviderResponseStartEvent(model="fake")
+
+                return hang()
+            return super().stream_response(**kwargs)  # type: ignore[arg-type]
+
+    provider = HangingNamingProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+        )
+    )
+
+    await _collect_session_events(session.prompt("Investigate flaky session restore tests"))
+
+    renamed = manager.get_session(record.id)
+    assert renamed is not None
+    assert renamed.title == "Investigate flaky session restore"
+
+
+@pytest.mark.anyio
 async def test_session_auto_name_does_not_overwrite_manual_name(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
