@@ -1558,7 +1558,8 @@ async def test_session_builds_system_prompt_when_system_is_omitted(tmp_path: Pat
     skills_dir = resource_root / "skills"
     skills_dir.mkdir(parents=True)
     (tmp_path / "AGENTS.md").write_text("Follow project rules.", encoding="utf-8")
-    (skills_dir / "testing.md").write_text(
+    (skills_dir / "testing").mkdir()
+    (skills_dir / "testing" / "SKILL.md").write_text(
         "---\ndescription: Test code\n---\n# Testing",
         encoding="utf-8",
     )
@@ -1625,9 +1626,9 @@ async def test_session_touches_session_manager_after_persisting_messages(tmp_pat
 @pytest.mark.anyio
 async def test_session_loads_and_expands_skills(tmp_path: Path) -> None:
     resource_root = tmp_path / "resources"
-    skills_dir = resource_root / "skills"
+    skills_dir = resource_root / "skills" / "testing"
     skills_dir.mkdir(parents=True)
-    (skills_dir / "testing.md").write_text("# Testing\nRun pytest.", encoding="utf-8")
+    (skills_dir / "SKILL.md").write_text("# Testing\nRun pytest.", encoding="utf-8")
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(
         [
@@ -1723,9 +1724,9 @@ async def test_session_expands_prompt_templates_as_slash_commands(tmp_path: Path
 @pytest.mark.anyio
 async def test_session_skill_index_lets_agent_read_relevant_skill_file(tmp_path: Path) -> None:
     resource_root = tmp_path / "resources"
-    skills_dir = resource_root / "skills"
+    skills_dir = resource_root / "skills" / "testing"
     skills_dir.mkdir(parents=True)
-    skill_path = skills_dir / "testing.md"
+    skill_path = skills_dir / "SKILL.md"
     skill_path.write_text(
         "---\ndescription: Use when writing tests\n---\n# Testing\nRun pytest.",
         encoding="utf-8",
@@ -1778,9 +1779,9 @@ async def test_session_loads_with_resource_diagnostics_instead_of_failing(
 ) -> None:
     resource_root = tmp_path / "resources"
     skills_dir = resource_root / "skills"
-    (skills_dir / "dup").mkdir(parents=True)
-    (skills_dir / "dup" / "SKILL.md").write_text("# Directory skill", encoding="utf-8")
-    (skills_dir / "dup.md").write_text("# File skill", encoding="utf-8")
+    (skills_dir / "good").mkdir(parents=True)
+    (skills_dir / "good" / "SKILL.md").write_text("# Directory skill", encoding="utf-8")
+    (skills_dir / "legacy.md").write_text("# Legacy bare-md skill", encoding="utf-8")
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     config = CodingSessionConfig(
         provider=FakeProvider([]),
@@ -1793,9 +1794,11 @@ async def test_session_loads_with_resource_diagnostics_instead_of_failing(
 
     session = await CodingSession.load(config)
 
-    assert [skill.name for skill in session.skills] == ["dup"]
+    assert [skill.name for skill in session.skills] == ["good"]
     assert len(session.resource_diagnostics) == 1
-    assert "Duplicate skill name" in session.resource_diagnostics[0].message
+    assert (
+        "bare .md files are no longer treated as skills" in session.resource_diagnostics[0].message
+    )
     assert "Resource diagnostics: 1" in (session.handle_command("/session").message or "")
 
 
@@ -1823,9 +1826,9 @@ async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Pa
     assert session.skills == ()
     assert session.context_files == ()
 
-    skills_dir = resource_root / "skills"
+    skills_dir = resource_root / "skills" / "testing"
     skills_dir.mkdir(parents=True)
-    (skills_dir / "testing.md").write_text(
+    (skills_dir / "SKILL.md").write_text(
         "---\ndescription: Test code\n---\n# Testing\nRun pytest.",
         encoding="utf-8",
     )

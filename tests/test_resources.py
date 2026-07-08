@@ -27,10 +27,8 @@ def test_resource_paths_include_agents_and_project_directories(tmp_path: Path) -
     assert paths.skills_dirs == (
         tau_home / "skills",
         agents_home / "skills",
-        agents_home,
         cwd / ".tau" / "skills",
         cwd / ".agents" / "skills",
-        cwd / ".agents",
     )
     assert paths.prompts_dirs == (
         tau_home / "prompts",

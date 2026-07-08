@@ -242,12 +242,14 @@ class TuiSettings:
     keybindings: TuiKeybindings = field(default_factory=TuiKeybindings)
     theme: TuiThemeName = "tau-dark"
     auto_copy_selection: bool = False
+    sidebar_position: Literal["left", "right", "off"] = "left"
 
     def to_json(self) -> dict[str, Any]:
         """Serialize these settings to JSON-compatible data."""
         return {
             "auto_copy_selection": self.auto_copy_selection,
             "keybindings": self.keybindings.to_json(),
+            "sidebar_position": self.sidebar_position,
             "theme": self.theme,
         }
 
@@ -283,7 +285,7 @@ def save_tui_settings(settings: TuiSettings, paths: TauPaths | None = None) -> P
 
 def tui_settings_from_json(data: dict[str, Any]) -> TuiSettings:
     """Parse TUI settings from JSON-compatible data."""
-    allowed_fields = {"auto_copy_selection", "keybindings", "theme"}
+    allowed_fields = {"auto_copy_selection", "keybindings", "sidebar_position", "theme"}
     unknown_fields = set(data) - allowed_fields
     if unknown_fields:
         raise TuiConfigError(f"Unknown TUI settings field: {sorted(unknown_fields)[0]}")
@@ -291,6 +293,9 @@ def tui_settings_from_json(data: dict[str, Any]) -> TuiSettings:
     keybindings_data = data.get("keybindings", {})
     if not isinstance(keybindings_data, dict):
         raise TuiConfigError("TUI keybindings must be a JSON object")
+    raw_sidebar = data.get("sidebar_position", "left")
+    if not isinstance(raw_sidebar, str) or raw_sidebar not in {"left", "right", "off"}:
+        raise TuiConfigError("sidebar_position must be 'left', 'right', or 'off'")
     return TuiSettings(
         keybindings=_keybindings_from_json(keybindings_data),
         theme=_theme_name(data.get("theme", "tau-dark")),
@@ -298,6 +303,7 @@ def tui_settings_from_json(data: dict[str, Any]) -> TuiSettings:
             data.get("auto_copy_selection", False),
             "auto_copy_selection",
         ),
+        sidebar_position=cast(Literal["left", "right", "off"], raw_sidebar),
     )
 
 

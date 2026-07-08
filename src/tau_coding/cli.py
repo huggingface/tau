@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import sys
 from os import environ
 from pathlib import Path
 from typing import Annotated
@@ -17,7 +19,6 @@ from tau_ai import (
     ModelProvider,
 )
 from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL
-from tau_coding import __version__
 from tau_coding.catalog_loader import user_catalog_path
 from tau_coding.credentials import FileCredentialStore
 from tau_coding.provider_config import (
@@ -57,6 +58,31 @@ from tau_coding.update_check import (
     startup_release_notes_notice,
     startup_update_notice,
 )
+from tau_coding.version import current_version as _current_version
+
+
+def _is_utf8_encoding(encoding: str | None) -> bool:
+    """Return whether a stream encoding name represents UTF-8."""
+    if encoding is None:
+        return False
+    return encoding.lower().replace("-", "").replace("_", "") == "utf8"
+
+
+def _force_utf8_streams() -> None:
+    """Reconfigure stdout/stderr to UTF-8 when they are not already UTF-8.
+
+    Windows consoles default these streams to the system codepage (e.g.
+    cp1252), which raises UnicodeEncodeError on model output containing
+    characters outside that codepage.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if _is_utf8_encoding(getattr(stream, "encoding", None)):
+            continue
+        with contextlib.suppress(AttributeError, ValueError):
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+
+
+_force_utf8_streams()
 
 app = typer.Typer(
     name="tau",
@@ -181,8 +207,9 @@ def main(
     ] = False,
 ) -> None:
     """Run the Tau CLI."""
+    current_version = _current_version()
     if version:
-        typer.echo(f"tau {__version__}")
+        typer.echo(f"tau {current_version}")
         raise typer.Exit()
 
     if ctx.invoked_subcommand is not None:
@@ -278,7 +305,7 @@ async def run_openai_tui(
     update_notice: UpdateNotice | None = None,
 ) -> None:
     """Run the Textual TUI with the default OpenAI-compatible provider."""
-    release_notes_notice = startup_release_notes_notice(__version__)
+    release_notes_notice = startup_release_notes_notice(_current_version())
     startup_notices = [
         notice
         for notice in (
@@ -300,7 +327,7 @@ async def run_openai_tui(
 
 
 def _startup_update_notice() -> UpdateNotice | None:
-    return startup_update_notice(__version__)
+    return startup_update_notice(_current_version())
 
 
 def render_session_list(records: list[CodingSessionRecord]) -> None:
