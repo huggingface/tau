@@ -36,8 +36,14 @@ fatal errors.
 
 ## Skills
 
-A skill is a Markdown file describing how to accomplish something. The filename
-is the skill name. Optional frontmatter gives it a description:
+A skill is a directory containing a `SKILL.md` file, following the
+[Agent Skills spec](https://agentskills.io/specification#directory-structure).
+The directory name is the skill name. Optional frontmatter gives it a
+description:
+
+```text
+~/.tau/skills/security-review/SKILL.md
+```
 
 ```md
 ---
@@ -46,6 +52,23 @@ description: Review a diff for security issues.
 
 Steps to review the current diff for security problems...
 ```
+
+Any supporting files (references, snippets) can live alongside `SKILL.md`
+inside the same directory.
+
+{{% tip %}}
+Bare `.md` files at the root of a skills directory (for example
+`~/.tau/skills/review.md`) are **not** loaded as skills. Tau will surface a
+diagnostic telling you to move them into their own directory:
+
+```bash
+cd ~/.tau/skills
+mkdir review && mv review.md review/SKILL.md
+```
+
+This matches the Agent Skills spec and applies uniformly across `.tau/` and
+`.agents/` locations.
+{{% /tip %}}
 
 Tau lists loaded skills in the system prompt so the model knows they exist and
 can read the full file (via the `read` tool) when relevant. Invoke one
