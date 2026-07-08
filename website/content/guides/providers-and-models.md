@@ -70,8 +70,8 @@ separate `openai-codex` subscription provider.
 
 ## Adding a custom / local provider
 
-Any OpenAI-compatible endpoint works — including local servers like Ollama or
-llama.cpp. The easiest interactive path is:
+Any OpenAI-compatible endpoint works — including local servers like llama.cpp or
+Ollama. The easiest interactive path is:
 
 ```text
 /login custom
@@ -79,7 +79,48 @@ llama.cpp. The easiest interactive path is:
 
 Tau prompts for the provider details, saves the API key, writes the provider
 metadata to `~/.tau/catalog.toml`, and makes the provider available immediately.
-For scripted or one-off local setup, you can also register one with `tau setup`:
+
+### llama.cpp quickstart
+
+Tau works with llama.cpp through its OpenAI-compatible server. Start a local
+server with a GGUF model from Hugging Face:
+
+```bash
+llama-server -hf ggml-org/Qwen3.6-35B-A3B-GGUF:Q8_0
+```
+
+Some installs expose the same server as `llama serve`:
+
+```bash
+llama serve -hf ggml-org/Qwen3.6-35B-A3B-GGUF:Q8_0
+```
+
+Then register it with Tau:
+
+```bash
+export LLAMA_API_KEY=local # any non-empty value unless you started llama.cpp with --api-key
+
+tau --provider llama-cpp \
+  --base-url http://localhost:8080/v1 \
+  --api-key-env LLAMA_API_KEY \
+  --model local \
+  setup
+```
+
+Run Tau against the local model:
+
+```bash
+tau --provider llama-cpp
+tau --provider llama-cpp "summarize this project"    # TUI with an initial prompt
+tau --provider llama-cpp -p "summarize this project" # one-shot print mode
+```
+
+`llama-server` listens on port `8080` by default and only enforces the bearer
+token if you launch it with `--api-key`.
+
+For scripted or one-off setup with another OpenAI-compatible server, use the
+same `tau setup` flow. For example, Ollama's OpenAI-compatible endpoint usually
+runs at `http://localhost:11434/v1`:
 
 ```bash
 tau --provider local \
