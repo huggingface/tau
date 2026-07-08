@@ -106,6 +106,7 @@ from tau_coding.tui.config import (
     save_tui_settings,
 )
 from tau_coding.tui.state import TuiState, format_terminal_command_result_block
+from tau_coding.tui.terminal_title import TerminalTitleController
 from tau_coding.tui.widgets import (
     CompactSessionInfo,
     SessionSidebar,
@@ -2044,6 +2045,7 @@ class TauTuiApp(App[None]):
         self._completion_visible_line_budget: int | None = None
         self._activity_frame = 0
         self._activity_timer: Timer | None = None
+        self._terminal_title = TerminalTitleController()
         self._active_notification_keys: set[tuple[str, str]] = set()
         self._supports_pyperclip: bool | None = None
         self._sync_header_title()
@@ -2052,6 +2054,15 @@ class TauTuiApp(App[None]):
         """Reflect the active session name in Textual's header state."""
         self.title = "Tau"
         self.sub_title = _session_header_sub_title(self.session)
+        self._sync_terminal_title()
+
+    def _sync_terminal_title(self) -> None:
+        """Reflect the active session name and running state in the terminal tab title."""
+        self._terminal_title.update(
+            getattr(self.session, "session_title", None),
+            running=self.state.running,
+            frame=self._activity_frame,
+        )
 
     def _sync_text_selection_state(self) -> None:
         """Disable native text selection while the transcript is mutating."""
@@ -2123,10 +2134,11 @@ class TauTuiApp(App[None]):
             await self._submit_prompt(self.initial_prompt.strip())
 
     def on_unmount(self) -> None:
-        """Stop the activity timer when the app is torn down."""
+        """Stop activity animations when the app is torn down."""
         if self._activity_timer is not None:
             self._activity_timer.stop()
             self._activity_timer = None
+        self._terminal_title.restore()
 
     def on_resize(self, event: Resize) -> None:
         """Update responsive chrome when the terminal changes size."""
@@ -3293,6 +3305,7 @@ class TauTuiApp(App[None]):
         self.adapter.apply(queue_event())
 
     def _sync_activity_indicator(self) -> None:
+        self._sync_terminal_title()
         if self.state.running:
             if self._activity_timer is None:
                 self._activity_timer = self.set_interval(
@@ -3314,6 +3327,7 @@ class TauTuiApp(App[None]):
             return
         self._activity_frame += 1
         self._apply_activity_indicator()
+        self._sync_terminal_title()
 
     def _apply_activity_indicator(self) -> None:
         theme = self.tui_settings.resolved_theme

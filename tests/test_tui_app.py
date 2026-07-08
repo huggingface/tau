@@ -89,6 +89,7 @@ from tau_coding.tui.config import (
     tui_settings_path,
 )
 from tau_coding.tui.state import ChatItem
+from tau_coding.tui.terminal_title import TerminalTitleController
 from tau_coding.tui.widgets import (
     LeftAlignedMarkdownHeading,
     StreamingTranscriptMessageWidget,
@@ -2245,6 +2246,35 @@ async def test_tui_app_shows_activity_indicator_while_running() -> None:
         assert not app.query("#status")
         assert prompt.styles.border.top[1].hex.lower() == "#2d3748"
         assert indicator.render().plain == "τ"
+
+
+@pytest.mark.anyio
+async def test_tui_app_updates_terminal_title_for_running_and_named_session() -> None:
+    session = FakeSession()
+    session._session_title = "build notes"
+    app = TauTuiApp(session)
+    writes: list[str] = []
+    app._terminal_title = TerminalTitleController(enabled=True, writer=writes.append)
+
+    async with app.run_test():
+        assert writes[-1] == "\x1b]0;build notes — Tau\x07"
+
+        app.adapter.apply(AgentStartEvent())
+        app._refresh()
+        assert writes[-1] == "\x1b]0;⠋ build notes — Tau\x07"
+
+        app._tick_activity()
+        assert writes[-1] == "\x1b]0;⠙ build notes — Tau\x07"
+
+        session._session_title = "ship notes"
+        app._refresh_chrome()
+        assert writes[-1] == "\x1b]0;⠙ ship notes — Tau\x07"
+
+        app.adapter.apply(AgentEndEvent())
+        app._refresh()
+        assert writes[-1] == "\x1b]0;ship notes — Tau\x07"
+
+    assert writes[-1] == "\x1b]0;Tau\x07"
 
 
 @pytest.mark.anyio
