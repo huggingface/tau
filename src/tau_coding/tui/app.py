@@ -179,7 +179,7 @@ class CompletionActionTarget(Protocol):
 
     def action_toggle_thinking(self) -> None: ...
 
-    def action_edit_queued_follow_up(self) -> bool: ...
+    def action_edit_queued_message(self) -> bool: ...
 
     async def action_submit_prompt(self) -> None: ...
 
@@ -274,7 +274,7 @@ class PromptInput(TextArea):
         """Select the previous app-level completion or move up in the prompt."""
         if self._has_completion_options():
             self._completion_target().action_completion_previous()
-        elif self._completion_target().action_edit_queued_follow_up():
+        elif self._completion_target().action_edit_queued_message():
             return
         else:
             self.action_cursor_up()
@@ -2692,7 +2692,7 @@ class TauTuiApp(App[None]):
             self.screen.action_cursor_up()
             return
         if not self._completion_state.items:
-            if self.action_edit_queued_follow_up():
+            if self.action_edit_queued_message():
                 return
             if self.action_recall_previous_prompt():
                 return
@@ -2715,17 +2715,15 @@ class TauTuiApp(App[None]):
         self._refresh_completions()
         return True
 
-    def action_edit_queued_follow_up(self) -> bool:
-        """Move the latest queued follow-up back into the prompt for editing."""
+    def action_edit_queued_message(self) -> bool:
+        """Move the latest queued message back into the prompt for editing."""
         if not self.state.running:
             return False
         prompt = self.query_one("#prompt", PromptInput)
         if prompt.text.strip():
             return False
-        pop_follow_up = getattr(self.session, "pop_latest_follow_up_message", None)
-        if not callable(pop_follow_up):
-            return False
-        message = pop_follow_up()
+
+        message = self._pop_latest_queued_message()
         if not message:
             return False
         prompt.text = message
@@ -2734,6 +2732,26 @@ class TauTuiApp(App[None]):
         self._completion_state = self._build_completion_state(prompt.text)
         self._refresh()
         return True
+
+    def action_edit_queued_follow_up(self) -> bool:
+        """Move the latest queued message back into the prompt for editing."""
+        return self.action_edit_queued_message()
+
+    def _pop_latest_queued_message(self) -> str | None:
+        """Pop the latest queued follow-up or steering message from the session."""
+        pop_follow_up = getattr(self.session, "pop_latest_follow_up_message", None)
+        if callable(pop_follow_up):
+            message = pop_follow_up()
+            if isinstance(message, str) and message:
+                return message
+
+        pop_steering = getattr(self.session, "pop_latest_steering_message", None)
+        if callable(pop_steering):
+            message = pop_steering()
+            if isinstance(message, str) and message:
+                return message
+
+        return None
 
     def action_open_command_palette(self) -> None:
         """Open the slash-command palette in the prompt."""

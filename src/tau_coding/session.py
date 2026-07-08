@@ -668,6 +668,11 @@ class CodingSession:
         message = self._harness.pop_latest_follow_up()
         return None if message is None else message.content
 
+    def pop_latest_steering_message(self) -> str | None:
+        """Remove and return the most recently queued steering message."""
+        message = self._harness.pop_latest_steering()
+        return None if message is None else message.content
+
     def set_model(self, model: str) -> None:
         """Switch the active model for future turns and make it the default."""
         provider = self._active_provider_config()

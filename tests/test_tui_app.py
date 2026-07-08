@@ -371,6 +371,13 @@ class FakeSession:
         self.queued_follow_up_messages = self.queued_follow_up_messages[:-1]
         return message
 
+    def pop_latest_steering_message(self) -> str | None:
+        if not self.queued_steering_messages:
+            return None
+        message = self.queued_steering_messages[-1]
+        self.queued_steering_messages = self.queued_steering_messages[:-1]
+        return message
+
     async def prompt(
         self,
         text: str,
@@ -4535,6 +4542,53 @@ async def test_tui_app_up_arrow_edits_latest_queued_follow_up() -> None:
         assert app.state.queued_follow_up == ("first follow-up",)
         queued_messages = app.query_one("#queued-messages")
         assert queued_messages.display is True
+
+
+@pytest.mark.anyio
+async def test_tui_app_up_arrow_edits_latest_queued_steering_message() -> None:
+    session = FakeSession(messages=[UserMessage(content="remembered prompt")])
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        app.state.running = True
+        session.queued_steering_messages = ("first steering", "latest steering")
+        app._refresh()
+
+        prompt = app.query_one("#prompt", TextArea)
+        prompt.focus()
+        prompt.text = ""
+        await pilot.press("up")
+        await pilot.pause()
+
+        assert prompt.text == "latest steering"
+        assert session.queued_steering_messages == ("first steering",)
+        assert app.state.queued_steering == ("first steering",)
+        queued_messages = app.query_one("#queued-messages")
+        assert queued_messages.display is True
+
+
+@pytest.mark.anyio
+async def test_tui_app_up_arrow_prefers_queued_follow_up_before_steering() -> None:
+    session = FakeSession(messages=[UserMessage(content="remembered prompt")])
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        app.state.running = True
+        session.queued_steering_messages = ("queued steering",)
+        session.queued_follow_up_messages = ("queued follow-up",)
+        app._refresh()
+
+        prompt = app.query_one("#prompt", TextArea)
+        prompt.focus()
+        prompt.text = ""
+        await pilot.press("up")
+        await pilot.pause()
+
+        assert prompt.text == "queued follow-up"
+        assert session.queued_steering_messages == ("queued steering",)
+        assert session.queued_follow_up_messages == ()
+        assert app.state.queued_steering == ("queued steering",)
+        assert app.state.queued_follow_up == ()
 
 
 @pytest.mark.anyio
