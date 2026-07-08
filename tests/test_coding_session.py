@@ -9,6 +9,7 @@ from tau_agent import (
     AgentMessage,
     AgentTool,
     AssistantMessage,
+    MessageEndEvent,
     QueueUpdateEvent,
     ToolCall,
     ToolResultMessage,
@@ -1808,6 +1809,83 @@ async def test_session_persists_when_auto_name_touch_fails(tmp_path: Path) -> No
         AssistantMessage(content="Done"),
     )
     assert await storage.read_all()
+
+
+@pytest.mark.anyio
+async def test_session_auto_name_runs_while_assistant_responds(tmp_path: Path) -> None:
+    class SlowNamingProvider:
+        def __init__(self) -> None:
+            self.naming_started = asyncio.Event()
+            self.release_naming = asyncio.Event()
+
+        def stream_response(
+            self,
+            *,
+            model: str,
+            system: str,
+            messages: list[AgentMessage],
+            tools: list[AgentTool],
+            signal: CancellationToken | None = None,
+        ) -> AsyncIterator[ProviderEvent]:
+            is_naming = system.startswith("You write concise coding-agent session names")
+            del model, messages, signal
+
+            async def iterator() -> AsyncIterator[ProviderEvent]:
+                if is_naming:
+                    self.naming_started.set()
+                    await self.release_naming.wait()
+                    yield ProviderResponseEndEvent(
+                        message=AssistantMessage(content="Generated title")
+                    )
+                    return
+                yield ProviderResponseStartEvent(model="fake")
+                yield ProviderResponseEndEvent(message=AssistantMessage(content="Done"))
+
+            return iterator()
+
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(cwd=tmp_path, model="fake")
+    provider = SlowNamingProvider()
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+        )
+    )
+
+    stream = session.prompt("Name this session in the background")
+    seen_assistant = False
+    try:
+        async for event in stream:
+            if (
+                provider.naming_started.is_set()
+                and isinstance(event, MessageEndEvent)
+                and isinstance(event.message, AssistantMessage)
+            ):
+                seen_assistant = True
+                break
+        assert seen_assistant
+        assert provider.naming_started.is_set()
+        assert manager.get_session(record.id).title is None
+        assert session.messages == (
+            UserMessage(content="Name this session in the background"),
+            AssistantMessage(content="Done"),
+        )
+        provider.release_naming.set()
+        await _collect_session_events(stream)
+    finally:
+        provider.release_naming.set()
+        await stream.aclose()
+
+    renamed = manager.get_session(record.id)
+    assert renamed is not None
+    assert renamed.title == "Generated title"
 
 
 @pytest.mark.anyio

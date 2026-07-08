@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import string
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
@@ -1241,7 +1242,7 @@ class CodingSession:
 
         await self._try_auto_compact(context=context, phase="auto_compact_before_prompt")
         persisted_count = len(self._harness.messages)
-        auto_name_attempted = False
+        auto_name_task: asyncio.Task[None] | None = None
         overflow_event: ErrorEvent | None = None
         try:
             events = self._harness.prompt(expanded_content)
@@ -1249,9 +1250,11 @@ class CodingSession:
             async for event in events:
                 if isinstance(event, MessageEndEvent):
                     persisted_count = await self._persist_messages_since(persisted_count)
-                    if not auto_name_attempted and isinstance(event.message, UserMessage):
-                        auto_name_attempted = True
-                        await self._try_auto_name_session(event.message.content, context=context)
+                    if auto_name_task is None and isinstance(event.message, UserMessage):
+                        auto_name_task = asyncio.create_task(
+                            self._try_auto_name_session(event.message.content, context=context)
+                        )
+                        await asyncio.sleep(0)
                 if isinstance(event, ToolExecutionEndEvent):
                     self._invalidate_context_usage_cache()
                 if isinstance(event, ErrorEvent) and not event.recoverable:
@@ -1265,6 +1268,7 @@ class CodingSession:
                 yield event
             persisted_count = await self._persist_messages_since(persisted_count)
             if overflow_event is not None:
+                await _wait_for_auto_name_task(auto_name_task)
                 compacted = await self._try_overflow_compact(context=context)
                 if compacted:
                     retry_persisted_count = len(self._harness.messages)
@@ -1288,8 +1292,12 @@ class CodingSession:
                         yield retry_event
                     await self._persist_messages_since(retry_persisted_count)
                 return
+            await _wait_for_auto_name_task(auto_name_task)
             await self._try_auto_compact(context=context, phase="auto_compact_after_prompt")
         except Exception as exc:
+            if auto_name_task is not None and not auto_name_task.done():
+                auto_name_task.cancel()
+            await _wait_for_auto_name_task(auto_name_task)
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
                 phase="agent_loop",
@@ -1703,6 +1711,16 @@ class CodingSession:
         self._harness.replace_messages(self._state.messages)
         self._invalidate_context_usage_cache()
         return compaction
+
+
+async def _wait_for_auto_name_task(task: asyncio.Task[None] | None) -> None:
+    """Wait for background session naming without surfacing optional metadata failures."""
+    if task is None:
+        return
+    try:
+        await task
+    except asyncio.CancelledError:
+        return
 
 
 def _first_recent_context_index(
