@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.1.4",
+    "date": "2026-07-08",
+    "sections": {
+      "New": [
+        "Add automatic session naming for new conversations.",
+        "Add terminal tab titles with the Tau mark and active session name.",
+        "Add Claude Fable 5 and Claude Sonnet 5 model catalog entries.",
+        "Add a TUI sidebar_position setting for left or right sidebar placement."
+      ],
+      "Changed": [
+        "Unify skill discovery around the Agent Skills specification.",
+        "Read tau --version from installed package metadata.",
+        "Compact large pasted prompts in the TUI while preserving pasted content."
+      ],
+      "Fixed": [
+        "Fix Windows crashes caused by non-ASCII CLI output on non-UTF-8 streams.",
+        "Fix Gemini tool-call compatibility by preserving thought signatures and stripping unsupported JSON Schema keywords.",
+        "Fix skill discovery edge cases by ignoring .agents root directories and bare Markdown files under .agents/skills.",
+        "Fix SOCKS proxy environment URL handling.",
+        "Fix queued steering recall, TUI completion height stability, pasted placeholder expansion, auto-naming indexing, and terminal-title refreshes."
+      ]
+    }
+  },
+  {
     "version": "0.1.3",
     "date": "2026-07-07",
     "sections": {
