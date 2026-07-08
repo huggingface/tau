@@ -58,6 +58,27 @@ def _panel_text(value: str) -> str:
     return _collapse_ws(no_ansi.translate(borders))
 
 
+def test_force_utf8_streams_reconfigures_encodable_streams() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeStream:
+        def reconfigure(self, *, encoding: str, errors: str) -> None:
+            calls.append((encoding, errors))
+
+    class UnreconfigurableStream:
+        """Mimics streams (e.g. some test/CI capture streams) without reconfigure()."""
+
+    fake_stdout = FakeStream()
+    fake_stderr = UnreconfigurableStream()
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(cli.sys, "stdout", fake_stdout)
+        mp.setattr(cli.sys, "stderr", fake_stderr)
+        cli._force_utf8_streams()
+
+    assert calls == [("utf-8", "replace")]
+
+
 def test_version_command() -> None:
     result = CliRunner().invoke(app, ["--version"])
 
