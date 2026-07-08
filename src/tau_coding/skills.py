@@ -151,9 +151,13 @@ def build_skill_index(skills: Sequence[Skill]) -> str:
 
 def _load_skills_from_dir(skills_dir: Path) -> list[Skill]:
     skills, diagnostics = _load_skills_from_dir_with_diagnostics(skills_dir)
-    if diagnostics:
-        first = diagnostics[0]
-        raise ResourceError(first.message)
+    for diagnostic in diagnostics:
+        # Bare-.md migration hints are informational — the file is skipped,
+        # but that is not an error. Only fatal problems raise here; the full
+        # diagnostic stream is available through ``load_skills_with_diagnostics``.
+        if diagnostic.severity == "info":
+            continue
+        raise ResourceError(diagnostic.message)
     return skills
 
 
@@ -163,12 +167,13 @@ def _load_skills_from_dir_with_diagnostics(
     if not skills_dir.exists() or not skills_dir.is_dir():
         return [], []
 
-    # In .agents/skills/ directories, bare .md files are ignored — only
-    # SKILL.md files inside subdirectories are valid (Agent Skills standard).
-    # In .tau/skills/ directories, any .md file is treated as a skill
-    # (preserving the current behavior).
-    agents_mode = skills_dir.parent.name == ".agents"
-
+    # Tau follows the Agent Skills spec everywhere: a skill is a directory
+    # containing a ``SKILL.md`` file. Bare ``*.md`` files at the root of a
+    # skills directory are not skills and are surfaced as a diagnostic that
+    # tells the user how to migrate. This intentionally diverges from Pi,
+    # which keeps a permissive "any .md is a skill" path in its own
+    # ``.pi/skills/`` and ``~/.pi/agent/skills/`` folders purely for
+    # backward compatibility. See ADR 0003.
     skills: list[Skill] = []
     diagnostics: list[ResourceDiagnostic] = []
     seen: set[str] = set()
@@ -180,10 +185,22 @@ def _load_skills_from_dir_with_diagnostics(
             name = path.name
             if not skill_path.exists():
                 continue
-        elif path.is_file() and path.suffix.lower() == ".md" and not agents_mode:
+        elif path.is_file() and path.suffix.lower() == ".md":
             if path.name.upper() == "AGENTS.MD":
                 continue
-            skill_path = path
+            diagnostics.append(
+                ResourceDiagnostic(
+                    kind="skill",
+                    name=path.stem,
+                    path=path,
+                    message=(
+                        "bare .md files are no longer treated as skills; "
+                        f"move it to {(path.parent / path.stem / 'SKILL.md')}"
+                    ),
+                    severity="info",
+                )
+            )
+            continue
         else:
             continue
 

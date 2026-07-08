@@ -19,14 +19,18 @@ def test_load_skills_missing_directory_returns_empty(tmp_path: Path) -> None:
     assert load_skills(TauResourcePaths(root=tmp_path, agents_root=None)) == []
 
 
-def test_load_skills_from_directory_and_file(tmp_path: Path) -> None:
+def test_load_skills_from_directory(tmp_path: Path) -> None:
+    """Skills must live in ``<dir>/<name>/SKILL.md`` subdirectories."""
     skills_dir = tmp_path / "skills"
     (skills_dir / "python-testing").mkdir(parents=True)
     (skills_dir / "python-testing" / "SKILL.md").write_text(
         "---\ndescription: Test Python code\n---\n# Python Testing\nUse pytest.",
         encoding="utf-8",
     )
-    (skills_dir / "git-review.md").write_text("# Git Review\nReview diffs.", encoding="utf-8")
+    (skills_dir / "git-review").mkdir()
+    (skills_dir / "git-review" / "SKILL.md").write_text(
+        "# Git Review\nReview diffs.", encoding="utf-8"
+    )
 
     skills = load_skills(TauResourcePaths(root=tmp_path, agents_root=None))
 
@@ -77,39 +81,54 @@ def test_load_skills_with_diagnostics_reports_overrides(tmp_path: Path) -> None:
     tau_home = tmp_path / "home" / ".tau"
     agents_home = tmp_path / "home" / ".agents"
     cwd = tmp_path / "project"
-    (tau_home / "skills").mkdir(parents=True)
-    (tau_home / "skills" / "review.md").write_text("# User Tau Review", encoding="utf-8")
-    (cwd / ".tau" / "skills").mkdir(parents=True)
-    (cwd / ".tau" / "skills" / "review.md").write_text("# Project Tau Review", encoding="utf-8")
+    (tau_home / "skills" / "review").mkdir(parents=True)
+    (tau_home / "skills" / "review" / "SKILL.md").write_text(
+        "# User Tau Review", encoding="utf-8"
+    )
+    (cwd / ".tau" / "skills" / "review").mkdir(parents=True)
+    (cwd / ".tau" / "skills" / "review" / "SKILL.md").write_text(
+        "# Project Tau Review", encoding="utf-8"
+    )
 
     skills, diagnostics = load_skills_with_diagnostics(
         TauResourcePaths(root=tau_home, agents_root=agents_home, cwd=cwd)
     )
 
     assert [skill.name for skill in skills] == ["review"]
-    assert skills[0].path == cwd / ".tau" / "skills" / "review.md"
-    assert len(diagnostics) == 1
-    assert diagnostics[0].kind == "skill"
-    assert diagnostics[0].name == "review"
-    assert "overrides lower-precedence resource" in diagnostics[0].message
+    assert skills[0].path == cwd / ".tau" / "skills" / "review" / "SKILL.md"
+    override_diagnostics = [
+        d for d in diagnostics if "overrides lower-precedence resource" in d.message
+    ]
+    assert len(override_diagnostics) == 1
+    assert override_diagnostics[0].kind == "skill"
+    assert override_diagnostics[0].name == "review"
 
 
-def test_load_skills_with_diagnostics_ignores_duplicate_within_directory(
+def test_load_skills_with_diagnostics_reports_bare_md_migration_hint(
     tmp_path: Path,
 ) -> None:
+    """Bare ``.md`` files at a skills-dir root produce an info diagnostic.
+
+    They are silently skipped from the loaded skill set, but users are told
+    how to migrate: rename ``foo.md`` to ``foo/SKILL.md``.
+    """
     skills_dir = tmp_path / "skills"
-    (skills_dir / "dup").mkdir(parents=True)
-    (skills_dir / "dup" / "SKILL.md").write_text("# Directory skill", encoding="utf-8")
-    (skills_dir / "dup.md").write_text("# File skill", encoding="utf-8")
+    skills_dir.mkdir()
+    (skills_dir / "legacy.md").write_text("# Legacy Skill\nOld body.", encoding="utf-8")
+    (skills_dir / "good").mkdir()
+    (skills_dir / "good" / "SKILL.md").write_text("# Good Skill", encoding="utf-8")
 
     skills, diagnostics = load_skills_with_diagnostics(
         TauResourcePaths(root=tmp_path, agents_root=None)
     )
 
-    assert [skill.name for skill in skills] == ["dup"]
-    assert skills[0].path == skills_dir / "dup" / "SKILL.md"
-    assert len(diagnostics) == 1
-    assert "Duplicate skill name" in diagnostics[0].message
+    assert [skill.name for skill in skills] == ["good"]
+    migration_diagnostics = [d for d in diagnostics if d.severity == "info"]
+    assert len(migration_diagnostics) == 1
+    assert migration_diagnostics[0].name == "legacy"
+    assert migration_diagnostics[0].path == skills_dir / "legacy.md"
+    assert "bare .md files are no longer treated as skills" in migration_diagnostics[0].message
+    assert str(skills_dir / "legacy" / "SKILL.md") in migration_diagnostics[0].message
 
 
 def test_agents_root_is_not_a_skills_directory(tmp_path: Path) -> None:
@@ -147,10 +166,11 @@ def test_agents_skills_dir_ignores_bare_md_files(tmp_path: Path) -> None:
     assert [s.name for s in skills] == ["my-skill"]
 
 
-def test_tau_skills_dir_loads_bare_md_files(tmp_path: Path) -> None:
-    """Bare .md files in .tau/skills/ are treated as individual skills.
+def test_tau_skills_dir_ignores_bare_md_files(tmp_path: Path) -> None:
+    """Bare .md files in .tau/skills/ are also ignored (unified with .agents/).
 
-    This is pi mode: any ``.md`` file at the root is a skill.
+    Tau diverges from Pi here: Pi keeps a permissive ``.pi/skills`` for
+    backward compatibility, but Tau applies the Agent Skills spec uniformly.
     """
     skills_dir = tmp_path / "skills"
     (skills_dir / "my-skill").mkdir(parents=True)
@@ -160,23 +180,13 @@ def test_tau_skills_dir_loads_bare_md_files(tmp_path: Path) -> None:
     paths = TauResourcePaths(root=tmp_path, agents_root=None)
     skills = load_skills(paths)
 
-    assert {s.name for s in skills} == {"my-skill", "reference"}
-
-
-def test_load_skills_rejects_duplicate_names(tmp_path: Path) -> None:
-    skills_dir = tmp_path / "skills"
-    (skills_dir / "dup").mkdir(parents=True)
-    (skills_dir / "dup" / "SKILL.md").write_text("# Directory skill", encoding="utf-8")
-    (skills_dir / "dup.md").write_text("# File skill", encoding="utf-8")
-
-    with pytest.raises(ResourceError, match="Duplicate skill name"):
-        load_skills(TauResourcePaths(root=tmp_path, agents_root=None))
+    assert [s.name for s in skills] == ["my-skill"]
 
 
 def test_expand_skill_command_includes_skill_and_user_request(tmp_path: Path) -> None:
-    skills_dir = tmp_path / "skills"
-    skills_dir.mkdir()
-    (skills_dir / "testing.md").write_text("# Testing\nRun pytest.", encoding="utf-8")
+    skills_dir = tmp_path / "skills" / "testing"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "SKILL.md").write_text("# Testing\nRun pytest.", encoding="utf-8")
     skills = load_skills(TauResourcePaths(root=tmp_path, agents_root=None))
 
     expanded = expand_skill_command("/skill:testing add parser tests", skills)
@@ -240,9 +250,9 @@ def test_expand_skill_command_rejects_unknown_skill() -> None:
 
 
 def test_build_skill_index(tmp_path: Path) -> None:
-    skills_dir = tmp_path / "skills"
-    skills_dir.mkdir()
-    (skills_dir / "testing.md").write_text(
+    skills_dir = tmp_path / "skills" / "testing"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "SKILL.md").write_text(
         "---\ndescription: Test things\n---\nBody",
         encoding="utf-8",
     )

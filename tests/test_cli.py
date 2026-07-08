@@ -503,9 +503,9 @@ async def test_run_print_mode_expands_skill_commands(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     resource_root = tmp_path / "resources"
-    skills_dir = resource_root / "skills"
+    skills_dir = resource_root / "skills" / "testing"
     skills_dir.mkdir(parents=True)
-    (skills_dir / "testing.md").write_text("# Testing\nRun pytest.", encoding="utf-8")
+    (skills_dir / "SKILL.md").write_text("# Testing\nRun pytest.", encoding="utf-8")
     provider = FakeProvider(
         [
             [
