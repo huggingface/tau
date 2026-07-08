@@ -1828,15 +1828,28 @@ def _ordered_tree_entries(entries: list[SessionEntry]) -> tuple[SessionEntry, ..
 
     ordered: list[SessionEntry] = []
     seen: set[str] = set()
+    expanded: set[str | None] = set()
 
-    def append_descendants(parent_id: str | None) -> None:
-        children = children_by_parent.get(parent_id, [])
-        for child in children:
-            if child.id not in seen:
-                ordered.append(child)
-                seen.add(child.id)
-        for child in children:
-            append_descendants(child.id)
+    def append_descendants(root_parent_id: str | None) -> None:
+        # Iterative depth-first walk rather than recursion so a long session (a
+        # deep root-to-leaf entry chain) cannot exceed Python's recursion limit.
+        # `expanded` also makes a malformed parent cycle terminate instead of
+        # recursing forever. Emitting a node's direct children before descending,
+        # and pushing them reversed so the first child is processed next,
+        # preserves the original traversal order.
+        stack: list[str | None] = [root_parent_id]
+        while stack:
+            parent_id = stack.pop()
+            if parent_id in expanded:
+                continue
+            expanded.add(parent_id)
+            children = children_by_parent.get(parent_id, [])
+            for child in children:
+                if child.id not in seen:
+                    ordered.append(child)
+                    seen.add(child.id)
+            for child in reversed(children):
+                stack.append(child.id)
 
     append_descendants(None)
     for entry in entries:
