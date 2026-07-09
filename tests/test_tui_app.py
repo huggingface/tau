@@ -76,6 +76,7 @@ from tau_coding.tui.app import (
     _activity_prompt_border_color,
     _completion_selected_render_line,
     _terminal_command_prefix_span,
+    _textual_theme_for_tau_theme,
     _theme_css_variables,
     _visible_completion_state,
 )
@@ -2139,6 +2140,8 @@ def test_tui_app_uses_configured_theme_css_variables() -> None:
     assert variables["tau-screen-background"] == "#000000"
     assert variables["tau-prompt-background"] == "#1a1a1a"
     assert variables["tau-prompt-border"] == "#00ff66"
+    assert app.theme == "high-contrast"
+    assert app.current_theme.name == "high-contrast"
 
 
 def test_tui_app_uses_light_theme_css_variables() -> None:
@@ -2155,6 +2158,22 @@ def test_tui_app_uses_light_theme_css_variables() -> None:
     assert variables["footer-foreground"] == "#111827"
     assert variables["footer-description-foreground"] == "#111827"
     assert variables["footer-key-foreground"] == "#0f766e"
+    assert app.current_theme.dark is False
+
+
+def test_tui_app_registers_only_tau_themes_with_textual() -> None:
+    app = TauTuiApp(FakeSession())
+
+    assert tuple(app.available_themes) == ("tau-dark", "tau-light", "high-contrast")
+
+
+def test_textual_theme_mapping_uses_tau_theme_values() -> None:
+    textual_theme = _textual_theme_for_tau_theme("tau-light")
+
+    assert textual_theme.name == "tau-light"
+    assert textual_theme.primary == TAU_LIGHT_THEME.accent
+    assert textual_theme.dark is False
+    assert textual_theme.variables["tau-screen-background"] == TAU_LIGHT_THEME.screen_background
 
 
 def test_tau_dark_theme_uses_black_chat_backgrounds() -> None:
@@ -2333,6 +2352,21 @@ async def test_tui_app_clears_activity_status_on_error() -> None:
 
 
 @pytest.mark.anyio
+async def test_textual_theme_change_persists_tau_theme(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        app.theme = "tau-light"
+        await pilot.pause()
+
+    assert app.tui_settings.theme == "tau-light"
+    assert tui_settings_path().read_text(encoding="utf-8").find('"theme": "tau-light"') != -1
+
+
+@pytest.mark.anyio
 async def test_tui_app_theme_command_opens_picker_and_persists_selection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2365,6 +2399,7 @@ async def test_tui_app_theme_command_opens_picker_and_persists_selection(
         await pilot.pause()
 
         assert app.tui_settings.theme == "tau-light"
+        assert app.theme == "tau-light"
         assert tui_settings_path().read_text(encoding="utf-8").find('"theme": "tau-light"') != -1
         assert app.get_theme_variable_defaults()["tau-screen-background"] == "#ffffff"
 
@@ -2382,6 +2417,7 @@ async def test_tui_app_theme_command_argument_updates_theme_and_persists(
         await pilot.press("enter")
 
         assert app.tui_settings.theme == "tau-light"
+        assert app.theme == "tau-light"
         assert tui_settings_path().read_text(encoding="utf-8").find('"theme": "tau-light"') != -1
         assert app.get_theme_variable_defaults()["tau-screen-background"] == "#ffffff"
 
@@ -2992,6 +3028,62 @@ async def test_tui_app_session_picker_arrow_keys_select_session() -> None:
         await pilot.pause()
 
         assert session.resumed_session_ids == ["session-2"]
+
+
+@pytest.mark.anyio
+async def test_tui_app_blocks_tree_picker_while_agent_is_running() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+    notifications: list[str] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        del kwargs
+        notifications.append(message)
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        app.state.running = True
+        prompt = app.query_one("#prompt")
+        prompt.value = "/tree"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert session.tree_branch_requests == []
+        assert prompt.value == "/tree"
+        assert not isinstance(app.screen, TreePickerScreen)
+        assert notifications == [
+            "Tau is still working. Press Escape to interrupt before using /tree."
+        ]
+
+
+@pytest.mark.anyio
+async def test_tui_app_blocks_tree_branch_selection_while_agent_is_running() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+    notifications: list[str] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        del kwargs
+        notifications.append(message)
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/tree"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, TreePickerScreen)
+        app.state.running = True
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert session.tree_branch_requests == []
+        assert notifications == [
+            "Tau is still working. Press Escape to interrupt before using /tree."
+        ]
 
 
 @pytest.mark.anyio

@@ -143,7 +143,10 @@ back to plain code rendering instead of producing a broken transcript block.
 The built-in theme set now includes `tau-light` alongside `tau-dark` and
 `high-contrast`. Theme choice stays in `tau_coding.tui` configuration and feeds
 Textual CSS variables plus Rich renderers without leaking UI policy into the
-portable harness.
+portable harness. Textual's native theme registry is constrained to these same
+Tau themes, so Textual's menu/command-palette theme entry changes Tau's durable
+`~/.tau/tui.json` setting instead of becoming a second, non-persistent theme
+system.
 
 Sessions can now be renamed from the TUI with `/name <new name>`. The command
 updates the indexed session metadata used by `/resume`, resume completions, and
