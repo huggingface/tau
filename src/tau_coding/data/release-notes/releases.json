@@ -1,5 +1,24 @@
 [
   {
+    "version": "0.1.5",
+    "date": "2026-07-09",
+    "sections": {
+      "New": [
+        "Add OpenAI GPT-5.6, GPT-5.6 Sol, GPT-5.6 Terra, and GPT-5.6 Luna model catalog entries for OpenAI and OpenAI Codex.",
+        "Add NVIDIA NIM as a built-in provider.",
+        "Redesign session HTML export with a cleaner, icon-based interface."
+      ],
+      "Changed": [
+        "Improve the documentation website with a roadmap page, clearer Pi links, and refreshed navigation and homepage polish."
+      ],
+      "Fixed": [
+        "Fix release-note packaging so installed wheels include the bundled release notes file.",
+        "Fix Windows test isolation by avoiding accidental writes to a real ~/.tau directory.",
+        "Fix TUI theme selection edge cases."
+      ]
+    }
+  },
+  {
     "version": "0.1.4",
     "date": "2026-07-08",
     "sections": {
