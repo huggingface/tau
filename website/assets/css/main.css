@@ -249,6 +249,18 @@ h1{
 }
 h1 em{ font-style:normal; font-weight:500; color:var(--accent); }
 .h1-compact{ font-size:clamp(48px,7.5vw,72px); margin-top:8px; }
+
+/* The homepage hero title keeps its original serif treatment, while every
+   other heading across the site uses the handwritten font. */
+.hero-title-original{
+  font-family:var(--serif);
+  font-weight:300;
+  font-size:clamp(40px, 7vw, 76px);
+  line-height:1.04;
+  letter-spacing:-0.015em;
+  margin:18px 0 0;
+}
+.hero-title-original em{ font-style:italic; font-weight:400; color:var(--accent); }
 h1 .big-tau{
   font-family:var(--math); font-style:italic; font-weight:400;
   color:var(--accent);
