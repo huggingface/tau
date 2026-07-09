@@ -245,12 +245,14 @@ def test_builtin_catalog_golden_opencode_go_metadata() -> None:
     assert minimax is not None
     assert minimax.kind == "anthropic"
     assert minimax.thinking_default == "high"
-    assert minimax.thinking_level_map == {"off": "disabled"}
+    assert minimax.thinking_level_map.get("off") == "disabled"
+    assert minimax.thinking_level_map.get("minimal") is None
+    assert minimax.thinking_level_map.get("xhigh") is None
 
     qwen = entry.model_metadata.get("qwen3.7-max")
     assert qwen is not None
     assert qwen.kind == "anthropic"
-    assert qwen.thinking_default == "medium"
+    assert qwen.thinking_default == "high"
     assert qwen.thinking_level_map.get("off") == "disabled"
 
     # Unknown provider/model pairs resolve to None.

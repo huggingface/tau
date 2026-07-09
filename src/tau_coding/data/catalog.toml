@@ -6304,6 +6304,7 @@ always_thinking = true
 kind = "anthropic"
 thinking_default = "high"
 thinking_level_map = {off = "disabled"}
+unsupported_thinking_levels = ["minimal", "low", "medium", "xhigh"]
 
 [providers.model_metadata."minimax-m2.7"]
 kind = "anthropic"
@@ -6311,15 +6312,18 @@ always_thinking = true
 
 [providers.model_metadata."qwen3.7-max"]
 kind = "anthropic"
-thinking_default = "medium"
+thinking_default = "high"
 thinking_level_map = {off = "disabled"}
+unsupported_thinking_levels = ["minimal", "low", "medium", "xhigh"]
 
 [providers.model_metadata."qwen3.7-plus"]
 kind = "anthropic"
-thinking_default = "medium"
+thinking_default = "high"
 thinking_level_map = {off = "disabled"}
+unsupported_thinking_levels = ["minimal", "low", "medium", "xhigh"]
 
 [providers.model_metadata."qwen3.6-plus"]
 kind = "anthropic"
-thinking_default = "medium"
+thinking_default = "high"
 thinking_level_map = {off = "disabled"}
+unsupported_thinking_levels = ["minimal", "low", "medium", "xhigh"]
