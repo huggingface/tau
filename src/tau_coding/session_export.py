@@ -9,6 +9,10 @@ from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from pygments import highlight
+from pygments.formatters import HtmlFormatter
+from pygments.lexers import JsonLexer
+
 from tau_agent.messages import AssistantMessage, ToolResultMessage, UserMessage
 from tau_agent.session import (
     BranchSummaryEntry,
@@ -123,7 +127,7 @@ def render_session_html(
   <title>{_escape(title)}</title>
   <style>
     :root {{
-      color-scheme: light dark;
+      color-scheme: light;
       --canvas: #ffffff;
       --surface: #ffffff;
       --surface-muted: #f6f8fc;
@@ -139,7 +143,8 @@ def render_session_html(
       font-family: var(--serif);
     }}
     @media (prefers-color-scheme: dark) {{
-      :root {{
+      :root:not([data-theme="light"]) {{
+        color-scheme: dark;
         --canvas: #0f1420;
         --surface: #141a29;
         --surface-muted: #1a2133;
@@ -150,6 +155,18 @@ def render_session_html(
         --accent: #7fa0f0;
         --code-bg: #171e30;
       }}
+    }}
+    :root[data-theme="dark"] {{
+      color-scheme: dark;
+      --canvas: #0f1420;
+      --surface: #141a29;
+      --surface-muted: #1a2133;
+      --text: #e7ecf7;
+      --muted: #9aa5c0;
+      --line: #262f47;
+      --line-strong: #333f5c;
+      --accent: #7fa0f0;
+      --code-bg: #171e30;
     }}
     * {{ box-sizing: border-box; }}
     html {{ scroll-behavior: smooth; }}
@@ -207,14 +224,43 @@ def render_session_html(
       padding: 12px 14px;
       margin: 10px 0 0;
     }}
+    .header-top {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }}
     .eyebrow {{
       font-family: var(--sans);
       color: var(--muted);
       font-size: 0.7rem;
       font-weight: 500;
       letter-spacing: 0.14em;
-      margin: 0 0 10px;
+      margin: 0;
       text-transform: uppercase;
+    }}
+    .theme-toggle {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      color: var(--muted);
+      background: none;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      cursor: pointer;
+      transition: color .15s, border-color .15s;
+    }}
+    .theme-toggle:hover {{ color: var(--accent); border-color: var(--accent); }}
+    .theme-toggle .icon {{ width: 14px; height: 14px; }}
+    .theme-toggle .theme-icon-dark {{ display: none; }}
+    :root[data-theme="dark"] .theme-toggle .theme-icon-light {{ display: none; }}
+    :root[data-theme="dark"] .theme-toggle .theme-icon-dark {{ display: inline-block; }}
+    @media (prefers-color-scheme: dark) {{
+      :root:not([data-theme="light"]) .theme-toggle .theme-icon-light {{ display: none; }}
+      :root:not([data-theme="light"]) .theme-toggle .theme-icon-dark {{ display: inline-block; }}
     }}
     .source, .generated {{
       margin: 6px 0 0;
@@ -357,6 +403,24 @@ def render_session_html(
       color: var(--muted);
       font-style: italic;
     }}
+    pre.highlight {{ padding: 12px 14px; }}
+    .highlight .p {{ color: var(--muted); }}
+    .highlight .nt {{ color: var(--accent); }}
+    .highlight .s2, .highlight .s1 {{ color: #2f7a4f; }}
+    .highlight .mi, .highlight .mf {{ color: #a05a12; }}
+    .highlight .kc {{ color: #a02f6b; font-weight: 500; }}
+    @media (prefers-color-scheme: dark) {{
+      :root:not([data-theme="light"]) .highlight .s2,
+      :root:not([data-theme="light"]) .highlight .s1 {{ color: #7fd08a; }}
+      :root:not([data-theme="light"]) .highlight .mi,
+      :root:not([data-theme="light"]) .highlight .mf {{ color: #e0a95e; }}
+      :root:not([data-theme="light"]) .highlight .kc {{ color: #e58fc0; }}
+    }}
+    :root[data-theme="dark"] .highlight .s2,
+    :root[data-theme="dark"] .highlight .s1 {{ color: #7fd08a; }}
+    :root[data-theme="dark"] .highlight .mi,
+    :root[data-theme="dark"] .highlight .mf {{ color: #e0a95e; }}
+    :root[data-theme="dark"] .highlight .kc {{ color: #e58fc0; }}
     @media (max-width: 820px) {{
       main {{ grid-template-columns: 1fr; }}
       aside {{
@@ -372,7 +436,18 @@ def render_session_html(
 </head>
 <body>
   <header>
-    <p class="eyebrow">Tau session export</p>
+    <div class="header-top">
+      <p class="eyebrow">Tau session export</p>
+      <button
+        type="button"
+        class="theme-toggle"
+        id="themeToggle"
+        aria-label="Toggle light/dark theme"
+      >
+        <span class="icon theme-icon-light">{_ICON_SUN}</span>
+        <span class="icon theme-icon-dark">{_ICON_MOON}</span>
+      </button>
+    </div>
     <h1>{_escape(title)}</h1>
     <div class="export-meta">
       {source_html}
@@ -391,6 +466,36 @@ def render_session_html(
       {details_html}
     </section>
   </main>
+  <script>
+    (function () {{
+      var root = document.documentElement;
+      var stored = null;
+      try {{
+        stored = window.localStorage.getItem("tau-session-export-theme");
+      }} catch (err) {{
+        stored = null;
+      }}
+      if (stored === "light" || stored === "dark") {{
+        root.setAttribute("data-theme", stored);
+      }}
+      var toggle = document.getElementById("themeToggle");
+      if (!toggle) {{
+        return;
+      }}
+      toggle.addEventListener("click", function () {{
+        var prefersDark =
+          window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        var current = root.getAttribute("data-theme") || (prefersDark ? "dark" : "light");
+        var next = current === "dark" ? "light" : "dark";
+        root.setAttribute("data-theme", next);
+        try {{
+          window.localStorage.setItem("tau-session-export-theme", next);
+        }} catch (err) {{
+          /* localStorage unavailable; theme choice just won't persist. */
+        }}
+      }});
+    }})();
+  </script>
 </body>
 </html>
 """
@@ -650,7 +755,7 @@ def _render_entry_body(entry: SessionEntry) -> str:
     if isinstance(entry, CustomEntry):
         return (
             f"<p>Custom namespace: <code>{_escape(entry.namespace)}</code></p>"
-            f"<pre>{_escape(_json_dump(entry.data))}</pre>"
+            f"{_render_json_block(entry.data)}"
         )
     return f"<pre>{_escape(entry.model_dump_json(indent=2))}</pre>"
 
@@ -672,7 +777,7 @@ def _render_message_entry(entry: MessageEntry) -> str:
                     "<li>"
                     f"<code>{_escape(call.name)}</code> "
                     f"<code>{_escape(call.id)}</code>"
-                    f"<pre>{_escape(_json_dump(call.arguments))}</pre>"
+                    f"{_render_json_block(call.arguments)}"
                     "</li>"
                     for call in message.tool_calls
                 )
@@ -697,9 +802,9 @@ def _render_message_entry(entry: MessageEntry) -> str:
             f"<pre>{_escape(message.content)}</pre>"
         )
         if message.data is not None:
-            body += f"<h4>Data</h4><pre>{_escape(_json_dump(message.data))}</pre>"
+            body += f"<h4>Data</h4>{_render_json_block(message.data)}"
         if message.details is not None:
-            body += f"<h4>Details</h4><pre>{_escape(_json_dump(message.details))}</pre>"
+            body += f"<h4>Details</h4>{_render_json_block(message.details)}"
         return body
     return f"<pre>{_escape(entry.model_dump_json(indent=2))}</pre>"
 
@@ -742,11 +847,9 @@ _ICON_ASSISTANT = (
 )
 _ICON_TOOL = (
     '<svg viewBox="0 0 16 16" aria-hidden="true">'
-    '<path d="M6.4 3.2 3.2 6.4l1.1 1.1L1.7 10 3 11.3l2.6-2.6 1.1 1.1 3.2-3.2c.5.1 1.1.0 1.6-.5'
-    '.7-.7.7-1.9-.2-2.6"'
-    ' fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"'
-    ' stroke-linecap="round"/>'
-    '<path d="M9.8 6.2 12.2 8.6c.9.9 2.2.9 3 0l-3-3c-.9-.9-2.4-.9-3.2.0Z" fill="none"'
+    '<rect x="8.7" y="1.6" width="3.2" height="5.6" rx=".7" transform="rotate(45 10.3 4.4)"'
+    ' fill="none" stroke="currentColor" stroke-width="1.2"/>'
+    '<path d="M8.1 6.8 3 11.9c-.6.6-.6 1.5.0 2.1.6.6 1.5.6 2.1.0l5.1-5.1" fill="none"'
     ' stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>'
     "</svg>"
 )
@@ -787,6 +890,20 @@ _ICON_GENERIC = (
     ' stroke-width="1.2"/>'
     '<path d="M5 5.5h6M5 8h6M5 10.5h4" stroke="currentColor" stroke-width="1.1"'
     ' stroke-linecap="round"/>'
+    "</svg>"
+)
+_ICON_SUN = (
+    '<svg viewBox="0 0 16 16" aria-hidden="true">'
+    '<circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.2"/>'
+    '<path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4'
+    'M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" stroke="currentColor" stroke-width="1.2"'
+    ' stroke-linecap="round"/>'
+    "</svg>"
+)
+_ICON_MOON = (
+    '<svg viewBox="0 0 16 16" aria-hidden="true">'
+    '<path d="M13.2 9.8A5.6 5.6 0 0 1 6.2 2.8a5.6 5.6 0 1 0 7 7Z" fill="none"'
+    ' stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>'
     "</svg>"
 )
 
@@ -878,6 +995,20 @@ def _summarize_text(text: str, *, limit: int = 92) -> str:
 
 def _json_dump(value: dict[str, JSONValue]) -> str:
     return json.dumps(value, indent=2, sort_keys=True)
+
+
+_JSON_LEXER = JsonLexer()
+_HIGHLIGHT_FORMATTER = HtmlFormatter(nowrap=True)
+
+
+def _render_json_block(value: dict[str, JSONValue]) -> str:
+    """Render a JSON payload as a syntax-highlighted, self-contained <pre> block."""
+    source = _json_dump(value)
+    try:
+        highlighted = highlight(source, _JSON_LEXER, _HIGHLIGHT_FORMATTER)
+    except Exception:  # noqa: BLE001 - fall back to plain escaped text
+        return f"<pre>{_escape(source)}</pre>"
+    return f'<pre class="highlight">{highlighted}</pre>'
 
 
 def _format_timestamp(timestamp: float) -> str:

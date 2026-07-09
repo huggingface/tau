@@ -76,8 +76,36 @@ def test_render_session_html_uses_static_document_layout() -> None:
     assert "Session" in html
     assert "Transcript" in html
     assert "border-right: 1px solid var(--line);" in html
-    assert "<script" not in html.lower()
+    assert 'id="themeToggle"' in html
     assert "<link" not in html.lower()
+    assert "http://" not in html and "https://" not in html
+
+
+def test_render_session_html_syntax_highlights_tool_call_arguments() -> None:
+    entries = [
+        MessageEntry(
+            id="root",
+            message=AssistantMessage(
+                content="Reading a file",
+                tool_calls=[ToolCall(id="call-1", name="read", arguments={"path": "README.md"})],
+            ),
+        ),
+    ]
+
+    html = render_session_html(entries, title="Highlight Export")
+
+    assert 'class="highlight"' in html
+    assert '<span class="nt">' in html or '<span class="s2">' in html
+
+
+def test_render_session_html_includes_theme_toggle_script() -> None:
+    entries = [MessageEntry(id="root", message=UserMessage(content="Hello"))]
+
+    html = render_session_html(entries, title="Toggle Export")
+
+    assert 'id="themeToggle"' in html
+    assert "localStorage" in html
+    assert "data-theme" in html
 
 
 def test_export_session_html_writes_file(tmp_path: Path) -> None:

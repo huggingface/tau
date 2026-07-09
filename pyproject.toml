@@ -15,6 +15,7 @@ dependencies = [
     "httpx[socks]>=0.27",
     "packaging>=24.0",
     "pydantic>=2.0",
+    "pygments>=2.18",
     "rich>=13.0",
     "textual>=1.0",
     "typer>=0.12",
@@ -55,6 +56,10 @@ indent-style = "space"
 python_version = "3.12"
 strict = true
 packages = ["tau_ai", "tau_agent", "tau_coding"]
+
+[[tool.mypy.overrides]]
+module = "pygments.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
