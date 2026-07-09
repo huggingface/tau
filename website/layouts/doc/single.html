@@ -1,0 +1,17 @@
+{{ define "main" }}
+<div class="wrap docs-layout">
+  <aside>
+    {{ partial "sidebar.html" . }}
+  </aside>
+  <article class="docs-content">
+    <h1>{{ .Title }}</h1>
+    {{ with .Description }}<p class="docs-description">{{ . }}</p>{{ end }}
+    {{ .Content }}
+
+    <div class="docs-footer">
+      <a class="edit-link" href="{{ .Site.Params.editRepoUrl }}/{{ .File.Path }}">Edit this page on GitHub &#8599;</a>
+    </div>
+    {{ partial "docs-prevnext.html" . }}
+  </article>
+</div>
+{{ end }}

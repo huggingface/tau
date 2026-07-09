@@ -23,6 +23,8 @@ from tau_ai.events import (
     ProviderToolCallEvent,
 )
 from tau_ai.fake import FakeProvider
+from tau_ai.google import GoogleGenerativeAIProvider
+from tau_ai.mistral import MistralConversationsProvider
 from tau_ai.openai_codex import (
     DEFAULT_OPENAI_CODEX_BASE_URL,
     OpenAICodexConfig,
@@ -42,6 +44,8 @@ __all__ = [
     "DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS",
     "DEFAULT_OPENAI_CODEX_BASE_URL",
     "FakeProvider",
+    "GoogleGenerativeAIProvider",
+    "MistralConversationsProvider",
     "ModelProvider",
     "OpenAICodexConfig",
     "OpenAICodexCredentials",

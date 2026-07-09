@@ -7,6 +7,8 @@ from typing import Protocol
 
 from tau_ai import (
     AnthropicProvider,
+    GoogleGenerativeAIProvider,
+    MistralConversationsProvider,
     ModelProvider,
     OpenAICodexConfig,
     OpenAICodexCredentials,
@@ -22,11 +24,13 @@ from tau_coding.oauth import (
 from tau_coding.provider_config import (
     AnthropicProviderConfig,
     OpenAICodexProviderConfig,
+    OpenAICompatibleProviderConfig,
     ProviderConfig,
     ProviderConfigError,
     anthropic_config_from_provider,
     openai_compatible_config_from_provider,
     provider_thinking_levels,
+    validate_provider_model,
 )
 from tau_coding.thinking import ThinkingLevel, normalize_thinking_level, reasoning_effort_for_level
 
@@ -47,12 +51,15 @@ def create_model_provider(
     thinking_level: ThinkingLevel | None = None,
 ) -> ClosableModelProvider:
     """Create a runtime model provider from durable provider settings."""
+    if model is not None:
+        validate_provider_model(provider, model)
     credentials = credential_store or FileCredentialStore()
     if isinstance(provider, AnthropicProviderConfig):
         return AnthropicProvider(
             anthropic_config_from_provider(
                 provider,
                 credential_reader=credentials,
+                model=model,
                 thinking_level=thinking_level,
             )
         )
@@ -64,6 +71,7 @@ def create_model_provider(
                     credential_store=credentials,
                 ),
                 base_url=provider.base_url,
+                provider_name=provider.name,
                 headers=provider.headers,
                 timeout_seconds=provider.timeout_seconds,
                 max_retries=provider.max_retries,
@@ -75,14 +83,19 @@ def create_model_provider(
                 ),
             )
         )
-    return OpenAICompatibleProvider(
-        openai_compatible_config_from_provider(
+    if isinstance(provider, OpenAICompatibleProviderConfig):
+        config = openai_compatible_config_from_provider(
             provider,
             credential_reader=credentials,
             model=model,
             thinking_level=thinking_level,
         )
-    )
+        if provider.api == "google-generative-ai":
+            return GoogleGenerativeAIProvider(config)
+        if provider.api == "mistral-conversations":
+            return MistralConversationsProvider(config)
+        return OpenAICompatibleProvider(config)
+    raise ProviderConfigError(f"Unsupported provider config: {provider.name}")
 
 
 def _codex_reasoning_effort(

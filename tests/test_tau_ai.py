@@ -18,6 +18,7 @@ from tau_ai import (
     AnthropicConfig,
     AnthropicProvider,
     FakeProvider,
+    GoogleGenerativeAIProvider,
     OpenAICodexConfig,
     OpenAICodexCredentials,
     OpenAICodexProvider,
@@ -211,6 +212,40 @@ async def test_openai_compatible_provider_includes_configured_reasoning_effort()
 
 
 @pytest.mark.anyio
+async def test_openai_compatible_provider_includes_openrouter_provider_routing() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://openrouter.ai/api/v1",
+                compat={"openrouterProvider": {"ignore": ["Nebius"]}},
+            ),
+            client=client,
+        )
+
+        await _collect(
+            provider.stream_response(
+                model="nvidia/nemotron-3-super-120b-a12b",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert loads(requests[0].content)["provider"] == {"ignore": ["Nebius"]}
+
+
+@pytest.mark.anyio
 async def test_openai_compatible_provider_supports_nested_reasoning_effort_parameter() -> None:
     requests: list[httpx.Request] = []
 
@@ -247,6 +282,164 @@ async def test_openai_compatible_provider_supports_nested_reasoning_effort_param
     assert requests[0].url == "https://example.test/v1/chat/completions"
     assert loads(requests[0].content)["reasoning"] == {"effort": "high"}
     assert "reasoning_effort" not in loads(requests[0].content)
+
+
+@pytest.mark.anyio
+async def test_google_provider_sends_system_instruction_at_top_level() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},'
+                '"finishReason":"STOP"}]}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = GoogleGenerativeAIProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://generativelanguage.googleapis.com/v1beta",
+                reasoning_effort="low",
+            ),
+            client=client,
+        )
+
+        await _collect(
+            provider.stream_response(
+                model="gemini-2.5-flash",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    payload = loads(requests[0].content)
+    assert payload["systemInstruction"] == {"parts": [{"text": "You are Tau."}]}
+    assert "systemInstruction" not in payload["generationConfig"]
+    assert payload["generationConfig"]["thinkingConfig"] == {
+        "includeThoughts": True,
+        "thinkingBudget": 2048,
+    }
+
+
+@pytest.mark.anyio
+async def test_google_provider_round_trips_thought_signature() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"candidates":[{"content":{"parts":[{"functionCall":'
+                '{"id":"call-1","name":"bash","args":{"command":"ls"}},'
+                '"thoughtSignature":"sig-123"}]},"finishReason":"STOP"}]}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = GoogleGenerativeAIProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://generativelanguage.googleapis.com/v1beta",
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gemini-2.5-flash",
+                system="",
+                messages=[UserMessage(content="List files")],
+                tools=[],
+            )
+        )
+
+        assistant_message = events[-1].message
+        assert assistant_message.tool_calls[0].thought_signature == "sig-123"
+
+        await _collect(
+            provider.stream_response(
+                model="gemini-2.5-flash",
+                system="",
+                messages=[
+                    UserMessage(content="List files"),
+                    assistant_message,
+                    ToolResultMessage(tool_call_id="call-1", name="bash", content="a.py"),
+                ],
+                tools=[],
+            )
+        )
+
+    second_payload = loads(requests[1].content)
+    tool_call_part = second_payload["contents"][1]["parts"][0]
+    assert tool_call_part["thoughtSignature"] == "sig-123"
+
+
+@pytest.mark.anyio
+async def test_google_provider_strips_unsupported_schema_keywords_from_tools() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},'
+                '"finishReason":"STOP"}]}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async def executor(_arguments: dict[str, JSONValue]) -> AgentToolResult:
+        return AgentToolResult(tool_call_id="", ok=True, content="")
+
+    tool = AgentTool(
+        name="bash",
+        description="Run a shell command.",
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "command": {"type": "string"},
+                "env": {
+                    "type": "array",
+                    "items": {"type": "string", "additionalProperties": False},
+                },
+            },
+        },
+        executor=executor,
+    )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = GoogleGenerativeAIProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://generativelanguage.googleapis.com/v1beta",
+            ),
+            client=client,
+        )
+
+        await _collect(
+            provider.stream_response(
+                model="gemini-2.5-flash",
+                system="",
+                messages=[UserMessage(content="List files")],
+                tools=[tool],
+            )
+        )
+
+    payload = loads(requests[0].content)
+    parameters = payload["tools"][0]["functionDeclarations"][0]["parameters"]
+    assert "additionalProperties" not in parameters
+    assert "additionalProperties" not in parameters["properties"]["env"]["items"]
+    assert parameters["properties"]["command"] == {"type": "string"}
 
 
 @pytest.mark.anyio
@@ -458,12 +651,16 @@ async def test_openai_compatible_provider_does_not_retry_non_transient_status() 
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(400, text="bad request")
+        return httpx.Response(
+            400,
+            json={"error": {"message": "The selected model is unavailable."}},
+        )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
+                provider_name="test-openai",
                 base_url="https://example.test/v1",
                 max_retries=3,
                 max_retry_delay_seconds=0,
@@ -482,7 +679,51 @@ async def test_openai_compatible_provider_does_not_retry_non_transient_status() 
 
     assert len(requests) == 1
     assert isinstance(events[-1], ProviderErrorEvent)
-    assert events[-1].data == {"body": "bad request", "attempts": 1}
+    assert events[-1].message == (
+        "test-openai request failed with status 400 for model test-model: "
+        "The selected model is unavailable."
+    )
+    assert events[-1].data == {
+        "status_code": 400,
+        "body": '{"error":{"message":"The selected model is unavailable."}}',
+        "attempts": 1,
+    }
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_provider_includes_plain_http_error_body_in_message() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text="bad request details")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                provider_name="test-openai",
+                base_url="https://example.test/v1",
+                max_retries=0,
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="test-model",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], ProviderErrorEvent)
+    assert events[-1].message == (
+        "test-openai request failed with status 400 for model test-model: bad request details"
+    )
+    assert events[-1].data == {
+        "status_code": 400,
+        "body": "bad request details",
+        "attempts": 1,
+    }
 
 
 @pytest.mark.anyio
@@ -501,6 +742,7 @@ async def test_openai_codex_provider_includes_http_error_detail_in_message() -> 
             OpenAICodexConfig(
                 credential_resolver=credentials,
                 base_url="https://chatgpt.test/backend-api",
+                provider_name="openai-codex",
                 max_retries=0,
             ),
             client=client,
@@ -517,7 +759,8 @@ async def test_openai_codex_provider_includes_http_error_detail_in_message() -> 
 
     assert isinstance(events[-1], ProviderErrorEvent)
     assert events[-1].message == (
-        "OpenAI Codex request failed with status 400: The requested model does not exist."
+        "openai-codex request failed with status 400 for model gpt-5.5: "
+        "The requested model does not exist."
     )
     assert events[-1].data == {
         "status_code": 400,
@@ -539,6 +782,7 @@ async def test_openai_codex_provider_includes_plain_http_error_body_in_message()
             OpenAICodexConfig(
                 credential_resolver=credentials,
                 base_url="https://chatgpt.test/backend-api",
+                provider_name="openai-codex",
                 max_retries=0,
             ),
             client=client,
@@ -555,7 +799,7 @@ async def test_openai_codex_provider_includes_plain_http_error_body_in_message()
 
     assert isinstance(events[-1], ProviderErrorEvent)
     assert events[-1].message == (
-        "OpenAI Codex request failed with status 400: bad request details"
+        "openai-codex request failed with status 400 for model gpt-5.5: bad request details"
     )
     assert events[-1].data == {
         "status_code": 400,
@@ -1096,6 +1340,46 @@ async def test_anthropic_provider_retries_transient_status_with_event() -> None:
         "text_delta",
         "response_end",
     ]
+
+
+@pytest.mark.anyio
+async def test_anthropic_provider_includes_http_error_detail_in_message() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={"error": {"message": "model: invalid-model is not supported"}},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                provider_name="anthropic",
+                base_url="https://api.anthropic.test/v1",
+                max_retries=0,
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], ProviderErrorEvent)
+    assert events[-1].message == (
+        "anthropic request failed with status 400 for model claude-test: "
+        "model: invalid-model is not supported"
+    )
+    assert events[-1].data == {
+        "status_code": 400,
+        "body": '{"error":{"message":"model: invalid-model is not supported"}}',
+        "attempts": 1,
+    }
 
 
 def _weather_tool() -> AgentTool:

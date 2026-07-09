@@ -56,13 +56,12 @@ uv run ruff format --check .
 uv run mypy
 ```
 
-For the documentation site:
+For the documentation site (a [Hugo](https://gohugo.io/) project):
 
 ```bash
 cd website
-bun install
-bun run dev
-bun run build
+hugo server -D
+hugo --minify
 ```
 
 ## Where changes belong
@@ -76,6 +75,19 @@ Use the layer boundaries to decide where code should live:
 - Rich rendering should not leak into the reusable agent harness.
 
 If a change crosses layers, prefer adding a small typed boundary instead of importing app-specific details into core code.
+
+## Adding a provider or model
+
+The built-in provider catalog is data, not code: edit
+`src/tau_coding/data/catalog.toml` and open a PR — no Python changes needed.
+Each `[[providers]]` table declares the provider's name, kind
+(`openai-compatible`, `anthropic`, or `openai-codex`), base URL, models,
+default model, context windows, and thinking configuration. Validation happens
+at load time, so a typo fails tests with a pointed error message.
+
+For personal or unreleased providers, create `~/.tau/catalog.toml` with the
+same schema — it is overlaid on the built-in catalog (your values win, models
+are unioned) and needs no PR at all.
 
 ## Testing expectations
 
@@ -111,20 +123,6 @@ when it detects that version change, or when a maintainer uses an explicit
 release trigger such as a published GitHub Release or manual workflow dispatch.
 See [dev-notes/release-process.md](dev-notes/release-process.md) for the full
 process.
-
-## Contributor prompts
-
-Tau includes shared prompt templates to help contributors draft complete issues
-and pull requests from inside the TUI:
-
-```text
-/issue describe the bug or feature request
-/pr add any reviewer context for the current branch
-```
-
-These prompts can use `gh` when it is installed and authenticated, but they also
-fall back to copy/paste-ready Markdown and manual GitHub instructions when a
-local environment is not fully configured.
 
 ## Pull request guidelines
 

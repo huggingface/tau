@@ -27,6 +27,8 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.http import create_async_client
+from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 
@@ -57,6 +59,7 @@ class OpenAICodexConfig:
     originator: str = "tau"
     reasoning_effort: str | None = None
     reasoning_summary: str = "auto"
+    provider_name: str = "OpenAI Codex"
 
 
 class OpenAICodexProvider:
@@ -145,9 +148,11 @@ class OpenAICodexProvider:
                                     return
                                 continue
                             yield ProviderErrorEvent(
-                                message=_codex_http_error_message(
+                                message=provider_http_error_message(
+                                    provider_name=self._config.provider_name,
                                     status_code=response.status_code,
                                     body=body_text,
+                                    model=model,
                                 ),
                                 data={
                                     "status_code": response.status_code,
@@ -199,7 +204,7 @@ class OpenAICodexProvider:
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self._config.timeout_seconds)
+            self._client = create_async_client(timeout=self._config.timeout_seconds)
         return self._client
 
     def _should_retry(
@@ -645,43 +650,6 @@ def _finish_reason_from_response(event: Mapping[str, Any]) -> str | None:
     if isinstance(status, str):
         return status
     return None
-
-
-def _codex_http_error_message(*, status_code: int, body: str) -> str:
-    prefix = f"OpenAI Codex request failed with status {status_code}"
-    detail = _http_error_detail(body)
-    if detail:
-        return f"{prefix}: {detail}"
-    return prefix
-
-
-def _http_error_detail(body: str) -> str:
-    parsed = _loads_object(body)
-    if parsed is not None:
-        detail = _error_detail_from_mapping(parsed)
-        if detail:
-            return detail
-    return body.strip()[:1000]
-
-
-def _error_detail_from_mapping(value: Mapping[str, Any]) -> str:
-    error = value.get("error")
-    if isinstance(error, Mapping):
-        message = error.get("message")
-        if isinstance(message, str) and message:
-            return message
-        code = error.get("code")
-        if isinstance(code, str) and code:
-            return code
-    for key in ("message", "detail", "error"):
-        detail = value.get(key)
-        if isinstance(detail, str) and detail:
-            return detail
-        if isinstance(detail, Mapping):
-            nested = _error_detail_from_mapping(detail)
-            if nested:
-                return nested
-    return ""
 
 
 def _response_error_message(event: Mapping[str, Any]) -> str:

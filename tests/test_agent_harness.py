@@ -122,6 +122,21 @@ def test_harness_can_pop_latest_follow_up_message() -> None:
     assert harness.pop_latest_follow_up() is None
 
 
+def test_harness_can_pop_latest_steering_message() -> None:
+    harness = AgentHarness(
+        AgentHarnessConfig(provider=FakeProvider([]), model="fake", system="You are Tau.")
+    )
+
+    harness.steer("First")
+    harness.steer("Second")
+    popped = harness.pop_latest_steering()
+
+    assert popped == UserMessage(content="Second")
+    assert harness.queue_update_event().steering == ("First",)
+    assert harness.pop_latest_steering() == UserMessage(content="First")
+    assert harness.pop_latest_steering() is None
+
+
 @pytest.mark.anyio
 async def test_subscribed_listeners_receive_events_and_can_unsubscribe() -> None:
     assistant = AssistantMessage(content="Hello")

@@ -4271,6 +4271,9 @@ async def test_tui_thinking_toggle_during_stream_preserves_user_scrollback() -> 
         app.state.running = True
         theme = app.tui_settings.resolved_theme
         # Stream some content so the transcript is tall enough to scroll back in.
+        # Keep display state in sync with the widget-level simulation so the
+        # visibility reconcile has thinking content to re-render.
+        app.state.add_thinking_delta("thinking line\n" * 20)
         await transcript.append_thinking_delta(
             "thinking line\n" * 20, theme=theme, show_thinking=True
         )
@@ -4416,6 +4419,111 @@ async def test_tui_thinking_toggle_via_event_stream_preserves_assistant_widget()
         await pilot.pause()
         assert app.state.show_thinking is False
         assert transcript._active_assistant_widget is assistant_before
+
+
+@pytest.mark.anyio
+async def test_tui_app_hidden_thinking_placeholder_stays_before_streamed_answer() -> None:
+    session = FakeSession(
+        events=[
+            AgentStartEvent(),
+            ThinkingDeltaEvent(delta="private plan"),
+            MessageStartEvent(message_role="assistant"),
+            MessageDeltaEvent(delta="public answer"),
+            MessageEndEvent(message=AssistantMessage(content="public answer")),
+            AgentEndEvent(),
+        ]
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        await app._run_prompt("stream")
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert [line.text for line in transcript.lines] == [
+            "Thinking… Press Ctrl+T to show thinking tokens.",
+            "public answer",
+        ]
+
+
+@pytest.mark.anyio
+async def test_tui_app_thinking_toggle_preserves_unrelated_widgets() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        app.state.add_item("user", "first prompt")
+        app.state.add_thinking_delta("plan one")
+        app.state.add_item("assistant", "first answer")
+        app.state.add_item("user", "second prompt")
+        app.state.add_thinking_delta("plan two")
+        app.state.add_item("assistant", "second answer")
+        app._refresh()
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        stable_widgets = [
+            widget
+            for widget in transcript.children
+            if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+            and widget.item.role != "thinking"
+        ]
+        assert len(stable_widgets) == 4
+        assert (
+            sum(
+                1
+                for widget in transcript.children
+                if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+                and widget.item.role == "thinking"
+            )
+            == 2
+        )
+
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+        assert [
+            widget
+            for widget in transcript.children
+            if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+            and widget.item.role != "thinking"
+        ] == stable_widgets
+        assert [line.text for line in transcript.lines] == [
+            "first prompt",
+            "plan one",
+            "first answer",
+            "second prompt",
+            "plan two",
+            "second answer",
+        ]
+
+        app.state.add_item("status", "late status")
+        await transcript.append_item(app.state.items[-1])
+        await pilot.pause()
+        stable_widgets.append(
+            next(
+                widget
+                for widget in reversed(transcript.children)
+                if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+                and widget.item.role == "status"
+            )
+        )
+
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+        assert [
+            widget
+            for widget in transcript.children
+            if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
+            and widget.item.role != "thinking"
+        ] == stable_widgets
+        assert [line.text for line in transcript.lines] == [
+            "first prompt",
+            "Thinking… Press Ctrl+T to show thinking tokens.",
+            "first answer",
+            "second prompt",
+            "Thinking… Press Ctrl+T to show thinking tokens.",
+            "second answer",
+            "late status",
+        ]
 
 
 @pytest.mark.anyio

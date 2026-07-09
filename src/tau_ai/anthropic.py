@@ -21,6 +21,8 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.http import create_async_client
+from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 
@@ -65,7 +67,10 @@ class AnthropicProvider:
                 system=system,
                 messages=messages,
                 tools=tools,
+                max_tokens=self._config.max_tokens,
                 thinking_budget_tokens=self._config.thinking_budget_tokens,
+                thinking_effort=self._config.thinking_effort,
+                thinking_mode=self._config.thinking_mode,
             )
             headers = {
                 **(dict(self._config.headers or {})),
@@ -84,6 +89,7 @@ class AnthropicProvider:
                     ) as response:
                         if response.status_code >= 400:
                             body = await response.aread()
+                            body_text = body.decode(errors="replace")
                             if self._should_retry(attempt, status_code=response.status_code):
                                 delay = retry_delay_seconds(
                                     attempt,
@@ -96,7 +102,7 @@ class AnthropicProvider:
                                     reason=f"HTTP {response.status_code}",
                                     data={
                                         "status_code": response.status_code,
-                                        "body": body.decode(errors="replace"),
+                                        "body": body_text,
                                     },
                                 )
                                 attempt += 1
@@ -104,11 +110,15 @@ class AnthropicProvider:
                                     return
                                 continue
                             yield ProviderErrorEvent(
-                                message=(
-                                    f"Provider request failed with status {response.status_code}"
+                                message=provider_http_error_message(
+                                    provider_name=self._config.provider_name,
+                                    status_code=response.status_code,
+                                    body=body_text,
+                                    model=model,
                                 ),
                                 data={
-                                    "body": body.decode(errors="replace"),
+                                    "status_code": response.status_code,
+                                    "body": body_text,
                                     "attempts": attempt + 1,
                                 },
                             )
@@ -227,7 +237,7 @@ class AnthropicProvider:
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self._config.timeout_seconds)
+            self._client = create_async_client(timeout=self._config.timeout_seconds)
         return self._client
 
     def _should_retry(self, attempt: int, *, status_code: int | None = None) -> bool:
@@ -260,19 +270,25 @@ def _build_messages_payload(
     system: str,
     messages: list[AgentMessage],
     tools: list[AgentTool],
+    max_tokens: int | None = None,
     thinking_budget_tokens: int | None = None,
+    thinking_effort: str | None = None,
+    thinking_mode: str = "budget",
 ) -> dict[str, JSONValue]:
-    max_tokens = DEFAULT_MAX_TOKENS
+    resolved_max_tokens = max_tokens or DEFAULT_MAX_TOKENS
     if thinking_budget_tokens is not None:
-        max_tokens = max(max_tokens, thinking_budget_tokens + 1024)
+        resolved_max_tokens = max(resolved_max_tokens, thinking_budget_tokens + 1024)
     payload: dict[str, JSONValue] = {
         "model": model,
-        "max_tokens": max_tokens,
+        "max_tokens": resolved_max_tokens,
         "stream": True,
         "system": system,
         "messages": [_anthropic_message(message) for message in messages],
     }
-    if thinking_budget_tokens is not None:
+    if thinking_mode == "adaptive" and thinking_effort is not None:
+        payload["thinking"] = {"type": "adaptive", "display": "summarized"}
+        payload["output_config"] = {"effort": thinking_effort}
+    elif thinking_budget_tokens is not None:
         payload["thinking"] = {
             "type": "enabled",
             "budget_tokens": thinking_budget_tokens,

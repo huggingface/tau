@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import sys
 from os import environ
 from pathlib import Path
 from typing import Annotated
@@ -17,7 +19,7 @@ from tau_ai import (
     ModelProvider,
 )
 from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL
-from tau_coding import __version__
+from tau_coding.catalog_loader import user_catalog_path
 from tau_coding.credentials import FileCredentialStore
 from tau_coding.provider_config import (
     DEFAULT_MODEL,
@@ -51,7 +53,36 @@ from tau_coding.session_manager import CodingSessionRecord, SessionManager
 from tau_coding.shell_config import load_shell_settings
 from tau_coding.thinking import DEFAULT_THINKING_LEVEL
 from tau_coding.tui import run_tui_app
-from tau_coding.update_check import UpdateNotice, startup_update_notice
+from tau_coding.update_check import (
+    UpdateNotice,
+    startup_release_notes_notice,
+    startup_update_notice,
+)
+from tau_coding.version import current_version as _current_version
+
+
+def _is_utf8_encoding(encoding: str | None) -> bool:
+    """Return whether a stream encoding name represents UTF-8."""
+    if encoding is None:
+        return False
+    return encoding.lower().replace("-", "").replace("_", "") == "utf8"
+
+
+def _force_utf8_streams() -> None:
+    """Reconfigure stdout/stderr to UTF-8 when they are not already UTF-8.
+
+    Windows consoles default these streams to the system codepage (e.g.
+    cp1252), which raises UnicodeEncodeError on model output containing
+    characters outside that codepage.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if _is_utf8_encoding(getattr(stream, "encoding", None)):
+            continue
+        with contextlib.suppress(AttributeError, ValueError):
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+
+
+_force_utf8_streams()
 
 app = typer.Typer(
     name="tau",
@@ -91,7 +122,9 @@ def setup_command(
     )
     updated = upsert_openai_compatible_provider(settings, provider, set_default=set_default)
     path = save_provider_settings(updated)
-    typer.echo(f"Saved provider '{provider.name}' to {path}")
+    typer.echo(
+        f"Saved provider '{provider.name}' to {user_catalog_path()} and preferences to {path}"
+    )
     if provider.api_key_env not in environ:
         typer.echo(f"Set {provider.api_key_env} before running Tau with this provider.", err=True)
 
@@ -174,8 +207,9 @@ def main(
     ] = False,
 ) -> None:
     """Run the Tau CLI."""
+    current_version = _current_version()
     if version:
-        typer.echo(f"tau {__version__}")
+        typer.echo(f"tau {current_version}")
         raise typer.Exit()
 
     if ctx.invoked_subcommand is not None:
@@ -240,7 +274,7 @@ def main(
                 initial_prompt,
                 notice,
             )
-        except RuntimeError as exc:
+        except (RuntimeError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
         raise typer.Exit()
 
@@ -254,7 +288,7 @@ def main(
 
     try:
         ok = anyio.run(run_openai_print_mode, prompt, model, cwd or Path.cwd(), output, provider)
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     if not ok:
         raise typer.Exit(1)
@@ -271,6 +305,15 @@ async def run_openai_tui(
     update_notice: UpdateNotice | None = None,
 ) -> None:
     """Run the Textual TUI with the default OpenAI-compatible provider."""
+    release_notes_notice = startup_release_notes_notice(_current_version())
+    startup_notices = [
+        notice
+        for notice in (
+            release_notes_notice.message if release_notes_notice is not None else None,
+            update_notice.message if update_notice is not None else None,
+        )
+        if notice is not None
+    ]
     await run_tui_app(
         model=model,
         cwd=cwd,
@@ -279,12 +322,12 @@ async def run_openai_tui(
         provider_name=provider_name,
         auto_compact_token_threshold=auto_compact_token_threshold,
         initial_prompt=initial_prompt,
-        startup_notice=update_notice.message if update_notice is not None else None,
+        startup_notices=tuple(startup_notices),
     )
 
 
 def _startup_update_notice() -> UpdateNotice | None:
-    return startup_update_notice(__version__)
+    return startup_update_notice(_current_version())
 
 
 def render_session_list(records: list[CodingSessionRecord]) -> None:

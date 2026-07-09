@@ -29,6 +29,8 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.http import create_async_client
+from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 
@@ -77,7 +79,7 @@ class OpenAICompatibleProvider:
         signal: CancellationToken | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Stream one model response as provider-neutral events."""
-        if _use_responses_api(model):
+        if self._config.api == "openai-responses" or _use_responses_api(model):
             return self._stream_responses(
                 model=model,
                 system=system,
@@ -110,6 +112,10 @@ class OpenAICompatibleProvider:
             tools=tools,
             reasoning_effort=self._config.reasoning_effort,
             reasoning_effort_parameter=self._config.reasoning_effort_parameter,
+            thinking_format=self._config.thinking_format,
+            compat=self._config.compat,
+            max_tokens=self._config.max_tokens,
+            include_reasoning_effort_none=self._config.include_reasoning_effort_none,
         )
         return self._stream(
             model=model,
@@ -135,6 +141,7 @@ class OpenAICompatibleProvider:
             messages=messages,
             tools=tools,
             reasoning_effort=self._config.reasoning_effort,
+            max_tokens=self._config.max_tokens,
         )
         return self._stream(
             model=model,
@@ -177,6 +184,7 @@ class OpenAICompatibleProvider:
                     ) as response:
                         if response.status_code >= 400:
                             body = await response.aread()
+                            body_text = body.decode(errors="replace")
                             if self._should_retry(attempt, status_code=response.status_code):
                                 delay = retry_delay_seconds(
                                     attempt,
@@ -189,7 +197,7 @@ class OpenAICompatibleProvider:
                                     reason=f"HTTP {response.status_code}",
                                     data={
                                         "status_code": response.status_code,
-                                        "body": body.decode(errors="replace"),
+                                        "body": body_text,
                                     },
                                 )
                                 attempt += 1
@@ -197,11 +205,15 @@ class OpenAICompatibleProvider:
                                     return
                                 continue
                             yield ProviderErrorEvent(
-                                message=(
-                                    f"Provider request failed with status {response.status_code}"
+                                message=provider_http_error_message(
+                                    provider_name=self._config.provider_name,
+                                    status_code=response.status_code,
+                                    body=body_text,
+                                    model=model,
                                 ),
                                 data={
-                                    "body": body.decode(errors="replace"),
+                                    "status_code": response.status_code,
+                                    "body": body_text,
                                     "attempts": attempt + 1,
                                 },
                             )
@@ -258,7 +270,7 @@ class OpenAICompatibleProvider:
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self._config.timeout_seconds)
+            self._client = create_async_client(timeout=self._config.timeout_seconds)
         return self._client
 
     def _should_retry(self, attempt: int, *, status_code: int | None = None) -> bool:
@@ -553,7 +565,18 @@ def _build_chat_payload(
     tools: list[AgentTool],
     reasoning_effort: str | None = None,
     reasoning_effort_parameter: str = "reasoning_effort",
+    thinking_format: str = "openai",
+    compat: Mapping[str, JSONValue] | None = None,
+    max_tokens: int | None = None,
+    include_reasoning_effort_none: bool = False,
 ) -> dict[str, JSONValue]:
+    resolved_compat = dict(compat or {})
+    supports_store = bool(resolved_compat.get("supportsStore", True))
+    supports_usage = bool(resolved_compat.get("supportsUsageInStreaming", True))
+    supports_reasoning_effort = bool(resolved_compat.get("supportsReasoningEffort", True))
+    max_tokens_field = _string_compat(
+        resolved_compat.get("maxTokensField"), default="max_completion_tokens"
+    )
     payload: dict[str, JSONValue] = {
         "model": model,
         "stream": True,
@@ -562,14 +585,71 @@ def _build_chat_payload(
             *[_message_to_openai(message) for message in messages],
         ],
     }
-    if reasoning_effort is not None:
-        if reasoning_effort_parameter == "reasoning.effort":
-            payload["reasoning"] = {"effort": reasoning_effort}
-        else:
-            payload["reasoning_effort"] = reasoning_effort
+    if supports_usage:
+        payload["stream_options"] = {"include_usage": True}
+    if supports_store:
+        payload["store"] = False
+    if max_tokens is not None:
+        payload["max_tokens" if max_tokens_field == "max_tokens" else "max_completion_tokens"] = (
+            max_tokens
+        )
+    openrouter_provider = resolved_compat.get("openrouterProvider")
+    if isinstance(openrouter_provider, dict):
+        payload["provider"] = openrouter_provider
+    _apply_chat_reasoning(
+        payload,
+        reasoning_effort=reasoning_effort if supports_reasoning_effort else None,
+        reasoning_effort_parameter=reasoning_effort_parameter,
+        thinking_format=thinking_format,
+        include_reasoning_effort_none=include_reasoning_effort_none,
+    )
     if tools:
         payload["tools"] = [_tool_to_openai(tool) for tool in tools]
+        if resolved_compat.get("zaiToolStream") is True:
+            payload["tool_stream"] = True
     return payload
+
+
+def _apply_chat_reasoning(
+    payload: dict[str, JSONValue],
+    *,
+    reasoning_effort: str | None,
+    reasoning_effort_parameter: str,
+    thinking_format: str,
+    include_reasoning_effort_none: bool,
+) -> None:
+    reasoning_enabled = reasoning_effort is not None and reasoning_effort != "none"
+    if thinking_format in {"zai", "qwen"}:
+        payload["enable_thinking"] = reasoning_enabled
+        return
+    if thinking_format == "qwen-chat-template":
+        payload["chat_template_kwargs"] = {
+            "enable_thinking": reasoning_enabled,
+            "preserve_thinking": True,
+        }
+        return
+    if thinking_format == "deepseek":
+        payload["thinking"] = {"type": "enabled" if reasoning_enabled else "disabled"}
+        if reasoning_enabled:
+            payload["reasoning_effort"] = reasoning_effort
+        return
+    if thinking_format == "openrouter" or reasoning_effort_parameter == "reasoning.effort":
+        if reasoning_enabled:
+            payload["reasoning"] = {"effort": reasoning_effort}
+        elif include_reasoning_effort_none:
+            payload["reasoning"] = {"effort": "none"}
+        return
+    if thinking_format == "together":
+        payload["reasoning"] = {"enabled": reasoning_enabled}
+        if reasoning_enabled:
+            payload["reasoning_effort"] = reasoning_effort
+        return
+    if reasoning_enabled or include_reasoning_effort_none:
+        payload["reasoning_effort"] = reasoning_effort or "none"
+
+
+def _string_compat(value: object, *, default: str) -> str:
+    return value if isinstance(value, str) and value else default
 
 
 def _build_responses_payload(
@@ -579,6 +659,7 @@ def _build_responses_payload(
     messages: list[AgentMessage],
     tools: list[AgentTool],
     reasoning_effort: str | None = None,
+    max_tokens: int | None = None,
 ) -> dict[str, JSONValue]:
     payload: dict[str, JSONValue] = {
         "model": model,
@@ -590,6 +671,8 @@ def _build_responses_payload(
         "instructions": system,
         "input": _messages_to_responses_input(messages),
     }
+    if max_tokens is not None:
+        payload["max_output_tokens"] = max_tokens
     effort = _normalize_responses_effort(reasoning_effort)
     if effort is not None:
         # ``summary: auto`` streams ``response.reasoning_summary_text.delta``

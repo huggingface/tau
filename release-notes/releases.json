@@ -1,0 +1,92 @@
+[
+  {
+    "version": "0.1.4",
+    "date": "2026-07-08",
+    "sections": {
+      "New": [
+        "Add automatic session naming for new conversations.",
+        "Add terminal tab titles with the Tau mark and active session name.",
+        "Add Claude Fable 5 and Claude Sonnet 5 model catalog entries.",
+        "Add a TUI sidebar_position setting for left or right sidebar placement."
+      ],
+      "Changed": [
+        "Unify skill discovery around the Agent Skills specification.",
+        "Read tau --version from installed package metadata.",
+        "Compact large pasted prompts in the TUI while preserving pasted content."
+      ],
+      "Fixed": [
+        "Fix Windows crashes caused by non-ASCII CLI output on non-UTF-8 streams.",
+        "Fix Gemini tool-call compatibility by preserving thought signatures and stripping unsupported JSON Schema keywords.",
+        "Fix skill discovery edge cases by ignoring .agents root directories and bare Markdown files under .agents/skills.",
+        "Fix SOCKS proxy environment URL handling.",
+        "Fix queued steering recall, TUI completion height stability, pasted placeholder expansion, auto-naming indexing, and terminal-title refreshes."
+      ]
+    }
+  },
+  {
+    "version": "0.1.3",
+    "date": "2026-07-07",
+    "sections": {
+      "New": [
+        "Add a config-driven Pi API provider catalog with user overlay support."
+      ],
+      "Changed": [
+        "Optimistically render ordinary TUI prompt submissions to reduce perceived latency.",
+        "Improve scoped provider/model switching performance and responsiveness.",
+        "Migrate the documentation site to Hugo."
+      ],
+      "Fixed": [
+        "Prevent custom prompt slash commands from appearing twice in the TUI transcript.",
+        "Persist interrupted tool repairs correctly when resuming sessions.",
+        "Show bad --model values as clean errors instead of tracebacks.",
+        "Fix provider/model selection and resume mismatch edge cases.",
+        "Hide code block scrollbars while assistant messages are streaming."
+      ]
+    }
+  },
+  {
+    "version": "0.1.2",
+    "date": "2026-07-03",
+    "sections": {
+      "New": [
+        "Show one-time release highlights in the TUI transcript after Tau is upgraded.",
+        "Show the active session name in the TUI header."
+      ],
+      "Changed": [
+        "Render assistant and thinking messages without role blocks for a cleaner transcript.",
+        "Apply role foreground colors to streaming transcript messages.",
+        "Clarify the PyPI release process in the developer notes."
+      ],
+      "Fixed": [
+        "Fix autocomplete suggestion window shrinking.",
+        "Keep pre-branch context when branching with a summary.",
+        "Keep session state on the active branch when persisting messages."
+      ]
+    }
+  },
+  {
+    "version": "0.1.1",
+    "date": "2026-06-26",
+    "sections": {
+      "New": [
+        "Check PyPI for Tau updates on startup.",
+        "Route OpenAI gpt-5.5, gpt-5.4, and codex models to the /v1/responses API.",
+        "Add the /system command for viewing the active system prompt.",
+        "Add prompt history recall with the Up key."
+      ],
+      "Changed": [
+        "Lower the Python requirement to 3.12.",
+        "Render transcript messages as full-height role blocks."
+      ],
+      "Fixed": [
+        "Restore streaming transcript scrollback.",
+        "Fix TUI code block horizontal scrolling.",
+        "Fix autocomplete suggestion viewport sizing.",
+        "Disable TUI text selection while streaming.",
+        "Guard Markdown selection until blocks are mounted.",
+        "Validate conflicting session flags in the CLI.",
+        "Stabilize CI checks."
+      ]
+    }
+  }
+]
