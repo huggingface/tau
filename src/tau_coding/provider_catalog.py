@@ -85,6 +85,3 @@ def builtin_provider_entry(name: str) -> ProviderCatalogEntry | None:
         if entry.name == name:
             return entry
     return None
-
-
-

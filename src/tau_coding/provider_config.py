@@ -1330,8 +1330,8 @@ def provider_thinking_level_from_label(
     metadata = _metadata_for_model(provider, selected_model)
     if metadata is not None and metadata.thinking_level_labels:
         label = value.strip().lower()
-        for level, l in metadata.thinking_level_labels.items():
-            if l == label:
+        for level, lbl in metadata.thinking_level_labels.items():
+            if lbl == label:
                 return level
     return normalize_thinking_level(value)
 

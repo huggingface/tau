@@ -21,7 +21,6 @@ from tau_coding.oauth import (
     oauth_credential_is_expired,
     refresh_openai_codex_token,
 )
-
 from tau_coding.provider_config import (
     AnthropicProviderConfig,
     OpenAICodexProviderConfig,
@@ -57,7 +56,11 @@ def create_model_provider(
     credentials = credential_store or FileCredentialStore()
     selected_model = model or provider.default_model
     metadata = getattr(provider, "model_metadata", {}).get(selected_model)
-    if metadata is not None and metadata.api == "anthropic-messages":
+    if (
+        metadata is not None
+        and metadata.api == "anthropic-messages"
+        and isinstance(provider, OpenAICompatibleProviderConfig | AnthropicProviderConfig)
+    ):
         provider = _anthropic_provider_config_for_model(provider, selected_model)
     if isinstance(provider, AnthropicProviderConfig):
         return AnthropicProvider(
@@ -104,7 +107,7 @@ def create_model_provider(
 
 
 def _anthropic_provider_config_for_model(
-    provider: ProviderConfig,
+    provider: OpenAICompatibleProviderConfig | AnthropicProviderConfig,
     model: str,
 ) -> AnthropicProviderConfig:
     """Adapt shared connection settings for a model served via Messages API."""

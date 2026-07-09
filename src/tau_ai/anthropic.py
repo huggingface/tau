@@ -288,9 +288,10 @@ def _build_messages_payload(
         "messages": [_anthropic_message(message) for message in messages],
     }
     if thinking_type is not None:
-        payload["thinking"] = {"type": thinking_type}
+        thinking_dict: dict[str, JSONValue] = {"type": thinking_type}
         if thinking_type == "adaptive":
-            payload["thinking"]["display"] = "summarized"
+            thinking_dict["display"] = "summarized"
+        payload["thinking"] = thinking_dict
     elif thinking_mode == "adaptive" and thinking_effort is not None:
         payload["thinking"] = {"type": "adaptive", "display": "summarized"}
         payload["output_config"] = {"effort": thinking_effort}

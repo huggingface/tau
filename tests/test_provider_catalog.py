@@ -236,6 +236,7 @@ def test_builtin_catalog_golden_opencode_go_metadata() -> None:
     assert glm.thinking_level_labels == {"xhigh": "max"}
 
     from tau_coding.provider_config import provider_thinking_is_always_on
+
     assert provider_thinking_is_always_on(entry, model="glm-5.1") is True
     assert provider_thinking_is_always_on(entry, model="kimi-k2.7-code") is True
 
@@ -266,6 +267,7 @@ def test_user_catalog_model_metadata_round_trip(tmp_path: Path) -> None:
     assert entry.model_metadata["glm-5.2"].thinking_level_labels == {"xhigh": "max"}
     assert entry.model_metadata["minimax-m3"].api == "anthropic-messages"
     from tau_coding.provider_config import provider_thinking_is_always_on
+
     assert provider_thinking_is_always_on(entry, model="minimax-m3") is True
 
     # Saving an entry with model metadata and reloading preserves it exactly.
