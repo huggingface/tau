@@ -21,6 +21,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.events import Key, Resize
 from textual.screen import ModalScreen
+from textual.theme import Theme
 from textual.timer import Timer
 from textual.widgets import (
     Button,
@@ -77,6 +78,7 @@ from tau_coding.provider_config import (
 )
 from tau_coding.provider_runtime import create_model_provider
 from tau_coding.session import (
+    TREE_RUNNING_MESSAGE,
     CodingSession,
     CodingSessionConfig,
     ModelChoice,
@@ -106,6 +108,7 @@ from tau_coding.tui.config import (
     save_tui_settings,
 )
 from tau_coding.tui.state import TuiState, format_terminal_command_result_block
+from tau_coding.tui.terminal_title import TerminalTitleController
 from tau_coding.tui.widgets import (
     CompactSessionInfo,
     SessionSidebar,
@@ -2028,6 +2031,8 @@ class TauTuiApp(App[None]):
         self.startup_notices = tuple((*startup_notices, *legacy_notices))
         self.initial_prompt = initial_prompt
         super().__init__()
+        self._register_tau_textual_themes()
+        self.theme = self.tui_settings.theme
         self._bindings = BindingsMap(_app_bindings(self.tui_settings.keybindings))
         self.session = session
         self.state = TuiState(skills=session.skills)
@@ -2044,6 +2049,7 @@ class TauTuiApp(App[None]):
         self._completion_visible_line_budget: int | None = None
         self._activity_frame = 0
         self._activity_timer: Timer | None = None
+        self._terminal_title = TerminalTitleController()
         self._active_notification_keys: set[tuple[str, str]] = set()
         self._supports_pyperclip: bool | None = None
         self._sync_header_title()
@@ -2052,6 +2058,15 @@ class TauTuiApp(App[None]):
         """Reflect the active session name in Textual's header state."""
         self.title = "Tau"
         self.sub_title = _session_header_sub_title(self.session)
+        self._sync_terminal_title()
+
+    def _sync_terminal_title(self) -> None:
+        """Reflect the active session name and running state in the terminal tab title."""
+        self._terminal_title.update(
+            getattr(self.session, "session_title", None),
+            running=self.state.running,
+            frame=self._activity_frame,
+        )
 
     def _sync_text_selection_state(self) -> None:
         """Disable native text selection while the transcript is mutating."""
@@ -2075,6 +2090,28 @@ class TauTuiApp(App[None]):
             with suppress(Exception):
                 pyperclip.copy(text)
         super().copy_to_clipboard(text)
+
+    def _register_tau_textual_themes(self) -> None:
+        """Register Tau themes with Textual's theme system.
+
+        Textual exposes its own theme menu and command palette entries. Registering
+        Tau's built-in themes there makes those controls update the same theme as
+        `/theme` instead of changing only Textual's chrome.
+        """
+        self._registered_themes.clear()
+        for theme_name in BUILTIN_TUI_THEME_NAMES:
+            self.register_theme(_textual_theme_for_tau_theme(theme_name))
+
+    def _watch_theme(self, theme_name: str) -> None:
+        """Keep Textual theme changes synchronized with Tau's durable TUI theme."""
+        super()._watch_theme(theme_name)
+        if theme_name not in BUILTIN_TUI_THEME_NAMES:
+            return
+        tau_theme: TuiThemeName = theme_name
+        if self.tui_settings.theme == tau_theme:
+            return
+        self._replace_tui_settings(theme=tau_theme)
+        save_tui_settings(self.tui_settings)
 
     def get_theme_variable_defaults(self) -> dict[str, str]:
         """Return Tau-specific CSS variables for the selected TUI theme."""
@@ -2123,10 +2160,11 @@ class TauTuiApp(App[None]):
             await self._submit_prompt(self.initial_prompt.strip())
 
     def on_unmount(self) -> None:
-        """Stop the activity timer when the app is torn down."""
+        """Stop activity animations when the app is torn down."""
         if self._activity_timer is not None:
             self._activity_timer.stop()
             self._activity_timer = None
+        self._terminal_title.restore()
 
     def on_resize(self, event: Resize) -> None:
         """Update responsive chrome when the terminal changes size."""
@@ -2261,6 +2299,11 @@ class TauTuiApp(App[None]):
             if command.resume_picker_requested:
                 self.action_open_session_picker()
             if command.tree_picker_requested:
+                if self._is_agent_or_queue_active():
+                    prompt.text = raw_text
+                    prompt.move_cursor(_text_end_location(raw_text))
+                    self._notify(TREE_RUNNING_MESSAGE, severity="warning")
+                    return
                 await self._open_tree_picker()
             if command.login_picker_requested:
                 self._open_login_picker()
@@ -2459,15 +2502,19 @@ class TauTuiApp(App[None]):
         self._follow_transcript_output()
         self._refresh()
 
-    def _set_tui_theme(self, theme: TuiThemeName) -> None:
+    def _replace_tui_settings(self, *, theme: TuiThemeName) -> None:
+        """Replace the current immutable TUI settings with a new theme."""
         self.tui_settings = TuiSettings(
             keybindings=self.tui_settings.keybindings,
             theme=theme,
             auto_copy_selection=self.tui_settings.auto_copy_selection,
             sidebar_position=self.tui_settings.sidebar_position,
         )
+
+    def _set_tui_theme(self, theme: TuiThemeName) -> None:
+        self._replace_tui_settings(theme=theme)
         save_tui_settings(self.tui_settings)
-        self.refresh_css(animate=False)
+        self.theme = theme
         self._refresh()
 
     async def _queue_prompt(
@@ -2551,6 +2598,7 @@ class TauTuiApp(App[None]):
         if isinstance(event, MessageEndEvent):
             if event.message.role == "user":
                 await self._append_confirmed_user_message(event.message)
+                self._sync_header_title()
                 return
             if event.message.role == "assistant":
                 await transcript.finish_assistant_message(event.message.content)
@@ -2819,6 +2867,9 @@ class TauTuiApp(App[None]):
         self._refresh()
 
     async def _open_tree_picker(self) -> None:
+        if self._is_agent_or_queue_active():
+            self._notify(TREE_RUNNING_MESSAGE, severity="warning")
+            return
         tree_choices = getattr(self.session, "tree_choices", None)
         if tree_choices is None:
             self._notify("Session tree is not available.", severity="warning")
@@ -2855,6 +2906,9 @@ class TauTuiApp(App[None]):
         summarize: bool,
         custom_instructions: str | None = None,
     ) -> None:
+        if self._is_agent_or_queue_active():
+            self._notify(TREE_RUNNING_MESSAGE, severity="warning")
+            return
         branch_to_entry = getattr(self.session, "branch_to_entry", None)
         if branch_to_entry is None:
             self._notify("Session tree is not available.", severity="warning")
@@ -3311,6 +3365,7 @@ class TauTuiApp(App[None]):
         self.adapter.apply(queue_event())
 
     def _sync_activity_indicator(self) -> None:
+        self._sync_terminal_title()
         if self.state.running:
             if self._activity_timer is None:
                 self._activity_timer = self.set_interval(
@@ -3332,6 +3387,7 @@ class TauTuiApp(App[None]):
             return
         self._activity_frame += 1
         self._apply_activity_indicator()
+        self._sync_terminal_title()
 
     def _apply_activity_indicator(self) -> None:
         theme = self.tui_settings.resolved_theme
@@ -3873,7 +3929,28 @@ def _is_thinking_cycle_key(key: str, configured_key: str) -> bool:
     return configured_key == "shift+tab" and key == "backtab"
 
 
+def _textual_theme_for_tau_theme(theme_name: TuiThemeName) -> Theme:
+    """Map a Tau theme to Textual's native theme type."""
+    theme = TuiSettings(theme=theme_name).resolved_theme
+    return Theme(
+        name=theme.name,
+        primary=theme.accent,
+        secondary=theme.prompt_border,
+        warning=theme.markdown_bullet,
+        error=theme.role_styles["error"].border,
+        success=theme.role_styles["assistant"].border,
+        accent=theme.accent,
+        foreground=theme.screen_text,
+        background=theme.screen_background,
+        surface=theme.chrome_background,
+        panel=theme.sidebar_background,
+        dark=theme.name != "tau-light",
+        variables=_theme_css_variables(theme),
+    )
+
+
 def _theme_css_variables(theme: TuiTheme) -> dict[str, str]:
+    """Return Textual CSS variables for a resolved Tau theme."""
     return {
         "tau-screen-background": theme.screen_background,
         "tau-screen-text": theme.screen_text,
