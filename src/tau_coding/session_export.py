@@ -110,8 +110,9 @@ def render_session_html(
     entry_list = list(entries)
     active_leaf_id = _active_leaf_id(entry_list)
     active_path_ids = _active_path_ids(entry_list, active_leaf_id)
-    tree_html = _render_tree(entry_list, active_path_ids, active_leaf_id)
-    details_html = _render_entry_details(entry_list, active_path_ids, active_leaf_id)
+    visible_entries = _visible_entries(entry_list)
+    tree_html = _render_tree(visible_entries, active_path_ids, active_leaf_id)
+    details_html = _render_entry_details(visible_entries, active_path_ids, active_leaf_id)
     source_html = f'<p class="source">Source: <code>{_escape(source)}</code></p>' if source else ""
     generated_at = datetime.now(UTC).replace(microsecond=0).isoformat()
     return f"""<!doctype html>
@@ -344,13 +345,14 @@ def render_session_html(
     }}
     .node-type {{
       display: flex;
-      align-items: baseline;
-      gap: 6px;
+      align-items: center;
+      gap: 7px;
       font-family:
         ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
       font-size: 0.78rem;
-      font-weight: 650;
-      overflow-wrap: anywhere;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }}
     .node-type::before {{
       content: "";
@@ -359,13 +361,6 @@ def render_session_html(
       height: 6px;
       border-radius: 50%;
       background: var(--role);
-    }}
-    .node-meta {{
-      display: block;
-      margin-top: 2px;
-      color: var(--muted);
-      font-size: 0.82rem;
-      overflow-wrap: anywhere;
     }}
     .entry-meta {{
       display: grid;
@@ -434,6 +429,16 @@ def render_session_html(
 """
 
 
+def _visible_entries(entries: Sequence[SessionEntry]) -> list[SessionEntry]:
+    """Filter out entries that are pointers/plumbing rather than transcript content.
+
+    Leaf pointer entries only record which entry is the current tip of a branch;
+    that information is already conveyed by the active-path/active-leaf styling,
+    so showing them as their own rows would just add noise to the export.
+    """
+    return [entry for entry in entries if not isinstance(entry, LeafEntry)]
+
+
 def _active_leaf_id(entries: Sequence[SessionEntry]) -> str | None:
     for entry in reversed(entries):
         if isinstance(entry, LeafEntry):
@@ -473,7 +478,7 @@ def _render_tree(
 
     rendered_ids: set[str] = set()
     rendered_nodes = [
-        _render_tree_node(
+        _render_tree_chain(
             root,
             children_by_parent,
             active_path_ids,
@@ -486,7 +491,7 @@ def _render_tree(
     ]
 
     dangling_nodes = [
-        _render_tree_node(
+        _render_tree_chain(
             entry,
             children_by_parent,
             active_path_ids,
@@ -500,8 +505,7 @@ def _render_tree(
     if dangling_nodes:
         rendered_nodes.append(
             "<li>"
-            '<span class="node-link"><span class="node-type">Unreachable entries</span>'
-            '<span class="node-meta">Entries with cyclic or duplicate tree links.</span></span>'
+            '<span class="node-link"><span class="node-type">Unreachable entries</span></span>'
             f'<ol class="tree">{"".join(dangling_nodes)}</ol>'
             "</li>"
         )
@@ -509,8 +513,8 @@ def _render_tree(
     return f'<ol class="tree">{"".join(rendered_nodes)}</ol>'
 
 
-def _render_tree_node(
-    entry: SessionEntry,
+def _render_tree_chain(
+    start: SessionEntry,
     children_by_parent: dict[str | None, list[SessionEntry]],
     active_path_ids: set[str],
     active_leaf_id: str | None,
@@ -518,42 +522,71 @@ def _render_tree_node(
     ancestors: set[str],
     rendered_ids: set[str],
 ) -> str:
-    rendered_ids.add(entry.id)
+    """Render `start` and its unbranched descendants as flat sibling `<li>`s.
+
+    Session history is usually a straight line, so a naive tree renders one
+    nested level per entry. Instead, follow single-child chains at the same
+    list level and only introduce a nested `<ol>` where the history actually
+    forks (a node with more than one child).
+    """
+    chain: list[SessionEntry] = []
+    fork_children: list[SessionEntry] = []
+    current: SessionEntry | None = start
+    chain_ancestors = set(ancestors)
+    while current is not None:
+        rendered_ids.add(current.id)
+        chain.append(current)
+        chain_ancestors.add(current.id)
+        children = [
+            child
+            for child in children_by_parent.get(current.id, [])
+            if child.id not in chain_ancestors
+        ]
+        if len(children) == 1:
+            current = children[0]
+            continue
+        fork_children = children
+        current = None
+
+    li_html_parts = []
+    for position, node in enumerate(chain):
+        nested_html = ""
+        if position == len(chain) - 1 and fork_children:
+            nested_html = "".join(
+                _render_tree_chain(
+                    child,
+                    children_by_parent,
+                    active_path_ids,
+                    active_leaf_id,
+                    ancestors=chain_ancestors,
+                    rendered_ids=rendered_ids,
+                )
+                for child in fork_children
+                if child.id not in rendered_ids
+            )
+            nested_html = f'<ol class="tree">{nested_html}</ol>'
+        li_html_parts.append(_render_tree_node(node, nested_html, active_path_ids, active_leaf_id))
+    return "".join(li_html_parts)
+
+
+def _render_tree_node(
+    entry: SessionEntry,
+    nested_html: str,
+    active_path_ids: set[str],
+    active_leaf_id: str | None,
+) -> str:
     classes = ["tree-node", _entry_role_class(entry)]
     if entry.id in active_path_ids:
         classes.append("active-path")
     if entry.id == active_leaf_id:
         classes.append("active-leaf")
-    child_entries = [
-        child for child in children_by_parent.get(entry.id, []) if child.id not in ancestors
-    ]
-    child_html = ""
-    if child_entries:
-        next_ancestors = {*ancestors, entry.id}
-        child_html = (
-            '<ol class="tree">'
-            + "".join(
-                _render_tree_node(
-                    child,
-                    children_by_parent,
-                    active_path_ids,
-                    active_leaf_id,
-                    ancestors=next_ancestors,
-                    rendered_ids=rendered_ids,
-                )
-                for child in child_entries
-                if child.id not in rendered_ids
-            )
-            + "</ol>"
-        )
-
     return (
         f'<li class="{" ".join(c for c in classes if c)}">'
         f'<a class="node-link" href="#entry-{_attr(entry.id)}">'
-        f'<span class="node-type">{_escape(_entry_title(entry))}</span>'
-        f'<span class="node-meta">{_escape(_entry_summary(entry))}</span>'
+        f'<span class="node-type">{_escape(_entry_title(entry))}: '
+        f'{_escape(_entry_summary(entry))}</span>'
         "</a>"
-        f"{child_html}"
+        f"{nested_html}"
         "</li>"
     )
 
