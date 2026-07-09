@@ -1382,13 +1382,31 @@ def _metadata_supports_thinking_level(
     metadata: ProviderModelMetadata,
     level: ThinkingLevel,
 ) -> bool:
-    return _thinking_level_map_supports(metadata.thinking_level_map, level)
+    """Return whether model metadata allows the given thinking level.
+
+    A level is supported unless the metadata's ``thinking_level_map``
+    explicitly maps it to ``None`` (marking it as unsupported).  Levels
+    not mentioned in the map are treated as supported since they inherit
+    the provider-level thinking configuration.
+    """
+    if level in metadata.thinking_level_map:
+        return metadata.thinking_level_map[level] is not None
+    return True
 
 
 def _thinking_level_map_supports(
     thinking_level_map: dict[ThinkingLevel, str | None],
     level: ThinkingLevel,
 ) -> bool:
+    """Return whether ``level`` has a non-None mapping.
+
+    Used when deriving thinking levels solely from a model's
+    ``thinking_level_map`` (no provider-level ``thinking_levels``).
+    A level is supported only when it has an explicit non-None value
+    in the map.  The fallback excludes ``xhigh`` because callers that
+    reach this path are models with a custom map that must enumerate
+    every supported level.
+    """
     if level in thinking_level_map:
         return thinking_level_map[level] is not None
     return level != "xhigh"
