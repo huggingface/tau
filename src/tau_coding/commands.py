@@ -318,7 +318,7 @@ def create_default_command_registry() -> CommandRegistry:
         SlashCommand(
             name="scoped-models",
             usage="/scoped-models",
-            description="Choose models available to quick-cycle with Ctrl+P.",
+            description="Choose models available to quick-cycle with Ctrl+K.",
             handler=_scoped_models_command,
             search_terms=("scope", "quick", "cycle", "ctrl+p"),
         )
@@ -430,7 +430,8 @@ def _hotkeys_command(context: CommandContext) -> CommandResult:
         "- Shift+Enter: insert newline",
         "- Alt+Enter: queue follow-up while running",
         "- Esc: cancel active run",
-        "- Ctrl+K: open slash-command completions",
+        "- Ctrl+P: open command palette",
+        "- Ctrl+K: cycle scoped model",
         "- Ctrl+R: open session picker",
         "- Shift+Tab: cycle thinking mode",
         "- Ctrl+T: toggle thinking tokens",

@@ -19,14 +19,15 @@ class TuiKeybindings:
     """Configurable keys for Tau's built-in Textual frontend."""
 
     cancel: str = "escape"
-    command_palette: str = "ctrl+k"
+    command_palette: str = "ctrl+p"
     session_picker: str = "ctrl+r"
+    diff_viewer: str = "ctrl+l"
     queue_follow_up: str = "alt+enter"
     accept_completion: str = "tab"
     completion_next: str = "down"
     completion_previous: str = "up"
     thinking_cycle: str = "shift+tab"
-    model_cycle: str = "ctrl+p"
+    model_cycle: str = "ctrl+k"
     toggle_thinking: str = "ctrl+t"
     toggle_tool_results: str = "ctrl+o"
     copy_message: str = "ctrl+c"
@@ -38,6 +39,7 @@ class TuiKeybindings:
             "cancel": self.cancel,
             "command_palette": self.command_palette,
             "session_picker": self.session_picker,
+            "diff_viewer": self.diff_viewer,
             "queue_follow_up": self.queue_follow_up,
             "accept_completion": self.accept_completion,
             "completion_next": self.completion_next,

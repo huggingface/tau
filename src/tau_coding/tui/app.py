@@ -31,6 +31,7 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    RichLog,
     Static,
     TextArea,
 )
@@ -56,7 +57,7 @@ from tau_agent.tools import AgentTool
 from tau_ai import ProviderErrorEvent, ProviderEvent
 from tau_ai.provider import CancellationToken
 from tau_coding.catalog_loader import save_user_catalog_entries
-from tau_coding.commands import CommandRegistry, create_default_command_registry
+from tau_coding.commands import CommandRegistry, SlashCommand, create_default_command_registry
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.oauth import OAuthAuthInfo, OAuthPrompt, login_openai_codex
 from tau_coding.provider_catalog import (
@@ -114,6 +115,7 @@ from tau_coding.tui.widgets import (
     SessionSidebar,
     TranscriptView,
     render_completion_suggestions,
+    render_diff_content,
 )
 
 type BindingEntry = Binding | tuple[str, str] | tuple[str, str, str]
@@ -836,6 +838,195 @@ class CommandOutputScreen(ModalScreen[None]):
     def action_scroll_down(self) -> None:
         """Scroll command output down."""
         self.query_one("#command-output-scroll", CommandOutputScroll).action_scroll_down()
+
+
+class CommandPaletteScreen(ModalScreen[str | None]):
+    """Searchable command palette showing all registered slash commands."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("up", "cursor_up", "Up", show=False),
+        Binding("down", "cursor_down", "Down", show=False),
+        Binding("enter", "select_cursor", "Run", show=False),
+        Binding("tab", "select_cursor", "Run", show=False),
+    ]
+
+    def __init__(
+        self,
+        commands: Sequence[SlashCommand],
+        *,
+        theme: TuiTheme,
+    ) -> None:
+        super().__init__()
+        self.all_commands = tuple(commands)
+        self.theme = theme
+        self.search_value = ""
+
+    def compose(self) -> ComposeResult:
+        """Compose the command palette."""
+        with Vertical(id="command-palette"):
+            yield Static("Command Palette", id="command-palette-title")
+            yield Input(placeholder="Search commands…", id="command-palette-search")
+            yield ListView(id="command-palette-list")
+            yield Static("Enter runs command - Escape closes", id="command-palette-help")
+
+    def on_mount(self) -> None:
+        """Focus the search field."""
+        self.query_one("#command-palette-search", Input).focus()
+        self._refresh_command_list()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Filter commands as the search value changes."""
+        if event.input.id != "command-palette-search":
+            return
+        event.stop()
+        self.search_value = event.value
+        self._refresh_command_list()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Select the highlighted command from the search field."""
+        if event.input.id != "command-palette-search":
+            return
+        event.stop()
+        self._select_visible_choice()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Handle the selected row."""
+        event.stop()
+        self._select_visible_choice()
+
+    def on_key(self, event: Key) -> None:
+        """Route palette keys to the list."""
+        if event.key == "up":
+            event.stop()
+            self.action_cursor_up()
+        elif event.key == "down":
+            event.stop()
+            self.action_cursor_down()
+        elif event.key in {"enter", "tab"}:
+            event.stop()
+            self.action_select_cursor()
+
+    def action_cursor_up(self) -> None:
+        """Move to the previous command."""
+        self.query_one("#command-palette-list", ListView).action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        """Move to the next command."""
+        self.query_one("#command-palette-list", ListView).action_cursor_down()
+
+    def action_select_cursor(self) -> None:
+        """Select the highlighted command and dismiss."""
+        self._select_visible_choice()
+
+    def action_cancel(self) -> None:
+        """Close without selecting a command."""
+        self.dismiss(None)
+
+    def _select_visible_choice(self) -> None:
+        command_list = self.query_one("#command-palette-list", ListView)
+        index = command_list.index
+        if index is None:
+            return
+        command = self.visible_commands[index]
+        self.dismiss(f"/{command.name} ")
+
+    @property
+    def visible_commands(self) -> tuple[SlashCommand, ...]:
+        normalized = self.search_value.strip().lower()
+        if not normalized:
+            return self.all_commands
+        return tuple(
+            command
+            for command in self.all_commands
+            if normalized in command.name.lower()
+            or normalized in command.description.lower()
+            or any(normalized in alias.lower() for alias in command.aliases)
+            or any(normalized in term.lower() for term in command.search_terms)
+        )
+
+    def _refresh_command_list(self) -> None:
+        command_list = self.query_one("#command-palette-list", ListView)
+        command_list.clear()
+        command_list.extend(
+            [
+                ListItem(Label(self._command_label(command), markup=False))
+                for command in self.visible_commands
+            ]
+        )
+        if self.visible_commands:
+            command_list.index = 0
+
+    def _command_label(self, command: SlashCommand) -> str:
+        return f"/{command.name}  {command.description}"
+
+
+class DiffViewerScreen(ModalScreen[None]):
+    """Modal viewer for syntax-highlighted diffs."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "close", "Close"),
+        Binding("enter", "close", "Close"),
+        Binding("q", "close", "Close"),
+        Binding("up", "scroll_up", "Scroll up", show=False, priority=True),
+        Binding("down", "scroll_down", "Scroll down", show=False, priority=True),
+    ]
+
+    def __init__(
+        self,
+        diff_text: str,
+        *,
+        title: str = "Diff",
+        theme: TuiTheme,
+    ) -> None:
+        super().__init__()
+        self.diff_text = diff_text
+        self.title_text = title
+        self.theme = theme
+
+    def compose(self) -> ComposeResult:
+        """Compose the diff viewer."""
+        with Vertical(id="diff-viewer"):
+            yield Static(self.title_text, id="diff-viewer-title")
+            with DiffViewerScroll(id="diff-viewer-scroll"):
+                yield RichLog(id="diff-viewer-content", highlight=True, markup=False)
+            yield Static("q/Enter/Escape closes — Arrow keys scroll", id="diff-viewer-help")
+
+    def on_mount(self) -> None:
+        """Render the diff content and focus the scroll area."""
+        content = self.query_one("#diff-viewer-content", RichLog)
+        rendered = render_diff_content(
+            self.diff_text,
+            syntax_theme=self.theme.syntax_theme,
+            code_block_background=self.theme.markdown_code_block_background,
+        )
+        content.write(rendered)
+        self.query_one("#diff-viewer-scroll", DiffViewerScroll).focus()
+
+    def on_key(self, event: Key) -> None:
+        """Route arrow keys to the scroll area."""
+        if event.key == "up":
+            event.stop()
+            self.action_scroll_up()
+        elif event.key == "down":
+            event.stop()
+            self.action_scroll_down()
+
+    def action_close(self) -> None:
+        """Close the diff viewer."""
+        self.dismiss(None)
+
+    def action_scroll_up(self) -> None:
+        """Scroll diff content up."""
+        self.query_one("#diff-viewer-scroll", DiffViewerScroll).action_scroll_up()
+
+    def action_scroll_down(self) -> None:
+        """Scroll diff content down."""
+        self.query_one("#diff-viewer-scroll", DiffViewerScroll).action_scroll_down()
+
+
+class DiffViewerScroll(VerticalScroll):
+    """Scrollable container for diff viewer content."""
 
 
 class LoginProviderPickerScreen(ModalScreen[str | None]):
@@ -1790,8 +1981,64 @@ class TauTuiApp(App[None]):
 
     SessionPickerScreen,
     TreePickerScreen,
-    CommandOutputScreen {
+    CommandPaletteScreen,
+    CommandOutputScreen,
+    DiffViewerScreen {
         align: center middle;
+    }
+
+    #command-palette,
+    #diff-viewer {
+        width: 76;
+        max-width: 90%;
+        height: auto;
+        max-height: 70%;
+        padding: 1 2;
+        background: $tau-chrome-background;
+        color: $tau-chrome-text;
+        border: tall $tau-border;
+    }
+
+    #command-palette-title,
+    #diff-viewer-title {
+        height: 1;
+        color: $tau-chrome-text;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #command-palette-search {
+        height: 3;
+        margin-bottom: 1;
+        background: $tau-prompt-background;
+        color: $tau-prompt-text;
+        border: tall $tau-prompt-border;
+    }
+
+    #command-palette-list {
+        height: auto;
+        max-height: 16;
+        background: $tau-transcript-background;
+        color: $tau-screen-text;
+        border: tall $tau-border;
+    }
+
+    #command-palette-list ListItem Label {
+        color: $tau-screen-text;
+    }
+
+    #command-palette-help,
+    #diff-viewer-help {
+        height: 1;
+        margin-top: 1;
+        color: $tau-muted-text;
+    }
+
+    #diff-viewer-scroll {
+        height: auto;
+        max-height: 20;
+        background: $tau-transcript-background;
+        border: tall $tau-border;
     }
 
     #session-picker,
@@ -2801,14 +3048,58 @@ class TauTuiApp(App[None]):
 
         return None
 
+    @property
+    def _command_registry(self) -> CommandRegistry:
+        """Return the session command registry."""
+        return _session_command_registry(self.session)
+
     def action_open_command_palette(self) -> None:
-        """Open the slash-command palette in the prompt."""
+        """Open the command palette modal."""
+        registry = self._command_registry
+        commands = registry.list_commands()
+        if not commands:
+            self._notify("No commands available.", severity="warning")
+            return
+        self.push_screen(
+            CommandPaletteScreen(
+                commands,
+                theme=self.tui_settings.resolved_theme,
+            ),
+            callback=self._handle_command_palette_result,
+        )
+
+    def _handle_command_palette_result(self, result: str | None) -> None:
+        """Insert the selected command into the prompt."""
+        if result is None:
+            return
         prompt = self.query_one("#prompt", PromptInput)
         prompt.focus()
-        prompt.text = "/"
-        prompt.move_cursor((0, 1))
+        prompt.text = result
+        prompt.move_cursor((0, len(result)))
         self._completion_state = self._build_completion_state(prompt.text)
         self._refresh_completions()
+
+    def action_open_diff_viewer(self) -> None:
+        """Open the diff viewer with the most recent patch content."""
+        diff_text = self.state.last_diff
+        title = "Last Patch"
+        if diff_text:
+            self._open_diff_viewer(diff_text, title=title)
+        else:
+            self._notify("No patch diff available.", severity="warning")
+
+    def _open_diff_viewer(self, diff_text: str, title: str = "Diff") -> None:
+        """Open the syntax-highlighted diff viewer modal."""
+        if not diff_text.strip():
+            self._notify("No diff content to display.", severity="warning")
+            return
+        self.push_screen(
+            DiffViewerScreen(
+                diff_text,
+                title=title,
+                theme=self.tui_settings.resolved_theme,
+            ),
+        )
 
     def action_open_session_picker(self) -> None:
         """Open the indexed session picker."""
@@ -4054,6 +4345,7 @@ def _app_bindings(keybindings: TuiKeybindings) -> list[Binding]:
         Binding(keybindings.toggle_thinking, "toggle_thinking", "Thinking tokens"),
         Binding(keybindings.copy_message, "clear_prompt", "Clear input"),
         Binding(keybindings.quit, "quit", "Quit"),
+        Binding(keybindings.diff_viewer, "open_diff_viewer", "Diff"),
     ]
 
 
@@ -4140,6 +4432,7 @@ def _hidden_prompt_bindings(
         (keybindings.completion_next, "completion_next"),
         (keybindings.completion_previous, "completion_previous"),
         (keybindings.quit, "quit"),
+        (keybindings.diff_viewer, "open_diff_viewer"),
     )
     return [
         Binding(key, action, show=False, priority=True)

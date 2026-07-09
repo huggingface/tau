@@ -53,6 +53,7 @@ class TuiState:
     queued_steering: tuple[str, ...] = ()
     queued_follow_up: tuple[str, ...] = ()
     skills: tuple[Skill, ...] = ()
+    last_diff: str | None = None
 
     def add_item(
         self,
@@ -133,6 +134,9 @@ class TuiState:
             content=result.content,
             data=result.data,
         )
+        patch = _result_patch(name=result.name, ok=result.ok, data=result.data)
+        if patch:
+            self.last_diff = patch
         for item in reversed(self.items):
             if item.role in {"tool", "skill"} and item.tool_call_id == result.tool_call_id:
                 item.tool_result_text = result_text

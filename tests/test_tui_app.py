@@ -61,6 +61,7 @@ from tau_coding.tui.app import (
     COMPLETION_MAX_VISIBLE_LINES,
     PASTE_DISPLAY_THRESHOLD,
     CommandOutputScreen,
+    CommandPaletteScreen,
     CustomProviderLoginResult,
     CustomProviderLoginScreen,
     LoginMethodPickerScreen,
@@ -1864,12 +1865,12 @@ async def test_tui_app_uses_textual_footer_for_shortcut_hints() -> None:
         assert _visible_footer_bindings(app) == {
             "Quit": "ctrl+d",
             "Clear": "ctrl+c",
-            "Commands": "ctrl+k",
+            "Commands": "ctrl+p",
             "Submit": "enter",
             "Newline": "shift+enter",
             "Sessions": "ctrl+r",
             "Thinking": "shift+tab",
-            "Model": "ctrl+p",
+            "Model": "ctrl+k",
             "Cancel": "escape",
         }
 
@@ -3474,13 +3475,11 @@ async def test_tui_app_opens_command_palette_from_keybinding() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
-        prompt = app.query_one("#prompt")
-        await pilot.press("ctrl+k")
+        await pilot.press("ctrl+p")
+        await pilot.pause()
 
-        assert prompt.value == "/"
-        assert app._completion_state.items
-        assert any(item.display == "/session" for item in app._completion_state.items)
-        assert app.query_one("#autocomplete").display is True
+        assert app.screen is not None
+        assert isinstance(app.screen, CommandPaletteScreen)
 
 
 def test_tui_model_picker_guides_setup_when_no_provider_is_usable() -> None:
@@ -3843,17 +3842,15 @@ async def test_tui_app_uses_configured_command_palette_keybinding() -> None:
     )
 
     async with app.run_test() as pilot:
-        prompt = app.query_one("#prompt")
-        await pilot.press("ctrl+k")
+        await pilot.press("ctrl+p")
+        await pilot.pause()
 
-        assert prompt.value == ""
-        assert app._completion_state.items == ()
+        assert not isinstance(app.screen, CommandPaletteScreen)
 
         await pilot.press("ctrl+j")
+        await pilot.pause()
 
-        assert prompt.value == "/"
-        assert app._completion_state.items
-        assert any(item.display == "/session" for item in app._completion_state.items)
+        assert isinstance(app.screen, CommandPaletteScreen)
 
 
 @pytest.mark.anyio
@@ -5028,7 +5025,7 @@ async def test_tui_app_cycles_scoped_model_from_keybinding() -> None:
     app._notify = fake_notify  # type: ignore[method-assign]
 
     async with app.run_test() as pilot:
-        await pilot.press("ctrl+p")
+        await pilot.press("ctrl+k")
         await pilot.pause()
 
     assert session.provider_name == "openai"
@@ -5057,7 +5054,7 @@ async def test_tui_app_cycles_scoped_model_without_redrawing_transcript() -> Non
             transcript_refreshes += 1
 
         transcript.update_from_state = fake_update_from_state  # type: ignore[method-assign]
-        await pilot.press("ctrl+p")
+        await pilot.press("ctrl+k")
         await pilot.pause()
 
     assert session.provider_name == "openai"
