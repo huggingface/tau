@@ -23,8 +23,9 @@ material. The published docs distill the result; see
 
 ## Roadmap
 
-The roadmap and phase status are tracked in
-[GitHub issue #1](https://github.com/alejandro-ao/tau/issues/1).
+The published, phase-by-phase roadmap and status lives on the
+[roadmap page]({{< relref "./roadmap.md" >}}). The underlying checklist is
+tracked in [GitHub issue #1](https://github.com/alejandro-ao/tau/issues/1).
 
 ## Running the project locally
 
