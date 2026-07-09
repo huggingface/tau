@@ -20,5 +20,9 @@ website/.hugo_build.lock
 .AppleDouble
 .LSOverride
 
+<<<<<<< HEAD
 # Agent tools
 .firecrawl/
+
+# Tau runtime scratch
+session-temp.jsonl
