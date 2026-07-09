@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import isolate_home
 from tau_agent import (
     AgentMessage,
     AgentTool,
@@ -822,8 +823,7 @@ async def test_session_cycles_thinking_level(tmp_path: Path) -> None:
 async def test_session_uses_active_model_thinking_capabilities(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    isolate_home(monkeypatch, tmp_path)
     provider_config = OpenAICompatibleProviderConfig(
         name="openai",
         models=("reasoner", "plain"),
@@ -2460,10 +2460,7 @@ async def test_session_switches_configured_provider(
         created_providers.append(provider)
         return provider
 
-    monkeypatch.setenv("HOME", str(tmp_path))
-    # Path.home() resolves via USERPROFILE on Windows, so HOME alone does not
-    # isolate the test from the developer's real ~/.tau settings.
-    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    isolate_home(monkeypatch, tmp_path)
     monkeypatch.setenv("LOCAL_API_KEY", "test-key")
     monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
@@ -2911,8 +2908,7 @@ async def test_session_load_falls_back_when_persisted_model_does_not_match_provi
 async def test_session_set_model_persists_default_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    isolate_home(monkeypatch, tmp_path)
     tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
     provider_config = OpenAICompatibleProviderConfig(
         name="openai",
@@ -2943,8 +2939,7 @@ async def test_session_set_model_persists_default_provider_model(
 async def test_session_set_model_choice_persists_default_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    isolate_home(monkeypatch, tmp_path)
     tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
     settings = ProviderSettings(
         default_provider="openai",
@@ -3004,8 +2999,7 @@ async def test_session_set_model_choice_persists_default_provider_model(
 async def test_session_set_model_choice_switches_provider_model_directly(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    isolate_home(monkeypatch, tmp_path)
     monkeypatch.setenv("LOCAL_API_KEY", "local-key")
     tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
     settings = ProviderSettings(
@@ -3070,8 +3064,7 @@ async def test_session_set_model_choice_switches_provider_model_directly(
 async def test_session_set_model_preserves_newer_provider_file_changes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    isolate_home(monkeypatch, tmp_path)
     tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
     loaded_provider = OpenAICompatibleProviderConfig(
         name="openai",
