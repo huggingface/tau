@@ -198,7 +198,7 @@ def test_session_command_includes_session_details(tmp_path: Path) -> None:
     assert result.message is not None
     assert "Model: fake-model" in result.message
     assert f"CWD: {tmp_path}" in result.message
-    assert "Tools: 4" in result.message
+    assert "Tools: 6" in result.message
     assert "Skills: 1" in result.message
     assert "Context files: 1" in result.message
     assert "Estimated context tokens: 123" in result.message

@@ -139,6 +139,7 @@ from tau_coding.thinking import (
 )
 from tau_coding.tools import (
     ToolDefinition,
+    ToolInputError,
     create_bash_tool,
     create_bash_tool_definition,
     create_coding_tools,
@@ -146,6 +147,7 @@ from tau_coding.tools import (
     create_edit_tool_definition,
     create_read_tool,
     create_read_tool_definition,
+    create_todo_tools,
     create_write_tool,
     create_write_tool_definition,
 )
@@ -195,6 +197,7 @@ __all__ = [
     "TauPaths",
     "TauResourcePaths",
     "ToolDefinition",
+    "ToolInputError",
     "TranscriptRenderer",
     "ThinkingLevel",
     "ThinkingParameter",
@@ -216,6 +219,7 @@ __all__ = [
     "create_event_renderer",
     "create_read_tool",
     "create_read_tool_definition",
+    "create_todo_tools",
     "create_write_tool",
     "create_write_tool_definition",
     "credentials_path",

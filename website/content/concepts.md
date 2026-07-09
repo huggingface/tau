@@ -25,8 +25,9 @@ You pick a provider + model; you can switch either mid-session.
 
 ## Tools
 
-**Tools** are the actions the agent can take in your project. Tau ships four:
-`read`, `write`, `edit`, and `bash`. The model decides when to call them; Tau
+**Tools** are the actions the agent can take in your project. Tau ships six:
+`read`, `write`, `edit`, `bash`, `todo_write`, and `todo_read`. The model
+decides when to call them; Tau
 executes them in your working directory and streams the results.
 → [Tools reference]({{< relref "./reference/tools.md" >}})
 

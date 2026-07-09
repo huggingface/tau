@@ -1,4 +1,5 @@
 import asyncio
+import json
 import shlex
 from pathlib import Path
 from time import monotonic
@@ -12,8 +13,10 @@ from tau_coding import (
     create_edit_tool_definition,
     create_read_tool,
     create_read_tool_definition,
+    create_todo_tools,
     create_write_tool,
 )
+from tau_coding.tools import ToolInputError
 
 
 class FakeCancellationToken:
@@ -31,7 +34,14 @@ class FakeCancellationToken:
 async def test_create_coding_tools_returns_initial_tool_set(tmp_path: Path) -> None:
     tools = create_coding_tools(cwd=tmp_path)
 
-    assert [tool.name for tool in tools] == ["read", "write", "edit", "bash"]
+    assert [tool.name for tool in tools] == [
+        "read",
+        "write",
+        "edit",
+        "bash",
+        "todo_write",
+        "todo_read",
+    ]
     edit_tool = tools[2]
     assert edit_tool.prompt_snippet is not None
     assert "Use edit for precise changes" in edit_tool.prompt_guidelines[0]
@@ -244,3 +254,169 @@ async def test_bash_tool_cancellation_kills_shell_children(tmp_path: Path) -> No
     assert result.data["cancelled"] is True
     assert "cancelled" in result.content
     assert duration < 0.5
+
+
+# ---------------------------------------------------------------------------
+# todo_write / todo_read
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_todo_read_returns_empty_list_initially() -> None:
+    _write_tool, read_tool = create_todo_tools()
+
+    result = await read_tool.execute({})
+
+    assert result.ok is True
+    assert result.name == "todo_read"
+    assert result.content == "[]"
+    assert result.data == {"count": 0}
+
+
+@pytest.mark.anyio
+async def test_todo_write_saves_todos_and_read_returns_them() -> None:
+    write_tool, read_tool = create_todo_tools()
+    todos = [
+        {"id": "1", "content": "Write tests", "status": "pending", "priority": "high"},
+        {"id": "2", "content": "Run linter", "status": "in_progress", "priority": "medium"},
+    ]
+
+    write_result = await write_tool.execute({"todos": todos})
+
+    assert write_result.ok is True
+    assert write_result.name == "todo_write"
+    assert "2 items saved" in write_result.content
+    assert write_result.data == {"count": 2}
+
+    read_result = await read_tool.execute({})
+    parsed = json.loads(read_result.content)
+    assert len(parsed) == 2
+    assert parsed[0] == {
+        "id": "1",
+        "content": "Write tests",
+        "status": "pending",
+        "priority": "high",
+    }
+    assert parsed[1]["status"] == "in_progress"
+
+
+@pytest.mark.anyio
+async def test_todo_write_singular_item_message() -> None:
+    write_tool, _read_tool = create_todo_tools()
+    todos = [{"id": "1", "content": "Only task", "status": "pending", "priority": "low"}]
+
+    result = await write_tool.execute({"todos": todos})
+
+    assert "1 item saved" in result.content
+
+
+@pytest.mark.anyio
+async def test_todo_write_replaces_list_on_second_call() -> None:
+    write_tool, read_tool = create_todo_tools()
+    first = [{"id": "1", "content": "First", "status": "pending", "priority": "low"}]
+    second = [{"id": "2", "content": "Second", "status": "completed", "priority": "high"}]
+
+    await write_tool.execute({"todos": first})
+    await write_tool.execute({"todos": second})
+
+    parsed = json.loads((await read_tool.execute({})).content)
+    assert len(parsed) == 1
+    assert parsed[0]["content"] == "Second"
+
+
+@pytest.mark.anyio
+async def test_todo_write_clears_list_when_given_empty_array() -> None:
+    write_tool, read_tool = create_todo_tools()
+    initial = [{"id": "1", "content": "Task", "status": "pending", "priority": "low"}]
+    await write_tool.execute({"todos": initial})
+
+    await write_tool.execute({"todos": []})
+
+    read_result = await read_tool.execute({})
+    assert read_result.content == "[]"
+    assert read_result.data == {"count": 0}
+
+
+@pytest.mark.anyio
+async def test_todo_write_rejects_invalid_status() -> None:
+    write_tool, _read_tool = create_todo_tools()
+
+    with pytest.raises(ToolInputError, match="status must be one of"):
+        await write_tool.execute(
+            {"todos": [{"id": "1", "content": "Task", "status": "done", "priority": "high"}]}
+        )
+
+
+@pytest.mark.anyio
+async def test_todo_write_rejects_invalid_priority() -> None:
+    write_tool, _read_tool = create_todo_tools()
+
+    with pytest.raises(ToolInputError, match="priority must be one of"):
+        await write_tool.execute(
+            {"todos": [{"id": "1", "content": "Task", "status": "pending", "priority": "urgent"}]}
+        )
+
+
+@pytest.mark.anyio
+async def test_todo_write_rejects_missing_required_field() -> None:
+    write_tool, _read_tool = create_todo_tools()
+
+    with pytest.raises(ToolInputError, match="id must be a string"):
+        await write_tool.execute(
+            {"todos": [{"content": "No id", "status": "pending", "priority": "low"}]}
+        )
+
+
+@pytest.mark.anyio
+async def test_todo_write_rejects_non_list_todos() -> None:
+    write_tool, _read_tool = create_todo_tools()
+
+    with pytest.raises(ToolInputError, match="todos must be an array"):
+        await write_tool.execute({"todos": "not a list"})
+
+
+@pytest.mark.anyio
+async def test_todo_write_accepts_json_string_todos() -> None:
+    write_tool, read_tool = create_todo_tools()
+    expected = {"id": "1", "content": "From JSON string", "status": "pending", "priority": "low"}
+    todos_json = json.dumps([expected])
+
+    result = await write_tool.execute({"todos": todos_json})
+    assert result.ok is True
+
+    read_result = await read_tool.execute({})
+    parsed = json.loads(read_result.content)
+    assert parsed == [expected]
+
+
+@pytest.mark.anyio
+async def test_todo_tools_from_different_create_calls_do_not_share_state() -> None:
+    write_a, read_a = create_todo_tools()
+    _write_b, read_b = create_todo_tools()
+
+    await write_a.execute(
+        {
+            "todos": [
+                {"id": "1", "content": "Session A task", "status": "pending", "priority": "high"}
+            ]
+        }
+    )
+
+    result_b = await read_b.execute({})
+    assert result_b.content == "[]"
+
+
+def test_todo_write_tool_has_expected_prompt_metadata() -> None:
+    write_tool, _read_tool = create_todo_tools()
+
+    assert write_tool.prompt_snippet == "Write or update the todo list"
+    assert len(write_tool.prompt_guidelines) == 1
+    assert "todo_write" in write_tool.prompt_guidelines[0]
+
+
+def test_todo_read_tool_has_expected_prompt_metadata() -> None:
+    _write_tool, read_tool = create_todo_tools()
+
+    assert read_tool.prompt_snippet == "Read the current todo list"
+    assert len(read_tool.prompt_guidelines) == 1
+    assert "todo_read" in read_tool.prompt_guidelines[0]

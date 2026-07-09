@@ -1,11 +1,12 @@
 ---
 title: Built-in tools
-description: The read, write, edit, and bash tools the agent uses to work in your project.
+description: The read, write, edit, bash, and todo tools the agent uses to work in your project.
 ---
 
 Tools are the actions the agent can take in your working directory. The model
 decides when to call them; Tau executes them and streams the results back. Tau
-ships four built-in coding tools: `read`, `write`, `edit`, and `bash`.
+ships six built-in coding tools: `read`, `write`, `edit`, `bash`, `todo_write`,
+and `todo_read`.
 
 All paths are resolved against the session's working directory (`--cwd`, or the
 directory you launched Tau from).
@@ -98,9 +99,40 @@ of large output (truncated to 2,000 lines / 50 KB; the full output is written to
 a temp `.log` file whose path is included in the result). On POSIX, a timeout
 kills the whole process group.
 
+## `todo_write`
+
+Replaces the session's in-memory todo list with a new list of tasks. The agent
+uses it to plan multi-step work and mark tasks as it progresses.
+
+```json
+{
+  "todos": [
+    { "id": "1", "content": "Write tests", "status": "in_progress", "priority": "high" }
+  ]
+}
+```
+
+| Argument | Required | Type | Description |
+| --- | --- | --- | --- |
+| `todos` | yes | array | The complete new todo list, replacing any existing items. |
+
+Each todo requires an `id` (string), `content` (string), `status`
+(`pending`, `in_progress`, or `completed`), and `priority` (`high`, `medium`,
+or `low`). The list lives in memory for the lifetime of the tool set — it is
+not persisted to disk. Passing an empty array clears the list.
+
+## `todo_read`
+
+Returns the current session todo list as JSON. Takes no arguments.
+
+```json
+{}
+```
+
 ## Choosing the right tool
 
 - **`read`** — inspect files (instead of `cat`/`sed`).
 - **`write`** — new files or complete rewrites.
 - **`edit`** — precise changes to an existing file.
 - **`bash`** — tests, linters, searches, project inspection.
+- **`todo_write` / `todo_read`** — plan and track multi-step tasks.

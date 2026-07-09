@@ -92,6 +92,172 @@ class ToolDefinition:
 
 _file_locks: dict[Path, asyncio.Lock] = {}
 
+_TODO_VALID_STATUSES: frozenset[str] = frozenset({"pending", "in_progress", "completed"})
+_TODO_VALID_PRIORITIES: frozenset[str] = frozenset({"high", "medium", "low"})
+
+
+def create_todo_tools() -> tuple[AgentTool, AgentTool]:
+    """Create the ``todo_write`` and ``todo_read`` tools with shared in-memory state.
+
+    Both tools share the same todo list for the lifetime of the returned
+    objects. Calling ``create_todo_tools`` a second time produces a new pair
+    with a fresh list; the two pairs do not share state.
+    """
+    state: list[dict[str, JSONValue]] = []
+    return (
+        _create_todo_write_definition(state).to_agent_tool(),
+        _create_todo_read_definition(state).to_agent_tool(),
+    )
+
+
+def _create_todo_write_definition(
+    state: list[dict[str, JSONValue]],
+) -> ToolDefinition:
+    """Create the ``todo_write`` tool definition backed by *state*."""
+
+    async def execute(
+        arguments: Mapping[str, JSONValue],
+        signal: ToolCancellationToken | None = None,
+    ) -> AgentToolResult:
+        del signal
+        raw: JSONValue = arguments.get("todos")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError:
+                raw = None
+        if not isinstance(raw, list):
+            raise ToolInputError("todos must be an array of todo objects")
+
+        validated: list[dict[str, JSONValue]] = []
+        for index, item in enumerate(raw):
+            if not isinstance(item, dict):
+                raise ToolInputError(f"todos[{index}] must be an object")
+            todo_id = item.get("id")
+            content = item.get("content")
+            status = item.get("status")
+            priority = item.get("priority")
+            if not isinstance(todo_id, str):
+                raise ToolInputError(f"todos[{index}].id must be a string")
+            if not isinstance(content, str):
+                raise ToolInputError(f"todos[{index}].content must be a string")
+            if not isinstance(status, str) or status not in _TODO_VALID_STATUSES:
+                raise ToolInputError(
+                    f"todos[{index}].status must be one of: "
+                    + ", ".join(sorted(_TODO_VALID_STATUSES))
+                )
+            if not isinstance(priority, str) or priority not in _TODO_VALID_PRIORITIES:
+                raise ToolInputError(
+                    f"todos[{index}].priority must be one of: "
+                    + ", ".join(sorted(_TODO_VALID_PRIORITIES))
+                )
+            validated.append(
+                {
+                    "id": todo_id,
+                    "content": content,
+                    "status": status,
+                    "priority": priority,
+                }
+            )
+
+        state.clear()
+        state.extend(validated)
+        count = len(validated)
+        noun = "item" if count == 1 else "items"
+        return AgentToolResult(
+            tool_call_id="",
+            name="todo_write",
+            ok=True,
+            content=f"Todo list updated. {count} {noun} saved.",
+            data={"count": count},
+        )
+
+    return ToolDefinition(
+        name="todo_write",
+        description=(
+            "Replace the session todo list with a new list of tasks. "
+            "Use this to track what you plan to do and mark tasks as you progress. "
+            "Each todo requires: id (string), content (string), "
+            "status (pending|in_progress|completed), priority (high|medium|low)."
+        ),
+        prompt_snippet="Write or update the todo list",
+        prompt_guidelines=(
+            "Use todo_write to track multi-step tasks: create todos before starting, "
+            "update status as you work (pending → in_progress → completed).",
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "todos": {
+                    "type": "array",
+                    "description": "The complete new todo list, replacing any existing items",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "description": "Unique task identifier",
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "Task description",
+                            },
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "in_progress", "completed"],
+                                "description": "Current task status",
+                            },
+                            "priority": {
+                                "type": "string",
+                                "enum": ["high", "medium", "low"],
+                                "description": "Task priority",
+                            },
+                        },
+                        "required": ["id", "content", "status", "priority"],
+                    },
+                }
+            },
+            "required": ["todos"],
+        },
+        executor=execute,
+    )
+
+
+def _create_todo_read_definition(
+    state: list[dict[str, JSONValue]],
+) -> ToolDefinition:
+    """Create the ``todo_read`` tool definition backed by *state*."""
+
+    async def execute(
+        arguments: Mapping[str, JSONValue],
+        signal: ToolCancellationToken | None = None,
+    ) -> AgentToolResult:
+        del arguments, signal
+        content = json.dumps(state, indent=2) if state else "[]"
+        return AgentToolResult(
+            tool_call_id="",
+            name="todo_read",
+            ok=True,
+            content=content,
+            data={"count": len(state)},
+        )
+
+    return ToolDefinition(
+        name="todo_read",
+        description=(
+            "Read the current session todo list. "
+            "Returns all tasks with their id, content, status, and priority."
+        ),
+        prompt_snippet="Read the current todo list",
+        prompt_guidelines=("Use todo_read to check outstanding tasks before starting work.",),
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        executor=execute,
+    )
+
 
 def create_coding_tools(
     *,
@@ -100,12 +266,14 @@ def create_coding_tools(
 ) -> list[AgentTool]:
     """Create the default coding-tool set for a local project.
 
-    The returned tools are ordered as `read`, `write`, `edit`, and `bash`.
-    Relative paths used with those tools are resolved against `cwd`; when `cwd`
-    is omitted, the process current working directory at factory-call time is
-    used. The tools share per-path write/edit locks within this process so
-    concurrent mutations of the same file do not interleave. When configured,
-    `shell_command_prefix` is prepended to every bash tool command.
+    The returned tools are ordered as ``read``, ``write``, ``edit``, ``bash``,
+    ``todo_write``, and ``todo_read``. Relative paths used with those tools are
+    resolved against `cwd`; when `cwd` is omitted, the process current working
+    directory at factory-call time is used. The tools share per-path write/edit
+    locks within this process so concurrent mutations of the same file do not
+    interleave. When configured, `shell_command_prefix` is prepended to every
+    bash tool command. The ``todo_write`` and ``todo_read`` tools share a
+    single in-memory list that lives for the lifetime of the returned list.
     """
     root = Path.cwd() if cwd is None else Path(cwd)
     return [
@@ -113,6 +281,7 @@ def create_coding_tools(
         create_write_tool(cwd=root),
         create_edit_tool(cwd=root),
         create_bash_tool(cwd=root, shell_command_prefix=shell_command_prefix),
+        *create_todo_tools(),
     ]
 
 
