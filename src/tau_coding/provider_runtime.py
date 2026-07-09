@@ -21,7 +21,7 @@ from tau_coding.oauth import (
     oauth_credential_is_expired,
     refresh_openai_codex_token,
 )
-from tau_coding.provider_catalog import catalog_model_override
+
 from tau_coding.provider_config import (
     AnthropicProviderConfig,
     OpenAICodexProviderConfig,
@@ -56,8 +56,8 @@ def create_model_provider(
         validate_provider_model(provider, model)
     credentials = credential_store or FileCredentialStore()
     selected_model = model or provider.default_model
-    override = catalog_model_override(provider.name, selected_model)
-    if override is not None and override.kind == "anthropic":
+    metadata = getattr(provider, "model_metadata", {}).get(selected_model)
+    if metadata is not None and metadata.kind == "anthropic":
         provider = _anthropic_provider_config_for_model(provider, selected_model)
     if isinstance(provider, AnthropicProviderConfig):
         return AnthropicProvider(

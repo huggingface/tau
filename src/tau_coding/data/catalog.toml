@@ -6240,89 +6240,87 @@ thinking_parameter = "reasoning_effort"
 
 [providers.model_metadata."deepseek-v4-flash-free"]
 base_url = "https://opencode.ai/zen/v1"
+thinking_default = "high"
+thinking_level_map = {high = "high", xhigh = "max"}
+thinking_level_labels = {xhigh = "max"}
+unsupported_thinking_levels = ["low", "medium"]
 
 [providers.model_metadata."mimo-v2.5-free"]
 base_url = "https://opencode.ai/zen/v1"
+always_thinking = true
 
 [providers.model_metadata."big-pickle"]
 base_url = "https://opencode.ai/zen/v1"
+always_thinking = true
 
 [providers.model_metadata."north-mini-code-free"]
 base_url = "https://opencode.ai/zen/v1"
+thinking_default = "high"
+unsupported_thinking_levels = ["low", "medium", "xhigh"]
 
 [providers.model_metadata."nemotron-3-ultra-free"]
 base_url = "https://opencode.ai/zen/v1"
+always_thinking = true
 
 [providers.model_metadata."hy3-free"]
 base_url = "https://opencode.ai/zen/v1"
+always_thinking = true
 
-[providers.model_overrides."glm-5.2"]
+[providers.model_metadata."glm-5.2"]
 thinking_default = "high"
-thinking_modes = {high = {api_value = "high"}, xhigh = {api_value = "max", label = "max"}}
+thinking_level_map = {high = "high", xhigh = "max"}
+thinking_level_labels = {xhigh = "max"}
+unsupported_thinking_levels = ["off", "low", "medium"]
 
-[providers.model_overrides."glm-5.1"]
+[providers.model_metadata."glm-5.1"]
 always_thinking = true
 
-[providers.model_overrides."kimi-k2.7-code"]
+[providers.model_metadata."kimi-k2.7-code"]
 always_thinking = true
 
-[providers.model_overrides."kimi-k2.6"]
+[providers.model_metadata."kimi-k2.6"]
 always_thinking = true
 
-[providers.model_overrides."deepseek-v4-pro"]
+[providers.model_metadata."deepseek-v4-pro"]
 thinking_default = "high"
-thinking_modes = {high = {api_value = "high"}, xhigh = {api_value = "max", label = "max"}}
+thinking_level_map = {high = "high", xhigh = "max"}
+thinking_level_labels = {xhigh = "max"}
+unsupported_thinking_levels = ["off", "low", "medium"]
 
-[providers.model_overrides."deepseek-v4-flash"]
+[providers.model_metadata."deepseek-v4-flash"]
 thinking_default = "high"
-thinking_modes = {high = {api_value = "high"}, xhigh = {api_value = "max", label = "max"}}
+thinking_level_map = {high = "high", xhigh = "max"}
+thinking_level_labels = {xhigh = "max"}
+unsupported_thinking_levels = ["off", "low", "medium"]
 
-[providers.model_overrides."mimo-v2.5"]
+[providers.model_metadata."mimo-v2.5"]
 always_thinking = true
 
-[providers.model_overrides."mimo-v2.5-pro"]
+[providers.model_metadata."mimo-v2.5-pro"]
 always_thinking = true
 
-[providers.model_overrides."minimax-m3"]
+[providers.model_metadata."minimax-m3"]
 kind = "anthropic"
 thinking_default = "high"
-thinking_modes = {off = {api_value = "disabled"}, high = {api_value = "adaptive", label = "on"}}
+thinking_level_map = {off = "disabled", high = "adaptive"}
+thinking_level_labels = {high = "on"}
+unsupported_thinking_levels = ["low", "medium"]
 
-[providers.model_overrides."minimax-m2.7"]
+[providers.model_metadata."minimax-m2.7"]
 kind = "anthropic"
 always_thinking = true
 
-[providers.model_overrides."qwen3.7-max"]
+[providers.model_metadata."qwen3.7-max"]
 kind = "anthropic"
 thinking_default = "medium"
-thinking_modes = {off = {api_value = "disabled"}, low = {}, medium = {}, high = {}, xhigh = {}}
+thinking_level_map = {off = "disabled"}
 
-[providers.model_overrides."qwen3.7-plus"]
+[providers.model_metadata."qwen3.7-plus"]
 kind = "anthropic"
 thinking_default = "medium"
-thinking_modes = {off = {api_value = "disabled"}, low = {}, medium = {}, high = {}, xhigh = {}}
+thinking_level_map = {off = "disabled"}
 
-[providers.model_overrides."qwen3.6-plus"]
+[providers.model_metadata."qwen3.6-plus"]
 kind = "anthropic"
 thinking_default = "medium"
-thinking_modes = {off = {api_value = "disabled"}, low = {}, medium = {}, high = {}, xhigh = {}}
-
-[providers.model_overrides."deepseek-v4-flash-free"]
-thinking_default = "high"
-thinking_modes = {off = {}, high = {api_value = "high"}, xhigh = {api_value = "max", label = "max"}}
-
-[providers.model_overrides."mimo-v2.5-free"]
-always_thinking = true
-
-[providers.model_overrides."big-pickle"]
-always_thinking = true
-
-[providers.model_overrides."north-mini-code-free"]
-thinking_default = "high"
-thinking_modes = {off = {}, high = {}}
-
-[providers.model_overrides."nemotron-3-ultra-free"]
-always_thinking = true
-
-[providers.model_overrides."hy3-free"]
-always_thinking = true
+thinking_level_map = {off = "disabled"}

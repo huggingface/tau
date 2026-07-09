@@ -18,10 +18,7 @@ from tau_coding.paths import TauPaths
 from tau_coding.provider_catalog import (
     BUILTIN_PROVIDER_CATALOG,
     ProviderCatalogEntry,
-    ProviderModelOverride,
-    ThinkingMode,
     builtin_provider_entry,
-    catalog_model_override,
 )
 from tau_coding.provider_config import load_provider_settings
 
@@ -185,13 +182,12 @@ def test_builtin_catalog_entries_are_internally_consistent() -> None:
         assert entry.default_model in entry.models
         assert set(entry.thinking_models) <= set(entry.models)
         assert set(entry.context_windows or {}) <= set(entry.models)
-        assert set(entry.model_overrides or {}) <= set(entry.models)
         if entry.thinking_default is not None:
             assert entry.thinking_levels is not None
             assert entry.thinking_default in entry.thinking_levels
 
 
-_LOCAL_OVERRIDE_PROVIDER = """
+_LOCAL_METADATA_PROVIDER = """
 [[providers]]
 name = "opencode-go"
 display_name = "OpenCode Go"
@@ -211,80 +207,79 @@ thinking_parameter = "reasoning_effort"
 "glm-5.2" = 1000000
 "minimax-m3" = 1000000
 
-[providers.model_overrides."glm-5.2"]
+[providers.model_metadata."glm-5.2"]
 thinking_default = "high"
-thinking_modes = {high = {api_value = "high"}, xhigh = {api_value = "max", label = "max"}}
+thinking_level_map = {high = "high", xhigh = "max"}
+thinking_level_labels = {xhigh = "max"}
+unsupported_thinking_levels = ["off", "low", "medium"]
 
-[providers.model_overrides."minimax-m3"]
+[providers.model_metadata."minimax-m3"]
 kind = "anthropic"
 always_thinking = true
 """
 
 
-def test_builtin_catalog_golden_opencode_go_overrides() -> None:
+def test_builtin_catalog_golden_opencode_go_metadata() -> None:
     entry = builtin_provider_entry("opencode-go")
     assert entry is not None
     assert entry.kind == "openai-compatible"
     assert entry.base_url == "https://opencode.ai/zen/go/v1"
     assert entry.api_key_env == "OPENCODE_API_KEY"
     assert entry.default_model == "deepseek-v4-pro"
-    assert entry.model_overrides is not None
-    assert set(entry.model_overrides) == set(entry.models)
 
-    glm = catalog_model_override("opencode-go", "glm-5.2")
+    glm = entry.model_metadata.get("glm-5.2")
     assert glm is not None
     assert glm.thinking_default == "high"
-    assert glm.thinking_modes == {
-        "high": ThinkingMode(api_value="high"),
-        "xhigh": ThinkingMode(api_value="max", label="max"),
-    }
+    assert glm.thinking_level_map.get("high") == "high"
+    assert glm.thinking_level_map.get("xhigh") == "max"
+    assert glm.thinking_level_map.get("off") is None
+    assert glm.thinking_level_map.get("low") is None
+    assert glm.thinking_level_map.get("medium") is None
+    assert glm.thinking_level_labels == {"xhigh": "max"}
+    assert glm.always_thinking is False
 
-    assert catalog_model_override("opencode-go", "glm-5.1").always_thinking is True
-    assert catalog_model_override("opencode-go", "kimi-k2.7-code").thinking_modes is None
+    assert entry.model_metadata["glm-5.1"].always_thinking is True
+    assert entry.model_metadata["kimi-k2.7-code"].always_thinking is True
 
-    minimax = catalog_model_override("opencode-go", "minimax-m3")
+    minimax = entry.model_metadata.get("minimax-m3")
+    assert minimax is not None
     assert minimax.kind == "anthropic"
     assert minimax.thinking_default == "high"
-    assert minimax.thinking_modes == {
-        "off": ThinkingMode(api_value="disabled"),
-        "high": ThinkingMode(api_value="adaptive", label="on"),
-    }
+    assert minimax.thinking_level_map.get("off") == "disabled"
+    assert minimax.thinking_level_map.get("high") == "adaptive"
+    assert minimax.thinking_level_map.get("low") is None
+    assert minimax.thinking_level_map.get("medium") is None
+    assert minimax.thinking_level_labels == {"high": "on"}
 
-    qwen = catalog_model_override("opencode-go", "qwen3.7-max")
+    qwen = entry.model_metadata.get("qwen3.7-max")
+    assert qwen is not None
     assert qwen.kind == "anthropic"
     assert qwen.thinking_default == "medium"
-    assert qwen.thinking_modes == {
-        "off": ThinkingMode(api_value="disabled"),
-        "low": ThinkingMode(),
-        "medium": ThinkingMode(),
-        "high": ThinkingMode(),
-        "xhigh": ThinkingMode(),
-    }
+    assert qwen.thinking_level_map.get("off") == "disabled"
 
     # Unknown provider/model pairs resolve to None.
-    assert catalog_model_override("opencode-go", "unknown-model") is None
-    assert catalog_model_override("not-a-provider", "glm-5.2") is None
-    assert catalog_model_override("opencode-go", None) is None
+    assert entry.model_metadata.get("unknown-model") is None
+    assert builtin_provider_entry("not-a-provider") is None
 
 
-def test_user_catalog_model_overrides_round_trip(tmp_path: Path) -> None:
-    paths = _write_user_catalog(tmp_path / ".tau", _LOCAL_OVERRIDE_PROVIDER)
+def test_user_catalog_model_metadata_round_trip(tmp_path: Path) -> None:
+    paths = _write_user_catalog(tmp_path / ".tau", _LOCAL_METADATA_PROVIDER)
     catalog = effective_catalog(paths)
     entry = next(e for e in catalog if e.name == "opencode-go")
-    assert entry.model_overrides is not None
-    assert set(entry.model_overrides) == {"glm-5.2", "minimax-m3"}
-    assert entry.model_overrides["glm-5.2"].thinking_modes == {
-        "high": ThinkingMode(api_value="high"),
-        "xhigh": ThinkingMode(api_value="max", label="max"),
-    }
-    assert entry.model_overrides["minimax-m3"].kind == "anthropic"
-    assert entry.model_overrides["minimax-m3"].always_thinking is True
+    assert entry.model_metadata["glm-5.2"].thinking_level_map.get("high") == "high"
+    assert entry.model_metadata["glm-5.2"].thinking_level_map.get("xhigh") == "max"
+    assert entry.model_metadata["glm-5.2"].thinking_level_map.get("off") is None
+    assert entry.model_metadata["glm-5.2"].thinking_level_labels == {"xhigh": "max"}
+    assert entry.model_metadata["minimax-m3"].kind == "anthropic"
+    assert entry.model_metadata["minimax-m3"].always_thinking is True
 
-    # Saving an entry with overrides and reloading preserves them exactly.
-    saved_override = ProviderModelOverride(
+    # Saving an entry with model metadata and reloading preserves it exactly.
+    from tau_coding.provider_catalog import ModelCatalogMetadata
+
+    saved_meta = ModelCatalogMetadata(
         kind="anthropic",
-        thinking_modes={"off": ThinkingMode(api_value="disabled")},
         thinking_default="medium",
+        thinking_level_map={"off": "disabled"},
     )
     save_path = save_user_catalog_entries(
         (
@@ -298,14 +293,18 @@ def test_user_catalog_model_overrides_round_trip(tmp_path: Path) -> None:
                 models=("a-model", "b-model"),
                 default_model="a-model",
                 docs_url="https://example.test/docs",
-                model_overrides={"a-model": saved_override},
+                model_metadata={"a-model": saved_meta},
             ),
         ),
         paths=paths,
     )
     reloaded = effective_catalog(paths)
     custom = next(e for e in reloaded if e.name == "custom-aggregator")
-    assert custom.model_overrides == {"a-model": saved_override}
+    meta = custom.model_metadata.get("a-model")
+    assert meta is not None
+    assert meta.kind == "anthropic"
+    assert meta.thinking_default == "medium"
+    assert meta.thinking_level_map.get("off") == "disabled"
     assert save_path.exists()
 
 

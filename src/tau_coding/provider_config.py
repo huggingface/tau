@@ -30,12 +30,9 @@ from tau_coding.provider_catalog import (
     ProviderApi,
     ProviderCatalogEntry,
     ProviderKind,
-    ThinkingMode,
-    catalog_model_override,
 )
 from tau_coding.thinking import (
     DEFAULT_THINKING_LEVEL,
-    THINKING_LEVELS,
     ThinkingLevel,
     ThinkingParameter,
     anthropic_thinking_budget_for_level,
@@ -73,6 +70,10 @@ class ProviderModelMetadata:
     headers: dict[str, str] = field(default_factory=dict)
     compat: dict[str, Any] = field(default_factory=dict)
     thinking_level_map: dict[ThinkingLevel, str | None] = field(default_factory=dict)
+    kind: ProviderKind | None = None
+    always_thinking: bool = False
+    thinking_default: ThinkingLevel | None = None
+    thinking_level_labels: dict[ThinkingLevel, str] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
         """Serialize this model metadata to JSON-compatible data."""
@@ -88,6 +89,10 @@ class ProviderModelMetadata:
             "headers": dict(self.headers),
             "compat": dict(self.compat),
             "thinking_level_map": dict(self.thinking_level_map),
+            "kind": self.kind,
+            "always_thinking": self.always_thinking,
+            "thinking_default": self.thinking_default,
+            "thinking_level_labels": dict(self.thinking_level_labels),
         }
 
 
@@ -456,6 +461,10 @@ def _provider_model_metadata_from_catalog(
             headers=dict(metadata.headers),
             compat=dict(metadata.compat),
             thinking_level_map=dict(metadata.thinking_level_map),
+            kind=metadata.kind,
+            always_thinking=metadata.always_thinking,
+            thinking_default=metadata.thinking_default,
+            thinking_level_labels=dict(metadata.thinking_level_labels),
         )
         for model, metadata in model_metadata.items()
     }
@@ -1272,14 +1281,9 @@ def provider_thinking_levels(
 ) -> tuple[ThinkingLevel, ...]:
     """Return thinking levels supported by a provider/model pair."""
     selected_model = model or provider.default_model
-    override = catalog_model_override(provider.name, selected_model)
-    if override is not None:
-        if override.always_thinking:
-            return ()
-        if override.thinking_modes is not None:
-            return tuple(level for level in THINKING_LEVELS if level in override.thinking_modes)
-
     metadata = _metadata_for_model(provider, selected_model)
+    if metadata is not None and metadata.always_thinking:
+        return ()
     if metadata is not None and metadata.reasoning is False:
         return ()
     if provider.thinking_levels is None:
@@ -1302,8 +1306,8 @@ def provider_thinking_is_always_on(
 ) -> bool:
     """Return whether built-in metadata declares reasoning as always enabled."""
     selected_model = model or provider.default_model
-    override = catalog_model_override(provider.name, selected_model)
-    return override.always_thinking if override is not None else False
+    metadata = _metadata_for_model(provider, selected_model)
+    return metadata.always_thinking if metadata is not None else False
 
 
 def provider_thinking_level_label(
@@ -1314,8 +1318,11 @@ def provider_thinking_level_label(
 ) -> str:
     """Return the provider-facing display label for a canonical Tau level."""
     normalized = normalize_thinking_level(level)
-    mode = _thinking_mode(provider, model=model, level=normalized)
-    return mode.label if mode is not None and mode.label is not None else normalized
+    selected_model = model or provider.default_model
+    metadata = _metadata_for_model(provider, selected_model)
+    if metadata is not None and normalized in metadata.thinking_level_labels:
+        return metadata.thinking_level_labels[normalized]
+    return normalized
 
 
 def provider_thinking_level_from_label(
@@ -1326,11 +1333,11 @@ def provider_thinking_level_from_label(
 ) -> ThinkingLevel:
     """Resolve a provider-facing input label to a canonical Tau level."""
     selected_model = model or provider.default_model
-    override = catalog_model_override(provider.name, selected_model)
-    if override is not None and override.thinking_modes is not None:
+    metadata = _metadata_for_model(provider, selected_model)
+    if metadata is not None and metadata.thinking_level_labels:
         label = value.strip().lower()
-        for level, mode in override.thinking_modes.items():
-            if mode.label == label:
+        for level, l in metadata.thinking_level_labels.items():
+            if l == label:
                 return level
     return normalize_thinking_level(value)
 
@@ -1471,9 +1478,9 @@ def provider_default_thinking_level(
     if not levels:
         return None
     selected_model = model or provider.default_model
-    override = catalog_model_override(provider.name, selected_model)
-    if override is not None and override.thinking_default in levels:
-        return override.thinking_default
+    metadata = _metadata_for_model(provider, selected_model)
+    if metadata is not None and metadata.thinking_default in levels:
+        return metadata.thinking_default
     if provider.thinking_default in levels:
         return provider.thinking_default
     if DEFAULT_THINKING_LEVEL in levels:
@@ -1618,9 +1625,6 @@ def _reasoning_effort_from_provider(
             f"Thinking mode {normalized} is not available for "
             f"{provider.name}:{selected_model}. Available modes: {available}"
         )
-    api_value = _thinking_api_value(provider, model=model, level=normalized)
-    if api_value is not None:
-        return api_value
     mapped = _metadata_thinking_value(provider, selected_model, normalized)
     if mapped is not None:
         return mapped
@@ -1747,39 +1751,19 @@ def _anthropic_thinking_type_from_provider(
     levels = provider_thinking_levels(provider, model=model)
     if not levels:
         return None
+    selected_model = model or provider.default_model
     if normalized not in levels:
-        selected_model = model or provider.default_model
         available = ", ".join(levels)
         raise ProviderConfigError(
             f"Thinking mode {normalized} is not available for "
             f"{provider.name}:{selected_model}. Available modes: {available}"
         )
-    api_value = _thinking_api_value(provider, model=model, level=normalized)
-    if api_value == "adaptive":
+    mapped = _metadata_thinking_value(provider, selected_model, normalized)
+    if mapped == "adaptive":
         return "adaptive"
-    if api_value == "disabled":
+    if mapped == "disabled":
         return "disabled"
     return None
-
-
-def _thinking_api_value(
-    provider: ProviderConfig,
-    *,
-    model: str | None,
-    level: ThinkingLevel,
-) -> str | None:
-    mode = _thinking_mode(provider, model=model, level=level)
-    return mode.api_value if mode is not None else None
-
-
-def _thinking_mode(
-    provider: ProviderConfig, *, model: str | None, level: ThinkingLevel
-) -> ThinkingMode | None:
-    selected_model = model or provider.default_model
-    override = catalog_model_override(provider.name, selected_model)
-    if override is None or override.thinking_modes is None:
-        return None
-    return override.thinking_modes.get(level)
 
 
 def _provider_from_json(data: object) -> ProviderConfig:
@@ -2229,6 +2213,15 @@ def _model_metadata_dict(
                 item.get("thinking_level_map", {}),
                 f"{field_name}.{model}.thinking_level_map",
             ),
+            kind=_optional_string(item.get("kind"), f"{field_name}.{model}.kind"),
+            always_thinking=_optional_bool(item.get("always_thinking"), f"{field_name}.{model}.always_thinking") or False,
+            thinking_default=_optional_thinking_level(
+                item.get("thinking_default"), f"{field_name}.{model}.thinking_default"
+            ),
+            thinking_level_labels=_thinking_level_labels_dict(
+                item.get("thinking_level_labels", {}),
+                f"{field_name}.{model}.thinking_level_labels",
+            ),
         )
     return items
 
@@ -2249,6 +2242,26 @@ def _thinking_level_map_dict(
                 f"Provider field values must be strings or null: {field_name}"
             )
         items[level] = item.strip() if isinstance(item, str) else None
+    return items
+
+
+def _thinking_level_labels_dict(
+    value: object,
+    field_name: str,
+) -> dict[ThinkingLevel, str]:
+    """Parse a thinking_level_labels mapping from JSON/preferences data."""
+    if not isinstance(value, dict):
+        raise ProviderConfigError(f"Provider field must be an object: {field_name}")
+    items: dict[ThinkingLevel, str] = {}
+    for key, item in value.items():
+        level = _optional_thinking_level(key, field_name)
+        if level is None:
+            raise ProviderConfigError(f"Provider field must be a thinking mode: {field_name}")
+        if not isinstance(item, str) or not item.strip():
+            raise ProviderConfigError(
+                f"Provider field values must be non-empty strings: {field_name}"
+            )
+        items[level] = item.strip()
     return items
 
 
