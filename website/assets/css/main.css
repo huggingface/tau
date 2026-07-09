@@ -239,13 +239,13 @@ header.hero{ padding:74px 0 40px; }
 
 h1{
   font-family:var(--hand);
-  font-weight:600;
+  font-weight:500;
   font-size:clamp(48px, 8.5vw, 92px);
   line-height:1.02;
   letter-spacing:-0.005em;
   margin:14px 0 0;
 }
-h1 em{ font-style:normal; font-weight:600; color:var(--accent); }
+h1 em{ font-style:normal; font-weight:500; color:var(--accent); }
 h1 .big-tau{
   font-family:var(--math); font-style:italic; font-weight:400;
   color:var(--accent);
