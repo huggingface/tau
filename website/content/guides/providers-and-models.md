@@ -19,12 +19,14 @@ tau
 /login              # choose a login method
 /login openai       # save an OpenAI API key
 /login openai-codex # authenticate a Codex/ChatGPT subscription via OAuth
+/login nvidia       # save an NVIDIA NIM API key
 /login custom       # add an OpenAI-compatible custom provider
 ```
 
 Built-in providers include **OpenAI**, **Anthropic**, **OpenAI Codex**
-(subscription), **OpenRouter**, and **Hugging Face**. Credentials saved this way
-live in `~/.tau/credentials.json` (private permissions). The custom-provider
+(subscription), **OpenRouter**, **Hugging Face**, and **NVIDIA NIM**.
+Credentials saved this way live in `~/.tau/credentials.json` (private
+permissions). The custom-provider
 flow asks for the provider name, display name, base URL, API-key environment
 variable, default model, and API key; it writes the provider definition to
 `~/.tau/catalog.toml` and runtime preferences to `~/.tau/providers.json`.

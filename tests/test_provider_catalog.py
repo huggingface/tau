@@ -56,6 +56,7 @@ def test_builtin_catalog_matches_expected_providers() -> None:
         "xai",
         "groq",
         "cerebras",
+        "nvidia",
         "openrouter",
         "zai",
         "mistral",
@@ -118,6 +119,56 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
     assert entry.thinking_models == ()
     assert entry.thinking_default == "medium"
     assert entry.thinking_parameter == "anthropic.thinking"
+
+
+def test_builtin_catalog_golden_nvidia_entry() -> None:
+    entry = builtin_provider_entry("nvidia")
+    assert entry is not None
+    assert entry.display_name == "NVIDIA NIM"
+    assert entry.kind == "openai-compatible"
+    assert entry.base_url == "https://integrate.api.nvidia.com/v1"
+    assert entry.api_key_env == "NVIDIA_API_KEY"
+    assert entry.credential_name == "nvidia"
+    assert entry.models == (
+        "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+        "nvidia/nvidia-nemotron-nano-9b-v2",
+        "meta/llama-3.3-70b-instruct",
+        "meta/llama-3.1-8b-instruct",
+        "deepseek-ai/deepseek-v4-pro",
+        "qwen/qwen3.5-122b-a10b",
+        "mistralai/mistral-large-2-instruct",
+        "openai/gpt-oss-120b",
+    )
+    assert entry.default_model == "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+    assert entry.docs_url == "https://docs.api.nvidia.com/nim"
+    assert entry.api == "openai-completions"
+    assert entry.context_windows == {
+        "nvidia/llama-3.3-nemotron-super-49b-v1.5": 131_072,
+        "nvidia/nvidia-nemotron-nano-9b-v2": 128_000,
+        "meta/llama-3.3-70b-instruct": 131_072,
+        "meta/llama-3.1-8b-instruct": 131_072,
+        "deepseek-ai/deepseek-v4-pro": 1_000_000,
+        "qwen/qwen3.5-122b-a10b": 262_144,
+        "mistralai/mistral-large-2-instruct": 131_072,
+        "openai/gpt-oss-120b": 131_072,
+    }
+    assert entry.thinking_levels == ("off", "minimal", "low", "medium", "high")
+    assert entry.thinking_models == ()
+    assert entry.thinking_default == "medium"
+    assert entry.thinking_parameter == "reasoning_effort"
+
+    default_metadata = entry.model_metadata[entry.default_model]
+    assert default_metadata.name == "NVIDIA: Llama 3.3 Nemotron Super 49B V1.5"
+    assert default_metadata.reasoning is True
+    assert default_metadata.input == ("text",)
+    assert default_metadata.context_window == 131_072
+    assert default_metadata.max_tokens == 16_384
+    assert default_metadata.cost == {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+
+    gpt_oss_metadata = entry.model_metadata["openai/gpt-oss-120b"]
+    assert gpt_oss_metadata.reasoning is True
+    assert gpt_oss_metadata.context_window == 131_072
+    assert gpt_oss_metadata.max_tokens == 65_536
 
 
 def test_builtin_catalog_entries_are_internally_consistent() -> None:

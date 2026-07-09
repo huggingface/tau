@@ -42,6 +42,7 @@ def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path)
         "xai",
         "groq",
         "cerebras",
+        "nvidia",
         "openrouter",
         "zai",
         "mistral",
