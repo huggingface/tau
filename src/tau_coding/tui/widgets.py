@@ -8,8 +8,8 @@ from pathlib import Path
 from subprocess import TimeoutExpired, run
 from typing import Any, ClassVar, Literal, Protocol
 
-from pygments.lexers import get_lexer_by_name  # type: ignore[import-untyped]
-from pygments.util import ClassNotFound  # type: ignore[import-untyped]
+from pygments.lexers import get_lexer_by_name
+from pygments.util import ClassNotFound
 from rich.align import Align
 from rich.console import Console, Group, RenderableType
 from rich.markdown import CodeBlock, Heading, Markdown
