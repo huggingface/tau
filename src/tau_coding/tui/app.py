@@ -77,6 +77,7 @@ from tau_coding.provider_config import (
 )
 from tau_coding.provider_runtime import create_model_provider
 from tau_coding.session import (
+    TREE_RUNNING_MESSAGE,
     CodingSession,
     CodingSessionConfig,
     ModelChoice,
@@ -2273,6 +2274,11 @@ class TauTuiApp(App[None]):
             if command.resume_picker_requested:
                 self.action_open_session_picker()
             if command.tree_picker_requested:
+                if self._is_agent_or_queue_active():
+                    prompt.text = raw_text
+                    prompt.move_cursor(_text_end_location(raw_text))
+                    self._notify(TREE_RUNNING_MESSAGE, severity="warning")
+                    return
                 await self._open_tree_picker()
             if command.login_picker_requested:
                 self._open_login_picker()
@@ -2832,6 +2838,9 @@ class TauTuiApp(App[None]):
         self._refresh()
 
     async def _open_tree_picker(self) -> None:
+        if self._is_agent_or_queue_active():
+            self._notify(TREE_RUNNING_MESSAGE, severity="warning")
+            return
         tree_choices = getattr(self.session, "tree_choices", None)
         if tree_choices is None:
             self._notify("Session tree is not available.", severity="warning")
@@ -2868,6 +2877,9 @@ class TauTuiApp(App[None]):
         summarize: bool,
         custom_instructions: str | None = None,
     ) -> None:
+        if self._is_agent_or_queue_active():
+            self._notify(TREE_RUNNING_MESSAGE, severity="warning")
+            return
         branch_to_entry = getattr(self.session, "branch_to_entry", None)
         if branch_to_entry is None:
             self._notify("Session tree is not available.", severity="warning")

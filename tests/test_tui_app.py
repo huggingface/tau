@@ -2995,6 +2995,62 @@ async def test_tui_app_session_picker_arrow_keys_select_session() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_app_blocks_tree_picker_while_agent_is_running() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+    notifications: list[str] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        del kwargs
+        notifications.append(message)
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        app.state.running = True
+        prompt = app.query_one("#prompt")
+        prompt.value = "/tree"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert session.tree_branch_requests == []
+        assert prompt.value == "/tree"
+        assert not isinstance(app.screen, TreePickerScreen)
+        assert notifications == [
+            "Tau is still working. Press Escape to interrupt before using /tree."
+        ]
+
+
+@pytest.mark.anyio
+async def test_tui_app_blocks_tree_branch_selection_while_agent_is_running() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+    notifications: list[str] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        del kwargs
+        notifications.append(message)
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/tree"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, TreePickerScreen)
+        app.state.running = True
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert session.tree_branch_requests == []
+        assert notifications == [
+            "Tau is still working. Press Escape to interrupt before using /tree."
+        ]
+
+
+@pytest.mark.anyio
 async def test_tui_app_tree_picker_branches_with_summary() -> None:
     session = FakeSession()
     app = TauTuiApp(session)

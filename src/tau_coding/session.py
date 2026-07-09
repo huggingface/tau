@@ -112,6 +112,7 @@ SESSION_NAME_SYSTEM_PROMPT = (
     "You write concise coding-agent session names. Reply with only a short title, "
     "maximum four words, no quotes, no punctuation-only output."
 )
+TREE_RUNNING_MESSAGE = "Tau is still working. Press Escape to interrupt before using /tree."
 
 
 @dataclass(frozen=True, slots=True)
@@ -432,6 +433,8 @@ class CodingSession:
         replace_instructions: bool = False,
     ) -> SessionTreeBranchResult:
         """Move the active leaf to a previous entry, preserving existing history."""
+        if self._harness.is_running:
+            raise RuntimeError(TREE_RUNNING_MESSAGE)
         entries = await self._read_session_entries()
         by_id = {entry.id: entry for entry in entries}
         if entry_id not in by_id:

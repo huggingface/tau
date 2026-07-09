@@ -606,6 +606,8 @@ async def test_tree_can_branch_from_first_user_message_before_assistant_response
     await provider.started.wait()
 
     choices = await session.tree_choices()
+    with pytest.raises(RuntimeError, match="Tau is still working"):
+        await session.branch_to_entry(choices[0].entry_id)
 
     session.cancel()
     await task
