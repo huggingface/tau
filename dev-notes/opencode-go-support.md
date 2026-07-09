@@ -32,3 +32,19 @@
   - Compiled [models.json](https://models.dev/models.json) (compiled models.dev catalog registry)
 - `anomalyco/opencode` repository on GitHub (`dev` branch):
   - [opencode.ai/zen/go/v1](https://github.com/anomalyco/opencode/tree/dev)
+
+## Gaps & Upstream Capabilities Limitations
+
+The following capabilities of OpenCode Go / Zen Free models are currently unsupported in upstream Tau and require local implementations:
+
+### 1. Hybrid Protocols per Provider (Mixed OpenAI & Anthropic API models)
+- **Problem**: Upstream Tau strictly assumes a provider serves models via a single client/API protocol class (either `openai-compatible` or `anthropic`/Messages API). Under a unified aggregator like `opencode-go`, some models use the OpenAI `/chat/completions` schema, while others (like Qwen and Minimax) are served via the Anthropic `/messages` API.
+- **Solution**: Check model-specific metadata configuration `api = "anthropic-messages"` inside `create_model_provider` and dynamically morph the configuration class into `AnthropicProviderConfig` at runtime.
+
+### 2. Toggle-Only Anthropic Thinking (MiniMax M3)
+- **Problem**: Upstream's Anthropic provider handles thinking via either `budget` mode (which expects an integer token count) or `adaptive` mode (which always appends `output_config.effort` to the request payload). Toggle-only models like `minimax-m3` reject the `effort` config payload and require a pure `{ "thinking": { "type": "adaptive" } }` payload.
+- **Solution**: Introduce the `thinking_type: Literal["adaptive", "disabled"]` runtime parameter to bypass the `output_config` payload and send a pure toggle to the endpoint.
+
+### 3. Model-Specific Thinking Level Display Labels
+- **Problem**: Provider-level thinking levels are mapped to standard canonical levels (like `high`, `xhigh`). Some models require mapping these canonical levels to custom UI display labels (e.g., mapping `high` to `"on"` or `"none"` in the CLI/TUI). Upstream does not support model-specific display label overrides.
+- **Solution**: Implement `thinking_level_labels` mapping on the model catalog metadata to translate canonical levels to display strings for CLI/TUI widgets.
