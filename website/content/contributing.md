@@ -23,8 +23,9 @@ material. The published docs distill the result; see
 
 ## Roadmap
 
-The roadmap and phase status are tracked in
-[GitHub issue #1](https://github.com/alejandro-ao/tau/issues/1).
+The published, phase-by-phase roadmap and status lives on the
+[roadmap page]({{< relref "./roadmap.md" >}}). The underlying checklist is
+tracked in [GitHub issue #1](https://github.com/alejandro-ao/tau/issues/1).
 
 ## Running the project locally
 
@@ -61,6 +62,6 @@ templates in `website/layouts/`.
 ## Documentation expectations
 
 Each substantial phase should leave beginner-friendly notes in `dev-notes/`
-explaining what was added, why it exists, how it maps to Pi's design, and how to
-test or use it. When a feature is user-facing, also update or add the relevant
-page under `website/src/content/docs/`.
+explaining what was added, why it exists, how it maps to [Pi](https://pi.dev)'s
+design, and how to test or use it. When a feature is user-facing, also update or
+add the relevant page under `website/src/content/docs/`.
