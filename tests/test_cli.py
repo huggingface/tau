@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from conftest import isolate_home
 from tau_agent import AssistantMessage, UserMessage
 from tau_agent.session import JsonlSessionStorage, MessageEntry
 from tau_ai import (
@@ -946,7 +947,7 @@ def test_providers_command_lists_default_provider(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
+    isolate_home(monkeypatch, tmp_path)
 
     result = CliRunner().invoke(app, ["providers"])
 
@@ -1003,7 +1004,7 @@ def test_setup_command_writes_provider_settings(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
+    isolate_home(monkeypatch, tmp_path)
     monkeypatch.setenv("LOCAL_API_KEY", "test-key")
 
     result = CliRunner().invoke(
@@ -1044,7 +1045,7 @@ def test_setup_command_warns_when_api_key_env_is_missing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
+    isolate_home(monkeypatch, tmp_path)
     monkeypatch.delenv("MISSING_API_KEY", raising=False)
 
     result = CliRunner().invoke(
