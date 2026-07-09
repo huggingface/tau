@@ -114,9 +114,7 @@ a{color:inherit; text-decoration:none;}
   padding-left:10px; margin-left:2px;
   border-left:1px solid var(--grid-strong);
   color:var(--ink-soft); opacity:.85;
-  transition:opacity .2s, color .2s;
 }
-.brand-by:hover{ opacity:1; color:var(--accent); }
 .brand-by .by-text{
   font-family:var(--grotesk); font-size:12px; font-style:italic;
   color:var(--ink-soft); transform:translateY(1px);
@@ -362,32 +360,21 @@ section{ padding:88px 0; }
   font-size:clamp(26px,4vw,38px); margin:0; letter-spacing:-0.01em;
 }
 
-/* ---- handwritten margin notes on section headers ----
-   Always sit above the heading (never overlapping the copy below it),
-   with a short hand-drawn arrow curving down to point at the text. */
-.hand-note{ position:relative; margin-top:38px; }
-.hand-note::after{
-  content:attr(data-note);
-  position:absolute;
-  bottom:100%; right:6%;
-  margin-bottom:2px;
-  padding-bottom:34px;
+/* ---- handwritten eyebrow labels ----
+   The small label above each section heading is set in a handwritten
+   font, so section intros read like a sketched marginal note rather
+   than a printed kicker. */
+.eyebrow-hand{
   font-family:var(--hand);
   font-size:22px;
-  line-height:1;
+  font-weight:600;
+  letter-spacing:.01em;
+  text-transform:none;
   color:var(--red);
-  transform:rotate(-4deg);
-  white-space:nowrap;
-  pointer-events:none;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 40'%3E%3Cpath d='M12,4 C20,14 28,22 34,32' fill='none' stroke='%23D6435B' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M34,32 L24,29 M34,32 L31,21' fill='none' stroke='%23D6435B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat:no-repeat;
-  background-position:center bottom 0;
-  background-size:40px 36px;
+  display:inline-block;
+  margin:0 0 2px;
 }
-@media (max-width:900px){
-  .hand-note::after{ display:none; }
-  .hand-note{ margin-top:0; }
-}
+.hero .eyebrow-hand{ color:var(--ink-soft); }
 
 /* ---- layers ---- */
 .layers{ display:grid; grid-template-columns:repeat(3,1fr); gap:1px;
@@ -438,8 +425,6 @@ section{ padding:88px 0; }
 .two p{ color:var(--ink-soft); }
 .two h2{ font-family:var(--serif); font-weight:400; font-style:italic;
   font-size:clamp(26px,4vw,36px); margin:0 0 16px; }
-.two h2.hand-note{ margin-top:38px; }
-@media (max-width:900px){ .two h2.hand-note{ margin-top:0; } }
 
 /* ---- event flow and capabilities ---- */
 .event-flow{
