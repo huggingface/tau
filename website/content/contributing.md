@@ -62,6 +62,6 @@ templates in `website/layouts/`.
 ## Documentation expectations
 
 Each substantial phase should leave beginner-friendly notes in `dev-notes/`
-explaining what was added, why it exists, how it maps to Pi's design, and how to
-test or use it. When a feature is user-facing, also update or add the relevant
-page under `website/src/content/docs/`.
+explaining what was added, why it exists, how it maps to [Pi](https://pi.dev)'s
+design, and how to test or use it. When a feature is user-facing, also update or
+add the relevant page under `website/src/content/docs/`.
