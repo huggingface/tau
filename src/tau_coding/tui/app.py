@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -122,6 +123,7 @@ SIDEBAR_MIN_HEIGHT = 24
 ACTIVITY_TICK_SECONDS = 0.15
 ACTIVITY_COLOR_FADE_STEPS = 24
 ACTIVITY_INDICATOR_HEIGHT = 3
+STREAMING_FLUSH_INTERVAL_SECONDS = 0.03
 COMPLETION_MAX_VISIBLE_LINES = 16
 COMPLETION_INITIAL_TERMINAL_FRACTION = 3
 COMPLETION_MIN_TRANSCRIPT_LINES = 4
@@ -2049,6 +2051,11 @@ class TauTuiApp(App[None]):
         self._completion_visible_line_budget: int | None = None
         self._activity_frame = 0
         self._activity_timer: Timer | None = None
+        self._streaming_flush_interval_seconds = STREAMING_FLUSH_INTERVAL_SECONDS
+        self._pending_streaming_deltas: deque[
+            tuple[Literal["assistant", "thinking"], str]
+        ] = deque()
+        self._streaming_flush_timer: Timer | None = None
         self._terminal_title = TerminalTitleController()
         self._active_notification_keys: set[tuple[str, str]] = set()
         self._supports_pyperclip: bool | None = None
@@ -2164,6 +2171,9 @@ class TauTuiApp(App[None]):
         if self._activity_timer is not None:
             self._activity_timer.stop()
             self._activity_timer = None
+        if self._streaming_flush_timer is not None:
+            self._streaming_flush_timer.stop()
+            self._streaming_flush_timer = None
         self._terminal_title.restore()
 
     def on_resize(self, event: Resize) -> None:
@@ -2549,6 +2559,7 @@ class TauTuiApp(App[None]):
                 if isinstance(event, ErrorEvent) and not event.recoverable:
                     _attach_diagnostic_log_path_to_error(self.state, self.session)
                 await self._apply_streaming_transcript_event(event)
+            await self._flush_streaming_transcript_deltas()
         except Exception as exc:  # noqa: BLE001 - surface unexpected worker errors in the TUI
             if active_run_id != self._prompt_run_id:
                 return
@@ -2578,24 +2589,20 @@ class TauTuiApp(App[None]):
             self._refresh_chrome()
             return
         if isinstance(event, AgentEndEvent):
+            await self._flush_streaming_transcript_deltas(transcript=transcript, theme=theme)
             await transcript.finish_assistant_message()
             self._refresh_chrome()
             return
         if isinstance(event, MessageStartEvent):
             return
         if isinstance(event, MessageDeltaEvent):
-            await transcript.append_assistant_delta(event.delta, theme=theme)
-            self._sync_activity_indicator()
+            self._queue_assistant_delta(event.delta)
             return
         if isinstance(event, ThinkingDeltaEvent):
-            await transcript.append_thinking_delta(
-                event.delta,
-                theme=theme,
-                show_thinking=self.state.show_thinking,
-            )
-            self._sync_activity_indicator()
+            self._queue_thinking_delta(event.delta)
             return
         if isinstance(event, MessageEndEvent):
+            await self._flush_streaming_transcript_deltas(transcript=transcript, theme=theme)
             if event.message.role == "user":
                 await self._append_confirmed_user_message(event.message)
                 self._sync_header_title()
@@ -2606,6 +2613,7 @@ class TauTuiApp(App[None]):
                 return
             return
         if isinstance(event, ToolExecutionStartEvent):
+            await self._flush_streaming_transcript_deltas(transcript=transcript, theme=theme)
             await transcript.finish_assistant_message()
             await transcript.append_item(
                 self.state.items[-1],
@@ -2615,6 +2623,7 @@ class TauTuiApp(App[None]):
             self._refresh_chrome()
             return
         if isinstance(event, ToolExecutionUpdateEvent | RetryEvent | ErrorEvent):
+            await self._flush_streaming_transcript_deltas(transcript=transcript, theme=theme)
             await transcript.finish_assistant_message()
             if self.state.items:
                 await transcript.append_item(
@@ -2631,6 +2640,83 @@ class TauTuiApp(App[None]):
             self._refresh_chrome()
             return
         self._refresh_chrome()
+
+    def _queue_assistant_delta(self, delta: str) -> None:
+        """Queue assistant output for the next throttled transcript flush."""
+        if not delta:
+            return
+        self._pending_streaming_deltas.append(("assistant", delta))
+        self._schedule_streaming_flush()
+
+    def _queue_thinking_delta(self, delta: str) -> None:
+        """Queue thinking output for the next throttled transcript flush."""
+        if not delta:
+            return
+        self._pending_streaming_deltas.append(("thinking", delta))
+        self._schedule_streaming_flush()
+
+    def _schedule_streaming_flush(self) -> None:
+        """Schedule a near-future flush so token bursts do not monopolize input."""
+        if self._streaming_flush_timer is not None:
+            return
+        self._streaming_flush_timer = self.set_timer(
+            self._streaming_flush_interval_seconds,
+            self._flush_streaming_transcript_deltas_from_timer,
+            name="streaming-transcript-flush",
+        )
+
+    async def _flush_streaming_transcript_deltas_from_timer(self) -> None:
+        """Flush queued streaming deltas from the Textual timer callback."""
+        self._streaming_flush_timer = None
+        await self._flush_streaming_transcript_deltas()
+
+    async def _flush_streaming_transcript_deltas(
+        self,
+        *,
+        transcript: TranscriptView | None = None,
+        theme: TuiTheme | None = None,
+    ) -> None:
+        """Apply queued streaming deltas in batches to keep input responsive."""
+        if not self._pending_streaming_deltas:
+            return
+        if self._streaming_flush_timer is not None:
+            self._streaming_flush_timer.stop()
+            self._streaming_flush_timer = None
+        theme = theme or self.tui_settings.resolved_theme
+        if transcript is None:
+            try:
+                transcript = self.query_one("#transcript", TranscriptView)
+            except NoMatches:
+                self._refresh()
+                return
+
+        current_role: Literal["assistant", "thinking"] | None = None
+        current_parts: list[str] = []
+
+        async def flush_current() -> None:
+            nonlocal current_role, current_parts
+            if current_role is None or not current_parts:
+                return
+            text = "".join(current_parts)
+            if current_role == "assistant":
+                await transcript.append_assistant_delta(text, theme=theme)
+            else:
+                await transcript.append_thinking_delta(
+                    text,
+                    theme=theme,
+                    show_thinking=self.state.show_thinking,
+                )
+            current_role = None
+            current_parts = []
+
+        while self._pending_streaming_deltas:
+            role, delta = self._pending_streaming_deltas.popleft()
+            if current_role is not None and role != current_role:
+                await flush_current()
+            current_role = role
+            current_parts.append(delta)
+        await flush_current()
+        self._sync_activity_indicator()
 
     def action_cancel(self) -> None:
         """Cancel the active compaction or agent turn."""
@@ -2672,6 +2758,10 @@ class TauTuiApp(App[None]):
         self._prompt_worker = None
         self.state.running = False
         self.state.assistant_buffer = ""
+        self._pending_streaming_deltas.clear()
+        if self._streaming_flush_timer is not None:
+            self._streaming_flush_timer.stop()
+            self._streaming_flush_timer = None
         self._sync_text_selection_state()
         self._refresh()
         if notify:

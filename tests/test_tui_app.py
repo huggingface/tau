@@ -60,6 +60,7 @@ from tau_coding.tui import app as tui_app
 from tau_coding.tui.app import (
     COMPLETION_MAX_VISIBLE_LINES,
     PASTE_DISPLAY_THRESHOLD,
+    STREAMING_FLUSH_INTERVAL_SECONDS,
     CommandOutputScreen,
     CustomProviderLoginResult,
     CustomProviderLoginScreen,
@@ -1550,11 +1551,85 @@ async def test_tui_streaming_deltas_update_active_message_without_full_refresh()
         MarkdownStream.write = original_stream_write  # type: ignore[method-assign]
 
     assert full_refreshes == 1
-    assert stream_writes == ["alpha ", "beta"]
+    assert stream_writes == ["alpha beta"]
     assert stream_replacements == []
     assert full_stream_updates == []
     assert streamed.selection_text == "alpha beta"
     assert "alpha beta" in transcript_text
+
+
+@pytest.mark.anyio
+async def test_tui_streaming_delta_timer_batches_bursts() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+    stream_writes: list[str] = []
+    original_stream_write = MarkdownStream.write
+
+    async def tracking_stream_write(self: MarkdownStream, fragment: str) -> None:
+        stream_writes.append(fragment)
+        await original_stream_write(self, fragment)
+
+    MarkdownStream.write = tracking_stream_write  # type: ignore[method-assign]
+    try:
+        async with app.run_test(size=(120, 30)) as pilot:
+            app._streaming_flush_interval_seconds = 60
+            await app._apply_streaming_transcript_event(MessageDeltaEvent(delta="alpha "))
+            await app._apply_streaming_transcript_event(MessageDeltaEvent(delta="beta"))
+            await pilot.pause()
+
+            assert stream_writes == []
+            assert app._pending_streaming_deltas
+
+            await app._flush_streaming_transcript_deltas()
+            await pilot.pause()
+    finally:
+        MarkdownStream.write = original_stream_write  # type: ignore[method-assign]
+
+    assert stream_writes == ["alpha beta"]
+
+
+@pytest.mark.anyio
+async def test_tui_streaming_delta_timer_flushes_after_interval() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+    stream_writes: list[str] = []
+    original_stream_write = MarkdownStream.write
+
+    async def tracking_stream_write(self: MarkdownStream, fragment: str) -> None:
+        stream_writes.append(fragment)
+        await original_stream_write(self, fragment)
+
+    MarkdownStream.write = tracking_stream_write  # type: ignore[method-assign]
+    try:
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app._apply_streaming_transcript_event(MessageDeltaEvent(delta="alpha "))
+            await app._apply_streaming_transcript_event(MessageDeltaEvent(delta="beta"))
+            await pilot.pause(STREAMING_FLUSH_INTERVAL_SECONDS * 3)
+    finally:
+        MarkdownStream.write = original_stream_write  # type: ignore[method-assign]
+
+    assert stream_writes == ["alpha beta"]
+
+
+@pytest.mark.anyio
+async def test_tui_streaming_flush_preserves_thinking_before_answer() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        app._streaming_flush_interval_seconds = 60
+        await app._apply_streaming_transcript_event(ThinkingDeltaEvent(delta="private "))
+        await app._apply_streaming_transcript_event(ThinkingDeltaEvent(delta="plan"))
+        await app._apply_streaming_transcript_event(MessageDeltaEvent(delta="public "))
+        await app._apply_streaming_transcript_event(MessageDeltaEvent(delta="answer"))
+        await app._flush_streaming_transcript_deltas()
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert [line.text for line in transcript.lines] == [
+            "Thinking… Press Ctrl+T to show thinking tokens.",
+            "public answer",
+        ]
 
 
 @pytest.mark.anyio
