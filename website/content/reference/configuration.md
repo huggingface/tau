@@ -219,8 +219,10 @@ The built-in frontend reads optional settings from `~/.tau/tui.json`:
 ```
 
 Built-in themes: `tau-dark` (default), `tau-light`, `high-contrast`. Set one with
-`/theme`. Keys use Textual syntax; omitted keys keep their defaults. Tau rejects
-unknown themes/keybinding names, empty keys, and duplicate assignments.
+`/theme`. Textual's native theme picker is mapped to the same Tau themes and
+persists the same `theme` setting. Keys use Textual syntax; omitted keys keep
+their defaults. Tau rejects unknown themes/keybinding names, empty keys, and
+duplicate assignments.
 
 - `sidebar_position`: `"left"` (default), `"right"`, or `"off"`. Controls
   placement of the session metadata sidebar. `"off"` hides the sidebar entirely;
