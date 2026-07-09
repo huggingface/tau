@@ -289,6 +289,8 @@ def _build_messages_payload(
     }
     if thinking_type is not None:
         payload["thinking"] = {"type": thinking_type}
+        if thinking_type == "adaptive":
+            payload["thinking"]["display"] = "summarized"
     elif thinking_mode == "adaptive" and thinking_effort is not None:
         payload["thinking"] = {"type": "adaptive", "display": "summarized"}
         payload["output_config"] = {"effort": thinking_effort}

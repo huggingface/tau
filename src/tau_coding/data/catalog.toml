@@ -6303,7 +6303,7 @@ always_thinking = true
 [providers.model_metadata."minimax-m3"]
 kind = "anthropic"
 thinking_default = "high"
-thinking_level_map = {off = "disabled"}
+thinking_level_map = {off = "disabled", high = "adaptive"}
 unsupported_thinking_levels = ["minimal", "low", "medium", "xhigh"]
 thinking_level_labels = {high = "on"}
 
