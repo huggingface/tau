@@ -6193,6 +6193,12 @@ models = [
   "qwen3.7-max",
   "qwen3.7-plus",
   "qwen3.6-plus",
+  "deepseek-v4-flash-free",
+  "mimo-v2.5-free",
+  "big-pickle",
+  "north-mini-code-free",
+  "nemotron-3-ultra-free",
+  "hy3-free",
 ]
 default_model = "deepseek-v4-pro"
 docs_url = "https://opencode.ai/docs/go"
@@ -6205,6 +6211,8 @@ thinking_models = [
   "qwen3.7-max",
   "qwen3.7-plus",
   "qwen3.6-plus",
+  "deepseek-v4-flash-free",
+  "north-mini-code-free",
 ]
 thinking_default = "medium"
 thinking_parameter = "reasoning_effort"
@@ -6223,6 +6231,12 @@ thinking_parameter = "reasoning_effort"
 "qwen3.7-max" = 1000000
 "qwen3.7-plus" = 1000000
 "qwen3.6-plus" = 1000000
+"deepseek-v4-flash-free" = 200000
+"mimo-v2.5-free" = 200000
+"big-pickle" = 200000
+"north-mini-code-free" = 256000
+"nemotron-3-ultra-free" = 1000000
+"hy3-free" = 256000
 
 [providers.model_overrides."glm-5.2"]
 thinking_default = "high"
@@ -6274,3 +6288,23 @@ thinking_modes = {off = {api_value = "disabled"}, low = {}, medium = {}, high = 
 kind = "anthropic"
 thinking_default = "medium"
 thinking_modes = {off = {api_value = "disabled"}, low = {}, medium = {}, high = {}, xhigh = {}}
+
+[providers.model_overrides."deepseek-v4-flash-free"]
+thinking_default = "high"
+thinking_modes = {off = {}, high = {api_value = "high"}, xhigh = {api_value = "max", label = "max"}}
+
+[providers.model_overrides."mimo-v2.5-free"]
+always_thinking = true
+
+[providers.model_overrides."big-pickle"]
+always_thinking = true
+
+[providers.model_overrides."north-mini-code-free"]
+thinking_default = "high"
+thinking_modes = {off = {}, high = {}}
+
+[providers.model_overrides."nemotron-3-ultra-free"]
+always_thinking = true
+
+[providers.model_overrides."hy3-free"]
+always_thinking = true
