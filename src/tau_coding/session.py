@@ -1420,7 +1420,9 @@ class CodingSession:
         auto_name_attempted = False
         overflow_event: ErrorEvent | None = None
         try:
-            events = self._harness.prompt(expanded_content, custom_type=custom_type, details=details)
+            events = self._harness.prompt(
+                expanded_content, custom_type=custom_type, details=details
+            )
             self._invalidate_context_usage_cache()
             async for event in events:
                 if isinstance(event, MessageEndEvent):

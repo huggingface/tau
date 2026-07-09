@@ -2439,8 +2439,10 @@ async def test_tui_app_updates_terminal_title_after_auto_session_naming() -> Non
             text: str,
             *,
             streaming_behavior: str | None = None,
+            custom_type: str | None = None,
+            details: dict[str, object] | None = None,
         ) -> AsyncIterator[AgentEvent]:
-            del streaming_behavior
+            del streaming_behavior, custom_type, details
             self.prompt_texts.append(text)
             yield AgentStartEvent()
             self._session_title = "Debug login"
