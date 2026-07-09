@@ -6238,6 +6238,24 @@ thinking_parameter = "reasoning_effort"
 "nemotron-3-ultra-free" = 1000000
 "hy3-free" = 256000
 
+[providers.model_metadata."deepseek-v4-flash-free"]
+base_url = "https://opencode.ai/zen/v1"
+
+[providers.model_metadata."mimo-v2.5-free"]
+base_url = "https://opencode.ai/zen/v1"
+
+[providers.model_metadata."big-pickle"]
+base_url = "https://opencode.ai/zen/v1"
+
+[providers.model_metadata."north-mini-code-free"]
+base_url = "https://opencode.ai/zen/v1"
+
+[providers.model_metadata."nemotron-3-ultra-free"]
+base_url = "https://opencode.ai/zen/v1"
+
+[providers.model_metadata."hy3-free"]
+base_url = "https://opencode.ai/zen/v1"
+
 [providers.model_overrides."glm-5.2"]
 thinking_default = "high"
 thinking_modes = {high = {api_value = "high"}, xhigh = {api_value = "max", label = "max"}}
