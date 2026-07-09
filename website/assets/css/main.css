@@ -1,6 +1,6 @@
 /* Tau site styles — shared by landing pages and docs. */
 
-@import url("https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,300;0,400;0,500;0,600;0,800;1,400&family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,300;0,400;0,500;0,600;0,800;1,400&family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Caveat:wght@500;600&display=swap");
 
 html, body{ margin:0; padding:0; }
 
@@ -19,6 +19,7 @@ html, body{ margin:0; padding:0; }
   --grotesk:"Space Grotesk", ui-sans-serif, system-ui, sans-serif;
   --mono:"JetBrains Mono", ui-monospace, monospace;
   --math:"STIX Two Text","Cambria Math","Times New Roman",serif;
+  --hand:"Caveat", "Segoe Print", cursive;
 
   --cell:28px;
   --maxw:1080px;
@@ -93,6 +94,7 @@ a{color:inherit; text-decoration:none;}
   margin:0 auto;
 }
 @media (max-width:720px){ .site-nav{ padding:22px 22px 0; } }
+.brand-group{ display:flex; align-items:baseline; gap:10px; }
 .brand{ display:flex; align-items:baseline; gap:12px; }
 .brand .glyph{
   font-family:var(--math); font-style:italic;
@@ -107,15 +109,27 @@ a{color:inherit; text-decoration:none;}
   border:1px solid var(--grid-strong); border-radius:2px;
   padding:1px 6px; transform:translateY(-2px);
 }
+.brand-by{
+  display:inline-flex; align-items:baseline; gap:5px;
+  padding-left:10px; margin-left:2px;
+  border-left:1px solid var(--grid-strong);
+  color:var(--ink-soft); opacity:.85;
+  transition:opacity .2s, color .2s;
+}
+.brand-by:hover{ opacity:1; color:var(--accent); }
+.brand-by .by-text{
+  font-family:var(--grotesk); font-size:12px; font-style:italic;
+  color:var(--ink-soft); transform:translateY(1px);
+}
+.brand-by .hf-logo{ display:inline-block; transform:translateY(3px); }
+@media (max-width:480px){
+  .brand-by .by-text{ display:none; }
+  .brand-by{ padding-left:8px; }
+}
 .navlinks{ display:flex; gap:24px; font-family:var(--grotesk); font-size:14.5px; align-items:center; }
 .navlinks a{ color:var(--ink-soft); transition:color .2s; }
 .navlinks a:hover{ color:var(--accent); }
 
-.nav-icon-link{
-  display:inline-flex; align-items:center;
-  color:var(--ink-soft); opacity:.85; transition:opacity .2s, color .2s;
-}
-.nav-icon-link:hover{ opacity:1; color:var(--accent); }
 .hf-logo{ display:block; }
 
 .gh-with-stars{ display:inline-flex; align-items:center; gap:7px; color:var(--ink-soft); transition:color .2s; }
@@ -130,7 +144,6 @@ a{color:inherit; text-decoration:none;}
 .gh-with-stars:hover .gh-stars{ color:var(--accent); border-color:var(--accent); }
 .gh-stars .star-icon{ color:var(--red); }
 @media (max-width:560px){
-  .nav-icon-link{ padding:14px 22px; border-top:1px solid var(--grid); }
   .gh-with-stars{ padding:14px 22px; border-top:1px solid var(--grid); }
 }
 
@@ -349,6 +362,33 @@ section{ padding:88px 0; }
   font-size:clamp(26px,4vw,38px); margin:0; letter-spacing:-0.01em;
 }
 
+/* ---- handwritten margin notes on section headers ----
+   Always sit above the heading (never overlapping the copy below it),
+   with a short hand-drawn arrow curving down to point at the text. */
+.hand-note{ position:relative; margin-top:38px; }
+.hand-note::after{
+  content:attr(data-note);
+  position:absolute;
+  bottom:100%; right:6%;
+  margin-bottom:2px;
+  padding-bottom:34px;
+  font-family:var(--hand);
+  font-size:22px;
+  line-height:1;
+  color:var(--red);
+  transform:rotate(-4deg);
+  white-space:nowrap;
+  pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 40'%3E%3Cpath d='M12,4 C20,14 28,22 34,32' fill='none' stroke='%23D6435B' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M34,32 L24,29 M34,32 L31,21' fill='none' stroke='%23D6435B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;
+  background-position:center bottom 0;
+  background-size:40px 36px;
+}
+@media (max-width:900px){
+  .hand-note::after{ display:none; }
+  .hand-note{ margin-top:0; }
+}
+
 /* ---- layers ---- */
 .layers{ display:grid; grid-template-columns:repeat(3,1fr); gap:1px;
   background:var(--grid-strong); border:1px solid var(--grid-strong); border-radius:6px; overflow:hidden; }
@@ -398,6 +438,8 @@ section{ padding:88px 0; }
 .two p{ color:var(--ink-soft); }
 .two h2{ font-family:var(--serif); font-weight:400; font-style:italic;
   font-size:clamp(26px,4vw,36px); margin:0 0 16px; }
+.two h2.hand-note{ margin-top:38px; }
+@media (max-width:900px){ .two h2.hand-note{ margin-top:0; } }
 
 /* ---- event flow and capabilities ---- */
 .event-flow{
