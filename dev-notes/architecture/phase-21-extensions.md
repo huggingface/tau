@@ -664,7 +664,7 @@ follow-up that can flip the project default.
 ## Example extension: subagents
 
 The subagents extension lives in its own repository
-(`rian-dolphin/tau-subagents`, private) rather than in this repo. It ports
+(`rian-dolphin/tau-subagents`) rather than in this repo. It ports
 the core of `tintinweb/pi-subagents` and doubles as the reference consumer
 of the newer API seams (manifest, dialogs, renderers, `on_update`,
 `context.transcript`), feature-detecting each so it loads on older builds:

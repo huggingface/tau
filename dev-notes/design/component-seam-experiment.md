@@ -252,7 +252,7 @@ main-pane
 pane. Textual screens already own focus/Esc/return semantics that the old
 `_activate_source`/`_activate_main` pair hand-rolled; reusing them shrinks core.
 
-> **Review revision (major — behavioral regression the doc doesn't reconcile):**
+> **Design revision (major — behavioral regression to reconcile):**
 > a `ModalScreen` is not behaviorally equivalent to today's in-place view, and the
 > divergence is larger than "steer composer feel" (risk §7.4). Today `_activate_
 > source` only swaps `#transcript` → `#agent-transcript-pane` (app.py L2929–2930);
@@ -273,7 +273,7 @@ pane. Textual screens already own focus/Esc/return semantics that the old
 > Right now the doc presents ModalScreen as a pure simplification; it is a UX
 > trade the reviewer should decide deliberately.
 
-> **Orchestrator decision (final): option (b) — in-tree main-area slot, not a
+> **Decision (final): option (b) — in-tree main-area slot, not a
 > ModalScreen.** The seam gains a third placement, `placement="main"`: the host
 > mounts the widget as a display-toggled sibling of `#transcript` inside a
 > generic `#main-slot` container (exactly the mechanics `#agent-transcript-pane`
@@ -379,7 +379,7 @@ re-invokes slot factories (drop + remount, or call an optional
   runtime is reset (`reset_for_reload`). A leaked extension widget must never
   survive a reload.
 
-> **Review revision (major — /resume path under-specified):**
+> **Design revision (major — /resume path under-specified):**
 > `_connect_extension_runtime` (app.py L2559) — which calls `set_ui_bridge` — runs
 > on **every** session bind, including `/resume` session switches (it is invoked
 > from `__init__` L2196 and per bound session, each `CodingSession` carrying its
@@ -474,8 +474,8 @@ runtime's existing "swallow + diagnose once" discipline (runtime.py
    a top-level `on_exception`/error hook that unmounts the offending extension
    widget and notifies rather than letting the app die.
 
-> **Review revision (blocker→resolved-with-concrete-fix):** the guard as written
-> is partly false. I ran a spike (Textual 8.2.7, the pinned version) mounting
+> **Design revision (blocker, resolved with a concrete fix):** the guard as written
+> is partly false. A spike (Textual 8.2.7, the pinned version) mounted
 > widgets whose `render()`, `compose()`, and `on_mount()` raise. **All three kill
 > the app**, and the `try/except` around the host's `mount()`/`refresh()` call
 > does *not* save it: `render()` is invoked by the compositor's own reflow loop
@@ -491,7 +491,7 @@ runtime's existing "swallow + diagnose once" discipline (runtime.py
 >    The guard must override *that* (accepting the private-API coupling, which is
 >    itself a contract-weight cost worth recording).
 > 2. **Overriding `_handle_exception` to NOT call `super()` and instead remove the
->    offending widget DOES keep the app alive and responsive** — I verified a
+>    offending widget DOES keep the app alive and responsive** — the spike verified a
 >    recovered app stays `is_running=True`, `_exit=False`, and can mount new
 >    widgets afterward. But `_handle_exception` receives only `error`, not the
 >    culprit widget, so the host must either (a) walk the incoming traceback for a
@@ -590,7 +590,7 @@ Line references are against this repo as of the pre-experiment baseline
   `set_transcript_sources_changed_callback` wiring in
   `_connect_extension_runtime` (L2566–2570); `_activate_source_by_id` call site.
 
-> **Review revision (minor, but must-fix or Step 3 red):** the call-site list for
+> **Design revision (minor, but required before Step 3 can pass):** the call-site list for
 > `_refresh_agent_strip` is incomplete. It is also called from `_refresh_chrome`
 > (L3676, the theme/chrome refresh path) — removing the method without deleting
 > that call leaves an `AttributeError` on every chrome refresh. Separately,
@@ -676,7 +676,7 @@ deleted). Design:
   is retained only as a cheap "did content change" dirty-check inside the
   viewer's refresh; it is no longer a host polling key.
 
-> **Review revision (verified-safe, but state the invariant):** deleting the poll
+> **Design revision (verified safe; the invariant must be stated):** deleting the poll
 > in favour of push is only safe because subagent runs execute as `asyncio` tasks
 > on the *same* event loop as the TUI — `_run_agent` is launched via
 > `asyncio.get_running_loop().create_task` (extension.py L299) and
@@ -701,7 +701,7 @@ deleted). Design:
   current `view_transcript`-missing branch does. The capability check moves from
   `getattr(ui, "view_transcript")` to `components.supports_components`.
 
-> **Review revision (major):** the plumbing does not exist as written.
+> **Design revision (major):** the plumbing does not exist as written.
 > `view_run_conversation(ui, run)` (agents_menu.py L115) receives `ui: DialogUi` —
 > a Protocol (L30–45) exposing *only* `select`/`confirm`/`input`/`notify`. It has
 > no `.components`, no manager, no theme. Today it calls
@@ -856,12 +856,12 @@ seam is fewer lines but a much heavier and less portable promise.
    crowd the transcript. Core should cap slot height (as `#agent-strip` did with
    `max-height: 8`).
 
-**Open questions I could not resolve from the source alone:** (1) whether a child
+**Open questions not resolvable from the source alone:** (1) whether a child
 widget render crash can be fully contained in Textual without a per-widget
 subprocess/boundary — needs a runtime spike; (2) whether the overlay should be a
 `ModalScreen` (chosen here for focus/Esc correctness) or an in-tree toggled
 container (closer to the removed `#agent-transcript-pane`, easier live-refresh) —
-I recommend `ModalScreen` but did not prototype both; (3) whether `run.revision`
+`ModalScreen` was recommended but both were not prototyped; (3) whether `run.revision`
 should be dropped entirely in favor of pure listener push or retained as a dirty
 check (retained here, but it is redundant once listeners exist).
 
