@@ -57,7 +57,7 @@ def create_model_provider(
     credentials = credential_store or FileCredentialStore()
     selected_model = model or provider.default_model
     metadata = getattr(provider, "model_metadata", {}).get(selected_model)
-    if metadata is not None and metadata.kind == "anthropic":
+    if metadata is not None and metadata.api == "anthropic-messages":
         provider = _anthropic_provider_config_for_model(provider, selected_model)
     if isinstance(provider, AnthropicProviderConfig):
         return AnthropicProvider(

@@ -208,14 +208,13 @@ thinking_parameter = "reasoning_effort"
 "minimax-m3" = 1000000
 
 [providers.model_metadata."glm-5.2"]
-thinking_default = "high"
 thinking_level_map = {high = "high", xhigh = "max"}
 thinking_level_labels = {xhigh = "max"}
 unsupported_thinking_levels = ["off", "low", "medium"]
 
 [providers.model_metadata."minimax-m3"]
-kind = "anthropic"
-always_thinking = true
+api = "anthropic-messages"
+reasoning = true
 """
 
 
@@ -229,30 +228,27 @@ def test_builtin_catalog_golden_opencode_go_metadata() -> None:
 
     glm = entry.model_metadata.get("glm-5.2")
     assert glm is not None
-    assert glm.thinking_default == "high"
     assert glm.thinking_level_map.get("high") == "high"
     assert glm.thinking_level_map.get("xhigh") == "max"
     assert glm.thinking_level_map.get("off") is None
     assert glm.thinking_level_map.get("low") is None
     assert glm.thinking_level_map.get("medium") is None
     assert glm.thinking_level_labels == {"xhigh": "max"}
-    assert glm.always_thinking is False
 
-    assert entry.model_metadata["glm-5.1"].always_thinking is True
-    assert entry.model_metadata["kimi-k2.7-code"].always_thinking is True
+    from tau_coding.provider_config import provider_thinking_is_always_on
+    assert provider_thinking_is_always_on(entry, model="glm-5.1") is True
+    assert provider_thinking_is_always_on(entry, model="kimi-k2.7-code") is True
 
     minimax = entry.model_metadata.get("minimax-m3")
     assert minimax is not None
-    assert minimax.kind == "anthropic"
-    assert minimax.thinking_default == "high"
+    assert minimax.api == "anthropic-messages"
     assert minimax.thinking_level_map.get("off") == "disabled"
     assert minimax.thinking_level_map.get("minimal") is None
     assert minimax.thinking_level_map.get("xhigh") is None
 
     qwen = entry.model_metadata.get("qwen3.7-max")
     assert qwen is not None
-    assert qwen.kind == "anthropic"
-    assert qwen.thinking_default == "high"
+    assert qwen.api == "anthropic-messages"
     assert qwen.thinking_level_map.get("off") == "disabled"
 
     # Unknown provider/model pairs resolve to None.
@@ -268,15 +264,15 @@ def test_user_catalog_model_metadata_round_trip(tmp_path: Path) -> None:
     assert entry.model_metadata["glm-5.2"].thinking_level_map.get("xhigh") == "max"
     assert entry.model_metadata["glm-5.2"].thinking_level_map.get("off") is None
     assert entry.model_metadata["glm-5.2"].thinking_level_labels == {"xhigh": "max"}
-    assert entry.model_metadata["minimax-m3"].kind == "anthropic"
-    assert entry.model_metadata["minimax-m3"].always_thinking is True
+    assert entry.model_metadata["minimax-m3"].api == "anthropic-messages"
+    from tau_coding.provider_config import provider_thinking_is_always_on
+    assert provider_thinking_is_always_on(entry, model="minimax-m3") is True
 
     # Saving an entry with model metadata and reloading preserves it exactly.
     from tau_coding.provider_catalog import ModelCatalogMetadata
 
     saved_meta = ModelCatalogMetadata(
-        kind="anthropic",
-        thinking_default="medium",
+        api="anthropic-messages",
         thinking_level_map={"off": "disabled"},
     )
     save_path = save_user_catalog_entries(
@@ -300,8 +296,7 @@ def test_user_catalog_model_metadata_round_trip(tmp_path: Path) -> None:
     custom = next(e for e in reloaded if e.name == "custom-aggregator")
     meta = custom.model_metadata.get("a-model")
     assert meta is not None
-    assert meta.kind == "anthropic"
-    assert meta.thinking_default == "medium"
+    assert meta.api == "anthropic-messages"
     assert meta.thinking_level_map.get("off") == "disabled"
     assert save_path.exists()
 

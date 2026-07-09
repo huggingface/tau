@@ -70,9 +70,6 @@ class ProviderModelMetadata:
     headers: dict[str, str] = field(default_factory=dict)
     compat: dict[str, Any] = field(default_factory=dict)
     thinking_level_map: dict[ThinkingLevel, str | None] = field(default_factory=dict)
-    kind: ProviderKind | None = None
-    always_thinking: bool = False
-    thinking_default: ThinkingLevel | None = None
     thinking_level_labels: dict[ThinkingLevel, str] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
@@ -89,9 +86,6 @@ class ProviderModelMetadata:
             "headers": dict(self.headers),
             "compat": dict(self.compat),
             "thinking_level_map": dict(self.thinking_level_map),
-            "kind": self.kind,
-            "always_thinking": self.always_thinking,
-            "thinking_default": self.thinking_default,
             "thinking_level_labels": dict(self.thinking_level_labels),
         }
 
@@ -461,9 +455,6 @@ def _provider_model_metadata_from_catalog(
             headers=dict(metadata.headers),
             compat=dict(metadata.compat),
             thinking_level_map=dict(metadata.thinking_level_map),
-            kind=metadata.kind,
-            always_thinking=metadata.always_thinking,
-            thinking_default=metadata.thinking_default,
             thinking_level_labels=dict(metadata.thinking_level_labels),
         )
         for model, metadata in model_metadata.items()
@@ -900,6 +891,7 @@ def _merge_provider_model_metadata(
             headers={**base.headers, **metadata.headers},
             compat={**base.compat, **metadata.compat},
             thinking_level_map={**base.thinking_level_map, **metadata.thinking_level_map},
+            thinking_level_labels={**base.thinking_level_labels, **metadata.thinking_level_labels},
         )
     return merged
 
@@ -1043,6 +1035,7 @@ def _catalog_model_metadata_from_provider(
             headers=dict(metadata.headers),
             compat=dict(metadata.compat),
             thinking_level_map=dict(metadata.thinking_level_map),
+            thinking_level_labels=dict(metadata.thinking_level_labels),
         )
         for model, metadata in metadata_by_model.items()
     }
@@ -1282,8 +1275,6 @@ def provider_thinking_levels(
     """Return thinking levels supported by a provider/model pair."""
     selected_model = model or provider.default_model
     metadata = _metadata_for_model(provider, selected_model)
-    if metadata is not None and metadata.always_thinking:
-        return ()
     if metadata is not None and metadata.reasoning is False:
         return ()
     if provider.thinking_levels is None:
@@ -1307,7 +1298,10 @@ def provider_thinking_is_always_on(
     """Return whether built-in metadata declares reasoning as always enabled."""
     selected_model = model or provider.default_model
     metadata = _metadata_for_model(provider, selected_model)
-    return metadata.always_thinking if metadata is not None else False
+    if metadata is None or metadata.reasoning is not True:
+        return False
+    levels = provider_thinking_levels(provider, model=selected_model)
+    return len(levels) == 0
 
 
 def provider_thinking_level_label(
@@ -1495,10 +1489,6 @@ def provider_default_thinking_level(
     levels = provider_thinking_levels(provider, model=model)
     if not levels:
         return None
-    selected_model = model or provider.default_model
-    metadata = _metadata_for_model(provider, selected_model)
-    if metadata is not None and metadata.thinking_default in levels:
-        return metadata.thinking_default
     if provider.thinking_default in levels:
         return provider.thinking_default
     if DEFAULT_THINKING_LEVEL in levels:
@@ -2230,11 +2220,6 @@ def _model_metadata_dict(
             thinking_level_map=_thinking_level_map_dict(
                 item.get("thinking_level_map", {}),
                 f"{field_name}.{model}.thinking_level_map",
-            ),
-            kind=_optional_string(item.get("kind"), f"{field_name}.{model}.kind"),
-            always_thinking=_optional_bool(item.get("always_thinking"), f"{field_name}.{model}.always_thinking") or False,
-            thinking_default=_optional_thinking_level(
-                item.get("thinking_default"), f"{field_name}.{model}.thinking_default"
             ),
             thinking_level_labels=_thinking_level_labels_dict(
                 item.get("thinking_level_labels", {}),

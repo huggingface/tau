@@ -42,9 +42,6 @@ class ModelCatalogMetadata:
     headers: dict[str, str] = field(default_factory=dict)
     compat: dict[str, JSONValue] = field(default_factory=dict)
     thinking_level_map: ThinkingLevelMap = field(default_factory=dict)
-    kind: ProviderKind | None = None
-    always_thinking: bool = False
-    thinking_default: ThinkingLevel | None = None
     thinking_level_labels: dict[ThinkingLevel, str] = field(default_factory=dict)
 
 

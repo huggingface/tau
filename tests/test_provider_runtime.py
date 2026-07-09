@@ -92,9 +92,8 @@ def test_create_model_provider_preserves_adaptive_thinking_type_when_swapping_to
         thinking_default="high",
         model_metadata={
             "minimax-m3": ProviderModelMetadata(
-                kind="anthropic",
+                api="anthropic-messages",
                 thinking_level_map={"off": "disabled", "high": "adaptive"},
-                thinking_default="high",
             ),
         },
     )

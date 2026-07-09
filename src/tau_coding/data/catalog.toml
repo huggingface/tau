@@ -6240,88 +6240,79 @@ thinking_parameter = "reasoning_effort"
 
 [providers.model_metadata."deepseek-v4-flash-free"]
 base_url = "https://opencode.ai/zen/v1"
-thinking_default = "high"
 thinking_level_map = {high = "high", xhigh = "max"}
 thinking_level_labels = {xhigh = "max"}
 unsupported_thinking_levels = ["minimal", "low", "medium"]
 
 [providers.model_metadata."mimo-v2.5-free"]
 base_url = "https://opencode.ai/zen/v1"
-always_thinking = true
+reasoning = true
 
 [providers.model_metadata."big-pickle"]
 base_url = "https://opencode.ai/zen/v1"
-always_thinking = true
+reasoning = true
 
 [providers.model_metadata."north-mini-code-free"]
 base_url = "https://opencode.ai/zen/v1"
-thinking_default = "high"
 thinking_level_map = {off = "none", high = "high"}
 unsupported_thinking_levels = ["minimal", "low", "medium", "xhigh"]
 
 [providers.model_metadata."nemotron-3-ultra-free"]
 base_url = "https://opencode.ai/zen/v1"
-always_thinking = true
+reasoning = true
 
 [providers.model_metadata."hy3-free"]
 base_url = "https://opencode.ai/zen/v1"
-always_thinking = true
+reasoning = true
 
 [providers.model_metadata."glm-5.2"]
-thinking_default = "high"
 thinking_level_map = {high = "high", xhigh = "max"}
 thinking_level_labels = {xhigh = "max"}
 unsupported_thinking_levels = ["off", "minimal", "low", "medium"]
 
 [providers.model_metadata."glm-5.1"]
-always_thinking = true
+reasoning = true
 
 [providers.model_metadata."kimi-k2.7-code"]
-always_thinking = true
+reasoning = true
 
 [providers.model_metadata."kimi-k2.6"]
-always_thinking = true
+reasoning = true
 
 [providers.model_metadata."deepseek-v4-pro"]
-thinking_default = "high"
 thinking_level_map = {high = "high", xhigh = "max"}
 thinking_level_labels = {xhigh = "max"}
 unsupported_thinking_levels = ["off", "minimal", "low", "medium"]
 
 [providers.model_metadata."deepseek-v4-flash"]
-thinking_default = "high"
 thinking_level_map = {high = "high", xhigh = "max"}
 thinking_level_labels = {xhigh = "max"}
 unsupported_thinking_levels = ["off", "minimal", "low", "medium"]
 
 [providers.model_metadata."mimo-v2.5"]
-always_thinking = true
+reasoning = true
 
 [providers.model_metadata."mimo-v2.5-pro"]
-always_thinking = true
+reasoning = true
 
 [providers.model_metadata."minimax-m3"]
-kind = "anthropic"
-thinking_default = "high"
+api = "anthropic-messages"
 thinking_level_map = {off = "disabled", high = "adaptive"}
 unsupported_thinking_levels = ["minimal", "low", "medium", "xhigh"]
 thinking_level_labels = {high = "on"}
 
 [providers.model_metadata."minimax-m2.7"]
-kind = "anthropic"
-always_thinking = true
+api = "anthropic-messages"
+reasoning = true
 
 [providers.model_metadata."qwen3.7-max"]
-kind = "anthropic"
-thinking_default = "high"
+api = "anthropic-messages"
 thinking_level_map = {off = "disabled"}
 
 [providers.model_metadata."qwen3.7-plus"]
-kind = "anthropic"
-thinking_default = "high"
+api = "anthropic-messages"
 thinking_level_map = {off = "disabled"}
 
 [providers.model_metadata."qwen3.6-plus"]
-kind = "anthropic"
-thinking_default = "high"
+api = "anthropic-messages"
 thinking_level_map = {off = "disabled"}
