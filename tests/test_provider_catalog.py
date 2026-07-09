@@ -245,11 +245,7 @@ def test_builtin_catalog_golden_opencode_go_metadata() -> None:
     assert minimax is not None
     assert minimax.kind == "anthropic"
     assert minimax.thinking_default == "high"
-    assert minimax.thinking_level_map.get("off") == "disabled"
-    assert minimax.thinking_level_map.get("high") == "adaptive"
-    assert minimax.thinking_level_map.get("low") is None
-    assert minimax.thinking_level_map.get("medium") is None
-    assert minimax.thinking_level_labels == {"high": "on"}
+    assert minimax.thinking_level_map == {"off": "disabled"}
 
     qwen = entry.model_metadata.get("qwen3.7-max")
     assert qwen is not None
