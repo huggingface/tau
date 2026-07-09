@@ -119,6 +119,7 @@ def _anthropic_provider_config_for_model(
         default_model=model,
         context_windows=provider.context_windows,
         headers=provider.headers,
+        model_metadata=provider.model_metadata,
         timeout_seconds=provider.timeout_seconds,
         max_retries=provider.max_retries,
         max_retry_delay_seconds=provider.max_retry_delay_seconds,

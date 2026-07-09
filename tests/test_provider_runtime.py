@@ -1,12 +1,13 @@
 import pytest
 
-from tau_ai import OpenAICodexProvider
+from tau_ai import AnthropicProvider, OpenAICodexProvider
 from tau_coding import provider_runtime
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.provider_config import (
     OpenAICodexProviderConfig,
     OpenAICompatibleProviderConfig,
     ProviderConfigError,
+    ProviderModelMetadata,
 )
 from tau_coding.provider_runtime import OpenAICodexCredentialResolver, create_model_provider
 
@@ -70,6 +71,44 @@ def test_create_model_provider_maps_codex_reasoning_effort_like_pi(tmp_path) -> 
     assert off_provider._config.reasoning_effort is None
     assert minimal_provider._config.reasoning_effort == "low"
     assert xhigh_provider._config.reasoning_effort == "xhigh"
+
+
+def test_create_model_provider_preserves_adaptive_thinking_type_when_swapping_to_anthropic(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model with ``kind=anthropic`` and a ``thinking_level_map`` value of
+    ``adaptive`` must end up with ``thinking_type='adaptive'`` (not the budget
+    fallback) once the runtime swaps to ``AnthropicProviderConfig``."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    provider_config = OpenAICompatibleProviderConfig(
+        name="opencode-go",
+        base_url="https://opencode.ai/zen/go/v1",
+        models=("minimax-m3",),
+        default_model="minimax-m3",
+        thinking_levels=("off", "high"),
+        thinking_models=("minimax-m3",),
+        thinking_default="high",
+        model_metadata={
+            "minimax-m3": ProviderModelMetadata(
+                kind="anthropic",
+                thinking_level_map={"off": "disabled", "high": "adaptive"},
+                thinking_default="high",
+            ),
+        },
+    )
+
+    runtime_provider = create_model_provider(
+        provider_config,
+        credential_store=store,
+        model="minimax-m3",
+        thinking_level="high",
+    )
+
+    assert isinstance(runtime_provider, AnthropicProvider)
+    assert runtime_provider._config.thinking_type == "adaptive"
+    assert runtime_provider._config.thinking_budget_tokens is None
 
 
 @pytest.mark.anyio
