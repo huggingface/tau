@@ -1,5 +1,6 @@
 """Tests for extension discovery, loading, hooks, and session wiring."""
 
+import asyncio
 import sys
 from pathlib import Path
 from typing import cast
@@ -1197,7 +1198,11 @@ async def test_headless_ui_bridges_component_seam_are_noops(tmp_path: Path) -> N
         bridge.set_slot_widget("k", lambda theme: None, placement="above_prompt")
         handle = bridge.open_main_view(lambda h, theme: None)
         assert handle.is_open is False
+        handle.close("ignored")  # accepts a result, does nothing with it
         handle.close()  # idempotent no-op
+        # A dead handle never opens a view: wait() resolves to None at once
+        # (never hangs) even though close was called.
+        assert await asyncio.wait_for(handle.wait(), timeout=1.0) is None
         unsubscribe = bridge.register_key_interceptor(lambda event, text: False)
         unsubscribe()  # must not raise
 

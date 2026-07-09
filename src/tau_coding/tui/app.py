@@ -337,21 +337,38 @@ class _TuiExtensionUiBridge:
 class _MainViewHandle:
     """Host-side handle to an open extension main view (experimental seam).
 
-    ``close()`` is idempotent and routes back to the app, which unmounts the
-    widget and restores the main transcript.
+    ``close(result)`` is idempotent and routes back to the app, which unmounts
+    the widget and restores the main transcript; it also resolves ``wait()``
+    with ``result`` (Pi's ``done(result)``). Every other teardown path the host
+    owns — session rebind, quarantine, being superseded by a later
+    ``open_main_view`` — resolves ``wait()`` with ``None`` via
+    :meth:`_resolve`, so an awaiting extension task never hangs.
     """
 
-    def __init__(self, app: TauTuiApp) -> None:
+    def __init__(self, app: TauTuiApp, result: asyncio.Future[object | None]) -> None:
         self._app = app
         self._open = True
         self.widget: Widget | None = None
+        # Created on the app's event loop at open time; resolved exactly once by
+        # the first teardown (close/clear/quarantine/supersede) to wake wait().
+        self._result = result
 
-    def close(self) -> None:
-        """Close the view (safe to call more than once)."""
+    def close(self, result: object | None = None) -> None:
+        """Close the view, resolving ``wait()`` with ``result`` (safe to repeat)."""
         if not self._open:
             return
         self._open = False
+        self._resolve(result)
         self._app._close_extension_main_view(self)
+
+    def _resolve(self, result: object | None) -> None:
+        """Resolve the pending ``wait()`` future once; later calls are no-ops."""
+        if not self._result.done():
+            self._result.set_result(result)
+
+    async def wait(self) -> object | None:
+        """Await teardown and return the ``close`` result (``None`` if cleared)."""
+        return await self._result
 
     @property
     def is_open(self) -> bool:
@@ -362,8 +379,12 @@ class _MainViewHandle:
 class _DeadMainViewHandle:
     """A no-op main-view handle returned when a view could not be opened."""
 
-    def close(self) -> None:
-        """Do nothing: there is no view to close."""
+    def close(self, result: object | None = None) -> None:
+        """Do nothing: there is no view to close (``result`` is ignored)."""
+
+    async def wait(self) -> object | None:
+        """Return None immediately: a dead handle never opens a view."""
+        return None
 
     @property
     def is_open(self) -> bool:
@@ -3195,18 +3216,22 @@ class TauTuiApp(App[None]):
         slot. ``is_open`` reports the *intended* state: the new handle is open
         the instant it is returned even though its widget mounts a tick later.
         """
-        handle = _MainViewHandle(self)
+        handle = _MainViewHandle(self, asyncio.get_event_loop().create_future())
         try:
             widget = factory(handle, self.tui_settings.resolved_theme)
         except Exception as exc:  # noqa: BLE001 - isolation boundary
             self._record_extension_component_failure("main_view", exc, notify=True)
+            # Nothing awaits this handle (the extension gets the dead one), but
+            # resolve it anyway so no future leaks unresolved.
+            handle._resolve(None)
             return _DeadMainViewHandle()
         handle.widget = widget
         previous = self._extension_main_view
         if previous is not None and previous is not handle:
-            # Superseded: its close() becomes a no-op so a stale Esc/unmount can't
-            # tear down the view that replaced it.
-            previous._open = False
+            # Superseded (last writer wins): its close() becomes a no-op so a
+            # stale Esc/unmount can't tear down the view that replaced it, and
+            # its pending wait() resolves with None.
+            self._release_main_view_handle(previous)
         self._extension_main_view = handle
         self._schedule_extension_swap(self._reconcile_main_view())
         return handle
@@ -3232,8 +3257,7 @@ class TauTuiApp(App[None]):
                 except Exception as exc:  # noqa: BLE001 - isolation boundary
                     if self._extension_main_view is target:
                         self._extension_main_view = None
-                    if target is not None:
-                        target._open = False
+                    self._release_main_view_handle(target)
                     self._record_extension_component_failure("main_view", exc, notify=True)
                     self._restore_main_transcript()
                     return
@@ -3251,6 +3275,19 @@ class TauTuiApp(App[None]):
             return
         self._extension_main_view = None
         self._schedule_extension_swap(self._reconcile_main_view())
+
+    def _release_main_view_handle(self, handle: _MainViewHandle | None) -> None:
+        """Mark a host-torn-down handle closed and resolve its ``wait()`` with None.
+
+        Used by the teardown paths the host drives itself (supersede, session
+        rebind, mount failure, quarantine) — as opposed to an explicit
+        ``handle.close(result)`` from the extension — so a pending ``wait()``
+        never leaks unresolved and ``is_open`` reports False.
+        """
+        if handle is None:
+            return
+        handle._open = False
+        handle._resolve(None)
 
     def _restore_main_transcript(self) -> None:
         """Hide the main slot and bring the main transcript back into focus."""
@@ -3300,8 +3337,7 @@ class TauTuiApp(App[None]):
         self._extension_slot_slot_ids.clear()
         handle = self._extension_main_view
         self._extension_main_view = None
-        if handle is not None:
-            handle._open = False
+        self._release_main_view_handle(handle)
         mounted = self._extension_main_view_mounted
         self._extension_main_view_mounted = None
         for widget in (handle.widget if handle is not None else None, mounted):
@@ -3385,7 +3421,9 @@ class TauTuiApp(App[None]):
         ) or self._extension_main_view_mounted is culprit:
             if self._extension_main_view_mounted is culprit:
                 self._extension_main_view_mounted = None
+            handle = self._extension_main_view
             self._extension_main_view = None
+            self._release_main_view_handle(handle)
             with suppress(Exception):
                 culprit.remove()
             self._restore_main_transcript()

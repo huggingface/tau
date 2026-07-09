@@ -6540,6 +6540,89 @@ async def test_component_main_view_open_and_close_restores_transcript() -> None:
 
 
 @pytest.mark.anyio
+async def test_component_main_view_close_result_resolves_wait() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+
+        handle = bridge.open_main_view(
+            lambda handle, theme: Static("main-view", id="ext-main-view")
+        )
+        await pilot.pause()
+
+        sentinel = object()
+        handle.close(sentinel)
+        # wait() may be awaited after close already happened: returns at once.
+        assert await handle.wait() is sentinel
+        # Idempotent: a later close does not overwrite the first result.
+        handle.close("ignored")
+        assert await handle.wait() is sentinel
+
+
+@pytest.mark.anyio
+async def test_component_main_view_close_without_result_resolves_none() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+
+        handle = bridge.open_main_view(
+            lambda handle, theme: Static("main-view", id="ext-main-view")
+        )
+        await pilot.pause()
+
+        handle.close()
+        assert await handle.wait() is None
+
+
+@pytest.mark.anyio
+async def test_component_main_view_superseded_resolves_first_wait_with_none() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+
+        first = bridge.open_main_view(lambda h, theme: Static("one", id="ext-one"))
+        await pilot.pause()
+        assert first.is_open
+
+        # Opening a second view supersedes (last writer wins) the first.
+        second = bridge.open_main_view(lambda h, theme: Static("two", id="ext-two"))
+        await pilot.pause()
+
+        assert not first.is_open
+        assert await first.wait() is None
+        assert second.is_open
+
+
+@pytest.mark.anyio
+async def test_component_main_view_rebind_resolves_pending_wait_with_none() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+
+        handle = bridge.open_main_view(lambda h, theme: Static("v", id="ext-view"))
+        await pilot.pause()
+
+        # Start awaiting before the teardown so a leaked future would hang here.
+        waiter = asyncio.ensure_future(handle.wait())
+        await pilot.pause()
+        assert not waiter.done()
+
+        app._clear_extension_components()
+        await pilot.pause()
+
+        assert not handle.is_open
+        assert await asyncio.wait_for(waiter, timeout=1.0) is None
+
+
+@pytest.mark.anyio
 async def test_component_key_interceptor_consumes_and_gates_on_prompt_text() -> None:
     app = TauTuiApp(FakeSession())
 

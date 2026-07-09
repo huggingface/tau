@@ -149,11 +149,34 @@ def _default_theme() -> TuiTheme:
 class MainViewHandle(Protocol):
     """Handle to an open main-area view (ports Pi's ``OverlayHandle``, trimmed).
 
+    Carries Pi's ``done(result)`` semantics: the factory (or a key interceptor)
+    calls ``close(result)`` to tear the view down *and* hand a value back to
+    whoever opened it, and the opener awaits :meth:`wait` for that value. This
+    is the result-resolution half of Pi's ``ctx.ui.custom<T>``, kept on the
+    synchronous open/handle model rather than an ``async`` open.
+
     ``close()`` unmounts the view and restores the main transcript. It is safe
-    to call more than once.
+    to call more than once; the first close wins and later closes are no-ops.
     """
 
-    def close(self) -> None: ...
+    def close(self, result: object | None = None) -> None:
+        """Close the view, resolving :meth:`wait` with ``result`` (Pi's ``done``).
+
+        The first close wins: its ``result`` is what :meth:`wait` returns, and
+        any later ``close(...)`` is a no-op. Safe to call more than once.
+        """
+        ...
+
+    async def wait(self) -> object | None:
+        """Await the view's teardown and return the result passed to ``close``.
+
+        Resolves with the value handed to :meth:`close` (``None`` when closed
+        with no result). Also resolves with ``None`` — never hangs — when the
+        view is force-cleared on a session rebind, quarantined after a widget
+        crash, or superseded by a later ``open_main_view``. Returns immediately
+        if the view was already closed before ``wait`` is awaited.
+        """
+        ...
 
     @property
     def is_open(self) -> bool: ...
@@ -213,7 +236,9 @@ class ComponentBridge(Protocol):
 
         The widget replaces the main transcript in place (a display-toggled
         sibling, not a modal screen), so prompt-adjacent widgets such as slot
-        widgets stay visible. ``handle.close()`` restores the transcript.
+        widgets stay visible. ``handle.close(result)`` restores the transcript
+        and resolves ``await handle.wait()`` with ``result`` (Pi's ``done``),
+        so the opener can show a view and get an answer back.
         """
         ...
 
@@ -432,8 +457,12 @@ class UiBridge(Protocol):
 class _DeadMainViewHandle:
     """A no-op main-view handle returned when no UI can host a view."""
 
-    def close(self) -> None:
-        """Do nothing: there is no view to close."""
+    def close(self, result: object | None = None) -> None:
+        """Do nothing: there is no view to close (``result`` is ignored)."""
+
+    async def wait(self) -> object | None:
+        """Return None immediately: a dead handle never opens a view."""
+        return None
 
     @property
     def is_open(self) -> bool:

@@ -303,6 +303,24 @@ pane. Textual screens already own focus/Esc/return semantics that the old
 >   pass-through returning the installed `UiBridge` narrowed to `ComponentBridge`
 >   (the bridge already reaches extensions via `runtime.ui`), so no runtime
 >   aggregation/registration was needed.
+>
+> **Implementation note (result resolution — Pi's `done`):** `MainViewHandle`
+> now carries the result-resolution half of Pi's `ctx.ui.custom<T>`. `close()`
+> gained an optional `close(result=None)` and the handle gained
+> `async def wait() -> object | None`, so an extension can "show a view, get an
+> answer": the factory (or a key interceptor) calls `close(result)`, and the
+> opener awaits `handle.wait()` for that value. We kept the **synchronous
+> open/handle** model rather than porting `custom` as an async call — `wait()` is
+> the awaitable, not `open_main_view`. Mechanics: the host creates an
+> `asyncio.Future` on its event loop at open time; `close(result)` resolves it
+> (first close wins, later closes no-op) and `wait()` awaits it (returning at once
+> if already closed). Every *host-driven* teardown resolves the future with
+> `None` via `_release_main_view_handle` — session rebind
+> (`_clear_extension_components`), quarantine of the view's widget, mount failure,
+> and being superseded by a later `open_main_view` (last writer wins) — so an
+> awaiting extension task can never hang. The dead handles
+> (`NullUiBridge`/`StderrUiBridge`, print mode) return `None` from `wait()`
+> immediately and ignore `close(result)`.
 
 ### 2e. The pre-editor input hook and Esc precedence
 
