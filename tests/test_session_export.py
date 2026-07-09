@@ -72,11 +72,10 @@ def test_render_session_html_uses_static_document_layout() -> None:
     assert '<main class="session-shell">' in html
     assert '<aside class="tree-rail">' in html
     assert '<section class="entry-stream" aria-label="Session entries">' in html
-    assert 'class="entry-card role-user active-entry"' in html
-    assert "Session Map" in html
-    assert "Transcript Stream" in html
-    assert "--accent-warm" in html
-    assert "border-left: 1px solid var(--line);" in html
+    assert 'class="entry-card active-entry"' in html
+    assert "Session" in html
+    assert "Transcript" in html
+    assert "border-right: 1px solid var(--line);" in html
     assert "<script" not in html.lower()
     assert "<link" not in html.lower()
 
