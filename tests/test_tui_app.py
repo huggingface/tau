@@ -61,6 +61,7 @@ from tau_coding.tui import app as tui_app
 from tau_coding.tui.app import (
     COMPLETION_MAX_VISIBLE_LINES,
     PASTE_DISPLAY_THRESHOLD,
+    RESERVED_EXTENSION_INTERCEPTOR_KEYS,
     CommandOutputScreen,
     CustomProviderLoginResult,
     CustomProviderLoginScreen,
@@ -6576,6 +6577,60 @@ async def test_component_key_interceptor_skipped_while_modal_open() -> None:
         await pilot.press("escape")
         assert await confirm_task is False
         assert "escape" not in seen
+
+
+@pytest.mark.anyio
+async def test_component_interceptor_never_consumes_reserved_interrupt_keys() -> None:
+    """The hard interrupt/exit keys bypass the interceptor entirely.
+
+    A buggy interceptor that returns True for everything must not be able to
+    swallow ctrl+c/ctrl+d and brick the session: those keys are skipped before
+    the consult (never reach the interceptor) and flow to normal dispatch, so
+    the app's escape hatches always fire. Everything else (e.g. escape) stays
+    interceptable.
+    """
+    assert "ctrl+c" in RESERVED_EXTENSION_INTERCEPTOR_KEYS
+    assert "ctrl+d" in RESERVED_EXTENSION_INTERCEPTOR_KEYS
+    assert "escape" not in RESERVED_EXTENSION_INTERCEPTOR_KEYS
+
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+        seen: list[str] = []
+        quits: list[int] = []
+
+        async def fake_quit() -> None:  # don't actually tear down the pilot
+            quits.append(1)
+
+        app.action_quit = fake_quit  # type: ignore[method-assign]
+
+        # Greedy interceptor: consumes literally every key it is consulted for.
+        bridge.register_key_interceptor(lambda event, text: (seen.append(event.key), True)[1])
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.focus()
+        await pilot.pause()
+
+        # ctrl+c (SIGINT/interrupt reflex, bound to clear_prompt): never consulted,
+        # and its bound action still fires (the prompt is cleared).
+        prompt.text = "hi"
+        prompt.move_cursor((0, 2))
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert "ctrl+c" not in seen
+        assert prompt.text == ""
+
+        # ctrl+d (quit / hard exit): never consulted, and quit still fires.
+        await pilot.press("ctrl+d")
+        await pilot.pause()
+        assert "ctrl+d" not in seen
+        assert quits == [1]
+
+        # A non-reserved key is still routed through the interceptor.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert "escape" in seen
 
 
 @pytest.mark.anyio

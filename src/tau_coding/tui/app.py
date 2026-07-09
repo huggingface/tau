@@ -2035,6 +2035,20 @@ class OAuthLoginScreen(ModalScreen[OAuthCredential | None]):
         self.dismiss(None)
 
 
+#: Keys an extension key interceptor is never consulted for. These flow
+#: straight to normal dispatch so a buggy interceptor (one that returns True
+#: too broadly) cannot swallow the session's hard interrupt/exit reflexes and
+#: brick the TUI. Deliberately minimal — only the always-available escape
+#: hatches: ``ctrl+d`` (the ``quit`` action, exits the app) and ``ctrl+c``
+#: (Tau binds it to ``clear_prompt``, but it is the terminal-standard
+#: SIGINT/interrupt reflex users hit to bail). NOT reserved: escape/enter/
+#: arrows/tab/left/right — those are load-bearing for the tau-subagents
+#: extension and must stay interceptable. This is Tau's counterpart to Pi's
+#: ``RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS`` (runner.ts:69), applied
+#: here to the pre-dispatch interceptor rather than a registerShortcut API.
+RESERVED_EXTENSION_INTERCEPTOR_KEYS: frozenset[str] = frozenset({"ctrl+c", "ctrl+d"})
+
+
 class TauTuiApp(App[None]):
     """Interactive Textual frontend for a ``CodingSession``."""
 
@@ -2659,10 +2673,15 @@ class TauTuiApp(App[None]):
         dialog/picker sits on the screen stack) and only when at least one is
         registered, so the default path is untouched. Interceptors therefore
         see EVERY main-screen key regardless of focus and must self-gate.
+
+        The hard interrupt/exit keys in
+        :data:`RESERVED_EXTENSION_INTERCEPTOR_KEYS` are skipped entirely, so
+        they always reach normal dispatch even behind a misbehaving interceptor.
         """
         if (
             isinstance(event, events.Key)
             and not event.is_forwarded
+            and event.key not in RESERVED_EXTENSION_INTERCEPTOR_KEYS
             and self._extension_key_interceptors
             and len(self.screen_stack) <= 1
             and self._run_extension_key_interceptors(event, self._current_prompt_text())
