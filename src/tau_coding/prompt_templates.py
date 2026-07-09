@@ -1,5 +1,7 @@
 """Markdown prompt template loading and rendering."""
 
+from __future__ import annotations
+
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -14,6 +16,7 @@ from tau_coding.resources import (
 )
 
 _TEMPLATE_VARIABLE_RE = re.compile(r"{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}")
+_ARGUMENT_TEMPLATE_VARIABLES = {"arguments", "args"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,14 +66,26 @@ def load_prompt_templates_with_diagnostics(
     return sorted(templates_by_name.values(), key=lambda template: template.name), diagnostics
 
 
-def render_prompt_template(template: PromptTemplate, variables: Mapping[str, str]) -> str:
-    """Render a prompt template using `{{ variable }}` placeholders."""
+def render_prompt_template(
+    template: PromptTemplate,
+    variables: Mapping[str, str],
+    *,
+    missing: str | None = None,
+) -> str:
+    """Render a prompt template using `{{ variable }}` placeholders.
+
+    By default, missing variables raise `ResourceError`. Callers that treat
+    templates as user-facing shortcuts can pass `missing` to render absent
+    variables as a fallback string instead.
+    """
 
     def replace(match: re.Match[str]) -> str:
         name = match.group(1)
         value = variables.get(name)
         if value is None:
-            raise ResourceError(f"Missing prompt template variable: {name}")
+            if missing is None:
+                raise ResourceError(f"Missing prompt template variable: {name}")
+            return missing
         return value
 
     return _TEMPLATE_VARIABLE_RE.sub(replace, template.content)
@@ -98,10 +113,21 @@ def expand_prompt_template_command(
     if template is None:
         return None
 
-    rendered = render_prompt_template(template, {"arguments": args, "args": args})
-    if args and not _TEMPLATE_VARIABLE_RE.search(template.content):
+    rendered = render_prompt_template(
+        template,
+        {"arguments": args, "args": args},
+        missing="",
+    )
+    if args and not _template_references_arguments(template.content):
         return f"{rendered.rstrip()}\n\n{args}"
     return rendered
+
+
+def _template_references_arguments(content: str) -> bool:
+    return any(
+        match.group(1) in _ARGUMENT_TEMPLATE_VARIABLES
+        for match in _TEMPLATE_VARIABLE_RE.finditer(content)
+    )
 
 
 def _find_prompt_template(

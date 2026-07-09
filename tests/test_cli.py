@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -24,13 +25,167 @@ from tau_coding.rendering import PrintOutputMode
 from tau_coding.resources import TauResourcePaths
 from tau_coding.system_prompt import BuildSystemPromptOptions, build_system_prompt
 from tau_coding.tools import create_coding_tools
+from tau_coding.update_check import (
+    ReleaseNoteSection,
+    ReleaseNotesEntry,
+    ReleaseNotesNotice,
+    UpdateNotice,
+)
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
-def test_version_command() -> None:
+def _strip_ansi(value: str) -> str:
+    return _ANSI_ESCAPE_RE.sub("", value)
+
+
+def _collapse_ws(value: str) -> str:
+    """Collapse all runs of whitespace to single spaces (Rich panel wrapping)."""
+    return re.sub(r"\s+", " ", value)
+
+
+def _panel_text(value: str) -> str:
+    """Strip ANSI escapes and Rich/Click panel borders, then collapse whitespace.
+
+    Typer renders ``BadParameter`` errors inside a bordered panel whose box-drawing
+    characters and line-wrapping can split a single message across lines. On CI
+    (no real TTY) Rich/Click also emit ANSI color codes around the wrapped border,
+    so the ANSI escapes must be removed *before* the border characters, otherwise
+    leftover escapes keep "Available" and "models: qwen" from being contiguous.
+    """
+    no_ansi = _strip_ansi(value)
+    borders = str.maketrans({ch: " " for ch in "│╭╮╰╯─"})
+    return _collapse_ws(no_ansi.translate(borders))
+
+
+def test_force_utf8_streams_reconfigures_non_utf8_streams() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeStream:
+        encoding = "cp1252"
+
+        def reconfigure(self, *, encoding: str, errors: str) -> None:
+            calls.append((encoding, errors))
+
+    class UnreconfigurableStream:
+        """Mimics streams (e.g. some test/CI capture streams) without reconfigure()."""
+
+        encoding = "cp437"
+
+    fake_stdout = FakeStream()
+    fake_stderr = UnreconfigurableStream()
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(cli.sys, "stdout", fake_stdout)
+        mp.setattr(cli.sys, "stderr", fake_stderr)
+        cli._force_utf8_streams()
+
+    assert calls == [("utf-8", "replace")]
+
+
+def test_force_utf8_streams_leaves_utf8_streams_alone() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeStream:
+        encoding = "UTF_8"
+
+        def reconfigure(self, *, encoding: str, errors: str) -> None:
+            calls.append((encoding, errors))
+
+    fake_stdout = FakeStream()
+    fake_stderr = FakeStream()
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(cli.sys, "stdout", fake_stdout)
+        mp.setattr(cli.sys, "stderr", fake_stderr)
+        cli._force_utf8_streams()
+
+    assert calls == []
+
+
+def test_version_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "_current_version", lambda: "1.2.3")
+
     result = CliRunner().invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == "tau 0.1.0"
+    assert result.stdout.strip() == "tau 1.2.3"
+
+
+def test_version_command_does_not_check_for_updates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "_current_version", lambda: "1.2.3")
+    monkeypatch.setattr(
+        cli,
+        "_startup_update_notice",
+        lambda: (_ for _ in ()).throw(AssertionError("no update check")),
+    )
+
+    result = CliRunner().invoke(app, ["--version"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "tau 1.2.3"
+
+
+def test_print_mode_writes_update_notice_to_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run_openai_print_mode(
+        prompt: str,
+        model: str | None,
+        cwd: Path,
+        output: PrintOutputMode,
+        provider_name: str | None,
+    ) -> bool:
+        del prompt, model, cwd, output, provider_name
+        return True
+
+    monkeypatch.setattr(
+        cli,
+        "_startup_update_notice",
+        lambda: UpdateNotice(current_version="0.1.0", latest_version="0.2.0"),
+    )
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(app, ["-p", "hello"])
+
+    assert result.exit_code == 0
+    assert "Tau 0.2.0 is available (installed: 0.1.0)" in result.stderr
+
+
+def test_json_print_mode_suppresses_update_notice(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run_openai_print_mode(
+        prompt: str,
+        model: str | None,
+        cwd: Path,
+        output: PrintOutputMode,
+        provider_name: str | None,
+    ) -> bool:
+        del prompt, model, cwd, output, provider_name
+        return True
+
+    monkeypatch.setattr(
+        cli,
+        "_startup_update_notice",
+        lambda: UpdateNotice(current_version="0.1.0", latest_version="0.2.0"),
+    )
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(app, ["-p", "hello", "--output", "json"])
+
+    assert result.exit_code == 0
+    assert result.stderr == ""
+
+
+def test_utility_command_does_not_check_for_updates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        cli,
+        "_startup_update_notice",
+        lambda: (_ for _ in ()).throw(AssertionError("no update check")),
+    )
+    monkeypatch.setattr(cli.SessionManager, "list_sessions", lambda self: [])
+
+    result = CliRunner().invoke(app, ["sessions"])
+
+    assert result.exit_code == 0
+    assert "No sessions found." in result.stdout
 
 
 def test_cli_without_prompt_invokes_tui_runner(
@@ -46,7 +201,9 @@ def test_cli_without_prompt_invokes_tui_runner(
         provider_name: str | None,
         auto_compact_token_threshold: int | None,
         initial_prompt: str | None,
+        update_notice: object | None = None,
     ) -> None:
+        del update_notice
         calls.append(
             (
                 model,
@@ -60,6 +217,7 @@ def test_cli_without_prompt_invokes_tui_runner(
         )
 
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
     monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
 
     result = CliRunner().invoke(app, [])
@@ -81,7 +239,9 @@ def test_cli_positional_prompt_invokes_tui_runner(
         provider_name: str | None,
         auto_compact_token_threshold: int | None,
         initial_prompt: str | None,
+        update_notice: object | None = None,
     ) -> None:
+        del update_notice
         calls.append(
             (
                 model,
@@ -95,12 +255,54 @@ def test_cli_positional_prompt_invokes_tui_runner(
         )
 
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
     monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
 
     result = CliRunner().invoke(app, ["explain this repo"])
 
     assert result.exit_code == 0
     assert calls == [(None, tmp_path, None, False, None, None, "explain this repo")]
+
+
+@pytest.mark.anyio
+async def test_run_openai_tui_combines_release_notes_and_update_notice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_run_tui_app(**kwargs: object) -> None:
+        calls.append(kwargs["startup_notices"])  # type: ignore[arg-type]
+
+    monkeypatch.setattr(cli, "run_tui_app", fake_run_tui_app)
+    monkeypatch.setattr(cli, "_current_version", lambda: "0.1.2")
+    monkeypatch.setattr(
+        cli,
+        "startup_release_notes_notice",
+        lambda version: ReleaseNotesNotice(
+            current_version=version,
+            previous_version="0.1.1",
+            entries=(
+                ReleaseNotesEntry(
+                    version=version,
+                    date=None,
+                    sections=(ReleaseNoteSection(title="New", items=("Release note",)),),
+                ),
+            ),
+        ),
+    )
+
+    await cli.run_openai_tui(
+        model=None,
+        cwd=tmp_path,
+        update_notice=UpdateNotice(current_version="0.1.2", latest_version="0.1.3"),
+    )
+
+    assert calls == [
+        (
+            "Tau updated to 0.1.2\n\n**New**\n- Release note",
+            "Tau 0.1.3 is available (installed: 0.1.2). Update with: uv tool upgrade tau-ai",
+        )
+    ]
 
 
 @pytest.mark.anyio
@@ -135,6 +337,33 @@ async def test_run_print_mode_prints_final_assistant_text(
         BuildSystemPromptOptions(cwd=tmp_path, tools=create_coding_tools(cwd=tmp_path))
     )
     assert [tool.name for tool in provider.calls[0][3]] == ["read", "write", "edit", "bash"]
+
+
+@pytest.mark.anyio
+async def test_run_print_mode_system_command_prints_prompt_without_provider_call(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    provider = FakeProvider([])
+
+    ok = await run_print_mode(
+        prompt="/system",
+        model="fake",
+        cwd=tmp_path,
+        provider=provider,
+        storage=storage,
+        resource_paths=TauResourcePaths(root=tmp_path / "resources", agents_root=None),
+    )
+
+    captured = capsys.readouterr()
+    expected_system = build_system_prompt(
+        BuildSystemPromptOptions(cwd=tmp_path, tools=create_coding_tools(cwd=tmp_path))
+    )
+    assert ok is True
+    assert captured.out == f"{expected_system}\n"
+    assert captured.err == ""
+    assert provider.calls == []
+    assert await storage.read_all() == []
 
 
 @pytest.mark.anyio
@@ -278,9 +507,9 @@ async def test_run_print_mode_expands_skill_commands(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     resource_root = tmp_path / "resources"
-    skills_dir = resource_root / "skills"
+    skills_dir = resource_root / "skills" / "testing"
     skills_dir.mkdir(parents=True)
-    (skills_dir / "testing.md").write_text("# Testing\nRun pytest.", encoding="utf-8")
+    (skills_dir / "SKILL.md").write_text("# Testing\nRun pytest.", encoding="utf-8")
     provider = FakeProvider(
         [
             [
@@ -374,6 +603,7 @@ def test_cli_exits_nonzero_when_print_mode_fails(monkeypatch: pytest.MonkeyPatch
     ) -> bool:
         return False
 
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
     monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
 
     result = CliRunner().invoke(app, ["-p", "hello"])
@@ -394,7 +624,9 @@ def test_default_tui_invokes_tui_runner_with_flags(
         provider_name: str | None,
         auto_compact_token_threshold: int | None,
         initial_prompt: str | None,
+        update_notice: object | None = None,
     ) -> None:
+        del update_notice
         calls.append(
             (
                 model,
@@ -407,6 +639,7 @@ def test_default_tui_invokes_tui_runner_with_flags(
             )
         )
 
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
     monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
 
     result = CliRunner().invoke(
@@ -429,24 +662,7 @@ def test_default_tui_invokes_tui_runner_with_flags(
     assert calls == [("fake", tmp_path, "session-1", False, "local", 1000, None)]
 
 
-def test_default_tui_rejects_resume_with_new_session(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    async def fake_run_openai_tui(
-        model: str | None,
-        cwd: Path,
-        session_id: str | None,
-        new_session: bool,
-        provider_name: str | None,
-        auto_compact_token_threshold: int | None,
-        initial_prompt: str | None,
-    ) -> None:
-        del model, cwd, session_id, new_session, provider_name, auto_compact_token_threshold
-        del initial_prompt
-        raise RuntimeError("--resume and --new-session cannot be used together")
-
-    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
-
+def test_default_tui_rejects_resume_with_new_session(tmp_path: Path) -> None:
     result = CliRunner().invoke(
         app,
         [
@@ -459,7 +675,102 @@ def test_default_tui_rejects_resume_with_new_session(
     )
 
     assert result.exit_code != 0
-    assert "--resume and --new-session cannot be used together" in result.output
+    assert "--resume and --new-session cannot be used together" in _strip_ansi(result.output)
+
+
+def _constrained_provider_settings() -> ProviderSettings:
+    """Settings with a single provider that only declares ``qwen``."""
+    return ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                models=("qwen",),
+                default_model="qwen",
+            ),
+        ),
+    )
+
+
+def test_panel_text_strips_ansi_and_borders() -> None:
+    """``_panel_text`` must strip ANSI escapes *and* panel borders before matching.
+
+    On CI (no real TTY) Rich/Click emit ANSI color codes around the wrapped panel
+    border, so ``Available`` and ``models: qwen`` get split by escape sequences.
+    This guards the helper used by the bad-model regression tests regardless of
+    the local CliRunner's rendering mode. See issue #265.
+    """
+    ci_style = (
+        "\x1b[33mUsage: \x1b[0mtau [OPTIONS] ...\n"
+        "\x1b[31m╭─\x1b[0m\x1b[31m Error \x1b[0m\x1b[31m─╮\x1b[0m\n"
+        "\x1b[31m│\x1b[0m Invalid value: Model is not configured for provider local: "
+        "llama. Available \x1b[31m│\x1b[0m\n"
+        "\x1b[31m│\x1b[0m models: qwen \x1b[31m│\x1b[0m\n"
+        "\x1b[31m╰╯\x1b[0m"
+    )
+    out = _panel_text(ci_style)
+    assert "Model is not configured for provider local: llama" in out
+    assert "Available models: qwen" in out
+    assert "\x1b" not in out
+
+
+def test_tui_surfaces_bad_model_as_clean_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regression: ``tau --model <bad>`` must exit with a clean error, not a traceback.
+
+    See https://github.com/alejandro-ao/tau/issues/265. The TUI startup path
+    previously only caught ``RuntimeError``, so a ``ProviderConfigError`` (a
+    ``ValueError`` subclass) raised while resolving the provider/model selection
+    escaped the ``anyio`` event loop as an unhandled traceback.
+    """
+    import tau_coding.tui.app as tui_app
+
+    settings = _constrained_provider_settings()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "load_provider_settings", lambda *args, **kwargs: settings)
+    monkeypatch.setattr(tui_app, "load_provider_settings", lambda *args, **kwargs: settings)
+
+    result = CliRunner().invoke(app, ["--model", "llama", "--provider", "local"])
+
+    # A clean BadParameter exits 2 (Typer's convention) and includes the
+    # actionable message listing valid models for the provider.
+    assert result.exit_code == 2
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    out = _panel_text(result.output)
+    assert "Model is not configured for provider local: llama" in out
+    assert "Available models: qwen" in out
+
+
+def test_print_mode_surfaces_bad_model_as_clean_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The print-mode ``--model <bad>`` path must also surface a clean error.
+
+    Companion regression to the TUI path (issue #265): the print-mode handler
+    likewise only caught ``RuntimeError``, so it also dumped a
+    ``ProviderConfigError`` traceback instead of a friendly message.
+    """
+    import tau_coding.tui.app as tui_app
+
+    settings = _constrained_provider_settings()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "load_provider_settings", lambda *args, **kwargs: settings)
+    monkeypatch.setattr(tui_app, "load_provider_settings", lambda *args, **kwargs: settings)
+
+    result = CliRunner().invoke(app, ["--model", "llama", "--provider", "local", "-p", "hello"])
+
+    assert result.exit_code == 2
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    out = _panel_text(result.output)
+    assert "Model is not configured for provider local: llama" in out
+    assert "Available models: qwen" in out
 
 
 def test_sessions_command_lists_indexed_sessions(
@@ -640,11 +951,11 @@ def test_providers_command_lists_default_provider(
     result = CliRunner().invoke(app, ["providers"])
 
     assert result.exit_code == 0
-    assert "*\topenai\topenai-compatible\tgpt-5.5" in result.stdout
+    assert "*\topenai\topenai-compatible\tgpt-5.4" in result.stdout
     assert " \topenai-codex\topenai-codex\tgpt-5.5" in result.stdout
     assert " \tanthropic\tanthropic\tclaude-sonnet-4-6" in result.stdout
-    assert " \topenrouter\topenai-compatible\topenai/gpt-5.5" in result.stdout
-    assert " \thuggingface\topenai-compatible\topenai/gpt-oss-120b" in result.stdout
+    assert " \topenrouter\topenai-compatible\tqwen/qwen3.7-max" in result.stdout
+    assert " \thuggingface\topenai-compatible\tmoonshotai/Kimi-K2.6" in result.stdout
 
 
 def test_render_provider_settings_shows_credential_source(
@@ -682,7 +993,7 @@ def test_render_provider_settings_shows_credential_source(
     cli.render_provider_settings(settings, credential_reader=FakeCredentials())
 
     output = capsys.readouterr().out
-    assert "*\tstored\topenai-compatible\tgpt-5.5" in output
+    assert "*\tstored\topenai-compatible\tgpt-5.4" in output
     assert "\tSTORED_API_KEY\tstored:stored\t" in output
     assert "\tENV_API_KEY\tenv:ENV_API_KEY\t" in output
     assert "\tMISSING_API_KEY\tmissing\t" in output

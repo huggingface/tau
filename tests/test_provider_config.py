@@ -23,6 +23,8 @@ from tau_coding.provider_config import (
     provider_thinking_unavailable_reason,
     resolve_provider_selection,
     save_provider_settings,
+    set_default_provider_model,
+    set_provider_thinking_level,
     upsert_openai_compatible_provider,
 )
 
@@ -35,8 +37,27 @@ def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path)
         "openai",
         "openai-codex",
         "anthropic",
+        "google",
+        "deepseek",
+        "xai",
+        "groq",
+        "cerebras",
+        "nvidia",
         "openrouter",
+        "zai",
+        "mistral",
+        "minimax",
+        "minimax-cn",
+        "moonshotai",
+        "moonshotai-cn",
         "huggingface",
+        "fireworks",
+        "together",
+        "vercel-ai-gateway",
+        "xiaomi",
+        "xiaomi-token-plan-cn",
+        "xiaomi-token-plan-ams",
+        "xiaomi-token-plan-sgp",
     ]
     assert settings.providers[0].default_model == DEFAULT_MODEL
     assert settings.get_provider("anthropic").api_key_env == "ANTHROPIC_API_KEY"
@@ -68,30 +89,36 @@ def test_builtin_openai_declares_model_scoped_thinking_capabilities() -> None:
     assert provider_thinking_levels(openai, model="gpt-4.1") == ()
     assert (
         provider_thinking_unavailable_reason(openai, model="gpt-4.1")
-        == "openai:gpt-4.1 is not declared in thinking_models"
+        == "openai:gpt-4.1 is not a reasoning model"
     )
     assert provider_thinking_levels(openrouter, model="openai/gpt-5.5") == (
         "off",
+        "minimal",
         "low",
         "medium",
         "high",
         "xhigh",
     )
     assert provider_thinking_unavailable_reason(openrouter, model="openai/gpt-5.5") is None
-    assert provider_thinking_levels(openrouter, model="anthropic/claude-sonnet-4.6") == ()
-    assert (
-        provider_thinking_unavailable_reason(
-            openrouter,
-            model="anthropic/claude-sonnet-4.6",
-        )
-        == "openrouter:anthropic/claude-sonnet-4.6 is not declared in thinking_models"
-    )
-    assert provider_thinking_levels(huggingface, model="openai/gpt-oss-120b") == (
+    assert provider_thinking_levels(openrouter, model="anthropic/claude-sonnet-4.6") == (
+        "off",
+        "minimal",
         "low",
         "medium",
         "high",
     )
-    assert provider_thinking_unavailable_reason(huggingface, model="openai/gpt-oss-120b") is None
+    assert (
+        provider_thinking_unavailable_reason(openrouter, model="anthropic/claude-sonnet-4.6")
+        is None
+    )
+    assert provider_thinking_levels(huggingface, model="MiniMaxAI/MiniMax-M2.7") == (
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+    )
+    assert provider_thinking_unavailable_reason(huggingface, model="MiniMaxAI/MiniMax-M2.7") is None
     assert provider_thinking_levels(codex, model="gpt-5.5") == (
         "off",
         "minimal",
@@ -103,14 +130,70 @@ def test_builtin_openai_declares_model_scoped_thinking_capabilities() -> None:
     assert provider_thinking_unavailable_reason(codex, model="gpt-5.5") is None
     assert provider_thinking_levels(anthropic, model="claude-sonnet-4-6") == (
         "off",
+        "low",
+        "medium",
+        "high",
+    )
+    assert provider_thinking_unavailable_reason(anthropic, model="claude-sonnet-4-6") is None
+    assert provider_thinking_levels(anthropic, model="claude-haiku-4-5") == (
+        "off",
         "minimal",
         "low",
         "medium",
         "high",
-        "xhigh",
     )
-    assert provider_thinking_unavailable_reason(anthropic, model="claude-sonnet-4-6") is None
-    assert provider_thinking_levels(anthropic, model="claude-haiku-4-5") == ()
+
+
+def test_load_provider_settings_accepts_provider_preferences_with_user_catalog(
+    tmp_path: Path,
+) -> None:
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    (tau_home / "catalog.toml").write_text(
+        """
+schema_version = 1
+
+[[providers]]
+name = "local"
+display_name = "local"
+kind = "openai-compatible"
+base_url = "http://localhost:11434/v1"
+api_key_env = "LOCAL_API_KEY"
+models = ["qwen", "llama"]
+default_model = "qwen"
+docs_url = "http://localhost:11434/v1"
+""".strip(),
+        encoding="utf-8",
+    )
+    (tau_home / "providers.json").write_text(
+        json.dumps(
+            {
+                "default_provider": "local",
+                "provider_preferences": {
+                    "local": {
+                        "default_model": "qwen",
+                        "headers": {"X-Test": "yes"},
+                        "timeout_seconds": 12.0,
+                        "max_retries": 1,
+                        "max_retry_delay_seconds": 0.5,
+                        "thinking_defaults": {},
+                    }
+                },
+                "scoped_models": [{"provider": "local", "model": "qwen"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_provider_settings(TauPaths(home=tau_home))
+
+    provider = settings.get_provider("local")
+    assert settings.default_provider == "local"
+    assert provider.base_url == "http://localhost:11434/v1"
+    assert provider.default_model == "qwen"
+    assert provider.headers == {"X-Test": "yes"}
+    assert provider.timeout_seconds == 12.0
+    assert settings.scoped_models == (ScopedModelConfig(provider="local", model="qwen"),)
 
 
 def test_save_provider_settings_writes_backup_when_replacing(tmp_path: Path) -> None:
@@ -232,14 +315,9 @@ def test_upsert_openai_compatible_provider_replaces_and_sets_default() -> None:
     )
 
     assert updated.default_provider == "local"
-    assert [item.name for item in updated.providers] == [
-        "anthropic",
-        "huggingface",
-        "local",
-        "openai",
-        "openai-codex",
-        "openrouter",
-    ]
+    assert [item.name for item in updated.providers] == sorted(
+        [provider.name for provider in settings.providers] + ["local"]
+    )
     assert replaced.get_provider("local").default_model == "llama"
     assert replaced.scoped_models == settings.scoped_models
 
@@ -269,6 +347,48 @@ def test_resolve_provider_selection_rejects_unknown_provider() -> None:
         resolve_provider_selection(ProviderSettings(), provider_name="missing")
 
 
+def test_resolve_provider_selection_rejects_model_not_declared_for_provider() -> None:
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                models=("qwen",),
+                default_model="qwen",
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        ProviderConfigError,
+        match="Model is not configured for provider local: llama",
+    ):
+        resolve_provider_selection(settings, model="llama")
+
+
+def test_set_default_provider_model_rejects_model_not_declared_for_provider() -> None:
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                models=("qwen",),
+                default_model="qwen",
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        ProviderConfigError,
+        match="Model is not configured for provider local: llama",
+    ):
+        set_default_provider_model(settings, provider_name="local", model="llama")
+
+
 def test_openai_compatible_config_from_provider_uses_configured_env_var(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -284,6 +404,7 @@ def test_openai_compatible_config_from_provider_uses_configured_env_var(
     config = openai_compatible_config_from_provider(provider)
 
     assert config.api_key == "test-key"
+    assert config.provider_name == "local"
     assert config.base_url == "http://localhost:11434/v1"
     assert config.headers == {}
     assert config.timeout_seconds == 60.0
@@ -582,6 +703,7 @@ def test_provider_settings_from_json_loads_custom_thinking_capabilities() -> Non
                     "thinking_models": ["reasoner"],
                     "thinking_default": "low",
                     "thinking_parameter": "reasoning_effort",
+                    "thinking_defaults": {"reasoner": "high"},
                 }
             ],
         }
@@ -593,7 +715,33 @@ def test_provider_settings_from_json_loads_custom_thinking_capabilities() -> Non
     assert provider_thinking_levels(provider, model="reasoner") == ("off", "low", "high")
     assert provider_thinking_levels(provider, model="plain") == ()
     assert provider_default_thinking_level(provider, model="reasoner") == "low"
+    assert provider.thinking_defaults == {"reasoner": "high"}
     assert provider.to_json()["thinking_parameter"] == "reasoning_effort"
+
+
+def test_set_provider_thinking_level_updates_preference() -> None:
+    provider = OpenAICompatibleProviderConfig(
+        name="local",
+        models=("reasoner",),
+        default_model="reasoner",
+        thinking_levels=("low", "high"),
+        thinking_models=("reasoner",),
+        thinking_default="low",
+        thinking_parameter="reasoning_effort",
+    )
+    settings = ProviderSettings(default_provider="local", providers=(provider,))
+
+    updated = set_provider_thinking_level(
+        settings,
+        provider_name="local",
+        model="reasoner",
+        thinking_level="high",
+    )
+
+    assert updated.get_provider("local").thinking_defaults == {"reasoner": "high"}
+    assert updated.to_json()["provider_preferences"]["local"]["thinking_defaults"] == {
+        "reasoner": "high"
+    }
 
 
 def test_provider_settings_from_json_loads_openai_codex_provider() -> None:
@@ -653,6 +801,45 @@ def test_provider_settings_from_json_loads_anthropic_thinking_provider() -> None
     assert provider.thinking_parameter == "anthropic.thinking"
 
 
+def test_load_provider_settings_does_not_restore_stale_codex_builtin_models(
+    tmp_path: Path,
+) -> None:
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    (tau_home / "providers.json").write_text(
+        """
+{
+  "default_provider": "openai-codex",
+  "providers": [
+    {
+      "type": "openai-codex",
+      "name": "openai-codex",
+      "base_url": "https://chatgpt.com/backend-api",
+      "api_key_env": "OPENAI_CODEX_ACCESS_TOKEN",
+      "credential_name": "openai-codex",
+      "models": ["gpt-5", "gpt-5.5"],
+      "default_model": "gpt-5"
+    }
+  ]
+}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    settings = load_provider_settings(TauPaths(home=tau_home))
+    provider = settings.get_provider("openai-codex")
+
+    assert provider.models == (
+        "gpt-5.5",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.3-codex",
+        "gpt-5.3-codex-spark",
+        "gpt-5.2",
+    )
+    assert provider.default_model == "gpt-5.5"
+
+
 def test_load_provider_settings_merges_builtin_model_catalog(tmp_path: Path) -> None:
     tau_home = tmp_path / ".tau"
     tau_home.mkdir()
@@ -667,8 +854,8 @@ def test_load_provider_settings_merges_builtin_model_catalog(tmp_path: Path) -> 
       "base_url": "https://router.huggingface.co/v1",
       "api_key_env": "HF_TOKEN",
       "credential_name": "huggingface",
-      "models": ["openai/gpt-oss-120b", "custom/coder"],
-      "default_model": "openai/gpt-oss-120b",
+      "models": ["MiniMaxAI/MiniMax-M2.7", "custom/coder"],
+      "default_model": "MiniMaxAI/MiniMax-M2.7",
       "headers": {"X-HF-Bill-To": "my-org"}
     }
   ]
@@ -680,12 +867,11 @@ def test_load_provider_settings_merges_builtin_model_catalog(tmp_path: Path) -> 
     settings = load_provider_settings(TauPaths(home=tau_home))
 
     provider = settings.get_provider("huggingface")
-    assert provider.default_model == "openai/gpt-oss-120b"
+    assert provider.default_model == "MiniMaxAI/MiniMax-M2.7"
     assert provider.headers == {"X-HF-Bill-To": "my-org"}
-    assert provider.context_windows["openai/gpt-oss-120b"] == 131_072
+    assert provider.context_windows["MiniMaxAI/MiniMax-M2.7"] == 204_800
     assert "Qwen/Qwen3-Coder-480B-A35B-Instruct" in provider.models
-    assert "MiniMaxAI/MiniMax-M3" in provider.models
-    assert "moonshotai/Kimi-K2.7-Code" in provider.models
+    assert "moonshotai/Kimi-K2.6" in provider.models
     assert "custom/coder" in provider.models
 
 

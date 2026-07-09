@@ -1,5 +1,7 @@
 """Canonical filesystem paths for Tau user and project data."""
 
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass, field
 from hashlib import sha256

@@ -5,7 +5,12 @@ build/
 dist/
 wheels/
 *.egg-info
-site/
+.mypy_cache/
 
 # Virtual environments
 .venv
+
+# Hugo docs site (website/)
+website/public/
+website/resources/
+website/.hugo_build.lock

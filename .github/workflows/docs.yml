@@ -1,8 +1,9 @@
 name: Deploy documentation
 
-# Temporarily disabled until the repository is public.
-# Re-enable the push trigger to publish documentation on every main branch push.
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -14,33 +15,33 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+defaults:
+  run:
+    working-directory: website
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
+      - name: Setup Hugo
+        uses: peaceiris/actions-hugo@v3
         with:
-          enable-cache: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version-file: .python-version
-
-      - name: Install dependencies
-        run: uv sync --group docs --frozen
+          hugo-version: "0.152.2"
+          extended: true
 
       - name: Build documentation
-        run: uv run --group docs mkdocs build --strict
+        run: hugo --minify
+
+      - name: Build search index
+        run: npx --yes pagefind@latest --site public
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
-          path: site
+          path: website/public
 
   deploy:
     environment:
@@ -51,4 +52,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

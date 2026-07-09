@@ -1,5 +1,7 @@
 """Project instruction discovery for Tau coding sessions."""
 
+from __future__ import annotations
+
 from pathlib import Path
 
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths

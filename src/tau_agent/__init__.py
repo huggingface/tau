@@ -1,5 +1,7 @@
 """Portable agent harness primitives for Tau."""
 
+from __future__ import annotations
+
 from tau_agent.events import (
     AgentEndEvent,
     AgentEvent,

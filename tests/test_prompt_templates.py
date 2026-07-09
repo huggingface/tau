@@ -121,6 +121,30 @@ def test_expand_prompt_template_command_replaces_slash_command() -> None:
     )
 
 
+def test_expand_prompt_template_command_blanks_missing_custom_variables() -> None:
+    template = PromptTemplate(
+        name="review",
+        path=Path("review.md"),
+        content="Base branch: {{ base_branch }}\nReview PR {{ arguments }}.",
+    )
+
+    assert expand_prompt_template_command("/review 168", [template]) == (
+        "Base branch: \nReview PR 168."
+    )
+
+
+def test_expand_prompt_template_command_appends_arguments_without_argument_placeholder() -> None:
+    template = PromptTemplate(
+        name="review",
+        path=Path("review.md"),
+        content="Base branch: {{ base_branch }}\nReview this code.",
+    )
+
+    assert expand_prompt_template_command("/review src/app.py", [template]) == (
+        "Base branch: \nReview this code.\n\nsrc/app.py"
+    )
+
+
 def test_expand_prompt_template_command_appends_arguments_without_placeholder() -> None:
     template = PromptTemplate(name="review", path=Path("review.md"), content="Review this code.")
 

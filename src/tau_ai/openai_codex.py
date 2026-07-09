@@ -1,5 +1,7 @@
 """OpenAI Codex subscription Responses provider."""
 
+from __future__ import annotations
+
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from json import JSONDecodeError, dumps, loads
@@ -25,6 +27,8 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.http import create_async_client
+from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 
@@ -55,6 +59,7 @@ class OpenAICodexConfig:
     originator: str = "tau"
     reasoning_effort: str | None = None
     reasoning_summary: str = "auto"
+    provider_name: str = "OpenAI Codex"
 
 
 class OpenAICodexProvider:
@@ -143,11 +148,14 @@ class OpenAICodexProvider:
                                     return
                                 continue
                             yield ProviderErrorEvent(
-                                message=(
-                                    "OpenAI Codex request failed with status "
-                                    f"{response.status_code}"
+                                message=provider_http_error_message(
+                                    provider_name=self._config.provider_name,
+                                    status_code=response.status_code,
+                                    body=body_text,
+                                    model=model,
                                 ),
                                 data={
+                                    "status_code": response.status_code,
                                     "body": body_text,
                                     "attempts": attempt + 1,
                                 },
@@ -196,7 +204,7 @@ class OpenAICodexProvider:
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self._config.timeout_seconds)
+            self._client = create_async_client(timeout=self._config.timeout_seconds)
         return self._client
 
     def _should_retry(

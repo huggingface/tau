@@ -43,11 +43,23 @@ class FakeSession:
         self.thinking_unavailable_reason: str | None = None
         self.tui_theme = "tau-dark"
         self.resource_diagnostics = ()
+        self.system_prompt = "You are Tau.\nFollow project instructions."
         self.session_id = "session-1"
         self.session_title: str | None = None
         self.session_manager: SessionManager | None = manager
+        self.ensure_session_indexed_called = False
         self.reload_called = False
         self.provider_reload_called = False
+
+    def ensure_session_indexed(self) -> None:
+        self.ensure_session_indexed_called = True
+        if self.session_manager is not None:
+            self.session_manager.create_session(
+                cwd=self.cwd,
+                model=self.model,
+                provider_name=self.provider_name,
+                session_id=self.session_id,
+            )
 
     def set_model(self, model: str) -> None:
         self.model = model
@@ -109,9 +121,21 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
         "scoped-models",
         "session",
         "skill",
+        "system",
         "theme",
         "tree",
     ]
+
+
+def test_system_command_returns_active_prompt(tmp_path: Path) -> None:
+    registry = create_default_command_registry()
+    session = FakeSession(tmp_path)
+
+    result = registry.execute(session, "/system")
+
+    assert result.handled is True
+    assert result.message == "You are Tau.\nFollow project instructions."
+    assert registry.execute(session, "/system extra").message == "Usage: /system"
 
 
 def test_quit_and_new_return_control_flags(tmp_path: Path) -> None:
@@ -119,7 +143,7 @@ def test_quit_and_new_return_control_flags(tmp_path: Path) -> None:
     session = FakeSession(tmp_path)
 
     assert registry.execute(session, "/quit").exit_requested is True
-    assert registry.execute(session, "/exit").message == "Unknown command: /exit"
+    assert registry.execute(session, "/exit").exit_requested is True
     assert registry.execute(session, "/q").message == "Unknown command: /q"
     assert registry.execute(session, "/new").new_session_requested is True
     assert registry.execute(session, "/clear").message == "Unknown command: /clear"
@@ -210,10 +234,7 @@ def test_session_command_explains_unavailable_thinking_controls(tmp_path: Path) 
 
     assert result.message is not None
     assert "Thinking mode: unavailable" in result.message
-    assert (
-        "Thinking unavailable: Provider local does not declare thinking_levels"
-        in result.message
-    )
+    assert "Thinking unavailable: Provider local does not declare thinking_levels" in result.message
     assert "Thinking mode: medium" not in result.message
 
 
@@ -309,6 +330,13 @@ def test_login_command_requests_provider_login(tmp_path: Path) -> None:
 
     assert result.handled is True
     assert result.login_provider == "openai"
+
+
+def test_login_command_requests_custom_provider_login(tmp_path: Path) -> None:
+    result = create_default_command_registry().execute(FakeSession(tmp_path), "/login custom")
+
+    assert result.handled is True
+    assert result.custom_provider_login_requested is True
 
 
 def test_logout_command_requests_provider_picker(tmp_path: Path) -> None:
@@ -409,6 +437,20 @@ def test_name_command_renames_current_session(tmp_path: Path) -> None:
     assert renamed.title == "Customer bugfix"
     assert renamed.model == "fake-model"
     assert renamed.updated_at >= record.updated_at
+
+
+def test_name_command_indexes_pending_session_before_renaming(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    session = FakeSession(tmp_path, manager=manager)
+    session.session_id = "pending-session"
+
+    result = create_default_command_registry().execute(session, "/name Customer bugfix")
+
+    assert result.message == "Session renamed: Customer bugfix"
+    assert session.ensure_session_indexed_called is True
+    record = manager.get_session("pending-session")
+    assert record is not None
+    assert record.title == "Customer bugfix"
 
 
 def test_name_command_reports_missing_session_manager(tmp_path: Path) -> None:

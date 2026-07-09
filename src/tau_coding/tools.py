@@ -7,6 +7,8 @@ directory, return structured `AgentToolResult` values, and keep local
 filesystem/shell behavior outside the reusable `tau_agent` package.
 """
 
+from __future__ import annotations
+
 import asyncio
 import difflib
 import json
@@ -18,6 +20,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from time import monotonic
+from typing import Any
 
 from tau_agent.tools import AgentTool, AgentToolResult, ToolCancellationToken, ToolExecutor
 from tau_agent.types import JSONValue
@@ -90,21 +93,26 @@ class ToolDefinition:
 _file_locks: dict[Path, asyncio.Lock] = {}
 
 
-def create_coding_tools(*, cwd: str | Path | None = None) -> list[AgentTool]:
+def create_coding_tools(
+    *,
+    cwd: str | Path | None = None,
+    shell_command_prefix: str | None = None,
+) -> list[AgentTool]:
     """Create the default coding-tool set for a local project.
 
     The returned tools are ordered as `read`, `write`, `edit`, and `bash`.
     Relative paths used with those tools are resolved against `cwd`; when `cwd`
     is omitted, the process current working directory at factory-call time is
     used. The tools share per-path write/edit locks within this process so
-    concurrent mutations of the same file do not interleave.
+    concurrent mutations of the same file do not interleave. When configured,
+    `shell_command_prefix` is prepended to every bash tool command.
     """
     root = Path.cwd() if cwd is None else Path(cwd)
     return [
         create_read_tool(cwd=root),
         create_write_tool(cwd=root),
         create_edit_tool(cwd=root),
-        create_bash_tool(cwd=root),
+        create_bash_tool(cwd=root, shell_command_prefix=shell_command_prefix),
     ]
 
 
@@ -422,7 +430,11 @@ def create_edit_tool(*, cwd: str | Path | None = None) -> AgentTool:
     return create_edit_tool_definition(cwd=cwd).to_agent_tool()
 
 
-def create_bash_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinition:
+def create_bash_tool_definition(
+    *,
+    cwd: str | Path | None = None,
+    shell_command_prefix: str | None = None,
+) -> ToolDefinition:
     """Create a definition for the `bash` tool.
 
     The tool runs a shell command with `cwd` as the subprocess working
@@ -440,12 +452,14 @@ def create_bash_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
     duration, truncation metadata, and full-output path metadata.
     """
     root = Path.cwd() if cwd is None else Path(cwd)
+    prefix = shell_command_prefix.strip() if shell_command_prefix else None
 
     async def execute(
         arguments: Mapping[str, JSONValue],
         signal: ToolCancellationToken | None = None,
     ) -> AgentToolResult:
         command = _str_arg(arguments, "command")
+        shell_command = _prefixed_shell_command(command, prefix)
         timeout = _optional_float_arg(arguments, "timeout")
         if timeout is not None and timeout <= 0:
             raise ToolInputError("timeout must be greater than 0")
@@ -455,15 +469,16 @@ def create_bash_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
         start = monotonic()
         if os.name == "posix":
             process = await asyncio.create_subprocess_shell(
-                command,
+                shell_command,
                 cwd=root,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 start_new_session=True,
+                executable="bash" if prefix else None,
             )
         else:
             process = await asyncio.create_subprocess_shell(
-                command,
+                shell_command,
                 cwd=root,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
@@ -527,6 +542,7 @@ def create_bash_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
                 "duration_seconds": round(monotonic() - start, 3),
                 "truncation": truncation.to_json(),
                 "full_output_path": full_output_path,
+                "shell_command_prefix_applied": prefix is not None,
             },
         )
 
@@ -555,9 +571,23 @@ def create_bash_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
     )
 
 
-def create_bash_tool(*, cwd: str | Path | None = None) -> AgentTool:
+def create_bash_tool(
+    *,
+    cwd: str | Path | None = None,
+    shell_command_prefix: str | None = None,
+) -> AgentTool:
     """Create an `AgentTool` for executing shell commands with captured output."""
-    return create_bash_tool_definition(cwd=cwd).to_agent_tool()
+    return create_bash_tool_definition(
+        cwd=cwd,
+        shell_command_prefix=shell_command_prefix,
+    ).to_agent_tool()
+
+
+def _prefixed_shell_command(command: str, prefix: str | None) -> str:
+    """Return a shell command with an opt-in setup prefix applied."""
+    if prefix is None:
+        return command
+    return f"{prefix}\n{command}"
 
 
 def format_size(bytes_count: int) -> str:
@@ -582,7 +612,7 @@ async def _communicate_with_cancellation(
     communicate = asyncio.create_task(process.communicate())
     cancel_watch: asyncio.Task[None] | None = None
     try:
-        wait_for = {communicate}
+        wait_for: set[asyncio.Task[Any]] = {communicate}
         if signal is not None:
             cancel_watch = asyncio.create_task(_wait_for_cancel(signal))
             wait_for.add(cancel_watch)
@@ -601,8 +631,11 @@ async def _communicate_with_cancellation(
         try:
             output_bytes, stderr = await communicate
         except asyncio.CancelledError:
-            output_bytes, stderr = b"", None
-        return output_bytes, stderr, not cancelled, cancelled
+            output_bytes = b""
+            stderr_result: bytes | None = None
+        else:
+            stderr_result = stderr
+        return output_bytes, stderr_result, not cancelled, cancelled
     except asyncio.CancelledError:
         _kill_process_tree(process)
         if not communicate.done():

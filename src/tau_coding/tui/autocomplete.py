@@ -1,5 +1,7 @@
 """Prompt autocomplete helpers for Tau's Textual TUI."""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -109,7 +111,10 @@ def build_completion_state(
 
     token_end = _first_token_end(text)
     token = text[:token_end]
+    has_argument_text = token_end < len(text)
     if token.startswith("/skill:"):
+        if has_argument_text and _matches_skill_command(token, skills):
+            return CompletionState()
         return CompletionState(_skill_completions(token=token, token_end=token_end, skills=skills))
 
     if ":" in token:
@@ -127,6 +132,12 @@ def build_completion_state(
     )
     if argument_completions is not None:
         return CompletionState(argument_completions)
+
+    if has_argument_text and (
+        _matches_prompt_template_command(token, prompt_templates)
+        or _matches_registered_command(token, command_registry)
+    ):
+        return CompletionState()
 
     return CompletionState(
         _command_completions(
@@ -300,6 +311,23 @@ def _parse_shell_path_token(token: str) -> tuple[str, str, str] | None:
     if any(part in {"", ".", ".."} for part in parent_parts):
         return None
     return parent_text, name_prefix, replacement_prefix
+
+
+def _matches_skill_command(token: str, skills: Sequence[Skill]) -> bool:
+    command_name = token.removeprefix("/skill:").lower()
+    return any(skill.name.lower() == command_name for skill in skills)
+
+
+def _matches_prompt_template_command(
+    token: str, prompt_templates: Sequence[PromptTemplate]
+) -> bool:
+    command_name = token.removeprefix("/").lower()
+    return any(template.name.lower() == command_name for template in prompt_templates)
+
+
+def _matches_registered_command(token: str, registry: CommandRegistry) -> bool:
+    command_name = token.removeprefix("/").lower()
+    return registry.get(command_name) is not None
 
 
 def _command_completions(

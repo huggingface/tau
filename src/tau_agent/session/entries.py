@@ -1,5 +1,7 @@
 """Append-only session entry models."""
 
+from __future__ import annotations
+
 from time import time
 from typing import Annotated, Literal
 from uuid import uuid4

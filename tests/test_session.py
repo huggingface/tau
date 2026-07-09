@@ -106,6 +106,16 @@ def test_session_state_replays_linear_entries() -> None:
     assert state.context_entry_ids == ("user", "assistant")
 
 
+def test_session_state_can_replay_explicit_empty_leaf() -> None:
+    root = MessageEntry(id="root", message=UserMessage(content="Hi"))
+
+    state = SessionState.from_entries([root], leaf_id=None)
+
+    assert state.messages == ()
+    assert state.active_leaf_id is None
+    assert state.context_entry_ids == ()
+
+
 def test_session_state_replays_compaction_as_context_summary() -> None:
     user = MessageEntry(id="user", message=UserMessage(content="Explain sessions."))
     assistant = MessageEntry(
@@ -188,6 +198,7 @@ def test_session_state_replays_branch_summary_as_context_summary() -> None:
     state = SessionState.from_entries([root, summary], leaf_id="branch-summary")
 
     assert state.messages == (
+        UserMessage(content="Root"),
         UserMessage(
             content=(
                 "The following is a summary of a branch that this conversation came back from:\n"
@@ -197,7 +208,7 @@ def test_session_state_replays_branch_summary_as_context_summary() -> None:
             )
         ),
     )
-    assert state.context_entry_ids == ("branch-summary",)
+    assert state.context_entry_ids == ("root", "branch-summary")
 
 
 def test_path_to_entry_returns_root_to_leaf_branch() -> None:

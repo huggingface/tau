@@ -1,5 +1,7 @@
 """Stateful reusable agent harness built on the pure loop."""
 
+from __future__ import annotations
+
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import suppress
@@ -9,7 +11,7 @@ from typing import Literal
 
 from tau_agent.events import AgentEvent, MessageEndEvent, MessageStartEvent, QueueUpdateEvent
 from tau_agent.loop import run_agent_loop
-from tau_agent.messages import AgentMessage, UserMessage
+from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
 from tau_agent.tools import AgentTool
 from tau_ai.provider import ModelProvider
 
@@ -165,6 +167,12 @@ class AgentHarness:
             return None
         return self._follow_up_queue.pop()
 
+    def pop_latest_steering(self) -> AgentMessage | None:
+        """Remove and return the most recently queued steering message."""
+        if not self._steering_queue:
+            return None
+        return self._steering_queue.pop()
+
     def queue_update_event(self) -> QueueUpdateEvent:
         """Return the current queue state as a portable agent event."""
         return QueueUpdateEvent(
@@ -175,6 +183,7 @@ class AgentHarness:
     def prompt(self, content: str) -> AsyncIterator[AgentEvent]:
         """Append a user message and run the agent loop."""
         self._ensure_not_running()
+        self._append_interrupted_tool_results()
         self._running = True
         message = UserMessage(content=content)
         self._messages.append(message)
@@ -183,6 +192,7 @@ class AgentHarness:
     def continue_(self) -> AsyncIterator[AgentEvent]:
         """Continue the agent loop without appending a new user message."""
         self._ensure_not_running()
+        self._append_interrupted_tool_results()
         self._running = True
         return self._run()
 
@@ -213,6 +223,8 @@ class AgentHarness:
                         yield prompt_event
                     pending_prompt_event = None
         finally:
+            if signal.is_cancelled():
+                self._append_interrupted_tool_results()
             if self._current_signal is signal:
                 self._current_signal = None
             self._running = False
@@ -243,3 +255,44 @@ class AgentHarness:
             queue.clear()
             return messages
         return (queue.popleft(),)
+
+    def append_interrupted_tool_results(self) -> int:
+        """Repair a transcript left mid-tool-call by an interrupted run.
+
+        Returns the number of synthetic tool results that were appended.
+        """
+        before_count = len(self._messages)
+        self._append_interrupted_tool_results()
+        return len(self._messages) - before_count
+
+    def _append_interrupted_tool_results(self) -> None:
+        """Repair a transcript left mid-tool-call by an interrupted run.
+
+        OpenAI-compatible providers reject a transcript where an assistant tool
+        call has no matching tool result anywhere in the submitted history. If
+        the UI cancels the worker while a tool is still running, the normal loop
+        may not get a chance to append the cancellation result, so repair that
+        gap before the next model request.
+        """
+        returned_ids = {
+            message.tool_call_id
+            for message in self._messages
+            if isinstance(message, ToolResultMessage)
+        }
+        for message in tuple(self._messages):
+            if not isinstance(message, AssistantMessage):
+                continue
+            for tool_call in message.tool_calls:
+                if tool_call.id in returned_ids:
+                    continue
+                returned_ids.add(tool_call.id)
+                content = "Tool call interrupted by user"
+                self._messages.append(
+                    ToolResultMessage(
+                        tool_call_id=tool_call.id,
+                        name=tool_call.name,
+                        content=content,
+                        ok=False,
+                        error=content,
+                    )
+                )

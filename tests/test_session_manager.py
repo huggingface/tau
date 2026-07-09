@@ -29,6 +29,25 @@ def test_session_manager_creates_and_lists_sessions(tmp_path: Path) -> None:
     assert manager.list_sessions(cwd) == [record]
 
 
+def test_session_manager_prepares_unindexed_session(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+
+    record = manager.prepare_session(cwd=cwd, model="fake", provider_name="fake-provider")
+
+    assert record.provider_name == "fake-provider"
+    assert record.path.name == f"{record.id}.jsonl"
+    assert manager.get_session(record.id) is None
+    assert manager.list_sessions(cwd) == []
+
+    indexed = manager.index_session(record)
+
+    assert indexed == record
+    assert manager.get_session(record.id) == record
+    assert manager.list_sessions(cwd) == [record]
+
+
 def test_session_manager_filters_sessions_by_project_cwd(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     first_cwd = tmp_path / "first"

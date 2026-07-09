@@ -1,5 +1,7 @@
 """Tau coding-agent application package."""
 
+from __future__ import annotations
+
 from tau_coding.commands import (
     CommandRegistry,
     CommandResult,
@@ -73,6 +75,7 @@ from tau_coding.provider_config import (
     upsert_openai_compatible_provider,
     upsert_provider,
     upsert_saved_provider,
+    validate_provider_model,
 )
 from tau_coding.rendering import (
     EventRenderer,
@@ -87,6 +90,7 @@ from tau_coding.session import (
     CodingSession,
     CodingSessionConfig,
     ModelChoice,
+    SessionTreeBranchResult,
     SessionTreeChoice,
     default_session_path,
     jsonl_session_storage,
@@ -98,6 +102,13 @@ from tau_coding.session_export import (
     render_session_html,
 )
 from tau_coding.session_manager import CodingSessionRecord, SessionManager
+from tau_coding.shell_config import (
+    ShellConfigError,
+    ShellSettings,
+    load_shell_settings,
+    shell_settings_from_json,
+    shell_settings_path,
+)
 from tau_coding.skills import (
     Skill,
     build_skill_index,
@@ -138,8 +149,9 @@ from tau_coding.tools import (
     create_write_tool,
     create_write_tool_definition,
 )
+from tau_coding.version import current_version
 
-__version__ = "0.1.0"
+__version__ = current_version()
 
 __all__ = [
     "__version__",
@@ -157,6 +169,7 @@ __all__ = [
     "FinalTextRenderer",
     "JsonEventRenderer",
     "ModelChoice",
+    "SessionTreeBranchResult",
     "SessionTreeChoice",
     "AnthropicProviderConfig",
     "OpenAICompatibleProviderConfig",
@@ -175,6 +188,8 @@ __all__ = [
     "ResourceError",
     "SessionManager",
     "SessionExportError",
+    "ShellConfigError",
+    "ShellSettings",
     "Skill",
     "SlashCommand",
     "TauPaths",
@@ -232,6 +247,7 @@ __all__ = [
     "FileCredentialStore",
     "jsonl_session_storage",
     "load_provider_settings",
+    "load_shell_settings",
     "load_prompt_templates",
     "load_prompt_templates_with_diagnostics",
     "load_skills",
@@ -251,9 +267,12 @@ __all__ = [
     "resolve_provider_selection",
     "save_default_provider_model",
     "save_provider_settings",
+    "shell_settings_from_json",
+    "shell_settings_path",
     "toggle_saved_scoped_model",
     "export_session_html",
     "upsert_provider",
     "upsert_openai_compatible_provider",
     "upsert_saved_provider",
+    "validate_provider_model",
 ]

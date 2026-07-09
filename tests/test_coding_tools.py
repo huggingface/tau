@@ -1,4 +1,5 @@
 import asyncio
+import shlex
 from pathlib import Path
 from time import monotonic
 
@@ -160,6 +161,44 @@ async def test_bash_tool_captures_stdout_and_exit_code(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
+async def test_create_coding_tools_applies_shell_command_prefix(
+    tmp_path: Path,
+) -> None:
+    tools = create_coding_tools(
+        cwd=tmp_path,
+        shell_command_prefix="shopt -s expand_aliases\nalias greet='printf coding-tool-alias'",
+    )
+    bash_tool = next(tool for tool in tools if tool.name == "bash")
+
+    result = await bash_tool.execute({"command": "greet"})
+
+    assert result.ok is True
+    assert result.content == "coding-tool-alias"
+    assert result.data is not None
+    assert result.data["shell_command_prefix_applied"] is True
+
+
+@pytest.mark.anyio
+async def test_bash_tool_applies_opt_in_shell_command_prefix(tmp_path: Path) -> None:
+    rc_path = tmp_path / ".zshrc"
+    marker = tmp_path / "sourced"
+    rc_path.write_text(
+        f"alias greet='printf alias-output'\ntouch {shlex.quote(str(marker))}\n",
+        encoding="utf-8",
+    )
+    prefix = f"shopt -s expand_aliases\neval \"$(grep '^alias ' {shlex.quote(str(rc_path))})\""
+    tool = create_bash_tool(cwd=tmp_path, shell_command_prefix=prefix)
+
+    result = await tool.execute({"command": "greet"})
+
+    assert result.ok is True
+    assert result.content == "alias-output"
+    assert result.data is not None
+    assert result.data["shell_command_prefix_applied"] is True
+    assert not marker.exists()
+
+
+@pytest.mark.anyio
 async def test_bash_tool_reports_timeout(tmp_path: Path) -> None:
     tool = create_bash_tool(cwd=tmp_path)
 
@@ -177,9 +216,7 @@ async def test_bash_tool_timeout_kills_shell_children(tmp_path: Path) -> None:
     marker = tmp_path / "marker"
 
     start = monotonic()
-    result = await tool.execute(
-        {"command": "(sleep 0.25; touch marker) & wait", "timeout": 0.01}
-    )
+    result = await tool.execute({"command": "(sleep 0.25; touch marker) & wait", "timeout": 0.01})
     duration = monotonic() - start
     await asyncio.sleep(0.35)
 

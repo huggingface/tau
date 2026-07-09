@@ -1,5 +1,7 @@
 """User-home session management for Tau coding sessions."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
 from time import time
@@ -113,12 +115,32 @@ class SessionManager:
         session_id: str | None = None,
     ) -> CodingSessionRecord:
         """Create and index a new session record."""
+        record = self.prepare_session(
+            cwd=cwd,
+            model=model,
+            provider_name=provider_name,
+            title=title,
+            session_id=session_id,
+        )
+        self.index_session(record)
+        return record
+
+    def prepare_session(
+        self,
+        *,
+        cwd: Path,
+        model: str,
+        provider_name: str | None = None,
+        title: str | None = None,
+        session_id: str | None = None,
+    ) -> CodingSessionRecord:
+        """Return metadata for a session without adding it to the resume index."""
         now = time()
         resolved_cwd = cwd.resolve()
         record_id = session_id or uuid4().hex
         path = self.paths.project_session_dir(resolved_cwd) / f"{record_id}.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
-        record = CodingSessionRecord(
+        return CodingSessionRecord(
             id=record_id,
             path=path,
             cwd=resolved_cwd,
@@ -128,6 +150,9 @@ class SessionManager:
             created_at=now,
             updated_at=now,
         )
+
+    def index_session(self, record: CodingSessionRecord) -> CodingSessionRecord:
+        """Add a prepared session record to the resume index."""
         self._upsert(record)
         return record
 

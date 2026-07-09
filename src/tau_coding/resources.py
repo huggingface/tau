@@ -1,5 +1,7 @@
 """Markdown resource path and frontmatter helpers."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -58,17 +60,21 @@ class TauResourcePaths:
 
     @property
     def skills_dirs(self) -> tuple[Path, ...]:
-        """Return skill directories in increasing precedence order."""
+        """Return skill directories in increasing precedence order.
+
+        Only the ``skills`` subdirectory of an ``.agents`` root is scanned,
+        never the root ``.agents`` directory itself (which may contain
+        ``README.md``, ``AGENTS.md``, etc.).
+        """
         paths = self._paths()
         dirs = [self.skills_dir]
         if self.agents_root is not None:
-            dirs.extend([self.agents_root / "skills", self.agents_root])
+            dirs.append(self.agents_root / "skills")
         if self.cwd is not None:
             dirs.extend(
                 [
                     paths.project_skills_dir(self.cwd),
                     paths.project_agents_skills_dir(self.cwd),
-                    paths.project_agents_dir(self.cwd),
                 ]
             )
         return tuple(_dedupe_paths(dirs))

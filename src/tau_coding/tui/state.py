@@ -1,5 +1,7 @@
 """Display state for Tau's Textual TUI."""
 
+from __future__ import annotations
+
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -210,8 +212,7 @@ class TuiState:
 
 def _parse_branch_summary_message(content: str) -> str | None:
     prefix = (
-        "The following is a summary of a branch that this conversation "
-        "came back from:\n<summary>\n"
+        "The following is a summary of a branch that this conversation came back from:\n<summary>\n"
     )
     suffix = "\n</summary>"
     if content.startswith(prefix) and content.endswith(suffix):

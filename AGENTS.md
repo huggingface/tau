@@ -52,6 +52,13 @@ Do not let Textual become a dependency of the reusable agent harness.
 - Prefer simple, explicit abstractions over framework-heavy designs.
 - Keep commits atomic: one coherent feature, fix, docs update, refactor, or cleanup per commit.
 
+## GitHub Issue and PR Formatting
+
+- When creating or editing GitHub issues and pull requests from the CLI, write multiline Markdown bodies through a temporary file or heredoc and pass them with `--body-file`.
+- Do not pass escaped newlines like `\n` inside quoted `--body` strings; GitHub will render them literally instead of as line breaks.
+- Use Markdown headings, blank lines, bullets, and backticks for commands/paths so issue and PR descriptions are readable.
+- After creating or editing a GitHub issue or PR body, verify the rendered source with `gh issue view ... --json body` or `gh pr view ... --json body` when practical.
+
 ## Python Guidelines
 
 - Target the Python version declared in `pyproject.toml`.
@@ -62,10 +69,13 @@ Do not let Textual become a dependency of the reusable agent harness.
 
 ## Documentation Expectations
 
-Each substantial phase should leave behind beginner-friendly documentation under `docs/`, explaining:
+Each substantial phase should leave behind beginner-friendly notes under `dev-notes/` (build journals, design docs, ADRs), explaining:
 
 - what was added
 - why it exists
 - how it maps to Pi's design
 - how to test or use it
+
+When a phase adds or changes user-facing behavior, also update the published docs
+under `website/src/content/docs/` (the "Use Tau" guides and reference).
 

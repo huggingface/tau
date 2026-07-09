@@ -1,0 +1,47 @@
+baseURL = "https://twotimespi.dev/"
+languageCode = "en-us"
+title = "Tau"
+enableRobotsTXT = true
+publishDir = "public"
+
+[markup.goldmark.renderer]
+  unsafe = true
+
+[markup.goldmark.parser]
+  wrapStandAloneImageWithinParagraph = false
+
+[markup.highlight]
+  noClasses = false
+  style = "monokai"
+
+[params]
+  description = "An educational Python project for learning how coding agents are built."
+  githubUrl = "https://github.com/alejandro-ao/tau"
+  editRepoUrl = "https://github.com/alejandro-ao/tau/edit/main/website/content"
+  githubRepo = "alejandro-ao/tau"
+
+[outputs]
+  home = ["HTML", "RSS"]
+
+[module]
+  [[module.mounts]]
+    source = "content"
+    target = "content"
+  [[module.mounts]]
+    source = "static"
+    target = "static"
+  [[module.mounts]]
+    source = "data"
+    target = "data"
+  [[module.mounts]]
+    source = "layouts"
+    target = "layouts"
+  [[module.mounts]]
+    source = "assets"
+    target = "assets"
+  [[module.mounts]]
+    source = "archetypes"
+    target = "archetypes"
+  [[module.mounts]]
+    source = "../src/tau_coding/data/release-notes"
+    target = "data/release-notes"

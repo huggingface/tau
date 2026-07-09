@@ -3,15 +3,17 @@
 </p>
 
 <p align="center">
-  <strong>A minimalist coding-agent harness in Python, inspired by Pi and built as a teaching project.</strong>
+  <strong>A small, readable terminal coding agent — and a working example of how coding agents are built.</strong>
 </p>
 
 <p align="center">
-  <a href="https://alejandro-ao.github.io/tau/">Documentation</a>
+  <a href="https://twotimespi.dev/">Documentation</a>
   ·
-  <a href="docs/getting-started.md">Getting started</a>
+  <a href="https://twotimespi.dev/quickstart/">Quickstart</a>
   ·
-  <a href="docs/architecture/index.md">Architecture notes</a>
+  <a href="https://twotimespi.dev/internals/architecture/">Architecture</a>
+  ·
+  <a href="https://pypi.org/project/tau-ai/">PyPI</a>
   ·
   <a href="https://github.com/alejandro-ao/tau/issues/1">Roadmap</a>
 </p>
@@ -20,245 +22,142 @@
 
 ## What is Tau?
 
-Tau is a Python implementation of the minimalist coding-agent harness architecture
-popularized by **Pi**. It is both:
+**Tau is a coding agent that lives in your terminal.** You type requests like
+"explain this repo", "add tests", or "fix this stack trace"; Tau can read files,
+edit code, run commands, and keep a durable session history while streaming what
+it is doing.
 
-1. a usable terminal coding agent, and
-2. a readable, phase-by-phase reference implementation for learning how coding
-   agents are assembled.
-
-The project intentionally keeps the core pieces small and explicit: model
-providers stream events, an agent loop turns those events into tool execution and
-transcript updates, a reusable harness owns state, and the coding app adds local
-files, shell tools, sessions, skills, commands, and terminal frontends.
+Tau is also meant to be read. It is a teaching project for understanding the
+shape of a coding-agent system without starting from a giant production
+codebase.
 
 ```text
-tau_ai       provider/model streaming layer
-tau_agent    portable agent harness, loop, tools, events, sessions
-tau_coding   CLI app, resources, skills, commands, sessions, UI integration
+tau_coding  →  tau_agent  →  tau_ai
 ```
 
-The central design boundary is:
+- `tau_ai` translates model providers into Tau's provider-neutral stream.
+- `tau_agent` owns the portable brain: messages, tools, events, loop, harness,
+  and session primitives.
+- `tau_coding` wraps the brain as a real coding app: CLI, TUI, file/shell tools,
+  provider config, project instructions, skills, and on-disk sessions.
+
+The important boundary is:
 
 ```text
-AgentHarness = reusable agent brain
-AgentSession = coding-agent environment
-TUI          = one possible frontend
+AgentHarness = reusable brain
+CodingSession = coding-agent environment
+TUI = one possible frontend
 ```
 
-Tau should make the architecture legible. If you want to understand how a coding
-agent works without starting from a large production codebase, this repository is
-for you.
-
-## Why Tau exists
-
-Tau is being built as an effort to teach how to create coding agents.
-
-The philosophy is:
-
-- **Small layers beat magic.** Each package has a clear job and can be explained
-  independently.
-- **Events are the contract.** The agent harness emits provider-neutral events;
-  renderers and TUIs consume them.
-- **The core stays portable.** `tau_agent` does not depend on Textual, Rich,
-  shell config directories, slash commands, or application-specific resources.
-- **Tools are ordinary typed functions.** File and shell capabilities are exposed
-  through explicit schemas and deterministic result objects.
-- **Sessions are durable and inspectable.** Tau stores append-only JSONL session
-  transcripts under `~/.tau/sessions/`.
-- **Documentation follows implementation.** The project is developed in small,
-  documented phases so readers can trace how the system grows.
-
-Pi is the design inspiration; Tau is the Python learning path.
-
-## Current capabilities
-
-Tau currently includes:
-
-- an installable `tau` console command
-- a Textual interactive TUI
-- non-interactive print mode for one-shot prompts
-- OpenAI-compatible, Anthropic, OpenAI Codex subscription, OpenRouter, and
-  Hugging Face provider support through provider configuration
-- provider retry/backoff events and thinking/reasoning deltas
-- built-in local coding tools: `read`, `write`, `edit`, and `bash`
-- durable per-project sessions and session resume
-- session tree branching and HTML/JSONL export
-- slash commands, model picker, theme picker, and autocomplete
-- skills, prompt templates, and `AGENTS.md` project-context discovery
-- context accounting, manual compaction, and optional automatic compaction
-- Rich/plain/json/transcript rendering paths for print-mode output
-- a deterministic fake provider used by tests
-
-Tau is still evolving. Expect the command surface and internals to improve as the
-roadmap progresses.
+The core does not know about Textual, Rich, local config paths, slash commands,
+or rendering. Frontends consume events.
 
 ## Install
 
-Tau targets the Python version declared in `pyproject.toml` and uses
-[`uv`](https://docs.astral.sh/uv/) for the recommended workflow.
-
-Install from GitHub:
+Tau is published on PyPI as `tau-ai` and installs a `tau` command.
+It requires Python 3.12 or newer.
 
 ```bash
-uv tool install git+https://github.com/alejandro-ao/tau.git
+uv tool install tau-ai
 tau --version
 ```
 
-Install from a local checkout:
+Don't have `uv`? Install with `pipx` or `pip` instead:
+
+```bash
+pipx install tau-ai
+# or
+python -m pip install tau-ai
+```
+
+If you prefer `uv`, install it with:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+For local development:
 
 ```bash
 git clone https://github.com/alejandro-ao/tau.git
 cd tau
-uv tool install --editable .
-tau --version
-```
-
-For development:
-
-```bash
-uv sync --dev --group docs
+uv sync --dev
 uv run tau --version
 ```
 
-## First run
+## Quickstart
 
-Start the interactive terminal UI:
+Run Tau from the project you want it to work on:
+
+```bash
+cd my-project
+tau
+```
+
+Then type a request and press **Enter**:
+
+```text
+explain what this project does
+```
+
+One-shot print mode is useful for scripts and quick prompts:
+
+```bash
+tau -p "summarize the architecture"
+tau --cwd /path/to/project -p "find the CLI entry point"
+```
+
+Tau needs a model provider. Start Tau and connect one with `/login`:
 
 ```bash
 tau
 ```
 
-Start the TUI and submit the first prompt immediately:
-
-```bash
-tau "explain this repository"
-```
-
-Run a one-shot non-interactive prompt:
-
-```bash
-tau -p "summarize the architecture"
-```
-
-Choose a configured provider/model:
-
-```bash
-tau --provider openai --model gpt-4.1 "review this codebase"
-tau --provider local --model qwen -p "list the main modules"
-```
-
-Use another working directory for coding tools:
-
-```bash
-tau --cwd /path/to/project "find the CLI entry point"
-```
-
-## Configure a model provider
-
-The easiest path is from inside the TUI:
-
 ```text
 /login
 /login openai
 /login openai-codex
-/logout
-/logout openai
 /model
 ```
 
-`/login` can save API-key credentials for built-in providers or authenticate an
-OpenAI Codex subscription account with OAuth. Credentials are stored in
-`~/.tau/credentials.json` with private file permissions. Provider metadata lives
-in `~/.tau/providers.json`. `/logout` removes only credentials saved in Tau's
-`credentials.json`; environment variables and provider configuration are
-unchanged.
+Tau ships with support for OpenAI, Anthropic, OpenAI Codex subscription auth,
+OpenRouter, Hugging Face, and custom OpenAI-compatible endpoints, including local
+models. See the [providers guide](https://twotimespi.dev/guides/providers-and-models/).
 
-You can also configure an OpenAI-compatible provider from the CLI:
+The built-in catalog lives in `src/tau_coding/data/catalog.toml`; add your own
+providers and models by dropping a `~/.tau/catalog.toml` with the same schema —
+no code changes required.
 
-```bash
-tau --provider local \
-  --base-url http://localhost:11434/v1 \
-  --api-key-env LOCAL_API_KEY \
-  --model qwen \
-  setup
-```
+## What Tau can do
 
-Then run:
+- Interactive Textual TUI and non-interactive print mode.
+- Built-in coding tools: `read`, `write`, `edit`, and `bash`.
+- Durable JSONL sessions under `~/.tau/sessions/` with resume and branching.
+- Slash commands for login, model selection, sessions, compaction, export, theme,
+  and more.
+- Project instructions from `AGENTS.md`, `.tau/`, and `.agents/` resources.
+- User skills and prompt templates.
+- Context accounting, manual compaction, and optional automatic compaction.
+- Provider-neutral event rendering for Rich, plain text, JSON, transcripts, and
+  custom frontends.
 
-```bash
-export LOCAL_API_KEY="..."
-tau --provider local
-```
+## Philosophy
 
-Useful provider commands:
+Tau follows a few rules:
 
-```bash
-tau providers
-```
-
-See [docs/providers.md](docs/providers.md) and
-[docs/configuration.md](docs/configuration.md) for details.
-
-## Working in the TUI
-
-Common slash commands:
-
-| Command | Purpose |
-| --- | --- |
-| `/login [provider]` | Save or refresh provider credentials. |
-| `/logout [provider]` | Remove Tau-saved provider credentials. |
-| `/model` | Choose the active provider/model. |
-| `/scoped-models` | Pick models available for quick cycling. |
-| `/session` | Show session and context information. |
-| `/resume [session-id]` | Resume a previous session. |
-| `/tree` | Branch from a previous session entry. |
-| `/name <new name>` | Rename the current session. |
-| `/compact <summary>` | Replace active context with a manual summary. |
-| `/export [--format html\|jsonl] [destination]` | Export the current session. |
-| `/reload` | Reload local resources and project context. |
-| `/theme [name]` | Show or set the TUI theme. |
-| `/hotkeys` | Show common keyboard shortcuts. |
-| `/quit` | Exit the session. |
-
-Common shortcuts:
-
-| Shortcut | Action |
-| --- | --- |
-| `Enter` | Submit prompt. |
-| `Shift+Enter` | Insert newline. |
-| `Alt+Enter` | Queue a follow-up while the agent is running. |
-| `Esc` | Cancel active run. |
-| `Ctrl+K` | Open slash-command completions. |
-| `Ctrl+R` | Open session picker. |
-| `Shift+Tab` | Cycle thinking mode. |
-| `Ctrl+T` | Toggle thinking-token display. |
-| `Ctrl+O` | Collapse or expand tool output. |
-| `Ctrl+P` | Cycle scoped models. |
-| `Ctrl+D` | Quit. |
-
-## Sessions, resources, and files
-
-Tau stores durable app state in your home directory:
-
-```text
-~/.tau/providers.json       provider metadata
-~/.tau/credentials.json     saved API keys and OAuth credentials
-~/.tau/tui.json             TUI theme/keybinding settings
-~/.tau/sessions/            append-only JSONL session transcripts
-~/.tau/skills/              user Tau skills
-~/.tau/prompts/             user prompt templates
-~/.tau/AGENTS.md            user Tau instructions
-```
-
-Tau also reads user-level `.agents` resources and project-local resources from
-the active working directory, including `AGENTS.md`, `.tau/`, and `.agents/`
-locations. This lets a project teach Tau how it should behave without changing
-Tau's core harness.
+- **Small layers beat magic.** Each package has one job and can be read alone.
+- **Events are the contract.** Providers, renderers, the TUI, and custom
+  frontends meet at a typed event stream.
+- **The core stays portable.** The reusable harness does not depend on the CLI,
+  Textual, Rich, or Tau's file layout.
+- **Tools are ordinary typed functions.** A tool is a schema plus an async
+  executor returning a structured result.
+- **Sessions are durable and inspectable.** History is append-only JSONL; active
+  context can be compacted without rewriting the record.
+- **Documentation follows implementation.** The public docs explain the result;
+  `dev-notes/` preserves the phase-by-phase build journal.
 
 ## Use Tau as a library
-
-Tau's reusable brain lives in `tau_agent`:
 
 ```python
 from tau_agent import AgentHarness, AgentHarnessConfig
@@ -276,61 +175,54 @@ async for event in harness.prompt("Explain this package"):
     print(event)
 ```
 
-That harness is deliberately independent of the CLI/TUI. You can build another
-frontend by consuming the same event stream.
+Because the harness emits events instead of rendering UI directly, the same core
+can drive the built-in TUI, print mode, or a frontend you build yourself.
 
 ## Development
 
-Set up the repository:
+See [CONTRIBUTING.md](CONTRIBUTING.md) for project philosophy, layer boundaries, testing expectations, and pull request guidelines.
 
 ```bash
-uv sync --dev --group docs
-```
-
-Run checks:
-
-```bash
+uv sync --dev
 uv run pytest
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
 ```
 
-Run Tau locally:
+Run Tau from the checkout:
 
 ```bash
 uv run tau
 uv run tau -p "explain this repo"
 ```
 
-Run the documentation site:
+Run the Hugo documentation site:
 
 ```bash
-uv run --group docs mkdocs serve
+cd website
+hugo server -D
 ```
 
-Then open `http://127.0.0.1:8000`.
+Open <http://localhost:1313/>. Build with `hugo --minify`.
 
-## Documentation map
+## Documentation
 
-- [Getting Started](docs/getting-started.md)
-- [Installation](docs/installation.md)
-- [Configuration and Files](docs/configuration.md)
-- [Providers](docs/providers.md)
-- [Architecture](docs/01-architecture.md)
-- [Architecture phase notes](docs/architecture/index.md)
-- [Agent Loop](docs/agent-loop.md)
-- [Agent Harness](docs/harness.md)
-- [Tools](docs/03-tools.md)
-- [Sessions](docs/04-sessions.md)
-- [Building a Custom TUI](docs/custom-tui.md)
-- [Roadmap](docs/00-roadmap.md)
+User docs are published at <https://twotimespi.dev/> and live in
+`website/content/`.
 
-## Project status
+Useful entry points:
+
+- [What is Tau?](https://twotimespi.dev/what-is-tau/)
+- [Quickstart](https://twotimespi.dev/quickstart/)
+- [Core concepts](https://twotimespi.dev/concepts/)
+- [Architecture overview](https://twotimespi.dev/internals/architecture/)
+- [The agent loop & events](https://twotimespi.dev/internals/agent-loop/)
+- [CLI reference](https://twotimespi.dev/reference/cli/)
 
 Tau is under active development. The implementation roadmap is tracked in
-[GitHub issue #1](https://github.com/alejandro-ao/tau/issues/1), and the docs
-under `docs/architecture/` record the completed phases.
+[GitHub issue #1](https://github.com/alejandro-ao/tau/issues/1).
 
-The goal is not to hide complexity. The goal is to make each part of a coding
-agent visible, testable, and understandable.
+## License
+
+Tau is released under the [MIT License](LICENSE).

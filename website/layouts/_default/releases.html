@@ -1,0 +1,69 @@
+{{ define "main" }}
+{{ $releases := (index site.Data "release-notes").releases }}
+<div class="wrap">
+  <header class="release-header">
+    <div class="release-hero">
+      <p class="eyebrow-hand">Changelog</p>
+      <h1>Release notes.</h1>
+      <p class="lede">
+        Every release is structured data in the repo &mdash; the same notes
+        Tau shows in the TUI after an upgrade and publishes here.
+      </p>
+    </div>
+
+    <div class="release-meta-row">
+      <div class="meta-cell">
+        <span class="meta-num">v{{ (index $releases 0).version }}</span>
+        <span class="meta-cap">latest release</span>
+      </div>
+      <div class="meta-cell">
+        <span class="meta-num">{{ len $releases }}</span>
+        <span class="meta-cap">releases published</span>
+      </div>
+      <div class="meta-cell">
+        <span class="meta-num">{{ (index $releases 0).date }}</span>
+        <span class="meta-cap">shipped</span>
+      </div>
+    </div>
+  </header>
+</div>
+
+<div class="wrap">
+  <section>
+    <div class="sec-head">
+      <span class="mark">01</span>
+      <h2>All releases</h2>
+    </div>
+
+    <div class="release-list">
+      {{ range $i, $release := $releases }}
+      <details class="release-card" id="v{{ $release.version }}" {{ if eq $i 0 }}open{{ end }}>
+        <summary class="release-card-head">
+          <span class="release-version">
+            <span class="chevron" aria-hidden="true">&rsaquo;</span>
+            v{{ $release.version }}
+          </span>
+          <span class="release-head-right">
+            {{ if eq $i 0 }}<span class="badge">Latest</span>{{ end }}
+            {{ with $release.date }}<time datetime="{{ . }}">{{ . }}</time>{{ end }}
+          </span>
+        </summary>
+
+        <div class="release-sections">
+          {{ range $section := slice "New" "Changed" "Fixed" }}
+          {{ with index $release.sections $section }}
+          <section class="release-section">
+            <h4>{{ $section }}</h4>
+            <ul>
+              {{ range . }}<li>{{ . }}</li>{{ end }}
+            </ul>
+          </section>
+          {{ end }}
+          {{ end }}
+        </div>
+      </details>
+      {{ end }}
+    </div>
+  </section>
+</div>
+{{ end }}
