@@ -283,3 +283,11 @@ def test_fetch_latest_pypi_version_rejects_malformed_versions() -> None:
         assert exc.__class__.__name__ == "InvalidVersion"
     else:
         raise AssertionError("expected InvalidVersion")
+
+
+def test_load_release_notes_resolves_default_path() -> None:
+    """Regression: load_release_notes() resolves the module-level RELEASE_NOTES_PATH
+    correctly in both dev and installed layouts."""
+    entries = load_release_notes()
+    assert len(entries) > 0, "should find at least one release entry"
+    assert all(entry.version for entry in entries), "every entry must have a version"

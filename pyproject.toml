@@ -38,7 +38,6 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tau_ai", "src/tau_agent", "src/tau_coding"]
-artifacts = ["release-notes/releases.json"]
 
 [tool.ruff]
 line-length = 100
