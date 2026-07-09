@@ -19,7 +19,6 @@ publishDir = "public"
   githubUrl = "https://github.com/alejandro-ao/tau"
   editRepoUrl = "https://github.com/alejandro-ao/tau/edit/main/website/content"
   githubRepo = "alejandro-ao/tau"
-  huggingfaceUrl = "https://huggingface.co/alejandro-ao"
 
 [outputs]
   home = ["HTML", "RSS"]
