@@ -590,6 +590,21 @@ so async handlers could not be awaited); extension state is simply rebuilt,
 and background work started before the reload is orphaned. The `"reload"`
 lifecycle reason is reserved for when the command path becomes async.
 
+**Ruling:** reload invalidates prior extension instances (Pi's
+`assertActive`/`invalidate` parity). Each load generation shares an
+`ExtensionGeneration` token; `reset_for_reload` marks it stale and mints a
+fresh one, and every `ExtensionAPI` method/property and every
+`ExtensionContext`/`ExtensionUi` read — trivial reads like `has_ui`
+included, matching Pi's assert-on-everything — checks the token first and
+raises `ExtensionError`. An orphaned background task holding a pre-reload
+`tau` therefore fails loudly (and, when it fails inside a handler, is
+recorded as a normal runtime diagnostic) instead of silently acting against
+the new registration set. Rebinding does **not** invalidate — a deliberate
+deviation from Pi, which replaces the runtime per session swap and hands
+fresh contexts via `withSession`: Tau's runtime is long-lived across
+resume/new/branch, the same extension instances continue by design, and
+their context views simply reflect the newly bound session.
+
 Extension diagnostics (load-time and runtime handler failures) merge into
 `resource_diagnostics`, so `/session` and `/reload` surface them with no
 TUI changes.

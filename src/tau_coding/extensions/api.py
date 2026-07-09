@@ -265,6 +265,46 @@ class ExtensionError(RuntimeError):
     """Raised when an extension misuses the API (e.g. actions before binding)."""
 
 
+_STALE_MESSAGE = (
+    "extension instance is stale after reload: state captured before /reload"
+    " (a saved `tau` API object, context, or ui handle) must not be reused;"
+    " the reloaded extension received a fresh API in its new setup()"
+)
+
+
+class ExtensionGeneration:
+    """Liveness token for one extension load generation.
+
+    Ports Pi's ``assertActive``/``invalidate`` staleness guard: every
+    :class:`ExtensionAPI` method and every :class:`ExtensionContext`/
+    :class:`ExtensionUi` read checks this token before touching the runtime,
+    so state captured before a `/reload` fails loudly instead of silently
+    acting against the new registration set. Only reload invalidates; session
+    rebinding (resume/new/branch) keeps the generation alive by design (see
+    the phase-21 lifecycle Ruling).
+    """
+
+    __slots__ = ("_stale_message",)
+
+    def __init__(self) -> None:
+        self._stale_message: str | None = None
+
+    @property
+    def active(self) -> bool:
+        """Return whether this generation is still the live one."""
+        return self._stale_message is None
+
+    def invalidate(self, message: str | None = None) -> None:
+        """Mark this generation stale; the first message wins (Pi parity)."""
+        if self._stale_message is None:
+            self._stale_message = message or _STALE_MESSAGE
+
+    def assert_active(self) -> None:
+        """Raise :class:`ExtensionError` when this generation is stale."""
+        if self._stale_message is not None:
+            raise ExtensionError(self._stale_message)
+
+
 @dataclass(frozen=True, slots=True)
 class SessionStartEvent:
     """Payload for the `session_start` lifecycle event."""
@@ -575,14 +615,23 @@ class ExtensionUi:
     Mirrors Pi's `ctx.ui`: async `select`/`confirm`/`input` dialogs plus a
     synchronous `notify`. Every call delegates to the host UI bridge, which
     returns the Pi no-op defaults when no interactive frontend is attached.
+    Every member (trivial reads included, matching Pi) asserts the owning
+    load generation is still active and raises :class:`ExtensionError` when
+    the facade was captured before a `/reload`.
     """
 
-    def __init__(self, runtime: ExtensionRuntime) -> None:
+    def __init__(
+        self,
+        runtime: ExtensionRuntime,
+        generation: ExtensionGeneration | None = None,
+    ) -> None:
         self._runtime = runtime
+        self._generation = generation if generation is not None else ExtensionGeneration()
 
     @property
     def has_ui(self) -> bool:
         """Return whether an interactive UI is attached."""
+        self._generation.assert_active()
         return self._runtime.ui.has_ui
 
     async def select(
@@ -593,6 +642,7 @@ class ExtensionUi:
         timeout: float | None = None,
     ) -> str | None:
         """Prompt the user to pick an option; None on cancel/no UI."""
+        self._generation.assert_active()
         return await self._runtime.ui.select(title, options, timeout=timeout)
 
     async def confirm(
@@ -603,6 +653,7 @@ class ExtensionUi:
         timeout: float | None = None,
     ) -> bool:
         """Ask the user to confirm; True only if confirmed."""
+        self._generation.assert_active()
         return await self._runtime.ui.confirm(title, message, timeout=timeout)
 
     async def input(
@@ -613,6 +664,7 @@ class ExtensionUi:
         timeout: float | None = None,
     ) -> str | None:
         """Prompt the user for text; None on cancel/no UI."""
+        self._generation.assert_active()
         return await self._runtime.ui.input(title, placeholder, timeout=timeout)
 
     @property
@@ -623,49 +675,69 @@ class ExtensionUi:
         :class:`ComponentBridge` members (the TUI hosts real widgets; the
         print-mode bridges are no-ops with ``supports_components == False``).
         Gate widget work on ``context.ui.components.supports_components``.
+        A stale facade raises here, before the bridge is ever reachable.
         """
+        self._generation.assert_active()
         return cast("ComponentBridge", self._runtime.ui)
 
     def notify(self, message: str, level: NotifyLevel = "info") -> None:
         """Show a notification in the UI, if one is attached."""
+        self._generation.assert_active()
         self._runtime.ui.notify(message, level)
 
 
 class ExtensionContext:
-    """Read-only session context exposed to extensions."""
+    """Read-only session context exposed to extensions.
 
-    def __init__(self, runtime: ExtensionRuntime) -> None:
+    Every property (trivial reads included, matching Pi's context getters)
+    asserts the owning load generation is still active, so a context captured
+    before a `/reload` raises :class:`ExtensionError` instead of reading the
+    reloaded world.
+    """
+
+    def __init__(
+        self,
+        runtime: ExtensionRuntime,
+        generation: ExtensionGeneration | None = None,
+    ) -> None:
         self._runtime = runtime
-        self._ui = ExtensionUi(runtime)
+        self._generation = generation if generation is not None else ExtensionGeneration()
+        self._ui = ExtensionUi(runtime, self._generation)
 
     @property
     def cwd(self) -> Path:
         """Return the session working directory."""
+        self._generation.assert_active()
         return self._runtime.session_view.cwd
 
     @property
     def model(self) -> str:
         """Return the active model name."""
+        self._generation.assert_active()
         return self._runtime.session_view.model
 
     @property
     def provider_name(self) -> str:
         """Return the active provider name."""
+        self._generation.assert_active()
         return self._runtime.session_view.provider_name
 
     @property
     def session_id(self) -> str | None:
         """Return the current session id, if the session is indexed."""
+        self._generation.assert_active()
         return self._runtime.session_view.session_id
 
     @property
     def system_prompt(self) -> str:
         """Return the active system prompt."""
+        self._generation.assert_active()
         return self._runtime.session_view.system_prompt
 
     @property
     def is_running(self) -> bool:
         """Return whether an agent run is currently active."""
+        self._generation.assert_active()
         return self._runtime.session_view.is_running
 
     @property
@@ -679,12 +751,14 @@ class ExtensionContext:
         type). Each message is deep-copied so an extension mutating a returned
         object cannot corrupt the live session transcript.
         """
+        self._generation.assert_active()
         messages = self._runtime.session_view.messages
         return tuple(message.model_copy(deep=True) for message in messages)
 
     @property
     def has_ui(self) -> bool:
         """Return whether an interactive UI is attached."""
+        self._generation.assert_active()
         return self._runtime.ui.has_ui
 
     @property
@@ -695,29 +769,46 @@ class ExtensionContext:
         Because command handlers are sync (see the docs), a `/command` that
         needs a dialog should spawn a loop task that awaits `context.ui`.
         """
+        self._generation.assert_active()
         return self._ui
 
 
 class ExtensionAPI:
-    """The object handed to each extension's `setup(tau)` entry point."""
+    """The object handed to each extension's `setup(tau)` entry point.
 
-    def __init__(self, runtime: ExtensionRuntime, extension_name: str) -> None:
+    Every method and property asserts the load generation first (Pi's
+    ``assertActive`` parity): after `/reload` replaces the registration set,
+    a `tau` object captured by the previous instance raises
+    :class:`ExtensionError` on any use instead of silently acting against
+    the new world.
+    """
+
+    def __init__(
+        self,
+        runtime: ExtensionRuntime,
+        extension_name: str,
+        generation: ExtensionGeneration | None = None,
+    ) -> None:
         self._runtime = runtime
         self._extension_name = extension_name
-        self._context = ExtensionContext(runtime)
+        self._generation = generation if generation is not None else ExtensionGeneration()
+        self._context = ExtensionContext(runtime, self._generation)
 
     @property
     def name(self) -> str:
         """Return this extension's name."""
+        self._generation.assert_active()
         return self._extension_name
 
     @property
     def context(self) -> ExtensionContext:
         """Return read-only session context."""
+        self._generation.assert_active()
         return self._context
 
     def register_tool(self, tool: AgentTool) -> None:
         """Register an agent tool (first registration per name wins)."""
+        self._generation.assert_active()
         self._runtime.register_tool(self._extension_name, tool)
 
     def register_command(
@@ -730,6 +821,7 @@ class ExtensionAPI:
         aliases: tuple[str, ...] = (),
     ) -> None:
         """Register a slash command backed by this extension."""
+        self._generation.assert_active()
         self._runtime.register_command(
             self._extension_name,
             name,
@@ -746,6 +838,7 @@ class ExtensionAPI:
         `prompt_guidelines`); this is for behavioral guidance not tied to
         any tool. Duplicate lines are de-duplicated at prompt build time.
         """
+        self._generation.assert_active()
         self._runtime.register_prompt_guideline(self._extension_name, guideline)
 
     def on(
@@ -754,11 +847,13 @@ class ExtensionAPI:
         handler: ExtensionHandler | None = None,
     ) -> Callable[[ExtensionHandler], ExtensionHandler] | ExtensionHandler:
         """Subscribe to an event, directly or as a decorator."""
+        self._generation.assert_active()
         if handler is not None:
             self._runtime.subscribe(self._extension_name, event, handler)
             return handler
 
         def decorator(decorated: ExtensionHandler) -> ExtensionHandler:
+            self._generation.assert_active()
             self._runtime.subscribe(self._extension_name, event, decorated)
             return decorated
 
@@ -771,6 +866,7 @@ class ExtensionAPI:
         deliver_as: DeliverAs = "follow_up",
     ) -> None:
         """Queue a user message for the active or next agent run."""
+        self._generation.assert_active()
         self._runtime.send_user_message(content, deliver_as=deliver_as)
 
     def register_message_renderer(
@@ -785,6 +881,7 @@ class ExtensionAPI:
         and :class:`MessageRenderOptions` and returns a Rich-markup string; it
         must not return a Textual widget (that keeps extensions TUI-free).
         """
+        self._generation.assert_active()
         self._runtime.register_message_renderer(self._extension_name, custom_type, renderer)
 
     def send_custom_message(
@@ -804,6 +901,7 @@ class ExtensionAPI:
         a turn when the session is idle, mirroring ``send_user_message``; set it
         to ``False`` to only queue for the next run.
         """
+        self._generation.assert_active()
         self._runtime.send_custom_message(
             content,
             custom_type=custom_type,
@@ -814,10 +912,12 @@ class ExtensionAPI:
 
     async def append_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         """Persist extension-owned data to the session as a custom entry."""
+        self._generation.assert_active()
         await self._runtime.append_custom_entry(namespace, data)
 
     def notify(self, message: str, level: NotifyLevel = "info") -> None:
         """Show a notification in the UI, if one is attached."""
+        self._generation.assert_active()
         self._runtime.ui.notify(message, level)
 
 

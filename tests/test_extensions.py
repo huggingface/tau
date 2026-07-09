@@ -1609,6 +1609,138 @@ async def test_runtime_survives_new_session_swap(tmp_path: Path) -> None:
     assert ("start", "new") in module.EVENTS
 
 
+# -- reload staleness guard (Pi's assertActive/invalidate) ---------------------
+
+
+API_CAPTURING_EXTENSION = "APIS = []\n\n\ndef setup(tau):\n    APIS.append(tau)\n"
+
+
+def test_reset_for_reload_invalidates_prior_api_actions(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "old"))
+    runtime.bind(RecordingSession(tmp_path))
+
+    runtime.reset_for_reload()
+
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        api.send_user_message("zombie")
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        api.register_tool(_make_tool("late", content="x"))
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        api.on("input", lambda event: None)
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        api.notify("zombie")
+
+
+async def test_reset_for_reload_invalidates_prior_context_and_ui(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime(ui=RecordingUiBridge())
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "old"))
+    runtime.bind(RecordingSession(tmp_path))
+    context = api.context
+    ui = context.ui
+    assert context.cwd == tmp_path
+    assert ui.has_ui is True
+
+    runtime.reset_for_reload()
+
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = context.cwd
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = context.transcript
+    # Trivial reads assert too (Pi asserts on everything).
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = context.has_ui
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        ui.notify("zombie")
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        await ui.select("Pick", ("a", "b"))
+    # The component bridge is unreachable through a stale facade.
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = ui.components
+
+
+async def test_reload_invalidates_old_instance_and_new_instance_works(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider([])
+    session = await CodingSession.load(
+        _session_config(tmp_path, provider, extension_body=API_CAPTURING_EXTENSION)
+    )
+    old_module = _loaded_extension_module("integration")
+    old_api = cast(ExtensionAPI, old_module.APIS[-1])  # type: ignore[attr-defined]
+    assert old_api.context.cwd == session.cwd
+
+    session.reload()
+
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        old_api.send_user_message("zombie")
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = old_api.context
+
+    new_module = _loaded_extension_module("integration")
+    new_api = cast(ExtensionAPI, new_module.APIS[-1])  # type: ignore[attr-defined]
+    assert new_api is not old_api
+    assert new_api.context.cwd == session.cwd
+    new_api.send_user_message("fresh")  # the reloaded instance works normally
+
+
+async def test_session_rebinding_does_not_invalidate_extension_instances(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    from tau_coding import SessionManager, TauPaths
+
+    provider = FakeProvider([])
+    manager = SessionManager(
+        TauPaths(home=tmp_path / "home-tau", agents_home=tmp_path / "home-agents")
+    )
+    config = _session_config(tmp_path, provider, extension_body=API_CAPTURING_EXTENSION)
+    record = manager.create_session(cwd=config.cwd, model="fake")
+    config = dataclass_replace(config, session_manager=manager, session_id=record.id)
+    session = await CodingSession.load(config)
+    module = _loaded_extension_module("integration")
+    api = cast(ExtensionAPI, module.APIS[-1])  # type: ignore[attr-defined]
+
+    await session.new_session()
+
+    # Same instance continues by design (setup did not re-run); its context
+    # views simply reflect the newly bound session.
+    assert len(module.APIS) == 1  # type: ignore[attr-defined]
+    assert api.context.session_id == session.session_id
+    api.send_user_message("still alive")  # must not raise
+
+
+async def test_inflight_handler_touching_stale_api_records_diagnostic(
+    tmp_path: Path,
+) -> None:
+    import asyncio
+
+    runtime = ExtensionRuntime()
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "background"))
+    runtime.bind(RecordingSession(tmp_path))
+    release = asyncio.Event()
+
+    async def handler(event: object) -> None:
+        await release.wait()
+        api.send_user_message("zombie")  # generation went stale mid-flight
+
+    api.on("input", handler)
+
+    hooks = asyncio.ensure_future(runtime.run_input_hooks("hello"))
+    await asyncio.sleep(0)  # let the handler start and park on the event
+    runtime.reset_for_reload()
+    release.set()
+    outcome = await hooks
+
+    # The ExtensionError is contained by the handler try/except and surfaces
+    # as a normal runtime diagnostic instead of crashing dispatch.
+    assert outcome.handled is False
+    assert any(
+        "stale after reload" in diagnostic.message for diagnostic in runtime.diagnostics
+    )
+
+
 # -- custom message renderers -------------------------------------------------
 
 

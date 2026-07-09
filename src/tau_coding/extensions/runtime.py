@@ -33,6 +33,7 @@ from tau_coding.extensions.api import (
     ExtensionCommandContext,
     ExtensionCommandHandler,
     ExtensionError,
+    ExtensionGeneration,
     ExtensionHandler,
     InputEvent,
     InputHookResult,
@@ -140,7 +141,9 @@ class ExtensionRuntime:
 
     The runtime outlives any single `CodingSession`: session replacement flows
     (resume, new, branch) re-bind the same runtime rather than re-running
-    extension discovery and `setup`.
+    extension discovery and `setup`. `/reload`, by contrast, replaces the
+    registration set and invalidates the previous extension generation (see
+    `reset_for_reload`), so pre-reload API objects fail loudly.
     """
 
     def __init__(self, *, ui: UiBridge | None = None) -> None:
@@ -156,6 +159,7 @@ class ExtensionRuntime:
         self._ui: UiBridge = ui or NullUiBridge()
         self._turn_requested: TurnRequestedCallback | None = None
         self._harness_unsubscribe: Callable[[], None] | None = None
+        self._generation = ExtensionGeneration()
 
     # -- loading -----------------------------------------------------------
 
@@ -179,7 +183,17 @@ class ExtensionRuntime:
             self._setup_extension(extension)
 
     def reset_for_reload(self) -> None:
-        """Drop all registrations and imported modules ahead of a re-load."""
+        """Drop all registrations and imported modules ahead of a re-load.
+
+        Also invalidates the current extension generation (Pi's ``invalidate``
+        parity): any `tau` API object, context, or ui facade captured before
+        the reload — including one held by a still-running background task —
+        raises :class:`ExtensionError` on its next use instead of acting
+        against the fresh registration set. Session rebinding does not come
+        through here and never invalidates.
+        """
+        self._generation.invalidate()
+        self._generation = ExtensionGeneration()
         if self._harness_unsubscribe is not None:
             self._harness_unsubscribe()
             self._harness_unsubscribe = None
@@ -194,7 +208,7 @@ class ExtensionRuntime:
         unload_extension_modules()
 
     def _setup_extension(self, extension: LoadedExtension) -> None:
-        api = ExtensionAPI(self, extension.name)
+        api = ExtensionAPI(self, extension.name, self._generation)
         registered = RegisteredExtension(name=extension.name, path=extension.path, api=api)
         self._extensions.append(registered)
         try:
