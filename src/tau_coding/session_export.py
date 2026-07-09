@@ -865,7 +865,7 @@ _ICON_BRANCH = (
 _ICON_LABEL = (
     '<svg viewBox="0 0 16 16" aria-hidden="true">'
     '<path d="M2.5 4.2c0-.9.8-1.7 1.7-1.7h4.4c.5.0.9.2 1.2.5l4 4c.6.6.6 1.7.0 2.4l-4.4 4.4'
-    'c-.6.6-1.7.6-2.4.0'
+    "c-.6.6-1.7.6-2.4.0"
     'l-4-4c-.3-.3-.5-.7-.5-1.2Z" fill="none" stroke="currentColor" stroke-width="1.2"'
     ' stroke-linejoin="round"/>'
     '<circle cx="5.6" cy="5.6" r="1" fill="currentColor"/>'
