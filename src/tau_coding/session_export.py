@@ -123,32 +123,43 @@ def render_session_html(
   <style>
     :root {{
       color-scheme: light dark;
-      --canvas: #f4f6f8;
+      --canvas: #faf8f4;
       --surface: #ffffff;
-      --surface-muted: #eef3f7;
-      --text: #16181c;
-      --muted: #65707c;
-      --line: #d9e0e7;
-      --accent: #0f766e;
+      --surface-muted: #f1ede4;
+      --text: #201d18;
+      --muted: #7a7266;
+      --line: #e4ddd0;
+      --accent: #9a4b32;
       --accent-warm: #b45309;
-      --accent-soft: #dff5f1;
-      --code-bg: #eef2f6;
+      --accent-soft: #f4e6dd;
+      --code-bg: #f5f1e8;
+      --user: #2f6f6b;
+      --user-soft: #e3efed;
+      --assistant: #9a4b32;
+      --assistant-soft: #f4e6dd;
+      --tool: #5b5490;
+      --tool-soft: #eae7f5;
       font-family:
-        Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-        sans-serif;
+        "iA Writer Quattro", Charter, "Iowan Old Style", Georgia, ui-serif, serif;
     }}
     @media (prefers-color-scheme: dark) {{
       :root {{
-        --canvas: #111418;
-        --surface: #171b20;
-        --surface-muted: #202832;
-        --text: #edf1f5;
-        --muted: #a4afbb;
-        --line: #303a45;
-        --accent: #5eead4;
+        --canvas: #15130f;
+        --surface: #1c1a15;
+        --surface-muted: #262319;
+        --text: #ede7db;
+        --muted: #a49b8a;
+        --line: #38332a;
+        --accent: #e08a5e;
         --accent-warm: #fbbf24;
-        --accent-soft: #123b37;
-        --code-bg: #1d2530;
+        --accent-soft: #3a2a20;
+        --code-bg: #221f18;
+        --user: #7fd6cc;
+        --user-soft: #1e3230;
+        --assistant: #e08a5e;
+        --assistant-soft: #3a2a20;
+        --tool: #b3aae6;
+        --tool-soft: #2b2740;
       }}
     }}
     * {{ box-sizing: border-box; }}
@@ -164,23 +175,47 @@ def render_session_html(
       margin: 0 auto;
       padding: 32px clamp(18px, 4vw, 48px) 20px;
     }}
-    h1, h2, h3, h4 {{ margin: 0; line-height: 1.2; }}
-    h1 {{ font-size: clamp(1.85rem, 3vw, 2.45rem); font-weight: 750; }}
+    h1, h2, h3, h4 {{ margin: 0; line-height: 1.25; }}
+    h1 {{
+      font-size: clamp(1.9rem, 3vw, 2.6rem);
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }}
     h2 {{
+      font-family:
+        ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
       color: var(--muted);
-      font-size: 0.78rem;
-      font-weight: 700;
-      letter-spacing: 0;
+      font-size: 0.72rem;
+      font-weight: 650;
+      letter-spacing: 0.08em;
       margin-bottom: 14px;
       text-transform: uppercase;
     }}
-    h3 {{ font-size: 1.02rem; font-weight: 720; }}
-    h4 {{ font-size: 0.9rem; margin-top: 16px; }}
+    h3 {{
+      font-family:
+        ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      font-size: 0.68rem;
+      font-weight: 650;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }}
+    h4 {{
+      font-family:
+        ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      font-size: 0.72rem;
+      font-weight: 650;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-top: 16px;
+    }}
     code, pre {{
       font-family:
         "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-      font-size: 0.9em;
+      font-size: 0.85em;
     }}
+    p {{ margin: 0; }}
     pre {{
       white-space: pre-wrap;
       overflow-wrap: anywhere;
@@ -192,23 +227,28 @@ def render_session_html(
       margin: 10px 0 0;
     }}
     .eyebrow {{
+      font-family:
+        ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
       color: var(--accent);
-      font-size: 0.8rem;
-      font-weight: 760;
-      margin: 0 0 8px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      margin: 0 0 10px;
       text-transform: uppercase;
     }}
     .source, .generated {{
-      margin: 8px 0 0;
+      margin: 6px 0 0;
       color: var(--muted);
-      font-size: 0.92rem;
+      font-size: 0.88rem;
+      font-family:
+        ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     }}
     .export-meta {{
       border-top: 1px solid var(--line);
       display: flex;
       flex-wrap: wrap;
-      gap: 6px 18px;
-      margin-top: 18px;
+      gap: 4px 18px;
+      margin-top: 20px;
       padding-top: 14px;
     }}
     main {{
@@ -229,26 +269,47 @@ def render_session_html(
       border-left: 1px solid var(--line);
     }}
     article {{
+      --role: var(--muted);
+      --role-soft: var(--surface-muted);
       position: relative;
       margin: 0;
-      padding: 0 0 28px 28px;
-      border-left: 1px solid var(--line);
+      padding: 2px 0 30px 26px;
+      border-left: 2px solid var(--line);
     }}
-    article + article {{ padding-top: 28px; }}
+    article.role-user {{ --role: var(--user); --role-soft: var(--user-soft); }}
+    article.role-assistant {{ --role: var(--assistant); --role-soft: var(--assistant-soft); }}
+    article.role-tool {{ --role: var(--tool); --role-soft: var(--tool-soft); }}
+    article + article {{ padding-top: 4px; }}
     article::before {{
       content: "";
       position: absolute;
-      left: -5px;
-      top: 3px;
-      width: 9px;
-      height: 9px;
+      left: -6px;
+      top: 6px;
+      width: 10px;
+      height: 10px;
       border-radius: 50%;
       background: var(--surface);
-      border: 2px solid var(--accent);
+      border: 2px solid var(--role);
     }}
+    article.active-entry {{ border-left-color: var(--role); }}
     article.active-entry::before {{
-      border-color: var(--accent-warm);
-      box-shadow: 0 0 0 4px var(--accent-soft);
+      box-shadow: 0 0 0 4px var(--role-soft);
+    }}
+    .entry-index {{
+      font-family:
+        ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      font-size: 0.68rem;
+      font-weight: 650;
+      letter-spacing: 0.06em;
+      color: var(--role);
+      text-transform: uppercase;
+    }}
+    .entry-status {{
+      margin-left: 8px;
+      color: var(--muted);
+      font-weight: 500;
+      letter-spacing: 0;
+      text-transform: none;
     }}
     .tree {{
       list-style: none;
@@ -256,32 +317,52 @@ def render_session_html(
       padding-left: 0;
     }}
     .tree .tree {{
-      margin-left: 10px;
+      margin-left: 9px;
       padding-left: 12px;
       border-left: 1px solid var(--line);
     }}
-    .tree li {{ margin: 6px 0; }}
+    .tree li {{ margin: 3px 0; }}
     .node-link {{
+      --role: var(--muted);
       display: block;
       color: var(--text);
       text-decoration: none;
       border-radius: 4px;
-      padding: 7px 9px;
+      border-left: 2px solid transparent;
+      padding: 6px 9px 6px 8px;
     }}
     .node-link:hover {{ background: var(--surface-muted); }}
+    .tree-node.role-user .node-link {{ --role: var(--user); }}
+    .tree-node.role-assistant .node-link {{ --role: var(--assistant); }}
+    .tree-node.role-tool .node-link {{ --role: var(--tool); }}
     .active-path > .node-link {{
-      background: var(--accent-soft);
+      border-left-color: var(--role);
     }}
     .active-leaf > .node-link {{
-      box-shadow: inset 3px 0 0 var(--accent-warm);
+      background: var(--surface-muted);
+      font-weight: 600;
     }}
     .node-type {{
-      display: block;
-      font-weight: 700;
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      font-family:
+        ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      font-size: 0.78rem;
+      font-weight: 650;
       overflow-wrap: anywhere;
+    }}
+    .node-type::before {{
+      content: "";
+      flex: 0 0 auto;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--role);
     }}
     .node-meta {{
       display: block;
+      margin-top: 2px;
       color: var(--muted);
       font-size: 0.82rem;
       overflow-wrap: anywhere;
@@ -289,31 +370,32 @@ def render_session_html(
     .entry-meta {{
       display: grid;
       grid-template-columns: max-content minmax(0, 1fr);
-      gap: 4px 10px;
-      margin: 12px 0 0;
+      gap: 3px 10px;
+      margin: 10px 0 0;
+      font-family:
+        ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
       color: var(--muted);
-      font-size: 0.88rem;
-    }}
-    .entry-meta dt {{ font-weight: 700; color: var(--text); }}
-    .entry-meta dd {{ margin: 0; overflow-wrap: anywhere; }}
-    .badges {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-top: 10px;
-    }}
-    .badge {{
-      background: var(--surface-muted);
-      border-radius: 999px;
-      padding: 2px 8px;
-      color: var(--accent-warm);
       font-size: 0.78rem;
-      font-weight: 700;
     }}
+    .entry-meta dt {{
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-size: 0.68rem;
+      align-self: baseline;
+      padding-top: 2px;
+    }}
+    .entry-meta dd {{ margin: 0; overflow-wrap: anywhere; }}
     .message-role {{
-      margin-top: 14px;
+      display: inline-block;
+      margin: 4px 0 2px;
+      font-family:
+        ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      font-size: 0.7rem;
       font-weight: 700;
-      text-transform: capitalize;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--role);
     }}
     .empty {{
       color: var(--muted);
@@ -437,7 +519,7 @@ def _render_tree_node(
     rendered_ids: set[str],
 ) -> str:
     rendered_ids.add(entry.id)
-    classes = ["tree-node"]
+    classes = ["tree-node", _entry_role_class(entry)]
     if entry.id in active_path_ids:
         classes.append("active-path")
     if entry.id == active_leaf_id:
@@ -466,7 +548,7 @@ def _render_tree_node(
         )
 
     return (
-        f'<li class="{" ".join(classes)}">'
+        f'<li class="{" ".join(c for c in classes if c)}">'
         f'<a class="node-link" href="#entry-{_attr(entry.id)}">'
         f'<span class="node-type">{_escape(_entry_title(entry))}</span>'
         f'<span class="node-meta">{_escape(_entry_summary(entry))}</span>'
@@ -501,26 +583,23 @@ def _render_entry_detail(
     active_path_ids: set[str],
     active_leaf_id: str | None,
 ) -> str:
-    classes = ["entry-card"]
-    badges = []
+    classes = ["entry-card", _entry_role_class(entry)]
+    status_bits = []
     if entry.id in active_path_ids:
-        badges.append("active path")
+        status_bits.append("active path")
     if entry.id == active_leaf_id:
-        badges.append("active leaf")
-    if badges:
+        status_bits.append("active leaf")
+    if status_bits:
         classes.append("active-entry")
-    badge_html = (
-        '<div class="badges">'
-        + "".join(f'<span class="badge">{_escape(badge)}</span>' for badge in badges)
-        + "</div>"
-        if badges
+    status_html = (
+        f'<span class="entry-status">{_escape(" · ".join(status_bits))}</span>'
+        if status_bits
         else ""
     )
     body = _render_entry_body(entry)
     return (
-        f'<article id="entry-{_attr(entry.id)}" class="{" ".join(classes)}">'
-        f"<h3>{index}. {_escape(_entry_title(entry))}</h3>"
-        f"{badge_html}"
+        f'<article id="entry-{_attr(entry.id)}" class="{" ".join(c for c in classes if c)}">'
+        f'<p class="entry-index">{index:02d} · {_escape(_entry_title(entry))}{status_html}</p>'
         '<dl class="entry-meta">'
         "<dt>id</dt>"
         f"<dd><code>{_escape(entry.id)}</code></dd>"
@@ -633,6 +712,12 @@ def _render_list(title: str, values: Sequence[str]) -> str:
         f"<h4>{_escape(title)}</h4>"
         "<ul>" + "".join(f"<li><code>{_escape(value)}</code></li>" for value in values) + "</ul>"
     )
+
+
+def _entry_role_class(entry: SessionEntry) -> str:
+    if isinstance(entry, MessageEntry):
+        return f"role-{entry.message.role}"
+    return ""
 
 
 def _entry_parent_html(entry: SessionEntry) -> str:
