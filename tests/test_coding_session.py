@@ -484,6 +484,14 @@ async def test_terminal_command_can_run_without_context(tmp_path: Path) -> None:
     assert not any(isinstance(entry, MessageEntry) for entry in entries)
 
 
+# The shell_command_prefix feature routes commands through bash only on POSIX
+# (see create_bash_tool); on Windows they run under the default shell.
+requires_posix_shell = pytest.mark.skipif(
+    sys.platform == "win32", reason="shell_command_prefix uses bash only on POSIX"
+)
+
+
+@requires_posix_shell
 @pytest.mark.anyio
 async def test_terminal_command_uses_configured_shell_command_prefix(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
@@ -505,6 +513,7 @@ async def test_terminal_command_uses_configured_shell_command_prefix(tmp_path: P
     assert result.added_to_context is False
 
 
+@requires_posix_shell
 @pytest.mark.anyio
 async def test_agent_bash_tool_uses_configured_shell_command_prefix(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
@@ -814,6 +823,7 @@ async def test_session_uses_active_model_thinking_capabilities(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     provider_config = OpenAICompatibleProviderConfig(
         name="openai",
         models=("reasoner", "plain"),
@@ -2451,6 +2461,9 @@ async def test_session_switches_configured_provider(
         return provider
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    # Path.home() resolves via USERPROFILE on Windows, so HOME alone does not
+    # isolate the test from the developer's real ~/.tau settings.
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("LOCAL_API_KEY", "test-key")
     monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
@@ -2677,6 +2690,7 @@ async def test_session_toggles_and_cycles_scoped_models(
     ]
 
 
+@requires_posix_shell
 @pytest.mark.anyio
 async def test_session_resume_preserves_shell_command_prefix(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
@@ -2898,6 +2912,7 @@ async def test_session_set_model_persists_default_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
     provider_config = OpenAICompatibleProviderConfig(
         name="openai",
@@ -2929,6 +2944,7 @@ async def test_session_set_model_choice_persists_default_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
     settings = ProviderSettings(
         default_provider="openai",
@@ -2989,6 +3005,7 @@ async def test_session_set_model_choice_switches_provider_model_directly(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("LOCAL_API_KEY", "local-key")
     tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
     settings = ProviderSettings(
@@ -3054,6 +3071,7 @@ async def test_session_set_model_preserves_newer_provider_file_changes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
     loaded_provider = OpenAICompatibleProviderConfig(
         name="openai",
