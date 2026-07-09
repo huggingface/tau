@@ -238,14 +238,14 @@ header.hero{ padding:74px 0 40px; }
 }
 
 h1{
-  font-family:var(--serif);
-  font-weight:300;
-  font-size:clamp(40px, 7vw, 76px);
-  line-height:1.04;
-  letter-spacing:-0.015em;
-  margin:18px 0 0;
+  font-family:var(--hand);
+  font-weight:600;
+  font-size:clamp(48px, 8.5vw, 92px);
+  line-height:1.02;
+  letter-spacing:-0.005em;
+  margin:14px 0 0;
 }
-h1 em{ font-style:italic; font-weight:400; color:var(--accent); }
+h1 em{ font-style:normal; font-weight:600; color:var(--accent); }
 h1 .big-tau{
   font-family:var(--math); font-style:italic; font-weight:400;
   color:var(--accent);
@@ -356,8 +356,8 @@ section{ padding:88px 0; }
   transform:translateY(-2px);
 }
 .sec-head h2{
-  font-family:var(--serif); font-weight:400; font-style:italic;
-  font-size:clamp(26px,4vw,38px); margin:0; letter-spacing:-0.01em;
+  font-family:var(--hand); font-weight:600; font-style:normal;
+  font-size:clamp(32px,5vw,46px); line-height:1.0; margin:0; letter-spacing:-0.01em;
 }
 
 /* ---- handwritten eyebrow labels ----
@@ -382,7 +382,7 @@ section{ padding:88px 0; }
 @media (max-width:760px){ .layers{ grid-template-columns:1fr; } }
 .layer{ background:var(--ground); padding:30px 26px 34px; position:relative; }
 .layer .pkg{ font-family:var(--mono); font-size:13.5px; color:var(--accent); }
-.layer h3{ font-family:var(--serif); font-weight:500; font-size:21px; margin:14px 0 8px; }
+.layer h3{ font-family:var(--hand); font-weight:600; font-size:27px; line-height:1.02; margin:12px 0 6px; }
 .layer p{ margin:0; font-size:16px; color:var(--ink-soft); line-height:1.55; }
 .layer .idx{
   position:absolute; top:24px; right:24px;
@@ -393,7 +393,7 @@ section{ padding:88px 0; }
 .principles{ display:grid; grid-template-columns:repeat(2,1fr); gap:36px 56px; }
 @media (max-width:680px){ .principles{ grid-template-columns:1fr; } }
 .pr{ border-top:1.5px solid var(--ink); padding-top:18px; }
-.pr h3{ font-family:var(--serif); font-weight:600; font-size:20px; margin:0 0 8px; }
+.pr h3{ font-family:var(--hand); font-weight:600; font-size:26px; line-height:1.02; margin:0 0 6px; }
 .pr p{ margin:0; font-size:16.5px; color:var(--ink-soft); }
 
 /* ---- code block (terminal figure) ---- */
@@ -423,8 +423,8 @@ section{ padding:88px 0; }
 .boundary-two{ grid-template-columns:.78fr 1.22fr; }
 @media (max-width:820px){ .two, .boundary-two{ grid-template-columns:1fr; gap:28px; } }
 .two p{ color:var(--ink-soft); }
-.two h2{ font-family:var(--serif); font-weight:400; font-style:italic;
-  font-size:clamp(26px,4vw,36px); margin:0 0 16px; }
+.two h2{ font-family:var(--hand); font-weight:600; font-style:normal;
+  font-size:clamp(32px,5vw,44px); line-height:1.0; margin:0 0 14px; }
 
 /* ---- event flow and capabilities ---- */
 .event-flow{
