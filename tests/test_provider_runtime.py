@@ -77,7 +77,7 @@ def test_create_model_provider_preserves_adaptive_thinking_type_when_swapping_to
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A model with ``kind=anthropic`` and a ``thinking_level_map`` value of
+    """A model with ``api=anthropic-messages`` and a ``thinking_level_map`` value of
     ``adaptive`` must end up with ``thinking_type='adaptive'`` (not the budget
     fallback) once the runtime swaps to ``AnthropicProviderConfig``."""
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
