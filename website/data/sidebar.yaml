@@ -48,5 +48,7 @@
       path: /internals/custom-frontend/
 - label: Release notes
   link: /releases/
+- label: Roadmap
+  link: /roadmap/
 - label: Contributing
   path: /contributing/

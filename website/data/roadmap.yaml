@@ -1,0 +1,156 @@
+groups:
+  - label: What's next
+    note: "the frontier"
+    phases:
+      - id: "26"
+        title: "RPC support"
+        summary: "Drive Tau as a subprocess over a structured RPC protocol, so other apps and editors can embed the agent without shelling out to the TUI."
+        status: planned
+      - id: "27"
+        title: "Python SDK"
+        summary: "A typed Python client for embedding Tau's harness and sessions directly in other Python programs, without going through the CLI."
+        status: planned
+      - id: "21"
+        title: "Extensions"
+        summary: "Local extension loading; extension-contributed tools, commands, prompt snippets/guidelines; event subscriptions."
+        status: in_progress
+
+  - label: Since then
+    note: "shipped post-roadmap"
+    phases:
+      - id: "25"
+        title: "System prompt display command"
+        summary: "/system shows the effective system prompt Tau will send to the provider, without touching the transcript."
+        status: shipped
+      - id: "24"
+        title: "Session tree branching"
+        summary: "A /tree modal for branching and revisiting session history, with branch summaries and tool-call filtering."
+        status: shipped
+
+  - label: Pre-extension polish
+    note: "getting it right"
+    phases:
+      - id: "23"
+        title: "Advanced TUI and product polish"
+        summary: "Richer transcript rendering, diff viewer, model/session picker UI, command palette, keybinding customization, theme polish."
+        status: shipped
+      - id: "22"
+        title: "Compaction and context management"
+        summary: "Token/context estimation, manual /compact, automatic compaction threshold, compaction entries in the session tree."
+        status: shipped
+      - id: "20.4"
+        title: "Session visualization and export"
+        summary: "Export a session transcript/tree, human-readable HTML view, preserved branch structure."
+        status: shipped
+      - id: "20.3"
+        title: "Skill invocation reliability"
+        summary: "Loaded skills callable by default, manual /skill:<name> triggering, deterministic tests for skill delivery."
+        status: shipped
+      - id: "20.2"
+        title: "Thinking mode controls"
+        summary: "Explicit thinking-mode model, TUI control with a Shift-Tab shortcut, active mode shown in the sidebar."
+        status: shipped
+      - id: "20.1"
+        title: "Accurate context accounting and sidebar refresh"
+        summary: "Recalculate context/token usage after each turn and keep the TUI sidebar in sync."
+        status: shipped
+
+  - label: Hardening
+    note: "before extensions"
+    phases:
+      - id: "20"
+        title: "Packaging and installation polish"
+        summary: "Installable user-facing tool experience, uv tool/pipx docs, first-run setup docs, format docs."
+        status: shipped
+      - id: "19"
+        title: "Project context discovery and reload"
+        summary: "Auto-discovery of AGENTS.md and instruction files, /context and /reload commands."
+        status: shipped
+      - id: "18"
+        title: "Provider configuration and setup"
+        summary: "Durable provider config, multiple OpenAI-compatible providers, default provider/model, setup/login flow."
+        status: shipped
+      - id: "17.5"
+        title: "TUI transcript wrapping and resize behavior"
+        summary: "Reflowed transcript text on resize, no horizontal scroll for normal messages, sane handling of long output."
+        status: shipped
+      - id: "17"
+        title: "TUI slash-command autocomplete"
+        summary: "Autocomplete for commands, /skill:, and prompt templates with Tab/arrow-key selection."
+        status: shipped
+      - id: "16"
+        title: "Robust skills and prompt discovery"
+        summary: "Load skills/prompts from Tau home, .agents, and project resources with deterministic precedence and diagnostics."
+        status: shipped
+      - id: "15"
+        title: "Slash command registry"
+        summary: "Registry-based command handling shared by CLI/TUI, built-in commands, extension-ready internal API."
+        status: shipped
+      - id: "14"
+        title: "Session manager and resume"
+        summary: "Create/list/resume sessions, session metadata index, tau sessions, tau resume <id>, TUI resume/new-session flow."
+        status: shipped
+      - id: "13"
+        title: "Tau home, paths, and automatic .agents resources"
+        summary: "Canonical Tau home/resource paths, user-level and project-level .agents auto-loading, documented path precedence."
+        status: shipped
+
+  - label: A real coding agent
+    note: "sessions & skills"
+    phases:
+      - id: "12"
+        title: "Textual TUI foundation"
+        summary: "Textual app behind an adapter boundary, TUI state adapter, prompt input/transcript/status, basic commands and cancellation."
+        status: shipped
+      - id: "11"
+        title: "Print and event rendering modes"
+        summary: "Final text mode, JSON event stream mode, transcript mode, renderer boundary in tau_coding."
+        status: shipped
+      - id: "10"
+        title: "System prompt assembly"
+        summary: "Pi-style prompt builder, tool snippets/guidelines, skill index, project context, date/cwd suffix."
+        status: shipped
+      - id: "9"
+        title: "Skills and prompt templates"
+        summary: "Markdown skills, markdown prompt templates, /skill:name expansion, resource path primitives."
+        status: shipped
+      - id: "8"
+        title: "Coding session wrapper"
+        summary: "CodingSession, persistence around the harness, initial command seam, prompt expansion seam."
+        status: shipped
+      - id: "7"
+        title: "Session tree and JSONL persistence"
+        summary: "Append-only session entries, JSONL storage, session replay, active leaf reconstruction."
+        status: shipped
+
+  - label: Foundation
+    note: "the core loop"
+    phases:
+      - id: "6"
+        title: "Non-interactive print-mode CLI"
+        summary: "Single prompt CLI, provider/model wiring, built-in tool registration."
+        status: shipped
+      - id: "5"
+        title: "Built-in coding tools"
+        summary: "read, write, edit, bash — with per-tool prompt snippets and guidelines."
+        status: shipped
+      - id: "4"
+        title: "AgentHarness"
+        summary: "Transcript owner, prompt()/continue_(), cancellation boundary."
+        status: shipped
+      - id: "3"
+        title: "Pure agent loop"
+        summary: "Provider stream consumption, assistant message assembly, tool execution loop, agent events."
+        status: shipped
+      - id: "2"
+        title: "AI provider layer"
+        summary: "Provider interface, fake provider for tests, OpenAI-compatible provider, environment-based API config."
+        status: shipped
+      - id: "1"
+        title: "Core types and event model"
+        summary: "Provider-neutral messages, tool calls/results, agent events."
+        status: shipped
+      - id: "0"
+        title: "Project foundation and design docs"
+        summary: "Package scaffold, docs and ADRs, test/lint/format/typecheck setup, basic `tau --version`."
+        status: shipped

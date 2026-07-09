@@ -227,6 +227,8 @@ body.search-open{ overflow:hidden; }
 
 /* ---- hero ---- */
 header.hero{ padding:74px 0 40px; }
+header.hero.hero-compact{ padding-top:64px; }
+@media (max-width:720px){ header.hero.hero-compact{ padding-top:40px; } }
 .hero-grid{
   display:grid;
   grid-template-columns:1.02fr .98fr;
@@ -246,6 +248,7 @@ h1{
   margin:14px 0 0;
 }
 h1 em{ font-style:normal; font-weight:500; color:var(--accent); }
+.h1-compact{ font-size:clamp(48px,7.5vw,72px); margin-top:8px; }
 h1 .big-tau{
   font-family:var(--math); font-style:italic; font-weight:400;
   color:var(--accent);
@@ -374,7 +377,7 @@ section{ padding:88px 0; }
   display:inline-block;
   margin:0 0 2px;
 }
-.hero .eyebrow-hand{ color:var(--ink-soft); }
+.hero .eyebrow-hand{ color:var(--ink-soft); margin-bottom:0; }
 
 /* ---- layers ---- */
 .layers{ display:grid; grid-template-columns:repeat(3,1fr); gap:1px;
@@ -673,11 +676,12 @@ section{ padding:88px 0; }
 .admonition-caution .admonition-title{ color:var(--red); }
 
 /* ---- releases page ---- */
-.release-header{ padding-top:8px; }
+.release-header{ padding-top:64px; }
+@media (max-width:720px){ .release-header{ padding-top:40px; } }
 .release-hero{ max-width:640px; }
 .release-hero h1{
-  margin:8px 0 0; font-family:var(--serif); font-size:clamp(40px,6vw,60px);
-  font-weight:400; letter-spacing:-0.01em;
+  margin:8px 0 0; font-family:var(--hand); font-size:clamp(48px,7.5vw,72px);
+  font-weight:500; line-height:1.02; letter-spacing:-0.005em;
 }
 .release-hero .lede{ margin-top:16px; }
 
@@ -741,6 +745,74 @@ section{ padding:88px 0; }
 @media (max-width:560px){
   .release-card-head{ padding:18px 20px; }
   .release-sections{ padding:4px 20px 24px; }
+}
+
+/* ---- roadmap page ---- */
+.release-hero .eyebrow-hand{ margin-bottom:0; }
+
+/* A hand-drawn dashed line runs down through the marker column, connecting
+   every phase in a group like a sketched timeline. Each marker (check/dot)
+   sits on top with a solid background so it reads as a bead on the line. */
+.roadmap-list{
+  position:relative;
+  display:flex; flex-direction:column;
+  border:1px solid var(--grid-strong); border-radius:6px;
+  background:rgba(255,255,255,.86); margin-bottom:12px;
+  overflow:hidden;
+}
+.roadmap-list::before{
+  content:"";
+  position:absolute;
+  left:36px; top:0; bottom:0; width:0;
+  border-left:1.5px dashed var(--grid-strong);
+}
+.roadmap-item{
+  position:relative;
+  display:flex; gap:18px; align-items:flex-start;
+  padding:20px 26px;
+  border-bottom:1px solid var(--grid-strong);
+}
+.roadmap-item:last-child{ border-bottom:none; }
+.roadmap-item-mark{
+  position:relative; z-index:1; flex-shrink:0; margin-top:3px;
+  width:20px; height:20px; border-radius:50%;
+  background:var(--ground);
+  display:flex; align-items:center; justify-content:center;
+}
+.roadmap-check{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:20px; height:20px; border-radius:50%;
+  background:var(--green); color:#fff; font-size:12px; line-height:1;
+}
+.roadmap-dot{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:12px; height:12px; border-radius:50%;
+  background:var(--red); color:var(--red); font-size:0;
+}
+.roadmap-item-body{ flex:1; min-width:0; }
+.roadmap-item-head{ display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+.roadmap-phase{
+  font-family:var(--mono); font-size:12px; color:var(--ink-soft);
+  border:1px solid var(--grid-strong); border-radius:10px; padding:1px 8px;
+}
+.roadmap-item-head h3{
+  font-family:var(--hand); font-weight:600; font-size:24px; line-height:1.02;
+  margin:0; color:var(--ink);
+}
+.roadmap-item-body p{ margin:6px 0 0; color:var(--ink-soft); font-size:15.5px; line-height:1.5; }
+.roadmap-dot-planned{
+  background:var(--ground); border:1.5px solid var(--ink-soft); color:transparent;
+}
+.roadmap-in_progress{ background:rgba(27,63,160,.045); }
+.roadmap-in_progress .roadmap-item-head h3{ color:var(--ink); }
+.roadmap-planned .roadmap-item-head h3{ color:var(--ink-soft); }
+.badge-next{ background:var(--accent); }
+.badge-planned{ background:var(--ink-soft); }
+.roadmap-group{ padding-top:56px; padding-bottom:0; }
+.roadmap-group:first-of-type{ padding-top:88px; }
+@media (max-width:560px){
+  .roadmap-list::before{ left:28px; }
+  .roadmap-item{ padding:16px 18px; gap:12px; }
 }
 
 /* ---- 404 ---- */
