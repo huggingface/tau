@@ -21,7 +21,7 @@ UPDATE_CHECK_INTERVAL = timedelta(days=1)
 UPDATE_CHECK_TIMEOUT_SECONDS = 1.5
 UPDATE_CHECK_ENV_DISABLE = "TAU_NO_UPDATE_CHECK"
 RELEASE_NOTES_STATE_FILENAME = "release-notes-state.json"
-RELEASE_NOTES_PATH = Path(__file__).resolve().parents[2] / "release-notes" / "releases.json"
+RELEASE_NOTES_PATH = Path(__file__).resolve().parent / "data" / "release-notes" / "releases.json"
 
 Fetcher = Callable[[str, float], dict[str, Any]]
 Clock = Callable[[], datetime]

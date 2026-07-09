@@ -1003,6 +1003,95 @@ max_tokens = 40000
 cost = { input = 2.25, output = 2.75, cacheRead = 0, cacheWrite = 0 }
 
 [[providers]]
+name = "nvidia"
+display_name = "NVIDIA NIM"
+kind = "openai-compatible"
+base_url = "https://integrate.api.nvidia.com/v1"
+api_key_env = "NVIDIA_API_KEY"
+credential_name = "nvidia"
+models = ["nvidia/llama-3.3-nemotron-super-49b-v1.5", "nvidia/nvidia-nemotron-nano-9b-v2", "meta/llama-3.3-70b-instruct", "meta/llama-3.1-8b-instruct", "deepseek-ai/deepseek-v4-pro", "qwen/qwen3.5-122b-a10b", "mistralai/mistral-large-2-instruct", "openai/gpt-oss-120b"]
+default_model = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+docs_url = "https://docs.api.nvidia.com/nim"
+api = "openai-completions"
+thinking_levels = ["off", "minimal", "low", "medium", "high"]
+thinking_default = "medium"
+thinking_parameter = "reasoning_effort"
+
+[providers.context_windows]
+"nvidia/llama-3.3-nemotron-super-49b-v1.5" = 131072
+"nvidia/nvidia-nemotron-nano-9b-v2" = 128000
+"meta/llama-3.3-70b-instruct" = 131072
+"meta/llama-3.1-8b-instruct" = 131072
+"deepseek-ai/deepseek-v4-pro" = 1000000
+"qwen/qwen3.5-122b-a10b" = 262144
+"mistralai/mistral-large-2-instruct" = 131072
+"openai/gpt-oss-120b" = 131072
+
+[providers.model_metadata."nvidia/llama-3.3-nemotron-super-49b-v1.5"]
+name = "NVIDIA: Llama 3.3 Nemotron Super 49B V1.5"
+reasoning = true
+input = ["text"]
+context_window = 131072
+max_tokens = 16384
+cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+
+[providers.model_metadata."nvidia/nvidia-nemotron-nano-9b-v2"]
+name = "NVIDIA: Nemotron Nano 9B V2"
+reasoning = true
+input = ["text"]
+context_window = 128000
+max_tokens = 4096
+cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+
+[providers.model_metadata."meta/llama-3.3-70b-instruct"]
+name = "Llama 3.3 70B Instruct"
+reasoning = false
+input = ["text"]
+context_window = 131072
+max_tokens = 32768
+cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+
+[providers.model_metadata."meta/llama-3.1-8b-instruct"]
+name = "Llama 3.1 8B Instruct"
+reasoning = false
+input = ["text"]
+context_window = 131072
+max_tokens = 131072
+cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+
+[providers.model_metadata."deepseek-ai/deepseek-v4-pro"]
+name = "DeepSeek V4 Pro"
+reasoning = true
+input = ["text"]
+context_window = 1000000
+max_tokens = 384000
+cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+
+[providers.model_metadata."qwen/qwen3.5-122b-a10b"]
+name = "Qwen3.5 122B A10B"
+reasoning = true
+input = ["text"]
+context_window = 262144
+max_tokens = 262144
+cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+
+[providers.model_metadata."mistralai/mistral-large-2-instruct"]
+name = "Mistral Large 2 Instruct"
+reasoning = false
+input = ["text"]
+context_window = 131072
+max_tokens = 4096
+cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+
+[providers.model_metadata."openai/gpt-oss-120b"]
+name = "GPT OSS 120B"
+reasoning = true
+input = ["text"]
+context_window = 131072
+max_tokens = 65536
+cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+
+[[providers]]
 name = "openrouter"
 display_name = "OpenRouter"
 kind = "openai-compatible"
