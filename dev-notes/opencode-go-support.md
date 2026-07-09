@@ -48,3 +48,7 @@ The following capabilities of OpenCode Go / Zen Free models are currently unsupp
 ### 3. Model-Specific Thinking Level Display Labels
 - **Problem**: Provider-level thinking levels are mapped to standard canonical levels (like `high`, `xhigh`). Some models require mapping these canonical levels to custom UI display labels (e.g., mapping `high` to `"on"` or `"none"` in the CLI/TUI). Upstream does not support model-specific display label overrides.
 - **Solution**: Implement `thinking_level_labels` mapping on the model catalog metadata to translate canonical levels to display strings for CLI/TUI widgets.
+
+### 4. Always-On Reasoning Models
+- **Problem**: Upstream has no native way to declare always-on reasoning models (models where reasoning cannot be toggled off or customized, but thinking parameters must NOT be sent in the API payload to prevent errors). In upstream, excluding a model from the provider's `thinking_models` list disables its reasoning display entirely (rendering it as `"unavailable"` in the UI).
+- **Solution**: Set `reasoning = true` on the model metadata and exclude the model from the provider's `thinking_models` list. Our implementation detects these models by verifying that `reasoning` is `True` while supported `levels` is empty `()`. The TUI and CLI then format these models with the static `"always on"` label and disable custom level adjustments.
