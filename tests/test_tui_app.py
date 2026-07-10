@@ -549,10 +549,11 @@ def test_session_sidebar_lists_multiple_context_files() -> None:
     console.print(render_session_sidebar(session))
 
     output = console.export_text()
+    # The sidebar renders labels via str(Path(...)), so separators are native.
     assert "AGENTS.md" in output
-    assert ".agents/AGENTS.md" in output
-    assert "docs/AGENTS.md" in output
-    assert "/Users/alex/.agents/AGENTS.md" in output
+    assert str(Path(".agents") / "AGENTS.md") in output
+    assert str(Path("docs") / "AGENTS.md") in output
+    assert str(Path("/Users/alex/.agents/AGENTS.md")) in output
 
 
 def test_compact_session_info_renders_sidebar_facts() -> None:
@@ -564,7 +565,7 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
     lines = output.splitlines()
     provider_line = next(index for index, line in enumerate(lines) if "openai:fake-model" in line)
     context_line = next(index for index, line in enumerate(lines) if "12k/200k" in line)
-    assert "/workspace/project (--)" in output
+    assert f"{Path('/workspace/project')} (--)" in output
     assert "context 12k/200k" not in output
     assert "openai:fake-model" in lines[provider_line]
     assert "(medium)" in lines[provider_line]
@@ -574,7 +575,7 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
 def test_compact_session_info_styles_parent_path_as_metadata() -> None:
     cwd = _styled_cwd(Path("/workspace/project"), theme=TAU_DARK_THEME)
 
-    assert cwd.plain == "/workspace/project (--)"
+    assert cwd.plain == f"{Path('/workspace/project')} (--)"
     assert str(cwd.spans[0].style) == TAU_DARK_THEME.completion_description
     assert str(cwd.spans[1].style) == TAU_DARK_THEME.prompt_text
     assert str(cwd.spans[2].style) == TAU_DARK_THEME.completion_description
@@ -3606,7 +3607,9 @@ async def test_tui_app_export_command_runs_session_export() -> None:
         await pilot.press("enter")
 
         assert session.export_calls == [(Path("out.jsonl"), "jsonl")]
-        assert notifications == ["Exported session to /workspace/project/session.html"]
+        assert notifications == [
+            f"Exported session to {Path('/workspace/project/session.html')}"
+        ]
         assert session.prompt_texts == []
 
 
@@ -4116,7 +4119,7 @@ async def test_tui_app_completes_resume_session_argument() -> None:
 
         assert app._completion_state.selected is not None
         assert app._completion_state.selected.description == (
-            "Session - fake-model - /workspace/project"
+            f"Session - fake-model - {Path('/workspace/project')}"
         )
 
         await pilot.press("tab")

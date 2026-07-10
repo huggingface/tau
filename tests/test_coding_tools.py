@@ -1,5 +1,6 @@
 import asyncio
 import shlex
+import sys
 from pathlib import Path
 from time import monotonic
 
@@ -162,6 +163,14 @@ async def test_bash_tool_captures_stdout_and_exit_code(tmp_path: Path) -> None:
     assert result.details["timed_out"] is False
 
 
+# These tests rely on bash behavior (shell_command_prefix routes through bash,
+# and job control like `sleep 1 & wait`) that only applies on POSIX.
+requires_posix_shell = pytest.mark.skipif(
+    sys.platform == "win32", reason="bash-specific shell behavior is POSIX-only"
+)
+
+
+@requires_posix_shell
 @pytest.mark.anyio
 async def test_create_coding_tools_applies_shell_command_prefix(
     tmp_path: Path,
@@ -180,6 +189,7 @@ async def test_create_coding_tools_applies_shell_command_prefix(
     assert result.details["shell_command_prefix_applied"] is True
 
 
+@requires_posix_shell
 @pytest.mark.anyio
 async def test_bash_tool_applies_opt_in_shell_command_prefix(tmp_path: Path) -> None:
     rc_path = tmp_path / ".zshrc"
@@ -231,6 +241,7 @@ async def test_bash_tool_timeout_kills_shell_children(tmp_path: Path) -> None:
     assert not marker.exists()
 
 
+@requires_posix_shell
 @pytest.mark.anyio
 async def test_bash_tool_cancellation_kills_shell_children(tmp_path: Path) -> None:
     tool = create_bash_tool(cwd=tmp_path)

@@ -45,7 +45,9 @@ def test_default_prompt_includes_tools_guidelines_date_and_cwd(tmp_path: Path) -
     assert "Tau documentation (read only when the user asks about Tau itself" in prompt
     assert "custom providers or adding built-in providers/models (docs/models.md)" in prompt
     assert "creating or modifying extensions (docs/extensions.md" in prompt
-    assert prompt.endswith(f"Current date: 2026-06-17\nCurrent working directory: {tmp_path}")
+    # build_system_prompt normalizes the cwd to forward slashes on every platform.
+    expected_cwd = str(tmp_path).replace("\\", "/")
+    assert prompt.endswith(f"Current date: 2026-06-17\nCurrent working directory: {expected_cwd}")
 
 
 def test_tool_without_prompt_snippet_is_hidden_from_available_tools() -> None:
