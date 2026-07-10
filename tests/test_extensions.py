@@ -1138,12 +1138,12 @@ class RecordingUiBridge:
 
     def open_main_view(self, factory):  # noqa: ANN001
         self.calls.append(("open_main_view", (), {}))
-
-    def clear_components(self) -> None:
-        self.calls.append(("clear_components", (), {}))
         from tau_coding.extensions.api import _DeadMainViewHandle
 
         return _DeadMainViewHandle()
+
+    def clear_components(self) -> None:
+        self.calls.append(("clear_components", (), {}))
 
     def register_key_interceptor(self, handler):  # noqa: ANN001
         self.interceptors.append(handler)
