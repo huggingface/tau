@@ -3049,6 +3049,36 @@ class TauTuiApp(App[None]):
                 return True
         return False
 
+    def _replace_transformed_optimistic_user_message(
+        self, event: AgentEvent, *, run_id: int
+    ) -> bool:
+        """Reconcile a transformed prompt with its optimistic render.
+
+        An extension `input` hook may transform the submitted text inside
+        session.prompt, so the confirmed UserMessage no longer matches the
+        optimistically rendered original (the exact-equality path above).
+        Rewrite the optimistic item in place and redraw, instead of letting
+        the confirmed event append a second user item alongside the stale
+        original. Runs after _consume_optimistic_user_event, so it only fires
+        when this run's pending optimistic text mismatches — the run's own
+        prompt confirmation is the first user event of the run, so a queued
+        steering/follow-up user message can never be mistaken for it.
+        """
+        if not isinstance(event, MessageEndEvent) or not isinstance(event.message, UserMessage):
+            return False
+        for index, (pending_run_id, pending_text) in enumerate(self._optimistic_user_messages):
+            if pending_run_id != run_id:
+                continue
+            del self._optimistic_user_messages[index]
+            for item in reversed(self.state.items):
+                if item.role == "user" and item.text == pending_text:
+                    item.text = event.message.content
+                    break
+            self._refresh()
+            self._sync_header_title()
+            return True
+        return False
+
     def _clear_optimistic_user_messages(self, *, run_id: int) -> None:
         """Drop unconfirmed optimistic messages once their run is no longer active."""
         self._optimistic_user_messages = [
@@ -3636,6 +3666,11 @@ class TauTuiApp(App[None]):
                 if self._consume_optimistic_user_event(event, run_id=active_run_id):
                     self._sync_text_selection_state()
                     self._refresh_chrome()
+                    continue
+                if self._replace_transformed_optimistic_user_message(
+                    event, run_id=active_run_id
+                ):
+                    self._sync_text_selection_state()
                     continue
                 if not (_is_user_message_end_event(event) and self.screen_stack):
                     self.adapter.apply(event)

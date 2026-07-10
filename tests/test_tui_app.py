@@ -1747,6 +1747,35 @@ async def test_tui_submit_prompt_optimistically_appends_user_message_without_ful
 
 
 @pytest.mark.anyio
+async def test_tui_transformed_prompt_replaces_optimistic_user_message() -> None:
+    # An extension `input` hook may transform the submitted text inside
+    # session.prompt, so the confirmed UserMessage content differs from the
+    # optimistically rendered original. The optimistic item must be rewritten
+    # in place — not left rendered alongside a second, transformed user item.
+    session = FakeSession(
+        events=[
+            AgentStartEvent(),
+            MessageEndEvent(message=UserMessage(content="rewritten words")),
+            AgentEndEvent(),
+        ],
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await app._submit_prompt("original words")
+        await pilot.pause()
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        user_messages = [item.text for item in app.state.items if item.role == "user"]
+        transcript_lines = [line.text for line in transcript.lines]
+
+    assert user_messages == ["rewritten words"]
+    assert "original words" not in transcript_lines
+    assert transcript_lines.count("rewritten words") == 1
+
+
+@pytest.mark.anyio
 async def test_tui_submit_prompt_does_not_optimistically_append_slash_commands() -> None:
     session = FakeSession(
         events=[
