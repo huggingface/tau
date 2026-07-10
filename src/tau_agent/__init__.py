@@ -28,6 +28,17 @@ from tau_agent.harness import (
 )
 from tau_agent.loop import run_agent_loop
 from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
+from tau_agent.provider import CancellationToken, ModelProvider
+from tau_agent.provider_events import (
+    ProviderErrorEvent,
+    ProviderEvent,
+    ProviderResponseEndEvent,
+    ProviderResponseStartEvent,
+    ProviderRetryEvent,
+    ProviderTextDeltaEvent,
+    ProviderThinkingDeltaEvent,
+    ProviderToolCallEvent,
+)
 from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
@@ -56,6 +67,7 @@ __all__ = [
     "AgentToolResult",
     "AssistantMessage",
     "BranchSummaryEntry",
+    "CancellationToken",
     "CompactionEntry",
     "CustomEntry",
     "ErrorEvent",
@@ -71,6 +83,15 @@ __all__ = [
     "MessageEntry",
     "MessageStartEvent",
     "ModelChangeEntry",
+    "ModelProvider",
+    "ProviderErrorEvent",
+    "ProviderEvent",
+    "ProviderResponseEndEvent",
+    "ProviderResponseStartEvent",
+    "ProviderRetryEvent",
+    "ProviderTextDeltaEvent",
+    "ProviderThinkingDeltaEvent",
+    "ProviderToolCallEvent",
     "QueuedMessages",
     "QueueUpdateEvent",
     "RetryEvent",

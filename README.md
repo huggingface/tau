@@ -32,7 +32,7 @@ shape of a coding-agent system without starting from a giant production
 codebase.
 
 ```text
-tau_coding  →  tau_agent  →  tau_ai
+tau_coding  →  tau_agent  ←  tau_ai
 ```
 
 - `tau_ai` translates model providers into Tau's provider-neutral stream.

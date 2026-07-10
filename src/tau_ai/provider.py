@@ -1,34 +1,15 @@
-"""Provider protocol for Tau model adapters."""
+"""Provider protocol, re-exported from the agent core.
+
+The canonical definitions live in ``tau_agent.provider`` so the portable
+agent core never imports from the provider layer. This module re-exports
+them unchanged for backwards compatibility.
+"""
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from typing import Protocol
+from tau_agent.provider import CancellationToken, ModelProvider
 
-from tau_agent.messages import AgentMessage
-from tau_agent.tools import AgentTool
-from tau_ai.events import ProviderEvent
-
-
-class CancellationToken(Protocol):
-    """Minimal cancellation interface accepted by providers."""
-
-    def is_cancelled(self) -> bool:
-        """Return whether the current stream should stop."""
-        ...
-
-
-class ModelProvider(Protocol):
-    """Provider-neutral interface for streaming model responses."""
-
-    def stream_response(
-        self,
-        *,
-        model: str,
-        system: str,
-        messages: list[AgentMessage],
-        tools: list[AgentTool],
-        signal: CancellationToken | None = None,
-    ) -> AsyncIterator[ProviderEvent]:
-        """Stream one model response as Tau provider events."""
-        ...
+__all__ = [
+    "CancellationToken",
+    "ModelProvider",
+]
