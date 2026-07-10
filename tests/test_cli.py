@@ -202,6 +202,7 @@ def test_cli_without_prompt_invokes_tui_runner(
         provider_name: str | None,
         auto_compact_token_threshold: int | None,
         initial_prompt: str | None,
+        resume_picker: bool = False,
         update_notice: object | None = None,
         *extra: object,
     ) -> None:
@@ -241,6 +242,7 @@ def test_cli_positional_prompt_invokes_tui_runner(
         provider_name: str | None,
         auto_compact_token_threshold: int | None,
         initial_prompt: str | None,
+        resume_picker: bool = False,
         update_notice: object | None = None,
         *extra: object,
     ) -> None:
@@ -628,6 +630,16 @@ def test_cli_exits_nonzero_when_print_mode_fails(monkeypatch: pytest.MonkeyPatch
 def test_default_tui_invokes_tui_runner_with_flags(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from tau_coding.paths import TauPaths
+
+    paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    manager = SessionManager(paths)
+    manager.create_session(
+        cwd=tmp_path,
+        model="fake",
+        session_id="session-1",
+    )
+
     calls: list[tuple[str | None, Path, str | None, bool, str | None, int | None, str | None]] = []
 
     async def fake_run_openai_tui(
@@ -638,6 +650,7 @@ def test_default_tui_invokes_tui_runner_with_flags(
         provider_name: str | None,
         auto_compact_token_threshold: int | None,
         initial_prompt: str | None,
+        resume_picker: bool = False,
         update_notice: object | None = None,
         *extra: object,
     ) -> None:
@@ -655,6 +668,7 @@ def test_default_tui_invokes_tui_runner_with_flags(
         )
 
     monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "SessionManager", lambda *args, **kwargs: manager)
     monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
 
     result = CliRunner().invoke(
@@ -675,6 +689,104 @@ def test_default_tui_invokes_tui_runner_with_flags(
 
     assert result.exit_code == 0
     assert calls == [("fake", tmp_path, "session-1", False, "local", 1000, None)]
+
+
+def test_continue_flag_resolves_latest_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--continue`/`-c` resolves the latest session for the cwd."""
+    from tau_coding.paths import TauPaths
+
+    paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    manager = SessionManager(paths)
+    manager.create_session(cwd=tmp_path, model="fake", session_id="latest-session")
+
+    calls: list[str | None] = []
+
+    async def fake_run_openai_tui(
+        model: str | None,
+        cwd: Path,
+        session_id: str | None,
+        new_session: bool,
+        provider_name: str | None,
+        auto_compact_token_threshold: int | None,
+        initial_prompt: str | None,
+        resume_picker: bool = False,
+        update_notice: object | None = None,
+    ) -> str | None:
+        del update_notice, resume_picker, auto_compact_token_threshold, initial_prompt
+        calls.append(session_id)
+        return session_id
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "SessionManager", lambda *args, **kwargs: manager)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, ["--cwd", str(tmp_path), "-c"])
+
+    assert result.exit_code == 0
+    assert calls == ["latest-session"]
+
+
+def test_continue_flag_creates_new_session_when_none_exists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--continue` with no previous sessions falls through to a new session."""
+    calls: list[str | None] = []
+
+    async def fake_run_openai_tui(
+        model: str | None,
+        cwd: Path,
+        session_id: str | None,
+        new_session: bool,
+        provider_name: str | None,
+        auto_compact_token_threshold: int | None,
+        initial_prompt: str | None,
+        resume_picker: bool = False,
+        update_notice: object | None = None,
+    ) -> str | None:
+        del update_notice, resume_picker, auto_compact_token_threshold, initial_prompt
+        calls.append(session_id)
+        return session_id
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, ["--cwd", str(tmp_path), "-c"])
+
+    assert result.exit_code == 0
+    assert calls == [None]
+
+
+def test_resume_flag_conflicts_with_continue(tmp_path: Path) -> None:
+    """`--resume` and `--continue` cannot be combined."""
+    result = CliRunner().invoke(
+        app,
+        ["--cwd", str(tmp_path), "--resume", "session-1", "-c"],
+    )
+
+    assert result.exit_code != 0
+    assert "--resume and --continue cannot be used together" in _strip_ansi(result.output)
+
+
+def test_print_resume_hint_shown_when_session_has_content(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Exit hint is printed when the session has conversation entries."""
+    from tau_coding.paths import TauPaths
+
+    paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    manager = SessionManager(paths)
+    session_id = "used-session"
+    manager.create_session(cwd=tmp_path, model="fake", session_id=session_id)
+    manager.touch_session(session_id)
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "SessionManager", lambda *args, **kwargs: manager)
+
+    cli._print_resume_hint(session_id)
+    captured = capsys.readouterr()
+    assert f"To continue this session: tau -c  |  tau --resume {session_id}" in captured.out
 
 
 def test_default_tui_rejects_resume_with_new_session(tmp_path: Path) -> None:

@@ -5775,8 +5775,12 @@ async def run_tui_app(
     extension_paths: tuple[Path, ...] = (),
     extensions_enabled: bool = True,
     project_extensions_enabled: bool = False,
-) -> None:
-    """Create the default provider/session and run the Textual app."""
+) -> str | None:
+    """Create the default provider/session and run the Textual app.
+
+    Returns the session id that was active on exit, or ``None``
+    if the session was not created.
+    """
     if new_session and session_id is not None:
         raise RuntimeError("--resume and --new-session cannot be used together")
 
@@ -5821,6 +5825,7 @@ async def run_tui_app(
         provider = LoginRequiredProvider(startup_message)
         runtime_provider_config = None
     session: CodingSession | None = None
+    result_id: str | None = None
     try:
         index_on_first_persist = False
         if record is None:
@@ -5861,9 +5866,11 @@ async def run_tui_app(
             initial_prompt=initial_prompt,
         )
         await app.run_async()
+        result_id = getattr(session, "_config", None) and session._config.session_id
     finally:
         if session is not None:
             close_session = getattr(session, "aclose", None)
             if close_session is not None:
                 await close_session()
         await provider.aclose()
+    return result_id

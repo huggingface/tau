@@ -190,8 +190,16 @@ def main(
     ] = PrintOutputMode.text,
     resume: Annotated[
         str | None,
-        typer.Option("--resume", help="Resume a session id in TUI mode."),
+        typer.Option("--resume", "-r", help="Resume a session id in TUI mode."),
     ] = None,
+    continue_session: Annotated[
+        bool,
+        typer.Option(
+            "--continue",
+            "-c",
+            help="Continue the most recent session in this directory.",
+        ),
+    ] = False,
     new_session: Annotated[
         bool,
         typer.Option("--new-session", help="Create a new session in TUI mode (default)."),
@@ -238,6 +246,18 @@ def main(
 
     if ctx.invoked_subcommand is not None:
         return
+
+    resolve_cwd = cwd or Path.cwd()
+
+    if resume is not None and continue_session:
+        raise typer.BadParameter("--resume and --continue cannot be used together")
+
+    if continue_session:
+        if new_session:
+            raise typer.BadParameter("--continue and --new-session cannot be used together")
+        latest = SessionManager().latest_session_for_cwd(resolve_cwd)
+        if latest is not None:
+            resume = latest.id
 
     if resume is not None and new_session:
         raise typer.BadParameter("--resume and --new-session cannot be used together")
@@ -289,10 +309,10 @@ def main(
     if prompt_option is None:
         notice = _startup_update_notice()
         try:
-            anyio.run(
+            session_id_used = anyio.run(
                 run_openai_tui,
                 model,
-                cwd or Path.cwd(),
+                resolve_cwd,
                 resume,
                 new_session,
                 provider,
@@ -305,6 +325,7 @@ def main(
             )
         except (RuntimeError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
+        _print_resume_hint(session_id_used)
         raise typer.Exit()
 
     prompt = prompt_option
@@ -334,6 +355,17 @@ def main(
         raise typer.Exit(1)
 
 
+def _print_resume_hint(session_id: str | None) -> None:
+    """Print a hint showing how to resume the just-ended session."""
+    if session_id is None:
+        return
+    manager = SessionManager()
+    record = manager.get_session(session_id)
+    if record is None or record.updated_at <= record.created_at:
+        return
+    typer.echo(f"To continue this session: tau -c  |  tau --resume {session_id}")
+
+
 async def run_openai_tui(
     model: str | None,
     cwd: Path,
@@ -346,8 +378,8 @@ async def run_openai_tui(
     extension_paths: tuple[Path, ...] = (),
     extensions_enabled: bool = True,
     project_extensions_enabled: bool = False,
-) -> None:
-    """Run the Textual TUI with the default OpenAI-compatible provider."""
+) -> str | None:
+    """Run the Textual TUI, returning the session id that was active on exit."""
     release_notes_notice = startup_release_notes_notice(_current_version())
     startup_notices = [
         notice
@@ -357,7 +389,7 @@ async def run_openai_tui(
         )
         if notice is not None
     ]
-    await run_tui_app(
+    return await run_tui_app(
         model=model,
         cwd=cwd,
         session_id=session_id,
