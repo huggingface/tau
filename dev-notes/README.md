@@ -4,8 +4,8 @@ These are the internal, phase-by-phase build journals and design records for Tau
 They are **not** published on the docs site — they live here for contributors who
 want to trace how the system was assembled.
 
-User-facing documentation lives in `website/src/content/docs/` and is published at
-<https://alejandro-ao.github.io/tau/>.
+User-facing documentation lives in `website/content/` and is published at
+<https://twotimespi.dev/>.
 
 ## Contents
 
