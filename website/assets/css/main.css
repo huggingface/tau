@@ -642,6 +642,15 @@ section{ padding:88px 0; }
 .docs-content pre code{
   background:none; border:none; padding:0; font-size:14px; line-height:1.7; color:inherit;
 }
+.copy-btn{
+  position:absolute; top:50%; right:10px; transform:translateY(-50%);
+  display:flex; align-items:center; justify-content:center;
+  width:30px; height:30px; padding:0;
+  color:rgba(215,224,244,.55); background:rgba(255,255,255,.07);
+  border:1px solid rgba(255,255,255,.14); border-radius:5px;
+  cursor:pointer;
+}
+.copy-btn--copied{ color:var(--green); border-color:var(--green); }
 .docs-content blockquote{
   margin:0 0 18px; padding:2px 20px; border-left:2px solid var(--grid-strong); color:var(--ink-soft);
 }

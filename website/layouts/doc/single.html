@@ -15,3 +15,11 @@
   </article>
 </div>
 {{ end }}
+
+{{ define "scripts" }}
+{{ $copyJs := resources.Get "js/copy-code.js" }}
+{{ if hugo.IsProduction }}
+  {{ $copyJs = $copyJs | js.Build | minify | fingerprint }}
+{{ end }}
+<script src="{{ $copyJs.RelPermalink }}"></script>
+{{ end }}
