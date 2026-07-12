@@ -243,7 +243,7 @@ class AnthropicProvider:
     def _should_retry(self, attempt: int, *, status_code: int | None = None) -> bool:
         if attempt >= self._config.max_retries:
             return False
-        return status_code is None or status_code in {408, 409, 429, 500, 502, 503, 504}
+        return status_code is None or status_code in {408, 409, 425, 429} or status_code >= 500
 
 
 class _AnthropicToolBuilder:
