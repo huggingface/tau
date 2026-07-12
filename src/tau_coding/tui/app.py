@@ -83,6 +83,7 @@ from tau_coding.extensions.api import (
     SlotWidgetContent,
     SlotWidgetFactory,
 )
+from tau_coding.notification import send_notification
 from tau_coding.oauth import login_openai_codex
 from tau_coding.oauth_registry import get_oauth_provider, oauth_provider_ids
 from tau_coding.oauth_types import (
@@ -3872,6 +3873,10 @@ class TauTuiApp(App[None]):
                 ):
                     _attach_diagnostic_log_path_to_error(self.state, self.session)
                 await self._apply_streaming_transcript_event(event)
+            if self.tui_settings.notifications and not self.app_focus:
+                send_notification(
+                    "Waiting for your input",
+                )
         except Exception as exc:  # noqa: BLE001 - surface unexpected worker errors in the TUI
             if active_run_id != self._prompt_run_id:
                 return
