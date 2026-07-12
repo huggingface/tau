@@ -58,6 +58,7 @@ from tau_ai.provider import CancellationToken
 from tau_coding.catalog_loader import save_user_catalog_entries
 from tau_coding.commands import CommandRegistry, create_default_command_registry
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
+from tau_coding.notification import send_notification
 from tau_coding.oauth import OAuthAuthInfo, OAuthPrompt, login_openai_codex
 from tau_coding.provider_catalog import (
     BUILTIN_PROVIDER_CATALOG,
@@ -2549,6 +2550,10 @@ class TauTuiApp(App[None]):
                 if isinstance(event, ErrorEvent) and not event.recoverable:
                     _attach_diagnostic_log_path_to_error(self.state, self.session)
                 await self._apply_streaming_transcript_event(event)
+            if self.tui_settings.notifications and not self.app_focus:
+                send_notification(
+                    "Waiting for your input",
+                )
         except Exception as exc:  # noqa: BLE001 - surface unexpected worker errors in the TUI
             if active_run_id != self._prompt_run_id:
                 return
