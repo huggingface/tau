@@ -154,7 +154,7 @@ def create_read_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
 
         mime_type = _detect_supported_image_mime_type(path)
         if mime_type is not None:
-            data = path.read_bytes()
+            data = await asyncio.to_thread(path.read_bytes)
             return AgentToolResult(
                 tool_call_id="",
                 name="read",
@@ -168,7 +168,7 @@ def create_read_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
                 },
             )
 
-        text = path.read_text(encoding="utf-8")
+        text = await asyncio.to_thread(path.read_text, encoding="utf-8")
         all_lines = text.split("\n")
         start_line = 0 if offset is None or offset == 0 else offset - 1
         if start_line >= len(all_lines):
@@ -282,7 +282,7 @@ def create_write_tool_definition(*, cwd: str | Path | None = None) -> ToolDefini
 
         async with _file_lock(path):
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            await asyncio.to_thread(path.write_text, content, encoding="utf-8")
 
         return AgentToolResult(
             tool_call_id="",
@@ -352,7 +352,7 @@ def create_edit_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
             raise ToolInputError(f"Could not edit file: {path}. Path is a directory.")
 
         async with _file_lock(path):
-            raw_content = path.read_text(encoding="utf-8")
+            raw_content = await asyncio.to_thread(path.read_text, encoding="utf-8")
             bom, content = _strip_bom(raw_content)
             original_ending = detect_line_ending(content)
             normalized = normalize_to_lf(content)
@@ -360,7 +360,7 @@ def create_edit_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
                 normalized, edits, str(path)
             )
             final_content = bom + restore_line_endings(new_content, original_ending)
-            path.write_text(final_content, encoding="utf-8")
+            await asyncio.to_thread(path.write_text, final_content, encoding="utf-8")
 
         diff_text, first_changed_line = generate_diff_string(base_content, new_content)
         patch = generate_unified_patch(str(path), base_content, new_content)
