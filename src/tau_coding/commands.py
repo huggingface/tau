@@ -185,6 +185,13 @@ class CommandRegistry:
         if not name:
             return CommandResult(handled=False)
 
+        # A name containing a slash is a file path, not a command.
+        # On *nix, absolute paths like /Users/me/file.png start with / and
+        # would be misparsed as a slash command. Return unhandled so the
+        # message flows through as a normal prompt.
+        if "/" in name:
+            return CommandResult(handled=False)
+
         command = self.get(name)
         if command is None and name == "scoped" and args.lower() == "models":
             command = self.get("scoped-models")

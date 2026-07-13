@@ -103,6 +103,17 @@ def test_registry_ignores_ordinary_prompts_and_skill_expansion(tmp_path: Path) -
     assert registry.execute(session, "/skill:review fix this").handled is False
 
 
+def test_registry_ignores_file_paths_starting_with_slash(tmp_path: Path) -> None:
+    """Absolute file paths starting with / must not be treated as slash commands."""
+    registry = create_default_command_registry()
+    session = FakeSession(tmp_path)
+
+    assert registry.execute(session, "/Users/me/screenshot.png").handled is False
+    assert registry.execute(session, "/docs/design.md").handled is False
+    assert registry.execute(session, "/tmp/foo/bar.txt").handled is False
+    assert registry.execute(session, "/home/user/file with spaces.md").handled is False
+
+
 def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
     commands = create_default_command_registry().list_commands()
 
