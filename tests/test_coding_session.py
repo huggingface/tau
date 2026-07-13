@@ -1795,6 +1795,52 @@ async def test_session_touches_session_manager_after_persisting_messages(tmp_pat
 
 
 @pytest.mark.anyio
+async def test_refresh_persisted_state_re_indexes_missing_session(tmp_path: Path) -> None:
+    """A session whose index entry is missing gets re-indexed on the next persist.
+
+    Reproduces the orphan condition: a session .jsonl file exists on disk but
+    its index entry was lost (or never written). Before the fix, every
+    touch_session call silently no-op'd because get_session returned None,
+    so the session stayed invisible to /resume and tau -c forever. After the
+    fix, _refresh_persisted_state re-creates the index entry via
+    _touch_or_index_session.
+    """
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(cwd=tmp_path, model="fake")
+    provider = FakeProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="Hi")),
+            ]
+        ]
+    )
+    config = CodingSessionConfig(
+        provider=provider,
+        model="fake",
+        system="You are Tau.",
+        storage=storage,
+        cwd=tmp_path,
+        session_id=record.id,
+        session_manager=manager,
+        resource_paths=TauResourcePaths(root=tmp_path / "resources", agents_root=None),
+    )
+    session = await CodingSession.load(config)
+
+    # Simulate index corruption: wipe the index after session creation
+    index_path = manager.project_index_path(tmp_path)
+    index_path.write_text("")
+    assert manager.get_session(record.id) is None
+
+    _events = await _collect_session_events(session.prompt("Hello"))
+
+    reindexed = manager.get_session(record.id)
+    assert reindexed is not None
+    assert reindexed.id == record.id
+
+
+@pytest.mark.anyio
 async def test_session_auto_names_first_unnamed_managed_session(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
