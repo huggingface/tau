@@ -6237,21 +6237,21 @@ name = "Step 3.7 Flash"
 reasoning = true
 input = ["text", "image"]
 context_window = 262144
-cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+cost = { input = 0.2, output = 1.15, cacheRead = 0.04, cacheWrite = 0 }
 
 [providers.model_metadata."step-3.5-flash"]
 name = "Step 3.5 Flash"
 reasoning = true
 input = ["text"]
 context_window = 262144
-cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+cost = { input = 0.1, output = 0.3, cacheRead = 0.02, cacheWrite = 0 }
 
 [providers.model_metadata."step-3.5-flash-2603"]
 name = "Step 3.5 Flash (2603)"
 reasoning = true
 input = ["text"]
 context_window = 262144
-cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+cost = { input = 0.1, output = 0.3, cacheRead = 0.02, cacheWrite = 0 }
 
 [[providers]]
 name = "stepfun-step-plan"
@@ -6319,18 +6319,18 @@ name = "Step 3.7 Flash"
 reasoning = true
 input = ["text", "image"]
 context_window = 262144
-cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+cost = { input = 0.2, output = 1.15, cacheRead = 0.04, cacheWrite = 0 }
 
 [providers.model_metadata."step-3.5-flash"]
 name = "Step 3.5 Flash"
 reasoning = true
 input = ["text"]
 context_window = 262144
-cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+cost = { input = 0.1, output = 0.3, cacheRead = 0.02, cacheWrite = 0 }
 
 [providers.model_metadata."step-3.5-flash-2603"]
 name = "Step 3.5 Flash (2603)"
 reasoning = true
 input = ["text"]
 context_window = 262144
-cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+cost = { input = 0.1, output = 0.3, cacheRead = 0.02, cacheWrite = 0 }
