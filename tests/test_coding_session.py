@@ -32,6 +32,7 @@ from tau_agent.session import (
 from tau_ai import CancellationToken, FakeProvider, ModelProvider, RuntimeModelLimits
 from tau_ai.events import AssistantMessageEvent
 from tau_coding import (
+    DEFAULT_CONTEXT_WINDOW_TOKENS,
     CodingSession,
     CodingSessionConfig,
     FileCredentialStore,
@@ -800,6 +801,23 @@ async def test_tree_branching_preserves_active_model(tmp_path: Path) -> None:
             AssistantMessage(content="Old answer"),
         ),
     )
+
+
+@pytest.mark.anyio
+async def test_context_usage_percent_uses_active_context_window(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="x" * 30_720,
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    assert session.context_window_tokens == DEFAULT_CONTEXT_WINDOW_TOKENS
+    assert session.context_usage_percent == 6
 
 
 @pytest.mark.anyio

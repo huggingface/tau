@@ -21,6 +21,7 @@ from tau_coding.tui.themes import (
 
 __all__ = [
     "BUILTIN_TUI_THEME_NAMES",
+    "ContextUsageDisplay",
     "HIGH_CONTRAST_THEME",
     "TAU_DARK_THEME",
     "TAU_LIGHT_THEME",
@@ -36,6 +37,9 @@ __all__ = [
     "tui_settings_from_json",
     "tui_settings_path",
 ]
+
+
+type ContextUsageDisplay = Literal["tokens", "percent", "both", "off"]
 
 
 class TuiConfigError(ValueError):
@@ -87,11 +91,13 @@ class TuiSettings:
     theme: TuiThemeName = "tau-dark"
     auto_copy_selection: bool = False
     sidebar_position: Literal["left", "right", "off"] = "right"
+    context_usage_display: ContextUsageDisplay = "tokens"
 
     def to_json(self) -> dict[str, Any]:
         """Serialize these settings to JSON-compatible data."""
         return {
             "auto_copy_selection": self.auto_copy_selection,
+            "context_usage_display": self.context_usage_display,
             "keybindings": self.keybindings.to_json(),
             "sidebar_position": self.sidebar_position,
             "theme": self.theme,
@@ -132,7 +138,13 @@ def save_tui_settings(settings: TuiSettings, paths: TauPaths | None = None) -> P
 
 def tui_settings_from_json(data: dict[str, Any]) -> TuiSettings:
     """Parse TUI settings from JSON-compatible data."""
-    allowed_fields = {"auto_copy_selection", "keybindings", "sidebar_position", "theme"}
+    allowed_fields = {
+        "auto_copy_selection",
+        "context_usage_display",
+        "keybindings",
+        "sidebar_position",
+        "theme",
+    }
     unknown_fields = set(data) - allowed_fields
     if unknown_fields:
         raise TuiConfigError(f"Unknown TUI settings field: {sorted(unknown_fields)[0]}")
@@ -151,6 +163,7 @@ def tui_settings_from_json(data: dict[str, Any]) -> TuiSettings:
             "auto_copy_selection",
         ),
         sidebar_position=cast(Literal["left", "right", "off"], raw_sidebar),
+        context_usage_display=_context_usage_display(data.get("context_usage_display", "tokens")),
     )
 
 
@@ -158,6 +171,12 @@ def _bool_setting(value: object, field_name: str) -> bool:
     if isinstance(value, bool):
         return value
     raise TuiConfigError(f"TUI setting must be a boolean: {field_name}")
+
+
+def _context_usage_display(value: object) -> ContextUsageDisplay:
+    if isinstance(value, str) and value in {"tokens", "percent", "both", "off"}:
+        return cast(ContextUsageDisplay, value)
+    raise TuiConfigError("context_usage_display must be 'tokens', 'percent', 'both', or 'off'")
 
 
 def _keybindings_from_json(data: dict[str, Any]) -> TuiKeybindings:

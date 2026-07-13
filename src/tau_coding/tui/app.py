@@ -4925,7 +4925,11 @@ class TauTuiApp(App[None]):
         sidebar = self.query_one("#sidebar", SessionSidebar)
         sidebar.update_from_session(self.session, theme=theme)
         compact_info = self.query_one("#compact-session-info", CompactSessionInfo)
-        compact_info.update_from_session(self.session, theme=theme)
+        compact_info.update_from_session(
+            self.session,
+            theme=theme,
+            context_usage_display=self.tui_settings.context_usage_display,
+        )
         queued_messages = self.query_one("#queued-messages", Static)
         queue_render_key = (
             self.state.queued_steering,

@@ -63,6 +63,9 @@ class CommandSession(Protocol):
     def context_window_tokens(self) -> int: ...
 
     @property
+    def context_usage_percent(self) -> int: ...
+
+    @property
     def thinking_level(self) -> str: ...
 
     @property
@@ -401,6 +404,7 @@ def _status_command(context: CommandContext) -> CommandResult:
         f"Context files: {len(session.context_files)}",
         f"Estimated context tokens: {session.context_token_estimate}",
         f"Context window: {session.context_window_tokens}",
+        _context_usage_status_line(session),
     ]
     context_window_source = getattr(session, "context_window_source", None)
     if context_window_source:
@@ -424,6 +428,14 @@ def _status_command(context: CommandContext) -> CommandResult:
     if session.session_title:
         lines.append(f"Session name: {session.session_title}")
     return CommandResult(handled=True, message="\n".join(lines))
+
+
+def _context_usage_status_line(session: CommandSession) -> str:
+    return (
+        "Context usage: "
+        f"{session.context_token_estimate} / {session.context_window_tokens} tokens "
+        f"({session.context_usage_percent}%)"
+    )
 
 
 def _system_command(context: CommandContext) -> CommandResult:

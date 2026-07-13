@@ -50,6 +50,7 @@ from tau_coding.context_window import (
     ContextUsageEstimate,
     auto_compaction_threshold_for_context_window,
     build_compaction_summary_prompt,
+    context_usage_percent,
     estimate_context_usage,
     estimate_message_tokens,
     summarize_messages_for_compaction,
@@ -647,6 +648,11 @@ class CodingSession:
                 tools=tuple(self._harness.config.tools),
             )
         return self._context_usage_cache
+
+    @property
+    def context_usage_percent(self) -> int:
+        """Return estimated active context usage as a whole-window percentage."""
+        return context_usage_percent(self.context_token_estimate, self.context_window_tokens)
 
     @property
     def system_prompt(self) -> str:

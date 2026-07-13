@@ -224,6 +224,7 @@ The built-in frontend reads optional settings from `~/.tau/tui.json`:
 {
   "theme": "high-contrast",
   "sidebar_position": "right",
+  "context_usage_display": "both",
   "keybindings": {
     "cancel": "escape",
     "command_palette": "ctrl+k",
@@ -254,6 +255,10 @@ keybinding names, empty keys, and duplicate assignments.
 - `sidebar_position`: `"right"` (default), `"left"`, or `"off"`. Controls
   placement of the session metadata sidebar. `"off"` hides the sidebar entirely;
   the compact session info row below the prompt still works.
+- `context_usage_display`: `"tokens"` (default), `"percent"`, `"both"`, or
+  `"off"`. Controls the compact context meter below the prompt. Token mode uses
+  Tau's rough token estimate and compaction threshold; percent mode uses the
+  active model's full context window.
 
 Full list in [Keyboard shortcuts]({{< relref "./keybindings.md" >}}).
 
@@ -278,6 +283,7 @@ Resource discovery order (later overrides earlier) is documented in
 
 ## Context
 
-`/session` reports a rough context estimate and breakdown. Auto-compaction
-triggers near the model's context window minus a reserve; override per run with
+`/session` reports rough context usage as tokens and as a percentage of the
+active model's context window, plus a token breakdown. Auto-compaction triggers
+near the model's context window minus a reserve; override per run with
 `--auto-compact-threshold`. Details in [Managing context]({{< relref "../guides/context.md" >}}).

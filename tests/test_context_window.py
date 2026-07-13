@@ -1,11 +1,15 @@
 from pathlib import Path
 
+import pytest
+
+import tau_coding
 from tau_agent import AssistantMessage, TextContent, ToolCall, ToolResultMessage, UserMessage
 from tau_agent.messages import assistant_content
 from tau_coding.context_window import (
     ContextUsageEstimate,
     auto_compaction_threshold_for_context_window,
     build_compaction_summary_prompt,
+    context_usage_percent,
     estimate_context_tokens,
     estimate_context_usage,
     estimate_message_tokens,
@@ -57,6 +61,24 @@ def test_auto_compaction_threshold_keeps_pi_style_reserve() -> None:
     assert auto_compaction_threshold_for_context_window(128_000) == 111_616
     assert auto_compaction_threshold_for_context_window(16_384) == 1
     assert auto_compaction_threshold_for_context_window(0) is None
+
+
+def test_context_usage_percent_reports_whole_model_window_percentage() -> None:
+    assert context_usage_percent(12_034, 216_384) == 6
+    assert context_usage_percent(50, 200) == 25
+    assert context_usage_percent(1, 3) == 33
+    assert context_usage_percent(0, 200) == 0
+    assert context_usage_percent(500_000, 100_000) == 500
+    assert context_usage_percent(1_000_000, 1) == 999
+    assert tau_coding.context_usage_percent(12_034, 216_384) == 6
+
+
+@pytest.mark.parametrize("context_window_tokens", [0, -1])
+def test_context_usage_percent_rejects_non_positive_context_windows(
+    context_window_tokens: int,
+) -> None:
+    with pytest.raises(ValueError, match="context_window_tokens must be positive"):
+        context_usage_percent(12_034, context_window_tokens)
 
 
 def test_context_usage_estimate_reports_breakdown(tmp_path: Path) -> None:
