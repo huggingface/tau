@@ -2761,6 +2761,13 @@ class TauTuiApp(App[None]):
         """Return keyboard focus to the prompt after clicks in the main TUI."""
         if event.button != 1:
             return
+        if self._extension_main_view is not None:
+            # An extension main view (e.g. a subagent conversation viewer) owns
+            # the main area and its keyboard; yanking focus back to the prompt
+            # would silently reroute every key — esc, toggles, typed text — to
+            # the main chat. Clicking the prompt itself still focuses it via
+            # Textual's native mouse-down focus.
+            return
         with suppress(NoMatches):
             self.screen.query_one("#prompt", PromptInput).focus()
 

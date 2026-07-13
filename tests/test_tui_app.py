@@ -6785,6 +6785,32 @@ async def test_component_main_view_open_and_close_restores_transcript() -> None:
 
 
 @pytest.mark.anyio
+async def test_click_does_not_steal_focus_while_main_view_open() -> None:
+    # The app-level click handler refocuses the prompt after main-TUI clicks,
+    # but an open extension main view owns the keyboard: yanking focus back
+    # would silently reroute esc/toggles/typed text to the main chat.
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        bridge = _component_bridge(app)
+
+        view = Static("main-view", id="ext-main-view")
+        view.can_focus = True
+        bridge.open_main_view(lambda handle, theme: view)
+        await pilot.pause()
+        view.focus()
+        await pilot.pause()
+        assert app.screen.focused is view
+
+        await pilot.click("#ext-main-view")
+        await pilot.pause()
+
+        assert app.screen.focused is view
+        assert not app.query_one("#prompt", PromptInput).has_focus
+
+
+@pytest.mark.anyio
 async def test_component_main_view_close_result_resolves_wait() -> None:
     app = TauTuiApp(FakeSession())
 
