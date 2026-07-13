@@ -196,6 +196,30 @@ docs_url = "http://localhost:11434/v1"
     assert settings.scoped_models == (ScopedModelConfig(provider="local", model="qwen"),)
 
 
+def test_load_provider_settings_ignores_preference_without_catalog_entry(
+    tmp_path: Path,
+) -> None:
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    (tau_home / "providers.json").write_text(
+        json.dumps(
+            {
+                "default_provider": "openai",
+                "provider_preferences": {
+                    "openai": {"default_model": "gpt-5-mini"},
+                    "llama-cpp": {"default_model": "local"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_provider_settings(TauPaths(home=tau_home))
+
+    assert settings.get_provider("openai").default_model == "gpt-5-mini"
+    assert "llama-cpp" not in {provider.name for provider in settings.providers}
+
+
 def test_save_provider_settings_writes_backup_when_replacing(tmp_path: Path) -> None:
     paths = TauPaths(home=tmp_path / ".tau")
     initial = ProviderSettings(
