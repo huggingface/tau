@@ -59,6 +59,7 @@ def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path)
         "xiaomi-token-plan-ams",
         "xiaomi-token-plan-sgp",
         "stepfun",
+        "stepfun-cn",
         "stepfun-step-plan",
         "stepfun-step-plan-cn",
     ]

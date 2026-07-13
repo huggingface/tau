@@ -6213,6 +6213,47 @@ context_window = 262144
 cost = { input = 0.1, output = 0.3, cacheRead = 0.02, cacheWrite = 0 }
 
 [[providers]]
+name = "stepfun-cn"
+display_name = "StepFun (China)"
+kind = "openai-compatible"
+base_url = "https://api.stepfun.com/v1"
+api_key_env = "STEPFUN_CN_API_KEY"
+credential_name = "stepfun-cn"
+models = ["step-3.7-flash", "step-3.5-flash", "step-3.5-flash-2603"]
+default_model = "step-3.7-flash"
+docs_url = "https://platform.stepfun.com/docs"
+api = "openai-completions"
+thinking_levels = ["low", "medium", "high"]
+thinking_default = "medium"
+thinking_parameter = "reasoning_effort"
+
+[providers.context_windows]
+"step-3.7-flash" = 262144
+"step-3.5-flash" = 262144
+"step-3.5-flash-2603" = 262144
+
+[providers.model_metadata."step-3.7-flash"]
+name = "Step 3.7 Flash"
+reasoning = true
+input = ["text", "image"]
+context_window = 262144
+cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+
+[providers.model_metadata."step-3.5-flash"]
+name = "Step 3.5 Flash"
+reasoning = true
+input = ["text"]
+context_window = 262144
+cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+
+[providers.model_metadata."step-3.5-flash-2603"]
+name = "Step 3.5 Flash (2603)"
+reasoning = true
+input = ["text"]
+context_window = 262144
+cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+
+[[providers]]
 name = "stepfun-step-plan"
 display_name = "StepFun Step Plan"
 kind = "openai-compatible"

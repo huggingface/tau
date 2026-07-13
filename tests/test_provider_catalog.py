@@ -73,6 +73,7 @@ def test_builtin_catalog_matches_expected_providers() -> None:
         "xiaomi-token-plan-ams",
         "xiaomi-token-plan-sgp",
         "stepfun",
+        "stepfun-cn",
         "stepfun-step-plan",
         "stepfun-step-plan-cn",
     ]
