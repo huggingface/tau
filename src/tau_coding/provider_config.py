@@ -1094,7 +1094,11 @@ def _providers_with_preferences(
         if provider_name in seen:
             raise ProviderConfigError("Provider preference names must be unique")
         if provider_name not in catalog_configs:
-            raise ProviderConfigError(f"Unknown provider preference: {provider_name}")
+            # Preferences contain runtime overrides, not provider definitions. A
+            # catalog entry may be removed independently, leaving an orphaned
+            # preference behind. Ignore it so one stale entry cannot prevent Tau
+            # from starting or running `tau setup` to register it again.
+            continue
         providers.append(
             _apply_provider_preference(
                 catalog_configs[provider_name],
