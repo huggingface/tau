@@ -238,6 +238,31 @@ async def test_jsonl_storage_appends_and_reads_entries(tmp_path: Path) -> None:
     assert await storage.read_all() == [first, second]
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\u0085"])
+async def test_jsonl_storage_round_trips_unicode_line_separators(
+    tmp_path: Path, separator: str
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    entry = MessageEntry(id="one", message=UserMessage(content=f"before{separator}after"))
+
+    await storage.append(entry)
+
+    assert await storage.read_all() == [entry]
+
+
+@pytest.mark.anyio
+async def test_jsonl_storage_reads_existing_file_with_unicode_line_separator(
+    tmp_path: Path,
+) -> None:
+    entry = MessageEntry(id="one", message=UserMessage(content="a\u2028b"))
+    path = tmp_path / "session.jsonl"
+    path.write_text(entry_to_json_line(entry), encoding="utf-8")
+    storage = JsonlSessionStorage(path)
+
+    assert await storage.read_all() == [entry]
+
+
 def test_session_state_replays_linear_entries() -> None:
     user = UserMessage(content="Hi", timestamp=1)
     assistant = AssistantMessage(content="Hello", timestamp=2)
