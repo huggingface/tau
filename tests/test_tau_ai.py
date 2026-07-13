@@ -177,6 +177,35 @@ async def test_openai_compatible_provider_formats_request_and_streams_text() -> 
 
 
 @pytest.mark.anyio
+async def test_openai_compatible_provider_omits_authorization_without_api_key() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(api_key=None, base_url="http://localhost:8080/v1"),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="local",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert "authorization" not in requests[0].headers
+
+
+@pytest.mark.anyio
 async def test_openai_compatible_provider_includes_configured_reasoning_effort() -> None:
     requests: list[httpx.Request] = []
 

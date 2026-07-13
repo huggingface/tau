@@ -1000,6 +1000,78 @@ def test_render_provider_settings_shows_credential_source(
     assert "\tMISSING_API_KEY\tmissing\t" in output
 
 
+def test_llama_cpp_setup_discovers_and_saves_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    monkeypatch.delenv("LLAMA_API_KEY", raising=False)
+
+    async def fake_discover(
+        base_url: str,
+        *,
+        api_key: str | None = None,
+    ) -> object:
+        from tau_coding.llama_cpp import LlamaCppServerInfo
+
+        assert base_url == "http://localhost:9090"
+        assert api_key is None
+        return LlamaCppServerInfo(
+            base_url="http://localhost:9090/v1",
+            models=("qwen.gguf", "coder.gguf"),
+        )
+
+    monkeypatch.setattr(cli, "discover_llama_cpp", fake_discover)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "llama-cpp",
+            "setup",
+            "--base-url",
+            "http://localhost:9090",
+            "--model",
+            "coder.gguf",
+        ],
+    )
+
+    provider = load_provider_settings(TauPaths(home=tmp_path / ".tau")).get_provider("llama-cpp")
+    assert result.exit_code == 0
+    assert "Discovered models: qwen.gguf, coder.gguf" in result.stdout
+    assert provider.base_url == "http://localhost:9090/v1"
+    assert provider.models == ("qwen.gguf", "coder.gguf")
+    assert provider.default_model == "coder.gguf"
+    assert provider.auth == "optional"
+
+
+def test_llama_cpp_doctor_reports_checks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+
+    async def fake_diagnose(*_args: object, **_kwargs: object) -> object:
+        from tau_coding.llama_cpp import (
+            LlamaCppDiagnostic,
+            LlamaCppDoctorReport,
+        )
+
+        return LlamaCppDoctorReport(
+            (
+                LlamaCppDiagnostic("server", "ok", "Found llama.cpp"),
+                LlamaCppDiagnostic("tools", "warning", "Tool probe was inconclusive"),
+            )
+        )
+
+    monkeypatch.setattr(cli, "diagnose_llama_cpp", fake_diagnose)
+
+    result = CliRunner().invoke(app, ["llama-cpp", "doctor"])
+
+    assert result.exit_code == 0
+    assert "✓ Found llama.cpp" in result.stdout
+    assert "! Tool probe was inconclusive" in result.stdout
+
+
 def test_setup_command_writes_provider_settings(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

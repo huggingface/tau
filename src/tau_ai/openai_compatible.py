@@ -170,10 +170,9 @@ class OpenAICompatibleProvider:
 
         async def iterator() -> AsyncIterator[ProviderEvent]:
             client = self._get_client()
-            headers = {
-                **(dict(self._config.headers or {})),
-                "Authorization": f"Bearer {self._config.api_key}",
-            }
+            headers = dict(self._config.headers or {})
+            if self._config.api_key:
+                headers["Authorization"] = f"Bearer {self._config.api_key}"
 
             attempt = 0
             while True:

@@ -19,7 +19,7 @@ DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS = 1.0
 class OpenAICompatibleConfig:
     """Configuration for an OpenAI-compatible chat completions endpoint."""
 
-    api_key: str
+    api_key: str | None
     base_url: str = DEFAULT_OPENAI_COMPATIBLE_BASE_URL
     headers: Mapping[str, str] | None = None
     timeout_seconds: float = DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS
