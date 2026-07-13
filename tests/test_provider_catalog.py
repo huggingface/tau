@@ -72,7 +72,23 @@ def test_builtin_catalog_matches_expected_providers() -> None:
         "xiaomi-token-plan-cn",
         "xiaomi-token-plan-ams",
         "xiaomi-token-plan-sgp",
+        "llama-cpp",
     ]
+
+
+def test_builtin_catalog_golden_llama_cpp_entry() -> None:
+    entry = builtin_provider_entry("llama-cpp")
+    assert entry is not None
+    assert entry.display_name == "llama.cpp"
+    assert entry.base_url == "http://127.0.0.1:8080/v1"
+    assert entry.auth == "optional"
+    assert entry.model_discovery == "openai"
+    assert entry.models == ("local",)
+    assert entry.default_model == "local"
+    assert entry.compat == {
+        "supportsStore": False,
+        "supportsUsageInStreaming": False,
+    }
 
 
 def test_builtin_catalog_golden_anthropic_entry() -> None:

@@ -3849,7 +3849,11 @@ def _subscription_login_providers(
 def _api_key_login_providers(
     providers: Sequence[ProviderCatalogEntry],
 ) -> tuple[ProviderCatalogEntry, ...]:
-    return tuple(provider for provider in providers if provider.kind != "openai-codex")
+    return tuple(
+        provider
+        for provider in providers
+        if provider.kind != "openai-codex" and provider.auth == "required"
+    )
 
 
 def _stored_credential_providers(

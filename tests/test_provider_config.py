@@ -58,8 +58,9 @@ def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path)
         "xiaomi-token-plan-cn",
         "xiaomi-token-plan-ams",
         "xiaomi-token-plan-sgp",
+        "llama-cpp",
     ]
-    assert settings.providers[0].default_model == DEFAULT_MODEL
+    assert settings.get_provider("openai").default_model == DEFAULT_MODEL
     assert settings.get_provider("anthropic").api_key_env == "ANTHROPIC_API_KEY"
     assert settings.get_provider("openrouter").api_key_env == "OPENROUTER_API_KEY"
     assert settings.get_provider("huggingface").api_key_env == "HF_TOKEN"
@@ -256,7 +257,10 @@ def test_save_and_load_provider_settings_round_trip(tmp_path: Path) -> None:
     loaded = load_provider_settings(paths)
 
     assert path == tmp_path / ".tau" / "providers.json"
-    assert loaded == settings
+    assert loaded.get_provider("local") == settings.get_provider("local")
+    assert loaded.default_provider == settings.default_provider
+    assert loaded.scoped_models == settings.scoped_models
+    assert loaded.get_provider("llama-cpp").auth == "optional"
 
 
 def test_provider_settings_parses_scoped_models() -> None:
@@ -410,6 +414,54 @@ def test_openai_compatible_config_from_provider_uses_configured_env_var(
     assert config.timeout_seconds == 60.0
     assert config.max_retries == 2
     assert config.max_retry_delay_seconds == 1.0
+
+
+def test_dynamic_provider_merge_replaces_url_and_models() -> None:
+    existing = OpenAICompatibleProviderConfig(
+        name="llama-cpp",
+        base_url="http://localhost:9090/v1",
+        auth="optional",
+        model_discovery="openai",
+        models=("qwen.gguf", "coder.gguf"),
+        default_model="coder.gguf",
+    )
+    incoming = OpenAICompatibleProviderConfig(
+        name="llama-cpp",
+        base_url="http://127.0.0.1:8080/v1",
+        auth="optional",
+        model_discovery="openai",
+        models=("qwen.gguf", "coder.gguf"),
+        default_model="qwen.gguf",
+    )
+
+    updated = upsert_openai_compatible_provider(
+        ProviderSettings(default_provider="llama-cpp", providers=(existing,)),
+        incoming,
+    )
+    provider = updated.get_provider("llama-cpp")
+
+    assert provider.base_url == "http://127.0.0.1:8080/v1"
+    assert provider.models == ("qwen.gguf", "coder.gguf")
+    assert provider.default_model == "coder.gguf"
+
+
+def test_openai_compatible_config_from_provider_allows_optional_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("LLAMA_API_KEY", raising=False)
+    provider = OpenAICompatibleProviderConfig(
+        name="llama-cpp",
+        base_url="http://127.0.0.1:8080/v1",
+        api_key_env="LLAMA_API_KEY",
+        auth="optional",
+        models=("local",),
+        default_model="local",
+    )
+
+    config = openai_compatible_config_from_provider(provider)
+
+    assert config.api_key is None
+    assert provider_has_usable_credentials(provider)
 
 
 def test_openai_compatible_config_from_provider_preserves_openai_base_url_env(
@@ -930,6 +982,7 @@ def test_load_provider_settings_restores_builtin_providers_with_stored_credentia
         "local",
         "openai-codex",
         "openrouter",
+        "llama-cpp",
     ]
     assert settings.default_provider == "local"
     assert settings.get_provider("openrouter").credential_name == "openrouter"

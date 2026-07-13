@@ -26,8 +26,10 @@ from tau_agent.types import JSONValue
 from tau_coding.paths import TauPaths
 from tau_coding.provider_catalog import (
     ModelCatalogMetadata,
+    ModelDiscovery,
     ModelInput,
     ProviderApi,
+    ProviderAuth,
     ProviderCatalogEntry,
     ProviderKind,
 )
@@ -79,6 +81,8 @@ class _CatalogProvider(BaseModel):
     base_url: _NonEmptyString
     api_key_env: _NonEmptyString
     credential_name: _NonEmptyString | None = None
+    auth: ProviderAuth = "required"
+    model_discovery: ModelDiscovery = "static"
     models: _NonEmptyStringTuple
     default_model: _NonEmptyString
     docs_url: _NonEmptyString
@@ -212,7 +216,10 @@ def _merge_raw_provider(base: dict[str, Any], overlay: dict[str, Any]) -> dict[s
     base_models = base.get("models", [])
     overlay_models = overlay.get("models", [])
     if isinstance(base_models, list) and isinstance(overlay_models, list):
-        merged["models"] = list(dict.fromkeys([*overlay_models, *base_models]))
+        if merged.get("model_discovery") == "openai":
+            merged["models"] = overlay_models
+        else:
+            merged["models"] = list(dict.fromkeys([*overlay_models, *base_models]))
     for key in ("context_windows", "headers", "compat"):
         base_mapping = base.get(key)
         overlay_mapping = overlay.get(key)
@@ -313,6 +320,8 @@ def _entry_from_provider(provider: _CatalogProvider, *, source: str) -> Provider
         api_key_env=provider.api_key_env,
         credential_name=provider.credential_name,
         models=provider.models,
+        auth=provider.auth,
+        model_discovery=provider.model_discovery,
         default_model=provider.default_model,
         docs_url=provider.docs_url,
         api=provider.api,
@@ -397,6 +406,8 @@ def _raw_provider_from_entry(entry: ProviderCatalogEntry) -> dict[str, Any]:
         "base_url": entry.base_url,
         "api_key_env": entry.api_key_env,
         "models": list(entry.models),
+        "auth": entry.auth,
+        "model_discovery": entry.model_discovery,
         "default_model": entry.default_model,
         "docs_url": entry.docs_url,
     }
@@ -470,6 +481,8 @@ def _catalog_to_toml(raw: dict[str, Any]) -> str:
             "base_url",
             "api_key_env",
             "credential_name",
+            "auth",
+            "model_discovery",
             "models",
             "default_model",
             "docs_url",

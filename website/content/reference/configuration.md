@@ -142,10 +142,14 @@ Provider preferences live in `~/.tau/providers.json`:
   defaults to `2`; `max_retry_delay_seconds` defaults to `1` (both ≥ 0).
 - API keys and OAuth credentials are **not** stored here — they live in
   `~/.tau/credentials.json`. Resolution order: stored credential, then the env
-  var named by `api_key_env`.
+  var named by `api_key_env`. Catalog providers may set `auth = "optional"` or
+  `auth = "none"`; Tau then permits calls without a key and omits the bearer
+  header. The built-in `llama-cpp` provider uses optional authentication.
 - The selected model must be present in that provider's `models` list. Add
   custom or local model names to `models` before using them as defaults,
-  CLI/TUI selections, or scoped models.
+  CLI/TUI selections, or scoped models. Providers with
+  `model_discovery = "openai"` can populate that list from `/v1/models`; run
+  `tau llama-cpp setup` for the built-in llama.cpp provider.
 - `scoped_models` are favorites for the **Ctrl+P** quick-cycle.
 - Older `providers.json` files that contain full `providers` entries are still
   accepted for compatibility. When Tau saves settings again, provider definitions

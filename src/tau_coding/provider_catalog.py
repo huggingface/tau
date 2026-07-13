@@ -15,6 +15,8 @@ ProviderKind = Literal[
     "google-generative-ai",
     "mistral-conversations",
 ]
+ProviderAuth = Literal["required", "optional", "none"]
+ModelDiscovery = Literal["static", "openai"]
 ProviderApi = Literal[
     "openai-completions",
     "openai-responses",
@@ -57,6 +59,8 @@ class ProviderCatalogEntry:
     models: tuple[str, ...]
     default_model: str
     docs_url: str
+    auth: ProviderAuth = "required"
+    model_discovery: ModelDiscovery = "static"
     api: ProviderApi | None = None
     context_windows: dict[str, int] | None = None
     headers: dict[str, str] = field(default_factory=dict)

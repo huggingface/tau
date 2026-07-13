@@ -1,6 +1,6 @@
 import pytest
 
-from tau_ai import OpenAICodexProvider
+from tau_ai import OpenAICodexProvider, OpenAICompatibleProvider
 from tau_coding import provider_runtime
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.provider_config import (
@@ -20,6 +20,28 @@ def test_create_model_provider_returns_openai_codex_provider(tmp_path) -> None:
     )
 
     assert isinstance(provider, OpenAICodexProvider)
+
+
+def test_create_model_provider_supports_optional_auth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.delenv("LLAMA_API_KEY", raising=False)
+    store = FileCredentialStore(tmp_path / "credentials.json")
+
+    provider = create_model_provider(
+        OpenAICompatibleProviderConfig(
+            name="llama-cpp",
+            api_key_env="LLAMA_API_KEY",
+            auth="optional",
+            models=("local",),
+            default_model="local",
+        ),
+        credential_store=store,
+    )
+
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider._config.api_key is None
 
 
 def test_create_model_provider_rejects_model_not_declared_for_provider(tmp_path) -> None:

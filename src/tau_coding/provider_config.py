@@ -27,7 +27,9 @@ from tau_coding.paths import TauPaths
 from tau_coding.provider_catalog import (
     BUILTIN_PROVIDER_CATALOG,
     ModelCatalogMetadata,
+    ModelDiscovery,
     ProviderApi,
+    ProviderAuth,
     ProviderCatalogEntry,
     ProviderKind,
 )
@@ -97,6 +99,8 @@ class OpenAICompatibleProviderConfig:
     api: ProviderApi = "openai-completions"
     api_key_env: str = "OPENAI_API_KEY"
     credential_name: str | None = None
+    auth: ProviderAuth = "required"
+    model_discovery: ModelDiscovery = "static"
     models: tuple[str, ...] = (DEFAULT_MODEL,)
     default_model: str = DEFAULT_MODEL
     context_windows: dict[str, int] = field(default_factory=dict)
@@ -138,6 +142,8 @@ class OpenAICompatibleProviderConfig:
             "api": self.api,
             "api_key_env": self.api_key_env,
             "credential_name": self.credential_name,
+            "auth": self.auth,
+            "model_discovery": self.model_discovery,
             "models": list(self.models),
             "default_model": self.default_model,
             "context_windows": dict(self.context_windows),
@@ -411,6 +417,8 @@ def provider_config_from_entry(entry: ProviderCatalogEntry) -> ProviderConfig:
         api=entry.api or _default_api_for_kind(entry.kind),
         api_key_env=entry.api_key_env,
         credential_name=entry.credential_name,
+        auth=entry.auth,
+        model_discovery=entry.model_discovery,
         models=entry.models,
         default_model=entry.default_model,
         context_windows=context_windows,
@@ -779,7 +787,11 @@ def _merge_openai_compatible_provider(
     existing: OpenAICompatibleProviderConfig,
     incoming: OpenAICompatibleProviderConfig,
 ) -> OpenAICompatibleProviderConfig:
-    models = _unique_strings((*incoming.models, *existing.models))
+    models = (
+        incoming.models
+        if incoming.model_discovery == "openai"
+        else _unique_strings((*incoming.models, *existing.models))
+    )
     return replace(
         incoming,
         models=models,
@@ -961,6 +973,13 @@ def _provider_definition_differs_from_catalog(
         return True
     if provider.credential_name != entry.credential_name:
         return True
+    if isinstance(provider, OpenAICompatibleProviderConfig) and provider.auth != entry.auth:
+        return True
+    if (
+        isinstance(provider, OpenAICompatibleProviderConfig)
+        and provider.model_discovery != entry.model_discovery
+    ):
+        return True
     if provider.models != entry.models:
         return True
     if getattr(provider, "api", None) != entry.api and entry.api is not None:
@@ -997,6 +1016,14 @@ def _catalog_entry_from_provider(
         api=getattr(provider, "api", None),
         credential_name=provider.credential_name,
         models=provider.models,
+        auth=(
+            provider.auth if isinstance(provider, OpenAICompatibleProviderConfig) else "required"
+        ),
+        model_discovery=(
+            provider.model_discovery
+            if isinstance(provider, OpenAICompatibleProviderConfig)
+            else "static"
+        ),
         default_model=(
             existing.default_model
             if existing is not None and existing.default_model in provider.models
@@ -1470,6 +1497,8 @@ def anthropic_config_from_provider(
 ) -> AnthropicConfig:
     """Build Anthropic runtime config from durable settings."""
     api_key = _api_key_from_provider(provider, credential_reader=credential_reader)
+    if api_key is None:
+        raise RuntimeError(f"Missing provider API key for {provider.name}.")
     selected_model = model or provider.default_model
     thinking_budget_tokens = _anthropic_thinking_budget_from_provider(
         provider,
@@ -1514,6 +1543,11 @@ def provider_has_usable_credentials(
     credential_reader: CredentialReader | None = None,
 ) -> bool:
     """Return whether Tau can attempt calls for this provider without prompting setup."""
+    if isinstance(provider, OpenAICompatibleProviderConfig) and provider.auth in {
+        "optional",
+        "none",
+    }:
+        return True
     if provider.credential_name and credential_reader is not None:
         if isinstance(provider, OpenAICodexProviderConfig):
             get_oauth = getattr(credential_reader, "get_oauth", None)
@@ -1680,6 +1714,10 @@ def _provider_from_json(data: object) -> ProviderConfig:
     credential_name = _optional_string(
         data.get("credential_name"), f"providers[{name}].credential_name"
     )
+    auth = _provider_auth(data.get("auth", "required"), f"providers[{name}].auth")
+    model_discovery = _model_discovery(
+        data.get("model_discovery", "static"), f"providers[{name}].model_discovery"
+    )
     models = _string_tuple(data.get("models"), f"providers[{name}].models")
     default_model = _string(data.get("default_model"), f"providers[{name}].default_model")
     context_windows = _context_window_dict(
@@ -1772,6 +1810,8 @@ def _provider_from_json(data: object) -> ProviderConfig:
         api=api or _default_api_for_kind(provider_type),
         api_key_env=api_key_env,
         credential_name=credential_name,
+        auth=auth,
+        model_discovery=model_discovery,
         models=models,
         default_model=default_model,
         context_windows=context_windows,
@@ -1793,7 +1833,9 @@ def _api_key_from_provider(
     provider: ProviderConfig,
     *,
     credential_reader: CredentialReader | None,
-) -> str:
+) -> str | None:
+    if isinstance(provider, OpenAICompatibleProviderConfig) and provider.auth == "none":
+        return None
     if provider.credential_name and credential_reader is not None:
         credential = credential_reader.get(provider.credential_name)
         if credential:
@@ -1802,6 +1844,11 @@ def _api_key_from_provider(
     api_key = environ.get(provider.api_key_env)
     if api_key:
         return api_key
+    if isinstance(provider, OpenAICompatibleProviderConfig) and provider.auth in {
+        "optional",
+        "none",
+    }:
+        return None
     credential_hint = f" or run /login {provider.name}" if provider.credential_name else ""
     raise RuntimeError(f"Missing provider API key. Set {provider.api_key_env}{credential_hint}.")
 
@@ -1953,6 +2000,20 @@ def _reject_unimplemented_thinking_config(
 ) -> None:
     if thinking_levels is not None:
         raise ProviderConfigError(f"{provider_type} thinking controls are not implemented yet")
+
+
+def _model_discovery(value: object, field_name: str) -> ModelDiscovery:
+    if value not in {"static", "openai"}:
+        raise ProviderConfigError(f"Provider field must be static or openai: {field_name}")
+    return cast(ModelDiscovery, value)
+
+
+def _provider_auth(value: object, field_name: str) -> ProviderAuth:
+    if value not in {"required", "optional", "none"}:
+        raise ProviderConfigError(
+            f"Provider field must be required, optional, or none: {field_name}"
+        )
+    return cast(ProviderAuth, value)
 
 
 def _optional_provider_api(value: object, field_name: str) -> ProviderApi | None:

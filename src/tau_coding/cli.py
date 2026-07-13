@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import sys
+from dataclasses import replace
+from functools import partial
 from os import environ
 from pathlib import Path
 from typing import Annotated
@@ -21,6 +23,15 @@ from tau_ai import (
 from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL
 from tau_coding.catalog_loader import user_catalog_path
 from tau_coding.credentials import FileCredentialStore
+from tau_coding.llama_cpp import (
+    LLAMA_CPP_API_KEY_ENV,
+    LLAMA_CPP_DEFAULT_BASE_URL,
+    LLAMA_CPP_PROVIDER_NAME,
+    LlamaCppError,
+    configured_llama_cpp_provider,
+    diagnose_llama_cpp,
+    discover_llama_cpp,
+)
 from tau_coding.provider_config import (
     DEFAULT_MODEL,
     DEFAULT_PROVIDER_NAME,
@@ -29,10 +40,13 @@ from tau_coding.provider_config import (
     ProviderConfig,
     ProviderSettings,
     load_provider_settings,
+    provider_config_from_catalog_entry,
     provider_kind,
     resolve_provider_selection,
+    save_default_provider_model,
     save_provider_settings,
     upsert_openai_compatible_provider,
+    upsert_saved_provider,
 )
 from tau_coding.provider_runtime import create_model_provider
 from tau_coding.rendering import PrintOutputMode, create_event_renderer
@@ -95,6 +109,97 @@ app = typer.Typer(
 def providers_command() -> None:
     """List configured model providers."""
     render_provider_settings(load_provider_settings(), credential_reader=FileCredentialStore())
+
+
+def llama_cpp_setup_command(
+    base_url: Annotated[
+        str,
+        typer.Option("--base-url", help="llama.cpp server URL, with or without /v1."),
+    ] = LLAMA_CPP_DEFAULT_BASE_URL,
+    model: Annotated[
+        str | None,
+        typer.Option("--model", "-m", help="Discovered model to use by default."),
+    ] = None,
+    api_key: Annotated[
+        str | None,
+        typer.Option("--api-key", help="API key for a protected llama.cpp server."),
+    ] = None,
+    set_default: Annotated[
+        bool,
+        typer.Option("--set-default/--no-set-default", help="Make llama.cpp the default."),
+    ] = True,
+) -> None:
+    """Discover a running llama.cpp server and save it as a Tau provider."""
+    if api_key is not None:
+        typer.echo(
+            "Warning: --api-key can be exposed in shell history; prefer LLAMA_API_KEY.",
+            err=True,
+        )
+    resolved_api_key = (
+        api_key
+        or FileCredentialStore().get(LLAMA_CPP_PROVIDER_NAME)
+        or environ.get(LLAMA_CPP_API_KEY_ENV)
+    )
+    try:
+        server = anyio.run(partial(discover_llama_cpp, base_url, api_key=resolved_api_key))
+        builtin = provider_config_from_catalog_entry(LLAMA_CPP_PROVIDER_NAME)
+        if not isinstance(builtin, OpenAICompatibleProviderConfig):
+            raise LlamaCppError("Built-in llama.cpp provider is not OpenAI-compatible")
+        provider = configured_llama_cpp_provider(builtin, server, model=model)
+        if api_key and provider.credential_name:
+            FileCredentialStore().set(provider.credential_name, api_key)
+        updated = upsert_saved_provider(provider, set_default=set_default)
+        save_default_provider_model(
+            provider_name=provider.name,
+            model=provider.default_model,
+            fallback_settings=updated,
+        )
+    except (LlamaCppError, RuntimeError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"Found llama.cpp at {provider.base_url}")
+    typer.echo(f"Discovered models: {', '.join(provider.models)}")
+    typer.echo(f"Saved provider '{provider.name}' with default model '{provider.default_model}'.")
+
+
+def llama_cpp_doctor_command(
+    base_url: Annotated[
+        str | None,
+        typer.Option("--base-url", help="Override the configured llama.cpp server URL."),
+    ] = None,
+    model: Annotated[
+        str | None,
+        typer.Option("--model", "-m", help="Model to probe."),
+    ] = None,
+    api_key: Annotated[
+        str | None,
+        typer.Option("--api-key", help="API key for a protected llama.cpp server."),
+    ] = None,
+) -> None:
+    """Check llama.cpp discovery, streaming, and coding-tool support."""
+    if api_key is not None:
+        typer.echo(
+            "Warning: --api-key can be exposed in shell history; prefer LLAMA_API_KEY.",
+            err=True,
+        )
+    configured = load_provider_settings().get_provider(LLAMA_CPP_PROVIDER_NAME)
+    if not isinstance(configured, OpenAICompatibleProviderConfig):
+        raise typer.BadParameter("Configured llama.cpp provider is not OpenAI-compatible")
+    provider = configured
+    if base_url is not None:
+        provider = replace(provider, base_url=base_url)
+    if model is not None:
+        models = provider.models if model in provider.models else (*provider.models, model)
+        provider = replace(provider, models=models, default_model=model)
+    resolved_api_key = api_key
+    if resolved_api_key is None and provider.credential_name:
+        resolved_api_key = FileCredentialStore().get(provider.credential_name)
+    resolved_api_key = resolved_api_key or environ.get(provider.api_key_env)
+    report = anyio.run(partial(diagnose_llama_cpp, provider, api_key=resolved_api_key))
+    icons = {"ok": "✓", "warning": "!", "error": "✗"}
+    for diagnostic in report.diagnostics:
+        typer.echo(f"{icons[diagnostic.status]} {diagnostic.message}")
+    if not report.ok:
+        raise typer.Exit(1)
 
 
 def setup_command(
@@ -247,6 +352,23 @@ def main(
         providers_command()
         raise typer.Exit()
 
+    if prompt_option is None and command == "llama-cpp":
+        llama_command, llama_options = _parse_llama_cpp_cli_args(positional_args[1:])
+        if llama_command == "setup":
+            llama_cpp_setup_command(
+                base_url=str(llama_options.get("base_url", LLAMA_CPP_DEFAULT_BASE_URL)),
+                model=_optional_cli_string(llama_options.get("model")),
+                api_key=_optional_cli_string(llama_options.get("api_key")),
+                set_default=bool(llama_options.get("set_default", True)),
+            )
+        else:
+            llama_cpp_doctor_command(
+                base_url=_optional_cli_string(llama_options.get("base_url")),
+                model=_optional_cli_string(llama_options.get("model")),
+                api_key=_optional_cli_string(llama_options.get("api_key")),
+            )
+        raise typer.Exit()
+
     if prompt_option is None and command == "setup" and len(positional_args) == 1:
         setup_command(
             provider_name=provider or DEFAULT_PROVIDER_NAME,
@@ -367,6 +489,49 @@ async def export_session_command(
     )
 
 
+def _optional_cli_string(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _parse_llama_cpp_cli_args(args: list[str]) -> tuple[str, dict[str, object]]:
+    usage = (
+        "Usage: tau llama-cpp setup|doctor [--base-url URL] [--model MODEL] "
+        "[--api-key KEY] [--no-set-default]"
+    )
+    if not args or args[0] not in {"setup", "doctor"}:
+        raise typer.BadParameter(usage)
+    command = args[0]
+    options: dict[str, object] = {}
+    index = 1
+    while index < len(args):
+        arg = args[index]
+        if arg == "--no-set-default" and command == "setup":
+            options["set_default"] = False
+        elif arg == "--set-default" and command == "setup":
+            options["set_default"] = True
+        elif arg in {"--base-url", "--model", "-m", "--api-key"}:
+            index += 1
+            if index >= len(args):
+                raise typer.BadParameter(usage)
+            key = {
+                "--base-url": "base_url",
+                "--model": "model",
+                "-m": "model",
+                "--api-key": "api_key",
+            }[arg]
+            options[key] = args[index]
+        elif arg.startswith("--base-url="):
+            options["base_url"] = arg.partition("=")[2]
+        elif arg.startswith("--model="):
+            options["model"] = arg.partition("=")[2]
+        elif arg.startswith("--api-key="):
+            options["api_key"] = arg.partition("=")[2]
+        else:
+            raise typer.BadParameter(usage)
+        index += 1
+    return command, options
+
+
 def _parse_export_cli_args(args: list[str]) -> tuple[str, Path | None, str | None]:
     if not args:
         raise RuntimeError("Usage: tau export <session-id-or-jsonl> [--format html|jsonl] [output]")
@@ -470,6 +635,11 @@ def _provider_credential_status(
             return f"stored:{provider.credential_name}"
     if environ.get(provider.api_key_env):
         return f"env:{provider.api_key_env}"
+    if isinstance(provider, OpenAICompatibleProviderConfig) and provider.auth in {
+        "optional",
+        "none",
+    }:
+        return "optional"
     return "missing"
 
 

@@ -97,16 +97,27 @@ Some installs expose the same server as `llama serve`:
 llama serve -hf ggml-org/Qwen3.6-35B-A3B-GGUF:Q8_0
 ```
 
-Then register it with Tau:
+Then let Tau discover the server and its model IDs:
 
 ```bash
-export LLAMA_API_KEY=local # any non-empty value unless you started llama.cpp with --api-key
+tau llama-cpp setup
+```
 
-tau --provider llama-cpp \
-  --base-url http://localhost:8080/v1 \
-  --api-key-env LLAMA_API_KEY \
-  --model local \
-  setup
+Tau connects to `http://127.0.0.1:8080` by default, queries `/v1/models`, saves
+all discovered model IDs, and selects the first model. Select another model or
+server explicitly when needed:
+
+```bash
+tau llama-cpp setup --base-url http://localhost:9090 --model my-model
+```
+
+No fake API key is required. If you started `llama-server` with `--api-key`, set
+`LLAMA_API_KEY` (preferred) or pass `--api-key` during setup. Command-line keys
+may be retained in shell history:
+
+```bash
+export LLAMA_API_KEY=secret
+tau llama-cpp setup
 ```
 
 Run Tau against the local model:
@@ -118,7 +129,15 @@ tau --provider llama-cpp -p "summarize this project" # one-shot print mode
 ```
 
 `llama-server` listens on port `8080` by default and only enforces the bearer
-token if you launch it with `--api-key`.
+token if you launch it with `--api-key`. Diagnose connectivity, streaming, and
+tool-call support with:
+
+```bash
+tau llama-cpp doctor
+```
+
+A warning from the tool probe usually means the GGUF is not a tool-capable
+instruct model or its llama.cpp chat template does not support tool calls.
 
 For scripted or one-off setup with another OpenAI-compatible server, use the
 same `tau setup` flow. For example, Ollama's OpenAI-compatible endpoint usually
