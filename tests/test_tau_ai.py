@@ -1343,6 +1343,56 @@ async def test_anthropic_provider_retries_transient_status_with_event() -> None:
 
 
 @pytest.mark.anyio
+async def test_anthropic_provider_retries_overloaded_529() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(529, text="overloaded")
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"content_block_delta","index":0,'
+                '"delta":{"type":"text_delta","text":"ok"}}\n\n'
+                'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n'
+                'data: {"type":"message_stop"}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+                max_retries=1,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 2
+    assert isinstance(events[0], ProviderRetryEvent)
+    assert events[0].data == {"status_code": 529, "body": "overloaded"}
+    assert [event.type for event in events] == [
+        "retry",
+        "response_start",
+        "text_delta",
+        "response_end",
+    ]
+
+
+@pytest.mark.anyio
 async def test_anthropic_provider_includes_http_error_detail_in_message() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(

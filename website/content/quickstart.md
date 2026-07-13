@@ -31,6 +31,25 @@ You can install Tau with `pipx install tau-ai` or
 [uv install docs](https://docs.astral.sh/uv/getting-started/installation/).
 {{% /tip %}}
 
+### Upgrade Tau
+
+For a normal tool install, upgrade with:
+
+```bash
+uv tool upgrade tau-ai
+```
+
+If you installed a local checkout with `uv tool install --editable .`, run the
+install command again after pulling changes:
+
+```bash
+uv tool install --editable --force .
+```
+
+Editable installs expose source changes immediately, but installed package
+metadata (including the version), dependencies, and entry points are refreshed
+only when uv reinstalls the tool.
+
 ## 2. Connect a model
 
 Tau needs an AI model to talk to. A **provider** is the service that hosts the
