@@ -6172,6 +6172,47 @@ compat = { requiresReasoningContentOnAssistantMessages = true, thinkingFormat = 
 cost = { input = 1, output = 3, cacheRead = 0.2, cacheWrite = 0 }
 
 [[providers]]
+name = "stepfun-step-plan"
+display_name = "StepFun Step Plan"
+kind = "openai-compatible"
+base_url = "https://api.stepfun.ai/step_plan/v1"
+api_key_env = "STEPFUN_STEP_PLAN_API_KEY"
+credential_name = "stepfun-step-plan"
+models = ["step-3.7-flash", "step-3.5-flash", "step-3.5-flash-2603"]
+default_model = "step-3.7-flash"
+docs_url = "https://platform.stepfun.ai/docs/en/step-plan/overview"
+api = "openai-completions"
+thinking_levels = ["low", "medium", "high"]
+thinking_default = "medium"
+thinking_parameter = "reasoning_effort"
+
+[providers.context_windows]
+"step-3.7-flash" = 262144
+"step-3.5-flash" = 262144
+"step-3.5-flash-2603" = 262144
+
+[providers.model_metadata."step-3.7-flash"]
+name = "Step 3.7 Flash"
+reasoning = true
+input = ["text", "image"]
+context_window = 262144
+cost = { input = 0.2, output = 1.15, cacheRead = 0.04, cacheWrite = 0 }
+
+[providers.model_metadata."step-3.5-flash"]
+name = "Step 3.5 Flash"
+reasoning = true
+input = ["text"]
+context_window = 262144
+cost = { input = 0.1, output = 0.3, cacheRead = 0.02, cacheWrite = 0 }
+
+[providers.model_metadata."step-3.5-flash-2603"]
+name = "Step 3.5 Flash (2603)"
+reasoning = true
+input = ["text"]
+context_window = 262144
+cost = { input = 0.1, output = 0.3, cacheRead = 0.02, cacheWrite = 0 }
+
+[[providers]]
 name = "stepfun-step-plan-cn"
 display_name = "StepFun Step Plan (China)"
 kind = "openai-compatible"
