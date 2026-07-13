@@ -119,7 +119,7 @@ For substantial architectural or phase-oriented work, add beginner-friendly note
 For user-facing behavior, update the published docs under:
 
 ```text
-website/src/content/docs/
+website/content/
 ```
 
 ## Release process

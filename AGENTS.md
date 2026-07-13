@@ -77,5 +77,5 @@ Each substantial phase should leave behind beginner-friendly notes under `dev-no
 - how to test or use it
 
 When a phase adds or changes user-facing behavior, also update the published docs
-under `website/src/content/docs/` (the "Use Tau" guides and reference).
+under `website/content/` (the guides and reference).
 
