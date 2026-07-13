@@ -619,21 +619,23 @@ subscription dropped, new one added) and emit
 `setup` therefore runs once per process per extension, not once per session
 swap. `aclose` emits `session_shutdown(reason="quit")`.
 
-`CodingSession.reload` (sync, from `/reload`) re-runs discovery: it purges
-`tau_extension_*` modules from `sys.modules`, re-imports, re-runs `setup`
-on a fresh runtime registration set, rebuilds the wrapped tool list in
-place (`harness.config.tools` is mutable by design), rebuilds the session
-command registry, and re-subscribes the fan-out listener. The summary gains
-an `extensions` category in `CodingReloadSummary`. Reload emits no
-`session_shutdown`/`session_start` pair (it runs on the sync command path,
-so async handlers could not be awaited); extension state is simply rebuilt,
-and background work started before the reload is orphaned. The `"reload"`
-lifecycle reason is reserved for when the command path becomes async.
+`CodingSession.reload` is async. The synchronous command registry returns a
+`reload_requested` action, and each frontend awaits the session operation.
+Reload first awaits `session_shutdown(reason="reload")` while the outgoing
+extension generation is still active, clears its host UI, invalidates the old
+generation, purges `tau_extension_*` modules from `sys.modules`, re-imports,
+and re-runs `setup` on a fresh registration set. It then rebuilds the wrapped
+tool list in place (`harness.config.tools` is mutable by design), rebuilds the
+session command registry, re-subscribes the fan-out listener, and awaits
+`session_start(reason="reload")` on the new generation. This lets shutdown
+handlers clean up through their live API and start handlers remount UI before
+reload reports completion. The summary includes an `extensions` category in
+`CodingReloadSummary`.
 
 **Ruling:** reload invalidates prior extension instances (Pi's
 `assertActive`/`invalidate` parity). Each load generation shares an
-`ExtensionGeneration` token; `reset_for_reload` marks it stale and mints a
-fresh one, and every `ExtensionAPI` method/property and every
+`ExtensionGeneration` token; `reset_for_reload` clears outgoing UI first, then marks the generation stale
+and mints a fresh one, and every `ExtensionAPI` method/property and every
 `ExtensionContext`/`ExtensionUi` read — trivial reads like `has_ui`
 included, matching Pi's assert-on-everything — checks the token first and
 raises `ExtensionError`. An orphaned background task holding a pre-reload

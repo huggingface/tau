@@ -20,6 +20,7 @@ from tau_ai import (
 )
 from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL
 from tau_coding.catalog_loader import user_catalog_path
+from tau_coding.commands import format_reload_summary
 from tau_coding.credentials import FileCredentialStore
 from tau_coding.extensions import StderrUiBridge
 from tau_coding.provider_config import (
@@ -621,8 +622,16 @@ async def run_print_mode(
             return result.ok
         command = session.handle_command(prompt)
         if command.handled:
-            if command.message:
-                typer.echo(command.message)
+            message = command.message
+            if command.reload_requested:
+                try:
+                    summary = await session.reload()
+                except ValueError as exc:
+                    message = f"Could not reload: {exc}"
+                else:
+                    message = format_reload_summary(summary)
+            if message:
+                typer.echo(message)
             return True
         async for event in session.prompt(prompt):
             renderer.render(event)

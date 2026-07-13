@@ -6,7 +6,7 @@ import asyncio
 import traceback
 from collections.abc import AsyncIterator, Callable, Coroutine, Sequence
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from inspect import isawaitable
 from io import StringIO
@@ -59,7 +59,11 @@ from tau_agent.types import JSONValue
 from tau_ai import ProviderErrorEvent, ProviderEvent
 from tau_ai.provider import CancellationToken
 from tau_coding.catalog_loader import save_user_catalog_entries
-from tau_coding.commands import CommandRegistry, create_default_command_registry
+from tau_coding.commands import (
+    CommandRegistry,
+    create_default_command_registry,
+    format_reload_summary,
+)
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.extensions.api import (
     KeyInterceptor,
@@ -2853,6 +2857,13 @@ class TauTuiApp(App[None]):
         if command.handled:
             if command.clear_requested:
                 self.state.clear()
+            if command.reload_requested:
+                try:
+                    summary = await self.session.reload()
+                except ValueError as exc:
+                    command = replace(command, message=f"Could not reload: {exc}")
+                else:
+                    command = replace(command, message=format_reload_summary(summary))
             if command.new_session_requested:
                 await self._new_session()
             if command.compact_summary is not None:

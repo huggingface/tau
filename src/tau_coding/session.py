@@ -1015,8 +1015,16 @@ class CodingSession:
         self._harness.config.provider = provider
         self._runtime_provider_config = provider_config
 
-    def reload(self) -> CodingReloadSummary:
-        """Reload local resources, project context, and extensions."""
+    async def reload(self) -> CodingReloadSummary:
+        """Reload resources and extensions with an awaited lifecycle boundary.
+
+        Outgoing handlers finish ``session_shutdown(reason="reload")`` while
+        their API generation is still active. The runtime then clears UI,
+        invalidates/reloads registrations, and awaits the new generation's
+        ``session_start(reason="reload")`` so startup-mounted UI is restored
+        before the command reports completion.
+        """
+        await self._extension_runtime.emit_session_shutdown("reload")
         before_skills = _skill_signatures(self._skills)
         before_prompt_templates = _prompt_template_signatures(self._prompt_templates)
         before_context_files = _context_file_signatures(self._context_files)
@@ -1075,6 +1083,8 @@ class CodingSession:
         if rebuilt_system_prompt is not None:
             self._harness.config.system = rebuilt_system_prompt
             self._invalidate_context_usage_cache()
+
+        await self._extension_runtime.emit_session_start("reload")
 
         return CodingReloadSummary(
             skills=_category_summary(before_skills, after_skills),

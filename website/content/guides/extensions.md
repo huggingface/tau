@@ -79,9 +79,10 @@ repo root when a manifest declares the entry.
 Extensions load project-first; on name conflicts (extension names, tool
 names, command names) the first registration wins. `--no-extensions`
 disables directory discovery entirely (explicit `-x` paths still load).
-`/reload` re-imports all extensions and re-runs `setup`; it does not emit
-`session_shutdown`, so background work an extension started before the
-reload is orphaned — treat `/reload` as a restart of extension state.
+`/reload` awaits `session_shutdown(reason="reload")` on the outgoing
+extension generation, clears its UI, re-imports every extension and re-runs
+`setup`, then awaits `session_start(reason="reload")` on the new generation.
+Use those lifecycle hooks to stop and restart background work and to remount UI.
 
 > **Security.** Extensions execute arbitrary Python inside your session.
 > Project extensions are therefore off by default — enable them with

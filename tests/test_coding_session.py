@@ -1999,7 +1999,7 @@ async def test_session_reload_preserves_disabled_skills(tmp_path: Path) -> None:
 
     assert session.skills == ()
 
-    session.reload()
+    await session.reload()
 
     assert session.skills == ()
     assert "<available_skills>" not in session.system_prompt
@@ -2183,16 +2183,15 @@ async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Pa
     (tmp_path / "AGENTS.md").write_text("Reloaded project rules.", encoding="utf-8")
 
     entries_before = await storage.read_all()
-    result = session.handle_command("/reload")
+    command = session.handle_command("/reload")
+    assert command.reload_requested is True
+    summary = await session.reload()
     entries_after = await storage.read_all()
     _events = await _collect_session_events(session.prompt("Hello"))
 
-    assert result.message is not None
-    assert "Reloaded local coding resources and project context." in result.message
-    assert "Skills: 1 total (changed, +1)" in result.message
-    assert "Project context files: 1 total (changed, +1)" in result.message
-    assert "Next-turn system prompt: rebuilt" in result.message
-    assert "Not refreshed by /reload" in result.message
+    assert summary.skills.after == 1
+    assert summary.context_files.after == 1
+    assert summary.system_prompt_rebuilt is True
     assert entries_after == entries_before
     assert [skill.name for skill in session.skills] == ["testing"]
     assert [Path(context_file.path).name for context_file in session.context_files] == ["AGENTS.md"]
@@ -2226,11 +2225,9 @@ async def test_session_reload_skips_provider_settings_refresh(
         )
     )
 
-    result = session.handle_command("/reload")
-
-    assert result.message is not None
-    assert "Provider config:" in result.message
-    assert "Not refreshed by /reload" in result.message
+    command = session.handle_command("/reload")
+    assert command.reload_requested is True
+    await session.reload()
 
 
 @pytest.mark.anyio
@@ -2258,10 +2255,11 @@ async def test_session_reload_leaves_system_prompt_when_inputs_are_unchanged(
         fail_build_system_prompt,
     )
 
-    result = session.handle_command("/reload")
+    command = session.handle_command("/reload")
+    assert command.reload_requested is True
+    summary = await session.reload()
 
-    assert result.message is not None
-    assert "Next-turn system prompt: unchanged" in result.message
+    assert summary.system_prompt_rebuilt is False
 
 
 @pytest.mark.anyio

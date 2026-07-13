@@ -371,21 +371,15 @@ def test_logout_command_rejects_unknown_provider(tmp_path: Path) -> None:
     assert "Unknown logout provider: local" in result.message
 
 
-def test_reload_command_refreshes_session_resources(tmp_path: Path) -> None:
+def test_reload_command_requests_async_session_reload(tmp_path: Path) -> None:
     session = FakeSession(tmp_path)
 
     result = create_default_command_registry().execute(session, "/reload")
 
-    assert result.message is not None
-    assert "Reloaded local coding resources and project context." in result.message
-    assert "Resources:" in result.message
-    assert "Skills: 1 total (changed, +1)" in result.message
-    assert "Prompt templates: 0 total (unchanged)" in result.message
-    assert "Project context files: 1 total (changed, +1)" in result.message
-    assert "Next-turn system prompt: rebuilt" in result.message
-    assert "Provider config:" in result.message
-    assert "Not refreshed by /reload" in result.message
-    assert session.reload_called is True
+    assert result.handled is True
+    assert result.reload_requested is True
+    assert result.message is None
+    assert session.reload_called is False
     assert session.provider_reload_called is False
 
 

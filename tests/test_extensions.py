@@ -1422,7 +1422,7 @@ async def test_reload_picks_up_guideline_changes(tmp_path: Path) -> None:
         "def setup(tau):\n    tau.add_prompt_guideline('Prefer uv over pip')\n",
     )
 
-    summary = session.reload()
+    summary = await session.reload()
 
     assert summary.system_prompt_rebuilt is True
     assert "Prefer uv over pip" in session.system_prompt
@@ -1683,7 +1683,7 @@ async def test_reload_picks_up_new_extension(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     _write_extension(_user_extensions_dir(paths), "late_arrival", HELLO_TOOL_EXTENSION)
 
-    summary = session.reload()
+    summary = await session.reload()
 
     assert summary.extensions.after == 1
     assert "hello" in [tool.name for tool in session.tools]
@@ -1838,7 +1838,7 @@ async def test_reload_invalidates_old_instance_and_new_instance_works(
     old_api = cast(ExtensionAPI, old_module.APIS[-1])  # type: ignore[attr-defined]
     assert old_api.context.cwd == session.cwd
 
-    session.reload()
+    await session.reload()
 
     with pytest.raises(ExtensionError, match="stale after reload"):
         old_api.send_user_message("zombie")
@@ -1850,6 +1850,42 @@ async def test_reload_invalidates_old_instance_and_new_instance_works(
     assert new_api is not old_api
     assert new_api.context.cwd == session.cwd
     new_api.send_user_message("fresh")  # the reloaded instance works normally
+
+
+async def test_reload_awaits_shutdown_before_invalidation_and_starts_new_generation(
+    tmp_path: Path,
+) -> None:
+    body = (
+        "EVENTS = []\n\n"
+        "def setup(tau):\n"
+        "    @tau.on('session_shutdown')\n"
+        "    async def stop(event):\n"
+        "        EVENTS.append(('stop', event.reason, tau.name))\n"
+        "    @tau.on('session_start')\n"
+        "    async def start(event):\n"
+        "        EVENTS.append(('start', event.reason, tau.name))\n"
+        "        tau.context.ui.components.set_slot_widget('status', [event.reason])\n"
+    )
+    session = await CodingSession.load(
+        _session_config(tmp_path, FakeProvider([]), extension_body=body)
+    )
+    ui = RecordingUiBridge()
+    session.extension_runtime.set_ui_bridge(ui)
+    old_module = _loaded_extension_module("integration")
+
+    await session.emit_pending_session_start()
+    assert old_module.EVENTS == [("start", "startup", "integration")]  # type: ignore[attr-defined]
+
+    await session.reload()
+
+    # The outgoing async shutdown completed while its API was active.
+    assert old_module.EVENTS[-1] == ("stop", "reload", "integration")  # type: ignore[attr-defined]
+    new_module = _loaded_extension_module("integration")
+    assert new_module.EVENTS == [("start", "reload", "integration")]  # type: ignore[attr-defined]
+    assert ui.calls[-2:] == [
+        ("clear_components", (), {}),
+        ("set_slot_widget", ("status",), {"placement": "above_prompt"}),
+    ]
 
 
 async def test_session_rebinding_does_not_invalidate_extension_instances(
