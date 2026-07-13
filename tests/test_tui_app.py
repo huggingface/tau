@@ -3543,6 +3543,27 @@ async def test_tui_app_notifications_render_literal_markup_text() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_app_clicking_header_does_not_resize_workspace() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        header = app.query_one("#header")
+        workspace = app.query_one("#workspace")
+        sidebar = app.query_one("#sidebar")
+        assert sidebar.display is True
+        initial_header_height = header.region.height
+        initial_workspace_region = workspace.region
+        initial_sidebar_region = sidebar.region
+
+        await pilot.click("#header")
+        await pilot.pause()
+
+        assert header.region.height == initial_header_height == 1
+        assert workspace.region == initial_workspace_region
+        assert sidebar.region == initial_sidebar_region
+
+
+@pytest.mark.anyio
 async def test_tui_app_clicking_transcript_refocuses_prompt() -> None:
     app = TauTuiApp(FakeSession())
 

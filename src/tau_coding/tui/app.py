@@ -1654,6 +1654,10 @@ class TauTuiApp(App[None]):
         dock: top;
     }
 
+    Header.-tall {
+        height: 1;
+    }
+
     Footer {
         background: $tau-chrome-background;
         color: $tau-chrome-text;
@@ -2120,7 +2124,7 @@ class TauTuiApp(App[None]):
 
     def compose(self) -> ComposeResult:
         """Compose the TUI widgets."""
-        yield Header()
+        yield Header(id="header")
         with Horizontal(id="workspace"):
             yield SessionSidebar(id="sidebar")
             with Vertical(id="main-pane"):
