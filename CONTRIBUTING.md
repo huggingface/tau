@@ -45,6 +45,16 @@ uv run tau
 uv run tau -p "explain this repo"
 ```
 
+To expose the checkout as a global `tau` command, use:
+
+```bash
+uv tool install --editable --force .
+```
+
+Repeat that command after `git pull`. The editable link makes source changes
+live, but uv must reinstall the tool to refresh package metadata (including the
+version), dependencies, and entry points.
+
 ## Checks before submitting
 
 Run the relevant focused tests while developing, then run the full checks before opening a pull request when practical:

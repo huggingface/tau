@@ -172,10 +172,16 @@ def startup_release_notes_notice(
     except InvalidVersion:
         return None
 
+    if release_notes is None:
+        try:
+            release_notes = load_release_notes()
+        except Exception:  # noqa: BLE001 - a broken bundled file must not block startup
+            release_notes = ()
+
     entries = release_notes_between(
         previous_version,
         current_version,
-        release_notes if release_notes is not None else load_release_notes(),
+        release_notes,
     )
     return ReleaseNotesNotice(
         current_version=current_version,

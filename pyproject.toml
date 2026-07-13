@@ -17,7 +17,7 @@ dependencies = [
     "pydantic>=2.0",
     "pygments>=2.18",
     "rich>=13.0",
-    "textual>=1.0",
+    "textual>=8.2.8",
     "typer>=0.12",
 ]
 

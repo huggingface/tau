@@ -14,6 +14,10 @@ publishDir = "public"
   noClasses = false
   style = "monokai"
 
+[services]
+  [services.googleAnalytics]
+    id = "G-3KBLC76BV0"
+
 [params]
   description = "An educational Python project for learning how coding agents are built."
   githubUrl = "https://github.com/alejandro-ao/tau"

@@ -32,6 +32,10 @@ the named skill into your prompt and runs it as a turn. See
 [Skills & prompt templates]({{< relref "../guides/skills-and-prompts.md" >}}).
 {{% /note %}}
 
+Only registered commands are consumed locally. Other slash-prefixed input, including
+absolute paths such as `/tmp` or `/Users/me/file.png`, is sent to the model as a normal
+prompt.
+
 Related:
 
 - **Thinking mode** is keyboard-driven, not a slash command — see
