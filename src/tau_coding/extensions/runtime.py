@@ -192,12 +192,13 @@ class ExtensionRuntime:
         against the fresh registration set. Session rebinding does not come
         through here and never invalidates.
         """
+        # Host-side extension UI (slot widgets, main views, key interceptors)
+        # belongs to the outgoing generation. Tear it down while that generation
+        # is still active so host cleanup triggered by component disposal can
+        # safely use its API; only then make every captured API/context stale.
+        self.clear_ui_components()
         self._generation.invalidate()
         self._generation = ExtensionGeneration()
-        # Host-side extension UI (slot widgets, main views, key interceptors)
-        # belongs to the invalidated generation: tear it down with the
-        # registrations, or interceptors accumulate one copy per reload.
-        self.clear_ui_components()
         if self._harness_unsubscribe is not None:
             self._harness_unsubscribe()
             self._harness_unsubscribe = None

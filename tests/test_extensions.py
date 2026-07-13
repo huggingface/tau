@@ -1758,6 +1758,25 @@ def test_reset_for_reload_clears_host_extension_components() -> None:
     assert ("clear_components", (), {}) in ui.calls
 
 
+def test_reset_for_reload_invalidates_only_after_component_cleanup() -> None:
+    runtime = ExtensionRuntime()
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "old"))
+    observed_active: list[bool] = []
+
+    class CleanupBridge(RecordingUiBridge):
+        def clear_components(self) -> None:
+            observed_active.append(api.name == "old")
+            super().clear_components()
+
+    runtime.set_ui_bridge(CleanupBridge())
+
+    runtime.reset_for_reload()
+
+    assert observed_active == [True]
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = api.name
+
+
 # -- reload staleness guard (Pi's assertActive/invalidate) ---------------------
 
 
