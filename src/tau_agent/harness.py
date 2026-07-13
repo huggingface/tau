@@ -12,8 +12,8 @@ from typing import Literal
 from tau_agent.events import AgentEvent, MessageEndEvent, MessageStartEvent, QueueUpdateEvent
 from tau_agent.loop import run_agent_loop
 from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
+from tau_agent.provider import ModelProvider
 from tau_agent.tools import AgentTool
-from tau_ai.provider import ModelProvider
 
 EventListener = Callable[[AgentEvent], Awaitable[None] | None]
 QueueMode = Literal["one_at_a_time", "all"]

@@ -10,7 +10,7 @@ paths, or rendering. Everything app-specific wraps around it.
 ## Three packages
 
 ```text
-tau_coding  →  tau_agent  →  tau_ai
+tau_coding  →  tau_agent  ←  tau_ai
 ```
 
 ### `tau_ai` — talking to models
@@ -36,8 +36,11 @@ Textual TUI.
 
 ## Dependency direction
 
-Dependencies only point one way: `tau_coding → tau_agent → tau_ai`. UI code
-*consumes* events; the core never reaches up to render anything. In one line:
+Dependencies point one way — inward to the portable core. `tau_agent` defines
+the contracts (`ModelProvider`, the provider events) and imports nothing from
+the other layers; `tau_ai` implements those contracts; `tau_coding` wires both
+together. UI code *consumes* events; the core never reaches up to render
+anything. In one line:
 
 ```text
 AgentHarness = reusable brain

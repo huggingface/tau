@@ -21,9 +21,8 @@ from tau_agent.events import (
     TurnStartEvent,
 )
 from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage
-from tau_agent.tools import AgentTool, AgentToolResult, ToolCall
-from tau_agent.types import JSONValue
-from tau_ai.events import (
+from tau_agent.provider import CancellationToken, ModelProvider
+from tau_agent.provider_events import (
     ProviderErrorEvent,
     ProviderResponseEndEvent,
     ProviderResponseStartEvent,
@@ -31,7 +30,8 @@ from tau_ai.events import (
     ProviderTextDeltaEvent,
     ProviderThinkingDeltaEvent,
 )
-from tau_ai.provider import CancellationToken, ModelProvider
+from tau_agent.tools import AgentTool, AgentToolResult, ToolCall
+from tau_agent.types import JSONValue
 
 
 async def run_agent_loop(
