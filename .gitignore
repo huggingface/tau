@@ -14,3 +14,9 @@ wheels/
 website/public/
 website/resources/
 website/.hugo_build.lock
+
+# System files
+.DS_Store
+
+# Agent tools
+.firecrawl/

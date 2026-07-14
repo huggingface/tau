@@ -191,7 +191,7 @@ class CommandRegistry:
             name = "scoped-models"
             args = ""
         if command is None:
-            return CommandResult(handled=True, message=f"Unknown command: /{name}")
+            return CommandResult(handled=False)
 
         return command.handler(
             CommandContext(session=session, registry=self, text=stripped, name=name, args=args)

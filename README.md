@@ -85,6 +85,18 @@ uv sync --dev
 uv run tau --version
 ```
 
+To make the checkout-backed command available globally, install it as an
+editable tool:
+
+```bash
+uv tool install --editable --force .
+```
+
+Run that command again after `git pull`. Editable installs expose source-code
+changes immediately, but the tool environment's package metadata, dependencies,
+and entry points are only refreshed when uv reinstalls the tool. Without the
+refresh, `tau --version` can still show the version from the previous install.
+
 ## Quickstart
 
 Run Tau from the project you want it to work on:
