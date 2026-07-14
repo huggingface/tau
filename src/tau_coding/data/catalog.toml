@@ -3398,7 +3398,7 @@ reasoning = true
 input = ["text"]
 context_window = 1000000
 max_tokens = 131072
-compat = { supportsDeveloperRole = false, thinkingFormat = "deepseek", zaiToolStream = true }
+compat = { supportsReasoningEffort = true, supportsDeveloperRole = false, thinkingFormat = "deepseek", zaiToolStream = true }
 cost = { input = 1.4, output = 4.4, cacheRead = 0.26, cacheWrite = 0 }
 thinking_level_map = { xhigh = "xhigh" }
 
@@ -3476,7 +3476,7 @@ reasoning = true
 input = ["text"]
 context_window = 1000000
 max_tokens = 131072
-compat = { supportsDeveloperRole = false, thinkingFormat = "deepseek", zaiToolStream = true }
+compat = { supportsReasoningEffort = true, supportsDeveloperRole = false, thinkingFormat = "deepseek", zaiToolStream = true }
 cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
 thinking_level_map = { xhigh = "xhigh" }
 
