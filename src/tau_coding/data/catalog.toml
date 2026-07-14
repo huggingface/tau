@@ -3335,7 +3335,7 @@ models = ["glm-4.5-air", "glm-4.7", "glm-5-turbo", "glm-5.1", "glm-5v-turbo", "g
 default_model = "glm-5.2"
 docs_url = "https://docs.z.ai"
 api = "openai-completions"
-thinking_levels = ["off", "minimal", "low", "medium", "high"]
+thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
 thinking_default = "medium"
 thinking_parameter = "reasoning_effort"
 
@@ -3398,8 +3398,9 @@ reasoning = true
 input = ["text"]
 context_window = 1000000
 max_tokens = 131072
-compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
+compat = { supportsDeveloperRole = false, thinkingFormat = "deepseek", zaiToolStream = true }
 cost = { input = 1.4, output = 4.4, cacheRead = 0.26, cacheWrite = 0 }
+thinking_level_map = { xhigh = "xhigh" }
 
 [[providers]]
 name = "zai-coding-plan"
@@ -3412,7 +3413,7 @@ models = ["glm-4.5-air", "glm-4.7", "glm-5-turbo", "glm-5.1", "glm-5v-turbo", "g
 default_model = "glm-5.2"
 docs_url = "https://docs.z.ai/devpack/overview"
 api = "openai-completions"
-thinking_levels = ["off", "minimal", "low", "medium", "high"]
+thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
 thinking_default = "medium"
 thinking_parameter = "reasoning_effort"
 
@@ -3475,8 +3476,9 @@ reasoning = true
 input = ["text"]
 context_window = 1000000
 max_tokens = 131072
-compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
+compat = { supportsDeveloperRole = false, thinkingFormat = "deepseek", zaiToolStream = true }
 cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+thinking_level_map = { xhigh = "xhigh" }
 
 [[providers]]
 name = "zhipu"
