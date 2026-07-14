@@ -44,6 +44,7 @@ def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path)
         "cerebras",
         "nvidia",
         "openrouter",
+        "zai",
         "zai-coding-plan",
         "zhipu",
         "zhipu-coding-plan",
