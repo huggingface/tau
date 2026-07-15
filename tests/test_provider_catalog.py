@@ -240,13 +240,14 @@ def test_builtin_minimax_m3_has_tiered_pricing() -> None:
         assert model_cost_for_input_tokens(metadata, 512_001) == long_context_cost
 
 
-def test_model_cost_for_input_tokens_rejects_invalid_count() -> None:
+@pytest.mark.parametrize("input_tokens", [-1, True])
+def test_model_cost_for_input_tokens_rejects_invalid_count(input_tokens: int) -> None:
     entry = builtin_provider_entry("minimax")
     assert entry is not None
     metadata = entry.model_metadata["MiniMax-M3"]
 
     with pytest.raises(ValueError, match="non-negative integer"):
-        model_cost_for_input_tokens(metadata, -1)
+        model_cost_for_input_tokens(metadata, input_tokens)
 
 
 def test_builtin_catalog_entries_are_internally_consistent() -> None:
@@ -353,9 +354,10 @@ cost_tiers = [
 
     save_user_catalog_entries([entry], paths)
     reloaded = next(e for e in effective_catalog(paths) if e.name == "minimax")
-    assert model_cost_for_input_tokens(
-        reloaded.model_metadata["MiniMax-M3"], 400_001
-    ) == long_context_cost
+    assert (
+        model_cost_for_input_tokens(reloaded.model_metadata["MiniMax-M3"], 400_001)
+        == long_context_cost
+    )
 
 
 def test_user_catalog_rejects_bounded_final_cost_tier(tmp_path: Path) -> None:

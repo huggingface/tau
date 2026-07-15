@@ -5,12 +5,14 @@ import pytest
 
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.paths import TauPaths
+from tau_coding.provider_catalog import ModelCostTier
 from tau_coding.provider_config import (
     DEFAULT_MODEL,
     AnthropicProviderConfig,
     OpenAICodexProviderConfig,
     OpenAICompatibleProviderConfig,
     ProviderConfigError,
+    ProviderModelMetadata,
     ProviderSettings,
     ScopedModelConfig,
     anthropic_config_from_provider,
@@ -282,6 +284,167 @@ def test_save_and_load_provider_settings_round_trip(tmp_path: Path) -> None:
 
     assert path == tmp_path / ".tau" / "providers.json"
     assert loaded == settings
+
+
+def test_legacy_provider_model_cost_tiers_round_trip() -> None:
+    raw = {
+        "default_provider": "local",
+        "providers": [
+            {
+                "type": "openai-compatible",
+                "name": "local",
+                "base_url": "http://localhost:11434/v1",
+                "api_key_env": "LOCAL_API_KEY",
+                "models": ["qwen"],
+                "default_model": "qwen",
+                "model_metadata": {
+                    "qwen": {
+                        "cost": {
+                            "input": 0.3,
+                            "output": 1.2,
+                            "cacheRead": 0.06,
+                            "cacheWrite": 0,
+                        },
+                        "cost_tiers": [
+                            {
+                                "max_input_tokens": 512000,
+                                "input": 0.3,
+                                "output": 1.2,
+                                "cacheRead": 0.06,
+                                "cacheWrite": 0,
+                            },
+                            {
+                                "input": 0.6,
+                                "output": 2.4,
+                                "cacheRead": 0.12,
+                                "cacheWrite": 0,
+                            },
+                        ],
+                    }
+                },
+            }
+        ],
+        "scoped_models": [],
+    }
+
+    settings = provider_settings_from_json(raw)
+    provider = settings.get_provider("local")
+    assert isinstance(provider, OpenAICompatibleProviderConfig)
+    assert (
+        provider.model_metadata["qwen"].to_json()["cost_tiers"]
+        == raw["providers"][0]["model_metadata"]["qwen"]["cost_tiers"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("cost_tiers", "match"),
+    [
+        (
+            [
+                {
+                    "max_input_tokens": 512000,
+                    "input": 0.3,
+                    "output": 1.2,
+                    "cacheRead": 0.06,
+                    "cacheWrite": 0,
+                }
+            ],
+            "final cost tier must omit max_input_tokens",
+        ),
+        (
+            [
+                {
+                    "max_input_tokens": 512000,
+                    "input": 0.3,
+                    "output": 1.2,
+                    "cacheRead": 0.06,
+                    "cacheWrite": 0,
+                },
+                {
+                    "max_input_tokens": 400000,
+                    "input": 0.4,
+                    "output": 1.6,
+                    "cacheRead": 0.08,
+                    "cacheWrite": 0,
+                },
+                {
+                    "input": 0.6,
+                    "output": 2.4,
+                    "cacheRead": 0.12,
+                    "cacheWrite": 0,
+                },
+            ],
+            "limits must be strictly increasing",
+        ),
+        (
+            [
+                {
+                    "unexpected": 1,
+                    "input": 0.3,
+                    "output": 1.2,
+                    "cacheRead": 0.06,
+                    "cacheWrite": 0,
+                }
+            ],
+            "unknown fields",
+        ),
+        (
+            [
+                {
+                    "input": -0.3,
+                    "output": 1.2,
+                    "cacheRead": 0.06,
+                    "cacheWrite": 0,
+                }
+            ],
+            "0 or greater",
+        ),
+    ],
+)
+def test_legacy_provider_rejects_invalid_cost_tiers(
+    cost_tiers: list[dict[str, object]],
+    match: str,
+) -> None:
+    raw = {
+        "default_provider": "local",
+        "providers": [
+            {
+                "type": "openai-compatible",
+                "name": "local",
+                "base_url": "http://localhost:11434/v1",
+                "api_key_env": "LOCAL_API_KEY",
+                "models": ["qwen"],
+                "default_model": "qwen",
+                "model_metadata": {"qwen": {"cost_tiers": cost_tiers}},
+            }
+        ],
+    }
+
+    with pytest.raises(ProviderConfigError, match=match):
+        provider_settings_from_json(raw)
+
+
+def test_runtime_metadata_rejects_invalid_cost_tier_values() -> None:
+    with pytest.raises(ProviderConfigError, match="cost tier values must be non-negative"):
+        OpenAICompatibleProviderConfig(
+            name="local",
+            models=("qwen",),
+            default_model="qwen",
+            model_metadata={
+                "qwen": ProviderModelMetadata(
+                    cost_tiers=(
+                        ModelCostTier(
+                            cost={
+                                "input": -0.3,
+                                "output": 1.2,
+                                "cacheRead": 0.06,
+                                "cacheWrite": 0,
+                            }
+                        ),
+                    )
+                )
+            },
+        )
 
 
 def test_provider_settings_parses_scoped_models() -> None:

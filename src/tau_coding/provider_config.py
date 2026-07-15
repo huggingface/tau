@@ -1885,7 +1885,9 @@ def _validate_model_metadata(
 
 def _validate_runtime_cost_tiers(tiers: tuple[ModelCostTier, ...]) -> None:
     if tiers and tiers[-1].max_input_tokens is not None:
-        raise ProviderConfigError("Provider model_metadata final cost tier must be unbounded")
+        raise ProviderConfigError(
+            "Provider model_metadata final cost tier must omit max_input_tokens"
+        )
     previous_limit = 0
     for tier in tiers:
         if any(value < 0 for value in tier.cost.values()):
@@ -2135,9 +2137,7 @@ def _model_metadata_dict(
             reasoning=_optional_bool(item.get("reasoning"), f"{field_name}.{model}.reasoning"),
             input=_optional_string_tuple(item.get("input"), f"{field_name}.{model}.input"),
             cost=_float_dict(item.get("cost", {}), f"{field_name}.{model}.cost"),
-            cost_tiers=_cost_tiers(
-                item.get("cost_tiers", []), f"{field_name}.{model}.cost_tiers"
-            ),
+            cost_tiers=_cost_tiers(item.get("cost_tiers", []), f"{field_name}.{model}.cost_tiers"),
             context_window=_optional_positive_int(
                 item.get("context_window"), f"{field_name}.{model}.context_window"
             ),
