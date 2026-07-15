@@ -18,6 +18,10 @@ from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.thinking import normalize_thinking_level
 
 BUILTIN_TUI_THEME_NAMES = ("tau-dark", "tau-light", "high-contrast")
+LOGIN_PROVIDER_ALIASES = {
+    "anthropic-api": ("anthropic", "api-key"),
+    "anthropic-subscription": ("anthropic", "subscription"),
+}
 
 
 class CommandSession(Protocol):
@@ -106,6 +110,7 @@ class CommandResult:
     login_picker_requested: bool = False
     custom_provider_login_requested: bool = False
     login_provider: str | None = None
+    login_method: str | None = None
     logout_picker_requested: bool = False
     logout_provider: str | None = None
     model_picker_requested: bool = False
@@ -677,16 +682,30 @@ def _login_command(context: CommandContext) -> CommandResult:
     if provider_name in {"custom", "new", "add"}:
         return CommandResult(handled=True, custom_provider_login_requested=True)
     if provider_name:
+        aliased_provider = LOGIN_PROVIDER_ALIASES.get(provider_name)
+        if aliased_provider is not None:
+            provider_name, login_method = aliased_provider
+        else:
+            login_method = None
         entry = builtin_provider_entry(provider_name)
         if entry is None:
-            providers = ", ".join(entry.name for entry in BUILTIN_PROVIDER_CATALOG)
+            providers = ", ".join(
+                [
+                    *(entry.name for entry in BUILTIN_PROVIDER_CATALOG),
+                    *LOGIN_PROVIDER_ALIASES,
+                ]
+            )
             return CommandResult(
                 handled=True,
                 message=(
                     f"Unknown login provider: {provider_name}\nAvailable providers: {providers}"
                 ),
             )
-        return CommandResult(handled=True, login_provider=entry.name)
+        return CommandResult(
+            handled=True,
+            login_provider=entry.name,
+            login_method=login_method,
+        )
 
     return CommandResult(handled=True, login_picker_requested=True)
 

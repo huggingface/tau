@@ -19,7 +19,8 @@ tau
 /login              # choose a login method
 /login openai       # save an OpenAI API key
 /login openai-codex # authenticate a Codex/ChatGPT subscription via OAuth
-/login anthropic    # choose Anthropic OAuth or save an API key
+/login anthropic-subscription # authenticate Claude Pro/Max via OAuth
+/login anthropic-api # save an Anthropic API key
 /login github-copilot # authenticate GitHub Copilot with a device code
 /login opencode-go  # save an OpenCode Go API key
 /login nvidia       # save an NVIDIA NIM API key
@@ -45,8 +46,11 @@ GitHub Copilot asks for a GitHub Enterprise Server URL/domain. Leave it blank
 for `github.com`. Device login also works in SSH/headless sessions: open the
 shown verification URL on any device and enter the displayed code.
 
-Anthropic also appears under **API key**, because `ANTHROPIC_API_KEY` remains a
-supported alternative. OAuth subscription requests use Anthropic's required
+Anthropic uses distinct direct-login aliases so the authentication method is
+unambiguous: `/login anthropic-subscription` starts OAuth, while
+`/login anthropic-api` saves an API key. The top-level `/login` picker still
+lists Anthropic under both **Subscription / OAuth** and **API key**. OAuth
+subscription requests use Anthropic's required
 Claude Code identity and may be billed as extra usage rather than consuming
 ordinary Claude plan limits. Check Anthropic's current account terms before
 using it.

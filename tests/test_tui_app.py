@@ -238,6 +238,18 @@ class FakeSession:
             return CommandResult(handled=True, login_picker_requested=True)
         if text in {"/login custom", "/login new", "/login add"}:
             return CommandResult(handled=True, custom_provider_login_requested=True)
+        if text == "/login anthropic-api":
+            return CommandResult(
+                handled=True,
+                login_provider="anthropic",
+                login_method="api-key",
+            )
+        if text == "/login anthropic-subscription":
+            return CommandResult(
+                handled=True,
+                login_provider="anthropic",
+                login_method="subscription",
+            )
         if text.startswith("/login "):
             return CommandResult(handled=True, login_provider=text.removeprefix("/login "))
         if text == "/logout":
@@ -4567,6 +4579,34 @@ async def test_tui_login_saves_provider_key(
     assert session.prompt_texts == []
     assert all(item.text != "stored-openai-key" for item in app.state.items)
     assert (tmp_path / ".tau" / "credentials.json").read_text(encoding="utf-8")
+
+
+@pytest.mark.anyio
+async def test_tui_anthropic_subscription_alias_opens_oauth() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/login anthropic-subscription"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, OAuthLoginScreen)
+        assert app.screen.provider.name == "anthropic"
+
+
+@pytest.mark.anyio
+async def test_tui_anthropic_api_alias_opens_api_key_login() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/login anthropic-api"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, LoginScreen)
+        assert app.screen.provider.name == "anthropic"
 
 
 @pytest.mark.anyio

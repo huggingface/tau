@@ -342,6 +342,27 @@ def test_login_command_requests_provider_login(tmp_path: Path) -> None:
     assert result.login_provider == "openai"
 
 
+def test_login_command_resolves_anthropic_auth_aliases(tmp_path: Path) -> None:
+    registry = create_default_command_registry()
+    session = FakeSession(tmp_path)
+
+    api_result = registry.execute(session, "/login anthropic-api")
+    subscription_result = registry.execute(session, "/login anthropic-subscription")
+
+    assert api_result.login_provider == "anthropic"
+    assert api_result.login_method == "api-key"
+    assert subscription_result.login_provider == "anthropic"
+    assert subscription_result.login_method == "subscription"
+
+
+def test_login_command_lists_auth_aliases_for_unknown_provider(tmp_path: Path) -> None:
+    result = create_default_command_registry().execute(FakeSession(tmp_path), "/login missing")
+
+    assert result.message is not None
+    assert "anthropic-api" in result.message
+    assert "anthropic-subscription" in result.message
+
+
 def test_login_command_requests_custom_provider_login(tmp_path: Path) -> None:
     result = create_default_command_registry().execute(FakeSession(tmp_path), "/login custom")
 

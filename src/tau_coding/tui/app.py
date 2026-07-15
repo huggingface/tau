@@ -60,6 +60,7 @@ from tau_ai import ProviderErrorEvent, ProviderEvent
 from tau_ai.provider import CancellationToken
 from tau_coding.catalog_loader import save_user_catalog_entries
 from tau_coding.commands import (
+    LOGIN_PROVIDER_ALIASES,
     CommandRegistry,
     create_default_command_registry,
     format_reload_summary,
@@ -2950,7 +2951,7 @@ class TauTuiApp(App[None]):
             if command.custom_provider_login_requested:
                 self._open_custom_provider_login()
             if command.login_provider is not None:
-                self._open_login(command.login_provider)
+                self._open_login(command.login_provider, method=command.login_method)
             if command.logout_picker_requested:
                 self._open_logout_picker()
             if command.logout_provider is not None:
@@ -4749,7 +4750,10 @@ class TauTuiApp(App[None]):
             skills=self.session.skills,
             prompt_templates=self.session.prompt_templates,
             model_names=self.session.available_models,
-            provider_names=self.session.available_providers,
+            provider_names=(
+                *self.session.available_providers,
+                *LOGIN_PROVIDER_ALIASES,
+            ),
             thinking_levels=getattr(self.session, "available_thinking_levels", ()),
             theme_names=BUILTIN_TUI_THEME_NAMES,
             session_options=_session_options(self.session),
