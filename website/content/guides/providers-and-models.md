@@ -24,9 +24,13 @@ tau
 ```
 
 Built-in providers include **OpenAI**, **Anthropic**, **OpenAI Codex**
-(subscription), **OpenRouter**, **Hugging Face**, and **NVIDIA NIM**.
-Credentials saved this way live in `~/.tau/credentials.json` (private
-permissions). The custom-provider
+(subscription), **Moonshot AI**, **Kimi Code** (subscription), **OpenRouter**,
+**Hugging Face**, and **NVIDIA NIM**. Moonshot AI includes `kimi-k2.7-code`,
+while Kimi Code exposes the rolling `kimi-for-coding` model through its separate
+`https://api.kimi.ai/coding/v1` endpoint. Use a Kimi Open Platform key for
+Moonshot AI and a key from the [Kimi Code console](https://www.kimi.ai/code/console)
+for Kimi Code. Credentials saved this way live in `~/.tau/credentials.json`
+(private permissions). The custom-provider
 flow asks for the provider name, display name, base URL, API-key environment
 variable, default model, and API key; it writes the provider definition to
 `~/.tau/catalog.toml` and runtime preferences to `~/.tau/providers.json`.

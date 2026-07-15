@@ -3733,9 +3733,9 @@ kind = "openai-compatible"
 base_url = "https://api.moonshot.ai/v1"
 api_key_env = "MOONSHOT_API_KEY"
 credential_name = "moonshotai"
-models = ["kimi-k2-0711-preview", "kimi-k2-0905-preview", "kimi-k2-thinking", "kimi-k2-thinking-turbo", "kimi-k2-turbo-preview", "kimi-k2.5", "kimi-k2.6"]
-default_model = "kimi-k2.6"
-docs_url = "https://platform.moonshot.ai/docs"
+models = ["kimi-k2-0711-preview", "kimi-k2-0905-preview", "kimi-k2-thinking", "kimi-k2-thinking-turbo", "kimi-k2-turbo-preview", "kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code"]
+default_model = "kimi-k2.7-code"
+docs_url = "https://platform.kimi.ai/docs"
 api = "openai-completions"
 thinking_levels = ["off", "minimal", "low", "medium", "high"]
 thinking_default = "medium"
@@ -3749,6 +3749,7 @@ kimi-k2-thinking-turbo = 262144
 kimi-k2-turbo-preview = 262144
 "kimi-k2.5" = 262144
 "kimi-k2.6" = 262144
+"kimi-k2.7-code" = 262144
 
 [providers.model_metadata.kimi-k2-0711-preview]
 name = "Kimi K2 0711"
@@ -3813,6 +3814,43 @@ max_tokens = 262144
 compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = false, maxTokensField = "max_tokens", supportsStrictMode = false }
 cost = { input = 0.95, output = 4, cacheRead = 0.16, cacheWrite = 0 }
 
+[providers.model_metadata."kimi-k2.7-code"]
+name = "Kimi K2.7 Code"
+reasoning = true
+input = ["text", "image"]
+context_window = 262144
+max_tokens = 32768
+compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = false, maxTokensField = "max_tokens", supportsStrictMode = false }
+cost = { input = 0.95, output = 4, cacheRead = 0.19, cacheWrite = 0 }
+unsupported_thinking_levels = ["off", "minimal", "low", "high"]
+
+[[providers]]
+name = "kimi-code"
+display_name = "Kimi Code subscription"
+kind = "openai-compatible"
+base_url = "https://api.kimi.ai/coding/v1"
+api_key_env = "MOONSHOT_API_KEY"
+credential_name = "kimi-code"
+models = ["kimi-for-coding"]
+default_model = "kimi-for-coding"
+docs_url = "https://www.kimi.ai/code/console"
+api = "openai-completions"
+thinking_levels = ["medium"]
+thinking_default = "medium"
+thinking_parameter = "reasoning_effort"
+
+[providers.context_windows]
+kimi-for-coding = 262144
+
+[providers.model_metadata.kimi-for-coding]
+name = "Kimi for Coding (latest)"
+reasoning = true
+input = ["text", "image"]
+context_window = 262144
+max_tokens = 32768
+compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = false, maxTokensField = "max_tokens", supportsStrictMode = false }
+cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+
 [[providers]]
 name = "moonshotai-cn"
 display_name = "Moonshot AI (China)"
@@ -3820,8 +3858,8 @@ kind = "openai-compatible"
 base_url = "https://api.moonshot.cn/v1"
 api_key_env = "MOONSHOT_API_KEY"
 credential_name = "moonshotai-cn"
-models = ["kimi-k2-0711-preview", "kimi-k2-0905-preview", "kimi-k2-thinking", "kimi-k2-thinking-turbo", "kimi-k2-turbo-preview", "kimi-k2.5", "kimi-k2.6"]
-default_model = "kimi-k2.6"
+models = ["kimi-k2-0711-preview", "kimi-k2-0905-preview", "kimi-k2-thinking", "kimi-k2-thinking-turbo", "kimi-k2-turbo-preview", "kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code"]
+default_model = "kimi-k2.7-code"
 docs_url = "https://platform.moonshot.cn/docs"
 api = "openai-completions"
 thinking_levels = ["off", "minimal", "low", "medium", "high"]
@@ -3836,6 +3874,7 @@ kimi-k2-thinking-turbo = 262144
 kimi-k2-turbo-preview = 262144
 "kimi-k2.5" = 262144
 "kimi-k2.6" = 262144
+"kimi-k2.7-code" = 262144
 
 [providers.model_metadata.kimi-k2-0711-preview]
 name = "Kimi K2 0711"
@@ -3899,6 +3938,16 @@ context_window = 262144
 max_tokens = 262144
 compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = false, maxTokensField = "max_tokens", supportsStrictMode = false }
 cost = { input = 0.95, output = 4, cacheRead = 0.16, cacheWrite = 0 }
+
+[providers.model_metadata."kimi-k2.7-code"]
+name = "Kimi K2.7 Code"
+reasoning = true
+input = ["text", "image"]
+context_window = 262144
+max_tokens = 32768
+compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = false, maxTokensField = "max_tokens", supportsStrictMode = false }
+cost = { input = 0.95, output = 4, cacheRead = 0.19, cacheWrite = 0 }
+unsupported_thinking_levels = ["off", "minimal", "low", "high"]
 
 [[providers]]
 name = "huggingface"

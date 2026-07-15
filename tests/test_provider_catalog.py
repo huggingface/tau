@@ -63,6 +63,7 @@ def test_builtin_catalog_matches_expected_providers() -> None:
         "minimax",
         "minimax-cn",
         "moonshotai",
+        "kimi-code",
         "moonshotai-cn",
         "huggingface",
         "fireworks",
@@ -169,6 +170,48 @@ def test_builtin_catalog_golden_nvidia_entry() -> None:
     assert gpt_oss_metadata.reasoning is True
     assert gpt_oss_metadata.context_window == 131_072
     assert gpt_oss_metadata.max_tokens == 65_536
+
+
+def test_builtin_catalog_golden_kimi_entries() -> None:
+    moonshot = builtin_provider_entry("moonshotai")
+    assert moonshot is not None
+    assert moonshot.default_model == "kimi-k2.7-code"
+    assert "kimi-k2.7-code" in moonshot.models
+    assert moonshot.context_windows is not None
+    assert moonshot.context_windows["kimi-k2.7-code"] == 262_144
+
+    moonshot_cn = builtin_provider_entry("moonshotai-cn")
+    assert moonshot_cn is not None
+    assert moonshot_cn.default_model == "kimi-k2.7-code"
+    assert "kimi-k2.7-code" in moonshot_cn.models
+    assert moonshot_cn.context_windows is not None
+    assert moonshot_cn.context_windows["kimi-k2.7-code"] == 262_144
+
+    k2_7 = moonshot.model_metadata["kimi-k2.7-code"]
+    assert k2_7.name == "Kimi K2.7 Code"
+    assert k2_7.reasoning is True
+    assert k2_7.input == ("text", "image")
+    assert k2_7.context_window == 262_144
+    assert k2_7.max_tokens == 32_768
+    assert k2_7.thinking_level_map == {
+        "off": None,
+        "minimal": None,
+        "low": None,
+        "high": None,
+    }
+
+    coding = builtin_provider_entry("kimi-code")
+    assert coding is not None
+    assert coding.display_name == "Kimi Code subscription"
+    assert coding.base_url == "https://api.kimi.ai/coding/v1"
+    assert coding.models == ("kimi-for-coding",)
+    assert coding.default_model == "kimi-for-coding"
+    assert coding.context_windows == {"kimi-for-coding": 262_144}
+
+    latest = coding.model_metadata["kimi-for-coding"]
+    assert latest.name == "Kimi for Coding (latest)"
+    assert latest.reasoning is True
+    assert latest.context_window == 262_144
 
 
 def test_builtin_catalog_entries_are_internally_consistent() -> None:
