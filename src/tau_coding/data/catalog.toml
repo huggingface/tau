@@ -3696,10 +3696,11 @@ cost = { input = 0.6, output = 2.4, cacheRead = 0.06, cacheWrite = 0.375 }
 
 [providers.model_metadata."MiniMax-M3"]
 reasoning = true
-input = ["text"]
+input = ["text", "image"]
 context_window = 1000000
 max_tokens = 131072
 compat = { forceAdaptiveThinking = true }
+# Standard-tier rates for requests with <=512k input tokens. MiniMax charges 2x above 512k.
 cost = { input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 }
 
 [[providers]]
@@ -3738,10 +3739,11 @@ cost = { input = 0.6, output = 2.4, cacheRead = 0.06, cacheWrite = 0.375 }
 
 [providers.model_metadata."MiniMax-M3"]
 reasoning = true
-input = ["text"]
+input = ["text", "image"]
 context_window = 1000000
 max_tokens = 131072
 compat = { forceAdaptiveThinking = true }
+# Standard-tier rates for requests with <=512k input tokens. MiniMax charges 2x above 512k.
 cost = { input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 }
 
 [[providers]]
