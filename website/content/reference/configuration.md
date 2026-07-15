@@ -109,6 +109,23 @@ strings, empty model names, unsupported provider kinds, default models that are
 not listed in `models`, `thinking_models` or `context_windows` entries for
 unknown models, and non-positive or non-integer context-window values.
 
+Model metadata can retain a backward-compatible flat `cost` and optionally
+provide ordered `cost_tiers` for rates that depend on input size:
+
+```toml
+[providers.model_metadata."long-context-model"]
+cost = { input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 }
+cost_tiers = [
+  { max_input_tokens = 512000, input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 },
+  { input = 0.6, output = 2.4, cacheRead = 0.12, cacheWrite = 0 },
+]
+```
+
+Limits are inclusive, must increase strictly, and the final tier must omit
+`max_input_tokens` so every valid input size has a rate. Callers that understand
+tiers should select the first tier whose limit includes the input-token count;
+older callers continue to see `cost` as the base rate.
+
 ### Provider preferences
 
 Provider preferences live in `~/.tau/providers.json`:

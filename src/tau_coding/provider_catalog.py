@@ -28,6 +28,14 @@ ThinkingLevelMap = dict[ThinkingLevel, str | None]
 
 
 @dataclass(frozen=True, slots=True)
+class ModelCostTier:
+    """Model rates that apply up to an optional input-token limit."""
+
+    cost: dict[str, float]
+    max_input_tokens: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ModelCatalogMetadata:
     """Provider-catalog metadata for a single model."""
 
@@ -37,11 +45,25 @@ class ModelCatalogMetadata:
     reasoning: bool | None = None
     input: tuple[ModelInput, ...] = ()
     cost: dict[str, float] | None = None
+    cost_tiers: tuple[ModelCostTier, ...] = ()
     context_window: int | None = None
     max_tokens: int | None = None
     headers: dict[str, str] = field(default_factory=dict)
     compat: dict[str, JSONValue] = field(default_factory=dict)
     thinking_level_map: ThinkingLevelMap = field(default_factory=dict)
+
+
+def model_cost_for_input_tokens(
+    metadata: ModelCatalogMetadata,
+    input_tokens: int,
+) -> dict[str, float] | None:
+    """Return model rates for an input size, falling back to the flat base cost."""
+    if not isinstance(input_tokens, int) or isinstance(input_tokens, bool) or input_tokens < 0:
+        raise ValueError("input_tokens must be a non-negative integer")
+    for tier in metadata.cost_tiers:
+        if tier.max_input_tokens is None or input_tokens <= tier.max_input_tokens:
+            return dict(tier.cost)
+    return dict(metadata.cost) if metadata.cost is not None else None
 
 
 @dataclass(frozen=True, slots=True)

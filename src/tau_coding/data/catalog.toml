@@ -3700,8 +3700,11 @@ input = ["text", "image"]
 context_window = 1000000
 max_tokens = 131072
 compat = { forceAdaptiveThinking = true }
-# Standard-tier rates for requests with <=512k input tokens. MiniMax charges 2x above 512k.
 cost = { input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 }
+cost_tiers = [
+  { max_input_tokens = 512000, input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 },
+  { input = 0.6, output = 2.4, cacheRead = 0.12, cacheWrite = 0 },
+]
 
 [[providers]]
 name = "minimax-cn"
@@ -3743,8 +3746,11 @@ input = ["text", "image"]
 context_window = 1000000
 max_tokens = 131072
 compat = { forceAdaptiveThinking = true }
-# Standard-tier rates for requests with <=512k input tokens. MiniMax charges 2x above 512k.
 cost = { input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 }
+cost_tiers = [
+  { max_input_tokens = 512000, input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 },
+  { input = 0.6, output = 2.4, cacheRead = 0.12, cacheWrite = 0 },
+]
 
 [[providers]]
 name = "moonshotai"

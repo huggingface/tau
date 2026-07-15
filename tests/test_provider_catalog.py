@@ -11,10 +11,15 @@ from tau_coding.catalog_loader import (
     builtin_catalog,
     builtin_catalog_resource_text,
     effective_catalog,
+    save_user_catalog_entries,
     user_catalog_path,
 )
 from tau_coding.paths import TauPaths
-from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG, builtin_provider_entry
+from tau_coding.provider_catalog import (
+    BUILTIN_PROVIDER_CATALOG,
+    builtin_provider_entry,
+    model_cost_for_input_tokens,
+)
 from tau_coding.provider_config import load_provider_settings
 
 VALID_PROVIDER = """
@@ -216,6 +221,34 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
     assert latest.context_window == 262_144
 
 
+def test_builtin_minimax_m3_has_tiered_pricing() -> None:
+    base_cost = {"input": 0.3, "output": 1.2, "cacheRead": 0.06, "cacheWrite": 0}
+    long_context_cost = {
+        "input": 0.6,
+        "output": 2.4,
+        "cacheRead": 0.12,
+        "cacheWrite": 0,
+    }
+
+    for provider_name in ("minimax", "minimax-cn"):
+        entry = builtin_provider_entry(provider_name)
+        assert entry is not None
+        metadata = entry.model_metadata["MiniMax-M3"]
+        assert metadata.input == ("text", "image")
+        assert metadata.cost == base_cost
+        assert model_cost_for_input_tokens(metadata, 512_000) == base_cost
+        assert model_cost_for_input_tokens(metadata, 512_001) == long_context_cost
+
+
+def test_model_cost_for_input_tokens_rejects_invalid_count() -> None:
+    entry = builtin_provider_entry("minimax")
+    assert entry is not None
+    metadata = entry.model_metadata["MiniMax-M3"]
+
+    with pytest.raises(ValueError, match="non-negative integer"):
+        model_cost_for_input_tokens(metadata, -1)
+
+
 def test_builtin_catalog_entries_are_internally_consistent() -> None:
     for entry in builtin_catalog():
         assert entry.default_model in entry.models
@@ -286,6 +319,60 @@ thinking_default = "high"
     assert entry.thinking_default == "high"
     assert entry.thinking_models == ()
     assert entry.thinking_parameter is None
+
+
+def test_user_catalog_overlays_and_serializes_cost_tiers(tmp_path: Path) -> None:
+    paths = _write_user_catalog(
+        tmp_path / ".tau",
+        """
+[[providers]]
+name = "minimax"
+
+[providers.model_metadata."MiniMax-M3"]
+cost_tiers = [
+  { max_input_tokens = 400000, input = 0.2, output = 1.0, cacheRead = 0.04, cacheWrite = 0 },
+  { input = 0.5, output = 2.0, cacheRead = 0.1, cacheWrite = 0 },
+]
+""",
+    )
+    entry = next(e for e in effective_catalog(paths) if e.name == "minimax")
+    metadata = entry.model_metadata["MiniMax-M3"]
+    assert model_cost_for_input_tokens(metadata, 400_000) == {
+        "input": 0.2,
+        "output": 1.0,
+        "cacheRead": 0.04,
+        "cacheWrite": 0,
+    }
+    long_context_cost = {
+        "input": 0.5,
+        "output": 2.0,
+        "cacheRead": 0.1,
+        "cacheWrite": 0,
+    }
+    assert model_cost_for_input_tokens(metadata, 400_001) == long_context_cost
+
+    save_user_catalog_entries([entry], paths)
+    reloaded = next(e for e in effective_catalog(paths) if e.name == "minimax")
+    assert model_cost_for_input_tokens(
+        reloaded.model_metadata["MiniMax-M3"], 400_001
+    ) == long_context_cost
+
+
+def test_user_catalog_rejects_bounded_final_cost_tier(tmp_path: Path) -> None:
+    paths = _write_user_catalog(
+        tmp_path / ".tau",
+        """
+[[providers]]
+name = "minimax"
+
+[providers.model_metadata."MiniMax-M3"]
+cost_tiers = [
+  { max_input_tokens = 512000, input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 },
+]
+""",
+    )
+    with pytest.raises(CatalogError, match="final tier must omit max_input_tokens"):
+        effective_catalog(paths)
 
 
 def test_user_catalog_rejects_unknown_keys(tmp_path: Path) -> None:
