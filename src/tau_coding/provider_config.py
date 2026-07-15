@@ -23,6 +23,7 @@ from tau_ai import (
 from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL
 from tau_coding.catalog_loader import effective_catalog, save_user_catalog_entries
 from tau_coding.credentials import FileCredentialStore, credentials_path
+from tau_coding.oauth_registry import get_oauth_provider
 from tau_coding.paths import TauPaths
 from tau_coding.provider_catalog import (
     BUILTIN_PROVIDER_CATALOG,
@@ -1535,11 +1536,14 @@ def provider_has_usable_credentials(
 ) -> bool:
     """Return whether Tau can attempt calls for this provider without prompting setup."""
     if provider.credential_name and credential_reader is not None:
-        if isinstance(provider, OpenAICodexProviderConfig):
-            get_oauth = getattr(credential_reader, "get_oauth", None)
-            if get_oauth is not None and get_oauth(provider.credential_name) is not None:
-                return True
-        elif credential_reader.get(provider.credential_name):
+        get_oauth = getattr(credential_reader, "get_oauth", None)
+        if (
+            get_oauth_provider(provider.name) is not None
+            and get_oauth is not None
+            and get_oauth(provider.credential_name) is not None
+        ):
+            return True
+        if credential_reader.get(provider.credential_name):
             return True
     return bool(environ.get(provider.api_key_env))
 
@@ -1818,6 +1822,13 @@ def _api_key_from_provider(
         credential = credential_reader.get(provider.credential_name)
         if credential:
             return credential
+        get_oauth = getattr(credential_reader, "get_oauth", None)
+        if get_oauth_provider(provider.name) is not None and get_oauth is not None:
+            oauth_credential = get_oauth(provider.credential_name)
+            if oauth_credential is not None:
+                access = getattr(oauth_credential, "access", None)
+                if isinstance(access, str) and access:
+                    return access
 
     api_key = environ.get(provider.api_key_env)
     if api_key:

@@ -78,6 +78,9 @@ def test_builtin_catalog_matches_expected_providers() -> None:
         "xiaomi-token-plan-cn",
         "xiaomi-token-plan-ams",
         "xiaomi-token-plan-sgp",
+        "opencode-go",
+        "opencode",
+        "github-copilot",
     ]
 
 
@@ -125,6 +128,21 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
     assert entry.thinking_models == ()
     assert entry.thinking_default == "medium"
     assert entry.thinking_parameter == "anthropic.thinking"
+    assert entry.auth_methods == ("api_key", "oauth")
+
+
+def test_builtin_catalog_oauth_and_opencode_auth_methods() -> None:
+    codex = builtin_provider_entry("openai-codex")
+    copilot = builtin_provider_entry("github-copilot")
+    opencode_go = builtin_provider_entry("opencode-go")
+    opencode = builtin_provider_entry("opencode")
+
+    assert codex is not None and codex.auth_methods == ("oauth",)
+    assert copilot is not None and copilot.auth_methods == ("oauth",)
+    assert opencode_go is not None and opencode_go.auth_methods == ("api_key",)
+    assert opencode is not None and opencode.auth_methods == ("api_key",)
+    assert opencode_go.api_key_env == "OPENCODE_API_KEY"
+    assert opencode.api_key_env == "OPENCODE_API_KEY"
 
 
 def test_builtin_catalog_golden_nvidia_entry() -> None:

@@ -25,6 +25,7 @@ ProviderApi = Literal[
 ]
 ModelInput = Literal["text", "image"]
 ThinkingLevelMap = dict[ThinkingLevel, str | None]
+AuthMethod = Literal["api_key", "oauth"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +89,7 @@ class ProviderCatalogEntry:
     thinking_models: tuple[str, ...] = ()
     thinking_default: ThinkingLevel | None = None
     thinking_parameter: ThinkingParameter | None = None
+    auth_methods: tuple[AuthMethod, ...] = ("api_key",)
 
 
 def _load_builtin_catalog() -> tuple[ProviderCatalogEntry, ...]:

@@ -176,17 +176,31 @@ class OpenAICompatibleProvider:
 
         async def iterator() -> AsyncIterator[ProviderEvent]:
             client = self._get_client()
-            headers = {
-                **(dict(self._config.headers or {})),
-                "Authorization": f"Bearer {self._config.api_key}",
-            }
+            api_key = self._config.api_key
+            request_url = url
+            headers = dict(self._config.headers or {})
+            if self._config.credential_resolver is not None:
+                auth = await self._config.credential_resolver()
+                api_key = auth.api_key
+                headers.update(auth.headers or {})
+                if auth.base_url is not None:
+                    endpoint = (
+                        "/responses"
+                        if url.rstrip("/").endswith("/responses")
+                        else "/chat/completions"
+                    )
+                    request_url = f"{auth.base_url.rstrip('/')}{endpoint}"
+            if not self._config.omit_authorization_header:
+                has_authorization = any(key.casefold() == "authorization" for key in headers)
+                if not has_authorization:
+                    headers["Authorization"] = f"Bearer {api_key}"
 
             attempt = 0
             while True:
                 parser = parser_factory()
                 try:
                     async with client.stream(
-                        "POST", url, json=payload, headers=headers
+                        "POST", request_url, json=payload, headers=headers
                     ) as response:
                         if response.status_code >= 400:
                             body = await response.aread()

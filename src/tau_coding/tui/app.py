@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import traceback
-from collections.abc import AsyncIterator, Callable, Coroutine, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -73,7 +73,15 @@ from tau_coding.extensions.api import (
     SlotWidgetContent,
     SlotWidgetFactory,
 )
-from tau_coding.oauth import OAuthAuthInfo, OAuthPrompt, login_openai_codex
+from tau_coding.oauth import login_openai_codex
+from tau_coding.oauth_registry import get_oauth_provider, oauth_provider_ids
+from tau_coding.oauth_types import (
+    OAuthAuthInfo,
+    OAuthDeviceCodeInfo,
+    OAuthLoginCallbacks,
+    OAuthPrompt,
+    OAuthSelectPrompt,
+)
 from tau_coding.provider_catalog import (
     BUILTIN_PROVIDER_CATALOG,
     ProviderCatalogEntry,
@@ -1988,18 +1996,26 @@ class OAuthLoginScreen(ModalScreen[OAuthCredential | None]):
         Binding("escape", "cancel", "Cancel"),
     ]
 
-    def __init__(self, provider: ProviderCatalogEntry, *, theme: TuiTheme) -> None:
+    def __init__(
+        self,
+        provider: ProviderCatalogEntry,
+        *,
+        theme: TuiTheme,
+        login: Callable[[OAuthLoginCallbacks], Awaitable[OAuthCredential]] | None = None,
+    ) -> None:
         super().__init__()
         self.provider = provider
         self.theme = theme
+        self._login = login
         self._manual_code_future: asyncio.Future[str] | None = None
         self._manual_code_value: str | None = None
+        self._prompt_allows_empty = False
 
     def compose(self) -> ComposeResult:
         """Compose the OAuth login prompt."""
         with Vertical(id="login-screen"):
             yield Static(f"Login: {self.provider.display_name}", id="login-title")
-            yield Static("Complete the browser login, or paste the redirect URL.", id="login-help")
+            yield Static("Follow the provider instructions to complete login.", id="login-help")
             yield Static("", id="login-oauth-url")
             yield Input(
                 placeholder="Paste redirect URL or authorization code",
@@ -2014,10 +2030,19 @@ class OAuthLoginScreen(ModalScreen[OAuthCredential | None]):
 
     async def _run_login(self) -> None:
         try:
-            credential = await login_openai_codex(
-                on_auth=self._show_auth,
-                on_prompt=self._prompt_for_code,
-                on_manual_code_input=self._manual_code_input,
+            oauth_provider = get_oauth_provider(self.provider.name)
+            login = self._login or (oauth_provider.login if oauth_provider is not None else None)
+            if login is None:
+                raise RuntimeError(f"No OAuth implementation for {self.provider.name}")
+            credential = await login(
+                OAuthLoginCallbacks(
+                    on_auth=self._show_auth,
+                    on_device_code=self._show_device_code,
+                    on_prompt=self._prompt_for_code,
+                    on_select=self._select_option,
+                    on_progress=self._show_progress,
+                    on_manual_code_input=self._manual_code_input,
+                )
             )
         except Exception as exc:  # noqa: BLE001 - surface OAuth failures in the TUI
             self.query_one("#login-help", Static).update(f"OAuth failed: {exc}")
@@ -2029,9 +2054,26 @@ class OAuthLoginScreen(ModalScreen[OAuthCredential | None]):
         if info.instructions:
             self.query_one("#login-help", Static).update(info.instructions)
 
+    def _show_device_code(self, info: OAuthDeviceCodeInfo) -> None:
+        self.query_one("#login-oauth-url", Static).update(info.verification_uri)
+        self.query_one("#login-help", Static).update(
+            f"Open the URL and enter code: {info.user_code}"
+        )
+
+    def _show_progress(self, message: str) -> None:
+        self.query_one("#login-help", Static).update(message)
+
     async def _prompt_for_code(self, prompt: OAuthPrompt) -> str:
         self.query_one("#login-help", Static).update(prompt.message)
-        return await self._manual_code_input()
+        self._prompt_allows_empty = prompt.allow_empty
+        try:
+            return await self._manual_code_input()
+        finally:
+            self._prompt_allows_empty = False
+
+    async def _select_option(self, prompt: OAuthSelectPrompt) -> str | None:
+        self.query_one("#login-help", Static).update(prompt.message)
+        return prompt.options[0].id if prompt.options else None
 
     async def _manual_code_input(self) -> str:
         if self._manual_code_value is not None:
@@ -2049,7 +2091,7 @@ class OAuthLoginScreen(ModalScreen[OAuthCredential | None]):
             return
         event.stop()
         value = event.value.strip()
-        if not value:
+        if not value and not self._prompt_allows_empty:
             return
         self._manual_code_value = value
         if self._manual_code_future is not None and not self._manual_code_future.done():
@@ -4151,13 +4193,21 @@ class TauTuiApp(App[None]):
                 providers,
                 theme=self.tui_settings.resolved_theme,
             ),
-            callback=self._handle_login_provider_result,
+            callback=lambda provider_name: self._handle_login_provider_result(
+                provider_name,
+                method=method,
+            ),
         )
 
-    def _handle_login_provider_result(self, provider_name: str | None) -> None:
+    def _handle_login_provider_result(
+        self,
+        provider_name: str | None,
+        *,
+        method: str | None = None,
+    ) -> None:
         if provider_name is None:
             return
-        self._open_login(provider_name)
+        self._open_login(provider_name, method=method)
 
     def _open_custom_provider_login(self) -> None:
         self.push_screen(
@@ -4207,14 +4257,32 @@ class TauTuiApp(App[None]):
         self._notify(f"Saved custom provider {result.display_name}.")
         self._refresh()
 
-    def _open_login(self, provider_name: str) -> None:
+    def _open_login(self, provider_name: str, *, method: str | None = None) -> None:
         entry = builtin_provider_entry(provider_name)
         if entry is None:
             self._notify(f"Unknown provider: {provider_name}", severity="error")
             return
-        if entry.kind == "openai-codex":
+        use_oauth = method == "subscription" or (
+            method is None and "api_key" not in entry.auth_methods
+        )
+        if use_oauth and get_oauth_provider(entry.name) is not None:
+            login = None
+            if entry.name == "openai-codex":
+
+                async def login(callbacks: OAuthLoginCallbacks) -> OAuthCredential:
+                    return await login_openai_codex(
+                        on_auth=callbacks.on_auth,
+                        on_prompt=callbacks.on_prompt,
+                        on_manual_code_input=callbacks.on_manual_code_input,
+                        on_progress=callbacks.on_progress,
+                    )
+
             self.push_screen(
-                OAuthLoginScreen(entry, theme=self.tui_settings.resolved_theme),
+                OAuthLoginScreen(
+                    entry,
+                    theme=self.tui_settings.resolved_theme,
+                    login=login,
+                ),
                 callback=lambda credential: self._handle_oauth_login_result(entry, credential),
             )
             return
@@ -5022,13 +5090,14 @@ def _login_provider_label(provider: ProviderCatalogEntry) -> str:
 def _subscription_login_providers(
     providers: Sequence[ProviderCatalogEntry],
 ) -> tuple[ProviderCatalogEntry, ...]:
-    return tuple(provider for provider in providers if provider.kind == "openai-codex")
+    provider_ids = oauth_provider_ids()
+    return tuple(provider for provider in providers if provider.name in provider_ids)
 
 
 def _api_key_login_providers(
     providers: Sequence[ProviderCatalogEntry],
 ) -> tuple[ProviderCatalogEntry, ...]:
-    return tuple(provider for provider in providers if provider.kind != "openai-codex")
+    return tuple(provider for provider in providers if "api_key" in provider.auth_methods)
 
 
 def _stored_credential_providers(

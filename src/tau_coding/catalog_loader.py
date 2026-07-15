@@ -25,6 +25,7 @@ from pydantic import (
 from tau_agent.types import JSONValue
 from tau_coding.paths import TauPaths
 from tau_coding.provider_catalog import (
+    AuthMethod,
     ModelCatalogMetadata,
     ModelCostTier,
     ModelInput,
@@ -103,6 +104,7 @@ class _CatalogProvider(BaseModel):
     thinking_models: tuple[_NonEmptyString, ...] = ()
     thinking_default: ThinkingLevel | None = None
     thinking_parameter: ThinkingParameter | None = None
+    auth_methods: tuple[AuthMethod, ...] = ("api_key",)
 
 
 class _CatalogFile(BaseModel):
@@ -342,6 +344,7 @@ def _entry_from_provider(provider: _CatalogProvider, *, source: str) -> Provider
         thinking_models=provider.thinking_models,
         thinking_default=provider.thinking_default,
         thinking_parameter=provider.thinking_parameter,
+        auth_methods=provider.auth_methods,
     )
 
 
@@ -473,6 +476,8 @@ def _raw_provider_from_entry(entry: ProviderCatalogEntry) -> dict[str, Any]:
         raw["thinking_default"] = entry.thinking_default
     if entry.thinking_parameter is not None:
         raw["thinking_parameter"] = entry.thinking_parameter
+    if entry.auth_methods != ("api_key",):
+        raw["auth_methods"] = list(entry.auth_methods)
     return raw
 
 
@@ -542,6 +547,7 @@ def _catalog_to_toml(raw: dict[str, Any]) -> str:
             "thinking_models",
             "thinking_default",
             "thinking_parameter",
+            "auth_methods",
         ):
             if key in provider:
                 lines.append(f"{key} = {_toml_value(provider[key])}")

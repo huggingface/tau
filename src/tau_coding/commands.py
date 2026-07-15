@@ -335,7 +335,7 @@ def create_default_command_registry() -> CommandRegistry:
         SlashCommand(
             name="login",
             usage="/login [provider]",
-            description="Save an API key for a built-in provider.",
+            description="Connect a provider with OAuth or an API key.",
             handler=_login_command,
         )
     )

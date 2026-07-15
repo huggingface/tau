@@ -4911,7 +4911,11 @@ async def test_tui_login_subscription_opens_oauth_provider_picker() -> None:
         assert isinstance(app.screen, LoginProviderPickerScreen)
         provider_list = app.screen.query_one("#login-provider-list", ListView)
         labels = [str(item.query_one(Label).render()) for item in provider_list.children]
-        assert labels == ["OpenAI Codex subscription — openai-codex"]
+        assert labels == [
+            "OpenAI Codex subscription — openai-codex",
+            "Anthropic — anthropic",
+            "GitHub Copilot — github-copilot",
+        ]
         assert "gpt-5.5" not in "\n".join(labels)
 
 
