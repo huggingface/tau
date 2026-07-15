@@ -4570,6 +4570,52 @@ async def test_tui_login_saves_provider_key(
 
 
 @pytest.mark.anyio
+async def test_tui_direct_anthropic_login_can_select_oauth() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/login anthropic"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, LoginMethodPickerScreen)
+        title = app.screen.query_one("#login-method-title", Static)
+        assert str(title.render()) == "Login: Anthropic"
+        method_list = app.screen.query_one("#login-method-list", ListView)
+        labels = [str(item.query_one(Label).render()) for item in method_list.children]
+        assert labels == [
+            "Subscription — OAuth account",
+            "API key — built-in provider",
+        ]
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, OAuthLoginScreen)
+        assert app.screen.provider.name == "anthropic"
+
+
+@pytest.mark.anyio
+async def test_tui_direct_anthropic_login_can_select_api_key() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/login anthropic"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, LoginMethodPickerScreen)
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, LoginScreen)
+        assert app.screen.provider.name == "anthropic"
+
+
+@pytest.mark.anyio
 async def test_tui_login_openai_codex_saves_oauth_credentials(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
