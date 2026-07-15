@@ -13,7 +13,7 @@ those locations and file formats.
 ~/.tau/
 ├── catalog.toml        # optional provider/model catalog overlay
 ├── providers.json      # provider/model preferences
-├── credentials.json    # saved API keys / OAuth tokens (private permissions)
+├── credentials.json    # saved API keys / OAuth tokens (0600, atomic writes)
 ├── settings.json       # general settings (e.g. shell command prefix)
 ├── tui.json            # TUI theme + keybindings
 ├── sessions/           # saved sessions, per project
@@ -161,7 +161,9 @@ Provider preferences live in `~/.tau/providers.json`:
   their session history. `timeout_seconds` defaults to `60` (> 0); `max_retries`
   defaults to `2`; `max_retry_delay_seconds` defaults to `1` (both ≥ 0).
 - API keys and OAuth credentials are **not** stored here — they live in
-  `~/.tau/credentials.json`. Resolution order: stored credential, then the env
+  `~/.tau/credentials.json` (private but not encrypted). OAuth objects may contain
+  provider metadata such as a GitHub Enterprise domain and are refreshed
+  automatically. Resolution order: stored credential, then the env
   var named by `api_key_env`.
 - The selected model must be present in that provider's `models` list. Add
   custom or local model names to `models` before using them as defaults,
