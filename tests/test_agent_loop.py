@@ -1,9 +1,12 @@
-from collections.abc import AsyncIterator, Mapping
+import asyncio
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from typing import cast
 
 import pytest
 
 from tau_agent import (
     AgentEvent,
+    AgentMessage,
     AgentTool,
     AgentToolResult,
     AssistantMessage,
@@ -14,7 +17,9 @@ from tau_agent import (
     ThinkingDeltaEvent,
     ToolCall,
     ToolExecutionEndEvent,
+    ToolExecutionUpdateEvent,
     ToolResultMessage,
+    ToolUpdateCallback,
     UserMessage,
 )
 from tau_agent.loop import run_agent_loop
@@ -631,3 +636,213 @@ async def test_agent_loop_stops_after_configured_max_turns() -> None:
         ErrorEvent(message="Agent loop stopped after reaching max_turns=1", recoverable=True)
     ]
     assert len(provider.calls) == 1
+
+
+def _tool_then_stop_provider(tool_call: ToolCall, final_text: str = "done") -> FakeProvider:
+    first = AssistantMessage(content="Working on it.", tool_calls=[tool_call])
+    final = AssistantMessage(content=final_text)
+    return FakeProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=first, finish_reason="tool_calls"),
+            ],
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=final, finish_reason="stop"),
+            ],
+        ]
+    )
+
+
+@pytest.mark.anyio
+async def test_agent_loop_emits_tool_updates_in_order_before_end() -> None:
+    async def executor(
+        arguments: Mapping[str, JSONValue],
+        signal: object | None = None,
+        *,
+        on_update: ToolUpdateCallback | None = None,
+    ) -> AgentToolResult:
+        del arguments, signal
+        assert on_update is not None
+        on_update("step 1", {"n": 1})
+        await asyncio.sleep(0)
+        on_update("step 2", {"n": 2})
+        await asyncio.sleep(0)
+        return AgentToolResult(tool_call_id="call-1", name="work", ok=True, content="result")
+
+    tool = AgentTool(
+        name="work",
+        description="Do work.",
+        input_schema={"type": "object"},
+        executor=executor,
+    )
+    tool_call = ToolCall(id="call-1", name="work", arguments={})
+    messages: list[AgentMessage] = [UserMessage(content="Do it")]
+
+    events = await _collect(
+        run_agent_loop(
+            provider=_tool_then_stop_provider(tool_call),
+            model="fake",
+            system="You are Tau.",
+            messages=messages,
+            tools=[tool],
+        )
+    )
+
+    tool_events = [
+        event
+        for event in events
+        if event.type in {"tool_execution_start", "tool_execution_update", "tool_execution_end"}
+    ]
+    assert [event.type for event in tool_events] == [
+        "tool_execution_start",
+        "tool_execution_update",
+        "tool_execution_update",
+        "tool_execution_end",
+    ]
+    updates = [event for event in tool_events if isinstance(event, ToolExecutionUpdateEvent)]
+    assert [(u.tool_call_id, u.message, u.data) for u in updates] == [
+        ("call-1", "step 1", {"n": 1}),
+        ("call-1", "step 2", {"n": 2}),
+    ]
+    end = tool_events[-1]
+    assert isinstance(end, ToolExecutionEndEvent)
+    assert end.result.content == "result"
+
+
+@pytest.mark.anyio
+async def test_agent_loop_executor_without_on_update_still_runs() -> None:
+    # Executor uses the classic (arguments, signal) signature; the inspect gate
+    # must never try to pass it an on_update kwarg.
+    async def executor(
+        arguments: Mapping[str, JSONValue],
+        signal: object | None = None,
+    ) -> AgentToolResult:
+        del arguments, signal
+        return AgentToolResult(tool_call_id="call-1", name="plain", ok=True, content="ok")
+
+    tool = AgentTool(
+        name="plain",
+        description="No progress seam.",
+        input_schema={"type": "object"},
+        executor=executor,
+    )
+    tool_call = ToolCall(id="call-1", name="plain", arguments={})
+    messages: list[AgentMessage] = [UserMessage(content="Do it")]
+
+    events = await _collect(
+        run_agent_loop(
+            provider=_tool_then_stop_provider(tool_call),
+            model="fake",
+            system="You are Tau.",
+            messages=messages,
+            tools=[tool],
+        )
+    )
+
+    assert not any(isinstance(event, ToolExecutionUpdateEvent) for event in events)
+    ends = [event for event in events if isinstance(event, ToolExecutionEndEvent)]
+    assert len(ends) == 1
+    assert ends[0].result.ok is True
+    assert ends[0].result.content == "ok"
+
+
+@pytest.mark.anyio
+async def test_agent_loop_keeps_updates_when_tool_raises() -> None:
+    async def executor(
+        arguments: Mapping[str, JSONValue],
+        signal: object | None = None,
+        *,
+        on_update: ToolUpdateCallback | None = None,
+    ) -> AgentToolResult:
+        del arguments, signal
+        assert on_update is not None
+        on_update("partway there")
+        await asyncio.sleep(0)
+        raise RuntimeError("boom")
+
+    tool = AgentTool(
+        name="work",
+        description="Fails midway.",
+        input_schema={"type": "object"},
+        executor=executor,
+    )
+    tool_call = ToolCall(id="call-1", name="work", arguments={})
+    messages: list[AgentMessage] = [UserMessage(content="Do it")]
+
+    events = await _collect(
+        run_agent_loop(
+            provider=_tool_then_stop_provider(tool_call),
+            model="fake",
+            system="You are Tau.",
+            messages=messages,
+            tools=[tool],
+        )
+    )
+
+    updates = [event for event in events if isinstance(event, ToolExecutionUpdateEvent)]
+    assert [u.message for u in updates] == ["partway there"]
+    ends = [event for event in events if isinstance(event, ToolExecutionEndEvent)]
+    assert len(ends) == 1
+    assert ends[0].result.ok is False
+    assert "boom" in ends[0].result.content
+    # The error result is still recorded in the transcript.
+    tool_results = [m for m in messages if isinstance(m, ToolResultMessage)]
+    assert len(tool_results) == 1
+    assert tool_results[0].tool_call_id == "call-1"
+    assert tool_results[0].ok is False
+
+
+@pytest.mark.anyio
+async def test_agent_loop_closing_stream_cancels_running_tool() -> None:
+    cancelled = asyncio.Event()
+
+    async def executor(
+        arguments: Mapping[str, JSONValue],
+        signal: object | None = None,
+        *,
+        on_update: ToolUpdateCallback | None = None,
+    ) -> AgentToolResult:
+        del arguments, signal
+        assert on_update is not None
+        on_update("started")
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return AgentToolResult(tool_call_id="call-1", name="work", ok=True, content="never")
+
+    tool = AgentTool(
+        name="work",
+        description="Runs forever.",
+        input_schema={"type": "object"},
+        executor=executor,
+    )
+    tool_call = ToolCall(id="call-1", name="work", arguments={})
+    messages: list[AgentMessage] = [UserMessage(content="Do it")]
+
+    stream = cast(
+        "AsyncGenerator[AgentEvent]",
+        run_agent_loop(
+            provider=_tool_then_stop_provider(tool_call),
+            model="fake",
+            system="You are Tau.",
+            messages=messages,
+            tools=[tool],
+        ),
+    )
+
+    seen: list[AgentEvent] = []
+    async for event in stream:
+        seen.append(event)
+        if isinstance(event, ToolExecutionUpdateEvent):
+            break
+
+    # We received the update before closing; closing must not drop it and must
+    # tear the in-flight tool task down cleanly.
+    await stream.aclose()
+
+    assert any(isinstance(event, ToolExecutionUpdateEvent) for event in seen)
+    await asyncio.wait_for(cancelled.wait(), timeout=1.0)

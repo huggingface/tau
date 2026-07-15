@@ -84,8 +84,6 @@ class CommandSession(Protocol):
 
     def set_model(self, model: str) -> None: ...
 
-    def reload(self) -> CodingReloadSummary: ...
-
     def reload_provider_settings(self) -> None: ...
 
 
@@ -96,6 +94,7 @@ class CommandResult:
     handled: bool
     exit_requested: bool = False
     clear_requested: bool = False
+    reload_requested: bool = False
     new_session_requested: bool = False
     compact_summary: str | None = None
     export_requested: bool = False
@@ -476,15 +475,9 @@ def _resources_command(context: CommandContext) -> CommandResult:
 
 
 def _reload_command(context: CommandContext) -> CommandResult:
-    try:
-        summary = context.session.reload()
-    except ValueError as exc:
-        return CommandResult(handled=True, message=f"Could not reload: {exc}")
-
-    return CommandResult(
-        handled=True,
-        message=_format_reload_summary(summary),
-    )
+    # Reload owns async extension lifecycle hooks, so frontends execute it from
+    # their async command path rather than inside this synchronous registry.
+    return CommandResult(handled=True, reload_requested=True)
 
 
 def _context_command(context: CommandContext) -> CommandResult:
@@ -742,12 +735,13 @@ def _refresh_provider_settings(session: CommandSession) -> CommandResult | None:
     return None
 
 
-def _format_reload_summary(summary: CodingReloadSummary) -> str:
+def format_reload_summary(summary: CodingReloadSummary) -> str:
     lines = [
         "Reloaded local coding resources and project context.",
         "Resources:",
         f"- Skills: {_format_reload_category(summary.skills)}",
         f"- Prompt templates: {_format_reload_category(summary.prompt_templates)}",
+        f"- Extensions: {_format_reload_category(summary.extensions)}",
         "Context:",
         f"- Project context files: {_format_reload_category(summary.context_files)}",
         "- Next-turn system prompt: "

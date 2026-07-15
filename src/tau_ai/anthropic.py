@@ -8,7 +8,13 @@ from typing import Any
 
 import httpx
 
-from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    ToolResultMessage,
+    Usage,
+    UserMessage,
+)
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
 from tau_ai.env import AnthropicConfig
@@ -128,6 +134,7 @@ class AnthropicProvider:
                         content_parts: list[str] = []
                         tool_builders: dict[int, _AnthropicToolBuilder] = {}
                         finish_reason: str | None = None
+                        usage: Usage | None = None
 
                         async for line in response.aiter_lines():
                             if signal is not None and signal.is_cancelled():
@@ -144,7 +151,11 @@ class AnthropicProvider:
                                 return
 
                             event_type = chunk.get("type")
-                            if event_type == "content_block_start":
+                            if event_type == "message_start":
+                                message = chunk.get("message")
+                                if isinstance(message, Mapping):
+                                    usage = _usage_from_message_start(message.get("usage"))
+                            elif event_type == "content_block_start":
                                 block = chunk.get("content_block")
                                 if isinstance(block, Mapping) and block.get("type") == "tool_use":
                                     index = int(chunk.get("index", 0))
@@ -185,6 +196,7 @@ class AnthropicProvider:
                                     finish_reason = (
                                         _string_or_empty(delta.get("stop_reason")) or finish_reason
                                     )
+                                usage = _apply_message_delta_usage(usage, chunk.get("usage"))
                             elif event_type == "error":
                                 error = chunk.get("error")
                                 message = "Provider returned an error"
@@ -203,6 +215,7 @@ class AnthropicProvider:
                             message=AssistantMessage(
                                 content="".join(content_parts),
                                 tool_calls=tool_calls,
+                                usage=usage,
                             ),
                             finish_reason=finish_reason,
                         )
@@ -354,3 +367,57 @@ def _loads_object(text: str) -> dict[str, Any] | None:
 
 def _string_or_empty(value: object) -> str:
     return value if isinstance(value, str) else ""
+
+
+def _int_or_none(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _usage_from_message_start(raw: object) -> Usage:
+    """Build a Usage from the ``message_start`` event's ``message.usage``.
+
+    Ports Pi's anthropic-messages.ts message_start handling. Cost is left unset
+    (None) because Tau has no per-model pricing table.
+    """
+    data = raw if isinstance(raw, Mapping) else {}
+    cache_creation = data.get("cache_creation")
+    cache_write_1h = (
+        _int_or_none(cache_creation.get("ephemeral_1h_input_tokens"))
+        if isinstance(cache_creation, Mapping)
+        else None
+    )
+    usage = Usage(
+        input=_int_or_none(data.get("input_tokens")) or 0,
+        output=_int_or_none(data.get("output_tokens")) or 0,
+        cache_read=_int_or_none(data.get("cache_read_input_tokens")) or 0,
+        cache_write=_int_or_none(data.get("cache_creation_input_tokens")) or 0,
+        cache_write_1h=cache_write_1h,
+    )
+    usage.total_tokens = usage.input + usage.output + usage.cache_read + usage.cache_write
+    return usage
+
+
+def _apply_message_delta_usage(usage: Usage | None, raw: object) -> Usage | None:
+    """Apply the ``message_delta`` event's ``usage`` onto the running Usage.
+
+    Ports Pi's anthropic-messages.ts message_delta handling: only overwrite
+    fields the provider reports (non-null), then recompute the token total.
+    """
+    if not isinstance(raw, Mapping):
+        return usage
+    usage = usage or Usage()
+    if (value := _int_or_none(raw.get("input_tokens"))) is not None:
+        usage.input = value
+    if (value := _int_or_none(raw.get("output_tokens"))) is not None:
+        usage.output = value
+    if (value := _int_or_none(raw.get("cache_read_input_tokens"))) is not None:
+        usage.cache_read = value
+    if (value := _int_or_none(raw.get("cache_creation_input_tokens"))) is not None:
+        usage.cache_write = value
+    details = raw.get("output_tokens_details")
+    if isinstance(details, Mapping):
+        thinking = _int_or_none(details.get("thinking_tokens"))
+        if thinking is not None:
+            usage.reasoning = thinking
+    usage.total_tokens = usage.input + usage.output + usage.cache_read + usage.cache_write
+    return usage

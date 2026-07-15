@@ -16,7 +16,13 @@ from typing import Any, Protocol
 
 import httpx
 
-from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    ToolResultMessage,
+    Usage,
+    UserMessage,
+)
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
 from tau_ai.env import OpenAICompatibleConfig
@@ -307,6 +313,7 @@ class _ChatStreamParser:
         self._content_parts: list[str] = []
         self._tool_call_builders: dict[int, _ToolCallBuilder] = {}
         self._finish_reason: str | None = None
+        self._usage: Usage | None = None
 
     def feed(self, event: str) -> tuple[list[ProviderEvent], bool]:
         if event == "[DONE]":
@@ -317,9 +324,22 @@ class _ChatStreamParser:
             self.fatal = True
             return [ProviderErrorEvent(message="Provider returned invalid JSON chunk")], True
 
+        # The final usage chunk (from stream_options) carries usage at the top
+        # level and often has empty choices.
+        chunk_usage = chunk.get("usage")
+        if isinstance(chunk_usage, Mapping):
+            self._usage = _parse_chunk_usage(chunk_usage)
+
         choice = _first_choice(chunk)
         if choice is None:
             return [], False
+
+        # Fallback: some providers (e.g. Moonshot) attach usage to the choice
+        # instead of the chunk. Matches Pi's per-chunk `!chunk.usage` guard: the
+        # fallback applies whenever this chunk lacks top-level usage.
+        choice_usage = choice.get("usage")
+        if not isinstance(chunk_usage, Mapping) and isinstance(choice_usage, Mapping):
+            self._usage = _parse_chunk_usage(choice_usage)
 
         self._finish_reason = choice.get("finish_reason") or self._finish_reason
         delta = choice.get("delta")
@@ -356,7 +376,9 @@ class _ChatStreamParser:
         events.append(
             ProviderResponseEndEvent(
                 message=AssistantMessage(
-                    content="".join(self._content_parts), tool_calls=tool_calls
+                    content="".join(self._content_parts),
+                    tool_calls=tool_calls,
+                    usage=self._usage,
                 ),
                 finish_reason=self._finish_reason,
             )
@@ -373,6 +395,7 @@ class _ResponsesStreamParser:
         self._content_parts: list[str] = []
         self._tool_call_builders: dict[str, _ResponsesToolCallBuilder] = {}
         self._status: str | None = None
+        self._usage: Usage | None = None
 
     def feed(self, event: str) -> tuple[list[ProviderEvent], bool]:
         # The Responses API has no [DONE] sentinel; it ends with a terminal
@@ -433,6 +456,7 @@ class _ResponsesStreamParser:
 
         elif chunk_type in ("response.completed", "response.incomplete"):
             self._status = _responses_finish_reason(chunk)
+            self._usage = _usage_from_responses_event(chunk) or self._usage
             return [], True
 
         elif chunk_type == "response.failed":
@@ -459,7 +483,9 @@ class _ResponsesStreamParser:
         events.append(
             ProviderResponseEndEvent(
                 message=AssistantMessage(
-                    content="".join(self._content_parts), tool_calls=tool_calls
+                    content="".join(self._content_parts),
+                    tool_calls=tool_calls,
+                    usage=self._usage,
                 ),
                 finish_reason=finish_reason,
             )
@@ -828,10 +854,6 @@ def _str_or_none(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _int_or_none(value: object) -> int | None:
-    return value if isinstance(value, int) else None
-
-
 def _system_message(system: str) -> dict[str, JSONValue]:
     return {"role": "system", "content": system}
 
@@ -904,6 +926,89 @@ def _first_choice(chunk: Mapping[str, Any]) -> Mapping[str, Any] | None:
     if not isinstance(choice, Mapping):
         return None
     return choice
+
+
+def _int_or_zero(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _int_or_none(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _parse_chunk_usage(raw: Mapping[str, Any]) -> Usage:
+    """Parse an OpenAI-compatible ``usage`` payload into a Usage.
+
+    Ports Pi's openai-completions.ts parseChunkUsage: ``cached_tokens`` are
+    cache reads, writes are subtracted from the prompt to leave the fresh input,
+    and ``completion_tokens`` already includes reasoning tokens. Cost is left
+    unset (None) because Tau has no per-model pricing table.
+    """
+    prompt_tokens = _int_or_zero(raw.get("prompt_tokens"))
+    prompt_details = raw.get("prompt_tokens_details")
+    cached_tokens: int | None = None
+    cache_write = 0
+    if isinstance(prompt_details, Mapping):
+        cached_tokens = _int_or_none(prompt_details.get("cached_tokens"))
+        cache_write = _int_or_zero(prompt_details.get("cache_write_tokens"))
+    # Nullish fallback, matching Pi's `cached_tokens ?? prompt_cache_hit_tokens
+    # ?? 0` (DeepSeek reports cache hits in prompt_cache_hit_tokens): a reported
+    # 0 does not fall through.
+    if cached_tokens is None:
+        cached_tokens = _int_or_none(raw.get("prompt_cache_hit_tokens"))
+    cache_read = cached_tokens or 0
+    fresh_input = max(0, prompt_tokens - cache_read - cache_write)
+    output = _int_or_zero(raw.get("completion_tokens"))
+    reasoning = None
+    completion_details = raw.get("completion_tokens_details")
+    if isinstance(completion_details, Mapping):
+        reasoning = _int_or_zero(completion_details.get("reasoning_tokens"))
+    return Usage(
+        input=fresh_input,
+        output=output,
+        cache_read=cache_read,
+        cache_write=cache_write,
+        reasoning=reasoning,
+        total_tokens=fresh_input + output + cache_read + cache_write,
+    )
+
+
+def _usage_from_responses_event(chunk: Mapping[str, Any]) -> Usage | None:
+    """Parse billed usage from a `/v1/responses` terminal event.
+
+    Mirrors the Codex adapter's ``_usage_from_response``: ``cached_tokens`` are
+    cache reads subtracted from ``input_tokens`` to leave fresh input, the
+    Responses API does not report cache writes (``cache_write`` stays 0), and
+    cost is left unset because Tau has no per-model pricing table.
+    """
+    response = chunk.get("response")
+    if not isinstance(response, Mapping):
+        return None
+    raw = response.get("usage")
+    if not isinstance(raw, Mapping):
+        return None
+    input_details = raw.get("input_tokens_details")
+    cache_read = (
+        _int_or_zero(input_details.get("cached_tokens"))
+        if isinstance(input_details, Mapping)
+        else 0
+    )
+    output_details = raw.get("output_tokens_details")
+    # Leave reasoning None (not 0) when the provider reports no breakdown,
+    # honoring the "None = not reported" contract on Usage.
+    reasoning = (
+        _int_or_zero(output_details.get("reasoning_tokens"))
+        if isinstance(output_details, Mapping)
+        else None
+    )
+    return Usage(
+        input=max(0, _int_or_zero(raw.get("input_tokens")) - cache_read),
+        output=_int_or_zero(raw.get("output_tokens")),
+        cache_read=cache_read,
+        cache_write=0,
+        reasoning=reasoning,
+        total_tokens=_int_or_zero(raw.get("total_tokens")),
+    )
 
 
 def _tool_call_deltas(delta: Mapping[str, Any]) -> list[Mapping[str, Any]]:

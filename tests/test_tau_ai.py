@@ -1872,3 +1872,451 @@ async def test_responses_api_maps_incomplete_status_to_length() -> None:
     assert isinstance(end, ProviderResponseEndEvent)
     assert end.message.content == "partial"
     assert end.finish_reason == "length"
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_provider_reports_usage() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":"stop"}]}\n\n'
+                'data: {"choices":[],"usage":{"prompt_tokens":30,"completion_tokens":5,'
+                '"prompt_tokens_details":{"cached_tokens":10},'
+                '"completion_tokens_details":{"reasoning_tokens":2}}}\n\n'
+                "data: [DONE]\n\n"
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="test-model",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hi")],
+                tools=[],
+            )
+        )
+
+    # The request opts in to streamed usage reporting.
+    assert loads(requests[0].content)["stream_options"] == {"include_usage": True}
+
+    assert isinstance(events[-1], ProviderResponseEndEvent)
+    usage = events[-1].message.usage
+    assert usage is not None
+    assert usage.input == 20  # 30 prompt - 10 cached
+    assert usage.output == 5
+    assert usage.cache_read == 10
+    assert usage.cache_write == 0
+    assert usage.reasoning == 2
+    assert usage.total_tokens == 35
+    assert usage.cost is None
+
+
+@pytest.mark.anyio
+async def test_openai_codex_provider_reports_usage() -> None:
+    async def credentials() -> OpenAICodexCredentials:
+        return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.output_text.delta","delta":"Hi"}\n\n'
+                'data: {"type":"response.completed","response":{"status":"completed",'
+                '"usage":{"input_tokens":50,"output_tokens":8,"total_tokens":58,'
+                '"input_tokens_details":{"cached_tokens":12},'
+                '"output_tokens_details":{"reasoning_tokens":3}}}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICodexProvider(
+            OpenAICodexConfig(
+                credential_resolver=credentials,
+                base_url="https://chatgpt.test/backend-api",
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hi")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], ProviderResponseEndEvent)
+    usage = events[-1].message.usage
+    assert usage is not None
+    assert usage.input == 38  # 50 input - 12 cached
+    assert usage.output == 8
+    assert usage.cache_read == 12
+    assert usage.cache_write == 0
+    assert usage.reasoning == 3
+    assert usage.total_tokens == 58
+    assert usage.cost is None
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_responses_api_reports_usage() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.output_text.delta","delta":"Hi"}\n\n'
+                'data: {"type":"response.completed","response":{"status":"completed",'
+                '"usage":{"input_tokens":50,"output_tokens":8,"total_tokens":58,'
+                '"input_tokens_details":{"cached_tokens":12},'
+                '"output_tokens_details":{"reasoning_tokens":3}}}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hi")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], ProviderResponseEndEvent)
+    usage = events[-1].message.usage
+    assert usage is not None
+    assert usage.input == 38  # 50 input - 12 cached
+    assert usage.output == 8
+    assert usage.cache_read == 12
+    assert usage.cache_write == 0
+    assert usage.reasoning == 3
+    assert usage.total_tokens == 58
+    assert usage.cost is None
+
+
+@pytest.mark.anyio
+async def test_anthropic_provider_reports_usage() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"message_start","message":{"content":[],"usage":'
+                '{"input_tokens":100,"output_tokens":1,"cache_read_input_tokens":40,'
+                '"cache_creation_input_tokens":25,'
+                '"cache_creation":{"ephemeral_1h_input_tokens":10}}}}\n\n'
+                'data: {"type":"content_block_delta","index":0,'
+                '"delta":{"type":"text_delta","text":"Hi"}}\n\n'
+                'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},'
+                '"usage":{"output_tokens":7}}\n\n'
+                'data: {"type":"message_stop"}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hi")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], ProviderResponseEndEvent)
+    usage = events[-1].message.usage
+    assert usage is not None
+    assert usage.input == 100
+    assert usage.output == 7  # updated by message_delta
+    assert usage.cache_read == 40
+    assert usage.cache_write == 25
+    assert usage.cache_write_1h == 10
+    assert usage.total_tokens == 172  # 100 + 7 + 40 + 25
+    assert usage.cost is None
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_provider_can_disable_usage_in_streaming() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n'
+                "data: [DONE]\n\n"
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+                compat={"supportsUsageInStreaming": False},
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="test-model",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert "stream_options" not in loads(requests[0].content)
+    assert isinstance(events[-1], ProviderResponseEndEvent)
+    assert events[-1].message.usage is None
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_provider_reads_usage_from_choice_fallback() -> None:
+    # Moonshot-style: usage lives on the choice, not at the chunk top level.
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":"stop",'
+                '"usage":{"prompt_tokens":15,"completion_tokens":4}}]}\n\n'
+                "data: [DONE]\n\n"
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="test-model",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hi")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], ProviderResponseEndEvent)
+    usage = events[-1].message.usage
+    assert usage is not None
+    assert usage.input == 15
+    assert usage.output == 4
+    assert usage.cache_read == 0
+    assert usage.total_tokens == 19
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_provider_falls_back_to_prompt_cache_hit_tokens() -> None:
+    # DeepSeek-style: cache reads come via prompt_cache_hit_tokens, and there
+    # is no prompt_tokens_details.cached_tokens to prefer.
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":"stop"}]}\n\n'
+                'data: {"choices":[],"usage":{"prompt_tokens":40,"completion_tokens":6,'
+                '"prompt_cache_hit_tokens":16}}\n\n'
+                "data: [DONE]\n\n"
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="test-model",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hi")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], ProviderResponseEndEvent)
+    usage = events[-1].message.usage
+    assert usage is not None
+    assert usage.input == 24  # 40 prompt - 16 cache hits
+    assert usage.cache_read == 16
+    assert usage.output == 6
+    assert usage.total_tokens == 46
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_provider_reported_zero_cached_tokens_wins() -> None:
+    # Nullish semantics (Pi: cached_tokens ?? prompt_cache_hit_tokens ?? 0):
+    # an explicitly reported cached_tokens of 0 must not fall through to
+    # prompt_cache_hit_tokens.
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":"stop"}]}\n\n'
+                'data: {"choices":[],"usage":{"prompt_tokens":40,"completion_tokens":6,'
+                '"prompt_tokens_details":{"cached_tokens":0},'
+                '"prompt_cache_hit_tokens":16}}\n\n'
+                "data: [DONE]\n\n"
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="test-model",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hi")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], ProviderResponseEndEvent)
+    usage = events[-1].message.usage
+    assert usage is not None
+    assert usage.cache_read == 0
+    assert usage.input == 40
+
+
+@pytest.mark.anyio
+async def test_anthropic_provider_reports_usage_from_message_delta_only() -> None:
+    # No usage on message_start: the message_delta usage alone must still
+    # produce a Usage (the `usage or Usage()` branch).
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"message_start","message":{"content":[]}}\n\n'
+                'data: {"type":"content_block_delta","index":0,'
+                '"delta":{"type":"text_delta","text":"Hi"}}\n\n'
+                'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},'
+                '"usage":{"input_tokens":12,"output_tokens":3}}\n\n'
+                'data: {"type":"message_stop"}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hi")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], ProviderResponseEndEvent)
+    usage = events[-1].message.usage
+    assert usage is not None
+    assert usage.input == 12
+    assert usage.output == 3
+    assert usage.cache_read == 0
+    assert usage.cache_write == 0
+    assert usage.reasoning is None
+    assert usage.total_tokens == 15
+
+
+@pytest.mark.anyio
+async def test_openai_codex_provider_leaves_reasoning_none_when_unreported() -> None:
+    async def credentials() -> OpenAICodexCredentials:
+        return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.output_text.delta","delta":"Hi"}\n\n'
+                'data: {"type":"response.completed","response":{"status":"completed",'
+                '"usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12}}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICodexProvider(
+            OpenAICodexConfig(
+                credential_resolver=credentials,
+                base_url="https://chatgpt.test/backend-api",
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hi")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], ProviderResponseEndEvent)
+    usage = events[-1].message.usage
+    assert usage is not None
+    assert usage.reasoning is None
+    assert usage.cache_read == 0
+    assert usage.total_tokens == 12

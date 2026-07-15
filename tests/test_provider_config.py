@@ -49,6 +49,7 @@ def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path)
         "minimax",
         "minimax-cn",
         "moonshotai",
+        "kimi-code",
         "moonshotai-cn",
         "huggingface",
         "fireworks",

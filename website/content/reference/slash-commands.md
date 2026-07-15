@@ -22,7 +22,7 @@ command palette with **Ctrl+K**.
 | `/theme [name]` | Show or set the TUI theme |
 | `/login [provider]` | Save credentials for a built-in provider |
 | `/logout [provider]` | Remove saved credentials for a provider |
-| `/reload` | Reload local skills, prompts, and project context |
+| `/reload` | Reload local skills, prompts, extensions, and project context |
 | `/hotkeys` | Show the keyboard shortcuts |
 | `/skill:<name> [request]` | Expand a loaded skill into your prompt |
 

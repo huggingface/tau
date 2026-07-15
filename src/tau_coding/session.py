@@ -22,6 +22,7 @@ from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage
 from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
+    CustomEntry,
     JsonlSessionStorage,
     LeafEntry,
     MessageEntry,
@@ -35,6 +36,7 @@ from tau_agent.session.entries import SessionEntry
 from tau_agent.session.jsonl import entry_to_json_line
 from tau_agent.session.tree import SessionTreeError, path_to_entry
 from tau_agent.tools import AgentTool
+from tau_agent.types import JSONValue
 from tau_ai import ModelProvider
 from tau_ai.events import ProviderErrorEvent, ProviderResponseEndEvent, ProviderTextDeltaEvent
 from tau_coding.branch_summary import summarize_branch_messages_with_model
@@ -57,6 +59,7 @@ from tau_coding.diagnostics import (
     AgentCallDiagnosticLogger,
     new_agent_call_run_id,
 )
+from tau_coding.extensions.runtime import ExtensionRuntime
 from tau_coding.paths import TauPaths
 from tau_coding.prompt_templates import (
     PromptTemplate,
@@ -203,6 +206,23 @@ class CodingSessionConfig:
     thinking_level: ThinkingLevel = DEFAULT_THINKING_LEVEL
     index_on_first_persist: bool = False
     shell_command_prefix: str | None = None
+    skills_enabled: bool = True
+    """Whether skill discovery is enabled for this session.
+
+    When ``True`` (the default), skills are discovered from the resource paths
+    and their index is injected into the system prompt as ``<available_skills>``,
+    and ``/skill:`` commands expand against them. When ``False``, skill discovery
+    is suppressed for the whole session: no skills load, the ``<available_skills>``
+    index is omitted, and ``/skill:`` commands find nothing to expand. This mirrors
+    Pi's loader-level ``noSkills`` flag, which suppresses only skill discovery and
+    leaves prompt templates and project context files (AGENTS.md) unaffected. It is
+    the seam hosts use to construct skill-less sessions (e.g. a subagent type that
+    gets no skills).
+    """
+    extension_paths: tuple[Path, ...] = ()
+    extensions_enabled: bool = True
+    project_extensions_enabled: bool = False
+    extension_runtime: ExtensionRuntime | None = None
 
 
 class CodingSession:
@@ -226,10 +246,13 @@ class CodingSession:
         resource_diagnostics: tuple[ResourceDiagnostic, ...] = (),
         command_registry: CommandRegistry | None = None,
         pending_initial_entries: tuple[SessionEntry, ...] = (),
+        extension_runtime: ExtensionRuntime | None = None,
     ) -> None:
         self._config = config
         self._state = state
         self._harness = harness
+        self._extension_runtime = extension_runtime or ExtensionRuntime()
+        self._session_start_pending = False
         self._last_parent_id = last_parent_id
         self._pending_initial_entries = pending_initial_entries
         self._skills = skills
@@ -283,7 +306,26 @@ class CodingSession:
             if latest_leaf is not None
             else linear_state
         )
-        tools = (
+        resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
+        resources = _load_session_resources(
+            resource_paths,
+            config.context_files,
+            skills_enabled=config.skills_enabled,
+        )
+
+        extension_runtime = config.extension_runtime
+        fresh_extension_runtime = extension_runtime is None
+        if extension_runtime is None:
+            extension_runtime = ExtensionRuntime()
+            if config.extensions_enabled or config.extension_paths:
+                extension_runtime.load(
+                    resource_paths,
+                    extra_paths=config.extension_paths,
+                    include_resource_dirs=config.extensions_enabled,
+                    include_project_dir=config.project_extensions_enabled,
+                )
+
+        base_tools = (
             config.tools
             if config.tools is not None
             else create_coding_tools(
@@ -291,8 +333,7 @@ class CodingSession:
                 shell_command_prefix=config.shell_command_prefix,
             )
         )
-        resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
-        resources = _load_session_resources(resource_paths, config.context_files)
+        tools = extension_runtime.compose_tools(base_tools)
         system = (
             config.system
             if config.system is not None
@@ -304,6 +345,7 @@ class CodingSession:
                     custom_prompt=config.custom_system_prompt,
                     append_system_prompt=config.append_system_prompt,
                     context_files=resources.context_files,
+                    extra_guidelines=extension_runtime.prompt_guidelines,
                 )
             )
         )
@@ -325,12 +367,25 @@ class CodingSession:
             prompt_templates=resources.prompt_templates,
             context_files=resources.context_files,
             resource_diagnostics=resources.diagnostics,
-            command_registry=config.command_registry,
+            command_registry=config.command_registry or extension_runtime.build_command_registry(),
             pending_initial_entries=pending_initial_entries,
+            extension_runtime=extension_runtime,
         )
         await session._persist_loaded_interrupted_tool_repairs()
         session._sync_thinking_level_to_active_model()
         session._refresh_runtime_provider()
+        if fresh_extension_runtime:
+            extension_runtime.bind(session)
+            # Attach to session._harness, not the local `harness`:
+            # _persist_loaded_interrupted_tool_repairs() above may have
+            # replaced the harness, and listeners on the discarded one would
+            # never see an agent event.
+            extension_runtime.attach_harness_listener(session._harness.subscribe)
+            # session_start is deferred: hosts emit it via
+            # emit_pending_session_start() after installing their UI bridge,
+            # so handlers can use notifications and dialogs (Pi starts the UI
+            # before initializing extensions for the same reason).
+            session._session_start_pending = True
         return session
 
     @property
@@ -606,8 +661,64 @@ class CodingSession:
 
     @property
     def resource_diagnostics(self) -> tuple[ResourceDiagnostic, ...]:
-        """Return non-fatal resource discovery diagnostics."""
-        return self._resource_diagnostics
+        """Return non-fatal resource and extension diagnostics."""
+        return self._resource_diagnostics + self._extension_runtime.diagnostics
+
+    @property
+    def extension_runtime(self) -> ExtensionRuntime:
+        """Return the extension runtime bound to this session."""
+        return self._extension_runtime
+
+    async def emit_pending_session_start(self) -> None:
+        """Emit the `session_start` deferred by `load`, once per session.
+
+        Hosts call this after installing their UI bridge so `session_start`
+        handlers can use notifications and dialogs (Pi's ordering: the UI
+        starts before extensions initialize). Idempotent; a no-op for
+        sessions that adopted an already-started extension runtime.
+        """
+        if not self._session_start_pending:
+            return
+        self._session_start_pending = False
+        await self._extension_runtime.emit_session_start("startup")
+
+    def queue_steering_message(
+        self,
+        content: str,
+        *,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None:
+        """Queue a steering user message (extension runtime seam)."""
+        self._harness.steer_message(
+            UserMessage(content=content, custom_type=custom_type, details=details)
+        )
+
+    def queue_follow_up_message(
+        self,
+        content: str,
+        *,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None:
+        """Queue a follow-up user message (extension runtime seam)."""
+        self._harness.follow_up_message(
+            UserMessage(content=content, custom_type=custom_type, details=details)
+        )
+
+    async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
+        """Persist an extension-owned custom entry on the active branch path.
+
+        The entry advances the append-only tree parent chain so it stays on the
+        replayed root-to-leaf path (off-path custom entries would be invisible
+        to `SessionState` after resume).
+        """
+        entry = CustomEntry(parent_id=self._last_parent_id, namespace=namespace, data=data)
+        await self._append_session_entry(entry)
+        self._last_parent_id = entry.id
+        leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
+        await self._append_session_entry(leaf)
+        await self._refresh_persisted_state(leaf_id=entry.id)
 
     @property
     def session_id(self) -> str | None:
@@ -904,33 +1015,52 @@ class CodingSession:
         self._harness.config.provider = provider
         self._runtime_provider_config = provider_config
 
-    def reload(self) -> CodingReloadSummary:
-        """Reload local coding resources and project context for future turns."""
+    async def reload(self) -> CodingReloadSummary:
+        """Reload resources and extensions with an awaited lifecycle boundary.
+
+        Outgoing handlers finish ``session_shutdown(reason="reload")`` while
+        their API generation is still active. The runtime then clears UI,
+        invalidates/reloads registrations, and awaits the new generation's
+        ``session_start(reason="reload")`` so startup-mounted UI is restored
+        before the command reports completion.
+        """
+        await self._extension_runtime.emit_session_shutdown("reload")
         before_skills = _skill_signatures(self._skills)
         before_prompt_templates = _prompt_template_signatures(self._prompt_templates)
         before_context_files = _context_file_signatures(self._context_files)
-        before_diagnostics = _diagnostic_signatures(self._resource_diagnostics)
+        before_diagnostics = _diagnostic_signatures(self.resource_diagnostics)
         before_system_prompt_inputs = _system_prompt_resource_signatures(
             skills=self._skills,
             context_files=self._context_files,
         )
+        before_extensions = _extension_signatures(self._extension_runtime)
+        before_tool_names = tuple(tool.name for tool in self._harness.config.tools)
+        before_guidelines = self._extension_runtime.prompt_guidelines
 
-        resources = _load_session_resources(self._resource_paths, self._config.context_files)
+        resources = _load_session_resources(
+            self._resource_paths,
+            self._config.context_files,
+            skills_enabled=self._config.skills_enabled,
+        )
+        self._reload_extensions()
 
         after_skills = _skill_signatures(resources.skills)
         after_prompt_templates = _prompt_template_signatures(resources.prompt_templates)
         after_context_files = _context_file_signatures(resources.context_files)
-        after_diagnostics = _diagnostic_signatures(resources.diagnostics)
         after_system_prompt_inputs = _system_prompt_resource_signatures(
             skills=resources.skills,
             context_files=resources.context_files,
         )
+        after_extensions = _extension_signatures(self._extension_runtime)
+        after_tool_names = tuple(tool.name for tool in self._harness.config.tools)
+        after_guidelines = self._extension_runtime.prompt_guidelines
 
         rebuilt_system_prompt: str | None = None
         system_prompt_rebuilt = False
-        if (
-            self._config.system is None
-            and before_system_prompt_inputs != after_system_prompt_inputs
+        if self._config.system is None and (
+            before_system_prompt_inputs != after_system_prompt_inputs
+            or before_tool_names != after_tool_names
+            or before_guidelines != after_guidelines
         ):
             rebuilt_system_prompt = build_system_prompt(
                 BuildSystemPromptOptions(
@@ -940,6 +1070,7 @@ class CodingSession:
                     custom_prompt=self._config.custom_system_prompt,
                     append_system_prompt=self._config.append_system_prompt,
                     context_files=resources.context_files,
+                    extra_guidelines=after_guidelines,
                 )
             )
             system_prompt_rebuilt = True
@@ -948,9 +1079,12 @@ class CodingSession:
         self._prompt_templates = resources.prompt_templates
         self._context_files = resources.context_files
         self._resource_diagnostics = resources.diagnostics
+        after_diagnostics = _diagnostic_signatures(self.resource_diagnostics)
         if rebuilt_system_prompt is not None:
             self._harness.config.system = rebuilt_system_prompt
             self._invalidate_context_usage_cache()
+
+        await self._extension_runtime.emit_session_start("reload")
 
         return CodingReloadSummary(
             skills=_category_summary(before_skills, after_skills),
@@ -959,9 +1093,39 @@ class CodingSession:
                 after_prompt_templates,
             ),
             context_files=_category_summary(before_context_files, after_context_files),
+            extensions=_category_summary(before_extensions, after_extensions),
             diagnostics=_category_summary(before_diagnostics, after_diagnostics),
             system_prompt_rebuilt=system_prompt_rebuilt,
         )
+
+    def _reload_extensions(self) -> None:
+        """Re-discover extensions and rebuild dependent tools and commands.
+
+        Extension `setup` re-runs against freshly imported modules. Wrapped
+        tools are rebuilt in place on the live harness config, the session
+        command registry is rebuilt (unless the caller supplied its own), and
+        the harness event fan-out is re-subscribed.
+        """
+        self._extension_runtime.reset_for_reload()
+        if self._config.extensions_enabled or self._config.extension_paths:
+            self._extension_runtime.load(
+                self._resource_paths,
+                extra_paths=self._config.extension_paths,
+                include_resource_dirs=self._config.extensions_enabled,
+                include_project_dir=self._config.project_extensions_enabled,
+            )
+        base_tools = (
+            self._config.tools
+            if self._config.tools is not None
+            else create_coding_tools(
+                cwd=self._config.cwd,
+                shell_command_prefix=self._config.shell_command_prefix,
+            )
+        )
+        self._harness.config.tools = self._extension_runtime.compose_tools(base_tools)
+        if self._config.command_registry is None:
+            self._command_registry = self._extension_runtime.build_command_registry()
+        self._extension_runtime.attach_harness_listener(self._harness.subscribe)
 
     def reload_provider_settings(self) -> None:
         """Reload provider settings for login and model-selection flows."""
@@ -1021,7 +1185,7 @@ class CodingSession:
                 resource_paths=self._config.resource_paths,
                 session_id=record.id,
                 session_manager=manager,
-                command_registry=self._command_registry,
+                command_registry=self._config.command_registry,
                 provider_name=provider_name,
                 provider_settings=self._provider_settings,
                 runtime_provider_config=runtime_provider_config,
@@ -1029,6 +1193,11 @@ class CodingSession:
                 auto_compact_enabled=self._auto_compact_enabled,
                 thinking_level=self._thinking_level,
                 shell_command_prefix=self._config.shell_command_prefix,
+                skills_enabled=self._config.skills_enabled,
+                extension_paths=self._config.extension_paths,
+                extensions_enabled=self._config.extensions_enabled,
+                project_extensions_enabled=self._config.project_extensions_enabled,
+                extension_runtime=self._extension_runtime,
             )
         )
         if restore_record_model:
@@ -1039,23 +1208,7 @@ class CodingSession:
             replacement._harness.config.model = self.model
             replacement._sync_thinking_level_to_active_model()
             replacement._refresh_runtime_provider()
-        self._config = replacement._config
-        self._state = replacement._state
-        self._harness = replacement._harness
-        self._invalidate_context_usage_cache()
-        self._last_parent_id = replacement._last_parent_id
-        self._skills = replacement._skills
-        self._prompt_templates = replacement._prompt_templates
-        self._context_files = replacement._context_files
-        self._resource_diagnostics = replacement._resource_diagnostics
-        self._command_registry = replacement._command_registry
-        self._provider_name = replacement._provider_name
-        self._provider_settings = replacement._provider_settings
-        self._runtime_provider_config = replacement._runtime_provider_config
-        self._resource_paths = replacement._resource_paths
-        self._auto_compact_token_threshold = replacement._auto_compact_token_threshold
-        self._auto_compact_enabled = replacement._auto_compact_enabled
-        self._thinking_level = replacement._thinking_level
+        await self._adopt_replacement(replacement, reason="resume")
         return f"Resumed session: {record.id}"
 
     async def new_session(self) -> str:
@@ -1097,8 +1250,31 @@ class CodingSession:
                 runtime_provider_config=runtime_provider_config,
                 thinking_level=thinking_level,
                 index_on_first_persist=True,
+                extension_runtime=self._extension_runtime,
             )
         )
+        await self._adopt_replacement(replacement, reason="new")
+        return f"Started new session: {record.id}"
+
+    async def _adopt_replacement(
+        self,
+        replacement: CodingSession,
+        *,
+        reason: Literal["new", "resume", "branch"],
+    ) -> None:
+        """Adopt a replacement session's state and re-bind the extension runtime.
+
+        The extension runtime is long-lived and shared with the replacement; it
+        must be re-bound to this outer session object because later state
+        (transcript persistence, parent ids) mutates here, not on the discarded
+        replacement instance.
+        """
+        await self._extension_runtime.emit_session_shutdown(reason)
+        # Tear down extension-owned UI (slot widgets, main views, key
+        # interceptors) from the outgoing session after its shutdown handlers
+        # run and before session_start fires, so start handlers can re-mount
+        # into a clean frontend.
+        self._extension_runtime.clear_ui_components()
         self._config = replacement._config
         self._state = replacement._state
         self._harness = replacement._harness
@@ -1116,7 +1292,11 @@ class CodingSession:
         self._auto_compact_token_threshold = replacement._auto_compact_token_threshold
         self._auto_compact_enabled = replacement._auto_compact_enabled
         self._thinking_level = replacement._thinking_level
-        return f"Started new session: {record.id}"
+        self._pending_initial_entries = replacement._pending_initial_entries
+        self._extension_runtime = replacement._extension_runtime
+        self._extension_runtime.bind(self)
+        self._extension_runtime.attach_harness_listener(self._harness.subscribe)
+        await self._extension_runtime.emit_session_start(reason)
 
     async def compact(self, instructions: str | None = None) -> str:
         """Generate a manual compaction summary and rebuild active context."""
@@ -1133,6 +1313,7 @@ class CodingSession:
 
     async def aclose(self) -> None:
         """Close runtime providers created by this coding session."""
+        await self._extension_runtime.emit_session_shutdown("quit")
         for provider in self._owned_providers:
             await provider.aclose()
         self._owned_providers.clear()
@@ -1216,9 +1397,27 @@ class CodingSession:
         content: str,
         *,
         streaming_behavior: StreamingBehavior | None = None,
+        source: Literal["interactive", "extension"] = "interactive",
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
     ) -> AsyncIterator[AgentEvent]:
-        """Append a user prompt, run the agent, and persist new messages."""
+        """Append a user prompt, run the agent, and persist new messages.
+
+        ``custom_type``/``details`` attach custom-message render metadata to the
+        appended ``UserMessage`` (used when an extension delivers a custom
+        message that starts an idle session's turn). ``source`` marks who
+        initiated the turn for the `input` hook (``"extension"`` when an
+        extension started it, ``"interactive"`` otherwise).
+        """
         context = self._diagnostic_context()
+        input_outcome = await self._extension_runtime.run_input_hooks(
+            content, source=source, streaming_behavior=streaming_behavior
+        )
+        if input_outcome.handled:
+            if input_outcome.message:
+                self._extension_runtime.ui.notify(input_outcome.message)
+            return
+        content = input_outcome.text
         try:
             expanded_content = self.expand_prompt_text(content)
         except ResourceError:
@@ -1247,7 +1446,9 @@ class CodingSession:
         auto_name_attempted = False
         overflow_event: ErrorEvent | None = None
         try:
-            events = self._harness.prompt(expanded_content)
+            events = self._harness.prompt(
+                expanded_content, custom_type=custom_type, details=details
+            )
             self._invalidate_context_usage_cache()
             async for event in events:
                 if isinstance(event, MessageEndEvent):
@@ -2168,6 +2369,10 @@ def _diagnostic_signatures(
     )
 
 
+def _extension_signatures(runtime: ExtensionRuntime) -> tuple[tuple[object, ...], ...]:
+    return tuple((name,) for name in runtime.extension_names)
+
+
 def _system_prompt_resource_signatures(
     *,
     skills: tuple[Skill, ...],
@@ -2183,8 +2388,15 @@ def _system_prompt_resource_signatures(
 def _load_session_resources(
     resource_paths: TauResourcePaths,
     explicit_context_files: tuple[ProjectContextFile, ...],
+    *,
+    skills_enabled: bool = True,
 ) -> SessionResources:
-    loaded_skills, skill_diagnostics = load_skills_with_diagnostics(resource_paths)
+    loaded_skills: list[Skill]
+    skill_diagnostics: list[ResourceDiagnostic]
+    if skills_enabled:
+        loaded_skills, skill_diagnostics = load_skills_with_diagnostics(resource_paths)
+    else:
+        loaded_skills, skill_diagnostics = [], []
     loaded_prompt_templates, prompt_diagnostics = load_prompt_templates_with_diagnostics(
         resource_paths
     )

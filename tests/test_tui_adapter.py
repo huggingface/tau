@@ -208,7 +208,19 @@ def test_tui_adapter_records_tool_updates_and_results() -> None:
     state = TuiState()
     adapter = TuiEventAdapter(state)
 
+    adapter.apply(
+        ToolExecutionStartEvent(
+            tool_call=ToolCall(id="call-1", name="read", arguments={"path": "notes.md"})
+        )
+    )
     adapter.apply(ToolExecutionUpdateEvent(tool_call_id="call-1", message="reading"))
+    assert len(state.items) == 1
+    assert state.items[0].update_text == "reading"
+
+    adapter.apply(ToolExecutionUpdateEvent(tool_call_id="call-1", message="still reading"))
+    assert len(state.items) == 1
+    assert state.items[0].update_text == "still reading"
+
     adapter.apply(
         ToolExecutionEndEvent(
             result=AgentToolResult(tool_call_id="call-1", name="read", ok=True, content="done")
@@ -225,11 +237,21 @@ def test_tui_adapter_records_tool_updates_and_results() -> None:
         )
     )
 
-    assert [(item.role, item.text, item.tool_result_text) for item in state.items] == [
-        ("tool", "… reading", None),
-        ("tool", "✓ read", "✓ read\ndone"),
-        ("tool", "✗ bash", "✗ bash\nfailed"),
+    assert [
+        (item.role, item.text, item.tool_result_text, item.update_text) for item in state.items
+    ] == [
+        ("tool", "→ read notes.md", "✓ read\ndone", None),
+        ("tool", "✗ bash", "✗ bash\nfailed", None),
     ]
+
+
+def test_tui_adapter_drops_orphan_tool_updates() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+
+    adapter.apply(ToolExecutionUpdateEvent(tool_call_id="call-9", message="reading"))
+
+    assert state.items == []
 
 
 def test_tui_adapter_records_retry_status() -> None:

@@ -43,6 +43,7 @@ from tau_coding import (
     OpenAICompatibleProviderConfig,
     ProviderConfigError,
     ProviderSettings,
+    ResourceError,
     ScopedModelConfig,
     SessionManager,
     SessionTreeBranchResult,
@@ -1934,6 +1935,77 @@ async def test_session_loads_and_expands_skills(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
+async def test_session_skills_disabled_suppresses_skill_index(tmp_path: Path) -> None:
+    resource_root = tmp_path / "resources"
+    skills_dir = resource_root / "skills"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "testing.md").write_text(
+        "---\ndescription: Test code\n---\n# Testing",
+        encoding="utf-8",
+    )
+    (tmp_path / "AGENTS.md").write_text("Follow project rules.", encoding="utf-8")
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    provider = FakeProvider(
+        [
+            [
+                ProviderResponseStartEvent(model="fake"),
+                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+            ]
+        ]
+    )
+    config = CodingSessionConfig(
+        provider=provider,
+        model="fake",
+        storage=storage,
+        cwd=tmp_path,
+        skills_enabled=False,
+        resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+    )
+    session = await CodingSession.load(config)
+
+    _events = await _collect_session_events(session.prompt("Hello"))
+
+    # Skill discovery is suppressed: no skills, no <available_skills> index.
+    assert session.skills == ()
+    assert "<available_skills>" not in provider.calls[0][1]
+    # Project context (AGENTS.md) remains unaffected by disabling skills.
+    assert "Follow project rules." in provider.calls[0][1]
+    assert [Path(context_file.path).name for context_file in session.context_files] == ["AGENTS.md"]
+    # /skill: commands have nothing to expand against.
+    with pytest.raises(ResourceError):
+        session.expand_prompt_text("/skill:testing")
+
+
+@pytest.mark.anyio
+async def test_session_reload_preserves_disabled_skills(tmp_path: Path) -> None:
+    resource_root = tmp_path / "resources"
+    skills_dir = resource_root / "skills"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "testing.md").write_text(
+        "---\ndescription: Test code\n---\n# Testing",
+        encoding="utf-8",
+    )
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=storage,
+            cwd=tmp_path,
+            skills_enabled=False,
+            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        )
+    )
+
+    assert session.skills == ()
+
+    await session.reload()
+
+    assert session.skills == ()
+    assert "<available_skills>" not in session.system_prompt
+
+
+@pytest.mark.anyio
 async def test_system_command_shows_prompt_without_persisting_or_adding_context(
     tmp_path: Path,
 ) -> None:
@@ -2111,16 +2183,15 @@ async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Pa
     (tmp_path / "AGENTS.md").write_text("Reloaded project rules.", encoding="utf-8")
 
     entries_before = await storage.read_all()
-    result = session.handle_command("/reload")
+    command = session.handle_command("/reload")
+    assert command.reload_requested is True
+    summary = await session.reload()
     entries_after = await storage.read_all()
     _events = await _collect_session_events(session.prompt("Hello"))
 
-    assert result.message is not None
-    assert "Reloaded local coding resources and project context." in result.message
-    assert "Skills: 1 total (changed, +1)" in result.message
-    assert "Project context files: 1 total (changed, +1)" in result.message
-    assert "Next-turn system prompt: rebuilt" in result.message
-    assert "Not refreshed by /reload" in result.message
+    assert summary.skills.after == 1
+    assert summary.context_files.after == 1
+    assert summary.system_prompt_rebuilt is True
     assert entries_after == entries_before
     assert [skill.name for skill in session.skills] == ["testing"]
     assert [Path(context_file.path).name for context_file in session.context_files] == ["AGENTS.md"]
@@ -2154,11 +2225,9 @@ async def test_session_reload_skips_provider_settings_refresh(
         )
     )
 
-    result = session.handle_command("/reload")
-
-    assert result.message is not None
-    assert "Provider config:" in result.message
-    assert "Not refreshed by /reload" in result.message
+    command = session.handle_command("/reload")
+    assert command.reload_requested is True
+    await session.reload()
 
 
 @pytest.mark.anyio
@@ -2186,10 +2255,11 @@ async def test_session_reload_leaves_system_prompt_when_inputs_are_unchanged(
         fail_build_system_prompt,
     )
 
-    result = session.handle_command("/reload")
+    command = session.handle_command("/reload")
+    assert command.reload_requested is True
+    summary = await session.reload()
 
-    assert result.message is not None
-    assert "Next-turn system prompt: unchanged" in result.message
+    assert summary.system_prompt_rebuilt is False
 
 
 @pytest.mark.anyio
