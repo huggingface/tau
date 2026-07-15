@@ -60,4 +60,4 @@ For the practical frontend contract, see [Building a Custom TUI](../custom-tui.m
 - [Phase 24: Session Tree Branching](./phase-24-session-tree-branching.md)
 
 Phase 21 extensions are implemented; see the phase note and the user guide at
-`website/src/content/docs/guides/extensions.md`.
+`website/content/guides/extensions.md`.
