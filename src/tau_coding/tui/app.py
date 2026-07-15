@@ -1368,40 +1368,30 @@ class LoginMethodPickerScreen(ModalScreen[str | None]):
         Binding("enter", "select_cursor", "Select", show=False, priority=True),
     ]
 
-    def __init__(
-        self,
-        *,
-        theme: TuiTheme,
-        provider: ProviderCatalogEntry | None = None,
-    ) -> None:
+    def __init__(self, *, theme: TuiTheme) -> None:
         super().__init__()
         self.theme = theme
-        self.provider = provider
 
     def compose(self) -> ComposeResult:
         """Compose the login method picker."""
-        title = "Login" if self.provider is None else f"Login: {self.provider.display_name}"
-        methods = [
-            ListItem(
-                Label("Subscription — OAuth account", markup=False),
-                id="login-method-subscription",
-            ),
-            ListItem(
-                Label("API key — built-in provider", markup=False),
-                id="login-method-api-key",
-            ),
-        ]
-        if self.provider is None:
-            methods.append(
+        with Vertical(id="login-method-picker"):
+            yield Static("Login", id="login-method-title")
+            yield Static("Choose how to authenticate.", id="login-method-intro")
+            yield LoginMethodListView(
+                ListItem(
+                    Label("Subscription — OAuth account", markup=False),
+                    id="login-method-subscription",
+                ),
+                ListItem(
+                    Label("API key — built-in provider", markup=False),
+                    id="login-method-api-key",
+                ),
                 ListItem(
                     Label("Custom provider — OpenAI-compatible", markup=False),
                     id="login-method-custom",
-                )
+                ),
+                id="login-method-list",
             )
-        with Vertical(id="login-method-picker"):
-            yield Static(title, id="login-method-title")
-            yield Static("Choose how to authenticate.", id="login-method-intro")
-            yield LoginMethodListView(*methods, id="login-method-list")
             yield Static("Enter selects - Escape closes", id="login-method-help")
 
     def on_mount(self) -> None:
@@ -4271,18 +4261,6 @@ class TauTuiApp(App[None]):
         entry = builtin_provider_entry(provider_name)
         if entry is None:
             self._notify(f"Unknown provider: {provider_name}", severity="error")
-            return
-        if method is None and set(entry.auth_methods) == {"api_key", "oauth"}:
-            self.push_screen(
-                LoginMethodPickerScreen(
-                    theme=self.tui_settings.resolved_theme,
-                    provider=entry,
-                ),
-                callback=lambda selected_method: self._open_login(
-                    entry.name,
-                    method=selected_method,
-                ),
-            )
             return
         use_oauth = method == "subscription" or (
             method is None and "api_key" not in entry.auth_methods
