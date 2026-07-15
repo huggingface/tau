@@ -3667,8 +3667,8 @@ kind = "anthropic"
 base_url = "https://api.minimax.io/anthropic"
 api_key_env = "MINIMAX_API_KEY"
 credential_name = "minimax"
-models = ["MiniMax-M2.7", "MiniMax-M2.7-highspeed"]
-default_model = "MiniMax-M2.7"
+models = ["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M3"]
+default_model = "MiniMax-M3"
 docs_url = "https://www.minimax.io/platform/document"
 api = "anthropic-messages"
 thinking_levels = ["off", "minimal", "low", "medium", "high"]
@@ -3678,6 +3678,7 @@ thinking_parameter = "anthropic.thinking"
 [providers.context_windows]
 "MiniMax-M2.7" = 204800
 "MiniMax-M2.7-highspeed" = 204800
+"MiniMax-M3" = 1000000
 
 [providers.model_metadata."MiniMax-M2.7"]
 reasoning = true
@@ -3693,6 +3694,14 @@ context_window = 204800
 max_tokens = 131072
 cost = { input = 0.6, output = 2.4, cacheRead = 0.06, cacheWrite = 0.375 }
 
+[providers.model_metadata."MiniMax-M3"]
+reasoning = true
+input = ["text"]
+context_window = 1000000
+max_tokens = 131072
+compat = { forceAdaptiveThinking = true }
+cost = { input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 }
+
 [[providers]]
 name = "minimax-cn"
 display_name = "MiniMax (China)"
@@ -3700,8 +3709,8 @@ kind = "anthropic"
 base_url = "https://api.minimaxi.com/anthropic"
 api_key_env = "MINIMAX_CN_API_KEY"
 credential_name = "minimax-cn"
-models = ["MiniMax-M2.7", "MiniMax-M2.7-highspeed"]
-default_model = "MiniMax-M2.7"
+models = ["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M3"]
+default_model = "MiniMax-M3"
 docs_url = "https://www.minimaxi.com/document"
 api = "anthropic-messages"
 thinking_levels = ["off", "minimal", "low", "medium", "high"]
@@ -3711,6 +3720,7 @@ thinking_parameter = "anthropic.thinking"
 [providers.context_windows]
 "MiniMax-M2.7" = 204800
 "MiniMax-M2.7-highspeed" = 204800
+"MiniMax-M3" = 1000000
 
 [providers.model_metadata."MiniMax-M2.7"]
 reasoning = true
@@ -3725,6 +3735,14 @@ input = ["text"]
 context_window = 204800
 max_tokens = 131072
 cost = { input = 0.6, output = 2.4, cacheRead = 0.06, cacheWrite = 0.375 }
+
+[providers.model_metadata."MiniMax-M3"]
+reasoning = true
+input = ["text"]
+context_window = 1000000
+max_tokens = 131072
+compat = { forceAdaptiveThinking = true }
+cost = { input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 }
 
 [[providers]]
 name = "moonshotai"
