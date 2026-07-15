@@ -25,12 +25,27 @@ tau
 
 Built-in providers include **OpenAI**, **Anthropic**, **OpenAI Codex**
 (subscription), **Moonshot AI**, **Kimi Code** (subscription), **OpenRouter**,
-**Hugging Face**, and **NVIDIA NIM**. Moonshot AI includes `kimi-k2.7-code`,
-while Kimi Code exposes the rolling `kimi-for-coding` model through its separate
-`https://api.kimi.com/coding/v1` endpoint. Use a Kimi Open Platform key for
-Moonshot AI and a key from the [Kimi Code console](https://www.kimi.ai/code/console)
-for Kimi Code. Credentials saved this way live in `~/.tau/credentials.json`
-(private permissions). The custom-provider
+**Hugging Face**, and **NVIDIA NIM**.
+
+### Moonshot AI API vs. Kimi Code
+
+Both Kimi providers authenticate requests with Bearer API keys; neither uses
+OAuth. They are separate because the keys come from different consoles, use
+different endpoints, and charge against different billing plans:
+
+| Tau provider | Access and billing | Model | Endpoint | Environment variable |
+| --- | --- | --- | --- | --- |
+| `moonshotai` | Pay-as-you-go key from the [Kimi Open Platform](https://platform.kimi.ai/console/api-keys) | `kimi-k2.7-code` | `https://api.moonshot.ai/v1` | `MOONSHOT_API_KEY` |
+| `kimi-code` | Subscription key from the [Kimi Code console](https://www.kimi.ai/code/console) | Rolling `kimi-for-coding` alias | `https://api.kimi.com/coding/v1` | `KIMI_CODE_API_KEY` |
+
+A key for one service should not be treated as interchangeable with a key for
+the other. Tau stores them independently under the `moonshotai` and `kimi-code`
+credential names, so `/login moonshotai` and `/login kimi-code` can configure
+both at once. The distinct environment variable names provide the same
+separation when credentials are supplied through the shell.
+
+Credentials saved through `/login` live in `~/.tau/credentials.json` (private
+permissions). The custom-provider
 flow asks for the provider name, display name, base URL, API-key environment
 variable, default model, and API key; it writes the provider definition to
 `~/.tau/catalog.toml` and runtime preferences to `~/.tau/providers.json`.

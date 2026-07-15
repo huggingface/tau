@@ -204,6 +204,8 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
     assert coding is not None
     assert coding.display_name == "Kimi Code subscription"
     assert coding.base_url == "https://api.kimi.com/coding/v1"
+    assert coding.api_key_env == "KIMI_CODE_API_KEY"
+    assert coding.credential_name == "kimi-code"
     assert coding.models == ("kimi-for-coding",)
     assert coding.default_model == "kimi-for-coding"
     assert coding.context_windows == {"kimi-for-coding": 262_144}
