@@ -3756,7 +3756,7 @@ cost_tiers = [
 
 [[providers]]
 name = "moonshotai"
-display_name = "Moonshot AI"
+display_name = "Moonshot AI (Kimi)"
 kind = "openai-compatible"
 base_url = "https://api.moonshot.ai/v1"
 api_key_env = "MOONSHOT_API_KEY"

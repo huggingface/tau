@@ -198,6 +198,7 @@ def test_builtin_catalog_golden_nvidia_entry() -> None:
 def test_builtin_catalog_golden_kimi_entries() -> None:
     moonshot = builtin_provider_entry("moonshotai")
     assert moonshot is not None
+    assert moonshot.display_name == "Moonshot AI (Kimi)"
     assert moonshot.default_model == "kimi-k2.7-code"
     assert "kimi-k2.7-code" in moonshot.models
     assert moonshot.context_windows is not None

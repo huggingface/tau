@@ -9,7 +9,8 @@ OpenAI-compatible endpoints (including local models).
 
 ## The fastest setup: `/login`
 
-Start Tau and use `/login` to connect a provider:
+Start Tau and use `/login` to connect a provider. The provider picker includes
+a search field, which is especially useful for the longer API-key provider list:
 
 ```bash
 tau
@@ -29,7 +30,7 @@ tau
 
 Built-in providers include **OpenAI**, **Anthropic**, **OpenAI Codex**
 (subscription), **GitHub Copilot**, **OpenCode Go**, **OpenCode Zen**,
-**Moonshot AI**, **Kimi Code** (subscription), **OpenRouter**, **Hugging Face**,
+**Moonshot AI (Kimi)**, **Kimi Code** (subscription), **OpenRouter**, **Hugging Face**,
 and **NVIDIA NIM**.
 
 ### OAuth subscriptions

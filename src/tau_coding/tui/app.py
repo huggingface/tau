@@ -1272,8 +1272,48 @@ class CommandOutputScreen(ModalScreen[None]):
         self.query_one("#command-output-scroll", CommandOutputScroll).action_scroll_down()
 
 
+class LoginProviderSearchInput(Input):
+    """Search input that keeps provider-picker navigation local."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Cancel", show=False, priority=True),
+        Binding("up", "cursor_up", "Up", show=False, priority=True),
+        Binding("down", "cursor_down", "Down", show=False, priority=True),
+    ]
+
+    def _picker(self) -> LoginProviderPickerScreen:
+        return cast(LoginProviderPickerScreen, self.screen)
+
+    def on_key(self, event: Key) -> None:
+        """Route picker control keys before the input edits its text."""
+        if event.key == "up":
+            event.stop()
+            event.prevent_default()
+            self.action_cursor_up()
+        elif event.key == "down":
+            event.stop()
+            event.prevent_default()
+            self.action_cursor_down()
+        elif event.key == "escape":
+            event.stop()
+            event.prevent_default()
+            self.action_cancel()
+
+    def action_cursor_up(self) -> None:
+        """Move the provider picker selection up."""
+        self._picker().action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        """Move the provider picker selection down."""
+        self._picker().action_cursor_down()
+
+    def action_cancel(self) -> None:
+        """Close the provider picker."""
+        self._picker().action_cancel()
+
+
 class LoginProviderPickerScreen(ModalScreen[str | None]):
-    """Provider picker for the TUI login flow."""
+    """Searchable provider picker for the TUI login flow."""
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
         Binding("escape", "cancel", "Cancel"),
@@ -1291,6 +1331,7 @@ class LoginProviderPickerScreen(ModalScreen[str | None]):
     ) -> None:
         super().__init__()
         self.providers = tuple(providers)
+        self.visible_providers = self.providers
         self.theme = theme
         self.title_text = title
 
@@ -1298,6 +1339,10 @@ class LoginProviderPickerScreen(ModalScreen[str | None]):
         """Compose the provider picker."""
         with Vertical(id="login-provider-picker"):
             yield Static(self.title_text, id="login-provider-title")
+            yield LoginProviderSearchInput(
+                placeholder="Search providers",
+                id="login-provider-search",
+            )
             yield ListView(
                 *[
                     ListItem(Label(_login_provider_label(provider), markup=False))
@@ -1308,10 +1353,24 @@ class LoginProviderPickerScreen(ModalScreen[str | None]):
             yield Static("Enter selects - Escape closes", id="login-provider-help")
 
     def on_mount(self) -> None:
-        """Focus the provider list."""
-        provider_list = self.query_one("#login-provider-list", ListView)
-        provider_list.index = 0
-        provider_list.focus()
+        """Focus the provider search field."""
+        self.query_one("#login-provider-search", Input).focus()
+        self._refresh_provider_list()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Filter providers as the search value changes."""
+        if event.input.id != "login-provider-search":
+            return
+        event.stop()
+        self.visible_providers = _filter_login_providers(self.providers, event.value)
+        self._refresh_provider_list()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Select the highlighted provider from the search field."""
+        if event.input.id != "login-provider-search":
+            return
+        event.stop()
+        self._select_visible_provider()
 
     def on_key(self, event: Key) -> None:
         """Route provider picker keys to the list."""
@@ -1327,7 +1386,8 @@ class LoginProviderPickerScreen(ModalScreen[str | None]):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Dismiss with the selected provider name."""
-        self.dismiss(self.providers[event.index].name)
+        event.stop()
+        self._select_visible_provider()
 
     def action_cursor_up(self) -> None:
         """Move to the previous provider."""
@@ -1339,11 +1399,35 @@ class LoginProviderPickerScreen(ModalScreen[str | None]):
 
     def action_select_cursor(self) -> None:
         """Select the highlighted provider."""
-        self.query_one("#login-provider-list", ListView).action_select_cursor()
+        self._select_visible_provider()
 
     def action_cancel(self) -> None:
         """Close without selecting a provider."""
         self.dismiss(None)
+
+    def _select_visible_provider(self) -> None:
+        provider_list = self.query_one("#login-provider-list", ListView)
+        index = provider_list.index
+        if index is None or not self.visible_providers:
+            return
+        self.dismiss(self.visible_providers[index].name)
+
+    def _refresh_provider_list(self) -> None:
+        provider_list = self.query_one("#login-provider-list", ListView)
+        provider_list.clear()
+        provider_list.extend(
+            [
+                ListItem(Label(_login_provider_label(provider), markup=False))
+                for provider in self.visible_providers
+            ]
+        )
+        provider_list.index = 0 if self.visible_providers else None
+        help_text = (
+            "Enter selects - Escape closes"
+            if self.visible_providers
+            else "No matching providers - Escape closes"
+        )
+        self.query_one("#login-provider-help", Static).update(help_text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2504,6 +2588,7 @@ class TauTuiApp(App[None]):
         max-height: 10;
     }
 
+    #login-provider-search,
     #model-picker-search {
         height: 3;
         margin-bottom: 1;
@@ -5145,6 +5230,20 @@ def _model_picker_label(
     )
     suffix = " [scoped]" if scoped else ""
     return f"{marker}{choice.provider_name}:{choice.model}{suffix}"
+
+
+def _filter_login_providers(
+    providers: Sequence[ProviderCatalogEntry],
+    query: str,
+) -> tuple[ProviderCatalogEntry, ...]:
+    normalized = query.strip().casefold()
+    if not normalized:
+        return tuple(providers)
+    return tuple(
+        provider
+        for provider in providers
+        if normalized in provider.name.casefold() or normalized in provider.display_name.casefold()
+    )
 
 
 def _filter_model_choices(choices: Sequence[ModelChoice], query: str) -> tuple[ModelChoice, ...]:

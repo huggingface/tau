@@ -4960,6 +4960,76 @@ async def test_tui_login_subscription_opens_oauth_provider_picker() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_login_api_provider_picker_filters_by_name_and_display_name() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/login"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, LoginMethodPickerScreen)
+        app.screen.action_cursor_down()
+        app.screen.action_select_cursor()
+        await pilot.pause()
+
+        assert isinstance(app.screen, LoginProviderPickerScreen)
+        search = app.screen.query_one("#login-provider-search", Input)
+        assert search.has_focus
+        search.value = "kimi"
+        await pilot.pause()
+
+        provider_list = app.screen.query_one("#login-provider-list", ListView)
+        labels = [str(item.query_one(Label).render()) for item in provider_list.children]
+        assert "Moonshot AI (Kimi) — moonshotai" in labels
+        assert "Kimi Code subscription — kimi-code" in labels
+
+        search.value = "moonshotai"
+        await pilot.pause()
+        labels = [str(item.query_one(Label).render()) for item in provider_list.children]
+        assert labels == [
+            "Moonshot AI (Kimi) — moonshotai",
+            "Moonshot AI (China) — moonshotai-cn",
+        ]
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, LoginScreen)
+        assert app.screen.provider.name == "moonshotai"
+
+
+@pytest.mark.anyio
+async def test_tui_login_api_provider_picker_handles_no_matches() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/login"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, LoginMethodPickerScreen)
+        app.screen.action_cursor_down()
+        app.screen.action_select_cursor()
+        await pilot.pause()
+
+        assert isinstance(app.screen, LoginProviderPickerScreen)
+        search = app.screen.query_one("#login-provider-search", Input)
+        search.value = "no-such-provider"
+        await pilot.pause()
+
+        provider_list = app.screen.query_one("#login-provider-list", ListView)
+        assert len(provider_list.children) == 0
+        assert provider_list.index is None
+        help_text = app.screen.query_one("#login-provider-help", Static)
+        assert str(help_text.render()) == "No matching providers - Escape closes"
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, LoginProviderPickerScreen)
+
+
+@pytest.mark.anyio
 async def test_tui_login_api_key_opens_api_provider_picker() -> None:
     app = TauTuiApp(FakeSession())
 
