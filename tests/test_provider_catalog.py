@@ -203,7 +203,7 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
     coding = builtin_provider_entry("kimi-code")
     assert coding is not None
     assert coding.display_name == "Kimi Code subscription"
-    assert coding.base_url == "https://api.kimi.ai/coding/v1"
+    assert coding.base_url == "https://api.kimi.com/coding/v1"
     assert coding.models == ("kimi-for-coding",)
     assert coding.default_model == "kimi-for-coding"
     assert coding.context_windows == {"kimi-for-coding": 262_144}

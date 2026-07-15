@@ -3,7 +3,7 @@
 Tau's built-in catalog now exposes Kimi's current coding models through their two official API surfaces:
 
 - `moonshotai:kimi-k2.7-code` uses the pay-as-you-go Kimi API at `https://api.moonshot.ai/v1`.
-- `kimi-code:kimi-for-coding` uses the Kimi Code subscription endpoint at `https://api.kimi.ai/coding/v1`. Kimi documents `kimi-for-coding` as the rolling model ID for the latest coding model.
+- `kimi-code:kimi-for-coding` uses the Kimi Code subscription endpoint at `https://api.kimi.com/coding/v1`. Kimi documents `kimi-for-coding` as the rolling model ID for the latest coding model.
 
 They are separate providers because their API keys and base URLs are separate. This mirrors Tau's existing separation between OpenAI API access and an OpenAI Codex subscription.
 
