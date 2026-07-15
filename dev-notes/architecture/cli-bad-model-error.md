@@ -25,7 +25,7 @@ The `export` command in the same file already used the correct pattern
 
 ## Why it exists
 
-Reported in https://github.com/alejandro-ao/tau/issues/265. The provider catalog
+Reported in https://github.com/huggingface/tau/issues/265. The provider catalog
 is intentionally provider-specific, so an unknown/typo'd model name is a common
 user error. The actionable message (which lists the valid models for the
 provider) already existed in `provider_config.validate_provider_model`; it just

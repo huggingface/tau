@@ -15,7 +15,7 @@
   ·
   <a href="https://pypi.org/project/tau-ai/">PyPI</a>
   ·
-  <a href="https://github.com/alejandro-ao/tau/issues/1">Roadmap</a>
+  <a href="https://github.com/huggingface/tau/issues/1">Roadmap</a>
 </p>
 
 ---
@@ -79,7 +79,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 For local development:
 
 ```bash
-git clone https://github.com/alejandro-ao/tau.git
+git clone https://github.com/huggingface/tau.git
 cd tau
 uv sync --dev
 uv run tau --version
@@ -233,7 +233,7 @@ Useful entry points:
 - [CLI reference](https://twotimespi.dev/reference/cli/)
 
 Tau is under active development. The implementation roadmap is tracked in
-[GitHub issue #1](https://github.com/alejandro-ao/tau/issues/1).
+[GitHub issue #1](https://github.com/huggingface/tau/issues/1).
 
 ## License
 

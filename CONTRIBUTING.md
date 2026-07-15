@@ -119,7 +119,7 @@ For substantial architectural or phase-oriented work, add beginner-friendly note
 For user-facing behavior, update the published docs under:
 
 ```text
-website/src/content/docs/
+website/content/
 ```
 
 ## Release process
@@ -150,6 +150,6 @@ Avoid unrelated refactors in feature or bug-fix PRs. If a larger design change i
 
 Tau is developed incrementally. For larger changes, check the roadmap issue before starting:
 
-<https://github.com/alejandro-ao/tau/issues/1>
+<https://github.com/huggingface/tau/issues/1>
 
 When in doubt, favor the smallest step that preserves the architecture and teaches the design clearly.

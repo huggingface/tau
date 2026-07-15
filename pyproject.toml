@@ -24,8 +24,8 @@ dependencies = [
 [project.urls]
 Homepage = "https://twotimespi.dev"
 Documentation = "https://twotimespi.dev"
-Repository = "https://github.com/alejandro-ao/tau"
-Issues = "https://github.com/alejandro-ao/tau/issues"
+Repository = "https://github.com/huggingface/tau"
+Issues = "https://github.com/huggingface/tau/issues"
 
 [project.scripts]
 tau = "tau_coding.cli:app"

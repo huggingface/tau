@@ -23,4 +23,4 @@ User-facing documentation lives in `website/content/` and is published at
 - `adr/` — architecture decision records.
 - `catalog-model-safety.md` — checklist for adding providers and models to the built-in catalog safely.
 
-The roadmap is tracked in [GitHub issue #1](https://github.com/alejandro-ao/tau/issues/1).
+The roadmap is tracked in [GitHub issue #1](https://github.com/huggingface/tau/issues/1).

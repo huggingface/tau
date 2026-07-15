@@ -728,7 +728,7 @@ def test_tui_surfaces_bad_model_as_clean_error(
 ) -> None:
     """Regression: ``tau --model <bad>`` must exit with a clean error, not a traceback.
 
-    See https://github.com/alejandro-ao/tau/issues/265. The TUI startup path
+    See https://github.com/huggingface/tau/issues/265. The TUI startup path
     previously only caught ``RuntimeError``, so a ``ProviderConfigError`` (a
     ``ValueError`` subclass) raised while resolving the provider/model selection
     escaped the ``anyio`` event loop as an unhandled traceback.
