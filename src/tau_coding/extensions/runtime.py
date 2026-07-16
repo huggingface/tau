@@ -405,10 +405,11 @@ class ExtensionRuntime:
 
     def render_tool_result(
         self,
+        tool_name: str,
         result: AgentToolResult,
         expanded: bool,
     ) -> str | None:
-        """Render a tool result via its tool's `render_result`, or ``None``.
+        """Render a named tool's result via `render_result`, or ``None``.
 
         Installed into frontends as the tool-result display resolver, the
         counterpart of `render_tool_call` for the other end of the row's
@@ -417,25 +418,23 @@ class ExtensionRuntime:
         its generic result formatting. Failures are diagnosed once per tool
         name (render paths re-run on every redraw).
         """
-        registered = self._tools.get(result.name)
+        registered = self._tools.get(tool_name)
         if registered is None or registered.tool.render_result is None:
             return None
-        failure_key = f"render_result:{result.name}"
+        failure_key = f"render_result:{tool_name}"
         try:
             markup = registered.tool.render_result(result, expanded=expanded)
         except Exception as exc:  # noqa: BLE001 - a renderer must never crash the frontend
             if failure_key not in self._renderer_failures_reported:
                 self._renderer_failures_reported.add(failure_key)
                 self._record_runtime_failure(
-                    registered.extension, f"render_result:{result.name}", exc
+                    registered.extension, f"render_result:{tool_name}", exc
                 )
             return None
         if markup is not None and not isinstance(markup, str):
             if failure_key not in self._renderer_failures_reported:
                 self._renderer_failures_reported.add(failure_key)
-                self._record_bad_result(
-                    registered.extension, f"render_result:{result.name}", markup
-                )
+                self._record_bad_result(registered.extension, f"render_result:{tool_name}", markup)
             return None
         return markup
 
@@ -617,37 +616,38 @@ class ExtensionRuntime:
 
     def _wrap_tool(self, tool: AgentTool) -> AgentTool:
         async def executor(
+            tool_call_id: str,
             arguments: Mapping[str, JSONValue],
             signal: ToolCancellationToken | None = None,
-            *,
             on_update: ToolUpdateCallback | None = None,
         ) -> AgentToolResult:
             call_outcome = await self._run_tool_call_hooks(tool.name, arguments)
             if call_outcome.block:
                 reason = call_outcome.reason or "blocked by an extension"
-                message = f"Tool call blocked: {reason}"
-                return AgentToolResult(
-                    tool_call_id="",
-                    name=tool.name,
-                    ok=False,
-                    content=message,
-                    error=message,
-                )
+                return AgentToolResult(content=f"Tool call blocked: {reason}")
             effective_arguments = (
                 call_outcome.arguments if call_outcome.arguments is not None else arguments
             )
-            # The wrapper always declares `on_update`; the inner tool's own
-            # inspect-gate drops it for executors that do not accept it.
-            result = await tool.execute(effective_arguments, signal=signal, on_update=on_update)
+            result = await tool.execute(
+                tool_call_id,
+                effective_arguments,
+                signal=signal,
+                on_update=on_update,
+            )
             return await self._run_tool_result_hooks(tool.name, effective_arguments, result)
 
         return AgentTool(
             name=tool.name,
+            label=tool.label,
             description=tool.description,
-            input_schema=tool.input_schema,
-            executor=executor,
+            parameters=tool.parameters,
+            execute_fn=executor,
             prompt_snippet=tool.prompt_snippet,
             prompt_guidelines=tool.prompt_guidelines,
+            prepare_arguments=tool.prepare_arguments,
+            execution_mode=tool.execution_mode,
+            render_call=tool.render_call,
+            render_result=tool.render_result,
         )
 
     async def _run_tool_call_hooks(
