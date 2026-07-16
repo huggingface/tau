@@ -1,7 +1,7 @@
 # Pi-like Event Migration Audit
 
-**Worktree:** `~/.agents/worktrees/tau/pi-event-extension-parity`  
-**Branch:** `feat/pi-event-extension-parity`  
+**Worktree:** `~/.agents/worktrees/tau/pi-event-extension-parity`
+**Branch:** `feat/pi-event-extension-parity`
 **Date:** 2026-07-16
 
 ## Executive summary
@@ -63,7 +63,7 @@ In addition, the circular dependency between `tau_agent` and `tau_ai` that PR #3
   - `src/tau_agent/loop.py:29-35` imports from `tau_ai.events` and `tau_ai.provider`.
   - `src/tau_agent/events.py:12` imports `AssistantMessageEvent` from `tau_ai.events`.
   - `src/tau_agent/harness.py:22` imports `ModelProvider` from `tau_ai.provider`.
-  
+
   Meanwhile `tau_ai` imports `tau_agent.messages`, `tau_agent.tools`, `tau_agent.types` in virtually every module. This is the same cycle PR #332 inverted by moving the provider protocol into `tau_agent`.
 
 ---
