@@ -14,10 +14,7 @@ from tau_agent.session.entries import SessionEntry
 class SessionAgentEndEvent(WireModel):
     type: Literal["agent_end"] = "agent_end"
     messages: list[AgentMessage] = Field(default_factory=list)
-    will_retry: bool = Field(
-        False,
-        alias="willRetry",
-    )
+    will_retry: bool = Field(False)
 
 
 class AgentSettledEvent(WireModel):
@@ -27,7 +24,7 @@ class AgentSettledEvent(WireModel):
 class QueueUpdateEvent(WireModel):
     type: Literal["queue_update"] = "queue_update"
     steering: tuple[str, ...] = ()
-    follow_up: tuple[str, ...] = Field((), alias="followUp")
+    follow_up: tuple[str, ...] = Field(())
 
 
 CompactionReason = Literal["manual", "threshold", "overflow"]
@@ -43,14 +40,8 @@ class CompactionEndEvent(WireModel):
     reason: CompactionReason
     result: object | None = None
     aborted: bool = False
-    will_retry: bool = Field(
-        False,
-        alias="willRetry",
-    )
-    error_message: str | None = Field(
-        None,
-        alias="errorMessage",
-    )
+    will_retry: bool = Field(False)
+    error_message: str | None = Field(None)
 
 
 class EntryAppendedEvent(WireModel):
@@ -71,19 +62,16 @@ class ThinkingLevelChangedEvent(WireModel):
 class AutoRetryStartEvent(WireModel):
     type: Literal["auto_retry_start"] = "auto_retry_start"
     attempt: int
-    max_attempts: int = Field(alias="maxAttempts")
-    delay_ms: int = Field(alias="delayMs")
-    error_message: str = Field(alias="errorMessage")
+    max_attempts: int
+    delay_ms: int
+    error_message: str
 
 
 class AutoRetryEndEvent(WireModel):
     type: Literal["auto_retry_end"] = "auto_retry_end"
     success: bool
     attempt: int
-    final_error: str | None = Field(
-        None,
-        alias="finalError",
-    )
+    final_error: str | None = Field(None)
 
 
 type SessionOwnEvent = Annotated[

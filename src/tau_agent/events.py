@@ -28,10 +28,7 @@ class TurnStartEvent(WireModel):
 class TurnEndEvent(WireModel):
     type: Literal["turn_end"] = "turn_end"
     message: AgentMessage
-    tool_results: list[ToolResultMessage] = Field(
-        default_factory=list,
-        alias="toolResults",
-    )
+    tool_results: list[ToolResultMessage] = Field(default_factory=list)
 
 
 class MessageStartEvent(WireModel):
@@ -42,7 +39,9 @@ class MessageStartEvent(WireModel):
 class MessageUpdateEvent(WireModel):
     type: Literal["message_update"] = "message_update"
     message: AgentMessage
-    assistant_message_event: AssistantMessageEvent = Field(alias="assistantMessageEvent")
+    assistant_message_event: AssistantMessageEvent = Field(
+        serialization_alias="assistantMessageEvent"
+    )
 
 
 class MessageEndEvent(WireModel):
@@ -52,25 +51,25 @@ class MessageEndEvent(WireModel):
 
 class ToolExecutionStartEvent(WireModel):
     type: Literal["tool_execution_start"] = "tool_execution_start"
-    tool_call_id: str = Field(alias="toolCallId")
-    tool_name: str = Field(alias="toolName")
+    tool_call_id: str
+    tool_name: str
     args: dict[str, JSONValue] = Field(default_factory=dict)
 
 
 class ToolExecutionUpdateEvent(WireModel):
     type: Literal["tool_execution_update"] = "tool_execution_update"
-    tool_call_id: str = Field(alias="toolCallId")
-    tool_name: str = Field(alias="toolName")
+    tool_call_id: str
+    tool_name: str
     args: dict[str, JSONValue] = Field(default_factory=dict)
-    partial_result: AgentToolResult = Field(alias="partialResult")
+    partial_result: AgentToolResult
 
 
 class ToolExecutionEndEvent(WireModel):
     type: Literal["tool_execution_end"] = "tool_execution_end"
-    tool_call_id: str = Field(alias="toolCallId")
-    tool_name: str = Field(alias="toolName")
+    tool_call_id: str
+    tool_name: str
     result: AgentToolResult
-    is_error: bool = Field(alias="isError")
+    is_error: bool
 
 
 type AgentEvent = Annotated[

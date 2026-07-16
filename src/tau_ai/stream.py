@@ -152,7 +152,7 @@ async def canonicalize_provider_stream(
                 ]
                 final_tools = list(final.tool_calls)
                 final_text = final.text
-                final.content = streamed_thinking
+                final.content = list(streamed_thinking)
                 if final_text:
                     final.content.append(TextContent(text=final_text))
                 final.content.extend(final_tools)

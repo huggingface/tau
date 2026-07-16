@@ -10,6 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from tau_agent.types import JSONValue
 
 
+def _to_camel(name: str) -> str:
+    parts = name.split("_")
+    return parts[0] + "".join(part.title() for part in parts[1:])
+
+
 def current_timestamp_ms() -> int:
     """Return the current Unix timestamp in milliseconds."""
     return int(time() * 1000)
@@ -23,6 +28,7 @@ class WireModel(BaseModel):
         populate_by_name=True,
         validate_by_name=True,
         serialize_by_alias=True,
+        alias_generator=_to_camel,
     )
 
 
@@ -31,14 +37,8 @@ class UsageCost(WireModel):
 
     input: float = 0.0
     output: float = 0.0
-    cache_read: float = Field(
-        0.0,
-        alias="cacheRead",
-    )
-    cache_write: float = Field(
-        0.0,
-        alias="cacheWrite",
-    )
+    cache_read: float = 0.0
+    cache_write: float = 0.0
     total: float = 0.0
 
 
@@ -47,46 +47,31 @@ class Usage(WireModel):
 
     input: int = 0
     output: int = 0
-    cache_read: int = Field(0, alias="cacheRead")
-    cache_write: int = Field(
-        0,
-        alias="cacheWrite",
-    )
-    cache_write_1h: int | None = Field(
-        None,
-        alias="cacheWrite1h",
-    )
+    cache_read: int = 0
+    cache_write: int = 0
+    cache_write_1h: int | None = None
     reasoning: int | None = None
-    total_tokens: int = Field(
-        0,
-        alias="totalTokens",
-    )
-    cost: UsageCost = Field(default_factory=UsageCost)
+    total_tokens: int = 0
+    cost: UsageCost = UsageCost()
 
 
 class TextContent(WireModel):
     type: Literal["text"] = "text"
     text: str
-    text_signature: str | None = Field(
-        None,
-        alias="textSignature",
-    )
+    text_signature: str | None = None
 
 
 class ThinkingContent(WireModel):
     type: Literal["thinking"] = "thinking"
     thinking: str
-    thinking_signature: str | None = Field(
-        None,
-        alias="thinkingSignature",
-    )
+    thinking_signature: str | None = None
     redacted: bool = False
 
 
 class ImageContent(WireModel):
     type: Literal["image"] = "image"
     data: str
-    mime_type: str = Field(alias="mimeType")
+    mime_type: str
 
 
 class ToolCall(WireModel):
@@ -96,10 +81,7 @@ class ToolCall(WireModel):
     id: str
     name: str
     arguments: dict[str, JSONValue] = Field(default_factory=dict)
-    thought_signature: str | None = Field(
-        None,
-        alias="thoughtSignature",
-    )
+    thought_signature: str | None = None
 
 
 type UserContent = str | list[TextContent | ImageContent]
@@ -142,24 +124,12 @@ class AssistantMessage(WireModel):
     api: str = "unknown"
     provider: str = "unknown"
     model: str = "unknown"
-    response_model: str | None = Field(
-        None,
-        alias="responseModel",
-    )
-    response_id: str | None = Field(
-        None,
-        alias="responseId",
-    )
+    response_model: str | None = None
+    response_id: str | None = None
     diagnostics: list[AssistantMessageDiagnostic] | None = None
-    usage: Usage = Field(default_factory=Usage)
-    stop_reason: StopReason = Field(
-        "stop",
-        alias="stopReason",
-    )
-    error_message: str | None = Field(
-        None,
-        alias="errorMessage",
-    )
+    usage: Usage = Usage()
+    stop_reason: StopReason = "stop"
+    error_message: str | None = None
     timestamp: int = Field(default_factory=current_timestamp_ms)
 
     @model_validator(mode="before")
@@ -205,15 +175,12 @@ class AssistantMessage(WireModel):
 
 class ToolResultMessage(WireModel):
     role: Literal["toolResult"] = "toolResult"
-    tool_call_id: str = Field(alias="toolCallId")
-    tool_name: str = Field(alias="toolName")
+    tool_call_id: str
+    tool_name: str
     content: list[ToolResultContent] = Field(default_factory=list)
     details: JSONValue = None
-    added_tool_names: list[str] | None = Field(
-        None,
-        alias="addedToolNames",
-    )
-    is_error: bool = Field(False, alias="isError")
+    added_tool_names: list[str] | None = None
+    is_error: bool = False
     timestamp: int = Field(default_factory=current_timestamp_ms)
 
     @model_validator(mode="before")
@@ -242,23 +209,17 @@ class BashExecutionMessage(WireModel):
     role: Literal["bashExecution"] = "bashExecution"
     command: str
     output: str
-    exit_code: int | None = Field(None, alias="exitCode")
+    exit_code: int | None = None
     cancelled: bool = False
     truncated: bool = False
-    full_output_path: str | None = Field(
-        None,
-        alias="fullOutputPath",
-    )
+    full_output_path: str | None = None
     timestamp: int = Field(default_factory=current_timestamp_ms)
-    exclude_from_context: bool = Field(
-        False,
-        alias="excludeFromContext",
-    )
+    exclude_from_context: bool = False
 
 
 class CustomMessage(WireModel):
     role: Literal["custom"] = "custom"
-    custom_type: str = Field(alias="customType")
+    custom_type: str
     content: UserContent
     display: bool = True
     details: JSONValue = None
@@ -272,14 +233,14 @@ class CustomMessage(WireModel):
 class BranchSummaryMessage(WireModel):
     role: Literal["branchSummary"] = "branchSummary"
     summary: str
-    from_id: str = Field(alias="fromId")
+    from_id: str
     timestamp: int = Field(default_factory=current_timestamp_ms)
 
 
 class CompactionSummaryMessage(WireModel):
     role: Literal["compactionSummary"] = "compactionSummary"
     summary: str
-    tokens_before: int = Field(alias="tokensBefore")
+    tokens_before: int
     timestamp: int = Field(default_factory=current_timestamp_ms)
 
 
