@@ -63,6 +63,7 @@ class TuiEventAdapter:
                 if message.stop_reason in {"error", "aborted"}:
                     text = message.error_message or "Error"
                     self.state.error = text
+                    self.state.running = False
                     self.state.add_item("error", f"Error: {text}")
                 else:
                     text = message.text or self.state.assistant_buffer

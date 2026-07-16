@@ -51,7 +51,7 @@ from tau_agent import (
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
 )
-from tau_agent.messages import AgentMessage, UserMessage
+from tau_agent.messages import AgentMessage, CustomMessage, UserMessage
 from tau_agent.tools import AgentTool
 from tau_agent.types import JSONValue
 from tau_ai import AssistantErrorEvent, AssistantMessageEvent, TextDeltaEvent, ThinkingDeltaEvent
@@ -3268,15 +3268,18 @@ class TauTuiApp(App[None]):
         ]
 
     async def _append_confirmed_user_message(self, message: AgentMessage) -> None:
-        """Render a non-optimistic user event incrementally when possible."""
-        if not isinstance(message, UserMessage):
-            self._refresh()
+        """Render a non-optimistic user/custom event incrementally when possible."""
+        if isinstance(message, UserMessage):
+            await self._append_optimistic_user_message(message.text)
             return
-        await self._append_optimistic_user_message(
-            message.content,
-            custom_type=message.custom_type,
-            details=message.details,
-        )
+        if isinstance(message, CustomMessage):
+            await self._append_optimistic_user_message(
+                message.text,
+                custom_type=message.custom_type,
+                details=message.details if isinstance(message.details, dict) else None,
+            )
+            return
+        self._refresh()
 
     def _connect_extension_runtime(self, session: CodingSession) -> None:
         """Give the extension runtime a UI bridge and an idle-run entry point."""
@@ -3893,7 +3896,7 @@ class TauTuiApp(App[None]):
             self._sync_activity_indicator()
             return
         if isinstance(event, MessageEndEvent):
-            if event.message.role == "user":
+            if isinstance(event.message, (UserMessage, CustomMessage)):
                 await self._append_confirmed_user_message(event.message)
                 self._sync_header_title()
                 return
@@ -4992,8 +4995,10 @@ def _should_optimistically_render_prompt(text: str) -> bool:
 
 
 def _is_user_message_end_event(event: AgentEvent) -> bool:
-    """Return whether an agent event closes a user message."""
-    return isinstance(event, MessageEndEvent) and isinstance(event.message, UserMessage)
+    """Return whether an agent event closes a user-context message."""
+    return isinstance(event, MessageEndEvent) and isinstance(
+        event.message, (UserMessage, CustomMessage)
+    )
 
 
 def _terminal_command_prefix_span(text: str) -> tuple[int, int] | None:

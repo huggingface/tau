@@ -12,18 +12,25 @@ from tau_agent.events import (
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
 )
-from tau_agent.messages import AssistantMessage, ToolCall
+from tau_agent.messages import AssistantMessage, CustomMessage, ToolCall
 from tau_ai.events import TextDeltaEvent
 from tau_coding.events import AutoRetryStartEvent, CodingSessionEvent
+from tau_coding.extensions.api import CustomMessageMarkup
 from tau_coding.tui.state import format_tool_call_block
 
 
 class TranscriptRenderer:
-    def __init__(self, **_: object) -> None:
+    def __init__(
+        self,
+        *,
+        custom_message_renderer: CustomMessageMarkup | None = None,
+        **_: object,
+    ) -> None:
         self._assistant_started = False
         self._assistant_ended = False
         self._failed = False
         self._console = Console(stderr=True, highlight=False)
+        self._custom_message_renderer = custom_message_renderer
 
     def render(self, event: CodingSessionEvent) -> None:
         if isinstance(event, MessageUpdateEvent):
@@ -54,6 +61,19 @@ class TranscriptRenderer:
             if event.result.text:
                 for line in event.result.text.splitlines():
                     self._console.print(Text(f"  {line}"))
+            return
+        if isinstance(event, MessageEndEvent) and isinstance(event.message, CustomMessage):
+            if self._custom_message_renderer is None or not event.message.display:
+                return
+            rendered = self._custom_message_renderer(
+                event.message.custom_type,
+                event.message.text,
+                event.message.details if isinstance(event.message.details, dict) else None,
+                False,
+            )
+            if rendered:
+                self._newline()
+                self._console.print(rendered)
             return
         if isinstance(event, MessageEndEvent) and isinstance(event.message, AssistantMessage):
             if event.message.stop_reason == "error":
