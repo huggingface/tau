@@ -23,18 +23,23 @@ AGENT_EVENT_TYPES: frozenset[str] = frozenset(
     {
         "agent_start",
         "agent_end",
+        "agent_settled",
         "turn_start",
         "turn_end",
-        "retry",
         "queue_update",
         "message_start",
-        "message_delta",
-        "thinking_delta",
+        "message_update",
         "message_end",
         "tool_execution_start",
         "tool_execution_update",
         "tool_execution_end",
-        "error",
+        "compaction_start",
+        "compaction_end",
+        "entry_appended",
+        "session_info_changed",
+        "thinking_level_changed",
+        "auto_retry_start",
+        "auto_retry_end",
     }
 )
 AGENT_EVENT_WILDCARD = "agent_event"
