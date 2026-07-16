@@ -146,13 +146,7 @@ class AssistantMessage(WireModel):
         data = dict(value)
         content = data.get("content")
         if isinstance(content, str):
-            blocks: list[object] = [TextContent(text=content)] if content else []
-            blocks.extend(data.pop("tool_calls", ()))
-            data["content"] = blocks
-        elif "tool_calls" in data:
-            blocks = list(content or ())
-            blocks.extend(data.pop("tool_calls") or ())
-            data["content"] = blocks
+            data["content"] = [TextContent(text=content)] if content else []
         usage = data.get("usage")
         if usage is None:
             data["usage"] = Usage()
@@ -189,15 +183,9 @@ class ToolResultMessage(WireModel):
         if not isinstance(value, dict):
             return value
         data = dict(value)
-        if "name" in data and "tool_name" not in data and "toolName" not in data:
-            data["tool_name"] = data.pop("name")
-        if "ok" in data and "is_error" not in data and "isError" not in data:
-            data["is_error"] = not bool(data.pop("ok"))
         content = data.get("content")
         if isinstance(content, str):
             data["content"] = [TextContent(text=content)] if content else []
-        data.pop("data", None)
-        data.pop("error", None)
         return data
 
     @property

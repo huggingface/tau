@@ -9,7 +9,7 @@ import pytest
 
 from pi_event_helpers import assistant_done, assistant_start
 from tau_agent import AssistantMessage, ToolCall, UserMessage
-from tau_agent.messages import AgentMessage
+from tau_agent.messages import AgentMessage, assistant_content
 from tau_agent.session import CustomEntry, JsonlSessionStorage, LeafEntry, MessageEntry
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
@@ -1569,7 +1569,7 @@ async def test_agent_events_reach_extension_after_interrupted_tool_repair(
     tool_call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
     assistant_entry = MessageEntry(
         parent_id=user_entry.id,
-        message=AssistantMessage(content="I'll read it.", tool_calls=[tool_call]),
+        message=AssistantMessage(content=assistant_content("I'll read it.", [tool_call])),
     )
     await storage.append(assistant_entry)
     await storage.append(LeafEntry(parent_id=assistant_entry.id, entry_id=assistant_entry.id))
@@ -1612,10 +1612,9 @@ async def test_extension_tool_call_block_reaches_model(tmp_path: Path) -> None:
                 assistant_start(model="fake"),
                 assistant_done(
                     message=AssistantMessage(
-                        content="",
-                        tool_calls=[
-                            ToolCall(id="call-1", name="bash", arguments={"command": "ls"})
-                        ],
+                        content=assistant_content(
+                            "", [ToolCall(id="call-1", name="bash", arguments={"command": "ls"})]
+                        )
                     )
                 ),
             ],

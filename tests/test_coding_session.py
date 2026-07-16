@@ -12,10 +12,12 @@ from tau_agent import (
     AgentMessage,
     AgentTool,
     AssistantMessage,
+    TextContent,
     ToolCall,
     ToolResultMessage,
     UserMessage,
 )
+from tau_agent.messages import assistant_content
 from tau_agent.session import (
     CompactionEntry,
     JsonlSessionStorage,
@@ -305,7 +307,7 @@ async def test_load_persists_repair_for_session_with_interrupted_tail_tool_call(
     tool_call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
     assistant_entry = MessageEntry(
         parent_id=user_entry.id,
-        message=AssistantMessage(content="I'll read it.", tool_calls=[tool_call]),
+        message=AssistantMessage(content=assistant_content("I'll read it.", [tool_call])),
     )
     await storage.append(assistant_entry)
     await storage.append(LeafEntry(parent_id=assistant_entry.id, entry_id=assistant_entry.id))
@@ -330,17 +332,16 @@ async def test_load_persists_repair_for_session_with_interrupted_tail_tool_call(
 
     expected_repair = ToolResultMessage(
         tool_call_id="call-1",
-        name="read",
-        content="Tool call interrupted by user",
-        ok=False,
-        error="Tool call interrupted by user",
+        tool_name="read",
+        content=[TextContent(text="Tool call interrupted by user")],
+        is_error=True,
     )
     assert provider.calls == []
     _assert_messages(
         session.messages,
         (
             UserMessage(content="Read README.md"),
-            AssistantMessage(content="I'll read it.", tool_calls=[tool_call]),
+            AssistantMessage(content=assistant_content("I'll read it.", [tool_call])),
             expected_repair,
         ),
     )
@@ -351,7 +352,7 @@ async def test_load_persists_repair_for_session_with_interrupted_tail_tool_call(
         [entry.message for entry in message_entries],
         [
             UserMessage(content="Read README.md"),
-            AssistantMessage(content="I'll read it.", tool_calls=[tool_call]),
+            AssistantMessage(content=assistant_content("I'll read it.", [tool_call])),
             expected_repair,
         ],
     )
@@ -367,7 +368,7 @@ async def test_load_persists_repair_for_historical_interrupted_tool_call(
     tool_call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
     assistant_entry = MessageEntry(
         parent_id=user_entry.id,
-        message=AssistantMessage(content="I'll read it.", tool_calls=[tool_call]),
+        message=AssistantMessage(content=assistant_content("I'll read it.", [tool_call])),
     )
     await storage.append(assistant_entry)
     continued_entry = MessageEntry(
@@ -390,17 +391,16 @@ async def test_load_persists_repair_for_historical_interrupted_tool_call(
 
     expected_repair = ToolResultMessage(
         tool_call_id="call-1",
-        name="read",
-        content="Tool call interrupted by user",
-        ok=False,
-        error="Tool call interrupted by user",
+        tool_name="read",
+        content=[TextContent(text="Tool call interrupted by user")],
+        is_error=True,
     )
     assert provider.calls == []
     _assert_messages(
         session.messages,
         (
             UserMessage(content="Read README.md"),
-            AssistantMessage(content="I'll read it.", tool_calls=[tool_call]),
+            AssistantMessage(content=assistant_content("I'll read it.", [tool_call])),
             expected_repair,
             UserMessage(content="continue"),
         ),
@@ -1546,7 +1546,7 @@ async def test_session_branch_with_summary_tracks_file_operations(tmp_path: Path
     assistant = MessageEntry(
         id="assistant",
         parent_id="root",
-        message=AssistantMessage(content="Using tools", tool_calls=[read_call, edit_call]),
+        message=AssistantMessage(content=assistant_content("Using tools", [read_call, edit_call])),
     )
     await storage.append(root)
     await storage.append(assistant)
@@ -1629,7 +1629,7 @@ async def test_tool_results_are_persisted(tmp_path: Path) -> None:
             [
                 assistant_start(model="fake"),
                 assistant_done(
-                    message=AssistantMessage(content="Using tool", tool_calls=[tool_call]),
+                    message=AssistantMessage(content=assistant_content("Using tool", [tool_call])),
                     finish_reason="tool_calls",
                 ),
             ],
@@ -2127,7 +2127,9 @@ async def test_session_skill_index_lets_agent_read_relevant_skill_file(tmp_path:
             [
                 assistant_start(model="fake"),
                 assistant_done(
-                    message=AssistantMessage(content="Reading skill.", tool_calls=[tool_call]),
+                    message=AssistantMessage(
+                        content=assistant_content("Reading skill.", [tool_call])
+                    ),
                     finish_reason="tool_calls",
                 ),
             ],

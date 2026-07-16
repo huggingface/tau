@@ -27,6 +27,7 @@ from tau_agent import (
     MessageEndEvent,
     MessageStartEvent,
     MessageUpdateEvent,
+    TextContent,
     ToolCall,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
@@ -34,6 +35,7 @@ from tau_agent import (
     ToolResultMessage,
     UserMessage,
 )
+from tau_agent.messages import assistant_content
 from tau_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
 from tau_coding.catalog_loader import user_catalog_path
 from tau_coding.commands import CommandResult
@@ -950,20 +952,21 @@ def test_tui_state_renders_restored_skill_file_reads_with_skill_style() -> None:
     state.load_messages(
         [
             AssistantMessage(
-                content="Reading skill.",
-                tool_calls=[
-                    ToolCall(
-                        id="call-1",
-                        name="read",
-                        arguments={"path": "/workspace/.tau/skills/review.md"},
-                    )
-                ],
+                content=assistant_content(
+                    "Reading skill.",
+                    [
+                        ToolCall(
+                            id="call-1",
+                            name="read",
+                            arguments={"path": "/workspace/.tau/skills/review.md"},
+                        )
+                    ],
+                )
             ),
             ToolResultMessage(
                 tool_call_id="call-1",
-                name="read",
-                ok=True,
-                content="# Review\nFull noisy instructions.",
+                tool_name="read",
+                content=[TextContent(text="# Review\nFull noisy instructions.")],
             ),
         ]
     )
@@ -2420,15 +2423,15 @@ def test_tui_app_loads_restored_messages_into_display_state() -> None:
             messages=[
                 UserMessage(content="Read the file"),
                 AssistantMessage(
-                    content="I'll inspect it.",
-                    tool_calls=[
-                        ToolCall(id="call-1", name="edit", arguments={"path": "README.md"})
-                    ],
+                    content=assistant_content(
+                        "I'll inspect it.",
+                        [ToolCall(id="call-1", name="edit", arguments={"path": "README.md"})],
+                    )
                 ),
                 ToolResultMessage(
                     tool_call_id="call-1",
                     tool_name="edit",
-                    content="Successfully replaced 1 block.",
+                    content=[TextContent(text="Successfully replaced 1 block.")],
                     details={"patch": "--- README.md\n+++ README.md\n@@\n-old\n+new"},
                 ),
             ]
@@ -2762,14 +2765,19 @@ async def test_restored_tool_calls_render_via_render_call() -> None:
     session = FakeSession(
         messages=[
             AssistantMessage(
-                content="",
-                tool_calls=[
-                    ToolCall(
-                        id="call-1",
-                        name="agent",
-                        arguments={"prompt": "long prompt", "description": "Summarize codebase"},
-                    )
-                ],
+                content=assistant_content(
+                    "",
+                    [
+                        ToolCall(
+                            id="call-1",
+                            name="agent",
+                            arguments={
+                                "prompt": "long prompt",
+                                "description": "Summarize codebase",
+                            },
+                        )
+                    ],
+                )
             )
         ]
     )
@@ -2842,7 +2850,8 @@ async def test_tool_result_renders_via_render_result() -> None:
                 tool_name="agent",
                 is_error=False,
                 result=AgentToolResult(
-                    content="the raw result body", details={"description": "Summarize codebase"}
+                    content=[TextContent(text="the raw result body")],
+                    details={"description": "Summarize codebase"},
                 ),
             )
         )
@@ -2871,20 +2880,21 @@ async def test_restored_tool_results_render_via_render_result() -> None:
     session = FakeSession(
         messages=[
             AssistantMessage(
-                content="",
-                tool_calls=[
-                    ToolCall(
-                        id="call-1",
-                        name="agent",
-                        arguments={"prompt": "x", "description": "Summarize codebase"},
-                    )
-                ],
+                content=assistant_content(
+                    "",
+                    [
+                        ToolCall(
+                            id="call-1",
+                            name="agent",
+                            arguments={"prompt": "x", "description": "Summarize codebase"},
+                        )
+                    ],
+                )
             ),
             ToolResultMessage(
                 tool_call_id="call-1",
-                name="agent",
-                ok=True,
-                content="the raw result body",
+                tool_name="agent",
+                content=[TextContent(text="the raw result body")],
                 details={"description": "Summarize codebase"},
             ),
         ]

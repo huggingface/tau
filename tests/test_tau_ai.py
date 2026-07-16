@@ -9,10 +9,12 @@ from tau_agent import (
     AgentToolResult,
     AssistantMessage,
     SimpleCancellationToken,
+    TextContent,
     ToolCall,
     ToolResultMessage,
     UserMessage,
 )
+from tau_agent.messages import assistant_content
 from tau_agent.types import JSONValue
 from tau_ai import (
     AnthropicConfig,
@@ -397,7 +399,9 @@ async def test_google_provider_round_trips_thought_signature() -> None:
                 messages=[
                     UserMessage(content="List files"),
                     assistant_message,
-                    ToolResultMessage(tool_call_id="call-1", name="bash", content="a.py"),
+                    ToolResultMessage(
+                        tool_call_id="call-1", tool_name="bash", content=[TextContent(text="a.py")]
+                    ),
                 ],
                 tools=[],
             )
@@ -1472,10 +1476,15 @@ async def test_responses_api_formats_request_for_restricted_model() -> None:
     messages = [
         UserMessage(content="weather in Paris?"),
         AssistantMessage(
-            content="",
-            tool_calls=[ToolCall(id="call_1", name="get_weather", arguments={"city": "Paris"})],
+            content=assistant_content(
+                "", [ToolCall(id="call_1", name="get_weather", arguments={"city": "Paris"})]
+            )
         ),
-        ToolResultMessage(tool_call_id="call_1", tool_name="get_weather", content='{"temp_c": 19}'),
+        ToolResultMessage(
+            tool_call_id="call_1",
+            tool_name="get_weather",
+            content=[TextContent(text='{"temp_c": 19}')],
+        ),
         UserMessage(content="summarize"),
     ]
 

@@ -35,13 +35,6 @@ class AgentToolResult(WireModel):
         content = data.get("content")
         if isinstance(content, str):
             data["content"] = [TextContent(text=content)] if content else []
-        # Removed Tau-v1 envelope fields are accepted only while core call sites
-        # migrate; they are never part of the resulting model or wire shape.
-        data.pop("tool_call_id", None)
-        data.pop("name", None)
-        data.pop("ok", None)
-        data.pop("data", None)
-        data.pop("error", None)
         return data
 
     @property
