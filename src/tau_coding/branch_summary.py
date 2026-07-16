@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping, Sequence
 
 from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
-from tau_ai import ModelProvider, ProviderErrorEvent, ProviderResponseEndEvent
+from tau_ai import AssistantDoneEvent, AssistantErrorEvent, ModelProvider
 
 BRANCH_SUMMARY_SYSTEM_PROMPT = (
     "You are a context summarization assistant. Your task is to read a conversation "
@@ -83,14 +83,14 @@ async def summarize_branch_messages_with_model(
         ],
         tools=[],
     ):
-        if isinstance(event, ProviderErrorEvent):
+        if isinstance(event, AssistantErrorEvent):
             return None
-        if isinstance(event, ProviderResponseEndEvent):
+        if isinstance(event, AssistantDoneEvent):
             response = event.message
 
     if response is None:
         return None
-    summary = response.content.strip()
+    summary = response.text.strip()
     if not summary:
         return None
     return _add_branch_summary_context(summary, messages)

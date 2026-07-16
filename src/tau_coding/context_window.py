@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tau_agent.messages import AgentMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    ToolResultMessage,
+    UserMessage,
+    message_text,
+)
 from tau_agent.tools import AgentTool
 
 CHARS_PER_TOKEN = 4
@@ -120,23 +126,15 @@ def estimate_text_tokens(text: str) -> int:
 
 def estimate_message_tokens(message: AgentMessage) -> int:
     """Return a rough token estimate for one provider-neutral message."""
-    match message.role:
-        case "user":
-            return MESSAGE_OVERHEAD_TOKENS + estimate_text_tokens(message.content)
-        case "assistant":
-            tool_call_tokens = sum(
-                estimate_text_tokens(call.name) + estimate_text_tokens(str(call.arguments))
-                for call in message.tool_calls
-            )
-            return (
-                MESSAGE_OVERHEAD_TOKENS + estimate_text_tokens(message.content) + tool_call_tokens
-            )
-        case "tool":
-            return (
-                MESSAGE_OVERHEAD_TOKENS
-                + estimate_text_tokens(message.name)
-                + estimate_text_tokens(message.content)
-            )
+    tokens = MESSAGE_OVERHEAD_TOKENS + estimate_text_tokens(message_text(message))
+    if isinstance(message, AssistantMessage):
+        tokens += sum(
+            estimate_text_tokens(call.name) + estimate_text_tokens(str(call.arguments))
+            for call in message.tool_calls
+        )
+    elif isinstance(message, ToolResultMessage):
+        tokens += estimate_text_tokens(message.tool_name)
+    return tokens
 
 
 def estimate_tool_tokens(tool: AgentTool) -> int:
@@ -192,7 +190,8 @@ def summarize_messages_for_compaction(messages: tuple[AgentMessage, ...]) -> str
         return "No prior messages."
     lines = [f"Automatically compacted {len(messages)} prior message(s)."]
     for index, message in enumerate(messages, start=1):
-        lines.append(f"{index}. {message.role}: {_message_text(message)}")
+        role = "tool" if isinstance(message, ToolResultMessage) else message.role
+        lines.append(f"{index}. {role}: {_message_text(message)}")
     return "\n".join(lines)
 
 
@@ -226,43 +225,31 @@ def serialize_messages_for_compaction(messages: tuple[AgentMessage, ...]) -> str
 
     lines: list[str] = []
     for index, message in enumerate(messages, start=1):
-        match message.role:
-            case "user":
-                lines.append(f"<message index={index} role=user>")
-                lines.append(message.content)
-                lines.append("</message>")
-            case "assistant":
-                lines.append(f"<message index={index} role=assistant>")
-                if message.content:
-                    lines.append(message.content)
-                if message.tool_calls:
-                    lines.append("<tool-calls>")
-                    for call in message.tool_calls:
-                        lines.append(f"- {call.name}: {call.arguments}")
-                    lines.append("</tool-calls>")
-                lines.append("</message>")
-            case "tool":
-                lines.append(
-                    f"<message index={index} role=tool name={message.name} ok={message.ok}>"
-                )
-                lines.append(message.content)
-                lines.append("</message>")
+        attributes = f"index={index} role={message.role}"
+        if isinstance(message, ToolResultMessage):
+            attributes += f" name={message.tool_name} error={str(message.is_error).lower()}"
+        lines.append(f"<message {attributes}>")
+        text = message_text(message)
+        if text:
+            lines.append(text)
+        if isinstance(message, AssistantMessage) and message.tool_calls:
+            lines.append("<tool-calls>")
+            for call in message.tool_calls:
+                lines.append(f"- {call.name}: {call.arguments}")
+            lines.append("</tool-calls>")
+        lines.append("</message>")
     return "\n".join(lines)
 
 
 def _message_text(message: AgentMessage) -> str:
-    match message.role:
-        case "user":
-            return _truncate_summary_text(message.content)
-        case "assistant":
-            suffix = ""
-            if message.tool_calls:
-                names = ", ".join(call.name for call in message.tool_calls)
-                suffix = f" [tool calls: {names}]"
-            return _truncate_summary_text(f"{message.content}{suffix}")
-        case "tool":
-            prefix = f"{message.name} {'ok' if message.ok else 'failed'}: "
-            return _truncate_summary_text(f"{prefix}{message.content}")
+    text = message_text(message)
+    if isinstance(message, AssistantMessage) and message.tool_calls:
+        names = ", ".join(call.name for call in message.tool_calls)
+        text = f"{text} [tool calls: {names}]"
+    elif isinstance(message, ToolResultMessage):
+        status = "failed" if message.is_error else "ok"
+        text = f"{message.tool_name} {status}: {text}"
+    return _truncate_summary_text(text)
 
 
 def _truncate_summary_text(text: str) -> str:
@@ -279,7 +266,10 @@ def _split_previous_compaction_summary(
         return None, messages
 
     first = messages[0]
-    if first.role != "user" or not first.content.startswith(COMPACTION_SUMMARY_PREFIX):
+    if not isinstance(first, UserMessage):
+        return None, messages
+    text = message_text(first)
+    if not text.startswith(COMPACTION_SUMMARY_PREFIX):
         return None, messages
 
-    return first.content.removeprefix(COMPACTION_SUMMARY_PREFIX), messages[1:]
+    return text.removeprefix(COMPACTION_SUMMARY_PREFIX), messages[1:]

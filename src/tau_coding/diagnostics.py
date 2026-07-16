@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from tau_agent.events import ErrorEvent
+from tau_agent.messages import AssistantMessage
 from tau_coding.paths import TauPaths
 
 
@@ -53,21 +53,19 @@ class AgentCallDiagnosticLogger:
         self._append(entry)
         return self.path
 
-    def log_error_event(
+    def log_assistant_error(
         self,
         *,
         context: AgentCallDiagnosticContext,
         phase: str,
-        event: ErrorEvent,
+        message: AssistantMessage,
     ) -> Path:
-        """Log an agent error event with safe provider diagnostic details."""
-        entry = _base_entry(context, phase=phase, kind="error_event")
+        """Log a terminal assistant error message with safe diagnostic details."""
+        entry = _base_entry(context, phase=phase, kind="assistant_error")
         entry["error"] = {
-            "message": event.message,
-            "recoverable": event.recoverable,
+            "message": message.error_message or "Error",
+            "stop_reason": message.stop_reason,
         }
-        if event.data is not None:
-            entry["error"]["data"] = event.data
         self._append(entry)
         return self.path
 

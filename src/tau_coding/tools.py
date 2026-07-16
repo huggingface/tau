@@ -22,7 +22,13 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
-from tau_agent.tools import AgentTool, AgentToolResult, ToolCancellationToken, ToolExecutor
+from tau_agent.tools import (
+    AgentTool,
+    AgentToolResult,
+    ToolCancellationToken,
+    ToolExecutor,
+    ToolUpdateCallback,
+)
 from tau_agent.types import JSONValue
 
 DEFAULT_MAX_OUTPUT_BYTES = 50 * 1024
@@ -80,11 +86,23 @@ class ToolDefinition:
     executor: ToolExecutor
 
     def to_agent_tool(self) -> AgentTool:
+        """Convert the coding definition to the Pi-compatible core tool."""
+
+        async def execute(
+            tool_call_id: str,
+            arguments: Mapping[str, JSONValue],
+            signal: ToolCancellationToken | None = None,
+            on_update: ToolUpdateCallback | None = None,
+        ) -> AgentToolResult:
+            del tool_call_id, on_update
+            return await self.executor(arguments, signal)
+
         return AgentTool(
             name=self.name,
+            label=self.name,
             description=self.description,
-            input_schema=self.input_schema,
-            executor=self.executor,
+            parameters=self.input_schema,
+            execute_fn=execute,
             prompt_snippet=self.prompt_snippet,
             prompt_guidelines=self.prompt_guidelines,
         )
