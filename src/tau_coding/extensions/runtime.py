@@ -6,9 +6,12 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from inspect import isawaitable
 from pathlib import Path
+from time import time_ns
 from typing import Literal, Protocol
 
-from tau_agent.events import AgentEvent
+from tau_agent.events import AgentEvent, AgentStartEvent
+from tau_agent.events import TurnEndEvent as AgentTurnEndEvent
+from tau_agent.events import TurnStartEvent as AgentTurnStartEvent
 from tau_agent.messages import AgentMessage, TextContent
 from tau_agent.tools import (
     AgentTool,
@@ -49,6 +52,8 @@ from tau_coding.extensions.api import (
     ToolCallHookResult,
     ToolResultHookEvent,
     ToolResultHookResult,
+    TurnEndEvent,
+    TurnStartEvent,
     UiBridge,
 )
 from tau_coding.extensions.loader import (
@@ -160,6 +165,7 @@ class ExtensionRuntime:
         self._ui: UiBridge = ui or NullUiBridge()
         self._turn_requested: TurnRequestedCallback | None = None
         self._harness_unsubscribe: Callable[[], None] | None = None
+        self._extension_turn_index = 0
         self._generation = ExtensionGeneration()
 
     # -- loading -----------------------------------------------------------
@@ -818,7 +824,24 @@ class ExtensionRuntime:
                 self._record_runtime_failure(extension, event_type, exc)
 
     async def _on_agent_event(self, event: AgentEvent) -> None:
-        await self.emit_event(event)
+        """Adapt core turn events to Pi's extension-facing session metadata."""
+        extension_event: object = event
+        if isinstance(event, AgentStartEvent):
+            self._extension_turn_index = 0
+        elif isinstance(event, AgentTurnStartEvent):
+            extension_event = TurnStartEvent(
+                turn_index=self._extension_turn_index,
+                timestamp=time_ns() // 1_000_000,
+            )
+        elif isinstance(event, AgentTurnEndEvent):
+            extension_event = TurnEndEvent(
+                turn_index=self._extension_turn_index,
+                message=event.message,
+                tool_results=list(event.tool_results),
+            )
+        await self.emit_event(extension_event)
+        if isinstance(event, AgentTurnEndEvent):
+            self._extension_turn_index += 1
 
     async def _emit_lifecycle(self, event_name: str, payload: object) -> None:
         for extension, handler in self._handlers_for(event_name):

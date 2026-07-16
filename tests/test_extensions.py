@@ -2,6 +2,7 @@
 
 import asyncio
 import sys
+import time
 from pathlib import Path
 from typing import cast
 
@@ -909,6 +910,73 @@ async def test_agent_event_fan_out_and_wildcard(tmp_path: Path) -> None:
 
     assert len(specific) == 1
     assert len(wildcard) == 2
+
+
+async def test_extension_turn_events_include_pi_session_metadata(tmp_path: Path) -> None:
+    from tau_agent.events import AgentStartEvent
+    from tau_agent.events import TurnEndEvent as AgentTurnEndEvent
+    from tau_agent.events import TurnStartEvent as AgentTurnStartEvent
+    from tau_agent.messages import UserMessage
+    from tau_coding.extensions import TurnEndEvent, TurnStartEvent
+
+    runtime = ExtensionRuntime()
+    api = _register_inline_extension(runtime, "turn_observer")
+    specific: list[object] = []
+    wildcard: list[object] = []
+    api.on("turn_start", lambda event, context: specific.append(event))
+    api.on("turn_end", lambda event, context: specific.append(event))
+    api.on("agent_event", lambda event, context: wildcard.append(event))
+
+    listeners: list[object] = []
+    runtime.attach_harness_listener(  # type: ignore[arg-type]
+        lambda listener: (listeners.append(listener), lambda: None)[1]
+    )
+    dispatch = listeners[0]
+    message = UserMessage(content="done")
+
+    await dispatch(AgentStartEvent())  # type: ignore[operator]
+    before_ms = time.time_ns() // 1_000_000
+    await dispatch(AgentTurnStartEvent())  # type: ignore[operator]
+    await dispatch(AgentTurnEndEvent(message=message))  # type: ignore[operator]
+    await dispatch(AgentTurnStartEvent())  # type: ignore[operator]
+
+    first_start, first_end, second_start = specific
+    assert isinstance(first_start, TurnStartEvent)
+    assert before_ms <= first_start.timestamp <= time.time_ns() // 1_000_000
+    assert first_start.turn_index == first_end.turn_index == 0
+    assert isinstance(first_end, TurnEndEvent)
+    assert first_end.message == message
+    assert first_end.tool_results == []
+    assert isinstance(second_start, TurnStartEvent)
+    assert second_start.turn_index == 1
+    assert wildcard[-3:] == specific
+
+
+async def test_extension_turn_index_resets_for_each_agent_run(tmp_path: Path) -> None:
+    from tau_agent.events import AgentStartEvent
+    from tau_agent.events import TurnEndEvent as AgentTurnEndEvent
+    from tau_agent.events import TurnStartEvent as AgentTurnStartEvent
+    from tau_agent.messages import UserMessage
+    from tau_coding.extensions import TurnStartEvent
+
+    runtime = ExtensionRuntime()
+    api = _register_inline_extension(runtime, "turn_observer")
+    seen: list[TurnStartEvent] = []
+    api.on("turn_start", lambda event, context: seen.append(event))
+    listeners: list[object] = []
+    runtime.attach_harness_listener(  # type: ignore[arg-type]
+        lambda listener: (listeners.append(listener), lambda: None)[1]
+    )
+    dispatch = listeners[0]
+    message = UserMessage(content="done")
+
+    await dispatch(AgentStartEvent())  # type: ignore[operator]
+    await dispatch(AgentTurnStartEvent())  # type: ignore[operator]
+    await dispatch(AgentTurnEndEvent(message=message))  # type: ignore[operator]
+    await dispatch(AgentStartEvent())  # type: ignore[operator]
+    await dispatch(AgentTurnStartEvent())  # type: ignore[operator]
+
+    assert [event.turn_index for event in seen] == [0, 0]
 
 
 async def test_message_end_event_surfaces_provider_usage(tmp_path: Path) -> None:

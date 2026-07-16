@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
-from tau_agent.messages import AgentMessage
+from tau_agent.messages import AgentMessage, ToolResultMessage
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
 
@@ -310,6 +310,30 @@ class ExtensionGeneration:
         """Raise :class:`ExtensionError` when this generation is stale."""
         if self._stale_message is not None:
             raise ExtensionError(self._stale_message)
+
+
+@dataclass(frozen=True, slots=True)
+class TurnStartEvent:
+    """Pi-shaped extension event fired at the start of a turn.
+
+    The portable agent event intentionally has no session metadata. The coding
+    session adapter adds the zero-based turn index and millisecond timestamp
+    before dispatching the event to extensions.
+    """
+
+    turn_index: int
+    timestamp: int
+    type: Literal["turn_start"] = field(default="turn_start", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class TurnEndEvent:
+    """Pi-shaped extension event fired after one assistant/tool turn."""
+
+    turn_index: int
+    message: AgentMessage
+    tool_results: list[ToolResultMessage]
+    type: Literal["turn_end"] = field(default="turn_end", init=False)
 
 
 @dataclass(frozen=True, slots=True)
