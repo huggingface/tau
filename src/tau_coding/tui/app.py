@@ -102,6 +102,7 @@ from tau_coding.provider_config import (
     upsert_saved_provider,
 )
 from tau_coding.provider_runtime import create_model_provider
+from tau_coding.resources import TauResourcePaths
 from tau_coding.session import (
     TREE_RUNNING_MESSAGE,
     CodingSession,
@@ -123,7 +124,6 @@ from tau_coding.tui.autocomplete import (
     build_completion_state,
 )
 from tau_coding.tui.config import (
-    BUILTIN_TUI_THEME_NAMES,
     TAU_DARK_THEME,
     TuiKeybindings,
     TuiSettings,
@@ -138,6 +138,12 @@ from tau_coding.tui.state import (
     format_terminal_command_result_block,
 )
 from tau_coding.tui.terminal_title import TerminalTitleController
+from tau_coding.tui.themes import (
+    available_tui_theme_names,
+    get_tui_theme,
+    load_custom_tui_themes,
+    set_custom_tui_themes,
+)
 from tau_coding.tui.widgets import (
     CompactSessionInfo,
     SessionSidebar,
@@ -1577,7 +1583,7 @@ class LoginMethodListView(ListView):
 
 
 class ThemePickerScreen(ModalScreen[TuiThemeName | None]):
-    """Theme picker for the built-in TUI themes."""
+    """Theme picker for the available TUI themes."""
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
         Binding("escape", "cancel", "Cancel", priority=True),
@@ -1586,10 +1592,17 @@ class ThemePickerScreen(ModalScreen[TuiThemeName | None]):
         Binding("enter", "select_cursor", "Select", show=False, priority=True),
     ]
 
-    def __init__(self, *, current_theme: TuiThemeName, theme: TuiTheme) -> None:
+    def __init__(
+        self,
+        *,
+        current_theme: TuiThemeName,
+        theme: TuiTheme,
+        theme_names: tuple[TuiThemeName, ...],
+    ) -> None:
         super().__init__()
         self.current_theme = current_theme
         self.theme = theme
+        self.theme_names = theme_names
 
     def compose(self) -> ComposeResult:
         """Compose the theme picker."""
@@ -1603,7 +1616,7 @@ class ThemePickerScreen(ModalScreen[TuiThemeName | None]):
                             markup=False,
                         )
                     )
-                    for theme_name in BUILTIN_TUI_THEME_NAMES
+                    for theme_name in self.theme_names
                 ],
                 id="theme-picker-list",
             )
@@ -1613,7 +1626,7 @@ class ThemePickerScreen(ModalScreen[TuiThemeName | None]):
         """Select the current theme."""
         theme_list = self.query_one("#theme-picker-list", ListView)
         try:
-            theme_list.index = BUILTIN_TUI_THEME_NAMES.index(self.current_theme)
+            theme_list.index = self.theme_names.index(self.current_theme)
         except ValueError:
             theme_list.index = 0
         theme_list.focus()
@@ -1632,7 +1645,7 @@ class ThemePickerScreen(ModalScreen[TuiThemeName | None]):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Dismiss with the selected theme name."""
-        self.dismiss(BUILTIN_TUI_THEME_NAMES[event.index])
+        self.dismiss(self.theme_names[event.index])
 
     def action_cursor_up(self) -> None:
         """Move to the previous theme."""
@@ -2718,12 +2731,24 @@ class TauTuiApp(App[None]):
         self.initial_prompt = initial_prompt
         super().__init__()
         self._register_tau_textual_themes()
-        self.theme = self.tui_settings.theme
+        # Assign the resolved theme's name: it is always registered, while the
+        # raw settings value may name a custom theme that failed to load. The
+        # guard keeps the watcher from persisting the fallback over the user's
+        # configured theme.
+        self._applying_settings_theme = True
+        self.theme = self.tui_settings.resolved_theme.name
+        self._applying_settings_theme = False
         self._bindings = BindingsMap(_app_bindings(self.tui_settings.keybindings))
         self.session = session
         self.state = TuiState(skills=session.skills)
         for notice in self.startup_notices:
             self.state.add_item("status", notice)
+        if self.tui_settings.theme != self.tui_settings.resolved_theme.name:
+            self.state.add_item(
+                "status",
+                f"Theme '{self.tui_settings.theme}' was not found; "
+                f"using {self.tui_settings.resolved_theme.name}.",
+            )
         self._prompt_history: tuple[str, ...] = ()
         self._load_session_messages_from_session()
         self.adapter = TuiEventAdapter(self.state)
@@ -2805,13 +2830,15 @@ class TauTuiApp(App[None]):
         `/theme` instead of changing only Textual's chrome.
         """
         self._registered_themes.clear()
-        for theme_name in BUILTIN_TUI_THEME_NAMES:
+        for theme_name in available_tui_theme_names():
             self.register_theme(_textual_theme_for_tau_theme(theme_name))
 
     def _watch_theme(self, theme_name: str) -> None:
         """Keep Textual theme changes synchronized with Tau's durable TUI theme."""
         super()._watch_theme(theme_name)
-        if theme_name not in BUILTIN_TUI_THEME_NAMES:
+        if theme_name not in available_tui_theme_names():
+            return
+        if getattr(self, "_applying_settings_theme", False):
             return
         tau_theme: TuiThemeName = theme_name
         if self.tui_settings.theme == tau_theme:
@@ -3087,7 +3114,7 @@ class TauTuiApp(App[None]):
             if command.thinking_level is not None:
                 await self._set_thinking_level(command.thinking_level)
             if command.theme is not None:
-                self._set_tui_theme(cast(TuiThemeName, command.theme))
+                self._set_tui_theme(command.theme)
             self.state.set_skills(self.session.skills)
             if command.message:
                 if _command_message_uses_notification(text, command.message):
@@ -3789,6 +3816,9 @@ class TauTuiApp(App[None]):
         )
 
     def _set_tui_theme(self, theme: TuiThemeName) -> None:
+        if theme not in available_tui_theme_names():
+            self._notify(f"Unknown theme: {theme}", severity="error")
+            return
         self._replace_tui_settings(theme=theme)
         save_tui_settings(self.tui_settings)
         self.theme = theme
@@ -4632,6 +4662,7 @@ class TauTuiApp(App[None]):
             ThemePickerScreen(
                 current_theme=self.tui_settings.theme,
                 theme=self.tui_settings.resolved_theme,
+                theme_names=available_tui_theme_names(),
             ),
             callback=self._handle_theme_picker_result,
         )
@@ -4903,7 +4934,7 @@ class TauTuiApp(App[None]):
                 *LOGIN_PROVIDER_ALIASES,
             ),
             thinking_levels=getattr(self.session, "available_thinking_levels", ()),
-            theme_names=BUILTIN_TUI_THEME_NAMES,
+            theme_names=available_tui_theme_names(),
             session_options=_session_options(self.session),
             cwd=self.session.cwd,
         )
@@ -5345,20 +5376,20 @@ def _is_thinking_cycle_key(key: str, configured_key: str) -> bool:
 
 def _textual_theme_for_tau_theme(theme_name: TuiThemeName) -> Theme:
     """Map a Tau theme to Textual's native theme type."""
-    theme = TuiSettings(theme=theme_name).resolved_theme
+    theme = get_tui_theme(theme_name)
     return Theme(
         name=theme.name,
         primary=theme.accent,
         secondary=theme.prompt_border,
         warning=theme.markdown_bullet,
-        error=theme.role_styles["error"].border,
-        success=theme.role_styles["assistant"].border,
+        error=theme.error,
+        success=theme.success,
         accent=theme.accent,
         foreground=theme.screen_text,
         background=theme.screen_background,
         surface=theme.chrome_background,
         panel=theme.sidebar_background,
-        dark=theme.name != "tau-light",
+        dark=theme.dark,
         variables=_theme_css_variables(theme),
     )
 
@@ -5786,8 +5817,13 @@ async def run_tui_app(
                 project_extensions_enabled=project_extensions_enabled,
             )
         )
+        custom_themes, theme_diagnostics = load_custom_tui_themes(
+            TauResourcePaths(cwd=record.cwd).themes_dirs
+        )
+        set_custom_tui_themes(custom_themes)
         legacy_notices = (startup_notice,) if startup_notice else ()
-        all_startup_notices = tuple((*startup_notices, *legacy_notices))
+        theme_notices = tuple(diagnostic.format() for diagnostic in theme_diagnostics)
+        all_startup_notices = tuple((*startup_notices, *legacy_notices, *theme_notices))
         app = TauTuiApp(
             session,
             tui_settings=load_tui_settings(),

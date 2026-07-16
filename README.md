@@ -148,7 +148,7 @@ no code changes required.
 - Slash commands for login, model selection, sessions, compaction, export, theme,
   and more.
 - Project instructions from `AGENTS.md`, `.tau/`, and `.agents/` resources.
-- User skills and prompt templates.
+- User skills, prompt templates, and custom TUI themes.
 - Context accounting, manual compaction, and optional automatic compaction.
 - Provider-neutral event rendering for Rich, plain text, JSON, transcripts, and
   custom frontends.

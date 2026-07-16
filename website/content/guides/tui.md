@@ -81,7 +81,9 @@ the transcript stays readable. Toggle full tool output with **Ctrl+O**.
 - **Ctrl+P** quickly cycles through your *scoped* (favorite) models without
   opening the picker. Manage that list with `/scoped-models` or by pressing
   `Space` on a model in the `/model` picker.
-- **`/theme`** switches between `tau-dark`, `tau-light`, and `high-contrast`.
+- **`/theme`** switches between `tau-dark`, `tau-light`, `high-contrast`, and
+  any custom themes you have installed — see
+  [Themes]({{< relref "./themes.md" >}}).
 
 ## The sidebar
 

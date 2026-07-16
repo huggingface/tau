@@ -19,6 +19,7 @@ those locations and file formats.
 ├── sessions/           # saved sessions, per project
 ├── skills/             # user-level skills
 ├── prompts/            # user-level prompt templates
+├── themes/             # user-level TUI themes
 ├── AGENTS.md           # global project instructions
 └── logs/               # diagnostics
 ```
@@ -240,11 +241,14 @@ The built-in frontend reads optional settings from `~/.tau/tui.json`:
 }
 ```
 
-Built-in themes: `tau-dark` (default), `tau-light`, `high-contrast`. Set one with
-`/theme`. Textual's native theme picker is mapped to the same Tau themes and
-persists the same `theme` setting. Keys use Textual syntax; omitted keys keep
-their defaults. Tau rejects unknown themes/keybinding names, empty keys, and
-duplicate assignments.
+Built-in themes: `tau-dark` (default), `tau-light`, `high-contrast`. Custom
+themes are JSON files in `~/.tau/themes/` or a project's `.tau/themes/` — see
+[Themes]({{< relref "../guides/themes.md" >}}). Set one with `/theme`.
+Textual's native theme picker is mapped to the same Tau themes and persists
+the same `theme` setting. A configured theme that cannot be found falls back
+to `tau-dark` with a startup notice, without overwriting the setting. Keys use
+Textual syntax; omitted keys keep their defaults. Tau rejects unknown
+keybinding names, empty keys, and duplicate assignments.
 
 - `sidebar_position`: `"left"` (default), `"right"`, or `"off"`. Controls
   placement of the session metadata sidebar. `"off"` hides the sidebar entirely;

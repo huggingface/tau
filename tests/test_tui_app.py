@@ -2337,6 +2337,43 @@ def test_tui_app_uses_configured_theme_css_variables() -> None:
     assert app.current_theme.name == "high-contrast"
 
 
+def test_tui_app_registers_and_applies_custom_theme() -> None:
+    from tau_coding.tui.themes import (
+        THEME_COLOR_FIELDS,
+        TRANSCRIPT_ROLES,
+        parse_tui_theme_json,
+        set_custom_tui_themes,
+    )
+
+    theme_data = {
+        "name": "midnight",
+        "colors": dict.fromkeys(THEME_COLOR_FIELDS, "#123456"),
+        "roles": {role: {"border": "#123456", "body": "#e0e0e0"} for role in TRANSCRIPT_ROLES},
+    }
+    set_custom_tui_themes({"midnight": parse_tui_theme_json(theme_data)})
+    try:
+        app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(theme="midnight"))
+
+        assert app.theme == "midnight"
+        assert app.get_theme_variable_defaults()["tau-screen-background"] == "#123456"
+    finally:
+        set_custom_tui_themes({})
+
+
+def test_tui_app_falls_back_to_tau_dark_when_theme_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(theme="missing-theme"))
+
+    assert app.theme == "tau-dark"
+    assert any("missing-theme" in item.text for item in app.state.items if item.role == "status")
+    # The fallback must not be persisted over the user's configured theme:
+    # if the theme file reappears, their choice should be honored again.
+    assert not tui_settings_path().exists()
+
+
 def test_tui_app_uses_light_theme_css_variables() -> None:
     app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(theme="tau-light"))
 
@@ -6061,6 +6098,7 @@ async def test_tui_app_runs_initial_prompt() -> None:
 async def test_run_tui_app_falls_back_to_first_credentialed_provider(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    isolate_home(monkeypatch, tmp_path)
     calls: list[str] = []
 
     class FakeCredentialStore:
@@ -6161,6 +6199,7 @@ async def test_run_tui_app_falls_back_to_first_credentialed_provider(
 async def test_run_tui_app_ignores_latest_directory_provider_model_for_new_session(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    isolate_home(monkeypatch, tmp_path)
     calls: list[str] = []
     latest_record = CodingSessionRecord(
         id="latest-session",
@@ -6264,6 +6303,7 @@ async def test_run_tui_app_ignores_latest_directory_provider_model_for_new_sessi
 async def test_run_tui_app_does_not_start_new_session_from_scoped_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    isolate_home(monkeypatch, tmp_path)
     calls: list[str] = []
     latest = CodingSessionRecord(
         id="latest-session",
@@ -6374,6 +6414,7 @@ async def test_run_tui_app_does_not_start_new_session_from_scoped_model(
 async def test_run_tui_app_creates_new_session_by_default(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    isolate_home(monkeypatch, tmp_path)
     calls: list[str] = []
     record = CodingSessionRecord(
         id="new-session",
@@ -6469,6 +6510,7 @@ async def test_run_tui_app_creates_new_session_by_default(
 async def test_run_tui_app_opens_when_provider_login_is_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    isolate_home(monkeypatch, tmp_path)
     calls: list[str] = []
     record = CodingSessionRecord(
         id="new-session",
@@ -6539,6 +6581,7 @@ async def test_run_tui_app_opens_when_provider_login_is_missing(
 async def test_run_tui_app_resumes_explicit_session(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    isolate_home(monkeypatch, tmp_path)
     calls: list[str] = []
     record = CodingSessionRecord(
         id="session-1",
@@ -6634,6 +6677,7 @@ async def test_run_tui_app_resumes_explicit_session(
 async def test_run_tui_app_ignores_uncredentialed_provider_when_matching_resume_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    isolate_home(monkeypatch, tmp_path)
     calls: list[str] = []
     record = CodingSessionRecord(
         id="session-1",

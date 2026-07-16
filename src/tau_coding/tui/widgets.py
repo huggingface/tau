@@ -1225,42 +1225,22 @@ def render_chat_item(
 def _chat_item_role_style(item: ChatItem, theme: TuiTheme) -> TuiRoleStyle:
     if item.role == "tool" and item.tool_result_text:
         if item.tool_result_text.startswith("✓"):
-            return TuiRoleStyle(
-                border=_tool_success_color(theme),
-                body=theme.role_styles["tool"].body,
-            )
+            return TuiRoleStyle(border=theme.success, body=theme.role_styles["tool"].body)
         if item.tool_result_text.startswith("✗"):
-            return TuiRoleStyle(border="#ff4f4f", body=theme.role_styles["tool"].body)
+            return TuiRoleStyle(border=theme.error, body=theme.role_styles["tool"].body)
     return theme.role_styles[item.role]
 
 
 def _tool_accent_style(item: ChatItem, *, theme: TuiTheme) -> str | None:
+    # Bare colors: the accent span inherits its background from the tool body
+    # style, so it blends with any theme's transcript background.
     if item.role != "tool" or not item.tool_result_text:
         return None
     if item.tool_result_text.startswith("✓"):
-        return _tool_success_style(theme)
+        return theme.tool_success_text
     if item.tool_result_text.startswith("✗"):
-        return _tool_error_style(theme)
+        return theme.tool_error_text
     return None
-
-
-def _tool_success_color(theme: TuiTheme) -> str:
-    if theme.name == "tau-light":
-        return "#166534"
-    return "#9cffb1"
-
-
-def _tool_success_style(theme: TuiTheme) -> str:
-    color = _tool_success_color(theme)
-    if theme.name == "tau-light":
-        return color
-    return f"{color} on #000000"
-
-
-def _tool_error_style(theme: TuiTheme) -> str:
-    if theme.name == "tau-light":
-        return theme.role_styles["error"].border
-    return "#ff4f4f on #000000"
 
 
 def _render_tool_chat_body(

@@ -17,7 +17,6 @@ from tau_coding.skills import Skill
 from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.thinking import normalize_thinking_level
 
-BUILTIN_TUI_THEME_NAMES = ("tau-dark", "tau-light", "high-contrast")
 LOGIN_PROVIDER_ALIASES = {
     "anthropic-api": ("anthropic", "api-key"),
     "anthropic-subscription": ("anthropic", "subscription"),
@@ -667,9 +666,14 @@ def _theme_command(context: CommandContext) -> CommandResult:
     if not context.args:
         return CommandResult(handled=True, theme_picker_requested=True)
 
+    # Imported lazily so importing this module never pulls in `tau_coding.tui`
+    # (whose package __init__ imports Textual) until /theme actually executes.
+    from tau_coding.tui.themes import available_tui_theme_names
+
     theme_name = context.args.strip()
-    if theme_name not in BUILTIN_TUI_THEME_NAMES:
-        themes = ", ".join(BUILTIN_TUI_THEME_NAMES)
+    available = available_tui_theme_names()
+    if theme_name not in available:
+        themes = ", ".join(available)
         return CommandResult(
             handled=True,
             message=f"Unknown theme: {theme_name}\nAvailable themes: {themes}",

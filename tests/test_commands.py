@@ -318,6 +318,31 @@ def test_theme_command_requests_picker_and_sets_theme(tmp_path: Path) -> None:
     assert "Unknown theme: solarized" in unknown_result.message
 
 
+def test_theme_command_accepts_registered_custom_theme(tmp_path: Path) -> None:
+    from tau_coding.tui.themes import (
+        THEME_COLOR_FIELDS,
+        TRANSCRIPT_ROLES,
+        parse_tui_theme_json,
+        set_custom_tui_themes,
+    )
+
+    theme_data = {
+        "name": "midnight",
+        "colors": dict.fromkeys(THEME_COLOR_FIELDS, "#101010"),
+        "roles": {role: {"border": "#101010", "body": "#e0e0e0"} for role in TRANSCRIPT_ROLES},
+    }
+    set_custom_tui_themes({"midnight": parse_tui_theme_json(theme_data)})
+    try:
+        result = create_default_command_registry().execute(FakeSession(tmp_path), "/theme midnight")
+        unknown = create_default_command_registry().execute(FakeSession(tmp_path), "/theme nope")
+    finally:
+        set_custom_tui_themes({})
+
+    assert result.theme == "midnight"
+    assert unknown.message is not None
+    assert "midnight" in unknown.message
+
+
 def test_non_pi_commands_are_not_registered(tmp_path: Path) -> None:
     registry = create_default_command_registry()
     session = FakeSession(tmp_path)
