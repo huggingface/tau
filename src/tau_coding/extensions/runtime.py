@@ -625,9 +625,7 @@ class ExtensionRuntime:
             call_outcome = await self._run_tool_call_hooks(tool.name, arguments)
             if call_outcome.block:
                 reason = call_outcome.reason or "blocked by an extension"
-                return AgentToolResult(
-                    content=[TextContent(text=f"Tool call blocked: {reason}")]
-                )
+                return AgentToolResult(content=[TextContent(text=f"Tool call blocked: {reason}")])
             effective_arguments = (
                 call_outcome.arguments if call_outcome.arguments is not None else arguments
             )
