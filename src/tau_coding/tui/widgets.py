@@ -1568,6 +1568,8 @@ def _context_file_label(path: Path, *, cwd: Path) -> str:
 def _thinking_level(session: SessionSummarySource) -> str:
     available = getattr(session, "available_thinking_levels", None)
     if available == ():
+        if getattr(session, "thinking_is_always_on", False):
+            return "always on"
         return "unavailable"
     explicit_level = getattr(session, "thinking_level", None)
     if explicit_level:

@@ -1332,6 +1332,35 @@ def provider_thinking_unavailable_reason(
     return None
 
 
+def provider_thinking_is_always_on(
+    provider: ProviderConfig,
+    *,
+    model: str | None = None,
+) -> bool:
+    """Return whether built-in metadata declares reasoning as always enabled."""
+    selected_model = model or provider.default_model
+    metadata = _metadata_for_model(provider, selected_model)
+    if metadata is None or metadata.reasoning is not True:
+        return False
+    levels = provider_thinking_levels(provider, model=selected_model)
+    return len(levels) == 0
+
+
+def provider_thinking_level_label(
+    provider: ProviderConfig,
+    level: str,
+    *,
+    model: str | None = None,
+) -> str:
+    """Return the provider-facing display label for a canonical Tau level."""
+    normalized = normalize_thinking_level(level)
+    selected_model = model or provider.default_model
+    metadata = _metadata_for_model(provider, selected_model)
+    if metadata is not None and normalized in metadata.thinking_level_labels:
+        return metadata.thinking_level_labels[normalized]
+    return normalized
+
+
 def _levels_from_thinking_map(
     thinking_level_map: dict[ThinkingLevel, str | None],
 ) -> tuple[ThinkingLevel, ...]:

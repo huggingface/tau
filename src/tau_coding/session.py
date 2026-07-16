@@ -84,6 +84,8 @@ from tau_coding.provider_config import (
     load_provider_settings,
     provider_default_thinking_level,
     provider_has_usable_credentials,
+    provider_thinking_is_always_on,
+    provider_thinking_level_label,
     provider_thinking_levels,
     provider_thinking_unavailable_reason,
     resolve_provider_selection,
@@ -584,6 +586,29 @@ class CodingSession:
         if provider is None:
             return "Active provider settings are not available"
         return provider_thinking_unavailable_reason(provider, model=self.model)
+
+    @property
+    def thinking_is_always_on(self) -> bool:
+        """Return whether the active model's reasoning cannot be disabled."""
+        provider = self._active_provider_config()
+        return provider is not None and provider_thinking_is_always_on(
+            provider,
+            model=self.model,
+        )
+
+    @property
+    def thinking_level_label(self) -> str:
+        """Return the provider-facing label for the active thinking state."""
+        if self.thinking_is_always_on:
+            return "always on"
+        provider = self._active_provider_config()
+        if provider is None:
+            return self._thinking_level
+        return provider_thinking_level_label(
+            provider,
+            self._thinking_level,
+            model=self.model,
+        )
 
     @property
     def storage(self) -> SessionStorage:
