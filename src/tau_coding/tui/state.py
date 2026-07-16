@@ -8,7 +8,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from tau_agent.messages import AgentMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    BranchSummaryMessage,
+    CompactionSummaryMessage,
+    CustomMessage,
+    ToolResultMessage,
+    UserMessage,
+)
 from tau_agent.tools import AgentToolResult, ToolCall
 from tau_agent.types import JSONValue
 from tau_coding.extensions.api import CustomMessageMarkup, ToolCallMarkup, ToolResultMarkup
@@ -145,7 +153,9 @@ class TuiState:
         """
         if item.role != "tool" or item.tool_result is None or self.tool_result_renderer is None:
             return None
-        return self.tool_result_renderer(item.tool_result, expanded)
+        if item.tool_name is None:
+            return None
+        return self.tool_result_renderer(item.tool_name, item.tool_result, expanded)
 
     def add_tool_call(self, tool_call: ToolCall) -> None:
         """Append a collapsed tool-call item."""
@@ -233,16 +243,22 @@ class TuiState:
         item.update_text = message
         return item
 
-    def record_tool_result(self, result: AgentToolResult) -> None:
-        """Attach a tool result to its matching call, or append an orphan result."""
+    def record_tool_result(
+        self,
+        tool_call_id: str,
+        tool_name: str,
+        result: AgentToolResult,
+        is_error: bool,
+    ) -> None:
+        """Attach a Pi-compatible tool result to its matching call."""
         result_text = format_tool_result_block(
-            name=result.name,
-            ok=result.ok,
-            content=result.content,
-            data=result.data,
+            name=tool_name,
+            ok=not is_error,
+            content=result.text,
+            data=result.details if isinstance(result.details, dict) else None,
         )
         for item in reversed(self.items):
-            if item.role in {"tool", "skill"} and item.tool_call_id == result.tool_call_id:
+            if item.role in {"tool", "skill"} and item.tool_call_id == tool_call_id:
                 item.tool_result_text = result_text
                 item.tool_result = result
                 item.update_text = None
@@ -250,8 +266,8 @@ class TuiState:
         self.items.append(
             ChatItem(
                 role="tool",
-                text=format_tool_result_summary(name=result.name, ok=result.ok),
-                tool_call_id=result.tool_call_id,
+                text=format_tool_result_summary(name=tool_name, ok=not is_error),
+                tool_call_id=tool_call_id,
                 tool_result_text=result_text,
                 tool_result=result,
             )
@@ -288,30 +304,41 @@ class TuiState:
         self.skills = tuple(skills)
 
     def load_messages(self, messages: Iterable[AgentMessage]) -> None:
-        """Populate the transcript from restored session messages."""
+        """Populate the transcript from restored canonical session messages."""
         for message in messages:
-            if message.role == "user":
+            if isinstance(message, UserMessage):
+                self.add_user_message(message.text)
+            elif isinstance(message, CustomMessage):
                 self.add_user_message(
-                    message.content,
+                    message.text,
                     custom_type=message.custom_type,
-                    details=message.details,
+                    details=message.details if isinstance(message.details, dict) else None,
                 )
-            elif message.role == "assistant":
-                if message.content:
-                    self.add_item("assistant", message.content)
+            elif isinstance(message, AssistantMessage):
+                if message.thinking_text:
+                    self.add_item("thinking", message.thinking_text)
+                if message.text:
+                    self.add_item("assistant", message.text)
                 for tool_call in message.tool_calls:
                     self.add_tool_call(tool_call)
-            elif message.role == "tool":
+            elif isinstance(message, ToolResultMessage):
                 self.record_tool_result(
-                    AgentToolResult(
-                        tool_call_id=message.tool_call_id,
-                        name=message.name,
-                        ok=message.ok,
-                        content=message.content,
-                        data=message.data,
-                        details=message.details,
-                        error=message.error,
-                    )
+                    message.tool_call_id,
+                    message.tool_name,
+                    AgentToolResult(content=message.content, details=message.details),
+                    message.is_error,
+                )
+            elif isinstance(message, BranchSummaryMessage):
+                self.add_item(
+                    "branch_summary",
+                    "Branch summary (Ctrl+O to expand)",
+                    tool_result_text=message.summary,
+                )
+            elif isinstance(message, CompactionSummaryMessage):
+                self.add_item(
+                    "compaction_summary",
+                    "Compaction summary (Ctrl+O to expand)",
+                    tool_result_text=message.summary,
                 )
 
     def _read_skill_name(self, tool_call: ToolCall) -> str | None:
