@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 from tau_agent import (
-    AgentEvent,
+    AgentEndEvent,
     AgentHarness,
     AgentHarnessConfig,
     CustomMessage,
@@ -64,7 +64,16 @@ from tau_coding.diagnostics import (
     AgentCallDiagnosticLogger,
     new_agent_call_run_id,
 )
-from tau_coding.events import QueueUpdateEvent
+from tau_coding.events import (
+    AgentSettledEvent,
+    AutoRetryEndEvent,
+    AutoRetryStartEvent,
+    CodingSessionEvent,
+    CompactionEndEvent,
+    CompactionStartEvent,
+    QueueUpdateEvent,
+    SessionAgentEndEvent,
+)
 from tau_coding.extensions.runtime import ExtensionRuntime
 from tau_coding.paths import TauPaths
 from tau_coding.prompt_templates import (
@@ -1415,7 +1424,7 @@ class CodingSession:
         source: Literal["interactive", "extension"] = "interactive",
         custom_type: str | None = None,
         details: dict[str, JSONValue] | None = None,
-    ) -> AsyncIterator[AgentEvent]:
+    ) -> AsyncIterator[CodingSessionEvent]:
         """Append a user prompt, run the agent, and persist new messages.
 
         ``custom_type``/``details`` attach custom-message render metadata to the
@@ -1495,11 +1504,28 @@ class CodingSession:
                     )
                     if _is_context_overflow_error(event.message):
                         overflow_message = event.message
-                yield event
+                if isinstance(event, AgentEndEvent):
+                    yield SessionAgentEndEvent(messages=event.messages, will_retry=False)
+                else:
+                    yield event
             persisted_count = await self._persist_messages_since(persisted_count)
             if overflow_message is not None:
+                yield CompactionStartEvent(reason="overflow")
                 compacted = await self._try_overflow_compact(context=context)
+                yield CompactionEndEvent(
+                    reason="overflow",
+                    result=None,
+                    aborted=not compacted,
+                    will_retry=compacted,
+                    error_message=None if compacted else "Overflow compaction failed",
+                )
                 if compacted:
+                    yield AutoRetryStartEvent(
+                        attempt=1,
+                        max_attempts=1,
+                        delay_ms=0,
+                        error_message=overflow_message.error_message or "Context overflow",
+                    )
                     retry_persisted_count = len(self._harness.messages)
                     retry_events = self._harness.continue_()
                     self._invalidate_context_usage_cache()
@@ -1522,10 +1548,19 @@ class CodingSession:
                                     message=retry_event.message,
                                 )
                             )
-                        yield retry_event
+                        if isinstance(retry_event, AgentEndEvent):
+                            yield SessionAgentEndEvent(
+                                messages=retry_event.messages,
+                                will_retry=False,
+                            )
+                        else:
+                            yield retry_event
                     await self._persist_messages_since(retry_persisted_count)
+                    yield AutoRetryEndEvent(success=True, attempt=1)
+                yield AgentSettledEvent()
                 return
             await self._try_auto_compact(context=context, phase="auto_compact_after_prompt")
+            yield AgentSettledEvent()
         except Exception as exc:
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
@@ -1534,7 +1569,7 @@ class CodingSession:
             )
             raise
 
-    async def continue_(self) -> AsyncIterator[AgentEvent]:
+    async def continue_(self) -> AsyncIterator[CodingSessionEvent]:
         """Continue the agent from restored state and persist new messages."""
         context = self._diagnostic_context()
         persisted_count = len(self._harness.messages)
@@ -1556,9 +1591,13 @@ class CodingSession:
                         phase="agent_loop",
                         message=event.message,
                     )
-                yield event
+                if isinstance(event, AgentEndEvent):
+                    yield SessionAgentEndEvent(messages=event.messages, will_retry=False)
+                else:
+                    yield event
             await self._persist_messages_since(persisted_count)
             await self._try_auto_compact(context=context, phase="auto_compact_after_continue")
+            yield AgentSettledEvent()
         except Exception as exc:
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
