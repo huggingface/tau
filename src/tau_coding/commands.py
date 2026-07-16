@@ -629,6 +629,12 @@ def _thinking_command(context: CommandContext) -> CommandResult:
         return CommandResult(handled=True, message="\n".join(lines))
 
     if not available:
+        always_on = getattr(session, "thinking_is_always_on", False)
+        if always_on:
+            return CommandResult(
+                handled=True,
+                message=f"Thinking mode is always on for {session.provider_name}:{session.model}",
+            )
         message = f"Thinking controls are unavailable for {session.provider_name}:{session.model}"
         reason = _thinking_unavailable_reason(session)
         if reason:
@@ -657,6 +663,8 @@ def _thinking_command(context: CommandContext) -> CommandResult:
 def _thinking_status_lines(session: CommandSession) -> list[str]:
     if tuple(session.available_thinking_levels):
         return [f"Thinking mode: {session.thinking_level}"]
+    if getattr(session, "thinking_is_always_on", False):
+        return ["Thinking mode: always on"]
     lines = ["Thinking mode: unavailable"]
     reason = _thinking_unavailable_reason(session)
     if reason:
