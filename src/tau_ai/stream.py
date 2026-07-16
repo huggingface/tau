@@ -111,8 +111,8 @@ async def canonicalize_provider_stream(
             )
         elif isinstance(event, ProviderToolCallEvent):
             index = len(partial.content)
-            yield ToolCallStartEvent(content_index=index, partial=_snapshot(partial))
             partial.content.append(event.tool_call.model_copy(deep=True))
+            yield ToolCallStartEvent(content_index=index, partial=_snapshot(partial))
             yield ToolCallEndEvent(
                 content_index=index,
                 tool_call=event.tool_call,
@@ -136,26 +136,15 @@ async def canonicalize_provider_stream(
                     partial=_snapshot(partial),
                 )
 
-            # Parser final messages remain authoritative for usage and calls;
-            # streamed blocks preserve their original interleaving/order.
+            # Preserve the exact streamed content order. The parser's final
+            # message remains authoritative only for response metadata/usage.
             final = event.message.model_copy(deep=True)
             final.api = api
             final.provider = provider
             final.model = model
-            if not final.content:
-                final.content = list(partial.content)
-            else:
-                streamed_thinking = [
-                    block.model_copy(deep=True)
-                    for block in partial.content
-                    if isinstance(block, ThinkingContent)
-                ]
-                final_tools = list(final.tool_calls)
-                final_text = final.text
-                final.content = list(streamed_thinking)
-                if final_text:
-                    final.content.append(TextContent(text=final_text))
-                final.content.extend(final_tools)
+            final.content = [block.model_copy(deep=True) for block in partial.content]
+            if not final.content and event.message.content:
+                final.content = [block.model_copy(deep=True) for block in event.message.content]
             final.stop_reason = _finish_reason(
                 event.finish_reason,
                 has_tools=bool(final.tool_calls),
