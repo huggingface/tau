@@ -18,17 +18,19 @@ from tau_agent import (
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
 )
+from tau_coding.extensions.api import CustomMessageMarkup
 from tau_coding.tui.state import format_tool_call_block
 
 
 class TranscriptRenderer:
     """Render assistant deltas live and tool activity to stderr."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, custom_message_renderer: CustomMessageMarkup | None = None) -> None:
         self._assistant_started = False
         self._assistant_ended = False
         self._failed = False
         self._console = Console(stderr=True, highlight=False)
+        self._custom_message_renderer = custom_message_renderer
 
     def render(self, event: AgentEvent) -> None:
         """Render one agent event."""
@@ -72,8 +74,33 @@ class TranscriptRenderer:
             self._console.print(Text(f"Error: {event.message}", style="red"))
             return
 
-        if isinstance(event, MessageEndEvent | AgentEndEvent):
+        if isinstance(event, MessageEndEvent):
+            self._render_custom_message(event)
             self._ensure_assistant_newline(final=True)
+            return
+
+        if isinstance(event, AgentEndEvent):
+            self._ensure_assistant_newline(final=True)
+
+    def _render_custom_message(self, event: MessageEndEvent) -> None:
+        """Render an extension custom message block via its registered renderer."""
+        message = event.message
+        if message.role != "user" or message.custom_type is None:
+            return
+        markup: str | None = None
+        if self._custom_message_renderer is not None:
+            markup = self._custom_message_renderer(
+                message.custom_type, message.content, message.details, False
+            )
+        self._ensure_assistant_newline()
+        if markup is None:
+            self._console.print(Text(message.content))
+            return
+        try:
+            rendered = Text.from_markup(markup)
+        except Exception:  # noqa: BLE001 - malformed markup must not crash print mode
+            rendered = Text(markup)
+        self._console.print(rendered)
 
     def finish(self) -> bool:
         """Return whether the rendered run succeeded."""

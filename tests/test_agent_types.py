@@ -24,7 +24,48 @@ from tau_agent.types import JSONValue
 def test_user_message_serializes_with_role() -> None:
     message = UserMessage(content="hello")
 
+    # custom_type/details are omitted when unset, so plain messages keep the
+    # pre-metadata wire shape (forward compat with older binaries).
     assert message.model_dump() == {"role": "user", "content": "hello"}
+
+
+def test_user_message_custom_metadata_round_trips() -> None:
+    message = UserMessage(
+        content="<task-notification/>",
+        custom_type="subagent-notification",
+        details={"id": "run-1", "turns": 3},
+    )
+
+    restored = UserMessage.model_validate(message.model_dump())
+
+    assert restored.custom_type == "subagent-notification"
+    assert restored.details == {"id": "run-1", "turns": 3}
+
+
+def test_user_message_loads_from_legacy_payload_without_custom_fields() -> None:
+    # A session persisted before custom_type/details existed must still load.
+    restored = UserMessage.model_validate({"role": "user", "content": "hello"})
+
+    assert restored.custom_type is None
+    assert restored.details is None
+
+
+def test_message_entry_round_trips_custom_user_message() -> None:
+    from tau_agent.session.entries import MessageEntry
+
+    entry = MessageEntry(
+        message=UserMessage(
+            content="<task-notification/>",
+            custom_type="subagent-notification",
+            details={"id": "run-1"},
+        )
+    )
+
+    restored = MessageEntry.model_validate_json(entry.model_dump_json())
+
+    assert isinstance(restored.message, UserMessage)
+    assert restored.message.custom_type == "subagent-notification"
+    assert restored.message.details == {"id": "run-1"}
 
 
 def test_assistant_message_can_include_tool_calls() -> None:

@@ -1,5 +1,26 @@
 [
   {
+    "version": "0.1.6",
+    "date": "2026-07-15",
+    "sections": {
+      "New": [
+        "Add Python extensions for custom tools, slash commands, lifecycle hooks, dialogs, and message rendering.",
+        "Add Kimi K2.7 Code, Kimi Code subscription, and MiniMax-M3 model catalog entries.",
+        "Add tiered model pricing metadata for models whose rates change with input size."
+      ],
+      "Changed": [
+        "Require Textual 8.2.8 or newer so CJK input methods work correctly.",
+        "Pass unknown slash-prefixed input through as prompts instead of rejecting it as an unknown command.",
+        "Retry Anthropic HTTP 425 and all 5xx responses consistently with other providers."
+      ],
+      "Fixed": [
+        "Fix extension reload lifecycle ordering.",
+        "Ignore saved provider preferences when their providers are no longer configured.",
+        "Prevent missing or malformed bundled release notes from crashing startup."
+      ]
+    }
+  },
+  {
     "version": "0.1.5",
     "date": "2026-07-09",
     "sections": {

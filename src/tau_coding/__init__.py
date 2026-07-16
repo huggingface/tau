@@ -32,6 +32,21 @@ from tau_coding.credentials import (
     OAuthCredential,
     credentials_path,
 )
+from tau_coding.oauth_registry import (
+    get_oauth_provider,
+    get_oauth_providers,
+    register_oauth_provider,
+    reset_oauth_providers,
+    unregister_oauth_provider,
+)
+from tau_coding.oauth_types import (
+    OAuthAuthInfo,
+    OAuthDeviceCodeInfo,
+    OAuthLoginCallbacks,
+    OAuthPrompt,
+    OAuthProvider,
+    OAuthRuntimeAuth,
+)
 from tau_coding.paths import TauPaths
 from tau_coding.prompt_templates import (
     PromptTemplate,
@@ -174,7 +189,13 @@ __all__ = [
     "AnthropicProviderConfig",
     "OpenAICompatibleProviderConfig",
     "OpenAICodexProviderConfig",
+    "OAuthAuthInfo",
     "OAuthCredential",
+    "OAuthDeviceCodeInfo",
+    "OAuthLoginCallbacks",
+    "OAuthPrompt",
+    "OAuthProvider",
+    "OAuthRuntimeAuth",
     "PrintOutputMode",
     "ProjectContextFile",
     "PromptTemplate",
@@ -245,6 +266,8 @@ __all__ = [
     "format_project_context",
     "format_skills_for_prompt",
     "FileCredentialStore",
+    "get_oauth_provider",
+    "get_oauth_providers",
     "jsonl_session_storage",
     "load_provider_settings",
     "load_shell_settings",
@@ -262,7 +285,9 @@ __all__ = [
     "provider_thinking_unavailable_reason",
     "normalize_thinking_levels",
     "reasoning_effort_for_level",
+    "register_oauth_provider",
     "render_prompt_template",
+    "reset_oauth_providers",
     "render_session_html",
     "resolve_provider_selection",
     "save_default_provider_model",
@@ -274,5 +299,6 @@ __all__ = [
     "upsert_provider",
     "upsert_openai_compatible_provider",
     "upsert_saved_provider",
+    "unregister_oauth_provider",
     "validate_provider_model",
 ]

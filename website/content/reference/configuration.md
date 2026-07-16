@@ -13,7 +13,7 @@ those locations and file formats.
 ~/.tau/
 ├── catalog.toml        # optional provider/model catalog overlay
 ├── providers.json      # provider/model preferences
-├── credentials.json    # saved API keys / OAuth tokens (private permissions)
+├── credentials.json    # saved API keys / OAuth tokens (0600, atomic writes)
 ├── settings.json       # general settings (e.g. shell command prefix)
 ├── tui.json            # TUI theme + keybindings
 ├── sessions/           # saved sessions, per project
@@ -96,9 +96,12 @@ Catalog entries support `kind` values of `openai-compatible`, `anthropic`, and
 
 User catalog overlays can be partial when they use the same `name` as a built-in
 provider. Scalar fields replace built-in values, `models` are merged with user
-models first, `context_windows` are merged, and the thinking fields
-(`thinking_levels`, `thinking_models`, `thinking_default`, `thinking_parameter`)
-replace as a group when `thinking_levels` is present.
+models first, and `context_windows` are merged. Model metadata is merged by model;
+its `headers`, `compat`, and `thinking_level_map` mappings are merged, while other
+metadata fields—including the complete `cost_tiers` array—replace the built-in
+value. The thinking fields (`thinking_levels`, `thinking_models`,
+`thinking_default`, `thinking_parameter`) replace as a group when
+`thinking_levels` is present.
 
 `catalog.toml` does not store runtime request options such as custom HTTP
 headers, timeouts, or retry settings. Put those in `~/.tau/providers.json` on the
@@ -108,6 +111,23 @@ Invalid catalog files fail loudly. Tau rejects unknown keys, empty required
 strings, empty model names, unsupported provider kinds, default models that are
 not listed in `models`, `thinking_models` or `context_windows` entries for
 unknown models, and non-positive or non-integer context-window values.
+
+Model metadata can retain a backward-compatible flat `cost` and optionally
+provide ordered `cost_tiers` for rates that depend on input size:
+
+```toml
+[providers.model_metadata."long-context-model"]
+cost = { input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 }
+cost_tiers = [
+  { max_input_tokens = 512000, input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 },
+  { input = 0.6, output = 2.4, cacheRead = 0.12, cacheWrite = 0 },
+]
+```
+
+Limits are inclusive, must increase strictly, and the final tier must omit
+`max_input_tokens` so every valid input size has a rate. Callers that understand
+tiers should select the first tier whose limit includes the input-token count;
+older callers continue to see `cost` as the base rate.
 
 ### Provider preferences
 
@@ -141,7 +161,9 @@ Provider preferences live in `~/.tau/providers.json`:
   their session history. `timeout_seconds` defaults to `60` (> 0); `max_retries`
   defaults to `2`; `max_retry_delay_seconds` defaults to `1` (both ≥ 0).
 - API keys and OAuth credentials are **not** stored here — they live in
-  `~/.tau/credentials.json`. Resolution order: stored credential, then the env
+  `~/.tau/credentials.json` (private but not encrypted). OAuth objects may contain
+  provider metadata such as a GitHub Enterprise domain and are refreshed
+  automatically. Resolution order: stored credential, then the env
   var named by `api_key_env`.
 - The selected model must be present in that provider's `models` list. Add
   custom or local model names to `models` before using them as defaults,

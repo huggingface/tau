@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 
 from tau_agent.events import (
@@ -17,11 +19,12 @@ from tau_agent.events import (
     ThinkingDeltaEvent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
+    ToolExecutionUpdateEvent,
     TurnEndEvent,
     TurnStartEvent,
 )
 from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage
-from tau_agent.tools import AgentTool, AgentToolResult, ToolCall
+from tau_agent.tools import AgentTool, AgentToolResult, ToolCall, ToolUpdateCallback
 from tau_agent.types import JSONValue
 from tau_ai.events import (
     ProviderErrorEvent,
@@ -208,7 +211,15 @@ async def _execute_tool_calls(
         if tool is None:
             result = _unknown_tool_result(tool_call)
         else:
-            result = await _execute_tool(tool, tool_call, signal)
+            produced: AgentToolResult | None = None
+            async for item in _execute_tool(tool, tool_call, signal):
+                if isinstance(item, ToolExecutionUpdateEvent):
+                    yield item
+                else:
+                    produced = item
+            if produced is None:  # pragma: no cover - _execute_tool always ends with a result
+                produced = _cancelled_tool_result(tool_call)
+            result = produced
 
         messages.append(_tool_result_message(result))
         yield ToolExecutionEndEvent(result=result)
@@ -218,9 +229,62 @@ async def _execute_tool(
     tool: AgentTool,
     tool_call: ToolCall,
     signal: CancellationToken | None,
+) -> AsyncIterator[ToolExecutionUpdateEvent | AgentToolResult]:
+    """Run a tool, yielding live progress updates then its final result.
+
+    Progress arrives through a synchronous ``on_update`` callback the tool may
+    call while it runs. Those calls are bridged onto this async stream via an
+    unbounded queue and a task/queue race, so updates are yielded in order
+    *while* the tool is still executing. The stream always ends with exactly one
+    `AgentToolResult` (never dropped, even on tool error or cancellation).
+    """
+    queue: asyncio.Queue[ToolExecutionUpdateEvent] = asyncio.Queue()
+
+    def on_update(message: str, data: dict[str, JSONValue] | None = None) -> None:
+        queue.put_nowait(
+            ToolExecutionUpdateEvent(
+                tool_call_id=tool_call.id,
+                message=message,
+                data=data,
+            )
+        )
+
+    task = asyncio.ensure_future(_run_tool(tool, tool_call, signal, on_update))
+    try:
+        while not task.done():
+            getter = asyncio.ensure_future(queue.get())
+            done, _pending = await asyncio.wait({task, getter}, return_when=asyncio.FIRST_COMPLETED)
+            if getter in done:
+                # An update was queued; the getter safely holds it.
+                yield getter.result()
+            else:
+                # The tool finished first; the getter never dequeued anything,
+                # so cancelling it cannot drop an update.
+                getter.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await getter
+        # Drain trailing updates enqueued after the tool finished but before the
+        # final poll, then emit the result last.
+        while not queue.empty():
+            yield queue.get_nowait()
+        yield task.result()
+    finally:
+        # Never orphan the tool task: this also runs when the consuming
+        # generator is closed mid-flight (GeneratorExit) or cancelled.
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+
+async def _run_tool(
+    tool: AgentTool,
+    tool_call: ToolCall,
+    signal: CancellationToken | None,
+    on_update: ToolUpdateCallback,
 ) -> AgentToolResult:
     try:
-        result = await tool.execute(tool_call.arguments, signal=signal)
+        result = await tool.execute(tool_call.arguments, signal=signal, on_update=on_update)
     except Exception as exc:  # noqa: BLE001 - tools are an isolation boundary
         return AgentToolResult(
             tool_call_id=tool_call.id,

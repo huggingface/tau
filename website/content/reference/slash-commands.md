@@ -20,9 +20,9 @@ command palette with **Ctrl+K**.
 | `/model` | Open the model picker |
 | `/scoped-models` | Choose favorite models for the Ctrl+P quick-cycle |
 | `/theme [name]` | Show or set the TUI theme |
-| `/login [provider]` | Save credentials for a built-in provider |
+| `/login [provider]` | Connect a built-in provider with OAuth or an API key; Anthropic uses `anthropic-subscription` or `anthropic-api` |
 | `/logout [provider]` | Remove saved credentials for a provider |
-| `/reload` | Reload local skills, prompts, and project context |
+| `/reload` | Reload local skills, prompts, extensions, and project context |
 | `/hotkeys` | Show the keyboard shortcuts |
 | `/skill:<name> [request]` | Expand a loaded skill into your prompt |
 

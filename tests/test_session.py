@@ -30,6 +30,120 @@ def test_session_entry_round_trips_jsonl() -> None:
     assert parsed == entry
 
 
+def test_plain_user_message_jsonl_line_omits_custom_metadata_keys() -> None:
+    # Forward compat: a session that never uses custom messages must stay
+    # byte-identical to the pre-metadata wire format, so old binaries
+    # (extra="forbid") can still read new session files.
+    entry = MessageEntry(id="entry-1", message=UserMessage(content="Hello"))
+
+    line = entry_to_json_line(entry)
+
+    assert '"custom_type"' not in line
+    assert '"details"' not in line
+    assert entry_from_json_line(line) == entry
+
+
+def test_custom_user_message_jsonl_line_keeps_custom_metadata_keys() -> None:
+    entry = MessageEntry(
+        id="entry-1",
+        message=UserMessage(
+            content="<task-notification/>",
+            custom_type="subagent-notification",
+            details={"id": "run-1"},
+        ),
+    )
+
+    line = entry_to_json_line(entry)
+    parsed = entry_from_json_line(line)
+
+    assert '"custom_type":"subagent-notification"' in line
+    assert '"details":{"id":"run-1"}' in line
+    assert parsed == entry
+
+
+def test_plain_assistant_message_jsonl_line_omits_usage_key() -> None:
+    # Forward compat, same contract as the UserMessage custom-metadata test
+    # above: virtually every session contains an assistant message, so a
+    # "usage": null key in each one would defeat that guarantee for every
+    # session, not just those using extensions.
+    entry = MessageEntry(id="entry-1", message=AssistantMessage(content="Hi"))
+
+    line = entry_to_json_line(entry)
+
+    assert '"usage"' not in line
+    assert entry_from_json_line(line) == entry
+
+
+def test_assistant_message_with_usage_round_trips_jsonl() -> None:
+    from tau_agent import Usage
+
+    entry = MessageEntry(
+        id="entry-1",
+        message=AssistantMessage(
+            content="Hi",
+            usage=Usage(input=10, output=5, total_tokens=15),
+        ),
+    )
+
+    line = entry_to_json_line(entry)
+    parsed = entry_from_json_line(line)
+
+    assert '"usage"' in line
+    assert parsed == entry
+    assert isinstance(parsed, MessageEntry)
+    assert isinstance(parsed.message, AssistantMessage)
+    assert parsed.message.usage is not None
+    assert parsed.message.usage.total_tokens == 15
+
+
+def test_old_binary_assistant_message_model_accepts_new_plain_session_line() -> None:
+    # Simulate an old tau binary's AssistantMessage: extra="forbid", no usage
+    # field. It must accept a message serialized by the new code.
+    import json
+    from typing import Literal
+
+    from pydantic import BaseModel, ConfigDict, Field
+
+    from tau_agent import ToolCall
+
+    class LegacyAssistantMessage(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        role: Literal["assistant"] = "assistant"
+        content: str = ""
+        tool_calls: list[ToolCall] = Field(default_factory=list)
+
+    entry = MessageEntry(id="entry-1", message=AssistantMessage(content="Hi"))
+    payload = json.loads(entry_to_json_line(entry))
+
+    legacy = LegacyAssistantMessage.model_validate(payload["message"])
+
+    assert legacy.content == "Hi"
+
+
+def test_old_binary_user_message_model_accepts_new_plain_session_line() -> None:
+    # Simulate an old tau binary's UserMessage: extra="forbid", no
+    # custom_type/details fields. It must accept a message serialized by the
+    # new code as long as no custom metadata was used.
+    import json
+    from typing import Literal
+
+    from pydantic import BaseModel, ConfigDict
+
+    class LegacyUserMessage(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        role: Literal["user"] = "user"
+        content: str
+
+    entry = MessageEntry(id="entry-1", message=UserMessage(content="Hello"))
+    payload = json.loads(entry_to_json_line(entry))
+
+    legacy = LegacyUserMessage.model_validate(payload["message"])
+
+    assert legacy.content == "Hello"
+
+
 def test_tool_result_message_metadata_round_trips_jsonl() -> None:
     entry = MessageEntry(
         id="entry-1",

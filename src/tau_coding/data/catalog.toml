@@ -458,6 +458,7 @@ kind = "openai-codex"
 base_url = "https://chatgpt.com/backend-api"
 api_key_env = "OPENAI_CODEX_ACCESS_TOKEN"
 credential_name = "openai-codex"
+auth_methods = ["oauth"]
 models = ["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"]
 default_model = "gpt-5.5"
 docs_url = "https://chatgpt.com/codex"
@@ -525,6 +526,7 @@ kind = "anthropic"
 base_url = "https://api.anthropic.com"
 api_key_env = "ANTHROPIC_API_KEY"
 credential_name = "anthropic"
+auth_methods = ["api_key", "oauth"]
 models = ["claude-fable-5", "claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-opus-4-1", "claude-opus-4-1-20250805", "claude-opus-4-5", "claude-opus-4-5-20251101", "claude-opus-4-6", "claude-opus-4-7", "claude-sonnet-4-5", "claude-sonnet-4-5-20250929", "claude-sonnet-4-6", "claude-sonnet-5"]
 default_model = "claude-sonnet-4-6"
 docs_url = "https://docs.anthropic.com"
@@ -3667,8 +3669,8 @@ kind = "anthropic"
 base_url = "https://api.minimax.io/anthropic"
 api_key_env = "MINIMAX_API_KEY"
 credential_name = "minimax"
-models = ["MiniMax-M2.7", "MiniMax-M2.7-highspeed"]
-default_model = "MiniMax-M2.7"
+models = ["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M3"]
+default_model = "MiniMax-M3"
 docs_url = "https://www.minimax.io/platform/document"
 api = "anthropic-messages"
 thinking_levels = ["off", "minimal", "low", "medium", "high"]
@@ -3678,6 +3680,7 @@ thinking_parameter = "anthropic.thinking"
 [providers.context_windows]
 "MiniMax-M2.7" = 204800
 "MiniMax-M2.7-highspeed" = 204800
+"MiniMax-M3" = 1000000
 
 [providers.model_metadata."MiniMax-M2.7"]
 reasoning = true
@@ -3693,6 +3696,18 @@ context_window = 204800
 max_tokens = 131072
 cost = { input = 0.6, output = 2.4, cacheRead = 0.06, cacheWrite = 0.375 }
 
+[providers.model_metadata."MiniMax-M3"]
+reasoning = true
+input = ["text", "image"]
+context_window = 1000000
+max_tokens = 131072
+compat = { forceAdaptiveThinking = true }
+cost = { input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 }
+cost_tiers = [
+  { max_input_tokens = 512000, input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 },
+  { input = 0.6, output = 2.4, cacheRead = 0.12, cacheWrite = 0 },
+]
+
 [[providers]]
 name = "minimax-cn"
 display_name = "MiniMax (China)"
@@ -3700,8 +3715,8 @@ kind = "anthropic"
 base_url = "https://api.minimaxi.com/anthropic"
 api_key_env = "MINIMAX_CN_API_KEY"
 credential_name = "minimax-cn"
-models = ["MiniMax-M2.7", "MiniMax-M2.7-highspeed"]
-default_model = "MiniMax-M2.7"
+models = ["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M3"]
+default_model = "MiniMax-M3"
 docs_url = "https://www.minimaxi.com/document"
 api = "anthropic-messages"
 thinking_levels = ["off", "minimal", "low", "medium", "high"]
@@ -3711,6 +3726,7 @@ thinking_parameter = "anthropic.thinking"
 [providers.context_windows]
 "MiniMax-M2.7" = 204800
 "MiniMax-M2.7-highspeed" = 204800
+"MiniMax-M3" = 1000000
 
 [providers.model_metadata."MiniMax-M2.7"]
 reasoning = true
@@ -3726,16 +3742,28 @@ context_window = 204800
 max_tokens = 131072
 cost = { input = 0.6, output = 2.4, cacheRead = 0.06, cacheWrite = 0.375 }
 
+[providers.model_metadata."MiniMax-M3"]
+reasoning = true
+input = ["text", "image"]
+context_window = 1000000
+max_tokens = 131072
+compat = { forceAdaptiveThinking = true }
+cost = { input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 }
+cost_tiers = [
+  { max_input_tokens = 512000, input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 },
+  { input = 0.6, output = 2.4, cacheRead = 0.12, cacheWrite = 0 },
+]
+
 [[providers]]
 name = "moonshotai"
-display_name = "Moonshot AI"
+display_name = "Moonshot AI (Kimi)"
 kind = "openai-compatible"
 base_url = "https://api.moonshot.ai/v1"
 api_key_env = "MOONSHOT_API_KEY"
 credential_name = "moonshotai"
-models = ["kimi-k2-0711-preview", "kimi-k2-0905-preview", "kimi-k2-thinking", "kimi-k2-thinking-turbo", "kimi-k2-turbo-preview", "kimi-k2.5", "kimi-k2.6"]
-default_model = "kimi-k2.6"
-docs_url = "https://platform.moonshot.ai/docs"
+models = ["kimi-k2-0711-preview", "kimi-k2-0905-preview", "kimi-k2-thinking", "kimi-k2-thinking-turbo", "kimi-k2-turbo-preview", "kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code"]
+default_model = "kimi-k2.7-code"
+docs_url = "https://platform.kimi.ai/docs"
 api = "openai-completions"
 thinking_levels = ["off", "minimal", "low", "medium", "high"]
 thinking_default = "medium"
@@ -3749,6 +3777,7 @@ kimi-k2-thinking-turbo = 262144
 kimi-k2-turbo-preview = 262144
 "kimi-k2.5" = 262144
 "kimi-k2.6" = 262144
+"kimi-k2.7-code" = 262144
 
 [providers.model_metadata.kimi-k2-0711-preview]
 name = "Kimi K2 0711"
@@ -3813,6 +3842,43 @@ max_tokens = 262144
 compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = false, maxTokensField = "max_tokens", supportsStrictMode = false }
 cost = { input = 0.95, output = 4, cacheRead = 0.16, cacheWrite = 0 }
 
+[providers.model_metadata."kimi-k2.7-code"]
+name = "Kimi K2.7 Code"
+reasoning = true
+input = ["text", "image"]
+context_window = 262144
+max_tokens = 32768
+compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = false, maxTokensField = "max_tokens", supportsStrictMode = false }
+cost = { input = 0.95, output = 4, cacheRead = 0.19, cacheWrite = 0 }
+unsupported_thinking_levels = ["off", "minimal", "low", "high"]
+
+[[providers]]
+name = "kimi-code"
+display_name = "Kimi Code subscription"
+kind = "openai-compatible"
+base_url = "https://api.kimi.com/coding/v1"
+api_key_env = "KIMI_CODE_API_KEY"
+credential_name = "kimi-code"
+models = ["kimi-for-coding"]
+default_model = "kimi-for-coding"
+docs_url = "https://www.kimi.ai/code/console"
+api = "openai-completions"
+thinking_levels = ["medium"]
+thinking_default = "medium"
+thinking_parameter = "reasoning_effort"
+
+[providers.context_windows]
+kimi-for-coding = 262144
+
+[providers.model_metadata.kimi-for-coding]
+name = "Kimi for Coding (latest)"
+reasoning = true
+input = ["text", "image"]
+context_window = 262144
+max_tokens = 32768
+compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = false, maxTokensField = "max_tokens", supportsStrictMode = false }
+cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+
 [[providers]]
 name = "moonshotai-cn"
 display_name = "Moonshot AI (China)"
@@ -3820,8 +3886,8 @@ kind = "openai-compatible"
 base_url = "https://api.moonshot.cn/v1"
 api_key_env = "MOONSHOT_API_KEY"
 credential_name = "moonshotai-cn"
-models = ["kimi-k2-0711-preview", "kimi-k2-0905-preview", "kimi-k2-thinking", "kimi-k2-thinking-turbo", "kimi-k2-turbo-preview", "kimi-k2.5", "kimi-k2.6"]
-default_model = "kimi-k2.6"
+models = ["kimi-k2-0711-preview", "kimi-k2-0905-preview", "kimi-k2-thinking", "kimi-k2-thinking-turbo", "kimi-k2-turbo-preview", "kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code"]
+default_model = "kimi-k2.7-code"
 docs_url = "https://platform.moonshot.cn/docs"
 api = "openai-completions"
 thinking_levels = ["off", "minimal", "low", "medium", "high"]
@@ -3836,6 +3902,7 @@ kimi-k2-thinking-turbo = 262144
 kimi-k2-turbo-preview = 262144
 "kimi-k2.5" = 262144
 "kimi-k2.6" = 262144
+"kimi-k2.7-code" = 262144
 
 [providers.model_metadata.kimi-k2-0711-preview]
 name = "Kimi K2 0711"
@@ -3899,6 +3966,16 @@ context_window = 262144
 max_tokens = 262144
 compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = false, maxTokensField = "max_tokens", supportsStrictMode = false }
 cost = { input = 0.95, output = 4, cacheRead = 0.16, cacheWrite = 0 }
+
+[providers.model_metadata."kimi-k2.7-code"]
+name = "Kimi K2.7 Code"
+reasoning = true
+input = ["text", "image"]
+context_window = 262144
+max_tokens = 32768
+compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = false, maxTokensField = "max_tokens", supportsStrictMode = false }
+cost = { input = 0.95, output = 4, cacheRead = 0.19, cacheWrite = 0 }
+unsupported_thinking_levels = ["off", "minimal", "low", "high"]
 
 [[providers]]
 name = "huggingface"
@@ -6170,3 +6247,134 @@ context_window = 1048576
 max_tokens = 131072
 compat = { requiresReasoningContentOnAssistantMessages = true, thinkingFormat = "deepseek" }
 cost = { input = 1, output = 3, cacheRead = 0.2, cacheWrite = 0 }
+
+[[providers]]
+name = "opencode-go"
+display_name = "OpenCode Go"
+kind = "openai-compatible"
+base_url = "https://opencode.ai/zen/go/v1"
+api_key_env = "OPENCODE_API_KEY"
+credential_name = "opencode-go"
+models = ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5.1", "glm-5.2", "kimi-k2.6", "kimi-k2.7-code", "mimo-v2.5", "mimo-v2.5-pro", "minimax-m2.7", "minimax-m3", "qwen3.6-plus", "qwen3.7-max", "qwen3.7-plus"]
+default_model = "kimi-k2.7-code"
+docs_url = "https://opencode.ai/docs/go"
+api = "openai-completions"
+thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
+thinking_default = "medium"
+thinking_parameter = "reasoning_effort"
+
+[providers.context_windows]
+"deepseek-v4-flash" = 1000000
+"deepseek-v4-pro" = 1000000
+"glm-5.1" = 202752
+"glm-5.2" = 202752
+"kimi-k2.6" = 262144
+"kimi-k2.7-code" = 262144
+"mimo-v2.5" = 262144
+"mimo-v2.5-pro" = 262144
+"minimax-m2.7" = 204800
+"minimax-m3" = 204800
+"qwen3.6-plus" = 1000000
+"qwen3.7-max" = 1000000
+"qwen3.7-plus" = 1000000
+
+[[providers]]
+name = "opencode"
+display_name = "OpenCode Zen"
+kind = "openai-compatible"
+base_url = "https://opencode.ai/zen/v1"
+api_key_env = "OPENCODE_API_KEY"
+credential_name = "opencode"
+models = ["big-pickle", "deepseek-v4-flash", "deepseek-v4-flash-free", "deepseek-v4-pro", "glm-5", "glm-5.1", "glm-5.2", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5", "gpt-5.5-pro", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "grok-4.5", "grok-build-0.1", "kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code", "mimo-v2.5-free", "minimax-m2.5", "minimax-m2.7", "minimax-m3", "nemotron-3-ultra-free", "north-mini-code-free", "qwen3.5-plus", "qwen3.6-plus"]
+default_model = "kimi-k2.7-code"
+docs_url = "https://opencode.ai/docs/zen"
+api = "openai-completions"
+thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
+thinking_default = "medium"
+thinking_parameter = "reasoning_effort"
+
+[providers.model_metadata."gpt-5.4"]
+api = "openai-responses"
+
+[providers.model_metadata."gpt-5.4-mini"]
+api = "openai-responses"
+
+[providers.model_metadata."gpt-5.5"]
+api = "openai-responses"
+
+[providers.model_metadata."gpt-5.5-pro"]
+api = "openai-responses"
+
+[providers.model_metadata."gpt-5.6-luna"]
+api = "openai-responses"
+
+[providers.model_metadata."gpt-5.6-sol"]
+api = "openai-responses"
+
+[providers.model_metadata."gpt-5.6-terra"]
+api = "openai-responses"
+
+[[providers]]
+name = "github-copilot"
+display_name = "GitHub Copilot"
+kind = "openai-compatible"
+base_url = "https://api.individual.githubcopilot.com"
+api_key_env = "COPILOT_GITHUB_TOKEN"
+credential_name = "github-copilot"
+auth_methods = ["oauth"]
+models = ["claude-fable-5", "claude-haiku-4.5", "claude-opus-4.5", "claude-opus-4.6", "claude-opus-4.7", "claude-opus-4.8", "claude-sonnet-4", "claude-sonnet-4.5", "claude-sonnet-4.6", "claude-sonnet-5", "gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-3.5-flash", "gpt-4.1", "gpt-5-mini", "gpt-5.2", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "kimi-k2.7-code", "mai-code-1-flash-picker"]
+default_model = "gpt-5.4"
+docs_url = "https://docs.github.com/en/copilot"
+api = "openai-responses"
+thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
+thinking_default = "medium"
+thinking_parameter = "reasoning_effort"
+headers = { User-Agent = "GitHubCopilotChat/0.35.0", Editor-Version = "vscode/1.107.0", Editor-Plugin-Version = "copilot-chat/0.35.0", Copilot-Integration-Id = "vscode-chat" }
+
+[providers.model_metadata."claude-fable-5"]
+api = "openai-completions"
+
+[providers.model_metadata."claude-haiku-4.5"]
+api = "anthropic-messages"
+
+[providers.model_metadata."claude-opus-4.5"]
+api = "anthropic-messages"
+
+[providers.model_metadata."claude-opus-4.6"]
+api = "anthropic-messages"
+
+[providers.model_metadata."claude-opus-4.7"]
+api = "anthropic-messages"
+
+[providers.model_metadata."claude-opus-4.8"]
+api = "anthropic-messages"
+
+[providers.model_metadata."claude-sonnet-4"]
+api = "anthropic-messages"
+
+[providers.model_metadata."claude-sonnet-4.5"]
+api = "anthropic-messages"
+
+[providers.model_metadata."claude-sonnet-4.6"]
+api = "anthropic-messages"
+
+[providers.model_metadata."claude-sonnet-5"]
+api = "anthropic-messages"
+
+[providers.model_metadata."gemini-2.5-pro"]
+api = "openai-completions"
+
+[providers.model_metadata."gemini-3-flash-preview"]
+api = "openai-completions"
+
+[providers.model_metadata."gemini-3.1-pro-preview"]
+api = "openai-completions"
+
+[providers.model_metadata."gemini-3.5-flash"]
+api = "openai-completions"
+
+[providers.model_metadata."gpt-4.1"]
+api = "openai-completions"
+
+[providers.model_metadata."kimi-k2.7-code"]
+api = "openai-completions"

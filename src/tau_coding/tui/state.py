@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Literal
 from tau_agent.messages import AgentMessage
 from tau_agent.tools import AgentToolResult, ToolCall
 from tau_agent.types import JSONValue
+from tau_coding.extensions.api import CustomMessageMarkup, ToolCallMarkup, ToolResultMarkup
 from tau_coding.skills import Skill, parse_skill_invocation
 
 ChatItemRole = Literal[
@@ -22,11 +24,18 @@ ChatItemRole = Literal[
     "skill",
     "branch_summary",
     "compaction_summary",
+    "custom",
 ]
 TOOL_RESULT_PREVIEW_LINES = 8
 TOOL_PATCH_PREVIEW_LINES = 32
 TOOL_RESULT_PREVIEW_CHARS = 2_000
 TERMINAL_COMMAND_OUTPUT_PREVIEW_LINES = 120
+TOOL_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+# Static invocation markers the spinner stands in for while a tool runs.
+_INVOCATION_MARKERS = ("→ ", "▸ ")
+# Show the live elapsed time on an executing tool row once it stops being
+# instant; quick reads/edits never flash a "(0s)".
+TOOL_TIMER_MIN_SECONDS = 1.0
 
 
 @dataclass(slots=True)
@@ -37,7 +46,16 @@ class ChatItem:
     text: str
     tool_call_id: str | None = None
     tool_result_text: str | None = None
+    # The raw result object, kept alongside the formatted text so the tool's
+    # `render_result` (resolved lazily, like `render_call`) can format it.
+    tool_result: AgentToolResult | None = None
+    update_text: str | None = None
+    tool_name: str | None = None
+    tool_arguments: dict[str, JSONValue] | None = None
+    started_at: float | None = None
     always_show_tool_result: bool = False
+    custom_type: str | None = None
+    details: dict[str, JSONValue] | None = None
 
 
 @dataclass(slots=True)
@@ -53,6 +71,10 @@ class TuiState:
     queued_steering: tuple[str, ...] = ()
     queued_follow_up: tuple[str, ...] = ()
     skills: tuple[Skill, ...] = ()
+    custom_renderer: CustomMessageMarkup | None = None
+    tool_call_renderer: ToolCallMarkup | None = None
+    tool_result_renderer: ToolResultMarkup | None = None
+    tool_spinner: str | None = None
 
     def add_item(
         self,
@@ -62,6 +84,8 @@ class TuiState:
         tool_call_id: str | None = None,
         tool_result_text: str | None = None,
         always_show_tool_result: bool = False,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
     ) -> None:
         """Append a transcript item."""
         self.items.append(
@@ -71,8 +95,57 @@ class TuiState:
                 tool_call_id=tool_call_id,
                 tool_result_text=tool_result_text,
                 always_show_tool_result=always_show_tool_result,
+                custom_type=custom_type,
+                details=details,
             )
         )
+
+    def resolve_custom_markup(self, item: ChatItem, *, expanded: bool) -> str | None:
+        """Render a custom item's markup via the installed resolver, or ``None``.
+
+        Returns ``None`` when the item is not custom, no resolver is installed,
+        or the resolver declines/fails to render (the caller then falls back to
+        the raw ``item.text``).
+        """
+        if item.role != "custom" or item.custom_type is None or self.custom_renderer is None:
+            return None
+        return self.custom_renderer(item.custom_type, item.text, item.details, expanded)
+
+    def resolve_tool_invocation(self, item: ChatItem) -> str | None:
+        """Render a tool item's invocation via the installed resolver, or ``None``.
+
+        Resolved lazily at render time (like custom markup) so tool calls
+        restored before the extension runtime connects still pick up their
+        tool's `render_call` on the next redraw. ``None`` means "no renderer"
+        and the caller falls back to the generic ``item.text``. While a tool
+        is still executing and ``tool_spinner`` is set, the current spinner
+        frame stands in for the invocation's static marker.
+        """
+        if item.role != "tool":
+            return None
+        line: str | None = None
+        if item.tool_name is not None and self.tool_call_renderer is not None:
+            line = self.tool_call_renderer(item.tool_name, item.tool_arguments or {})
+        if self.tool_spinner and item.tool_result_text is None:
+            line = apply_tool_spinner(line if line is not None else item.text, self.tool_spinner)
+            if item.started_at is not None:
+                elapsed = time.monotonic() - item.started_at
+                if elapsed >= TOOL_TIMER_MIN_SECONDS:
+                    line = f"{line} ({format_elapsed(elapsed)})"
+            return line
+        return line
+
+    def resolve_tool_result(self, item: ChatItem, *, expanded: bool) -> str | None:
+        """Render a tool item's result via its tool's `render_result`, or ``None``.
+
+        Resolved lazily at render time (like `resolve_tool_invocation`) so
+        results restored before the extension runtime connects still pick up
+        their tool's `render_result` on the next redraw. ``None`` means "no
+        renderer" and the caller falls back to the generic result block.
+        """
+        if item.role != "tool" or item.tool_result is None or self.tool_result_renderer is None:
+            return None
+        return self.tool_result_renderer(item.tool_result, expanded)
 
     def add_tool_call(self, tool_call: ToolCall) -> None:
         """Append a collapsed tool-call item."""
@@ -84,14 +157,34 @@ class TuiState:
                 tool_call_id=tool_call.id,
             )
             return
-        self.add_item(
-            "tool",
-            format_tool_call_block(tool_call),
-            tool_call_id=tool_call.id,
+        self.items.append(
+            ChatItem(
+                role="tool",
+                text=format_tool_call_block(tool_call),
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+                tool_arguments=tool_call.arguments,
+                started_at=time.monotonic(),
+            )
         )
 
-    def add_user_message(self, content: str) -> None:
-        """Append a user-authored message, compacting skill and summary messages."""
+    def add_user_message(
+        self,
+        content: str,
+        *,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None:
+        """Append a user-authored message, compacting skill and summary messages.
+
+        A message carrying ``custom_type`` is stored as a ``"custom"`` item so
+        the transcript can render it through a registered custom renderer; the
+        raw ``content`` is retained as the fallback and LLM-context text.
+        """
+        if custom_type is not None:
+            self.add_item("custom", content, custom_type=custom_type, details=details)
+            return
+
         branch_summary = _parse_branch_summary_message(content)
         if branch_summary is not None:
             self.add_item(
@@ -125,6 +218,21 @@ class TuiState:
             return
         self.add_item("thinking", delta)
 
+    def find_tool_item(self, tool_call_id: str) -> ChatItem | None:
+        """Return the transcript item for a tool call id, or ``None``."""
+        for item in reversed(self.items):
+            if item.role in {"tool", "skill"} and item.tool_call_id == tool_call_id:
+                return item
+        return None
+
+    def record_tool_update(self, tool_call_id: str, message: str) -> ChatItem | None:
+        """Attach live progress to its pending tool call; drop orphan updates."""
+        item = self.find_tool_item(tool_call_id)
+        if item is None or item.tool_result_text is not None:
+            return None
+        item.update_text = message
+        return item
+
     def record_tool_result(self, result: AgentToolResult) -> None:
         """Attach a tool result to its matching call, or append an orphan result."""
         result_text = format_tool_result_block(
@@ -136,12 +244,17 @@ class TuiState:
         for item in reversed(self.items):
             if item.role in {"tool", "skill"} and item.tool_call_id == result.tool_call_id:
                 item.tool_result_text = result_text
+                item.tool_result = result
+                item.update_text = None
                 return
-        self.add_item(
-            "tool",
-            format_tool_result_summary(name=result.name, ok=result.ok),
-            tool_call_id=result.tool_call_id,
-            tool_result_text=result_text,
+        self.items.append(
+            ChatItem(
+                role="tool",
+                text=format_tool_result_summary(name=result.name, ok=result.ok),
+                tool_call_id=result.tool_call_id,
+                tool_result_text=result_text,
+                tool_result=result,
+            )
         )
 
     def toggle_tool_results(self) -> bool:
@@ -178,7 +291,11 @@ class TuiState:
         """Populate the transcript from restored session messages."""
         for message in messages:
             if message.role == "user":
-                self.add_user_message(message.content)
+                self.add_user_message(
+                    message.content,
+                    custom_type=message.custom_type,
+                    details=message.details,
+                )
             elif message.role == "assistant":
                 if message.content:
                     self.add_item("assistant", message.content)
@@ -225,6 +342,26 @@ def _parse_compaction_summary_message(content: str) -> str | None:
     if content.startswith(prefix):
         return content.removeprefix(prefix)
     return None
+
+
+def format_elapsed(seconds: float) -> str:
+    """Format an elapsed duration tersely: 23s, 1m 23s, 1h 2m."""
+    total = int(seconds)
+    if total < 60:
+        return f"{total}s"
+    minutes, secs = divmod(total, 60)
+    if minutes < 60:
+        return f"{minutes}m {secs}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m"
+
+
+def apply_tool_spinner(text: str, frame: str) -> str:
+    """Show the spinner frame in place of a static invocation marker."""
+    for marker in _INVOCATION_MARKERS:
+        if text.startswith(marker):
+            return f"{frame} {text[len(marker) :]}"
+    return f"{frame} {text}"
 
 
 def format_tool_call_block(tool_call: ToolCall) -> str:
@@ -274,9 +411,15 @@ def _read_line_suffix(arguments: dict[str, JSONValue]) -> str:
     return f":{start}-{start + max(1, limit) - 1}"
 
 
+FALLBACK_INVOCATION_ARGS_CHARS = 160
+
+
 def _fallback_tool_call_invocation(tool_call: ToolCall) -> str:
     if tool_call.arguments:
-        return f"{tool_call.name} {tool_call.arguments}"
+        rendered = str(tool_call.arguments)
+        if len(rendered) > FALLBACK_INVOCATION_ARGS_CHARS:
+            rendered = rendered[:FALLBACK_INVOCATION_ARGS_CHARS].rstrip() + "…"
+        return f"{tool_call.name} {rendered}"
     return tool_call.name
 
 

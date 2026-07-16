@@ -134,8 +134,9 @@ def test_print_mode_writes_update_notice_to_stderr(monkeypatch: pytest.MonkeyPat
         cwd: Path,
         output: PrintOutputMode,
         provider_name: str | None,
+        *extra: object,
     ) -> bool:
-        del prompt, model, cwd, output, provider_name
+        del prompt, model, cwd, output, provider_name, extra
         return True
 
     monkeypatch.setattr(
@@ -158,8 +159,9 @@ def test_json_print_mode_suppresses_update_notice(monkeypatch: pytest.MonkeyPatc
         cwd: Path,
         output: PrintOutputMode,
         provider_name: str | None,
+        *extra: object,
     ) -> bool:
-        del prompt, model, cwd, output, provider_name
+        del prompt, model, cwd, output, provider_name, extra
         return True
 
     monkeypatch.setattr(
@@ -203,8 +205,9 @@ def test_cli_without_prompt_invokes_tui_runner(
         auto_compact_token_threshold: int | None,
         initial_prompt: str | None,
         update_notice: object | None = None,
+        *extra: object,
     ) -> None:
-        del update_notice
+        del update_notice, extra
         calls.append(
             (
                 model,
@@ -241,8 +244,9 @@ def test_cli_positional_prompt_invokes_tui_runner(
         auto_compact_token_threshold: int | None,
         initial_prompt: str | None,
         update_notice: object | None = None,
+        *extra: object,
     ) -> None:
-        del update_notice
+        del update_notice, extra
         calls.append(
             (
                 model,
@@ -601,6 +605,7 @@ def test_cli_exits_nonzero_when_print_mode_fails(monkeypatch: pytest.MonkeyPatch
         cwd: Path,
         output: PrintOutputMode,
         provider_name: str | None,
+        *extra: object,
     ) -> bool:
         return False
 
@@ -626,8 +631,9 @@ def test_default_tui_invokes_tui_runner_with_flags(
         auto_compact_token_threshold: int | None,
         initial_prompt: str | None,
         update_notice: object | None = None,
+        *extra: object,
     ) -> None:
-        del update_notice
+        del update_notice, extra
         calls.append(
             (
                 model,
@@ -722,7 +728,7 @@ def test_tui_surfaces_bad_model_as_clean_error(
 ) -> None:
     """Regression: ``tau --model <bad>`` must exit with a clean error, not a traceback.
 
-    See https://github.com/alejandro-ao/tau/issues/265. The TUI startup path
+    See https://github.com/huggingface/tau/issues/265. The TUI startup path
     previously only caught ``RuntimeError``, so a ``ProviderConfigError`` (a
     ``ValueError`` subclass) raised while resolving the provider/model selection
     escaped the ``anyio`` event loop as an unhandled traceback.
