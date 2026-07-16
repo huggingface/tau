@@ -236,7 +236,19 @@ The follow-up implementation addressed several audit findings:
   print frontends, and the hello-tool example to canonical models.
 - Verified real text and tool-call streams manually in JSON and text modes.
 
-Remaining release blockers are tracked by the still-red legacy test collection and
-full mypy run: the old tests and several consumers must be migrated rather than
-reintroducing removed public compatibility symbols. Provider parsers also still use
-the private transitional `_provider_events.py` bridge pending direct-emission work.
+The cutover is now complete at every public boundary:
+
+- The full Tau suite passes on canonical models and events; mypy and Ruff are clean.
+- Extension handlers consistently receive fresh `(event, context)` arguments, and
+  shipped examples plus the published guide use canonical tool definitions/results.
+- Persisted Tau-v1 JSONL messages migrate at the storage boundary and rewrite as
+  canonical assistant blocks, `toolResult` messages, and dedicated custom messages.
+- Runtime models reject removed Tau-v1 fields instead of silently discarding them.
+- Print, JSON, TUI, exporters, branch summaries, and provider tests consume one
+  protocol.
+
+Provider implementations still use `_provider_events.py` plus `stream.py` as a
+**private parser-normalization implementation**. This is not an advertised profile:
+`ModelProvider`, `tau_ai.events`, and every provider's `stream_response()` expose
+only identity-preserving canonical `tau_agent` events. Removing that parser helper
+is optional internal simplification, not a release or compatibility blocker.
