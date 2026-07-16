@@ -23,7 +23,8 @@ DANGEROUS_PATTERNS = (
 )
 
 
-def _gate_tool_call(event: ToolCallHookEvent) -> ToolCallHookResult | None:
+def _gate_tool_call(event: ToolCallHookEvent, context) -> ToolCallHookResult | None:  # noqa: ANN001
+    del context
     if event.tool_name != "bash":
         return None
     command = str(event.arguments.get("command", ""))
