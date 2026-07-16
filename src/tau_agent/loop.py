@@ -25,14 +25,14 @@ from tau_agent.messages import (
     ToolCall,
     ToolResultMessage,
 )
-from tau_agent.tools import AgentTool, AgentToolResult
-from tau_ai.events import (
+from tau_agent.provider import CancellationToken, ModelProvider
+from tau_agent.provider_events import (
     AssistantDoneEvent,
     AssistantErrorEvent,
     AssistantMessageEvent,
     AssistantStartEvent,
 )
-from tau_ai.provider import CancellationToken, ModelProvider
+from tau_agent.tools import AgentTool, AgentToolResult
 
 BeforeToolCall = Callable[[ToolCall], Awaitable[tuple[bool, str | None]]]
 AfterToolCall = Callable[

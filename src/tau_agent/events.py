@@ -7,9 +7,9 @@ from typing import Annotated, Literal
 from pydantic import Field
 
 from tau_agent.messages import AgentMessage, ToolResultMessage, WireModel
+from tau_agent.provider_events import AssistantMessageEvent
 from tau_agent.tools import AgentToolResult
 from tau_agent.types import JSONValue
-from tau_ai.events import AssistantMessageEvent
 
 
 class AgentStartEvent(WireModel):
