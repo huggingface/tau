@@ -545,14 +545,9 @@ def create_bash_tool_definition(
         if status:
             output_text = append_status_block(output_text, status)
 
-        ok = exit_code == 0 and not timed_out and not cancelled
         return AgentToolResult(
-            tool_call_id="",
-            name="bash",
-            ok=ok,
             content=output_text,
-            error=None if ok else status,
-            data={
+            details={
                 "command": command,
                 "exit_code": exit_code,
                 "timed_out": timed_out,

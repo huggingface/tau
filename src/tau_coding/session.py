@@ -696,9 +696,12 @@ class CodingSession:
         details: dict[str, JSONValue] | None = None,
     ) -> None:
         """Queue a steering user message (extension runtime seam)."""
-        self._harness.steer_message(
-            UserMessage(content=content, custom_type=custom_type, details=details)
+        message: AgentMessage = (
+            CustomMessage(custom_type=custom_type, content=content, details=details)
+            if custom_type is not None
+            else UserMessage(content=content)
         )
+        self._harness.steer_message(message)
 
     def queue_follow_up_message(
         self,
@@ -708,9 +711,12 @@ class CodingSession:
         details: dict[str, JSONValue] | None = None,
     ) -> None:
         """Queue a follow-up user message (extension runtime seam)."""
-        self._harness.follow_up_message(
-            UserMessage(content=content, custom_type=custom_type, details=details)
+        message: AgentMessage = (
+            CustomMessage(custom_type=custom_type, content=content, details=details)
+            if custom_type is not None
+            else UserMessage(content=content)
         )
+        self._harness.follow_up_message(message)
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         """Persist an extension-owned custom entry on the active branch path.
@@ -1374,10 +1380,10 @@ class CodingSession:
             cwd=self.cwd,
             shell_command_prefix=self._config.shell_command_prefix,
         )
-        result = await bash_tool.execute({"command": normalized_command})
+        result = await bash_tool.execute("terminal-command", {"command": normalized_command})
         exit_code = None
-        if result.data is not None:
-            raw_exit_code = result.data.get("exit_code")
+        if isinstance(result.details, dict):
+            raw_exit_code = result.details.get("exit_code")
             exit_code = raw_exit_code if isinstance(raw_exit_code, int) else None
 
         if add_to_context:
@@ -1386,7 +1392,7 @@ class CodingSession:
                 UserMessage(
                     content=_terminal_command_context_message(
                         normalized_command,
-                        result.content,
+                        result.text,
                     )
                 )
             )
@@ -1395,9 +1401,9 @@ class CodingSession:
 
         return TerminalCommandResult(
             command=normalized_command,
-            output=result.content,
+            output=result.text,
             exit_code=exit_code,
-            ok=result.ok,
+            ok=exit_code == 0,
             added_to_context=add_to_context,
         )
 
@@ -1441,10 +1447,12 @@ class CodingSession:
 
         if self._harness.is_running:
             if streaming_behavior == "steer":
-                yield self._harness.steer(expanded_content)
+                self._harness.steer(expanded_content)
+                yield self.queue_update_event()
                 return
             if streaming_behavior == "follow_up":
-                yield self._harness.follow_up(expanded_content)
+                self._harness.follow_up(expanded_content)
+                yield self.queue_update_event()
                 return
             raise RuntimeError(
                 "CodingSession is already running; pass streaming_behavior to queue a message."
