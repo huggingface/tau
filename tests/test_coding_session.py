@@ -6,12 +6,13 @@ from pathlib import Path
 
 import pytest
 
+from pi_event_helpers import assistant_done, assistant_error, assistant_start
+
 from conftest import isolate_home
 from tau_agent import (
     AgentMessage,
     AgentTool,
     AssistantMessage,
-    QueueUpdateEvent,
     ToolCall,
     ToolResultMessage,
     UserMessage,
@@ -25,15 +26,8 @@ from tau_agent.session import (
     SessionInfoEntry,
     ThinkingLevelChangeEntry,
 )
-from tau_ai import (
-    CancellationToken,
-    FakeProvider,
-    ModelProvider,
-    ProviderErrorEvent,
-    ProviderEvent,
-    ProviderResponseEndEvent,
-    ProviderResponseStartEvent,
-)
+from tau_ai import CancellationToken, FakeProvider, ModelProvider
+from tau_ai.events import AssistantMessageEvent
 from tau_coding import (
     CodingSession,
     CodingSessionConfig,
@@ -53,6 +47,7 @@ from tau_coding import (
     save_provider_settings,
 )
 from tau_coding import session as coding_session_module
+from tau_coding.events import QueueUpdateEvent
 from tau_coding.session import _ordered_tree_entries, parse_terminal_command
 
 
@@ -94,16 +89,16 @@ class RaisingProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
-    ) -> AsyncIterator[ProviderEvent]:
+    ) -> AsyncIterator[AssistantMessageEvent]:
         del model, system, messages, tools, signal
         self.call_count += 1
         should_fail = self.call_count == self.fail_on_call
 
-        async def iterator() -> AsyncIterator[ProviderEvent]:
+        async def iterator() -> AsyncIterator[AssistantMessageEvent]:
             if should_fail:
                 raise RuntimeError("provider exploded")
-            yield ProviderResponseStartEvent(model="fake")
-            yield ProviderResponseEndEvent(message=AssistantMessage(content="Generated title"))
+            yield assistant_start(model="fake")
+            yield assistant_done(message=AssistantMessage(content="Generated title"))
 
         return iterator()
 
@@ -123,21 +118,21 @@ class WaitingProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
-    ) -> AsyncIterator[ProviderEvent]:
+    ) -> AsyncIterator[AssistantMessageEvent]:
         del model, system, tools, signal
         call_index = self.call_count
         self.call_count += 1
         self.calls.append(list(messages))
 
-        async def iterator() -> AsyncIterator[ProviderEvent]:
+        async def iterator() -> AsyncIterator[AssistantMessageEvent]:
             if call_index == 0:
-                yield ProviderResponseStartEvent(model="fake")
+                yield assistant_start(model="fake")
                 self.started.set()
                 await self.release.wait()
-                yield ProviderResponseEndEvent(message=AssistantMessage(content="First"))
+                yield assistant_done(message=AssistantMessage(content="First"))
                 return
-            yield ProviderResponseStartEvent(model="fake")
-            yield ProviderResponseEndEvent(message=AssistantMessage(content="Second"))
+            yield assistant_start(model="fake")
+            yield assistant_done(message=AssistantMessage(content="Second"))
 
         return iterator()
 
@@ -156,18 +151,18 @@ class CancellableWaitingProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
-    ) -> AsyncIterator[ProviderEvent]:
+    ) -> AsyncIterator[AssistantMessageEvent]:
         del model, system, tools
         self.calls.append(list(messages))
 
-        async def iterator() -> AsyncIterator[ProviderEvent]:
-            yield ProviderResponseStartEvent(model="fake")
+        async def iterator() -> AsyncIterator[AssistantMessageEvent]:
+            yield assistant_start(model="fake")
             self.started.set()
             while not self.release.is_set():
                 if signal is not None and signal.is_cancelled():
                     return
                 await asyncio.sleep(0)
-            yield ProviderResponseEndEvent(message=AssistantMessage(content="Finished"))
+            yield assistant_done(message=AssistantMessage(content="Finished"))
 
         return iterator()
 
@@ -258,7 +253,7 @@ async def test_prompt_logs_error_event_diagnostic_data(tmp_path: Path) -> None:
     provider = FakeProvider(
         [
             [
-                ProviderErrorEvent(
+                assistant_error(
                     message="provider failed",
                     data={"status_code": 400, "body": "bad request"},
                 )
@@ -310,8 +305,8 @@ async def test_load_persists_repair_for_session_with_interrupted_tail_tool_call(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Recovered.")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Recovered.")),
             ]
         ]
     )
@@ -419,8 +414,8 @@ async def test_prompt_persists_user_assistant_and_leaf_entries(tmp_path: Path) -
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Hi")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Hi")),
             ]
         ]
     )
@@ -759,14 +754,14 @@ async def test_context_usage_recalculates_after_prompt_and_compaction(tmp_path: 
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
+                assistant_start(model="fake"),
+                assistant_done(
                     message=AssistantMessage(content="Long answer " * 80),
                 ),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Short summary")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Short summary")),
             ],
         ]
     )
@@ -1242,12 +1237,12 @@ async def test_persist_after_branch_keeps_state_on_active_branch(tmp_path: Path)
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="New answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="New answer")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Branch summary")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Branch summary")),
             ],
         ]
     )
@@ -1410,10 +1405,8 @@ async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> N
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
-                    message=AssistantMessage(content="The abandoned branch went left.")
-                ),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="The abandoned branch went left.")),
             ]
         ]
     )
@@ -1462,10 +1455,8 @@ async def test_session_branch_with_summary_accepts_custom_instructions(tmp_path:
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
-                    message=AssistantMessage(content="Custom branch summary.")
-                ),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Custom branch summary.")),
             ]
         ]
     )
@@ -1499,8 +1490,8 @@ async def test_session_branch_with_summary_tracks_file_operations(tmp_path: Path
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="File work summary.")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="File work summary.")),
             ]
         ]
     )
@@ -1564,8 +1555,8 @@ async def test_continue_persists_only_new_messages(tmp_path: Path) -> None:
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Continued")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Continued")),
             ]
         ]
     )
@@ -1588,15 +1579,15 @@ async def test_tool_results_are_persisted(tmp_path: Path) -> None:
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
+                assistant_start(model="fake"),
+                assistant_done(
                     message=AssistantMessage(content="Using tool", tool_calls=[tool_call]),
                     finish_reason="tool_calls",
                 ),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ],
         ]
     )
@@ -1614,8 +1605,8 @@ async def test_session_preserves_explicit_empty_system_prompt(tmp_path: Path) ->
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ]
         ]
     )
@@ -1648,8 +1639,8 @@ async def test_session_builds_system_prompt_when_system_is_omitted(tmp_path: Pat
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ]
         ]
     )
@@ -1680,12 +1671,12 @@ async def test_session_touches_session_manager_after_persisting_messages(tmp_pat
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Greeting")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Greeting")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ],
         ]
     )
@@ -1716,14 +1707,12 @@ async def test_session_auto_names_first_unnamed_managed_session(tmp_path: Path) 
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
-                    message=AssistantMessage(content='"Fix broken CLI output now"')
-                ),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content='"Fix broken CLI output now"')),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ],
         ]
     )
@@ -1758,11 +1747,11 @@ async def test_session_auto_name_falls_back_when_provider_fails(tmp_path: Path) 
     provider = FakeProvider(
         [
             [
-                ProviderErrorEvent(message="naming failed"),
+                assistant_error(message="naming failed"),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ],
         ]
     )
@@ -1799,12 +1788,12 @@ async def test_session_auto_name_falls_back_when_provider_returns_unusable_title
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="!!!")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="!!!")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ],
         ]
     )
@@ -1835,8 +1824,8 @@ async def test_session_auto_name_does_not_overwrite_manual_name(tmp_path: Path) 
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ],
         ]
     )
@@ -1870,12 +1859,12 @@ async def test_session_auto_name_does_not_index_new_session_before_first_persist
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Generated title")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Generated title")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ],
         ]
     )
@@ -1910,8 +1899,8 @@ async def test_session_loads_and_expands_skills(tmp_path: Path) -> None:
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ]
         ]
     )
@@ -1948,8 +1937,8 @@ async def test_session_skills_disabled_suppresses_skill_index(tmp_path: Path) ->
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ]
         ]
     )
@@ -2046,8 +2035,8 @@ async def test_session_expands_prompt_templates_as_slash_commands(tmp_path: Path
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ]
         ]
     )
@@ -2083,15 +2072,15 @@ async def test_session_skill_index_lets_agent_read_relevant_skill_file(tmp_path:
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
+                assistant_start(model="fake"),
+                assistant_done(
                     message=AssistantMessage(content="Reading skill.", tool_calls=[tool_call]),
                     finish_reason="tool_calls",
                 ),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Skill applied.")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Skill applied.")),
             ],
         ]
     )
@@ -2157,8 +2146,8 @@ async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Pa
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ]
         ]
     )
@@ -2300,18 +2289,16 @@ async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: P
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Session answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Session answer")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
-                    message=AssistantMessage(content="Generated session summary")
-                ),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Generated session summary")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Next answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Next answer")),
             ],
         ]
     )
@@ -2353,22 +2340,20 @@ async def test_session_auto_compacts_after_response_when_threshold_is_exceeded(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="First answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="First answer")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Second answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Second answer")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
-                    message=AssistantMessage(content="Generated automatic summary")
-                ),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Generated automatic summary")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Third answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Third answer")),
             ],
         ]
     )
@@ -2410,18 +2395,16 @@ async def test_session_auto_compacts_with_pi_style_default_threshold(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="First answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="First answer")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Second answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Second answer")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
-                    message=AssistantMessage(content="Default threshold summary")
-                ),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Default threshold summary")),
             ],
         ]
     )
@@ -2469,23 +2452,21 @@ async def test_session_compacts_and_retries_once_after_context_overflow(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="First answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="First answer")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Second answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Second answer")),
             ],
-            [ProviderErrorEvent(message="This model's maximum context length was exceeded.")],
+            [assistant_error(message="This model's maximum context length was exceeded.")],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
-                    message=AssistantMessage(content="Overflow recovery summary")
-                ),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Overflow recovery summary")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Recovered answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Recovered answer")),
             ],
         ]
     )
@@ -2802,8 +2783,8 @@ async def test_session_resumes_indexed_session(tmp_path: Path) -> None:
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Second answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Second answer")),
             ]
         ]
     )
@@ -3274,12 +3255,12 @@ async def test_session_new_session_is_indexed_after_first_message(
         return FakeProvider(
             [
                 [
-                    ProviderResponseStartEvent(model="gpt-5"),
-                    ProviderResponseEndEvent(message=AssistantMessage(content="Greeting")),
+                    assistant_start(model="gpt-5"),
+                    assistant_done(message=AssistantMessage(content="Greeting")),
                 ],
                 [
-                    ProviderResponseStartEvent(model="gpt-5"),
-                    ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                    assistant_start(model="gpt-5"),
+                    assistant_done(message=AssistantMessage(content="Done")),
                 ],
             ]
         )

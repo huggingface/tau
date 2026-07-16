@@ -7,12 +7,14 @@ from typing import cast
 
 import pytest
 
+from pi_event_helpers import assistant_done, assistant_start
+
 from tau_agent import AssistantMessage, ToolCall, UserMessage
 from tau_agent.messages import AgentMessage
 from tau_agent.session import CustomEntry, JsonlSessionStorage, LeafEntry, MessageEntry
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
-from tau_ai import FakeProvider, ProviderResponseEndEvent, ProviderResponseStartEvent
+from tau_ai import FakeProvider
 from tau_coding import CodingSession, CodingSessionConfig, TauResourcePaths
 from tau_coding.extensions import (
     CustomMessageView,
@@ -1505,8 +1507,8 @@ async def test_prompt_input_hook_defaults_to_interactive(tmp_path: Path) -> None
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="ok")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="ok")),
             ]
         ]
     )
@@ -1531,8 +1533,8 @@ async def test_prompt_input_hook_source_extension(tmp_path: Path) -> None:
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="ok")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="ok")),
             ]
         ]
     )
@@ -1571,8 +1573,8 @@ async def test_agent_events_reach_extension_after_interrupted_tool_repair(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Recovered.")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Recovered.")),
             ]
         ]
     )
@@ -1598,8 +1600,8 @@ async def test_extension_tool_call_block_reaches_model(tmp_path: Path) -> None:
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
+                assistant_start(model="fake"),
+                assistant_done(
                     message=AssistantMessage(
                         content="",
                         tool_calls=[
@@ -1609,8 +1611,8 @@ async def test_extension_tool_call_block_reaches_model(tmp_path: Path) -> None:
                 ),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="done")),
             ],
         ]
     )
@@ -1630,8 +1632,8 @@ async def test_custom_message_metadata_survives_session_reload(tmp_path: Path) -
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="ack")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="ack")),
             ],
         ]
     )
