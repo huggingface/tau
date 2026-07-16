@@ -125,10 +125,6 @@ def create_model_provider(
             )
         selected_api = compatible_config.api
         if selected_api == "anthropic-messages":
-            if credential is None:
-                raise ProviderConfigError(
-                    "Anthropic-protocol models on openai-compatible providers require OAuth"
-                )
             anthropic_config = AnthropicConfig(
                 api_key=compatible_config.api_key,
                 base_url=compatible_config.base_url,
@@ -137,7 +133,7 @@ def create_model_provider(
                 max_retries=compatible_config.max_retries,
                 max_retry_delay_seconds=compatible_config.max_retry_delay_seconds,
                 provider_name=compatible_config.provider_name,
-                bearer_auth=True,
+                bearer_auth=credential is not None,
                 credential_resolver=compatible_config.credential_resolver,
             )
             return AnthropicProvider(anthropic_config)

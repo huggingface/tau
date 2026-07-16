@@ -6268,28 +6268,115 @@ kind = "openai-compatible"
 base_url = "https://opencode.ai/zen/go/v1"
 api_key_env = "OPENCODE_API_KEY"
 credential_name = "opencode-go"
-models = ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5.1", "glm-5.2", "kimi-k2.6", "kimi-k2.7-code", "mimo-v2.5", "mimo-v2.5-pro", "minimax-m2.7", "minimax-m3", "qwen3.6-plus", "qwen3.7-max", "qwen3.7-plus"]
-default_model = "kimi-k2.7-code"
+models = [
+  "deepseek-v4-pro",
+  "deepseek-v4-flash",
+  "glm-5.2",
+  "glm-5.1",
+  "kimi-k2.7-code",
+  "kimi-k2.6",
+  "minimax-m3",
+  "minimax-m2.7",
+  "mimo-v2.5-pro",
+  "mimo-v2.5",
+  "qwen3.7-max",
+  "qwen3.7-plus",
+  "qwen3.6-plus",
+  "big-pickle",
+  "deepseek-v4-flash-free",
+  "hy3-free",
+  "mimo-v2.5-free",
+  "nemotron-3-ultra-free",
+  "north-mini-code-free",
+]
+default_model = "deepseek-v4-pro"
 docs_url = "https://opencode.ai/docs/go"
-api = "openai-completions"
-thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
+thinking_levels = ["off", "low", "medium", "high", "xhigh"]
+thinking_models = [
+  "deepseek-v4-pro",
+  "deepseek-v4-flash",
+  "glm-5.2",
+  "minimax-m3",
+  "qwen3.7-max",
+  "qwen3.7-plus",
+  "qwen3.6-plus",
+  "deepseek-v4-flash-free",
+  "north-mini-code-free",
+]
 thinking_default = "medium"
 thinking_parameter = "reasoning_effort"
 
 [providers.context_windows]
-"deepseek-v4-flash" = 1000000
-"deepseek-v4-pro" = 1000000
+"glm-5.2" = 1000000
 "glm-5.1" = 202752
-"glm-5.2" = 202752
-"kimi-k2.6" = 262144
 "kimi-k2.7-code" = 262144
-"mimo-v2.5" = 262144
-"mimo-v2.5-pro" = 262144
+"kimi-k2.6" = 262144
+"deepseek-v4-pro" = 1000000
+"deepseek-v4-flash" = 1000000
+"mimo-v2.5" = 1000000
+"mimo-v2.5-pro" = 1048576
+"minimax-m3" = 1000000
 "minimax-m2.7" = 204800
-"minimax-m3" = 204800
-"qwen3.6-plus" = 1000000
 "qwen3.7-max" = 1000000
 "qwen3.7-plus" = 1000000
+"qwen3.6-plus" = 1000000
+"deepseek-v4-flash-free" = 200000
+"mimo-v2.5-free" = 200000
+"big-pickle" = 200000
+"north-mini-code-free" = 256000
+"nemotron-3-ultra-free" = 1000000
+"hy3-free" = 256000
+
+[providers.model_metadata."deepseek-v4-flash-free"]
+base_url = "https://opencode.ai/zen/v1"
+thinking_level_map = {high = "high", xhigh = "max"}
+thinking_level_labels = {xhigh = "max"}
+unsupported_thinking_levels = ["minimal", "low", "medium"]
+
+[providers.model_metadata."mimo-v2.5-free"]
+base_url = "https://opencode.ai/zen/v1"
+reasoning = true
+
+[providers.model_metadata."big-pickle"]
+base_url = "https://opencode.ai/zen/v1"
+reasoning = true
+
+[providers.model_metadata."north-mini-code-free"]
+base_url = "https://opencode.ai/zen/v1"
+thinking_level_map = {off = "none", high = "high"}
+unsupported_thinking_levels = ["minimal", "low", "medium", "xhigh"]
+
+[providers.model_metadata."nemotron-3-ultra-free"]
+base_url = "https://opencode.ai/zen/v1"
+reasoning = true
+
+[providers.model_metadata."hy3-free"]
+base_url = "https://opencode.ai/zen/v1"
+reasoning = true
+
+[providers.model_metadata."glm-5.2"]
+thinking_level_map = {high = "high", xhigh = "max"}
+thinking_level_labels = {xhigh = "max"}
+unsupported_thinking_levels = ["off", "minimal", "low", "medium"]
+
+[providers.model_metadata."glm-5.1"]
+reasoning = true
+
+[providers.model_metadata."kimi-k2.7-code"]
+reasoning = true
+
+[providers.model_metadata."kimi-k2.6"]
+reasoning = true
+
+[providers.model_metadata."deepseek-v4-pro"]
+thinking_level_map = {high = "high", xhigh = "max"}
+thinking_level_labels = {xhigh = "max"}
+unsupported_thinking_levels = ["off", "minimal", "low", "medium"]
+
+[providers.model_metadata."deepseek-v4-flash"]
+thinking_level_map = {high = "high", xhigh = "max"}
+thinking_level_labels = {xhigh = "max"}
+unsupported_thinking_levels = ["off", "minimal", "low", "medium"]
 
 [[providers]]
 name = "opencode"

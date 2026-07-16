@@ -73,6 +73,7 @@ class ProviderModelMetadata:
     headers: dict[str, str] = field(default_factory=dict)
     compat: dict[str, Any] = field(default_factory=dict)
     thinking_level_map: dict[ThinkingLevel, str | None] = field(default_factory=dict)
+    thinking_level_labels: dict[ThinkingLevel, str] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
         """Serialize this model metadata to JSON-compatible data."""
@@ -99,6 +100,7 @@ class ProviderModelMetadata:
             "headers": dict(self.headers),
             "compat": dict(self.compat),
             "thinking_level_map": dict(self.thinking_level_map),
+            "thinking_level_labels": dict(self.thinking_level_labels),
         }
 
 
@@ -468,6 +470,7 @@ def _provider_model_metadata_from_catalog(
             headers=dict(metadata.headers),
             compat=dict(metadata.compat),
             thinking_level_map=dict(metadata.thinking_level_map),
+            thinking_level_labels=dict(metadata.thinking_level_labels),
         )
         for model, metadata in model_metadata.items()
     }
@@ -904,6 +907,7 @@ def _merge_provider_model_metadata(
             headers={**base.headers, **metadata.headers},
             compat={**base.compat, **metadata.compat},
             thinking_level_map={**base.thinking_level_map, **metadata.thinking_level_map},
+            thinking_level_labels={**base.thinking_level_labels, **metadata.thinking_level_labels},
         )
     return merged
 
@@ -1048,6 +1052,7 @@ def _catalog_model_metadata_from_provider(
             headers=dict(metadata.headers),
             compat=dict(metadata.compat),
             thinking_level_map=dict(metadata.thinking_level_map),
+            thinking_level_labels=dict(metadata.thinking_level_labels),
         )
         for model, metadata in metadata_by_model.items()
     }
@@ -2188,6 +2193,10 @@ def _model_metadata_dict(
                 item.get("thinking_level_map", {}),
                 f"{field_name}.{model}.thinking_level_map",
             ),
+            thinking_level_labels=cast("dict[ThinkingLevel, str]", _string_dict(
+                item.get("thinking_level_labels", {}),
+                f"{field_name}.{model}.thinking_level_labels",
+            )),
         )
     return items
 
