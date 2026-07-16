@@ -1457,11 +1457,15 @@ class CodingSession:
         if self._harness.is_running:
             if streaming_behavior == "steer":
                 self._harness.steer(expanded_content)
-                yield self.queue_update_event()
+                session_event_0 = self.queue_update_event()
+                await self._extension_runtime.emit_event(session_event_0)
+                yield session_event_0
                 return
             if streaming_behavior == "follow_up":
                 self._harness.follow_up(expanded_content)
-                yield self.queue_update_event()
+                session_event_0 = self.queue_update_event()
+                await self._extension_runtime.emit_event(session_event_0)
+                yield session_event_0
                 return
             raise RuntimeError(
                 "CodingSession is already running; pass streaming_behavior to queue a message."
@@ -1510,22 +1514,28 @@ class CodingSession:
                     yield event
             persisted_count = await self._persist_messages_since(persisted_count)
             if overflow_message is not None:
-                yield CompactionStartEvent(reason="overflow")
+                session_event_1 = CompactionStartEvent(reason="overflow")
+                await self._extension_runtime.emit_event(session_event_1)
+                yield session_event_1
                 compacted = await self._try_overflow_compact(context=context)
-                yield CompactionEndEvent(
+                compaction_end = CompactionEndEvent(
                     reason="overflow",
                     result=None,
                     aborted=not compacted,
                     will_retry=compacted,
                     error_message=None if compacted else "Overflow compaction failed",
                 )
+                await self._extension_runtime.emit_event(compaction_end)
+                yield compaction_end
                 if compacted:
-                    yield AutoRetryStartEvent(
+                    retry_start = AutoRetryStartEvent(
                         attempt=1,
                         max_attempts=1,
                         delay_ms=0,
                         error_message=overflow_message.error_message or "Context overflow",
                     )
+                    await self._extension_runtime.emit_event(retry_start)
+                    yield retry_start
                     retry_persisted_count = len(self._harness.messages)
                     retry_events = self._harness.continue_()
                     self._invalidate_context_usage_cache()
@@ -1556,11 +1566,17 @@ class CodingSession:
                         else:
                             yield retry_event
                     await self._persist_messages_since(retry_persisted_count)
-                    yield AutoRetryEndEvent(success=True, attempt=1)
-                yield AgentSettledEvent()
+                    session_event_4 = AutoRetryEndEvent(success=True, attempt=1)
+                    await self._extension_runtime.emit_event(session_event_4)
+                    yield session_event_4
+                session_event_5 = AgentSettledEvent()
+                await self._extension_runtime.emit_event(session_event_5)
+                yield session_event_5
                 return
             await self._try_auto_compact(context=context, phase="auto_compact_after_prompt")
-            yield AgentSettledEvent()
+            session_event_5 = AgentSettledEvent()
+            await self._extension_runtime.emit_event(session_event_5)
+            yield session_event_5
         except Exception as exc:
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
@@ -1597,7 +1613,9 @@ class CodingSession:
                     yield event
             await self._persist_messages_since(persisted_count)
             await self._try_auto_compact(context=context, phase="auto_compact_after_continue")
-            yield AgentSettledEvent()
+            session_event_5 = AgentSettledEvent()
+            await self._extension_runtime.emit_event(session_event_5)
+            yield session_event_5
         except Exception as exc:
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,

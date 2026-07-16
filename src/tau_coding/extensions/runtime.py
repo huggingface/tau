@@ -806,14 +806,21 @@ class ExtensionRuntime:
                 current = result.text
         return InputHookOutcome(handled=False, text=current)
 
-    async def _on_agent_event(self, event: AgentEvent) -> None:
-        handlers = list(self._handlers_for(event.type))
+    async def emit_event(self, event: object) -> None:
+        """Dispatch one canonical agent or coding-session event to extensions."""
+        event_type = getattr(event, "type", None)
+        if not isinstance(event_type, str):
+            raise TypeError("Extension events must expose a string type")
+        handlers = list(self._handlers_for(event_type))
         handlers.extend(self._handlers_for(AGENT_EVENT_WILDCARD))
         for extension, handler in handlers:
             try:
                 await _resolve(handler(event, self._fresh_context(extension)))
             except Exception as exc:  # noqa: BLE001 - extensions are an isolation boundary
-                self._record_runtime_failure(extension, event.type, exc)
+                self._record_runtime_failure(extension, event_type, exc)
+
+    async def _on_agent_event(self, event: AgentEvent) -> None:
+        await self.emit_event(event)
 
     async def _emit_lifecycle(self, event_name: str, payload: object) -> None:
         for extension, handler in self._handlers_for(event_name):
