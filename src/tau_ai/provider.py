@@ -7,19 +7,17 @@ from typing import Protocol
 
 from tau_agent.messages import AgentMessage
 from tau_agent.tools import AgentTool
-from tau_ai.events import ProviderEvent
+from tau_ai.events import AssistantMessageEvent
 
 
 class CancellationToken(Protocol):
-    """Minimal cancellation interface accepted by providers."""
-
     def is_cancelled(self) -> bool:
         """Return whether the current stream should stop."""
         ...
 
 
 class ModelProvider(Protocol):
-    """Provider-neutral interface for streaming model responses."""
+    """Provider-neutral Pi-compatible model stream interface."""
 
     def stream_response(
         self,
@@ -29,6 +27,6 @@ class ModelProvider(Protocol):
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
-    ) -> AsyncIterator[ProviderEvent]:
-        """Stream one model response as Tau provider events."""
+    ) -> AsyncIterator[AssistantMessageEvent]:
+        """Stream one model response as assistant message events."""
         ...

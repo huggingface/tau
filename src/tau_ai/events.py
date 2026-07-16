@@ -1,91 +1,107 @@
-"""Provider-neutral streaming events emitted by model adapters."""
+"""Pi-compatible streaming events emitted by model adapters."""
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import Field
 
-from tau_agent.messages import AssistantMessage
-from tau_agent.tools import ToolCall
-from tau_agent.types import JSONValue
+from tau_agent.messages import AssistantMessage, ToolCall, WireModel
 
 
-class ProviderResponseStartEvent(BaseModel):
-    """The provider has started a model response."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["response_start"] = "response_start"
-    model: str
+class AssistantStartEvent(WireModel):
+    type: Literal["start"] = "start"
+    partial: AssistantMessage
 
 
-class ProviderRetryEvent(BaseModel):
-    """The provider adapter is retrying a transient request failure."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["retry"] = "retry"
-    attempt: int
-    max_attempts: int
-    delay_seconds: float
-    message: str
-    data: dict[str, JSONValue] | None = None
+class TextStartEvent(WireModel):
+    type: Literal["text_start"] = "text_start"
+    content_index: int = Field(alias="contentIndex")
+    partial: AssistantMessage
 
 
-class ProviderTextDeltaEvent(BaseModel):
-    """A streamed text fragment from the provider."""
-
-    model_config = ConfigDict(extra="forbid")
-
+class TextDeltaEvent(WireModel):
     type: Literal["text_delta"] = "text_delta"
+    content_index: int = Field(alias="contentIndex")
     delta: str
+    partial: AssistantMessage
 
 
-class ProviderThinkingDeltaEvent(BaseModel):
-    """A streamed thinking/reasoning fragment from the provider."""
+class TextEndEvent(WireModel):
+    type: Literal["text_end"] = "text_end"
+    content_index: int = Field(alias="contentIndex")
+    content: str
+    partial: AssistantMessage
 
-    model_config = ConfigDict(extra="forbid")
 
+class ThinkingStartEvent(WireModel):
+    type: Literal["thinking_start"] = "thinking_start"
+    content_index: int = Field(alias="contentIndex")
+    partial: AssistantMessage
+
+
+class ThinkingDeltaEvent(WireModel):
     type: Literal["thinking_delta"] = "thinking_delta"
+    content_index: int = Field(alias="contentIndex")
     delta: str
+    partial: AssistantMessage
 
 
-class ProviderToolCallEvent(BaseModel):
-    """A complete tool call requested by the model."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["tool_call"] = "tool_call"
-    tool_call: ToolCall
+class ThinkingEndEvent(WireModel):
+    type: Literal["thinking_end"] = "thinking_end"
+    content_index: int = Field(alias="contentIndex")
+    content: str
+    partial: AssistantMessage
 
 
-class ProviderResponseEndEvent(BaseModel):
-    """The provider has completed a model response."""
+class ToolCallStartEvent(WireModel):
+    type: Literal["toolcall_start"] = "toolcall_start"
+    content_index: int = Field(alias="contentIndex")
+    partial: AssistantMessage
 
-    model_config = ConfigDict(extra="forbid")
 
-    type: Literal["response_end"] = "response_end"
+class ToolCallDeltaEvent(WireModel):
+    type: Literal["toolcall_delta"] = "toolcall_delta"
+    content_index: int = Field(alias="contentIndex")
+    delta: str
+    partial: AssistantMessage
+
+
+class ToolCallEndEvent(WireModel):
+    type: Literal["toolcall_end"] = "toolcall_end"
+    content_index: int = Field(alias="contentIndex")
+    tool_call: ToolCall = Field(alias="toolCall")
+    partial: AssistantMessage
+
+
+DoneReason = Literal["stop", "length", "toolUse"]
+ErrorReason = Literal["aborted", "error"]
+
+
+class AssistantDoneEvent(WireModel):
+    type: Literal["done"] = "done"
+    reason: DoneReason
     message: AssistantMessage
-    finish_reason: str | None = None
 
 
-class ProviderErrorEvent(BaseModel):
-    """A provider-level error that can be surfaced by the agent layer."""
-
-    model_config = ConfigDict(extra="forbid")
-
+class AssistantErrorEvent(WireModel):
     type: Literal["error"] = "error"
-    message: str
-    data: dict[str, JSONValue] | None = None
+    reason: ErrorReason
+    error: AssistantMessage
 
 
-type ProviderEvent = (
-    ProviderResponseStartEvent
-    | ProviderRetryEvent
-    | ProviderTextDeltaEvent
-    | ProviderThinkingDeltaEvent
-    | ProviderToolCallEvent
-    | ProviderResponseEndEvent
-    | ProviderErrorEvent
-)
+type AssistantMessageEvent = Annotated[
+    AssistantStartEvent
+    | TextStartEvent
+    | TextDeltaEvent
+    | TextEndEvent
+    | ThinkingStartEvent
+    | ThinkingDeltaEvent
+    | ThinkingEndEvent
+    | ToolCallStartEvent
+    | ToolCallDeltaEvent
+    | ToolCallEndEvent
+    | AssistantDoneEvent
+    | AssistantErrorEvent,
+    Field(discriminator="type"),
+]

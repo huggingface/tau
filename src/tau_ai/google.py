@@ -10,8 +10,7 @@ import httpx
 from tau_agent.messages import AgentMessage, AssistantMessage, UserMessage
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
-from tau_ai.env import OpenAICompatibleConfig
-from tau_ai.events import (
+from tau_ai._provider_events import (
     ProviderErrorEvent,
     ProviderEvent,
     ProviderResponseEndEvent,
@@ -20,10 +19,13 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.env import OpenAICompatibleConfig
+from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
+from tau_ai.stream import canonicalize_provider_stream
 
 
 class GoogleGenerativeAIProvider:
@@ -46,6 +48,23 @@ class GoogleGenerativeAIProvider:
             self._client = None
 
     def stream_response(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[AgentMessage],
+        tools: list[AgentTool],
+        signal: CancellationToken | None = None,
+    ) -> AsyncIterator[AssistantMessageEvent]:
+        """Stream one response as Pi-compatible assistant message events."""
+        raw = self._stream_provider_events(
+            model=model, system=system, messages=messages, tools=tools, signal=signal
+        )
+        return canonicalize_provider_stream(
+            raw, api="google-generative-ai", provider="google", model=model
+        )
+
+    def _stream_provider_events(
         self,
         *,
         model: str,
@@ -321,11 +340,11 @@ def _is_gemma4_model(model: str) -> bool:
 
 def _message_to_google(message: AgentMessage) -> dict[str, JSONValue]:
     if isinstance(message, UserMessage):
-        return {"role": "user", "parts": [{"text": message.content}]}
+        return {"role": "user", "parts": [{"text": message.text}]}
     if isinstance(message, AssistantMessage):
         parts: list[JSONValue] = []
-        if message.content:
-            parts.append({"text": message.content})
+        if message.text:
+            parts.append({"text": message.text})
         for tool_call in message.tool_calls:
             part: dict[str, JSONValue] = {
                 "functionCall": {
@@ -339,8 +358,8 @@ def _message_to_google(message: AgentMessage) -> dict[str, JSONValue]:
             parts.append(part)
         return {"role": "model", "parts": parts or [{"text": ""}]}
     response: dict[str, JSONValue] = {
-        "name": message.name,
-        "response": {"output" if message.ok else "error": message.content},
+        "name": message.tool_name,
+        "response": {"output" if not message.is_error else "error": message.text},
     }
     if message.tool_call_id:
         response["id"] = message.tool_call_id

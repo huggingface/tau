@@ -17,8 +17,7 @@ from tau_agent.messages import (
 )
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
-from tau_ai.env import AnthropicConfig
-from tau_ai.events import (
+from tau_ai._provider_events import (
     ProviderErrorEvent,
     ProviderEvent,
     ProviderResponseEndEvent,
@@ -27,10 +26,13 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.env import AnthropicConfig
+from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
+from tau_ai.stream import canonicalize_provider_stream
 
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_MAX_TOKENS = 4096
@@ -56,6 +58,23 @@ class AnthropicProvider:
             self._client = None
 
     def stream_response(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[AgentMessage],
+        tools: list[AgentTool],
+        signal: CancellationToken | None = None,
+    ) -> AsyncIterator[AssistantMessageEvent]:
+        """Stream one response as Pi-compatible assistant message events."""
+        raw = self._stream_provider_events(
+            model=model, system=system, messages=messages, tools=tools, signal=signal
+        )
+        return canonicalize_provider_stream(
+            raw, api="anthropic-messages", provider="anthropic", model=model
+        )
+
+    def _stream_provider_events(
         self,
         *,
         model: str,
@@ -337,11 +356,11 @@ def _build_messages_payload(
 
 def _anthropic_message(message: AgentMessage) -> dict[str, JSONValue]:
     if isinstance(message, UserMessage):
-        return {"role": "user", "content": message.content}
+        return {"role": "user", "content": message.text}
     if isinstance(message, AssistantMessage):
         content: list[JSONValue] = []
-        if message.content:
-            content.append({"type": "text", "text": message.content})
+        if message.text:
+            content.append({"type": "text", "text": message.text})
         for tool_call in message.tool_calls:
             content.append(
                 {
@@ -359,8 +378,8 @@ def _anthropic_message(message: AgentMessage) -> dict[str, JSONValue]:
                 {
                     "type": "tool_result",
                     "tool_use_id": message.tool_call_id,
-                    "content": message.content,
-                    "is_error": not message.ok,
+                    "content": message.text,
+                    "is_error": bool(message.is_error),
                 }
             ],
         }
