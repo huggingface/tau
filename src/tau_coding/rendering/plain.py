@@ -2,7 +2,8 @@
 
 import typer
 
-from tau_agent import AssistantMessage, MessageEndEvent
+from tau_agent.events import MessageEndEvent
+from tau_agent.messages import AssistantMessage
 from tau_coding.events import CodingSessionEvent
 
 

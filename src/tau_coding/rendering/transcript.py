@@ -4,15 +4,15 @@ import typer
 from rich.console import Console
 from rich.text import Text
 
-from tau_agent import (
+from tau_agent.events import (
     AgentEndEvent,
-    AssistantMessage,
     MessageEndEvent,
     MessageUpdateEvent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
 )
+from tau_agent.messages import AssistantMessage, ToolCall
 from tau_ai.events import TextDeltaEvent
 from tau_coding.events import AutoRetryStartEvent, CodingSessionEvent
 from tau_coding.tui.state import format_tool_call_block
@@ -35,8 +35,6 @@ class TranscriptRenderer:
         if isinstance(event, ToolExecutionStartEvent):
             self._newline()
             # Keep the established compact line while tool definitions migrate.
-            from tau_agent import ToolCall
-
             call = ToolCall(id=event.tool_call_id, name=event.tool_name, arguments=event.args)
             self._console.print(Text(format_tool_call_block(call), style="cyan"))
             return
