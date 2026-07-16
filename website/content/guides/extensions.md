@@ -291,22 +291,61 @@ your own on `session_shutdown`.
 
 ### Events
 
-Observation events mirror the canonical agent/session stream — subscribe by
-`type`: `agent_start`, `agent_end`, `agent_settled`, `turn_start`, `turn_end`,
-`message_start`, `message_update`, `message_end`, `tool_execution_start`,
-`tool_execution_update`, `tool_execution_end`, `queue_update`,
-`compaction_start`, `compaction_end`, `entry_appended`,
-`session_info_changed`, `thinking_level_changed`, `auto_retry_start`, and
-`auto_retry_end`. Use `agent_event` for the complete stream. A
-`message_update` contains the provider event in `assistant_message_event`
-(text/thinking/tool-call start, delta, and end). Handlers receive
-`(event, context)` and run on the session event loop. `message_end` carries
-provider token usage at `event.message.usage`. Extension `turn_start` and
-`turn_end` events are session-enriched like Pi's: both carry the same zero-based
-`turn_index`, `turn_start` also carries a Unix-millisecond `timestamp`, and the
-index increments after `turn_end` (then resets on the next `agent_start`). These
-extension payloads are defined in `tau_coding.extensions`; the portable
-`tau_agent` turn events intentionally remain free of session metadata.
+Observation events mirror the canonical agent/session stream. Handlers receive
+`(event, context)`, run on the session event loop, and may subscribe to one
+`type` or use `agent_event` for the complete stream.
+
+| Event | Important payload |
+|---|---|
+| `agent_start` | — |
+| `agent_end` | `messages`, `will_retry` on the session form |
+| `agent_settled` | —; no retry, compaction, or queued continuation remains |
+| `turn_start` | `turn_index`, Unix-millisecond `timestamp` |
+| `turn_end` | matching `turn_index`, `message`, `tool_results` |
+| `message_start` / `message_end` | `message`; assistant usage is at `message.usage` |
+| `message_update` | `message`, nested `assistant_message_event` |
+| `tool_execution_start` | `tool_call_id`, `tool_name`, `args` |
+| `tool_execution_update` | the call fields plus `partial_result` |
+| `tool_execution_end` | the call fields plus `result`, `is_error` |
+| `queue_update` | `steering`, `follow_up` |
+| `compaction_start` | `reason` (`manual`, `threshold`, or `overflow`) |
+| `compaction_end` | `reason`, `result`, `aborted`, `will_retry`, `error_message` |
+| `entry_appended` | persisted session `entry` |
+| `session_info_changed` | session `name` |
+| `thinking_level_changed` | `level` |
+| `auto_retry_start` | `attempt`, `max_attempts`, `delay_ms`, `error_message` |
+| `auto_retry_end` | `success`, `attempt`, `final_error` |
+
+`message_update.assistant_message_event` is the provider-neutral incremental
+stream. Its nested `type` is one of `text_start`, `text_delta`, `text_end`,
+`thinking_start`, `thinking_delta`, `thinking_end`, `toolcall_start`,
+`toolcall_delta`, or `toolcall_end`. Terminal provider events become
+`message_end`, rather than another `message_update`.
+
+Extension turn events are session-enriched like Pi's. `turn_start` and its
+matching `turn_end` carry the same zero-based `turn_index`; `turn_start` also
+carries a Unix-millisecond `timestamp`. The runtime increments the index after
+`turn_end` and resets it on the next `agent_start`:
+
+```python
+from tau_coding.extensions import TurnEndEvent, TurnStartEvent
+
+
+def setup(tau):
+    @tau.on("turn_start")
+    def on_turn_start(event: TurnStartEvent, context):
+        context.api.notify(
+            f"turn {event.turn_index} started at {event.timestamp}", "info"
+        )
+
+    @tau.on("turn_end")
+    def on_turn_end(event: TurnEndEvent, context):
+        assert event.turn_index >= 0
+```
+
+These enriched payloads are defined in `tau_coding.extensions`. The portable
+`tau_agent.events.TurnStartEvent` and `TurnEndEvent` intentionally omit session
+metadata, so reusable agent code stays independent of session policy.
 
 Lifecycle and intercepting hooks:
 
