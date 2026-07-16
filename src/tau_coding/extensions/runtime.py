@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from tau_agent.events import AgentEvent
-from tau_agent.messages import AgentMessage
+from tau_agent.messages import AgentMessage, TextContent
 from tau_agent.tools import (
     AgentTool,
     AgentToolResult,
@@ -32,6 +32,7 @@ from tau_coding.extensions.api import (
     ExtensionAPI,
     ExtensionCommandContext,
     ExtensionCommandHandler,
+    ExtensionContext,
     ExtensionError,
     ExtensionGeneration,
     ExtensionHandler,
@@ -624,7 +625,9 @@ class ExtensionRuntime:
             call_outcome = await self._run_tool_call_hooks(tool.name, arguments)
             if call_outcome.block:
                 reason = call_outcome.reason or "blocked by an extension"
-                return AgentToolResult(content=f"Tool call blocked: {reason}")
+                return AgentToolResult(
+                    content=[TextContent(text=f"Tool call blocked: {reason}")]
+                )
             effective_arguments = (
                 call_outcome.arguments if call_outcome.arguments is not None else arguments
             )
@@ -659,7 +662,7 @@ class ExtensionRuntime:
         for extension, handler in self._handlers_for("tool_call"):
             event = ToolCallHookEvent(tool_name=tool_name, arguments=effective)
             try:
-                result = await _resolve(handler(event))
+                result = await _resolve(handler(event, self._fresh_context(extension)))
             except Exception as exc:  # noqa: BLE001 - fail-safe: an error blocks the tool
                 self._record_runtime_failure(extension, "tool_call", exc)
                 return ToolCallHookResult(
@@ -689,7 +692,7 @@ class ExtensionRuntime:
         for extension, handler in self._handlers_for("tool_result"):
             event = ToolResultHookEvent(tool_name=tool_name, arguments=arguments, result=current)
             try:
-                outcome = await _resolve(handler(event))
+                outcome = await _resolve(handler(event, self._fresh_context(extension)))
             except Exception as exc:  # noqa: BLE001 - result hooks are observational-ish
                 self._record_runtime_failure(extension, "tool_result", exc)
                 continue
@@ -787,7 +790,8 @@ class ExtensionRuntime:
                             text=current,
                             source=source,
                             streaming_behavior=streaming_behavior,
-                        )
+                        ),
+                        self._fresh_context(extension),
                     )
                 )
             except Exception as exc:  # noqa: BLE001 - extensions are an isolation boundary
@@ -809,14 +813,14 @@ class ExtensionRuntime:
         handlers.extend(self._handlers_for(AGENT_EVENT_WILDCARD))
         for extension, handler in handlers:
             try:
-                await _resolve(handler(event))
+                await _resolve(handler(event, self._fresh_context(extension)))
             except Exception as exc:  # noqa: BLE001 - extensions are an isolation boundary
                 self._record_runtime_failure(extension, event.type, exc)
 
     async def _emit_lifecycle(self, event_name: str, payload: object) -> None:
         for extension, handler in self._handlers_for(event_name):
             try:
-                await _resolve(handler(payload))
+                await _resolve(handler(payload, self._fresh_context(extension)))
             except Exception as exc:  # noqa: BLE001 - extensions are an isolation boundary
                 self._record_runtime_failure(extension, event_name, exc)
 
@@ -832,6 +836,11 @@ class ExtensionRuntime:
             if extension.name == name:
                 return extension
         return None
+
+    def _fresh_context(self, extension_name: str) -> ExtensionContext:
+        """Return a fresh context for one handler invocation."""
+        api = self._api_for(extension_name)
+        return ExtensionContext(self, api._generation)
 
     def _api_for(self, extension_name: str) -> ExtensionAPI:
         extension = self._extension_by_name(extension_name)

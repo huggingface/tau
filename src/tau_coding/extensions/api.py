@@ -406,7 +406,7 @@ class ToolResultHookResult:
     details: dict[str, JSONValue] | None = None
 
 
-ExtensionHandler = Callable[[object], object | Awaitable[object]]
+ExtensionHandler = Callable[[object, "ExtensionContext"], object | Awaitable[object]]
 # Command handlers are sync-only: the slash-command path (CommandRegistry ->
 # CodingSession.handle_command -> TUI submit) is synchronous end to end.
 ExtensionCommandHandler = Callable[["str", "ExtensionCommandContext"], "str | None"]
