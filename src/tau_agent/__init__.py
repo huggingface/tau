@@ -1,5 +1,7 @@
 """Portable Pi-compatible agent harness primitives for Tau."""
 
+# ruff: noqa: F401 - this module intentionally defines the public facade
+
 from tau_agent.events import (
     AgentEndEvent,
     AgentEvent,

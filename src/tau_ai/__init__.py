@@ -1,5 +1,7 @@
 """Provider and Pi-compatible model streaming layer for Tau."""
 
+# ruff: noqa: F401 - this module intentionally defines the public facade
+
 from tau_ai.anthropic import AnthropicProvider
 from tau_ai.env import (
     DEFAULT_ANTHROPIC_BASE_URL,
