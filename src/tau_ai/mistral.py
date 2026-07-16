@@ -11,6 +11,7 @@ import httpx
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    ThinkingContent,
     ToolResultMessage,
     UserMessage,
     assistant_content,
@@ -208,6 +209,7 @@ class _MistralStreamParser:
     def __init__(self) -> None:
         self.emitted_content = False
         self._content_parts: list[str] = []
+        self._thinking_parts: list[str] = []
         self._tool_call_builders: dict[int, _ToolCallBuilder] = {}
         self._finish_reason: str | None = None
 
@@ -233,6 +235,7 @@ class _MistralStreamParser:
             events.append(ProviderTextDeltaEvent(delta=content))
         for thinking in _thinking_deltas(delta):
             self.emitted_content = True
+            self._thinking_parts.append(thinking)
             events.append(ProviderThinkingDeltaEvent(delta=thinking))
         for tool_call_delta in _tool_call_deltas(delta):
             self.emitted_content = True
@@ -248,11 +251,12 @@ class _MistralStreamParser:
         events: list[ProviderEvent] = [
             ProviderToolCallEvent(tool_call=tool_call) for tool_call in tool_calls
         ]
+        content = assistant_content("".join(self._content_parts), tool_calls)
+        if self._thinking_parts:
+            content.insert(0, ThinkingContent(thinking="".join(self._thinking_parts)))
         events.append(
             ProviderResponseEndEvent(
-                message=AssistantMessage(
-                    content=assistant_content("".join(self._content_parts), tool_calls)
-                ),
+                message=AssistantMessage(content=content),
                 finish_reason=self._finish_reason or ("tool_calls" if tool_calls else "stop"),
             )
         )
@@ -331,6 +335,8 @@ def _message_to_mistral(message: AgentMessage) -> dict[str, JSONValue]:
         return {"role": "user", "content": message.text}
     if isinstance(message, AssistantMessage):
         item: dict[str, JSONValue] = {"role": "assistant", "content": message.text}
+        if message.thinking_text:
+            item["reasoning_content"] = message.thinking_text
         if message.tool_calls:
             item["tool_calls"] = [
                 _tool_call_to_mistral(tool_call) for tool_call in message.tool_calls

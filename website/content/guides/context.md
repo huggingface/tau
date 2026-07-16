@@ -68,8 +68,9 @@ off → minimal → low → medium → high → xhigh
 ```
 
 - **Shift+Tab** cycles the thinking level (default is `medium`).
-- **Ctrl+T** toggles whether streamed reasoning tokens are shown (hidden by
-  default).
+- **Ctrl+T** toggles whether reasoning tokens are shown (hidden by default).
+  Reasoning blocks are saved with the assistant response, so their original
+  positions and visibility toggle are restored when you resume a session.
 
 Thinking is model-aware: Tau enables it only when the active provider declares
 supported levels for the active model. When it's unavailable, `/session` shows

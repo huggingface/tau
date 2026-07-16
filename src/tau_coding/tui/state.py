@@ -14,6 +14,8 @@ from tau_agent.messages import (
     BranchSummaryMessage,
     CompactionSummaryMessage,
     CustomMessage,
+    TextContent,
+    ThinkingContent,
     ToolResultMessage,
     UserMessage,
 )
@@ -315,12 +317,7 @@ class TuiState:
                     details=message.details if isinstance(message.details, dict) else None,
                 )
             elif isinstance(message, AssistantMessage):
-                if message.thinking_text:
-                    self.add_item("thinking", message.thinking_text)
-                if message.text:
-                    self.add_item("assistant", message.text)
-                for tool_call in message.tool_calls:
-                    self.add_tool_call(tool_call)
+                self.add_assistant_message(message)
             elif isinstance(message, ToolResultMessage):
                 self.record_tool_result(
                     message.tool_call_id,
@@ -340,6 +337,23 @@ class TuiState:
                     "Compaction summary (Ctrl+O to expand)",
                     tool_result_text=message.summary,
                 )
+
+    def add_assistant_message(
+        self,
+        message: AssistantMessage,
+        *,
+        include_tool_calls: bool = True,
+    ) -> None:
+        """Project canonical assistant blocks into display state in order."""
+        for block in message.content:
+            if isinstance(block, ThinkingContent):
+                if block.thinking:
+                    self.add_item("thinking", block.thinking)
+            elif isinstance(block, TextContent):
+                if block.text:
+                    self.add_item("assistant", block.text)
+            elif include_tool_calls:
+                self.add_tool_call(block)
 
     def _read_skill_name(self, tool_call: ToolCall) -> str | None:
         if tool_call.name != "read":

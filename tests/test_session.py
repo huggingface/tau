@@ -3,7 +3,14 @@ from pathlib import Path
 
 import pytest
 
-from tau_agent import AssistantMessage, CustomMessage, ToolResultMessage, UserMessage
+from tau_agent import (
+    AssistantMessage,
+    CustomMessage,
+    TextContent,
+    ThinkingContent,
+    ToolResultMessage,
+    UserMessage,
+)
 from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
@@ -79,6 +86,25 @@ def test_assistant_and_tool_result_round_trip_canonical_blocks() -> None:
     assert result_payload["toolName"] == "edit"
     assert entry_from_json_line(entry_to_json_line(assistant)) == assistant
     assert entry_from_json_line(entry_to_json_line(result)) == result
+
+
+def test_structured_thinking_message_round_trips_jsonl() -> None:
+    entry = MessageEntry(
+        id="a",
+        message=AssistantMessage(
+            content=[
+                ThinkingContent(thinking="plan", thinking_signature="reasoning"),
+                TextContent(text="done"),
+            ]
+        ),
+    )
+
+    parsed = entry_from_json_line(entry_to_json_line(entry))
+
+    assert parsed == entry
+    payload = json.loads(entry_to_json_line(entry))["message"]
+    assert [block["type"] for block in payload["content"]] == ["thinking", "text"]
+    assert payload["content"][0]["thinkingSignature"] == "reasoning"
 
 
 def test_legacy_assistant_message_migrates_to_ordered_blocks() -> None:

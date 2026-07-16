@@ -37,7 +37,7 @@ provider-neutral events — never from raw provider chunks. The portable `tau_ag
 - `AgentStartEvent` / `AgentEndEvent` — a run begins / ends
 - `TurnStartEvent` / `TurnEndEvent` — one assistant response and its tool results
 - `MessageStartEvent` / `MessageUpdateEvent` / `MessageEndEvent` — a message's
-  lifecycle
+  Pi-compatible lifecycle
 - `ToolExecutionStartEvent` / `ToolExecutionUpdateEvent` / `ToolExecutionEndEvent`
   — a tool runs
 
@@ -55,6 +55,10 @@ adapter enriches `turn_start` with a zero-based `turn_index` and millisecond
 `timestamp`, and `turn_end` with the matching index. See
 [Extensions]({{< relref "../guides/extensions.md#events" >}}) for their complete
 payload table.
+
+The final `AssistantMessage` is authoritative: it persists text, thinking, and tool
+calls as ordered content blocks. Nested update events provide responsive rendering,
+while saved sessions and provider history replay use the finalized structured message.
 
 Because the contract is *events*, a frontend's job is reduced to: send a prompt,
 consume the stream, draw what you see.

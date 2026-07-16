@@ -117,6 +117,8 @@ async def test_agent_loop_nests_thinking_events_without_losing_final_message() -
     ]
     assert [event.delta for event in nested] == ["hidden ", "reasoning"]
     assert messages[-1] == assistant
+    # The final provider message is the canonical persistence boundary.
+    assert isinstance(messages[-1], AssistantMessage)
 
 
 @pytest.mark.anyio
