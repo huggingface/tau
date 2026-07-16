@@ -263,6 +263,11 @@ def content_text(content: str | list[Any]) -> str:
     return "".join(block.text for block in content if isinstance(block, TextContent))
 
 
+def message_to_user(message: AgentMessage) -> UserMessage:
+    """Convert custom/session-only messages to provider-compatible user context."""
+    return UserMessage(content=message_text(message), timestamp=message.timestamp)
+
+
 def message_text(message: AgentMessage) -> str:
     """Return the user-visible text represented by an agent message."""
     if isinstance(message, (UserMessage, AssistantMessage, ToolResultMessage, CustomMessage)):

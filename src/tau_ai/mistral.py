@@ -8,7 +8,13 @@ from typing import Any, Protocol
 
 import httpx
 
-from tau_agent.messages import AgentMessage, AssistantMessage, UserMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    ToolResultMessage,
+    UserMessage,
+    message_to_user,
+)
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
 from tau_ai._provider_events import (
@@ -329,12 +335,14 @@ def _message_to_mistral(message: AgentMessage) -> dict[str, JSONValue]:
                 _tool_call_to_mistral(tool_call) for tool_call in message.tool_calls
             ]
         return item
-    return {
-        "role": "tool",
-        "tool_call_id": message.tool_call_id,
-        "name": message.tool_name,
-        "content": message.text,
-    }
+    if isinstance(message, ToolResultMessage):
+        return {
+            "role": "tool",
+            "tool_call_id": message.tool_call_id,
+            "name": message.tool_name,
+            "content": message.text,
+        }
+    return _message_to_mistral(message_to_user(message))
 
 
 def _tool_to_mistral(tool: AgentTool) -> dict[str, JSONValue]:

@@ -7,7 +7,13 @@ from json import JSONDecodeError, loads
 
 import httpx
 
-from tau_agent.messages import AgentMessage, AssistantMessage, UserMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    ToolResultMessage,
+    UserMessage,
+    message_to_user,
+)
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
 from tau_ai._provider_events import (
@@ -357,13 +363,15 @@ def _message_to_google(message: AgentMessage) -> dict[str, JSONValue]:
                 part["thoughtSignature"] = tool_call.thought_signature
             parts.append(part)
         return {"role": "model", "parts": parts or [{"text": ""}]}
-    response: dict[str, JSONValue] = {
-        "name": message.tool_name,
-        "response": {"output" if not message.is_error else "error": message.text},
-    }
-    if message.tool_call_id:
-        response["id"] = message.tool_call_id
-    return {"role": "user", "parts": [{"functionResponse": response}]}
+    if isinstance(message, ToolResultMessage):
+        response: dict[str, JSONValue] = {
+            "name": message.tool_name,
+            "response": {"output" if not message.is_error else "error": message.text},
+        }
+        if message.tool_call_id:
+            response["id"] = message.tool_call_id
+        return {"role": "user", "parts": [{"functionResponse": response}]}
+    return _message_to_google(message_to_user(message))
 
 
 def _tool_to_google(tool: AgentTool) -> dict[str, JSONValue]:

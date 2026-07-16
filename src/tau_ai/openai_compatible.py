@@ -22,6 +22,7 @@ from tau_agent.messages import (
     ToolResultMessage,
     Usage,
     UserMessage,
+    message_to_user,
 )
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
@@ -913,6 +914,7 @@ def _message_to_openai(message: AgentMessage) -> dict[str, JSONValue]:
             "name": message.tool_name,
             "content": message.text,
         }
+    return _message_to_openai(message_to_user(message))
 
 
 def _tool_to_openai(tool: AgentTool) -> dict[str, JSONValue]:

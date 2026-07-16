@@ -14,6 +14,7 @@ from tau_agent.messages import (
     ToolResultMessage,
     Usage,
     UserMessage,
+    message_to_user,
 )
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
@@ -383,7 +384,7 @@ def _anthropic_message(message: AgentMessage) -> dict[str, JSONValue]:
                 }
             ],
         }
-    raise TypeError(f"Unsupported message type: {type(message).__name__}")
+    return _anthropic_message(message_to_user(message))
 
 
 def _anthropic_tool(tool: AgentTool) -> dict[str, JSONValue]:
