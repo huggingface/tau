@@ -13,15 +13,13 @@ system, adapted to Python.
 Create `~/.tau/extensions/greet.py`:
 
 ```python
+from tau_agent.messages import TextContent
 from tau_agent.tools import AgentTool, AgentToolResult
 
 
-async def run_greet(arguments, signal=None):
+async def run_greet(tool_call_id, arguments, signal=None, on_update=None):
     return AgentToolResult(
-        tool_call_id="",
-        name="greet",
-        ok=True,
-        content=f"Hello, {arguments.get('who', 'world')}!",
+        content=[TextContent(text=f"Hello, {arguments.get('who', 'world')}!")],
     )
 
 
@@ -29,12 +27,13 @@ def setup(tau):
     tau.register_tool(
         AgentTool(
             name="greet",
+            label="Greet",
             description="Greet someone.",
-            input_schema={
+            parameters={
                 "type": "object",
                 "properties": {"who": {"type": "string"}},
             },
-            executor=run_greet,
+            execute_fn=run_greet,
             prompt_snippet="Greet someone by name.",
         )
     )
@@ -121,22 +120,22 @@ def setup(tau):
 ```
 
 `setup` must be a plain `def` (not `async def`). Event handlers may be sync
-or async. Action methods raise `ExtensionError` if called before the session
+or async and always receive `(event, context)`; the context is freshly created
+for each dispatch. Action methods raise `ExtensionError` if called before the session
 is bound — register handlers in `setup` and act on events instead.
 
 ### Tools
 
-`register_tool` takes a plain `tau_agent.tools.AgentTool`: a name, a
-description, a hand-written JSON-schema `input_schema`, and an async
-executor `(arguments, signal=None) -> AgentToolResult`. Give the tool a
+`register_tool` takes a plain `tau_agent.tools.AgentTool`: a name, label,
+description, a hand-written JSON-schema `parameters` mapping, and an async
+`execute_fn(tool_call_id, arguments, signal=None, on_update=None)`. Give the tool a
 `prompt_snippet` to list it in the system prompt's "Available tools"
 section, and `prompt_guidelines` for usage guidance tied to the tool.
 Registering a tool with a built-in's name (`read`, `write`, `edit`,
 `bash`) replaces the built-in.
 
 A long-running tool can stream progress: an executor that additionally
-declares an `on_update` parameter receives a callback
-`(message: str, data: dict | None = None)`; each call becomes a
+uses `on_update` receives a callback accepting an `AgentToolResult`; each call becomes a
 `tool_execution_update` event and drives the TUI's live progress line.
 Executors without the parameter are unaffected.
 
@@ -292,14 +291,17 @@ your own on `session_shutdown`.
 
 ### Events
 
-Observation events mirror the agent event stream — subscribe by the event's
-`type` literal: `agent_start`, `agent_end`, `turn_start`, `turn_end`,
-`message_start`, `message_delta`, `thinking_delta`, `message_end`,
-`tool_execution_start`, `tool_execution_update`, `tool_execution_end`,
-`retry`, `queue_update`, `error` — or `agent_event` for everything (fires
-per streamed token; prefer specific events). Handlers must be fast; they run
-on the session's event loop. `message_end` carries provider token usage at
-`event.message.usage` (`None` when the provider reported none).
+Observation events mirror the canonical agent/session stream — subscribe by
+`type`: `agent_start`, `agent_end`, `agent_settled`, `turn_start`, `turn_end`,
+`message_start`, `message_update`, `message_end`, `tool_execution_start`,
+`tool_execution_update`, `tool_execution_end`, `queue_update`,
+`compaction_start`, `compaction_end`, `entry_appended`,
+`session_info_changed`, `thinking_level_changed`, `auto_retry_start`, and
+`auto_retry_end`. Use `agent_event` for the complete stream. A
+`message_update` contains the provider event in `assistant_message_event`
+(text/thinking/tool-call start, delta, and end). Handlers receive
+`(event, context)` and run on the session event loop. `message_end` carries
+provider token usage at `event.message.usage`.
 
 Lifecycle and intercepting hooks:
 
@@ -309,7 +311,7 @@ Lifecycle and intercepting hooks:
 | `session_shutdown` | `SessionShutdownEvent(reason)` | — |
 | `input` | `InputEvent(text)` | `InputHookResult(action, text, message)` |
 | `tool_call` | `ToolCallHookEvent(tool_name, arguments)` | `ToolCallHookResult(block, reason, arguments)` |
-| `tool_result` | `ToolResultHookEvent(tool_name, arguments, result)` | `ToolResultHookResult(content, ok, details)` |
+| `tool_result` | `ToolResultHookEvent(tool_name, arguments, result)` | `ToolResultHookResult(content, details)` |
 
 - `session_start` fires once the host frontend is attached (Pi's ordering:
   the UI starts before extensions initialize), so handlers can call
@@ -320,7 +322,8 @@ Lifecycle and intercepting hooks:
 - `tool_call` runs before a tool executes. `block=True` prevents execution
   and reports `reason` to the model; returning `arguments` rewrites the
   call. A crashing `tool_call` handler blocks the tool (fail-safe).
-- `tool_result` can rewrite a result's `content`, `ok`, or `details`.
+- `tool_result` can rewrite a result's text `content` or `details`; execution
+  error state belongs to the host's tool lifecycle rather than the result payload.
 
 All other handler failures are contained: they are recorded as diagnostics
 (visible in `/session`) and never crash the session.
