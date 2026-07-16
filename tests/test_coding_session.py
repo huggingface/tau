@@ -1969,7 +1969,11 @@ async def test_session_loads_and_expands_skills(tmp_path: Path) -> None:
 
     _events = await _collect_session_events(session.prompt("/skill:testing add tests"))
 
-    assert [skill.name for skill in session.skills] == ["testing"]
+    assert {skill.name for skill in session.skills} == {
+        "create-tau-extension",
+        "tau-model-catalog",
+        "testing",
+    }
     assert '<skill name="testing" location="' in provider.calls[0][2][0].content
     assert "References are relative to" in provider.calls[0][2][0].content
     assert provider.calls[0][2][0].content.endswith("</skill>\n\nadd tests")
@@ -2186,7 +2190,7 @@ async def test_session_loads_with_resource_diagnostics_instead_of_failing(
 
     session = await CodingSession.load(config)
 
-    assert [skill.name for skill in session.skills] == ["good"]
+    assert "good" in {skill.name for skill in session.skills}
     assert len(session.resource_diagnostics) == 1
     assert (
         "bare .md files are no longer treated as skills" in session.resource_diagnostics[0].message
@@ -2215,7 +2219,10 @@ async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Pa
             resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
         )
     )
-    assert session.skills == ()
+    assert {skill.name for skill in session.skills} == {
+        "create-tau-extension",
+        "tau-model-catalog",
+    }
     assert session.context_files == ()
 
     skills_dir = resource_root / "skills" / "testing"
@@ -2233,11 +2240,15 @@ async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Pa
     entries_after = await storage.read_all()
     _events = await _collect_session_events(session.prompt("Hello"))
 
-    assert summary.skills.after == 1
+    assert summary.skills.after == 3
     assert summary.context_files.after == 1
     assert summary.system_prompt_rebuilt is True
     assert entries_after == entries_before
-    assert [skill.name for skill in session.skills] == ["testing"]
+    assert {skill.name for skill in session.skills} == {
+        "create-tau-extension",
+        "tau-model-catalog",
+        "testing",
+    }
     assert [Path(context_file.path).name for context_file in session.context_files] == ["AGENTS.md"]
     assert "Reloaded project rules." in provider.calls[0][1]
     assert "<name>testing</name>" in provider.calls[0][1]

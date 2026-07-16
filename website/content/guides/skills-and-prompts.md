@@ -13,6 +13,7 @@ Skills are loaded from these locations, in increasing precedence (later
 overrides earlier on name clashes):
 
 ```text
+Tau's bundled first-party skills
 ~/.tau/skills/
 ~/.agents/skills/
 ~/.agents/
@@ -69,6 +70,11 @@ mkdir review && mv review.md review/SKILL.md
 This matches the Agent Skills spec and applies uniformly across `.tau/` and
 `.agents/` locations.
 {{% /tip %}}
+
+Tau ships with first-party `create-tau-extension` and `tau-model-catalog`
+skills so installed copies know the supported workflows for extending Tau and
+maintaining its built-in provider catalog. Define a user or project skill with
+the same name to override the bundled workflow.
 
 Tau lists loaded skills in the system prompt so the model knows they exist and
 can read the full file (via the `read` tool) when relevant. Invoke one

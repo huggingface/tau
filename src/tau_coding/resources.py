@@ -7,6 +7,7 @@ from pathlib import Path
 
 from tau_agent.types import JSONValue
 from tau_coding.paths import TauPaths
+from tau_coding.self_docs import tau_builtin_skills_path
 
 
 class ResourceError(ValueError):
@@ -67,7 +68,7 @@ class TauResourcePaths:
         ``README.md``, ``AGENTS.md``, etc.).
         """
         paths = self._paths()
-        dirs = [self.skills_dir]
+        dirs = [tau_builtin_skills_path(), self.skills_dir]
         if self.agents_root is not None:
             dirs.append(self.agents_root / "skills")
         if self.cwd is not None:

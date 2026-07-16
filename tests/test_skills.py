@@ -15,8 +15,11 @@ from tau_coding import (
 from tau_coding.resources import ResourceError
 
 
-def test_load_skills_missing_directory_returns_empty(tmp_path: Path) -> None:
-    assert load_skills(TauResourcePaths(root=tmp_path, agents_root=None)) == []
+def test_load_skills_includes_bundled_first_party_skills(tmp_path: Path) -> None:
+    skills = load_skills(TauResourcePaths(root=tmp_path, agents_root=None))
+
+    assert [skill.name for skill in skills] == ["create-tau-extension", "tau-model-catalog"]
+    assert all("tau_coding/data/skills" in skill.path.as_posix() for skill in skills)
 
 
 def test_load_skills_from_directory(tmp_path: Path) -> None:
@@ -34,9 +37,15 @@ def test_load_skills_from_directory(tmp_path: Path) -> None:
 
     skills = load_skills(TauResourcePaths(root=tmp_path, agents_root=None))
 
-    assert [skill.name for skill in skills] == ["git-review", "python-testing"]
-    assert skills[0].description == "Git Review"
-    assert skills[1].description == "Test Python code"
+    skill_by_name = {skill.name: skill for skill in skills}
+    assert set(skill_by_name) == {
+        "create-tau-extension",
+        "git-review",
+        "python-testing",
+        "tau-model-catalog",
+    }
+    assert skill_by_name["git-review"].description == "Git Review"
+    assert skill_by_name["python-testing"].description == "Test Python code"
 
 
 def test_load_skills_includes_user_and_project_agents_directories(tmp_path: Path) -> None:
@@ -55,7 +64,31 @@ def test_load_skills_includes_user_and_project_agents_directories(tmp_path: Path
 
     skills = load_skills(TauResourcePaths(root=tau_home, agents_root=agents_home, cwd=cwd))
 
-    assert [skill.name for skill in skills] == ["project-skill", "user-skill"]
+    assert {skill.name for skill in skills} == {
+        "create-tau-extension",
+        "project-skill",
+        "tau-model-catalog",
+        "user-skill",
+    }
+
+
+def test_user_skill_overrides_bundled_skill(tmp_path: Path) -> None:
+    skill_dir = tmp_path / "skills" / "tau-model-catalog"
+    skill_dir.mkdir(parents=True)
+    skill_path = skill_dir / "SKILL.md"
+    skill_path.write_text("# Custom catalog workflow", encoding="utf-8")
+
+    skills, diagnostics = load_skills_with_diagnostics(
+        TauResourcePaths(root=tmp_path, agents_root=None)
+    )
+
+    catalog_skill = next(skill for skill in skills if skill.name == "tau-model-catalog")
+    assert catalog_skill.path == skill_path
+    assert any(
+        diagnostic.name == "tau-model-catalog"
+        and "overrides lower-precedence resource" in diagnostic.message
+        for diagnostic in diagnostics
+    )
 
 
 def test_project_agents_skill_overrides_user_agents_skill(tmp_path: Path) -> None:
@@ -72,9 +105,9 @@ def test_project_agents_skill_overrides_user_agents_skill(tmp_path: Path) -> Non
 
     skills = load_skills(TauResourcePaths(root=tau_home, agents_root=agents_home, cwd=cwd))
 
-    assert len(skills) == 1
-    assert skills[0].path == cwd / ".agents" / "skills" / "review" / "SKILL.md"
-    assert skills[0].description == "Project Review"
+    review = next(skill for skill in skills if skill.name == "review")
+    assert review.path == cwd / ".agents" / "skills" / "review" / "SKILL.md"
+    assert review.description == "Project Review"
 
 
 def test_load_skills_with_diagnostics_reports_overrides(tmp_path: Path) -> None:
@@ -92,8 +125,8 @@ def test_load_skills_with_diagnostics_reports_overrides(tmp_path: Path) -> None:
         TauResourcePaths(root=tau_home, agents_root=agents_home, cwd=cwd)
     )
 
-    assert [skill.name for skill in skills] == ["review"]
-    assert skills[0].path == cwd / ".tau" / "skills" / "review" / "SKILL.md"
+    review = next(skill for skill in skills if skill.name == "review")
+    assert review.path == cwd / ".tau" / "skills" / "review" / "SKILL.md"
     override_diagnostics = [
         d for d in diagnostics if "overrides lower-precedence resource" in d.message
     ]
@@ -120,7 +153,7 @@ def test_load_skills_with_diagnostics_reports_bare_md_migration_hint(
         TauResourcePaths(root=tmp_path, agents_root=None)
     )
 
-    assert [skill.name for skill in skills] == ["good"]
+    assert "good" in {skill.name for skill in skills}
     migration_diagnostics = [d for d in diagnostics if d.severity == "info"]
     assert len(migration_diagnostics) == 1
     assert migration_diagnostics[0].name == "legacy"
@@ -143,7 +176,7 @@ def test_agents_root_is_not_a_skills_directory(tmp_path: Path) -> None:
 
     skills = load_skills(TauResourcePaths(root=tmp_path / ".tau", agents_root=agents_home))
 
-    assert skills == []
+    assert {skill.name for skill in skills} == {"create-tau-extension", "tau-model-catalog"}
 
 
 def test_agents_skills_dir_ignores_bare_md_files(tmp_path: Path) -> None:
@@ -161,7 +194,7 @@ def test_agents_skills_dir_ignores_bare_md_files(tmp_path: Path) -> None:
     paths = TauResourcePaths(root=tmp_path / ".tau", agents_root=agents_home)
     skills = load_skills(paths)
 
-    assert [s.name for s in skills] == ["my-skill"]
+    assert "my-skill" in {skill.name for skill in skills}
 
 
 def test_tau_skills_dir_ignores_bare_md_files(tmp_path: Path) -> None:
@@ -178,7 +211,7 @@ def test_tau_skills_dir_ignores_bare_md_files(tmp_path: Path) -> None:
     paths = TauResourcePaths(root=tmp_path, agents_root=None)
     skills = load_skills(paths)
 
-    assert [s.name for s in skills] == ["my-skill"]
+    assert "my-skill" in {skill.name for skill in skills}
 
 
 def test_expand_skill_command_includes_skill_and_user_request(tmp_path: Path) -> None:
@@ -190,8 +223,9 @@ def test_expand_skill_command_includes_skill_and_user_request(tmp_path: Path) ->
     expanded = expand_skill_command("/skill:testing add parser tests", skills)
 
     assert expanded is not None
-    assert f'<skill name="testing" location="{skills[0].path}">' in expanded
-    assert f"References are relative to {skills[0].path.parent}." in expanded
+    testing = next(skill for skill in skills if skill.name == "testing")
+    assert f'<skill name="testing" location="{testing.path}">' in expanded
+    assert f"References are relative to {testing.path.parent}." in expanded
     assert "Run pytest." in expanded
     assert expanded.endswith("</skill>\n\nadd parser tests")
 
@@ -255,6 +289,9 @@ def test_build_skill_index(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    assert build_skill_index(load_skills(TauResourcePaths(root=tmp_path, agents_root=None))) == (
-        "Available skills:\n- testing: Test things"
-    )
+    index = build_skill_index(load_skills(TauResourcePaths(root=tmp_path, agents_root=None)))
+
+    assert "Available skills:" in index
+    assert "- create-tau-extension:" in index
+    assert "- tau-model-catalog:" in index
+    assert "- testing: Test things" in index

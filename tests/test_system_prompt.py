@@ -39,6 +39,12 @@ def test_default_prompt_includes_tools_guidelines_date_and_cwd(tmp_path: Path) -
     assert "Available tools:\n- read: Read file contents" in prompt
     assert "- Use bash for file operations like ls, rg, find" in prompt
     assert "- Use read to examine files instead of cat or sed." in prompt
+    assert "- Inspect relevant files and project instructions before editing" in prompt
+    assert "- Do not overwrite or discard unrelated user changes" in prompt
+    assert "- Report checks honestly; never claim a command passed unless you ran it" in prompt
+    assert "Tau documentation (read only when the user asks about Tau itself" in prompt
+    assert "adding models (docs/models.md)" in prompt
+    assert "extensions (docs/extensions.md, examples/extensions/)" in prompt
     assert prompt.endswith(f"Current date: 2026-06-17\nCurrent working directory: {tmp_path}")
 
 
@@ -77,6 +83,7 @@ def test_custom_prompt_replaces_default_but_keeps_append_context_and_date(tmp_pa
 
     assert prompt.startswith("Custom base.\n\nExtra rules.")
     assert "Available tools:" not in prompt
+    assert "Tau documentation" not in prompt
     assert '<project_instructions path="/repo/AGENTS.md">' in prompt
     assert "Follow rules." in prompt
     assert "Current date: 2026-06-17" in prompt

@@ -21,6 +21,7 @@ from tau_coding.provider_config import (
 )
 from tau_coding.rendering import PrintOutputMode
 from tau_coding.resources import TauResourcePaths
+from tau_coding.skills import load_skills
 from tau_coding.system_prompt import BuildSystemPromptOptions, build_system_prompt
 from tau_coding.tools import create_coding_tools
 from tau_coding.update_check import (
@@ -335,8 +336,13 @@ async def test_run_print_mode_prints_final_assistant_text(
     assert captured.out == "Hello\n"
     assert captured.err == ""
     assert provider.calls[0][0] == "fake"
+    resource_paths = TauResourcePaths(root=tmp_path / "resources", agents_root=None)
     assert provider.calls[0][1] == build_system_prompt(
-        BuildSystemPromptOptions(cwd=tmp_path, tools=create_coding_tools(cwd=tmp_path))
+        BuildSystemPromptOptions(
+            cwd=tmp_path,
+            tools=create_coding_tools(cwd=tmp_path),
+            skills=load_skills(resource_paths),
+        )
     )
     assert [tool.name for tool in provider.calls[0][3]] == ["read", "write", "edit", "bash"]
 
@@ -359,7 +365,11 @@ async def test_run_print_mode_system_command_prints_prompt_without_provider_call
 
     captured = capsys.readouterr()
     expected_system = build_system_prompt(
-        BuildSystemPromptOptions(cwd=tmp_path, tools=create_coding_tools(cwd=tmp_path))
+        BuildSystemPromptOptions(
+            cwd=tmp_path,
+            tools=create_coding_tools(cwd=tmp_path),
+            skills=load_skills(TauResourcePaths(root=tmp_path / "resources", agents_root=None)),
+        )
     )
     assert ok is True
     assert captured.out == f"{expected_system}\n"
