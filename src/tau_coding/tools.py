@@ -27,7 +27,6 @@ from tau_agent.tools import (
     AgentTool,
     AgentToolResult,
     ToolCancellationToken,
-    ToolExecutor,
     ToolUpdateCallback,
 )
 from tau_agent.types import JSONValue
