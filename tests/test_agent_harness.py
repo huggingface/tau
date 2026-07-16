@@ -3,7 +3,6 @@ from collections.abc import Mapping
 import pytest
 
 from pi_event_helpers import assistant_done, assistant_start, text_delta
-
 from tau_agent import (
     AgentTool,
     AgentToolResult,

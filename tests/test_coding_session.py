@@ -6,9 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from pi_event_helpers import assistant_done, assistant_error, assistant_start
-
 from conftest import isolate_home
+from pi_event_helpers import assistant_done, assistant_error, assistant_start
 from tau_agent import (
     AgentMessage,
     AgentTool,

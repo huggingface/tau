@@ -2,11 +2,10 @@ import re
 from pathlib import Path
 
 import pytest
-
-from pi_event_helpers import assistant_done, assistant_error, assistant_start, text_delta
 from typer.testing import CliRunner
 
 from conftest import isolate_home
+from pi_event_helpers import assistant_done, assistant_error, assistant_start, text_delta
 from tau_agent import AssistantMessage, UserMessage
 from tau_agent.session import JsonlSessionStorage, MessageEntry
 from tau_ai import (

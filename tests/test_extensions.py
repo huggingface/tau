@@ -8,7 +8,6 @@ from typing import cast
 import pytest
 
 from pi_event_helpers import assistant_done, assistant_start
-
 from tau_agent import AssistantMessage, ToolCall, UserMessage
 from tau_agent.messages import AgentMessage
 from tau_agent.session import CustomEntry, JsonlSessionStorage, LeafEntry, MessageEntry
