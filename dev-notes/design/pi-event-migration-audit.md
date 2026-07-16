@@ -217,3 +217,26 @@ This creates a bidirectional import graph between `tau_agent` and `tau_ai`. Impo
 | Tests | 11 test modules fail to import | High |
 
 The core text-only path works end-to-end, but any path involving session-level lifecycle, retries, compaction, tool-call streaming, or extensions is only partially migrated.
+
+
+## Remediation update
+
+The follow-up implementation addressed several audit findings:
+
+- Moved the provider contract and canonical assistant events into `tau_agent`, with
+  `tau_ai` retaining identity-preserving public re-exports. A layering test now
+  prevents `tau_agent -> tau_ai` imports.
+- Added focused canonical event-order and tool-result lifecycle tests.
+- Preserved streamed block ordering and fixed tool-call start snapshots.
+- Added coding-session `agent_end` (`willRetry`) and `agent_settled` events, queue
+  updates, and overflow compaction/retry lifecycle events.
+- Replaced the extension event allow-list with canonical event names and dispatches
+  fresh `(event, context)` handler arguments, including session-owned events.
+- Migrated built-in tools, provider payload conversion for session-only messages,
+  print frontends, and the hello-tool example to canonical models.
+- Verified real text and tool-call streams manually in JSON and text modes.
+
+Remaining release blockers are tracked by the still-red legacy test collection and
+full mypy run: the old tests and several consumers must be migrated rather than
+reintroducing removed public compatibility symbols. Provider parsers also still use
+the private transitional `_provider_events.py` bridge pending direct-emission work.
