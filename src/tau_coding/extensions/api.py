@@ -402,7 +402,6 @@ class ToolResultHookResult:
     """Result of a `tool_result` hook handler; set fields to override."""
 
     content: str | None = None
-    ok: bool | None = None
     details: dict[str, JSONValue] | None = None
 
 
