@@ -301,7 +301,12 @@ Observation events mirror the canonical agent/session stream — subscribe by
 `message_update` contains the provider event in `assistant_message_event`
 (text/thinking/tool-call start, delta, and end). Handlers receive
 `(event, context)` and run on the session event loop. `message_end` carries
-provider token usage at `event.message.usage`.
+provider token usage at `event.message.usage`. Extension `turn_start` and
+`turn_end` events are session-enriched like Pi's: both carry the same zero-based
+`turn_index`, `turn_start` also carries a Unix-millisecond `timestamp`, and the
+index increments after `turn_end` (then resets on the next `agent_start`). These
+extension payloads are defined in `tau_coding.extensions`; the portable
+`tau_agent` turn events intentionally remain free of session metadata.
 
 Lifecycle and intercepting hooks:
 
