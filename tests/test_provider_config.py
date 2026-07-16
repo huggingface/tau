@@ -692,6 +692,21 @@ def test_openai_compatible_config_from_provider_sets_reasoning_effort(
     assert plain.reasoning_effort is None
 
 
+def test_kimi_k3_maps_xhigh_thinking_to_max(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KIMI_CODE_API_KEY", "test-key")
+    settings = load_provider_settings(TauPaths(home=Path("/missing")))
+    provider = settings.get_provider("kimi-code")
+
+    config = openai_compatible_config_from_provider(
+        provider,
+        model="k3",
+        thinking_level="xhigh",
+    )
+
+    assert provider_thinking_levels(provider, model="k3") == ("xhigh",)
+    assert config.reasoning_effort == "max"
+
+
 def test_openai_compatible_config_from_provider_rejects_unsupported_thinking_level(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
