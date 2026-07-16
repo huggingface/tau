@@ -11,16 +11,16 @@ from shutil import copy2
 from tempfile import NamedTemporaryFile
 from typing import Any, Protocol, cast
 
-from tau_ai import (
+from tau_ai.env import (
     DEFAULT_ANTHROPIC_BASE_URL,
-    DEFAULT_OPENAI_CODEX_BASE_URL,
+    DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
     DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES,
     DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS,
     DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS,
     AnthropicConfig,
     OpenAICompatibleConfig,
 )
-from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL
+from tau_ai.openai_codex import DEFAULT_OPENAI_CODEX_BASE_URL
 from tau_coding.catalog_loader import effective_catalog, save_user_catalog_entries
 from tau_coding.credentials import FileCredentialStore, credentials_path
 from tau_coding.oauth_registry import get_oauth_provider

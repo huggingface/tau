@@ -22,6 +22,7 @@ from tau_agent.messages import (
     ToolResultMessage,
     Usage,
     UserMessage,
+    assistant_content,
     message_to_user,
 )
 from tau_agent.tools import AgentTool, ToolCall
@@ -413,9 +414,8 @@ class _ChatStreamParser:
         events.append(
             ProviderResponseEndEvent(
                 message=AssistantMessage(
-                    content="".join(self._content_parts),
-                    tool_calls=tool_calls,
-                    usage=self._usage,
+                    content=assistant_content("".join(self._content_parts), tool_calls),
+                    usage=self._usage or Usage(),
                 ),
                 finish_reason=self._finish_reason,
             )
@@ -520,9 +520,8 @@ class _ResponsesStreamParser:
         events.append(
             ProviderResponseEndEvent(
                 message=AssistantMessage(
-                    content="".join(self._content_parts),
-                    tool_calls=tool_calls,
-                    usage=self._usage,
+                    content=assistant_content("".join(self._content_parts), tool_calls),
+                    usage=self._usage or Usage(),
                 ),
                 finish_reason=finish_reason,
             )

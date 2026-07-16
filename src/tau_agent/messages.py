@@ -256,6 +256,16 @@ type AgentMessage = Annotated[
 ]
 
 
+def assistant_content(
+    text: str,
+    tool_calls: list[ToolCall] | tuple[ToolCall, ...] = (),
+) -> list[AssistantContent]:
+    """Build canonical ordered assistant blocks from parser accumulators."""
+    blocks: list[AssistantContent] = [TextContent(text=text)] if text else []
+    blocks.extend(tool_calls)
+    return blocks
+
+
 def content_text(content: str | list[Any]) -> str:
     """Return visible text from string or text/image content."""
     if isinstance(content, str):

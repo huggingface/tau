@@ -8,22 +8,19 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
-from tau_agent import (
-    AgentEndEvent,
-    AgentHarness,
-    AgentHarnessConfig,
-    CustomMessage,
-    MessageEndEvent,
-    QueuedMessages,
-    ToolExecutionEndEvent,
-)
+from tau_agent.events import AgentEndEvent, MessageEndEvent, ToolExecutionEndEvent
+from tau_agent.harness import AgentHarness, AgentHarnessConfig, QueuedMessages
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    CustomMessage,
+    TextContent,
     ToolResultMessage,
     UserMessage,
     message_text,
 )
+from tau_agent.provider import ModelProvider
+from tau_agent.provider_events import AssistantDoneEvent, AssistantErrorEvent, TextDeltaEvent
 from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
@@ -42,8 +39,6 @@ from tau_agent.session.jsonl import entry_to_json_line
 from tau_agent.session.tree import SessionTreeError, path_to_entry
 from tau_agent.tools import AgentTool
 from tau_agent.types import JSONValue
-from tau_ai import ModelProvider
-from tau_ai.events import AssistantDoneEvent, AssistantErrorEvent, TextDeltaEvent
 from tau_coding.branch_summary import summarize_branch_messages_with_model
 from tau_coding.commands import CommandRegistry, CommandResult, create_default_command_registry
 from tau_coding.context import discover_project_context_with_diagnostics
@@ -537,7 +532,7 @@ class CodingSession:
                 target_id = summary_entry.id
         elif selected_entry.type == "message" and isinstance(selected_entry.message, UserMessage):
             target_id = selected_entry.parent_id
-            input_prefill = selected_entry.message.content
+            input_prefill = selected_entry.message.text
 
         leaf = LeafEntry(parent_id=target_id, entry_id=target_id)
         await self._append_session_entry(leaf)
@@ -1566,7 +1561,7 @@ class CodingSession:
                         else:
                             yield retry_event
                     await self._persist_messages_since(retry_persisted_count)
-                    session_event_4 = AutoRetryEndEvent(success=True, attempt=1)
+                    session_event_4 = AutoRetryEndEvent(success=True, attempt=1, final_error=None)
                     await self._extension_runtime.emit_event(session_event_4)
                     yield session_event_4
                 session_event_5 = AgentSettledEvent()
@@ -2022,7 +2017,7 @@ def _first_recent_context_index(
         return next_user_index
 
     for index in range(candidate_index, len(rows)):
-        if rows[index][1].role != "tool":
+        if rows[index][1].role != "toolResult":
             return index
     return len(rows)
 
@@ -2183,10 +2178,7 @@ def _tree_entry_title(entry: SessionEntry) -> str:
 
 
 def _message_text_preview(message: AgentMessage) -> str:
-    content = message.content
-    if isinstance(content, str):
-        return _short_preview(content)
-    return _short_preview(str(content))
+    return _short_preview(message_text(message))
 
 
 def _short_preview(text: str, *, limit: int = 72) -> str:
@@ -2540,10 +2532,9 @@ def _interrupted_tool_repair_plan(
             repaired.append(
                 ToolResultMessage(
                     tool_call_id=tool_call.id,
-                    name=tool_call.name,
-                    content=content,
-                    ok=False,
-                    error=content,
+                    tool_name=tool_call.name,
+                    content=[TextContent(text=content)],
+                    is_error=True,
                 )
             )
 

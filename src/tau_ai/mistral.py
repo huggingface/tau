@@ -13,6 +13,7 @@ from tau_agent.messages import (
     AssistantMessage,
     ToolResultMessage,
     UserMessage,
+    assistant_content,
     message_to_user,
 )
 from tau_agent.tools import AgentTool, ToolCall
@@ -250,7 +251,7 @@ class _MistralStreamParser:
         events.append(
             ProviderResponseEndEvent(
                 message=AssistantMessage(
-                    content="".join(self._content_parts), tool_calls=tool_calls
+                    content=assistant_content("".join(self._content_parts), tool_calls)
                 ),
                 finish_reason=self._finish_reason or ("tool_calls" if tool_calls else "stop"),
             )

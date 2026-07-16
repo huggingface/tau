@@ -16,6 +16,7 @@ from tau_agent.messages import (
     ToolResultMessage,
     Usage,
     UserMessage,
+    assistant_content,
 )
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
@@ -518,9 +519,8 @@ async def _codex_provider_events(
 
     yield ProviderResponseEndEvent(
         message=AssistantMessage(
-            content="".join(content_parts),
-            tool_calls=tool_calls,
-            usage=usage,
+            content=assistant_content("".join(content_parts), tool_calls),
+            usage=usage or Usage(),
         ),
         finish_reason=finish_reason,
     )

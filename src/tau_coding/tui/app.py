@@ -39,11 +39,9 @@ from textual.widgets import (
 )
 from textual.worker import Worker
 
-from tau_agent import (
+from tau_agent.events import (
     AgentEndEvent,
-    AgentEvent,
     AgentStartEvent,
-    AssistantMessage,
     MessageEndEvent,
     MessageStartEvent,
     MessageUpdateEvent,
@@ -51,11 +49,16 @@ from tau_agent import (
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
 )
-from tau_agent.messages import AgentMessage, CustomMessage, UserMessage
+from tau_agent.messages import AgentMessage, AssistantMessage, CustomMessage, UserMessage
+from tau_agent.provider import CancellationToken
+from tau_agent.provider_events import (
+    AssistantErrorEvent,
+    AssistantMessageEvent,
+    TextDeltaEvent,
+    ThinkingDeltaEvent,
+)
 from tau_agent.tools import AgentTool
 from tau_agent.types import JSONValue
-from tau_ai import AssistantErrorEvent, AssistantMessageEvent, TextDeltaEvent, ThinkingDeltaEvent
-from tau_ai.provider import CancellationToken
 from tau_coding.catalog_loader import save_user_catalog_entries
 from tau_coding.commands import (
     LOGIN_PROVIDER_ALIASES,
@@ -3122,9 +3125,9 @@ class TauTuiApp(App[None]):
         """Load visible session messages and reseed prompt history from them."""
         self.state.load_messages(self.session.messages)
         self._prompt_history = tuple(
-            message.content
+            message.text
             for message in self.session.messages
-            if isinstance(message, UserMessage) and message.content.strip()
+            if isinstance(message, UserMessage) and message.text.strip()
         )
 
     def _is_compaction_active(self) -> bool:
@@ -3221,7 +3224,7 @@ class TauTuiApp(App[None]):
             )
         self._refresh_chrome(theme=theme)
 
-    def _consume_optimistic_user_event(self, event: AgentEvent, *, run_id: int) -> bool:
+    def _consume_optimistic_user_event(self, event: CodingSessionEvent, *, run_id: int) -> bool:
         """Return whether a user event confirms an already-rendered optimistic message."""
         if not isinstance(event, MessageEndEvent) or not isinstance(event.message, UserMessage):
             return False
@@ -3232,7 +3235,7 @@ class TauTuiApp(App[None]):
         return False
 
     def _replace_transformed_optimistic_user_message(
-        self, event: AgentEvent, *, run_id: int
+        self, event: CodingSessionEvent, *, run_id: int
     ) -> bool:
         """Reconcile a transformed prompt with its optimistic render.
 
@@ -3254,7 +3257,7 @@ class TauTuiApp(App[None]):
             del self._optimistic_user_messages[index]
             for item in reversed(self.state.items):
                 if item.role == "user" and item.text == pending_text:
-                    item.text = event.message.content
+                    item.text = event.message.text
                     break
             self._refresh()
             self._sync_header_title()
@@ -4994,7 +4997,7 @@ def _should_optimistically_render_prompt(text: str) -> bool:
     return bool(stripped) and not stripped.startswith("/")
 
 
-def _is_user_message_end_event(event: AgentEvent) -> bool:
+def _is_user_message_end_event(event: CodingSessionEvent) -> bool:
     """Return whether an agent event closes a user-context message."""
     return isinstance(event, MessageEndEvent) and isinstance(
         event.message, (UserMessage, CustomMessage)

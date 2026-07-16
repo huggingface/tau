@@ -1,18 +1,16 @@
 """Translate Pi-compatible session events into Textual display state."""
 
-from tau_agent import (
+from tau_agent.events import (
     AgentEndEvent,
     AgentStartEvent,
-    AssistantMessage,
-    CustomMessage,
     MessageEndEvent,
     MessageStartEvent,
     MessageUpdateEvent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
-    UserMessage,
 )
+from tau_agent.messages import AssistantMessage, CustomMessage, ToolCall, UserMessage
 from tau_ai.events import TextDeltaEvent, ThinkingDeltaEvent
 from tau_coding.events import AutoRetryStartEvent, CodingSessionEvent, QueueUpdateEvent
 from tau_coding.tui.state import TuiState
@@ -72,8 +70,6 @@ class TuiEventAdapter:
                 self.state.assistant_buffer = ""
             return
         if isinstance(event, ToolExecutionStartEvent):
-            from tau_agent import ToolCall
-
             self._flush()
             self.state.add_tool_call(
                 ToolCall(id=event.tool_call_id, name=event.tool_name, arguments=event.args)

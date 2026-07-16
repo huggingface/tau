@@ -14,6 +14,7 @@ from tau_agent.messages import (
     ToolResultMessage,
     Usage,
     UserMessage,
+    assistant_content,
     message_to_user,
 )
 from tau_agent.tools import AgentTool, ToolCall
@@ -249,9 +250,8 @@ class AnthropicProvider:
 
                         yield ProviderResponseEndEvent(
                             message=AssistantMessage(
-                                content="".join(content_parts),
-                                tool_calls=tool_calls,
-                                usage=usage,
+                                content=assistant_content("".join(content_parts), tool_calls),
+                                usage=usage or Usage(),
                             ),
                             finish_reason=finish_reason,
                         )

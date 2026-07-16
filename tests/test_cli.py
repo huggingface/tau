@@ -446,7 +446,7 @@ async def test_run_print_mode_persists_session_entries(
     assert ok is True
     assert [message.role for message in messages] == ["user", "assistant"]
     assert messages[0].content == "Say hello"
-    assert messages[1].content == "Done"
+    assert messages[1].text == "Done"
     assert any(entry.type == "leaf" for entry in entries)
 
 
@@ -562,7 +562,8 @@ async def test_run_print_mode_can_emit_json_events(
     captured = capsys.readouterr()
     assert ok is True
     assert '"type":"agent_start"' in captured.out
-    assert '"type":"message_delta"' in captured.out
+    assert '"type":"message_update"' in captured.out
+    assert '"assistantMessageEvent":{"type":"text_delta"' in captured.out
     assert captured.err == ""
 
 
