@@ -13,6 +13,7 @@ from tau_agent import (
     AgentTool,
     AssistantMessage,
     TextContent,
+    ThinkingContent,
     ToolCall,
     ToolResultMessage,
     UserMessage,
@@ -656,6 +657,32 @@ async def test_tree_can_branch_from_first_user_message_before_assistant_response
     assert message_entries[1].message.stop_reason == "error"
     assert isinstance(entries[-1], LeafEntry)
     assert entries[-1].entry_id == message_entries[0].parent_id
+
+
+@pytest.mark.anyio
+async def test_tree_choices_label_structured_tool_calls_without_exposing_thinking(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    entry = MessageEntry(
+        id="assistant",
+        message=AssistantMessage(
+            content=[
+                ThinkingContent(thinking="Inspect the project before answering."),
+                ToolCall(id="call-1", name="read", arguments={"path": "README.md"}),
+                ToolCall(id="call-2", name="bash", arguments={"command": "git status"}),
+            ]
+        ),
+    )
+    await storage.append(entry)
+    await storage.append(LeafEntry(entry_id=entry.id))
+    session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
+
+    choices = await session.tree_choices()
+
+    assert len(choices) == 1
+    assert choices[0].label == "tool call: read, bash"
+    assert choices[0].is_tool_call is True
 
 
 @pytest.mark.anyio

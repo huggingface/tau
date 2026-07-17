@@ -2165,7 +2165,11 @@ def _tree_entry_title(entry: SessionEntry) -> str:
     match entry.type:
         case "message":
             message = entry.message
-            if isinstance(message, AssistantMessage) and message.tool_calls and not message.content:
+            if (
+                isinstance(message, AssistantMessage)
+                and message.tool_calls
+                and not message.text.strip()
+            ):
                 tool_names = ", ".join(call.name for call in message.tool_calls)
                 return f"tool call: {tool_names}"
             return f"{message.role}: {_message_text_preview(message)}"
