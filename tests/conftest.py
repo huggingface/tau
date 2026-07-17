@@ -1,6 +1,17 @@
+import webbrowser
 from pathlib import Path
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def prevent_browser_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail tests that accidentally launch an external browser."""
+
+    def fail_browser_open(url: str, *_args: object, **_kwargs: object) -> bool:
+        pytest.fail(f"Test attempted to open a browser URL: {url}")
+
+    monkeypatch.setattr(webbrowser, "open", fail_browser_open)
 
 
 def isolate_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

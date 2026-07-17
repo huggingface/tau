@@ -4618,7 +4618,19 @@ async def test_tui_login_saves_provider_key(
 
 
 @pytest.mark.anyio
-async def test_tui_anthropic_subscription_alias_opens_oauth() -> None:
+async def test_tui_anthropic_subscription_alias_opens_oauth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    login_started = asyncio.Event()
+
+    class FakeOAuthProvider:
+        async def login(self, _callbacks: object) -> OAuthCredential:
+            login_started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    fake_provider = FakeOAuthProvider()
+    monkeypatch.setattr(tui_app, "get_oauth_provider", lambda _name: fake_provider)
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
@@ -4629,6 +4641,7 @@ async def test_tui_anthropic_subscription_alias_opens_oauth() -> None:
 
         assert isinstance(app.screen, OAuthLoginScreen)
         assert app.screen.provider.name == "anthropic"
+        assert login_started.is_set()
 
 
 @pytest.mark.anyio
