@@ -1442,6 +1442,33 @@ def provider_default_thinking_level(
     return levels[0]
 
 
+def resolve_startup_thinking_level(
+    provider: ProviderConfig,
+    model: str,
+    *,
+    preferred: ThinkingLevel = DEFAULT_THINKING_LEVEL,
+) -> ThinkingLevel | None:
+    """Pick a valid startup thinking level for a provider/model pair.
+
+    Startup (TUI and print mode) must never crash just because the remembered
+    default model does not support the global default level. The level is
+    resolved with the same precedence used when switching models mid-session:
+    the remembered per-model preference wins, then the global ``preferred``
+    level, then the provider/catalog default, then the first available level.
+
+    Returns ``None`` when the model has no configurable thinking levels.
+    """
+    levels = provider_thinking_levels(provider, model=model)
+    if not levels:
+        return None
+    remembered = provider.thinking_defaults.get(model)
+    if remembered in levels:
+        return remembered
+    if preferred in levels:
+        return preferred
+    return provider_default_thinking_level(provider, model=model) or levels[0]
+
+
 def openai_compatible_config_from_provider(
     provider: OpenAICompatibleProviderConfig,
     *,

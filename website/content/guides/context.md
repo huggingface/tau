@@ -76,3 +76,11 @@ supported levels for the active model. When it's unavailable, `/session` shows
 the reason (e.g. the provider doesn't declare `thinking_levels`, or the model
 isn't listed). Custom providers can opt in via `thinking_levels` in their config
 — see [Configuration]({{< relref "../reference/configuration.md#providers" >}}).
+
+At startup Tau picks a valid level for the selected model automatically: a
+remembered per-model choice wins, then `medium`, then the provider's own
+default, then the first level the model supports. So a model that only supports
+`xhigh` (for example `kimi-code:k3`) opens at `xhigh` instead of failing with
+"Thinking mode medium is not available". Picking an unsupported level
+explicitly (via `/think` or the thinking picker) still shows an error listing
+the available modes.

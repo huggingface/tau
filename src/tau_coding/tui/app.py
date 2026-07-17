@@ -98,6 +98,7 @@ from tau_coding.provider_config import (
     provider_config_from_catalog_entry,
     provider_has_usable_credentials,
     resolve_provider_selection,
+    resolve_startup_thinking_level,
     save_provider_settings,
     upsert_openai_compatible_provider,
     upsert_saved_provider,
@@ -115,7 +116,6 @@ from tau_coding.session import (
 )
 from tau_coding.session_manager import CodingSessionRecord, SessionManager
 from tau_coding.shell_config import load_shell_settings
-from tau_coding.thinking import DEFAULT_THINKING_LEVEL
 from tau_coding.tui.adapter import TuiEventAdapter
 from tau_coding.tui.autocomplete import (
     CompletionItem,
@@ -5761,7 +5761,10 @@ async def run_tui_app(
         provider = create_model_provider(
             selection.provider,
             model=selection.model,
-            thinking_level=DEFAULT_THINKING_LEVEL,
+            thinking_level=resolve_startup_thinking_level(
+                selection.provider,
+                selection.model,
+            ),
         )
     except RuntimeError:
         login_required_message = (
