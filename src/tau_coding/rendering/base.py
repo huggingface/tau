@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Protocol
 
-from tau_agent import AgentEvent
+from tau_coding.events import CodingSessionEvent
 
 
 class PrintOutputMode(StrEnum):
@@ -19,7 +19,7 @@ class PrintOutputMode(StrEnum):
 class EventRenderer(Protocol):
     """Consumes agent events and renders them for a frontend or output mode."""
 
-    def render(self, event: AgentEvent) -> None:
+    def render(self, event: CodingSessionEvent) -> None:
         """Render one event."""
 
     def finish(self) -> bool:

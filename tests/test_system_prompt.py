@@ -14,9 +14,14 @@ from tau_coding.system_prompt import (
 from tau_coding.tools import create_coding_tools
 
 
-async def _unused_executor(_arguments: object, signal: object | None = None) -> AgentToolResult:
-    del signal
-    return AgentToolResult(tool_call_id="", name="hidden", ok=True, content="")
+async def _unused_executor(
+    tool_call_id: str,
+    _arguments: object,
+    signal: object | None = None,
+    on_update: object | None = None,
+) -> AgentToolResult:
+    del tool_call_id, signal, on_update
+    return AgentToolResult(content="")
 
 
 def test_default_prompt_includes_tools_guidelines_date_and_cwd(tmp_path: Path) -> None:
@@ -40,9 +45,10 @@ def test_default_prompt_includes_tools_guidelines_date_and_cwd(tmp_path: Path) -
 def test_tool_without_prompt_snippet_is_hidden_from_available_tools() -> None:
     tool = AgentTool(
         name="hidden",
+        label="Hidden",
         description="Still sent to provider",
-        input_schema={"type": "object"},
-        executor=_unused_executor,
+        parameters={"type": "object"},
+        execute_fn=_unused_executor,  # type: ignore[arg-type]
     )
 
     assert format_available_tools([tool]) == "(none)"
@@ -113,9 +119,10 @@ def test_skills_are_included_only_when_read_tool_is_available(tmp_path: Path) ->
     skill = Skill(name="testing", path=tmp_path / "testing.md", content="", description="Test")
     no_read_tool = AgentTool(
         name="custom",
+        label="Custom",
         description="Custom",
-        input_schema={"type": "object"},
-        executor=_unused_executor,
+        parameters={"type": "object"},
+        execute_fn=_unused_executor,  # type: ignore[arg-type]
         prompt_snippet="Custom tool",
     )
 

@@ -230,9 +230,23 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
     assert coding.base_url == "https://api.kimi.com/coding/v1"
     assert coding.api_key_env == "KIMI_CODE_API_KEY"
     assert coding.credential_name == "kimi-code"
-    assert coding.models == ("kimi-for-coding",)
+    assert coding.models == ("k3", "kimi-for-coding")
     assert coding.default_model == "kimi-for-coding"
-    assert coding.context_windows == {"kimi-for-coding": 262_144}
+    assert coding.context_windows == {"k3": 1_048_576, "kimi-for-coding": 262_144}
+
+    k3 = coding.model_metadata["k3"]
+    assert k3.name == "Kimi K3"
+    assert k3.reasoning is True
+    assert k3.input == ("text",)
+    assert k3.context_window == 1_048_576
+    assert k3.thinking_level_map == {
+        "off": None,
+        "minimal": None,
+        "low": None,
+        "medium": None,
+        "high": None,
+        "xhigh": "max",
+    }
 
     latest = coding.model_metadata["kimi-for-coding"]
     assert latest.name == "Kimi for Coding (latest)"

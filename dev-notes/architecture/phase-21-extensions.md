@@ -212,6 +212,18 @@ the tool (fail-safe).
 
 ### Events
 
+> **Superseded protocol note (Pi 0.80.6 cutover):** the original event/tool/message
+> descriptions below document the first Tau extension implementation. The current
+> contract is the canonical protocol in `tau_agent.events`, `tau_agent.tools`, and
+> `tau_coding.events`: handlers receive `(event, context)`, streamed provider events
+> are nested under `message_update.assistant_message_event`, tool executors receive
+> `(tool_call_id, arguments, signal, on_update)`, and custom messages use the
+> dedicated `CustomMessage` role. The session-to-extension adapter additionally
+> enriches `turn_start` with Pi's zero-based `turn_index` and millisecond
+> `timestamp`, and `turn_end` with the matching `turn_index`; portable
+> `tau_agent` events remain session-agnostic. See the published extension guide
+> and `dev-notes/design/pi-event-migration-audit.md` for the final shape.
+
 Observation events reuse the `AgentEvent` `type` literals directly:
 `agent_start`, `agent_end`, `turn_start`, `turn_end`, `message_start`,
 `message_delta`, `thinking_delta`, `message_end`, `tool_execution_start`,

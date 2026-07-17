@@ -1,5 +1,25 @@
 [
   {
+    "version": "0.2.0",
+    "date": "2026-07-16",
+    "sections": {
+      "New": [
+        "Add Pi-compatible agent, provider, coding-session, and extension event streams with canonical lifecycle and settlement events.",
+        "Add OAuth login parity for Anthropic, GitHub Copilot, and OpenCode providers.",
+        "Add Kimi K3 model support."
+      ],
+      "Changed": [
+        "Replace the legacy runtime message, event, tool, session, and extension protocol with strict Pi-compatible contracts.",
+        "Enrich extension turn events with turn indexes and timestamps.",
+        "Keep tau_agent independent of tau_ai by moving portable provider contracts into the agent package."
+      ],
+      "Fixed": [
+        "Migrate legacy Tau v1 sessions, including null usage costs, at the persistence boundary.",
+        "Improve interactive OAuth login modal navigation."
+      ]
+    }
+  },
+  {
     "version": "0.1.6",
     "date": "2026-07-15",
     "sections": {

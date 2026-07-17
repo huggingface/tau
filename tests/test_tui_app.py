@@ -23,12 +23,11 @@ from tau_agent import (
     AgentStartEvent,
     AgentToolResult,
     AssistantMessage,
-    ErrorEvent,
-    MessageDeltaEvent,
+    CustomMessage,
     MessageEndEvent,
     MessageStartEvent,
-    QueueUpdateEvent,
-    ThinkingDeltaEvent,
+    MessageUpdateEvent,
+    TextContent,
     ToolCall,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
@@ -36,9 +35,12 @@ from tau_agent import (
     ToolResultMessage,
     UserMessage,
 )
+from tau_agent.messages import assistant_content
+from tau_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
 from tau_coding.catalog_loader import user_catalog_path
 from tau_coding.commands import CommandResult
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
+from tau_coding.events import QueueUpdateEvent
 from tau_coding.paths import TauPaths
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_config import (
@@ -606,7 +608,7 @@ def test_state_load_messages_projects_custom_type_on_resume() -> None:
     state.load_messages(
         [
             UserMessage(content="hello"),
-            UserMessage(
+            CustomMessage(
                 content="<task-notification/>",
                 custom_type="subagent-notification",
                 details={"id": "run-1"},
@@ -950,20 +952,21 @@ def test_tui_state_renders_restored_skill_file_reads_with_skill_style() -> None:
     state.load_messages(
         [
             AssistantMessage(
-                content="Reading skill.",
-                tool_calls=[
-                    ToolCall(
-                        id="call-1",
-                        name="read",
-                        arguments={"path": "/workspace/.tau/skills/review.md"},
-                    )
-                ],
+                content=assistant_content(
+                    "Reading skill.",
+                    [
+                        ToolCall(
+                            id="call-1",
+                            name="read",
+                            arguments={"path": "/workspace/.tau/skills/review.md"},
+                        )
+                    ],
+                )
             ),
             ToolResultMessage(
                 tool_call_id="call-1",
-                name="read",
-                ok=True,
-                content="# Review\nFull noisy instructions.",
+                tool_name="read",
+                content=[TextContent(text="# Review\nFull noisy instructions.")],
             ),
         ]
     )
@@ -1290,11 +1293,16 @@ async def test_tool_execution_updates_render_in_place() -> None:
         await pilot.pause()
         await stream(
             ToolExecutionStartEvent(
-                tool_call=ToolCall(id="call-1", name="agent", arguments={"prompt": "explore"})
+                tool_call_id="call-1", tool_name="agent", args={"prompt": "explore"}
             )
         )
         await stream(
-            ToolExecutionUpdateEvent(tool_call_id="call-1", message="agent-1: bash · turn 1")
+            ToolExecutionUpdateEvent(
+                tool_call_id="call-1",
+                tool_name="agent",
+                args={},
+                partial_result=AgentToolResult(content="agent-1: bash · turn 1"),
+            )
         )
         await pilot.pause()
 
@@ -1304,7 +1312,12 @@ async def test_tool_execution_updates_render_in_place() -> None:
 
         # A later update replaces the progress line instead of appending a block.
         await stream(
-            ToolExecutionUpdateEvent(tool_call_id="call-1", message="agent-1: turn 2 done")
+            ToolExecutionUpdateEvent(
+                tool_call_id="call-1",
+                tool_name="agent",
+                args={},
+                partial_result=AgentToolResult(content="agent-1: turn 2 done"),
+            )
         )
         await pilot.pause()
         tool_widgets = [w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool"]
@@ -1315,9 +1328,10 @@ async def test_tool_execution_updates_render_in_place() -> None:
         # The final result clears the transient progress line.
         await stream(
             ToolExecutionEndEvent(
-                result=AgentToolResult(
-                    tool_call_id="call-1", name="agent", ok=True, content="report"
-                )
+                tool_call_id="call-1",
+                tool_name="agent",
+                result=AgentToolResult(content="report"),
+                is_error=False,
             )
         )
         await pilot.pause()
@@ -1641,7 +1655,7 @@ async def test_tui_message_start_does_not_mount_empty_assistant_message() -> Non
     app = TauTuiApp(FakeSession())
 
     async with app.run_test(size=(120, 30)) as pilot:
-        await app._apply_streaming_transcript_event(MessageStartEvent())
+        await app._apply_streaming_transcript_event(MessageStartEvent(message=AssistantMessage()))
         await pilot.pause()
 
         assert list(app.query(StreamingTranscriptMessageWidget)) == []
@@ -1649,12 +1663,23 @@ async def test_tui_message_start_does_not_mount_empty_assistant_message() -> Non
 
 @pytest.mark.anyio
 async def test_tui_streaming_deltas_update_active_message_without_full_refresh() -> None:
+    partial = AssistantMessage()
     session = FakeSession(
         events=[
             AgentStartEvent(),
-            MessageStartEvent(),
-            MessageDeltaEvent(delta="alpha "),
-            MessageDeltaEvent(delta="beta"),
+            MessageStartEvent(message=partial),
+            MessageUpdateEvent(
+                message=partial,
+                assistant_message_event=TextDeltaEvent(
+                    content_index=0, delta="alpha ", partial=partial
+                ),
+            ),
+            MessageUpdateEvent(
+                message=partial,
+                assistant_message_event=TextDeltaEvent(
+                    content_index=0, delta="beta", partial=partial
+                ),
+            ),
             MessageEndEvent(message=AssistantMessage(content="alpha beta")),
             AgentEndEvent(),
         ]
@@ -2435,17 +2460,16 @@ def test_tui_app_loads_restored_messages_into_display_state() -> None:
             messages=[
                 UserMessage(content="Read the file"),
                 AssistantMessage(
-                    content="I'll inspect it.",
-                    tool_calls=[
-                        ToolCall(id="call-1", name="edit", arguments={"path": "README.md"})
-                    ],
+                    content=assistant_content(
+                        "I'll inspect it.",
+                        [ToolCall(id="call-1", name="edit", arguments={"path": "README.md"})],
+                    )
                 ),
                 ToolResultMessage(
                     tool_call_id="call-1",
-                    name="edit",
-                    content="Successfully replaced 1 block.",
-                    ok=True,
-                    data={"patch": "--- README.md\n+++ README.md\n@@\n-old\n+new"},
+                    tool_name="edit",
+                    content=[TextContent(text="Successfully replaced 1 block.")],
+                    details={"patch": "--- README.md\n+++ README.md\n@@\n-old\n+new"},
                 ),
             ]
         )
@@ -2575,7 +2599,11 @@ async def test_tui_app_clears_activity_status_on_error() -> None:
         indicator = app.query_one("#prompt-prefix")
         app.adapter.apply(AgentStartEvent())
         app._refresh()
-        app.adapter.apply(ErrorEvent(message="provider failed", recoverable=False))
+        app.adapter.apply(
+            MessageEndEvent(
+                message=AssistantMessage(stop_reason="error", error_message="provider failed")
+            )
+        )
         app._refresh()
 
         assert not app.query("#status")
@@ -2749,8 +2777,8 @@ class _RenderCallRuntime:
             return f"▸ agent · {arguments.get('description')}"
         return None
 
-    def render_tool_result(self, result, expanded):  # noqa: ANN001
-        if result.name == "agent" and result.details:
+    def render_tool_result(self, tool_name, result, expanded):  # noqa: ANN001
+        if tool_name == "agent" and result.details:
             suffix = " · expanded" if expanded else ""
             return f"[green]✓[/green] {result.details.get('description')} completed{suffix}"
         return None
@@ -2774,14 +2802,19 @@ async def test_restored_tool_calls_render_via_render_call() -> None:
     session = FakeSession(
         messages=[
             AssistantMessage(
-                content="",
-                tool_calls=[
-                    ToolCall(
-                        id="call-1",
-                        name="agent",
-                        arguments={"prompt": "long prompt", "description": "Summarize codebase"},
-                    )
-                ],
+                content=assistant_content(
+                    "",
+                    [
+                        ToolCall(
+                            id="call-1",
+                            name="agent",
+                            arguments={
+                                "prompt": "long prompt",
+                                "description": "Summarize codebase",
+                            },
+                        )
+                    ],
+                )
             )
         ]
     )
@@ -2809,15 +2842,18 @@ async def test_render_call_line_composes_with_live_update_text() -> None:
         await pilot.pause()
         await stream(
             ToolExecutionStartEvent(
-                tool_call=ToolCall(
-                    id="call-1",
-                    name="agent",
-                    arguments={"prompt": "x", "description": "Summarize codebase"},
-                )
+                tool_call_id="call-1",
+                tool_name="agent",
+                args={"prompt": "x", "description": "Summarize codebase"},
             )
         )
         await stream(
-            ToolExecutionUpdateEvent(tool_call_id="call-1", message="agent-1: bash · turn 1")
+            ToolExecutionUpdateEvent(
+                tool_call_id="call-1",
+                tool_name="agent",
+                args={},
+                partial_result=AgentToolResult(content="agent-1: bash · turn 1"),
+            )
         )
         await pilot.pause()
 
@@ -2840,22 +2876,20 @@ async def test_tool_result_renders_via_render_result() -> None:
         await pilot.pause()
         await stream(
             ToolExecutionStartEvent(
-                tool_call=ToolCall(
-                    id="call-1",
-                    name="agent",
-                    arguments={"prompt": "x", "description": "Summarize codebase"},
-                )
+                tool_call_id="call-1",
+                tool_name="agent",
+                args={"prompt": "x", "description": "Summarize codebase"},
             )
         )
         await stream(
             ToolExecutionEndEvent(
+                tool_call_id="call-1",
+                tool_name="agent",
+                is_error=False,
                 result=AgentToolResult(
-                    tool_call_id="call-1",
-                    name="agent",
-                    ok=True,
-                    content="the raw result body",
+                    content=[TextContent(text="the raw result body")],
                     details={"description": "Summarize codebase"},
-                )
+                ),
             )
         )
         await pilot.pause()
@@ -2883,20 +2917,21 @@ async def test_restored_tool_results_render_via_render_result() -> None:
     session = FakeSession(
         messages=[
             AssistantMessage(
-                content="",
-                tool_calls=[
-                    ToolCall(
-                        id="call-1",
-                        name="agent",
-                        arguments={"prompt": "x", "description": "Summarize codebase"},
-                    )
-                ],
+                content=assistant_content(
+                    "",
+                    [
+                        ToolCall(
+                            id="call-1",
+                            name="agent",
+                            arguments={"prompt": "x", "description": "Summarize codebase"},
+                        )
+                    ],
+                )
             ),
             ToolResultMessage(
                 tool_call_id="call-1",
-                name="agent",
-                ok=True,
-                content="the raw result body",
+                tool_name="agent",
+                content=[TextContent(text="the raw result body")],
                 details={"description": "Summarize codebase"},
             ),
         ]
@@ -2926,11 +2961,9 @@ async def test_pending_tool_row_shows_spinner_while_running() -> None:
         app.state.running = True
         await stream(
             ToolExecutionStartEvent(
-                tool_call=ToolCall(
-                    id="call-1",
-                    name="agent",
-                    arguments={"prompt": "x", "description": "Summarize codebase"},
-                )
+                tool_call_id="call-1",
+                tool_name="agent",
+                args={"prompt": "x", "description": "Summarize codebase"},
             )
         )
         app._tick_activity()
@@ -2964,7 +2997,10 @@ async def test_pending_tool_row_shows_spinner_while_running() -> None:
         # Once the result lands the static marker returns.
         await stream(
             ToolExecutionEndEvent(
-                result=AgentToolResult(tool_call_id="call-1", name="agent", ok=True, content="done")
+                tool_call_id="call-1",
+                tool_name="agent",
+                is_error=False,
+                result=AgentToolResult(content="done"),
             )
         )
         await pilot.pause()
@@ -3360,7 +3396,7 @@ async def test_tui_idle_extension_custom_message_renders_card_not_raw_content() 
         events=[
             AgentStartEvent(),
             MessageEndEvent(
-                message=UserMessage(
+                message=CustomMessage(
                     content=raw,
                     custom_type="subagent-notification",
                     details=details,
@@ -3401,7 +3437,7 @@ async def test_tui_mid_run_custom_follow_up_renders_card_not_raw_content() -> No
             AgentStartEvent(),
             MessageEndEvent(message=UserMessage(content="New prompt")),
             MessageEndEvent(
-                message=UserMessage(
+                message=CustomMessage(
                     content=raw,
                     custom_type="subagent-notification",
                     details={"description": "Summarize codebase"},
@@ -5683,12 +5719,23 @@ async def test_tui_app_toggles_thinking_tokens_from_keybinding_while_running() -
 
 @pytest.mark.anyio
 async def test_tui_app_hidden_thinking_placeholder_stays_before_streamed_answer() -> None:
+    partial = AssistantMessage()
     session = FakeSession(
         events=[
             AgentStartEvent(),
-            ThinkingDeltaEvent(delta="private plan"),
-            MessageStartEvent(message_role="assistant"),
-            MessageDeltaEvent(delta="public answer"),
+            MessageUpdateEvent(
+                message=partial,
+                assistant_message_event=ThinkingDeltaEvent(
+                    content_index=0, delta="private plan", partial=partial
+                ),
+            ),
+            MessageStartEvent(message=partial),
+            MessageUpdateEvent(
+                message=partial,
+                assistant_message_event=TextDeltaEvent(
+                    content_index=0, delta="public answer", partial=partial
+                ),
+            ),
             MessageEndEvent(message=AssistantMessage(content="public answer")),
             AgentEndEvent(),
         ]
@@ -5936,7 +5983,17 @@ async def test_tui_prompt_worker_refreshes_directly() -> None:
 async def test_tui_prompt_worker_shows_diagnostic_log_path_for_error_event(tmp_path: Path) -> None:
     class ErrorSession(FakeSession):
         def __init__(self) -> None:
-            super().__init__(events=[AgentStartEvent(), ErrorEvent(message="provider failed")])
+            super().__init__(
+                events=[
+                    AgentStartEvent(),
+                    MessageEndEvent(
+                        message=AssistantMessage(
+                            stop_reason="error", error_message="provider failed"
+                        )
+                    ),
+                    AgentEndEvent(),
+                ]
+            )
             self.last_diagnostic_log_path = tmp_path / "tau-home" / "logs" / "agent-calls.jsonl"
 
     session = ErrorSession()
@@ -5992,15 +6049,15 @@ async def test_tui_prompt_worker_refreshes_context_after_message_changes() -> No
             yield MessageEndEvent(message=AssistantMessage(content="Using a tool."))
             self.context_token_estimate = 40
             yield ToolExecutionStartEvent(
-                tool_call=ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
+                tool_call_id="call-1",
+                tool_name="read",
+                args={"path": "README.md"},
             )
             yield ToolExecutionEndEvent(
-                result=AgentToolResult(
-                    tool_call_id="call-1",
-                    name="read",
-                    ok=True,
-                    content="contents",
-                )
+                tool_call_id="call-1",
+                tool_name="read",
+                result=AgentToolResult(content="contents"),
+                is_error=False,
             )
             self.context_token_estimate = 50
             yield AgentEndEvent()
@@ -6072,7 +6129,7 @@ async def test_tui_app_shows_startup_update_notice_in_transcript_only() -> None:
         ]
 
     assert notifications == []
-    assert session.messages == (UserMessage(content="Earlier prompt"),)
+    assert [message.text for message in session.messages] == ["Earlier prompt"]
 
 
 @pytest.mark.anyio

@@ -8,17 +8,19 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
-from tau_agent import (
-    AgentEvent,
-    AgentHarness,
-    AgentHarnessConfig,
-    ErrorEvent,
-    MessageEndEvent,
-    QueuedMessages,
-    QueueUpdateEvent,
-    ToolExecutionEndEvent,
+from tau_agent.events import AgentEndEvent, MessageEndEvent, ToolExecutionEndEvent
+from tau_agent.harness import AgentHarness, AgentHarnessConfig, QueuedMessages
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    CustomMessage,
+    TextContent,
+    ToolResultMessage,
+    UserMessage,
+    message_text,
 )
-from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
+from tau_agent.provider import ModelProvider
+from tau_agent.provider_events import AssistantDoneEvent, AssistantErrorEvent, TextDeltaEvent
 from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
@@ -37,8 +39,6 @@ from tau_agent.session.jsonl import entry_to_json_line
 from tau_agent.session.tree import SessionTreeError, path_to_entry
 from tau_agent.tools import AgentTool
 from tau_agent.types import JSONValue
-from tau_ai import ModelProvider
-from tau_ai.events import ProviderErrorEvent, ProviderResponseEndEvent, ProviderTextDeltaEvent
 from tau_coding.branch_summary import summarize_branch_messages_with_model
 from tau_coding.commands import CommandRegistry, CommandResult, create_default_command_registry
 from tau_coding.context import discover_project_context_with_diagnostics
@@ -58,6 +58,16 @@ from tau_coding.diagnostics import (
     AgentCallDiagnosticContext,
     AgentCallDiagnosticLogger,
     new_agent_call_run_id,
+)
+from tau_coding.events import (
+    AgentSettledEvent,
+    AutoRetryEndEvent,
+    AutoRetryStartEvent,
+    CodingSessionEvent,
+    CompactionEndEvent,
+    CompactionStartEvent,
+    QueueUpdateEvent,
+    SessionAgentEndEvent,
 )
 from tau_coding.extensions.runtime import ExtensionRuntime
 from tau_coding.paths import TauPaths
@@ -522,7 +532,7 @@ class CodingSession:
                 target_id = summary_entry.id
         elif selected_entry.type == "message" and isinstance(selected_entry.message, UserMessage):
             target_id = selected_entry.parent_id
-            input_prefill = selected_entry.message.content
+            input_prefill = selected_entry.message.text
 
         leaf = LeafEntry(parent_id=target_id, entry_id=target_id)
         await self._append_session_entry(leaf)
@@ -690,9 +700,12 @@ class CodingSession:
         details: dict[str, JSONValue] | None = None,
     ) -> None:
         """Queue a steering user message (extension runtime seam)."""
-        self._harness.steer_message(
-            UserMessage(content=content, custom_type=custom_type, details=details)
+        message: AgentMessage = (
+            CustomMessage(custom_type=custom_type, content=content, details=details)
+            if custom_type is not None
+            else UserMessage(content=content)
         )
+        self._harness.steer_message(message)
 
     def queue_follow_up_message(
         self,
@@ -702,9 +715,12 @@ class CodingSession:
         details: dict[str, JSONValue] | None = None,
     ) -> None:
         """Queue a follow-up user message (extension runtime seam)."""
-        self._harness.follow_up_message(
-            UserMessage(content=content, custom_type=custom_type, details=details)
+        message: AgentMessage = (
+            CustomMessage(custom_type=custom_type, content=content, details=details)
+            if custom_type is not None
+            else UserMessage(content=content)
         )
+        self._harness.follow_up_message(message)
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         """Persist an extension-owned custom entry on the active branch path.
@@ -753,12 +769,12 @@ class CodingSession:
     @property
     def queued_steering_messages(self) -> tuple[str, ...]:
         """Return queued steering message text for UI display."""
-        return tuple(message.content for message in self._harness.queued_messages.steering)
+        return tuple(message_text(message) for message in self._harness.queued_messages.steering)
 
     @property
     def queued_follow_up_messages(self) -> tuple[str, ...]:
         """Return queued follow-up message text for UI display."""
-        return tuple(message.content for message in self._harness.queued_messages.follow_up)
+        return tuple(message_text(message) for message in self._harness.queued_messages.follow_up)
 
     @property
     def last_diagnostic_log_path(self) -> Path | None:
@@ -770,8 +786,11 @@ class CodingSession:
         self._harness.cancel()
 
     def queue_update_event(self) -> QueueUpdateEvent:
-        """Return the current queue state as an agent event."""
-        return self._harness.queue_update_event()
+        """Return the current queue state as a coding-session event."""
+        return QueueUpdateEvent(
+            steering=self.queued_steering_messages,
+            follow_up=self.queued_follow_up_messages,
+        )
 
     def clear_queued_messages(self) -> QueuedMessages:
         """Clear queued steering and follow-up messages."""
@@ -780,12 +799,12 @@ class CodingSession:
     def pop_latest_follow_up_message(self) -> str | None:
         """Remove and return the most recently queued follow-up message."""
         message = self._harness.pop_latest_follow_up()
-        return None if message is None else message.content
+        return None if message is None else message_text(message)
 
     def pop_latest_steering_message(self) -> str | None:
         """Remove and return the most recently queued steering message."""
         message = self._harness.pop_latest_steering()
-        return None if message is None else message.content
+        return None if message is None else message_text(message)
 
     def set_model(self, model: str) -> None:
         """Switch the active model for future turns and make it the default."""
@@ -1365,10 +1384,10 @@ class CodingSession:
             cwd=self.cwd,
             shell_command_prefix=self._config.shell_command_prefix,
         )
-        result = await bash_tool.execute({"command": normalized_command})
+        result = await bash_tool.execute("terminal-command", {"command": normalized_command})
         exit_code = None
-        if result.data is not None:
-            raw_exit_code = result.data.get("exit_code")
+        if isinstance(result.details, dict):
+            raw_exit_code = result.details.get("exit_code")
             exit_code = raw_exit_code if isinstance(raw_exit_code, int) else None
 
         if add_to_context:
@@ -1377,7 +1396,7 @@ class CodingSession:
                 UserMessage(
                     content=_terminal_command_context_message(
                         normalized_command,
-                        result.content,
+                        result.text,
                     )
                 )
             )
@@ -1386,9 +1405,9 @@ class CodingSession:
 
         return TerminalCommandResult(
             command=normalized_command,
-            output=result.content,
+            output=result.text,
             exit_code=exit_code,
-            ok=result.ok,
+            ok=exit_code == 0,
             added_to_context=add_to_context,
         )
 
@@ -1400,7 +1419,7 @@ class CodingSession:
         source: Literal["interactive", "extension"] = "interactive",
         custom_type: str | None = None,
         details: dict[str, JSONValue] | None = None,
-    ) -> AsyncIterator[AgentEvent]:
+    ) -> AsyncIterator[CodingSessionEvent]:
         """Append a user prompt, run the agent, and persist new messages.
 
         ``custom_type``/``details`` attach custom-message render metadata to the
@@ -1432,10 +1451,16 @@ class CodingSession:
 
         if self._harness.is_running:
             if streaming_behavior == "steer":
-                yield self._harness.steer(expanded_content)
+                self._harness.steer(expanded_content)
+                session_event_0 = self.queue_update_event()
+                await self._extension_runtime.emit_event(session_event_0)
+                yield session_event_0
                 return
             if streaming_behavior == "follow_up":
-                yield self._harness.follow_up(expanded_content)
+                self._harness.follow_up(expanded_content)
+                session_event_0 = self.queue_update_event()
+                await self._extension_runtime.emit_event(session_event_0)
+                yield session_event_0
                 return
             raise RuntimeError(
                 "CodingSession is already running; pass streaming_behavior to queue a message."
@@ -1444,33 +1469,68 @@ class CodingSession:
         await self._try_auto_compact(context=context, phase="auto_compact_before_prompt")
         persisted_count = len(self._harness.messages)
         auto_name_attempted = False
-        overflow_event: ErrorEvent | None = None
+        overflow_message: AssistantMessage | None = None
         try:
-            events = self._harness.prompt(
-                expanded_content, custom_type=custom_type, details=details
-            )
+            prompt_message: AgentMessage
+            if custom_type is not None:
+                prompt_message = CustomMessage(
+                    custom_type=custom_type,
+                    content=expanded_content,
+                    display=True,
+                    details=details,
+                )
+            else:
+                prompt_message = UserMessage(content=expanded_content)
+            events = self._harness.prompt_message(prompt_message)
             self._invalidate_context_usage_cache()
             async for event in events:
                 if isinstance(event, MessageEndEvent):
                     persisted_count = await self._persist_messages_since(persisted_count)
                     if not auto_name_attempted and isinstance(event.message, UserMessage):
                         auto_name_attempted = True
-                        await self._try_auto_name_session(event.message.content, context=context)
+                        await self._try_auto_name_session(event.message.text, context=context)
                 if isinstance(event, ToolExecutionEndEvent):
                     self._invalidate_context_usage_cache()
-                if isinstance(event, ErrorEvent) and not event.recoverable:
-                    self._last_diagnostic_log_path = self._diagnostic_logger.log_error_event(
+                if (
+                    isinstance(event, MessageEndEvent)
+                    and isinstance(event.message, AssistantMessage)
+                    and event.message.stop_reason == "error"
+                ):
+                    self._last_diagnostic_log_path = self._diagnostic_logger.log_assistant_error(
                         context=context,
                         phase="agent_loop",
-                        event=event,
+                        message=event.message,
                     )
-                    if _is_context_overflow_error(event):
-                        overflow_event = event
-                yield event
+                    if _is_context_overflow_error(event.message):
+                        overflow_message = event.message
+                if isinstance(event, AgentEndEvent):
+                    yield SessionAgentEndEvent(messages=event.messages, will_retry=False)
+                else:
+                    yield event
             persisted_count = await self._persist_messages_since(persisted_count)
-            if overflow_event is not None:
+            if overflow_message is not None:
+                session_event_1 = CompactionStartEvent(reason="overflow")
+                await self._extension_runtime.emit_event(session_event_1)
+                yield session_event_1
                 compacted = await self._try_overflow_compact(context=context)
+                compaction_end = CompactionEndEvent(
+                    reason="overflow",
+                    result=None,
+                    aborted=not compacted,
+                    will_retry=compacted,
+                    error_message=None if compacted else "Overflow compaction failed",
+                )
+                await self._extension_runtime.emit_event(compaction_end)
+                yield compaction_end
                 if compacted:
+                    retry_start = AutoRetryStartEvent(
+                        attempt=1,
+                        max_attempts=1,
+                        delay_ms=0,
+                        error_message=overflow_message.error_message or "Context overflow",
+                    )
+                    await self._extension_runtime.emit_event(retry_start)
+                    yield retry_start
                     retry_persisted_count = len(self._harness.messages)
                     retry_events = self._harness.continue_()
                     self._invalidate_context_usage_cache()
@@ -1481,18 +1541,37 @@ class CodingSession:
                             )
                         if isinstance(retry_event, ToolExecutionEndEvent):
                             self._invalidate_context_usage_cache()
-                        if isinstance(retry_event, ErrorEvent) and not retry_event.recoverable:
+                        if (
+                            isinstance(retry_event, MessageEndEvent)
+                            and isinstance(retry_event.message, AssistantMessage)
+                            and retry_event.message.stop_reason == "error"
+                        ):
                             self._last_diagnostic_log_path = (
-                                self._diagnostic_logger.log_error_event(
+                                self._diagnostic_logger.log_assistant_error(
                                     context=context,
                                     phase="agent_loop_retry",
-                                    event=retry_event,
+                                    message=retry_event.message,
                                 )
                             )
-                        yield retry_event
+                        if isinstance(retry_event, AgentEndEvent):
+                            yield SessionAgentEndEvent(
+                                messages=retry_event.messages,
+                                will_retry=False,
+                            )
+                        else:
+                            yield retry_event
                     await self._persist_messages_since(retry_persisted_count)
+                    session_event_4 = AutoRetryEndEvent(success=True, attempt=1, final_error=None)
+                    await self._extension_runtime.emit_event(session_event_4)
+                    yield session_event_4
+                session_event_5 = AgentSettledEvent()
+                await self._extension_runtime.emit_event(session_event_5)
+                yield session_event_5
                 return
             await self._try_auto_compact(context=context, phase="auto_compact_after_prompt")
+            session_event_5 = AgentSettledEvent()
+            await self._extension_runtime.emit_event(session_event_5)
+            yield session_event_5
         except Exception as exc:
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
@@ -1501,7 +1580,7 @@ class CodingSession:
             )
             raise
 
-    async def continue_(self) -> AsyncIterator[AgentEvent]:
+    async def continue_(self) -> AsyncIterator[CodingSessionEvent]:
         """Continue the agent from restored state and persist new messages."""
         context = self._diagnostic_context()
         persisted_count = len(self._harness.messages)
@@ -1513,15 +1592,25 @@ class CodingSession:
                     persisted_count = await self._persist_messages_since(persisted_count)
                 if isinstance(event, ToolExecutionEndEvent):
                     self._invalidate_context_usage_cache()
-                if isinstance(event, ErrorEvent) and not event.recoverable:
-                    self._last_diagnostic_log_path = self._diagnostic_logger.log_error_event(
+                if (
+                    isinstance(event, MessageEndEvent)
+                    and isinstance(event.message, AssistantMessage)
+                    and event.message.stop_reason == "error"
+                ):
+                    self._last_diagnostic_log_path = self._diagnostic_logger.log_assistant_error(
                         context=context,
                         phase="agent_loop",
-                        event=event,
+                        message=event.message,
                     )
-                yield event
+                if isinstance(event, AgentEndEvent):
+                    yield SessionAgentEndEvent(messages=event.messages, will_retry=False)
+                else:
+                    yield event
             await self._persist_messages_since(persisted_count)
             await self._try_auto_compact(context=context, phase="auto_compact_after_continue")
+            session_event_5 = AgentSettledEvent()
+            await self._extension_runtime.emit_event(session_event_5)
+            yield session_event_5
         except Exception as exc:
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
@@ -1734,13 +1823,14 @@ class CodingSession:
             messages=[UserMessage(content=prompt)],
             tools=[],
         ):
-            if isinstance(event, ProviderTextDeltaEvent):
+            if isinstance(event, TextDeltaEvent):
                 text_parts.append(event.delta)
-            elif isinstance(event, ProviderResponseEndEvent):
-                final_text = event.message.content
-            elif isinstance(event, ProviderErrorEvent):
-                details = f": {event.data}" if event.data is not None else ""
-                raise RuntimeError(f"Session naming failed: {event.message}{details}")
+            elif isinstance(event, AssistantDoneEvent):
+                final_text = event.message.text
+            elif isinstance(event, AssistantErrorEvent):
+                raise RuntimeError(
+                    f"Session naming failed: {event.error.error_message or event.reason}"
+                )
         return _sanitize_session_name(final_text if final_text is not None else "".join(text_parts))
 
     def _set_auto_session_title(self, title: str) -> None:
@@ -1805,13 +1895,14 @@ class CodingSession:
             messages=summary_messages,
             tools=[],
         ):
-            if isinstance(event, ProviderTextDeltaEvent):
+            if isinstance(event, TextDeltaEvent):
                 text_parts.append(event.delta)
-            elif isinstance(event, ProviderResponseEndEvent):
-                final_text = event.message.content
-            elif isinstance(event, ProviderErrorEvent):
-                details = f": {event.data}" if event.data is not None else ""
-                raise RuntimeError(f"Compaction summarization failed: {event.message}{details}")
+            elif isinstance(event, AssistantDoneEvent):
+                final_text = event.message.text
+            elif isinstance(event, AssistantErrorEvent):
+                raise RuntimeError(
+                    f"Compaction summarization failed: {event.error.error_message or event.reason}"
+                )
 
         summary = (final_text if final_text is not None else "".join(text_parts)).strip()
         if not summary:
@@ -1926,7 +2017,7 @@ def _first_recent_context_index(
         return next_user_index
 
     for index in range(candidate_index, len(rows)):
-        if rows[index][1].role != "tool":
+        if rows[index][1].role != "toolResult":
             return index
     return len(rows)
 
@@ -1942,10 +2033,8 @@ def _next_user_message_index(
     return None
 
 
-def _is_context_overflow_error(event: ErrorEvent) -> bool:
-    text = event.message
-    if event.data is not None:
-        text = f"{text} {event.data}"
+def _is_context_overflow_error(message: AssistantMessage) -> bool:
+    text = message.error_message or ""
     normalized = text.lower()
     markers = (
         "context length",
@@ -2089,10 +2178,7 @@ def _tree_entry_title(entry: SessionEntry) -> str:
 
 
 def _message_text_preview(message: AgentMessage) -> str:
-    content = message.content
-    if isinstance(content, str):
-        return _short_preview(content)
-    return _short_preview(str(content))
+    return _short_preview(message_text(message))
 
 
 def _short_preview(text: str, *, limit: int = 72) -> str:
@@ -2446,10 +2532,9 @@ def _interrupted_tool_repair_plan(
             repaired.append(
                 ToolResultMessage(
                     tool_call_id=tool_call.id,
-                    name=tool_call.name,
-                    content=content,
-                    ok=False,
-                    error=content,
+                    tool_name=tool_call.name,
+                    content=[TextContent(text=content)],
+                    is_error=True,
                 )
             )
 

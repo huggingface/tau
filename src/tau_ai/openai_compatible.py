@@ -22,11 +22,12 @@ from tau_agent.messages import (
     ToolResultMessage,
     Usage,
     UserMessage,
+    assistant_content,
+    message_to_user,
 )
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
-from tau_ai.env import OpenAICompatibleConfig
-from tau_ai.events import (
+from tau_ai._provider_events import (
     ProviderErrorEvent,
     ProviderEvent,
     ProviderResponseEndEvent,
@@ -35,10 +36,13 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.env import OpenAICompatibleConfig
+from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
+from tau_ai.stream import canonicalize_provider_stream
 
 # Models that reject function tools + reasoning_effort on /chat/completions and
 # must use the /v1/responses endpoint instead.
@@ -76,6 +80,26 @@ class OpenAICompatibleProvider:
             self._client = None
 
     def stream_response(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[AgentMessage],
+        tools: list[AgentTool],
+        signal: CancellationToken | None = None,
+    ) -> AsyncIterator[AssistantMessageEvent]:
+        """Stream one response as Pi-compatible assistant message events."""
+        raw = self._stream_provider_events(
+            model=model, system=system, messages=messages, tools=tools, signal=signal
+        )
+        return canonicalize_provider_stream(
+            raw,
+            api=self._config.api,
+            provider=getattr(self._config, "provider_name", "openai-compatible"),
+            model=model,
+        )
+
+    def _stream_provider_events(
         self,
         *,
         model: str,
@@ -390,9 +414,8 @@ class _ChatStreamParser:
         events.append(
             ProviderResponseEndEvent(
                 message=AssistantMessage(
-                    content="".join(self._content_parts),
-                    tool_calls=tool_calls,
-                    usage=self._usage,
+                    content=assistant_content("".join(self._content_parts), tool_calls),
+                    usage=self._usage or Usage(),
                 ),
                 finish_reason=self._finish_reason,
             )
@@ -497,9 +520,8 @@ class _ResponsesStreamParser:
         events.append(
             ProviderResponseEndEvent(
                 message=AssistantMessage(
-                    content="".join(self._content_parts),
-                    tool_calls=tool_calls,
-                    usage=self._usage,
+                    content=assistant_content("".join(self._content_parts), tool_calls),
+                    usage=self._usage or Usage(),
                 ),
                 finish_reason=finish_reason,
             )
@@ -740,10 +762,10 @@ def _messages_to_responses_input(
     items: list[JSONValue] = []
     for message in messages:
         if isinstance(message, UserMessage):
-            items.append({"role": "user", "content": message.content})
+            items.append({"role": "user", "content": message.text})
         elif isinstance(message, AssistantMessage):
-            if message.content:
-                items.append({"role": "assistant", "content": message.content})
+            if message.text:
+                items.append({"role": "assistant", "content": message.text})
             for tool_call in message.tool_calls:
                 items.append(
                     {
@@ -758,7 +780,7 @@ def _messages_to_responses_input(
                 {
                     "type": "function_call_output",
                     "call_id": message.tool_call_id,
-                    "output": message.content,
+                    "output": message.text,
                 }
             )
     return items
@@ -874,10 +896,10 @@ def _system_message(system: str) -> dict[str, JSONValue]:
 
 def _message_to_openai(message: AgentMessage) -> dict[str, JSONValue]:
     if isinstance(message, UserMessage):
-        return {"role": "user", "content": message.content}
+        return {"role": "user", "content": message.text}
 
     if isinstance(message, AssistantMessage):
-        item: dict[str, JSONValue] = {"role": "assistant", "content": message.content}
+        item: dict[str, JSONValue] = {"role": "assistant", "content": message.text}
         if message.tool_calls:
             item["tool_calls"] = [
                 _tool_call_to_openai(tool_call) for tool_call in message.tool_calls
@@ -888,9 +910,10 @@ def _message_to_openai(message: AgentMessage) -> dict[str, JSONValue]:
         return {
             "role": "tool",
             "tool_call_id": message.tool_call_id,
-            "name": message.name,
-            "content": message.content,
+            "name": message.tool_name,
+            "content": message.text,
         }
+    return _message_to_openai(message_to_user(message))
 
 
 def _tool_to_openai(tool: AgentTool) -> dict[str, JSONValue]:

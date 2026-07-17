@@ -1,30 +1,39 @@
-"""Provider-neutral transcript message models."""
+"""Pi-compatible provider-neutral content and transcript message models."""
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from time import time
+from typing import Annotated, Any, Literal
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    SerializerFunctionWrapHandler,
-    model_serializer,
-)
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from tau_agent.tools import ToolCall
 from tau_agent.types import JSONValue
 
 
-class UsageCost(BaseModel):
-    """Billed cost breakdown for a single provider response, in USD.
+def _to_camel(name: str) -> str:
+    parts = name.split("_")
+    return parts[0] + "".join(part.title() for part in parts[1:])
 
-    Ports Pi's `Usage.cost`. Populated only when a per-model pricing table is
-    available; Tau has none yet, so providers leave the enclosing ``Usage.cost``
-    set to ``None`` (see the phase-21 ruling).
-    """
 
-    model_config = ConfigDict(extra="forbid")
+def current_timestamp_ms() -> int:
+    """Return the current Unix timestamp in milliseconds."""
+    return int(time() * 1000)
+
+
+class WireModel(BaseModel):
+    """Strict model with Python field names and Pi-compatible JSON aliases."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+        validate_by_name=True,
+        serialize_by_alias=True,
+        alias_generator=_to_camel,
+    )
+
+
+class UsageCost(WireModel):
+    """Billed response cost in USD."""
 
     input: float = 0.0
     output: float = 0.0
@@ -33,16 +42,8 @@ class UsageCost(BaseModel):
     total: float = 0.0
 
 
-class Usage(BaseModel):
-    """Real billed token usage reported by a provider for one assistant response.
-
-    Ports Pi's `Usage` interface (packages/ai/src/types.ts) to snake_case. Token
-    counts are the provider's billed figures, not local estimates. ``reasoning``
-    is a subset of ``output`` (already included in it). ``cache_write_1h`` is a
-    subset of ``cache_write`` and is only reported by Anthropic.
-    """
-
-    model_config = ConfigDict(extra="forbid")
+class Usage(WireModel):
+    """Provider-reported token usage for one assistant response."""
 
     input: int = 0
     output: int = 0
@@ -51,86 +52,226 @@ class Usage(BaseModel):
     cache_write_1h: int | None = None
     reasoning: int | None = None
     total_tokens: int = 0
-    cost: UsageCost | None = None
+    cost: UsageCost = UsageCost()
 
 
-class UserMessage(BaseModel):
-    """A message authored by the user.
+class TextContent(WireModel):
+    type: Literal["text"] = "text"
+    text: str
+    text_signature: str | None = None
 
-    ``custom_type``/``details`` are optional presentation metadata attached by
-    an extension via ``send_custom_message``. They are benign for the model
-    (which still reads ``content``) and let a frontend render the message with a
-    registered custom renderer instead of the raw content. Both default to
-    ``None`` so sessions persisted before these fields existed still load, and
-    both are **omitted from serialization when None** so a session that never
-    uses custom messages stays byte-identical to the pre-metadata wire format
-    (old binaries use ``extra="forbid"`` and would reject unknown keys).
-    """
 
-    model_config = ConfigDict(extra="forbid")
+class ThinkingContent(WireModel):
+    type: Literal["thinking"] = "thinking"
+    thinking: str
+    thinking_signature: str | None = None
+    redacted: bool = False
 
+
+class ImageContent(WireModel):
+    type: Literal["image"] = "image"
+    data: str
+    mime_type: str
+
+
+class ToolCall(WireModel):
+    """A tool call content block requested by the assistant."""
+
+    type: Literal["toolCall"] = "toolCall"
+    id: str
+    name: str
+    arguments: dict[str, JSONValue] = Field(default_factory=dict)
+    thought_signature: str | None = None
+
+
+type UserContent = str | list[TextContent | ImageContent]
+type AssistantContent = TextContent | ThinkingContent | ToolCall
+type ToolResultContent = TextContent | ImageContent
+
+
+class UserMessage(WireModel):
     role: Literal["user"] = "user"
-    content: str
-    custom_type: str | None = None
+    content: UserContent
+    timestamp: int = Field(default_factory=current_timestamp_ms)
+
+    @property
+    def text(self) -> str:
+        return content_text(self.content)
+
+
+class AssistantDiagnosticError(WireModel):
+    name: str | None = None
+    message: str
+    stack: str | None = None
+    code: str | int | None = None
+
+
+class AssistantMessageDiagnostic(WireModel):
+    type: str
+    timestamp: int = Field(default_factory=current_timestamp_ms)
+    error: AssistantDiagnosticError | None = None
     details: dict[str, JSONValue] | None = None
 
-    @model_serializer(mode="wrap")
-    def _omit_unused_custom_metadata(
-        self, handler: SerializerFunctionWrapHandler
-    ) -> dict[str, Any]:
-        """Drop ``custom_type``/``details`` keys when unset (forward compat).
 
-        Targeted on purpose: only these two fields are conditional, so the wire
-        semantics of every other field (including explicit Nones elsewhere in
-        the entry models) are unchanged.
-        """
-        data: dict[str, Any] = handler(self)
-        if data.get("custom_type") is None:
-            data.pop("custom_type", None)
-        if data.get("details") is None:
-            data.pop("details", None)
-        return data
+StopReason = Literal["stop", "length", "toolUse", "error", "aborted"]
 
 
-class AssistantMessage(BaseModel):
-    """A message authored by the assistant.
-
-    ``usage`` defaults to ``None`` and is **omitted from serialization when
-    None**, for the same forward-compat reason as ``UserMessage``'s custom
-    metadata: old binaries use ``extra="forbid"``, and virtually every session
-    contains an assistant message, so an always-present ``"usage": null`` key
-    would make every new session file unreadable by them.
-    """
-
-    model_config = ConfigDict(extra="forbid")
+class AssistantMessage(WireModel):
+    """A Pi-compatible assistant message with ordered content blocks."""
 
     role: Literal["assistant"] = "assistant"
-    content: str = ""
-    tool_calls: list[ToolCall] = Field(default_factory=list)
-    usage: Usage | None = None
+    content: list[AssistantContent] = Field(default_factory=list)
+    api: str = "unknown"
+    provider: str = "unknown"
+    model: str = "unknown"
+    response_model: str | None = None
+    response_id: str | None = None
+    diagnostics: list[AssistantMessageDiagnostic] | None = None
+    usage: Usage = Usage()
+    stop_reason: StopReason = "stop"
+    error_message: str | None = None
+    timestamp: int = Field(default_factory=current_timestamp_ms)
 
-    @model_serializer(mode="wrap")
-    def _omit_unused_usage(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-        """Drop the ``usage`` key when unset (forward compat, see class docs)."""
-        data: dict[str, Any] = handler(self)
-        if data.get("usage") is None:
-            data.pop("usage", None)
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_convenient_content(cls, value: object) -> object:
+        """Accept a string only as a Python construction convenience.
+
+        The stored model and serialized protocol are always block based. This
+        keeps provider and test construction concise without creating a second
+        message representation.
+        """
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        content = data.get("content")
+        if isinstance(content, str):
+            data["content"] = [TextContent(text=content)] if content else []
+        usage = data.get("usage")
+        if usage is None:
+            data["usage"] = Usage()
         return data
 
+    @property
+    def text(self) -> str:
+        return "".join(block.text for block in self.content if isinstance(block, TextContent))
 
-class ToolResultMessage(BaseModel):
-    """A transcript message containing the result of a previous tool call."""
+    @property
+    def thinking_text(self) -> str:
+        return "".join(
+            block.thinking for block in self.content if isinstance(block, ThinkingContent)
+        )
 
-    model_config = ConfigDict(extra="forbid")
+    @property
+    def tool_calls(self) -> tuple[ToolCall, ...]:
+        return tuple(block for block in self.content if isinstance(block, ToolCall))
 
-    role: Literal["tool"] = "tool"
+
+class ToolResultMessage(WireModel):
+    role: Literal["toolResult"] = "toolResult"
     tool_call_id: str
-    name: str
-    content: str
-    ok: bool = True
-    data: dict[str, JSONValue] | None = None
-    details: dict[str, JSONValue] | None = None
-    error: str | None = None
+    tool_name: str
+    content: list[ToolResultContent] = Field(default_factory=list)
+    details: JSONValue = None
+    added_tool_names: list[str] | None = None
+    is_error: bool = False
+    timestamp: int = Field(default_factory=current_timestamp_ms)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_convenient_content(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        content = data.get("content")
+        if isinstance(content, str):
+            data["content"] = [TextContent(text=content)] if content else []
+        return data
+
+    @property
+    def text(self) -> str:
+        return content_text(self.content)
 
 
-type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage
+class BashExecutionMessage(WireModel):
+    role: Literal["bashExecution"] = "bashExecution"
+    command: str
+    output: str
+    exit_code: int | None = None
+    cancelled: bool = False
+    truncated: bool = False
+    full_output_path: str | None = None
+    timestamp: int = Field(default_factory=current_timestamp_ms)
+    exclude_from_context: bool = False
+
+
+class CustomMessage(WireModel):
+    role: Literal["custom"] = "custom"
+    custom_type: str
+    content: UserContent
+    display: bool = True
+    details: JSONValue = None
+    timestamp: int = Field(default_factory=current_timestamp_ms)
+
+    @property
+    def text(self) -> str:
+        return content_text(self.content)
+
+
+class BranchSummaryMessage(WireModel):
+    role: Literal["branchSummary"] = "branchSummary"
+    summary: str
+    from_id: str
+    timestamp: int = Field(default_factory=current_timestamp_ms)
+
+
+class CompactionSummaryMessage(WireModel):
+    role: Literal["compactionSummary"] = "compactionSummary"
+    summary: str
+    tokens_before: int
+    timestamp: int = Field(default_factory=current_timestamp_ms)
+
+
+type AgentMessage = Annotated[
+    UserMessage
+    | AssistantMessage
+    | ToolResultMessage
+    | BashExecutionMessage
+    | CustomMessage
+    | BranchSummaryMessage
+    | CompactionSummaryMessage,
+    Field(discriminator="role"),
+]
+
+
+def assistant_content(
+    text: str,
+    tool_calls: list[ToolCall] | tuple[ToolCall, ...] = (),
+) -> list[AssistantContent]:
+    """Build canonical ordered assistant blocks from parser accumulators."""
+    blocks: list[AssistantContent] = [TextContent(text=text)] if text else []
+    blocks.extend(tool_calls)
+    return blocks
+
+
+def content_text(content: str | list[Any]) -> str:
+    """Return visible text from string or text/image content."""
+    if isinstance(content, str):
+        return content
+    return "".join(block.text for block in content if isinstance(block, TextContent))
+
+
+def message_to_user(message: AgentMessage) -> UserMessage:
+    """Convert custom/session-only messages to provider-compatible user context."""
+    return UserMessage(content=message_text(message), timestamp=message.timestamp)
+
+
+def message_text(message: AgentMessage) -> str:
+    """Return the user-visible text represented by an agent message."""
+    if isinstance(message, (UserMessage, AssistantMessage, ToolResultMessage, CustomMessage)):
+        return message.text
+    if isinstance(message, (BranchSummaryMessage, CompactionSummaryMessage)):
+        return message.summary
+    if isinstance(message, BashExecutionMessage):
+        return message.output
+    return ""

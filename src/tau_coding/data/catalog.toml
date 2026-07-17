@@ -3859,16 +3859,27 @@ kind = "openai-compatible"
 base_url = "https://api.kimi.com/coding/v1"
 api_key_env = "KIMI_CODE_API_KEY"
 credential_name = "kimi-code"
-models = ["kimi-for-coding"]
+models = ["k3", "kimi-for-coding"]
 default_model = "kimi-for-coding"
-docs_url = "https://www.kimi.ai/code/console"
+docs_url = "https://www.kimi.com/code/docs/en/kimi-code/models"
 api = "openai-completions"
-thinking_levels = ["medium"]
+thinking_levels = ["medium", "xhigh"]
 thinking_default = "medium"
 thinking_parameter = "reasoning_effort"
 
 [providers.context_windows]
+k3 = 1048576
 kimi-for-coding = 262144
+
+[providers.model_metadata.k3]
+name = "Kimi K3"
+reasoning = true
+input = ["text"]
+context_window = 1048576
+compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = true, maxTokensField = "max_tokens", supportsStrictMode = false }
+cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+thinking_level_map = { xhigh = "max" }
+unsupported_thinking_levels = ["off", "minimal", "low", "medium", "high"]
 
 [providers.model_metadata.kimi-for-coding]
 name = "Kimi for Coding (latest)"

@@ -16,15 +16,11 @@ from tau_agent.messages import (
     ToolResultMessage,
     Usage,
     UserMessage,
+    assistant_content,
 )
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
-from tau_ai.env import (
-    DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES,
-    DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS,
-    DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS,
-)
-from tau_ai.events import (
+from tau_ai._provider_events import (
     ProviderErrorEvent,
     ProviderEvent,
     ProviderResponseEndEvent,
@@ -33,10 +29,17 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.env import (
+    DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES,
+    DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS,
+    DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS,
+)
+from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
+from tau_ai.stream import canonicalize_provider_stream
 
 DEFAULT_OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api"
 
@@ -88,6 +91,23 @@ class OpenAICodexProvider:
             self._client = None
 
     def stream_response(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[AgentMessage],
+        tools: list[AgentTool],
+        signal: CancellationToken | None = None,
+    ) -> AsyncIterator[AssistantMessageEvent]:
+        """Stream one response as Pi-compatible assistant message events."""
+        raw = self._stream_provider_events(
+            model=model, system=system, messages=messages, tools=tools, signal=signal
+        )
+        return canonicalize_provider_stream(
+            raw, api="openai-codex-responses", provider="openai-codex", model=model
+        )
+
+    def _stream_provider_events(
         self,
         *,
         model: str,
@@ -304,11 +324,11 @@ def _messages_to_responses_input(messages: list[AgentMessage]) -> list[JSONValue
             items.append(
                 {
                     "role": "user",
-                    "content": [{"type": "input_text", "text": message.content}],
+                    "content": [{"type": "input_text", "text": message.text}],
                 }
             )
         elif isinstance(message, AssistantMessage):
-            if message.content:
+            if message.text:
                 items.append(
                     {
                         "type": "message",
@@ -316,7 +336,7 @@ def _messages_to_responses_input(messages: list[AgentMessage]) -> list[JSONValue
                         "content": [
                             {
                                 "type": "output_text",
-                                "text": message.content,
+                                "text": message.text,
                                 "annotations": [],
                             }
                         ],
@@ -342,7 +362,7 @@ def _messages_to_responses_input(messages: list[AgentMessage]) -> list[JSONValue
                 {
                     "type": "function_call_output",
                     "call_id": call_id,
-                    "output": message.content,
+                    "output": message.text,
                 }
             )
     return items
@@ -499,9 +519,8 @@ async def _codex_provider_events(
 
     yield ProviderResponseEndEvent(
         message=AssistantMessage(
-            content="".join(content_parts),
-            tool_calls=tool_calls,
-            usage=usage,
+            content=assistant_content("".join(content_parts), tool_calls),
+            usage=usage or Usage(),
         ),
         finish_reason=finish_reason,
     )

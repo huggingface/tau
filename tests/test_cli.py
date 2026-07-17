@@ -5,14 +5,11 @@ import pytest
 from typer.testing import CliRunner
 
 from conftest import isolate_home
+from pi_event_helpers import assistant_done, assistant_error, assistant_start, text_delta
 from tau_agent import AssistantMessage, UserMessage
 from tau_agent.session import JsonlSessionStorage, MessageEntry
 from tau_ai import (
     FakeProvider,
-    ProviderErrorEvent,
-    ProviderResponseEndEvent,
-    ProviderResponseStartEvent,
-    ProviderTextDeltaEvent,
 )
 from tau_coding import CodingSessionRecord, SessionManager, cli
 from tau_coding.cli import app, run_print_mode
@@ -317,10 +314,10 @@ async def test_run_print_mode_prints_final_assistant_text(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderTextDeltaEvent(delta="Hel"),
-                ProviderTextDeltaEvent(delta="lo"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Hello")),
+                assistant_start(model="fake"),
+                text_delta(delta="Hel"),
+                text_delta(delta="lo"),
+                assistant_done(message=AssistantMessage(content="Hello")),
             ]
         ]
     )
@@ -378,8 +375,8 @@ async def test_run_print_mode_fails_on_non_recoverable_error(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderErrorEvent(message="provider failed"),
+                assistant_start(model="fake"),
+                assistant_error(message="provider failed"),
             ]
         ]
     )
@@ -400,8 +397,8 @@ async def test_run_print_mode_includes_discovered_context(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ]
         ]
     )
@@ -428,8 +425,8 @@ async def test_run_print_mode_persists_session_entries(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ]
         ]
     )
@@ -449,7 +446,7 @@ async def test_run_print_mode_persists_session_entries(
     assert ok is True
     assert [message.role for message in messages] == ["user", "assistant"]
     assert messages[0].content == "Say hello"
-    assert messages[1].content == "Done"
+    assert messages[1].text == "Done"
     assert any(entry.type == "leaf" for entry in entries)
 
 
@@ -518,8 +515,8 @@ async def test_run_print_mode_expands_skill_commands(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ]
         ]
     )
@@ -547,9 +544,9 @@ async def test_run_print_mode_can_emit_json_events(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderTextDeltaEvent(delta="Hello"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Hello")),
+                assistant_start(model="fake"),
+                text_delta(delta="Hello"),
+                assistant_done(message=AssistantMessage(content="Hello")),
             ]
         ]
     )
@@ -565,7 +562,8 @@ async def test_run_print_mode_can_emit_json_events(
     captured = capsys.readouterr()
     assert ok is True
     assert '"type":"agent_start"' in captured.out
-    assert '"type":"message_delta"' in captured.out
+    assert '"type":"message_update"' in captured.out
+    assert '"assistantMessageEvent":{"type":"text_delta"' in captured.out
     assert captured.err == ""
 
 
@@ -576,10 +574,10 @@ async def test_run_print_mode_can_emit_live_transcript(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderTextDeltaEvent(delta="Hel"),
-                ProviderTextDeltaEvent(delta="lo"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Hello")),
+                assistant_start(model="fake"),
+                text_delta(delta="Hel"),
+                text_delta(delta="lo"),
+                assistant_done(message=AssistantMessage(content="Hello")),
             ]
         ]
     )

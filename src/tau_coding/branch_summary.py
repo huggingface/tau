@@ -5,8 +5,15 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 
-from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
-from tau_ai import ModelProvider, ProviderErrorEvent, ProviderResponseEndEvent
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    ToolResultMessage,
+    UserMessage,
+    message_text,
+)
+from tau_agent.provider import ModelProvider
+from tau_agent.provider_events import AssistantDoneEvent, AssistantErrorEvent
 
 BRANCH_SUMMARY_SYSTEM_PROMPT = (
     "You are a context summarization assistant. Your task is to read a conversation "
@@ -83,14 +90,14 @@ async def summarize_branch_messages_with_model(
         ],
         tools=[],
     ):
-        if isinstance(event, ProviderErrorEvent):
+        if isinstance(event, AssistantErrorEvent):
             return None
-        if isinstance(event, ProviderResponseEndEvent):
+        if isinstance(event, AssistantDoneEvent):
             response = event.message
 
     if response is None:
         return None
-    summary = response.content.strip()
+    summary = response.text.strip()
     if not summary:
         return None
     return _add_branch_summary_context(summary, messages)
@@ -134,18 +141,20 @@ def _serialize_branch_conversation(messages: Sequence[AgentMessage]) -> str:
 def _format_summary_source_message(message: AgentMessage) -> str:
     match message:
         case UserMessage():
-            return f"[User]: {_trim_summary_source_text(message.content)}"
+            return f"[User]: {_trim_summary_source_text(message.text)}"
         case AssistantMessage():
             return _format_assistant_summary_source(message)
         case ToolResultMessage():
-            status = "ok" if message.ok else "failed"
-            content = _trim_summary_source_text(message.content, max_chars=TOOL_RESULT_MAX_CHARS)
-            return f"[Tool result: {message.name} ({status})]: {content}"
+            status = "failed" if message.is_error else "ok"
+            content = _trim_summary_source_text(message.text, max_chars=TOOL_RESULT_MAX_CHARS)
+            return f"[Tool result: {message.tool_name} ({status})]: {content}"
+        case _:
+            return f"[{message.role}]: {_trim_summary_source_text(message_text(message))}"
 
 
 def _format_assistant_summary_source(message: AssistantMessage) -> str:
     parts: list[str] = []
-    content = _trim_summary_source_text(message.content)
+    content = _trim_summary_source_text(message.text)
     if content != "(empty)":
         parts.append(f"[Assistant]: {content}")
     if message.tool_calls:

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from tau_agent.messages import TextContent
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_coding import TauResourcePaths
 from tau_coding.extensions import ExtensionRuntime
@@ -43,11 +44,18 @@ def _runtime_with_examples(tmp_path: Path, *names: str) -> ExtensionRuntime:
 def _fake_tool(name: str) -> tuple[AgentTool, list[dict[str, object]]]:
     executed: list[dict[str, object]] = []
 
-    async def executor(arguments: object, signal: object = None) -> AgentToolResult:
-        executed.append(dict(arguments))  # type: ignore[call-overload]
-        return AgentToolResult(tool_call_id="", name=name, ok=True, content="ran")
+    async def executor(tool_call_id, arguments, signal=None, on_update=None):  # noqa: ANN001, ANN202
+        del tool_call_id, signal, on_update
+        executed.append(dict(arguments))
+        return AgentToolResult(content=[TextContent(text="ran")])
 
-    tool = AgentTool(name=name, description="fake", input_schema={}, executor=executor)
+    tool = AgentTool(
+        name=name,
+        label=name,
+        description="fake",
+        parameters={},
+        execute_fn=executor,
+    )
     return tool, executed
 
 
@@ -65,19 +73,18 @@ async def test_hello_tool_greets(tmp_path: Path) -> None:
     runtime = _runtime_with_examples(tmp_path, "hello_tool.py")
     hello = runtime.compose_tools([])[0]
 
-    result = await hello.execute({"who": "Tau"})
+    result = await hello.execute("test-call", {"who": "Tau"})
 
-    assert result.ok is True
-    assert result.content == "Hello, Tau!"
+    assert result.text == "Hello, Tau!"
 
 
 async def test_hello_tool_defaults_to_world(tmp_path: Path) -> None:
     runtime = _runtime_with_examples(tmp_path, "hello_tool.py")
     hello = runtime.compose_tools([])[0]
 
-    result = await hello.execute({})
+    result = await hello.execute("test-call", {})
 
-    assert result.content == "Hello, world!"
+    assert result.text == "Hello, world!"
 
 
 # -- permission_gate.py ---------------------------------------------------------
@@ -99,10 +106,10 @@ async def test_permission_gate_blocks_dangerous_bash(tmp_path: Path, command: st
     bash, executed = _fake_tool("bash")
     wrapped = runtime.compose_tools([bash])[0]
 
-    result = await wrapped.execute({"command": command})
+    result = await wrapped.execute("test-call", {"command": command})
 
-    assert result.ok is False
-    assert "guarded pattern" in result.content
+    assert "blocked" in result.text.lower()
+    assert "guarded pattern" in result.text
     assert executed == []
 
 
@@ -120,9 +127,9 @@ async def test_permission_gate_allows_safe_bash(tmp_path: Path, command: str) ->
     bash, executed = _fake_tool("bash")
     wrapped = runtime.compose_tools([bash])[0]
 
-    result = await wrapped.execute({"command": command})
+    result = await wrapped.execute("test-call", {"command": command})
 
-    assert result.ok is True
+    assert result.text == "ran"
     assert executed == [{"command": command}]
 
 
@@ -131,7 +138,7 @@ async def test_permission_gate_ignores_other_tools(tmp_path: Path) -> None:
     write, executed = _fake_tool("write")
     wrapped = runtime.compose_tools([write])[0]
 
-    result = await wrapped.execute({"content": "rm -rf / would be bad"})
+    result = await wrapped.execute("test-call", {"content": "rm -rf / would be bad"})
 
-    assert result.ok is True
+    assert result.text == "ran"
     assert len(executed) == 1

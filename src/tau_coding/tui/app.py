@@ -39,26 +39,26 @@ from textual.widgets import (
 )
 from textual.worker import Worker
 
-from tau_agent import (
+from tau_agent.events import (
     AgentEndEvent,
-    AgentEvent,
     AgentStartEvent,
-    ErrorEvent,
-    MessageDeltaEvent,
     MessageEndEvent,
     MessageStartEvent,
-    QueueUpdateEvent,
-    RetryEvent,
-    ThinkingDeltaEvent,
+    MessageUpdateEvent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
 )
-from tau_agent.messages import AgentMessage, UserMessage
+from tau_agent.messages import AgentMessage, AssistantMessage, CustomMessage, UserMessage
+from tau_agent.provider import CancellationToken
+from tau_agent.provider_events import (
+    AssistantErrorEvent,
+    AssistantMessageEvent,
+    TextDeltaEvent,
+    ThinkingDeltaEvent,
+)
 from tau_agent.tools import AgentTool
 from tau_agent.types import JSONValue
-from tau_ai import ProviderErrorEvent, ProviderEvent
-from tau_ai.provider import CancellationToken
 from tau_coding.catalog_loader import save_user_catalog_entries
 from tau_coding.commands import (
     LOGIN_PROVIDER_ALIASES,
@@ -67,6 +67,7 @@ from tau_coding.commands import (
     format_reload_summary,
 )
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
+from tau_coding.events import AutoRetryStartEvent, CodingSessionEvent, QueueUpdateEvent
 from tau_coding.extensions.api import (
     KeyInterceptor,
     MainViewFactory,
@@ -186,12 +187,17 @@ class LoginRequiredProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
-    ) -> AsyncIterator[ProviderEvent]:
+    ) -> AsyncIterator[AssistantMessageEvent]:
         """Surface a login-needed provider error."""
-        del model, system, messages, tools, signal
+        del system, messages, tools, signal
 
-        async def iterator() -> AsyncIterator[ProviderEvent]:
-            yield ProviderErrorEvent(message=self.message)
+        async def iterator() -> AsyncIterator[AssistantMessageEvent]:
+            error = AssistantMessage(
+                model=model,
+                stop_reason="error",
+                error_message=self.message,
+            )
+            yield AssistantErrorEvent(reason="error", error=error)
 
         return iterator()
 
@@ -3146,9 +3152,9 @@ class TauTuiApp(App[None]):
         """Load visible session messages and reseed prompt history from them."""
         self.state.load_messages(self.session.messages)
         self._prompt_history = tuple(
-            message.content
+            message.text
             for message in self.session.messages
-            if isinstance(message, UserMessage) and message.content.strip()
+            if isinstance(message, UserMessage) and message.text.strip()
         )
 
     def _is_compaction_active(self) -> bool:
@@ -3245,7 +3251,7 @@ class TauTuiApp(App[None]):
             )
         self._refresh_chrome(theme=theme)
 
-    def _consume_optimistic_user_event(self, event: AgentEvent, *, run_id: int) -> bool:
+    def _consume_optimistic_user_event(self, event: CodingSessionEvent, *, run_id: int) -> bool:
         """Return whether a user event confirms an already-rendered optimistic message."""
         if not isinstance(event, MessageEndEvent) or not isinstance(event.message, UserMessage):
             return False
@@ -3256,7 +3262,7 @@ class TauTuiApp(App[None]):
         return False
 
     def _replace_transformed_optimistic_user_message(
-        self, event: AgentEvent, *, run_id: int
+        self, event: CodingSessionEvent, *, run_id: int
     ) -> bool:
         """Reconcile a transformed prompt with its optimistic render.
 
@@ -3278,7 +3284,7 @@ class TauTuiApp(App[None]):
             del self._optimistic_user_messages[index]
             for item in reversed(self.state.items):
                 if item.role == "user" and item.text == pending_text:
-                    item.text = event.message.content
+                    item.text = event.message.text
                     break
             self._refresh()
             self._sync_header_title()
@@ -3292,15 +3298,18 @@ class TauTuiApp(App[None]):
         ]
 
     async def _append_confirmed_user_message(self, message: AgentMessage) -> None:
-        """Render a non-optimistic user event incrementally when possible."""
-        if not isinstance(message, UserMessage):
-            self._refresh()
+        """Render a non-optimistic user/custom event incrementally when possible."""
+        if isinstance(message, UserMessage):
+            await self._append_optimistic_user_message(message.text)
             return
-        await self._append_optimistic_user_message(
-            message.content,
-            custom_type=message.custom_type,
-            details=message.details,
-        )
+        if isinstance(message, CustomMessage):
+            await self._append_optimistic_user_message(
+                message.text,
+                custom_type=message.custom_type,
+                details=message.details if isinstance(message.details, dict) else None,
+            )
+            return
+        self._refresh()
 
     def _connect_extension_runtime(self, session: CodingSession) -> None:
         """Give the extension runtime a UI bridge and an idle-run entry point."""
@@ -3866,7 +3875,11 @@ class TauTuiApp(App[None]):
                 if not (_is_user_message_end_event(event) and self.screen_stack):
                     self.adapter.apply(event)
                 self._sync_text_selection_state()
-                if isinstance(event, ErrorEvent) and not event.recoverable:
+                if (
+                    isinstance(event, MessageEndEvent)
+                    and isinstance(event.message, AssistantMessage)
+                    and event.message.stop_reason == "error"
+                ):
                     _attach_diagnostic_log_path_to_error(self.state, self.session)
                 await self._apply_streaming_transcript_event(event)
         except Exception as exc:  # noqa: BLE001 - surface unexpected worker errors in the TUI
@@ -3883,7 +3896,7 @@ class TauTuiApp(App[None]):
             if active_run_id == self._prompt_run_id:
                 self._prompt_worker = None
 
-    async def _apply_streaming_transcript_event(self, event: AgentEvent) -> None:
+    async def _apply_streaming_transcript_event(self, event: CodingSessionEvent) -> None:
         """Apply an agent event to mounted transcript widgets without full redraws."""
         if not self.screen_stack:
             self._refresh()
@@ -3903,25 +3916,25 @@ class TauTuiApp(App[None]):
             return
         if isinstance(event, MessageStartEvent):
             return
-        if isinstance(event, MessageDeltaEvent):
-            await transcript.append_assistant_delta(event.delta, theme=theme)
-            self._sync_activity_indicator()
-            return
-        if isinstance(event, ThinkingDeltaEvent):
-            await transcript.append_thinking_delta(
-                event.delta,
-                theme=theme,
-                show_thinking=self.state.show_thinking,
-            )
+        if isinstance(event, MessageUpdateEvent):
+            nested = event.assistant_message_event
+            if isinstance(nested, TextDeltaEvent):
+                await transcript.append_assistant_delta(nested.delta, theme=theme)
+            elif isinstance(nested, ThinkingDeltaEvent):
+                await transcript.append_thinking_delta(
+                    nested.delta,
+                    theme=theme,
+                    show_thinking=self.state.show_thinking,
+                )
             self._sync_activity_indicator()
             return
         if isinstance(event, MessageEndEvent):
-            if event.message.role == "user":
+            if isinstance(event.message, (UserMessage, CustomMessage)):
                 await self._append_confirmed_user_message(event.message)
                 self._sync_header_title()
                 return
-            if event.message.role == "assistant":
-                await transcript.finish_assistant_message(event.message.content)
+            if isinstance(event.message, AssistantMessage):
+                await transcript.finish_assistant_message(event.message.text)
                 self._refresh_chrome()
                 return
             return
@@ -3950,7 +3963,7 @@ class TauTuiApp(App[None]):
                 )
             self._refresh_chrome()
             return
-        if isinstance(event, RetryEvent | ErrorEvent):
+        if isinstance(event, AutoRetryStartEvent):
             await transcript.finish_assistant_message()
             if self.state.items:
                 await transcript.append_item(
@@ -5015,9 +5028,11 @@ def _should_optimistically_render_prompt(text: str) -> bool:
     return bool(stripped) and not stripped.startswith("/")
 
 
-def _is_user_message_end_event(event: AgentEvent) -> bool:
-    """Return whether an agent event closes a user message."""
-    return isinstance(event, MessageEndEvent) and isinstance(event.message, UserMessage)
+def _is_user_message_end_event(event: CodingSessionEvent) -> bool:
+    """Return whether an agent event closes a user-context message."""
+    return isinstance(event, MessageEndEvent) and isinstance(
+        event.message, (UserMessage, CustomMessage)
+    )
 
 
 def _terminal_command_prefix_span(text: str) -> tuple[int, int] | None:
