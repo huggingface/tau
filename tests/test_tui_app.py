@@ -6215,6 +6215,89 @@ async def test_run_tui_app_falls_back_to_first_credentialed_provider(
 
 
 @pytest.mark.anyio
+async def test_run_tui_app_surfaces_startup_provider_error_in_login_message(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Regression: a non-auth RuntimeError during startup provider construction
+    # was silently replaced by a generic "Login required" placeholder, hiding the
+    # real cause. The TUI must surface the underlying error to the user.
+    captured: dict[str, object] = {}
+
+    record = CodingSessionRecord(
+        id="new-session",
+        path=tmp_path / "new-session.jsonl",
+        cwd=tmp_path,
+        model="qwen",
+        title=None,
+        created_at=1.0,
+        updated_at=1.0,
+        provider_name="local",
+    )
+
+    class FakeProvider:
+        async def aclose(self) -> None:
+            pass
+
+    class FakeManager:
+        def prepare_session(
+            self,
+            *,
+            cwd: Path,
+            model: str,
+            provider_name: str | None = None,
+        ) -> CodingSessionRecord:
+            return record
+
+        def get_session(self, session_id: str) -> CodingSessionRecord | None:
+            return None
+
+    class FakeCodingSession:
+        @classmethod
+        async def load(cls, config: object) -> str:
+            return "session"
+
+    class FakeApp:
+        def __init__(self, session: str, **kwargs: object) -> None:
+            captured["startup_message"] = kwargs["startup_message"]
+            captured["startup_notices"] = kwargs["startup_notices"]
+
+        async def run_async(self) -> None:
+            pass
+
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("qwen",),
+                default_model="qwen",
+            ),
+        ),
+    )
+
+    def _boom(provider: object, **kwargs: object) -> object:
+        raise RuntimeError("connection to provider backend refused")
+
+    monkeypatch.setattr(tui_app, "load_provider_settings", lambda: settings)
+    monkeypatch.setattr(tui_app, "load_tui_settings", lambda: TuiSettings())
+    monkeypatch.setattr(tui_app, "create_model_provider", _boom)
+    monkeypatch.setattr(tui_app, "LoginRequiredProvider", lambda message: FakeProvider())
+    monkeypatch.setattr(tui_app, "CodingSession", FakeCodingSession)
+    monkeypatch.setattr(tui_app, "TauTuiApp", FakeApp)
+
+    await tui_app.run_tui_app(cwd=tmp_path, model=None, session_manager=FakeManager())
+
+    startup_message = captured["startup_message"]
+    assert "Login required" in startup_message
+    assert "connection to provider backend refused" in startup_message
+    notices = captured["startup_notices"]
+    assert any("connection to provider backend refused" in n for n in notices)
+
+
+@pytest.mark.anyio
 async def test_run_tui_app_ignores_latest_directory_provider_model_for_new_session(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -6562,7 +6645,11 @@ async def test_run_tui_app_opens_when_provider_login_is_missing(
             assert session == "session"
             message = str(kwargs["startup_message"])
             assert "Tau 0.2.0 is available" not in message
-            assert kwargs["startup_notices"] == ("Tau 0.2.0 is available",)
+            notices = kwargs["startup_notices"]
+            # The startup provider error is surfaced first, then the update notice.
+            assert any("Startup provider creation failed" in n for n in notices)
+            assert "Missing provider API key." in notices[0]
+            assert "Tau 0.2.0 is available" in notices
             assert "Login required. Run /login" in message
             assert "/login openai" in message
             assert "OPENAI_API_KEY" not in message

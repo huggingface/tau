@@ -5756,6 +5756,7 @@ async def run_tui_app(
         explicit_resume=session_id is not None,
     )
     startup_message: str | None = None
+    startup_error_notice: str | None = None
     runtime_provider_config: ProviderConfig | None = selection.provider
     try:
         provider = create_model_provider(
@@ -5766,12 +5767,18 @@ async def run_tui_app(
                 selection.model,
             ),
         )
-    except RuntimeError:
+    except RuntimeError as exc:
+        # Most startup RuntimeErrors are missing credentials, but surface the real
+        # cause so a non-auth failure is not silently misreported as "Login required".
         login_required_message = (
             "Login required. Run /login to choose a provider, "
             f"or /login {selection.provider.name} to continue with the current provider."
         )
-        startup_message = login_required_message
+        startup_message = f"{login_required_message}\n\nStartup error: {exc}"
+        startup_error_notice = (
+            f"Startup provider creation failed for "
+            f"{selection.provider.name}:{selection.model}: {exc}"
+        )
         provider = LoginRequiredProvider(startup_message)
         runtime_provider_config = None
     session: CodingSession | None = None
@@ -5805,7 +5812,8 @@ async def run_tui_app(
             )
         )
         legacy_notices = (startup_notice,) if startup_notice else ()
-        all_startup_notices = tuple((*startup_notices, *legacy_notices))
+        error_notices = (startup_error_notice,) if startup_error_notice else ()
+        all_startup_notices = tuple((*error_notices, *startup_notices, *legacy_notices))
         app = TauTuiApp(
             session,
             tui_settings=load_tui_settings(),
