@@ -11,6 +11,8 @@ import httpx
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    TextContent,
+    ThinkingContent,
     ToolResultMessage,
     Usage,
     UserMessage,
@@ -169,6 +171,8 @@ class AnthropicProvider:
 
                         yield ProviderResponseStartEvent(model=model)
                         content_parts: list[str] = []
+                        thinking_parts: list[str] = []
+                        thinking_signature: str | None = None
                         tool_builders: dict[int, _AnthropicToolBuilder] = {}
                         finish_reason: str | None = None
                         usage: Usage | None = None
@@ -217,7 +221,14 @@ class AnthropicProvider:
                                     thinking = _string_or_empty(delta.get("thinking"))
                                     if thinking:
                                         emitted_content = True
+                                        thinking_parts.append(thinking)
                                         yield ProviderThinkingDeltaEvent(delta=thinking)
+                                elif delta_type == "signature_delta":
+                                    signature = _string_or_empty(delta.get("signature"))
+                                    if signature:
+                                        thinking_signature = (
+                                            f"{thinking_signature or ''}{signature}"
+                                        )
                                 elif delta_type == "input_json_delta":
                                     index = int(chunk.get("index", 0))
                                     builder = tool_builders.setdefault(
@@ -248,9 +259,18 @@ class AnthropicProvider:
                         for tool_call in tool_calls:
                             yield ProviderToolCallEvent(tool_call=tool_call)
 
+                        content = assistant_content("".join(content_parts), tool_calls)
+                        if thinking_parts:
+                            content.insert(
+                                0,
+                                ThinkingContent(
+                                    thinking="".join(thinking_parts),
+                                    thinking_signature=thinking_signature,
+                                ),
+                            )
                         yield ProviderResponseEndEvent(
                             message=AssistantMessage(
-                                content=assistant_content("".join(content_parts), tool_calls),
+                                content=content,
                                 usage=usage or Usage(),
                             ),
                             finish_reason=finish_reason,
@@ -360,17 +380,26 @@ def _anthropic_message(message: AgentMessage) -> dict[str, JSONValue]:
         return {"role": "user", "content": message.text}
     if isinstance(message, AssistantMessage):
         content: list[JSONValue] = []
-        if message.text:
-            content.append({"type": "text", "text": message.text})
-        for tool_call in message.tool_calls:
-            content.append(
-                {
-                    "type": "tool_use",
-                    "id": tool_call.id,
-                    "name": tool_call.name,
-                    "input": tool_call.arguments,
+        for block in message.content:
+            if isinstance(block, TextContent):
+                content.append({"type": "text", "text": block.text})
+            elif isinstance(block, ThinkingContent):
+                thinking: dict[str, JSONValue] = {
+                    "type": "thinking",
+                    "thinking": block.thinking,
                 }
-            )
+                if block.thinking_signature is not None:
+                    thinking["signature"] = block.thinking_signature
+                content.append(thinking)
+            elif isinstance(block, ToolCall):
+                content.append(
+                    {
+                        "type": "tool_use",
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.arguments,
+                    }
+                )
         return {"role": "assistant", "content": content}
     if isinstance(message, ToolResultMessage):
         return {

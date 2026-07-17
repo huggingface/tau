@@ -13,6 +13,8 @@ import httpx
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    TextContent,
+    ThinkingContent,
     ToolResultMessage,
     Usage,
     UserMessage,
@@ -328,23 +330,31 @@ def _messages_to_responses_input(messages: list[AgentMessage]) -> list[JSONValue
                 }
             )
         elif isinstance(message, AssistantMessage):
-            if message.text:
-                items.append(
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "output_text",
-                                "text": message.text,
-                                "annotations": [],
-                            }
-                        ],
-                        "status": "completed",
-                        "id": f"msg_{assistant_index}",
-                    }
-                )
-                assistant_index += 1
+            for block in message.content:
+                if isinstance(block, ThinkingContent) and block.thinking_signature:
+                    try:
+                        reasoning_item = loads(block.thinking_signature)
+                    except (TypeError, ValueError):
+                        reasoning_item = None
+                    if isinstance(reasoning_item, dict):
+                        items.append(reasoning_item)
+                elif isinstance(block, TextContent):
+                    items.append(
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": block.text,
+                                    "annotations": [],
+                                }
+                            ],
+                            "status": "completed",
+                            "id": block.text_signature or f"msg_{assistant_index}",
+                        }
+                    )
+                    assistant_index += 1
             for tool_call in message.tool_calls:
                 call_id, item_id = _split_tool_call_id(tool_call.id)
                 item: dict[str, JSONValue] = {
@@ -384,6 +394,8 @@ async def _codex_provider_events(
     signal: CancellationToken | None,
 ) -> AsyncIterator[ProviderEvent]:
     content_parts: list[str] = []
+    thinking_parts: list[str] = []
+    reasoning_items: dict[str, dict[str, JSONValue]] = {}
     tool_calls: list[ToolCall] = []
     active_tools: list[_ToolCallBuilder] = []
     tools_by_item_id: dict[str, _ToolCallBuilder] = {}
@@ -415,7 +427,11 @@ async def _codex_provider_events(
 
         if event_type == "response.output_item.added":
             item = event.get("item")
-            if isinstance(item, Mapping) and item.get("type") == "function_call":
+            if isinstance(item, Mapping) and item.get("type") == "reasoning":
+                item_id = item.get("id")
+                if isinstance(item_id, str):
+                    reasoning_items[item_id] = dict(item)
+            elif isinstance(item, Mapping) and item.get("type") == "function_call":
                 _track_tool_builder(
                     _tool_builder_from_item(item),
                     event,
@@ -462,6 +478,7 @@ async def _codex_provider_events(
         }:
             delta = event.get("delta")
             if isinstance(delta, str) and delta:
+                thinking_parts.append(delta)
                 yield ProviderThinkingDeltaEvent(delta=delta)
 
         elif event_type in {
@@ -469,7 +486,11 @@ async def _codex_provider_events(
             "response.output_item.completed",
         }:
             item = event.get("item")
-            if isinstance(item, Mapping) and item.get("type") == "function_call":
+            if isinstance(item, Mapping) and item.get("type") == "reasoning":
+                item_id = item.get("id")
+                if isinstance(item_id, str):
+                    reasoning_items[item_id] = dict(item)
+            elif isinstance(item, Mapping) and item.get("type") == "function_call":
                 tool_builder = _tool_builder_for_event(
                     event,
                     active_tools=active_tools,
@@ -517,9 +538,20 @@ async def _codex_provider_events(
             usage = _usage_from_response(event) or usage
             break
 
+    content = assistant_content("".join(content_parts), tool_calls)
+    if thinking_parts:
+        content.insert(
+            0,
+            ThinkingContent(
+                thinking="".join(thinking_parts),
+                thinking_signature=(
+                    dumps(next(iter(reasoning_items.values()))) if reasoning_items else None
+                ),
+            ),
+        )
     yield ProviderResponseEndEvent(
         message=AssistantMessage(
-            content=assistant_content("".join(content_parts), tool_calls),
+            content=content,
             usage=usage or Usage(),
         ),
         finish_reason=finish_reason,
