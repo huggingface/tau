@@ -19,6 +19,7 @@ from tau_coding.tui.state import TuiState
 class TuiEventAdapter:
     def __init__(self, state: TuiState) -> None:
         self.state = state
+        self._assistant_start_item_index: int | None = None
 
     def apply(self, event: CodingSessionEvent) -> None:
         if isinstance(event, AgentStartEvent):
@@ -39,6 +40,7 @@ class TuiEventAdapter:
         if isinstance(event, MessageStartEvent):
             if isinstance(event.message, AssistantMessage):
                 self.state.assistant_buffer = event.message.text
+                self._assistant_start_item_index = len(self.state.items)
             return
         if isinstance(event, MessageUpdateEvent):
             nested = event.assistant_message_event
@@ -64,10 +66,14 @@ class TuiEventAdapter:
                     self.state.running = False
                     self.state.add_item("error", f"Error: {text}")
                 else:
-                    text = message.text or self.state.assistant_buffer
-                    if text:
-                        self.state.add_item("assistant", text)
+                    # Replace provisional delta rows with the final canonical
+                    # message so persisted block boundaries and ordering win.
+                    start = self._assistant_start_item_index
+                    if start is not None:
+                        del self.state.items[start:]
+                    self.state.add_assistant_message(message, include_tool_calls=False)
                 self.state.assistant_buffer = ""
+                self._assistant_start_item_index = None
             return
         if isinstance(event, ToolExecutionStartEvent):
             self._flush()

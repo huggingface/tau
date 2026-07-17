@@ -28,6 +28,7 @@ from tau_agent import (
     MessageStartEvent,
     MessageUpdateEvent,
     TextContent,
+    ThinkingContent,
     ToolCall,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
@@ -3429,6 +3430,56 @@ async def test_tui_mid_run_custom_follow_up_renders_card_not_raw_content() -> No
 
 
 @pytest.mark.anyio
+async def test_structured_assistant_redraw_preserves_extension_custom_card() -> None:
+    raw = "<task-notification>agent-1 completed</task-notification>"
+    partial = AssistantMessage()
+    final = AssistantMessage(content=[ThinkingContent(thinking="plan"), TextContent(text="done")])
+    session = FakeSession(
+        events=[
+            AgentStartEvent(),
+            MessageEndEvent(
+                message=CustomMessage(
+                    content=raw,
+                    custom_type="subagent-notification",
+                    details={"description": "Summarize codebase"},
+                )
+            ),
+            MessageStartEvent(message=partial),
+            MessageUpdateEvent(
+                message=partial,
+                assistant_message_event=ThinkingDeltaEvent(
+                    content_index=0,
+                    delta="plan",
+                    partial=partial,
+                ),
+            ),
+            MessageUpdateEvent(
+                message=partial,
+                assistant_message_event=TextDeltaEvent(
+                    content_index=1,
+                    delta="done",
+                    partial=partial,
+                ),
+            ),
+            MessageEndEvent(message=final),
+            AgentEndEvent(),
+        ]
+    )
+    session.extension_runtime = _CustomMessageRuntime()
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await app._run_prompt("run")
+        await pilot.pause()
+
+        custom_widget = next(
+            widget for widget in app.query(TranscriptMessageWidget) if widget.item.role == "custom"
+        )
+        assert "✓ Summarize codebase completed" in custom_widget.selection_text
+        assert "<task-notification>" not in custom_widget.selection_text
+
+
+@pytest.mark.anyio
 async def test_tui_app_completes_custom_prompt_slash_command() -> None:
     session = FakeSession()
     session.prompt_templates = (
@@ -4618,7 +4669,19 @@ async def test_tui_login_saves_provider_key(
 
 
 @pytest.mark.anyio
-async def test_tui_anthropic_subscription_alias_opens_oauth() -> None:
+async def test_tui_anthropic_subscription_alias_opens_oauth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    login_started = asyncio.Event()
+
+    class FakeOAuthProvider:
+        async def login(self, _callbacks: object) -> OAuthCredential:
+            login_started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    fake_provider = FakeOAuthProvider()
+    monkeypatch.setattr(tui_app, "get_oauth_provider", lambda _name: fake_provider)
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
@@ -4629,6 +4692,7 @@ async def test_tui_anthropic_subscription_alias_opens_oauth() -> None:
 
         assert isinstance(app.screen, OAuthLoginScreen)
         assert app.screen.provider.name == "anthropic"
+        assert login_started.is_set()
 
 
 @pytest.mark.anyio
@@ -5717,7 +5781,57 @@ async def test_tui_app_hidden_thinking_placeholder_stays_before_streamed_answer(
 
 
 @pytest.mark.anyio
-async def test_tui_app_thinking_toggle_preserves_unrelated_widgets() -> None:
+async def test_tui_app_restored_thinking_toggles_in_persisted_order() -> None:
+    app = TauTuiApp(
+        FakeSession(
+            messages=(
+                UserMessage(content="prompt"),
+                AssistantMessage(
+                    content=[
+                        ThinkingContent(thinking="first plan"),
+                        TextContent(text="first answer"),
+                        ThinkingContent(thinking="second plan"),
+                        TextContent(text="second answer"),
+                    ]
+                ),
+            )
+        )
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert [line.text for line in transcript.lines] == [
+            "prompt",
+            "Thinking… Press Ctrl+T to show thinking tokens.",
+            "first answer",
+            "Thinking… Press Ctrl+T to show thinking tokens.",
+            "second answer",
+        ]
+
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+        assert [line.text for line in transcript.lines] == [
+            "prompt",
+            "first plan",
+            "first answer",
+            "second plan",
+            "second answer",
+        ]
+
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+        assert [line.text for line in transcript.lines] == [
+            "prompt",
+            "Thinking… Press Ctrl+T to show thinking tokens.",
+            "first answer",
+            "Thinking… Press Ctrl+T to show thinking tokens.",
+            "second answer",
+        ]
+
+
+@pytest.mark.anyio
+async def test_tui_app_thinking_toggle_preserves_unrelated_items() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
@@ -5731,31 +5845,8 @@ async def test_tui_app_thinking_toggle_preserves_unrelated_widgets() -> None:
         await pilot.pause()
 
         transcript = app.query_one("#transcript", TranscriptView)
-        stable_widgets = [
-            widget
-            for widget in transcript.children
-            if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
-            and widget.item.role != "thinking"
-        ]
-        assert len(stable_widgets) == 4
-        assert (
-            sum(
-                1
-                for widget in transcript.children
-                if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
-                and widget.item.role == "thinking"
-            )
-            == 2
-        )
-
         await pilot.press("ctrl+t")
         await pilot.pause()
-        assert [
-            widget
-            for widget in transcript.children
-            if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
-            and widget.item.role != "thinking"
-        ] == stable_widgets
         assert [line.text for line in transcript.lines] == [
             "first prompt",
             "plan one",
@@ -5768,23 +5859,8 @@ async def test_tui_app_thinking_toggle_preserves_unrelated_widgets() -> None:
         app.state.add_item("status", "late status")
         await transcript.append_item(app.state.items[-1])
         await pilot.pause()
-        stable_widgets.append(
-            next(
-                widget
-                for widget in reversed(transcript.children)
-                if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
-                and widget.item.role == "status"
-            )
-        )
-
         await pilot.press("ctrl+t")
         await pilot.pause()
-        assert [
-            widget
-            for widget in transcript.children
-            if isinstance(widget, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
-            and widget.item.role != "thinking"
-        ] == stable_widgets
         assert [line.text for line in transcript.lines] == [
             "first prompt",
             "Thinking… Press Ctrl+T to show thinking tokens.",

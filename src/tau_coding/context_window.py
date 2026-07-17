@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    ThinkingContent,
     ToolResultMessage,
     UserMessage,
     message_text,
@@ -128,6 +129,11 @@ def estimate_message_tokens(message: AgentMessage) -> int:
     """Return a rough token estimate for one provider-neutral message."""
     tokens = MESSAGE_OVERHEAD_TOKENS + estimate_text_tokens(message_text(message))
     if isinstance(message, AssistantMessage):
+        tokens += sum(
+            estimate_text_tokens(block.thinking)
+            for block in message.content
+            if isinstance(block, ThinkingContent)
+        )
         tokens += sum(
             estimate_text_tokens(call.name) + estimate_text_tokens(str(call.arguments))
             for call in message.tool_calls

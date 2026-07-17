@@ -11,6 +11,7 @@ from tau_agent import (
     MessageStartEvent,
     MessageUpdateEvent,
     TextContent,
+    ThinkingContent,
     ToolCall,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
@@ -44,6 +45,26 @@ def test_assistant_message_keeps_ordered_content_blocks() -> None:
         "name": "read",
         "arguments": {"path": "README.md"},
         "thoughtSignature": None,
+    }
+
+
+def test_assistant_message_persists_thinking_blocks_and_signatures() -> None:
+    message = AssistantMessage(
+        content=[
+            ThinkingContent(thinking="plan", thinking_signature="reasoning_content"),
+            TextContent(text="done"),
+        ],
+        model="fake",
+        timestamp=123,
+    )
+
+    assert message.thinking_text == "plan"
+    payload = message.model_dump(by_alias=True)
+    assert payload["content"][0] == {
+        "type": "thinking",
+        "thinking": "plan",
+        "thinkingSignature": "reasoning_content",
+        "redacted": False,
     }
 
 

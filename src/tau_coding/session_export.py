@@ -15,6 +15,9 @@ from pygments.lexers import JsonLexer
 
 from tau_agent.messages import (
     AssistantMessage,
+    TextContent,
+    ThinkingContent,
+    ToolCall,
     ToolResultMessage,
     UserMessage,
     message_text,
@@ -773,25 +776,24 @@ def _render_message_entry(entry: MessageEntry) -> str:
             f"<pre>{_escape(message.text)}</pre>"
         )
     if isinstance(message, AssistantMessage):
-        tool_calls = ""
-        if message.tool_calls:
-            tool_calls = (
-                "<h4>Tool calls</h4>"
-                "<ul>"
-                + "".join(
-                    "<li>"
-                    f"<code>{_escape(call.name)}</code> "
-                    f"<code>{_escape(call.id)}</code>"
-                    f"{_render_json_block(call.arguments)}"
-                    "</li>"
-                    for call in message.tool_calls
+        blocks: list[str] = []
+        for block in message.content:
+            if isinstance(block, ThinkingContent):
+                blocks.append(f"<h4>Thinking</h4><pre>{_escape(block.thinking)}</pre>")
+            elif isinstance(block, TextContent):
+                blocks.append(f"<pre>{_escape(block.text)}</pre>")
+            elif isinstance(block, ToolCall):
+                blocks.append(
+                    "<h4>Tool call</h4><ul><li>"
+                    f"<code>{_escape(block.name)}</code> "
+                    f"<code>{_escape(block.id)}</code>"
+                    f"{_render_json_block(block.arguments)}"
+                    "</li></ul>"
                 )
-                + "</ul>"
-            )
-        content = message.text or "(no assistant text)"
+        content = "".join(blocks) or "<pre>(no assistant text)</pre>"
         return (
             f'<p class="message-role"><span class="icon">{_ICON_ASSISTANT}</span>assistant</p>'
-            f"<pre>{_escape(content)}</pre>{tool_calls}"
+            f"{content}"
         )
     if isinstance(message, ToolResultMessage):
         metadata = [

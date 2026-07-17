@@ -9,6 +9,8 @@ from tau_agent import (
     MessageStartEvent,
     MessageUpdateEvent,
     TextContent,
+    ThinkingContent,
+    ToolCall,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
@@ -84,6 +86,31 @@ def test_tui_adapter_groups_nested_thinking_deltas() -> None:
 
     assert [(item.role, item.text) for item in state.items] == [("thinking", "hidden reasoning")]
     assert state.show_thinking is False
+
+
+def test_tui_state_restores_persisted_assistant_blocks_in_order() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ThinkingContent(thinking="plan"),
+                    TextContent(text="before"),
+                    ToolCall(id="call-1", name="read", arguments={"path": "README.md"}),
+                    ThinkingContent(thinking="continue"),
+                    TextContent(text="done"),
+                ]
+            )
+        ]
+    )
+
+    assert [item.role for item in state.items] == [
+        "thinking",
+        "assistant",
+        "tool",
+        "thinking",
+        "assistant",
+    ]
 
 
 def test_tui_adapter_records_tool_progress_and_result() -> None:

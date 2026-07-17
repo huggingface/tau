@@ -49,7 +49,14 @@ from tau_agent.events import (
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
 )
-from tau_agent.messages import AgentMessage, AssistantMessage, CustomMessage, UserMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    CustomMessage,
+    TextContent,
+    ThinkingContent,
+    UserMessage,
+)
 from tau_agent.provider import CancellationToken
 from tau_agent.provider_events import (
     AssistantErrorEvent,
@@ -3904,8 +3911,21 @@ class TauTuiApp(App[None]):
                 self._sync_header_title()
                 return
             if isinstance(event.message, AssistantMessage):
-                await transcript.finish_assistant_message(event.message.text)
-                self._refresh_chrome()
+                visible_blocks = [
+                    block
+                    for block in event.message.content
+                    if isinstance(block, (TextContent, ThinkingContent))
+                ]
+                if (
+                    any(isinstance(block, ThinkingContent) for block in visible_blocks)
+                    or len(visible_blocks) > 1
+                ):
+                    # The adapter replaced provisional rows with canonical ordered
+                    # blocks. Redraw through the normal extension-aware path.
+                    self._refresh()
+                else:
+                    await transcript.finish_assistant_message(event.message.text)
+                    self._refresh_chrome()
                 return
             return
         if isinstance(event, ToolExecutionStartEvent):
