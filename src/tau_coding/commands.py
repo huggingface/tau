@@ -403,6 +403,12 @@ def _status_command(context: CommandContext) -> CommandResult:
         f"Estimated context tokens: {session.context_token_estimate}",
         f"Context window: {session.context_window_tokens}",
     ]
+    context_window_source = getattr(session, "context_window_source", None)
+    if context_window_source:
+        lines.append(f"Context window source: {context_window_source}")
+    discovery_error = getattr(session, "model_limits_discovery_error", None)
+    if discovery_error:
+        lines.append(f"Model limit discovery: unavailable ({discovery_error})")
     if context_usage is not None:
         lines.append(
             "Context token breakdown: "

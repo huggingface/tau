@@ -13,6 +13,8 @@ Run `/session` in the TUI to see a rough estimate:
 
 ```text
 Estimated context tokens: <count>
+Context window: <count>
+Context window source: configured catalog | provider live catalog
 Context token breakdown: system=<count>, messages=<count>, tools=<count>
 Thinking mode: <mode>
 ```
@@ -35,8 +37,11 @@ When it compacts, Tau asks the model to summarize older messages, keeps a recent
 suffix of the conversation, and continues. The original session file is never
 edited — only the *active context* sent to the provider changes.
 
-The default threshold follows the model's context window minus a reserve. You can
-override it for a run:
+The default threshold follows the model's context window minus a reserve. Providers
+that advertise an explicit runtime threshold can override that default. In particular,
+Codex subscription sessions discover account/rollout-specific limits from Codex's
+authenticated model catalog because those limits can differ from the public OpenAI API.
+You can override the resulting threshold for a run:
 
 ```bash
 tau --auto-compact-threshold 100000
@@ -77,3 +82,11 @@ supported levels for the active model. When it's unavailable, `/session` shows
 the reason (e.g. the provider doesn't declare `thinking_levels`, or the model
 isn't listed). Custom providers can opt in via `thinking_levels` in their config
 — see [Configuration]({{< relref "../reference/configuration.md#providers" >}}).
+
+At startup Tau picks a valid level for the selected model automatically: a
+remembered per-model choice wins, then `medium`, then the provider's own
+default, then the first level the model supports. So a model that only supports
+`xhigh` (for example `kimi-code:k3`) opens at `xhigh` instead of failing with
+"Thinking mode medium is not available". Picking an unsupported level
+explicitly (via `/think` or the thinking picker) still shows an error listing
+the available modes.

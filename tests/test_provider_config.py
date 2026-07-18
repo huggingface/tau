@@ -24,6 +24,7 @@ from tau_coding.provider_config import (
     provider_thinking_levels,
     provider_thinking_unavailable_reason,
     resolve_provider_selection,
+    resolve_startup_thinking_level,
     save_provider_settings,
     set_default_provider_model,
     set_provider_thinking_level,
@@ -536,6 +537,73 @@ def test_resolve_provider_selection_uses_configured_defaults() -> None:
 def test_resolve_provider_selection_rejects_unknown_provider() -> None:
     with pytest.raises(ProviderConfigError, match="Unknown provider"):
         resolve_provider_selection(ProviderSettings(), provider_name="missing")
+
+
+def _kimi_code_like_provider() -> OpenAICompatibleProviderConfig:
+    # Mirrors the catalog kimi-code entry: k3 only supports xhigh (mapped to
+    # "max"); every other level is marked unsupported (None) in the map.
+    return OpenAICompatibleProviderConfig(
+        name="kimi-code",
+        models=("k3", "kimi-for-coding"),
+        default_model="k3",
+        thinking_levels=("medium", "xhigh"),
+        thinking_default="medium",
+        thinking_parameter="reasoning_effort",
+        model_metadata={
+            "k3": ProviderModelMetadata(
+                reasoning=True,
+                thinking_level_map={
+                    "off": None,
+                    "minimal": None,
+                    "low": None,
+                    "medium": None,
+                    "high": None,
+                    "xhigh": "max",
+                },
+            ),
+        },
+    )
+
+
+def test_resolve_startup_thinking_level_falls_back_when_default_unsupported() -> None:
+    provider = _kimi_code_like_provider()
+
+    # k3 only supports xhigh, so the global "medium" default must be coerced
+    # instead of crashing startup.
+    assert resolve_startup_thinking_level(provider, "k3") == "xhigh"
+
+
+def test_resolve_startup_thinking_level_prefers_remembered_model_default() -> None:
+    provider = _kimi_code_like_provider()
+    remembered = OpenAICompatibleProviderConfig(
+        name=provider.name,
+        models=provider.models,
+        default_model=provider.default_model,
+        thinking_levels=provider.thinking_levels,
+        thinking_default=provider.thinking_default,
+        thinking_parameter=provider.thinking_parameter,
+        thinking_defaults={"k3": "xhigh"},
+        model_metadata=provider.model_metadata,
+    )
+
+    assert resolve_startup_thinking_level(remembered, "k3") == "xhigh"
+
+
+def test_resolve_startup_thinking_level_keeps_supported_default() -> None:
+    provider = _kimi_code_like_provider()
+
+    # kimi-for-coding supports the provider default (medium).
+    assert resolve_startup_thinking_level(provider, "kimi-for-coding") == "medium"
+
+
+def test_resolve_startup_thinking_level_returns_none_without_levels() -> None:
+    provider = OpenAICompatibleProviderConfig(
+        name="local",
+        models=("qwen",),
+        default_model="qwen",
+    )
+
+    assert resolve_startup_thinking_level(provider, "qwen") is None
 
 
 def test_resolve_provider_selection_rejects_model_not_declared_for_provider() -> None:
