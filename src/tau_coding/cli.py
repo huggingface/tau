@@ -6,7 +6,7 @@ import contextlib
 import sys
 from os import environ
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import anyio
 import typer
@@ -188,6 +188,13 @@ def main(
         PrintOutputMode,
         typer.Option("--output", "-o", help="Output mode for print mode."),
     ] = PrintOutputMode.text,
+    tui: Annotated[
+        Literal["textual", "rich"],
+        typer.Option(
+            "--tui",
+            help="Interactive frontend: 'textual' (full) or 'rich' (minimal).",
+        ),
+    ] = "textual",
     resume: Annotated[
         str | None,
         typer.Option("--resume", help="Resume a session id in TUI mode."),
@@ -302,6 +309,7 @@ def main(
                 extension_paths,
                 not no_extensions,
                 project_extensions,
+                tui,
             )
         except (RuntimeError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
@@ -346,8 +354,9 @@ async def run_openai_tui(
     extension_paths: tuple[Path, ...] = (),
     extensions_enabled: bool = True,
     project_extensions_enabled: bool = False,
+    tui: Literal["textual", "rich"] = "textual",
 ) -> None:
-    """Run the Textual TUI with the default OpenAI-compatible provider."""
+    """Run the selected TUI with the default OpenAI-compatible provider."""
     release_notes_notice = startup_release_notes_notice(_current_version())
     startup_notices = [
         notice
@@ -369,6 +378,7 @@ async def run_openai_tui(
         extension_paths=extension_paths,
         extensions_enabled=extensions_enabled,
         project_extensions_enabled=project_extensions_enabled,
+        frontend=tui,
     )
 
 

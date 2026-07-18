@@ -1,6 +1,6 @@
 # Tau TUI
 
-Tau's full interactive interface uses Textual behind an adapter boundary. `tau_agent` emits provider-neutral events; `tau_coding.tui` consumes and renders them.
+Tau's default full interactive interface uses Textual behind an adapter boundary. A minimalist Rich + prompt_toolkit frontend is available with `tau --tui rich`. Both consume provider-neutral events from `tau_agent`; frontend policy stays in `tau_coding`.
 
 For current behavior in a Tau checkout, read:
 

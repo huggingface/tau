@@ -3,9 +3,22 @@ title: The interactive session
 description: Get fluent in Tau's terminal UI — prompting, steering, the command palette, tool output, and pickers.
 ---
 
-Running `tau` with no arguments opens the interactive terminal UI (TUI). This is
+Running `tau` with no arguments opens the full Textual terminal UI (TUI). This is
 where most work happens. This guide covers the moving parts; for the exact keys
 see [Keyboard shortcuts]({{< relref "../reference/keybindings.md" >}}).
+
+Tau also ships an intentionally smaller Rich + prompt_toolkit frontend:
+
+```bash
+tau --tui rich
+```
+
+It keeps the transcript, streaming output, multiline history, completion, shell
+commands, and one compact session-status line, while omitting sidebars and
+picker/widget surfaces. Press **Alt+Enter** to submit and **Enter** for a newline.
+Commands that need a picker should be given an argument (for example,
+`/resume <id>`) or run after restarting with `--tui textual`. The rest of this
+guide describes the default Textual frontend.
 
 ## Sending a prompt
 

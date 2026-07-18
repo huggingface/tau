@@ -5775,8 +5775,9 @@ async def run_tui_app(
     extension_paths: tuple[Path, ...] = (),
     extensions_enabled: bool = True,
     project_extensions_enabled: bool = False,
+    frontend: Literal["textual", "rich"] = "textual",
 ) -> None:
-    """Create the default provider/session and run the Textual app."""
+    """Create the default provider/session and run the selected built-in TUI."""
     if new_session and session_id is not None:
         raise RuntimeError("--resume and --new-session cannot be used together")
 
@@ -5853,14 +5854,24 @@ async def run_tui_app(
         legacy_notices = (startup_notice,) if startup_notice else ()
         error_notices = (startup_error_notice,) if startup_error_notice else ()
         all_startup_notices = tuple((*error_notices, *startup_notices, *legacy_notices))
-        app = TauTuiApp(
-            session,
-            tui_settings=load_tui_settings(),
-            startup_message=startup_message,
-            startup_notices=all_startup_notices,
-            initial_prompt=initial_prompt,
-        )
-        await app.run_async()
+        if frontend == "rich":
+            from tau_coding.rich_tui import run_rich_tui
+
+            rich_notices = ((startup_message,) if startup_message else ()) + all_startup_notices
+            await run_rich_tui(
+                session,
+                startup_notices=rich_notices,
+                initial_prompt=initial_prompt,
+            )
+        else:
+            app = TauTuiApp(
+                session,
+                tui_settings=load_tui_settings(),
+                startup_message=startup_message,
+                startup_notices=all_startup_notices,
+                initial_prompt=initial_prompt,
+            )
+            await app.run_async()
     finally:
         if session is not None:
             close_session = getattr(session, "aclose", None)

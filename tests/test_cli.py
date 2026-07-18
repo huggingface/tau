@@ -228,6 +228,33 @@ def test_cli_without_prompt_invokes_tui_runner(
     assert calls == [(None, tmp_path, None, False, None, None, None)]
 
 
+def test_cli_selects_rich_tui(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    selected: list[object] = []
+
+    async def fake_run_openai_tui(*args: object) -> None:
+        selected.append(args[-1])
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, ["--tui", "rich"])
+
+    assert result.exit_code == 0
+    assert selected == ["rich"]
+
+
+def test_cli_rejects_unknown_tui(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+
+    result = CliRunner().invoke(app, ["--tui", "unknown"])
+
+    assert result.exit_code == 2
+    assert "Invalid value" in result.output
+    assert "textual" in result.output
+    assert "rich" in result.output
+
+
 def test_cli_positional_prompt_invokes_tui_runner(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

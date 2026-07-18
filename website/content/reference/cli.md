@@ -39,6 +39,7 @@ one-time release-notes message to the transcript with the new features and fixes
 | `-m, --model TEXT` | Model to request from the provider |
 | `--provider TEXT` | Configured provider name to use |
 | `--cwd PATH` | Working directory for the built-in tools |
+| `--tui [textual\|rich]` | Interactive frontend: full Textual UI (default) or minimalist Rich UI |
 | `-o, --output [text\|json\|transcript]` | Output mode for print mode (default `text`) |
 | `--resume TEXT` | Resume a session id in the TUI |
 | `--new-session` | Start a new session instead of resuming the default |
