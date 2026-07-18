@@ -999,6 +999,22 @@ class TreePickerResult:
     custom_instructions: str | None = None
 
 
+class _TreePickerListItem(ListItem):
+    """Tree entry that keeps inline label colors readable when highlighted."""
+
+    def __init__(self, choice: SessionTreeChoice, *, theme: TuiTheme) -> None:
+        self.choice = choice
+        self.theme = theme
+        super().__init__(Label(_tree_picker_label(choice, theme=theme), markup=False))
+
+    def watch_highlighted(self, value: bool) -> None:
+        """Recolor inline label spans when the list highlight changes."""
+        super().watch_highlighted(value)
+        self.query_one(Label).update(
+            _tree_picker_label(self.choice, theme=self.theme, highlighted=value)
+        )
+
+
 class TreePickerScreen(ModalScreen[TreePickerResult | None]):
     """Modal picker for branching from a previous session entry."""
 
@@ -1142,10 +1158,7 @@ class TreePickerScreen(ModalScreen[TreePickerResult | None]):
         return tuple(choice for choice in self.choices if not choice.is_tool_call)
 
     def _list_items(self) -> list[ListItem]:
-        return [
-            ListItem(Label(_tree_picker_label(choice, theme=self.theme), markup=False))
-            for choice in self._visible_choices()
-        ]
+        return [_TreePickerListItem(choice, theme=self.theme) for choice in self._visible_choices()]
 
     def _help_text(self) -> str:
         tool_call_state = "shown" if self.show_tool_calls else "hidden"
@@ -5220,7 +5233,12 @@ def _session_picker_label(record: SessionCompletionRecord) -> str:
     return " - ".join(parts)
 
 
-def _tree_picker_label(choice: SessionTreeChoice, *, theme: TuiTheme) -> Text:
+def _tree_picker_label(
+    choice: SessionTreeChoice,
+    *,
+    theme: TuiTheme,
+    highlighted: bool = False,
+) -> Text:
     marker = "* " if choice.active else "  "
     label = choice.label
     indent_width = len(label) - len(label.lstrip(" "))
@@ -5229,7 +5247,8 @@ def _tree_picker_label(choice: SessionTreeChoice, *, theme: TuiTheme) -> Text:
     author, separator, rest = body.partition(":")
     text = Text(f"{marker}{indent}")
     if separator:
-        text.append(author, style=theme.accent)
+        author_color = theme.highlight_text if highlighted else theme.accent
+        text.append(author, style=author_color)
         text.append(f"{separator}{rest}")
     else:
         text.append(body)

@@ -3850,10 +3850,15 @@ async def test_tui_app_tree_picker_branches_with_summary() -> None:
             "* assistant: Right",
         ]
         assert str(rendered_labels[0].spans[0].style) == _style_rgb(TAU_DARK_THEME.accent)
+        assert str(rendered_labels[3].spans[0].style) == _style_rgb(TAU_DARK_THEME.highlight_text)
 
         await pilot.press("up")
         await pilot.pause()
         assert tree_list.index == 2
+        left_label = tree_list.children[2].query_one(Label).render()
+        right_label = tree_list.children[3].query_one(Label).render()
+        assert str(left_label.spans[0].style) == _style_rgb(TAU_DARK_THEME.highlight_text)
+        assert str(right_label.spans[0].style) == _style_rgb(TAU_DARK_THEME.accent)
         await pilot.press("s")
         await pilot.pause()
 
