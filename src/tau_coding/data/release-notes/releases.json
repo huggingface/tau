@@ -1,5 +1,26 @@
 [
   {
+    "version": "0.2.1",
+    "date": "2026-07-18",
+    "sections": {
+      "New": [
+        "Persist thinking/reasoning blocks and provider replay metadata across Tau's Pi-compatible event streams, session storage, exports, and TUI rendering.",
+        "Bundle Tau self-knowledge docs, examples, and skills so installed copies can answer Tau-specific questions without a source checkout."
+      ],
+      "Changed": [
+        "Discover Codex context and compaction limits at runtime from the authenticated model catalog, with conservative static fallbacks and a visible limit source in session diagnostics.",
+        "Remove the redundant animated tool-row spinner while keeping static status-colored markers and elapsed-time feedback."
+      ],
+      "Fixed": [
+        "Fix provider-error recovery so a failed or aborted assistant turn no longer poisons the next prompt, while keeping the error visible in the TUI and session history.",
+        "Fix tool-call labels in the session tree for assistant turns without visible text.",
+        "Fix light theme code block background in fenced code blocks.",
+        "Coerce the startup thinking level to a mode the remembered default model supports, preventing crashes on incompatible saved preferences.",
+        "Fix tests launching the real Anthropic OAuth browser during test runs."
+      ]
+    }
+  },
+  {
     "version": "0.2.0",
     "date": "2026-07-16",
     "sections": {
