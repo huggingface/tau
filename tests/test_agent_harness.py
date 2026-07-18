@@ -14,7 +14,6 @@ from tau_agent import (
     TextContent,
     ToolCall,
     ToolResultMessage,
-    UserMessage,
 )
 from tau_agent.types import JSONValue
 from tau_ai import FakeProvider
@@ -189,10 +188,10 @@ def test_queue_mutators_return_canonical_snapshots() -> None:
     )
 
     harness.steer("First")
-    harness.steer("Second")
-    harness.follow_up("Later")
-    assert harness.pop_latest_steering() == UserMessage(content="Second")
-    assert harness.pop_latest_follow_up() == UserMessage(content="Later")
+    second = harness.steer("Second").steering[-1]
+    later = harness.follow_up("Later").follow_up[-1]
+    assert harness.pop_latest_steering() == second
+    assert harness.pop_latest_follow_up() == later
     assert [message.text for message in harness.queued_messages.steering] == ["First"]
 
     cleared = harness.clear_queues()

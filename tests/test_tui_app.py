@@ -97,6 +97,7 @@ from tau_coding.tui.config import (
     TAU_LIGHT_THEME,
     TuiKeybindings,
     TuiSettings,
+    TuiTheme,
     tui_settings_path,
 )
 from tau_coding.tui.state import TOOL_SPINNER_FRAMES, ChatItem, TuiState
@@ -2349,6 +2350,32 @@ async def test_streaming_code_block_hides_horizontal_scrollbar_until_finalized()
         assert finalized_fence.max_scroll_x > 0
         assert finalized_fence.styles.scrollbar_size_horizontal == 1
         assert finalized_fence.show_horizontal_scrollbar is True
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "theme",
+    [TAU_DARK_THEME, TAU_LIGHT_THEME, HIGH_CONTRAST_THEME],
+    ids=lambda theme: theme.name,
+)
+async def test_transcript_code_fence_uses_theme_background(theme: TuiTheme) -> None:
+    """Code fences keep Tau's themed background for every built-in theme.
+
+    Regression test: Textual's built-in `MarkdownFence:light` rule outranks
+    Tau's plain `ThemedMarkdownWidget MarkdownFence` selector, which used to
+    leave light-theme code fences with a transparent white background.
+    """
+    app = TauTuiApp(
+        FakeSession([AssistantMessage(content="```python\nx = 1\n```")]),
+        tui_settings=TuiSettings(theme=theme.name),
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        fence = app.query_one("MarkdownFence")
+
+    assert fence.styles.background == Color.parse(theme.markdown_code_block_background)
 
 
 def test_tui_app_uses_configured_theme_css_variables() -> None:
