@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.2.2",
+    "date": "2026-07-18",
+    "sections": {
+      "New": [
+        "Add data-driven JSON themes with built-in palettes plus user and project theme discovery.",
+        "Add live search to the resume session picker across session titles, models, and working directories."
+      ],
+      "Changed": [
+        "Keep long TUI sessions responsive by mounting a bounded transcript window while preserving access to the complete conversation.",
+        "Redesign the TUI sidebar around session identity, lifetime activity, token usage, estimated cost, compaction status, and loaded capabilities."
+      ]
+    }
+  },
+  {
     "version": "0.2.1",
     "date": "2026-07-18",
     "sections": {
