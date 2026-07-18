@@ -86,4 +86,6 @@ The prompt editor keeps only its left border; focus, shell-mode, and activity
 colors update that edge without surrounding the input on all four sides. Vertical
 padding replaces the removed top and bottom border space, preserving the original
 block height and full background area. User transcript blocks share that prompt
-background in every built-in theme, matching both the composer and sidebar.
+background in every built-in theme, matching both the composer and sidebar. A
+small vertical inset gives each submitted message a block silhouette instead of
+making only its text line appear highlighted.

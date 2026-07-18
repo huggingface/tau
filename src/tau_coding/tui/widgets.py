@@ -352,6 +352,8 @@ class TranscriptMessageWidget(Horizontal):
             self._result_markup,
         )
         super().__init__(classes="transcript-message")
+        if item.role == "user":
+            self.styles.padding = (1, 0)
         foreground, background = _split_rich_style_colors(self._role_style.body)
         self._body_foreground = foreground
         if item.role in _BORDERLESS_TRANSCRIPT_ROLES:

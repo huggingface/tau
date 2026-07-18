@@ -1338,6 +1338,8 @@ async def test_transcript_message_widget_renders_full_height_role_block() -> Non
         # block is rectangular and the accent spans every wrapped line.
         assert widget.styles.background == background
         assert body.styles.background == background
+        assert widget.styles.padding.top == 1
+        assert widget.styles.padding.bottom == 1
         edge_type, edge_color = widget.styles.border_left
         assert edge_type != "none"
         assert edge_color == border
