@@ -1477,9 +1477,9 @@ def render_session_sidebar(
     activity = Text(
         f"{stats.turn_count} {_plural(stats.turn_count, 'turn')}, "
         f"{stats.tool_call_count} tool {_plural(stats.tool_call_count, 'call')}",
-        style=theme.prompt_text,
+        style=theme.completion_description,
     )
-    usage = Text(style=theme.prompt_text)
+    usage = Text(style=theme.completion_description)
     usage.append(f"{_compact_usage_count(stats.input_tokens)} in, ")
     usage.append(f"{_compact_usage_count(stats.output_tokens)} out")
     usage.append(" · ", style=theme.completion_description)
@@ -1491,7 +1491,7 @@ def render_session_sidebar(
     threshold = session.auto_compact_token_threshold
     compaction = Text(
         "off" if threshold is None else f"auto at {_compact_token_count(threshold)}",
-        style=theme.prompt_text,
+        style=theme.completion_description,
     )
     tools = _comma_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
     skills = _bullet_list(
@@ -1541,7 +1541,7 @@ def _sidebar_section(
     theme: TuiTheme,
 ) -> RenderableType:
     """Render one sidebar section without a surrounding border."""
-    header = Text(title, style=f"bold {theme.accent}")
+    header = Text(title, style=f"bold {theme.prompt_text}")
     return Group(Padding(header, (0, 0, 0, 1)), Padding(body, (0, 0, 0, 1)))
 
 
@@ -2137,7 +2137,12 @@ def _comma_list(
 ) -> Text:
     if not items:
         return Text(empty, style=theme.completion_description)
-    return Text(", ".join(items), style=theme.prompt_text, overflow="fold", no_wrap=False)
+    return Text(
+        ", ".join(items),
+        style=theme.completion_description,
+        overflow="fold",
+        no_wrap=False,
+    )
 
 
 def _compact_usage_count(value: int) -> str:
@@ -2173,7 +2178,7 @@ def _bullet_list(
         if index:
             text.append("\n")
         text.append("• ", style=theme.completion_description)
-        text.append(item, style=theme.prompt_text)
+        text.append(item, style=theme.completion_description)
     return text
 
 

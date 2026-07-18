@@ -30,9 +30,10 @@ instruction source has a clear row. Paths inside the working directory are
 project-relative; paths outside it are absolute so user-level instructions are
 unambiguous.
 
-Spaced dividers separate each section. The sidebar is slightly wider, uses the
-same theme variable as the prompt field for its background, and hides on shorter
-terminals rather than clipping the expanded content. The versioned `τ = 2π` brand
+Spaced dividers separate each section. Section headings use the bright prompt
+text color while values use the quieter metadata gray. The sidebar is slightly
+wider, uses the same theme variable as the prompt field for its background, and
+hides on shorter terminals rather than clipping the expanded content. The versioned `τ = 2π` brand
 is a separate bottom-aligned widget, so it stays at the lower edge regardless of
 content height.
 

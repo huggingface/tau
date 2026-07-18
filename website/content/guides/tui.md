@@ -119,8 +119,9 @@ names use compact comma-separated lists. Skills and context files use bullet
 lists, with one item or path per line. Project context paths are relative to the
 working directory; context loaded from outside the project uses its full path.
 
-The wider sidebar uses the prompt field's background color and keeps Tau's
-versioned `τ = 2π` mark pinned to its bottom edge. Tau does not render separate
+The wider sidebar uses the prompt field's background color, bright section
+headings, quieter gray values, and keeps Tau's versioned `τ = 2π` mark pinned to
+its bottom edge. Tau does not render separate
 top-header or shortcut-footer rows. Named sessions remain visible in the sidebar
 and terminal tab title; `/hotkeys` lists shortcuts when needed. The sidebar hides
 automatically when the terminal is small, while the tab title continues to

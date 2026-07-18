@@ -513,6 +513,7 @@ def test_session_sidebar_uses_prominent_title_and_accented_section_headers() -> 
     session_name = sidebar.renderables[0]
     activity_section = sidebar.renderables[2]
     activity_header = activity_section.renderables[0]
+    activity_content = activity_section.renderables[1]
 
     console.print(sidebar)
 
@@ -521,7 +522,8 @@ def test_session_sidebar_uses_prominent_title_and_accented_section_headers() -> 
     assert session_name.left == 1
     assert str(session_name.renderable.style) == f"bold {TAU_DARK_THEME.accent}"
     assert activity_header.left == 1
-    assert str(activity_header.renderable.style) == f"bold {TAU_DARK_THEME.accent}"
+    assert str(activity_header.renderable.style) == f"bold {TAU_DARK_THEME.prompt_text}"
+    assert str(activity_content.renderable.style) == TAU_DARK_THEME.completion_description
     assert " session" not in output
     assert " context" in output
     assert " tools" in output
