@@ -81,6 +81,12 @@ class TuiState:
     custom_renderer: CustomMessageMarkup | None = None
     tool_call_renderer: ToolCallMarkup | None = None
     tool_result_renderer: ToolResultMarkup | None = None
+    _tool_items_by_call_id: dict[str, ChatItem] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def add_item(
         self,
@@ -94,17 +100,18 @@ class TuiState:
         details: dict[str, JSONValue] | None = None,
     ) -> None:
         """Append a transcript item."""
-        self.items.append(
-            ChatItem(
-                role=role,
-                text=text,
-                tool_call_id=tool_call_id,
-                tool_result_text=tool_result_text,
-                always_show_tool_result=always_show_tool_result,
-                custom_type=custom_type,
-                details=details,
-            )
+        item = ChatItem(
+            role=role,
+            text=text,
+            tool_call_id=tool_call_id,
+            tool_result_text=tool_result_text,
+            always_show_tool_result=always_show_tool_result,
+            custom_type=custom_type,
+            details=details,
         )
+        self.items.append(item)
+        if tool_call_id is not None and role in {"tool", "skill"}:
+            self._tool_items_by_call_id[tool_call_id] = item
 
     def resolve_custom_markup(self, item: ChatItem, *, expanded: bool) -> str | None:
         """Render a custom item's markup via the installed resolver, or ``None``.
@@ -160,16 +167,16 @@ class TuiState:
                 tool_call_id=tool_call.id,
             )
             return
-        self.items.append(
-            ChatItem(
-                role="tool",
-                text=format_tool_call_block(tool_call),
-                tool_call_id=tool_call.id,
-                tool_name=tool_call.name,
-                tool_arguments=tool_call.arguments,
-                started_at=time.monotonic(),
-            )
+        item = ChatItem(
+            role="tool",
+            text=format_tool_call_block(tool_call),
+            tool_call_id=tool_call.id,
+            tool_name=tool_call.name,
+            tool_arguments=tool_call.arguments,
+            started_at=time.monotonic(),
         )
+        self.items.append(item)
+        self._tool_items_by_call_id[tool_call.id] = item
 
     def add_user_message(
         self,
@@ -222,11 +229,8 @@ class TuiState:
         self.add_item("thinking", delta)
 
     def find_tool_item(self, tool_call_id: str) -> ChatItem | None:
-        """Return the transcript item for a tool call id, or ``None``."""
-        for item in reversed(self.items):
-            if item.role in {"tool", "skill"} and item.tool_call_id == tool_call_id:
-                return item
-        return None
+        """Return the transcript item for a tool call id in O(1)."""
+        return self._tool_items_by_call_id.get(tool_call_id)
 
     def record_tool_update(self, tool_call_id: str, message: str) -> ChatItem | None:
         """Attach live progress to its pending tool call; drop orphan updates."""
@@ -250,21 +254,21 @@ class TuiState:
             content=result.text,
             data=result.details if isinstance(result.details, dict) else None,
         )
-        for item in reversed(self.items):
-            if item.role in {"tool", "skill"} and item.tool_call_id == tool_call_id:
-                item.tool_result_text = result_text
-                item.tool_result = result
-                item.update_text = None
-                return
-        self.items.append(
-            ChatItem(
-                role="tool",
-                text=format_tool_result_summary(name=tool_name, ok=not is_error),
-                tool_call_id=tool_call_id,
-                tool_result_text=result_text,
-                tool_result=result,
-            )
+        item = self.find_tool_item(tool_call_id)
+        if item is not None:
+            item.tool_result_text = result_text
+            item.tool_result = result
+            item.update_text = None
+            return
+        item = ChatItem(
+            role="tool",
+            text=format_tool_result_summary(name=tool_name, ok=not is_error),
+            tool_call_id=tool_call_id,
+            tool_result_text=result_text,
+            tool_result=result,
         )
+        self.items.append(item)
+        self._tool_items_by_call_id[tool_call_id] = item
 
     def toggle_tool_results(self) -> bool:
         """Toggle expanded display for tool results and return the new state."""
@@ -289,6 +293,7 @@ class TuiState:
     def clear(self) -> None:
         """Clear visible transcript state without modifying durable session history."""
         self.items.clear()
+        self._tool_items_by_call_id.clear()
         self.assistant_buffer = ""
         self.error = None
 

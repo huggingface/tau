@@ -912,8 +912,48 @@ class ExtensionInputScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class SessionPickerSearchInput(Input):
+    """Search input that keeps session-picker navigation local to the picker."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Cancel", show=False, priority=True),
+        Binding("up", "cursor_up", "Up", show=False, priority=True),
+        Binding("down", "cursor_down", "Down", show=False, priority=True),
+    ]
+
+    def _picker(self) -> SessionPickerScreen:
+        return cast(SessionPickerScreen, self.screen)
+
+    def on_key(self, event: Key) -> None:
+        """Route picker control keys before the input edits its text."""
+        if event.key == "up":
+            event.stop()
+            event.prevent_default()
+            self.action_cursor_up()
+        elif event.key == "down":
+            event.stop()
+            event.prevent_default()
+            self.action_cursor_down()
+        elif event.key == "escape":
+            event.stop()
+            event.prevent_default()
+            self.action_cancel()
+
+    def action_cursor_up(self) -> None:
+        """Move the session picker selection up."""
+        self._picker().action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        """Move the session picker selection down."""
+        self._picker().action_cursor_down()
+
+    def action_cancel(self) -> None:
+        """Close the session picker."""
+        self._picker().action_cancel()
+
+
 class SessionPickerScreen(ModalScreen[str | None]):
-    """Minimal modal picker for indexed sessions."""
+    """Minimal modal picker for indexed sessions, with a search field."""
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
         Binding("escape", "cancel", "Cancel"),
@@ -930,12 +970,18 @@ class SessionPickerScreen(ModalScreen[str | None]):
     ) -> None:
         super().__init__()
         self.records = tuple(records)
+        self.visible_records = self.records
         self.theme = theme
+        self.search_value = ""
 
     def compose(self) -> ComposeResult:
         """Compose the session picker."""
         with Vertical(id="session-picker"):
             yield Static("Sessions", id="session-picker-title")
+            yield SessionPickerSearchInput(
+                placeholder="Search sessions",
+                id="session-picker-search",
+            )
             yield ListView(
                 *[
                     ListItem(Label(_session_picker_label(record), markup=False))
@@ -946,10 +992,25 @@ class SessionPickerScreen(ModalScreen[str | None]):
             yield Static("Enter selects - Escape closes", id="session-picker-help")
 
     def on_mount(self) -> None:
-        """Focus the session list for keyboard navigation."""
-        session_list = self.query_one("#session-picker-list", ListView)
-        session_list.index = 0
-        session_list.focus()
+        """Focus the search field for keyboard navigation."""
+        search = self.query_one("#session-picker-search", Input)
+        search.focus()
+        self._refresh_session_list()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Filter session choices as the search value changes."""
+        if event.input.id != "session-picker-search":
+            return
+        event.stop()
+        self.search_value = event.value
+        self._refresh_session_list()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Select the highlighted session from the search field."""
+        if event.input.id != "session-picker-search":
+            return
+        event.stop()
+        self._select_visible_record()
 
     def on_key(self, event: Key) -> None:
         """Route session picker keys to the list."""
@@ -965,7 +1026,8 @@ class SessionPickerScreen(ModalScreen[str | None]):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Dismiss with the selected session id."""
-        self.dismiss(self.records[event.index].id)
+        event.stop()
+        self._select_visible_record()
 
     def action_cursor_up(self) -> None:
         """Move to the previous session."""
@@ -977,11 +1039,38 @@ class SessionPickerScreen(ModalScreen[str | None]):
 
     def action_select_cursor(self) -> None:
         """Select the highlighted session."""
-        self.query_one("#session-picker-list", ListView).action_select_cursor()
+        self._select_visible_record()
 
     def action_cancel(self) -> None:
         """Close the picker without selecting a session."""
         self.dismiss(None)
+
+    def _select_visible_record(self) -> None:
+        if not self.visible_records:
+            return
+        session_list = self.query_one("#session-picker-list", ListView)
+        index = session_list.index
+        if index is None:
+            return
+        self.dismiss(self.visible_records[index].id)
+
+    def _refresh_session_list(self) -> None:
+        self.visible_records = _filter_session_records(self.records, self.search_value)
+        session_list = self.query_one("#session-picker-list", ListView)
+        session_list.clear()
+        session_list.extend(
+            [
+                ListItem(Label(_session_picker_label(record), markup=False))
+                for record in self.visible_records
+            ]
+        )
+        session_list.index = 0 if self.visible_records else None
+        help_text = (
+            "Enter selects - Escape closes"
+            if self.visible_records
+            else "No matching sessions - Escape closes"
+        )
+        self.query_one("#session-picker-help", Static).update(help_text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2446,6 +2535,14 @@ class TauTuiApp(App[None]):
         margin-bottom: 1;
     }
 
+    #session-picker-search {
+        height: 3;
+        margin-bottom: 1;
+        background: $tau-prompt-background;
+        color: $tau-prompt-text;
+        border: tall $tau-prompt-border;
+    }
+
     #session-picker-list,
     #tree-picker-list {
         height: auto;
@@ -2757,6 +2854,9 @@ class TauTuiApp(App[None]):
         self._completion_visible_line_budget: int | None = None
         self._activity_frame = 0
         self._activity_timer: Timer | None = None
+        self._last_tool_timer_refresh_at = 0.0
+        self._last_activity_indicator_key: tuple[object, ...] | None = None
+        self._last_queue_render_key: tuple[object, ...] | None = None
         self._terminal_title = TerminalTitleController()
         self._active_notification_keys: set[tuple[str, str]] = set()
         self._supports_pyperclip: bool | None = None
@@ -3751,8 +3851,16 @@ class TauTuiApp(App[None]):
             f"$ {command.strip()}",
             always_show_tool_result=True,
         )
+        item = self.state.items[item_index]
         self._follow_transcript_output()
-        self._refresh()
+        transcript = self.query_one("#transcript", TranscriptView)
+        await transcript.append_item(
+            item,
+            theme=self.tui_settings.resolved_theme,
+            show_tool_results=True,
+            scroll_end=True,
+        )
+        self._refresh_chrome()
 
         try:
             result = await run_terminal_command(command, add_to_context=add_to_context)
@@ -3765,7 +3873,12 @@ class TauTuiApp(App[None]):
                     output=str(exc),
                 )
             self._notify(f"Could not run command: {exc}", severity="error")
-            self._refresh()
+            await transcript.update_item(
+                item,
+                theme=self.tui_settings.resolved_theme,
+                show_tool_results=True,
+            )
+            self._refresh_chrome()
             return
 
         if item_index >= len(self.state.items):
@@ -3778,7 +3891,12 @@ class TauTuiApp(App[None]):
             output=result.output,
         )
         self._follow_transcript_output()
-        self._refresh()
+        await transcript.update_item(
+            item,
+            theme=self.tui_settings.resolved_theme,
+            show_tool_results=True,
+        )
+        self._refresh_chrome()
 
     def _replace_tui_settings(self, *, theme: TuiThemeName) -> None:
         """Replace the current immutable TUI settings with a new theme."""
@@ -3808,7 +3926,7 @@ class TauTuiApp(App[None]):
         except Exception as exc:  # noqa: BLE001 - surface queueing failures in the TUI
             self._notify(f"Could not queue message: {exc}", severity="error")
             return
-        self._refresh()
+        self._refresh_chrome()
 
     async def _run_prompt(
         self,
@@ -3888,7 +4006,6 @@ class TauTuiApp(App[None]):
                     theme=theme,
                     show_thinking=self.state.show_thinking,
                 )
-            self._sync_activity_indicator()
             return
         if isinstance(event, MessageEndEvent):
             if isinstance(event.message, (UserMessage, CustomMessage)):
@@ -3905,18 +4022,32 @@ class TauTuiApp(App[None]):
                 visible_blocks = [
                     block
                     for block in event.message.content
-                    if isinstance(block, (TextContent, ThinkingContent))
+                    if (
+                        isinstance(block, TextContent)
+                        and bool(block.text)
+                        or isinstance(block, ThinkingContent)
+                        and bool(block.thinking)
+                    )
                 ]
+                canonical_items = self.state.items[-len(visible_blocks) :] if visible_blocks else []
                 if (
                     any(isinstance(block, ThinkingContent) for block in visible_blocks)
                     or len(visible_blocks) > 1
                 ):
-                    # The adapter replaced provisional rows with canonical ordered
-                    # blocks. Redraw through the normal extension-aware path.
-                    self._refresh()
+                    # Replace only this message's provisional streaming widgets;
+                    # unrelated history remains mounted and selectable.
+                    await transcript.finish_structured_assistant_message(
+                        canonical_items,
+                        theme=theme,
+                        show_thinking=self.state.show_thinking,
+                    )
                 else:
-                    await transcript.finish_assistant_message(event.message.text)
-                    self._refresh_chrome()
+                    canonical_item = canonical_items[-1] if canonical_items else None
+                    await transcript.finish_assistant_message(
+                        event.message.text,
+                        item=canonical_item,
+                    )
+                self._refresh_chrome()
                 return
             return
         if isinstance(event, ToolExecutionStartEvent):
@@ -3955,7 +4086,17 @@ class TauTuiApp(App[None]):
             self._refresh_chrome()
             return
         if isinstance(event, ToolExecutionEndEvent):
-            self._refresh()
+            updated_item = self.state.find_tool_item(event.tool_call_id)
+            if updated_item is not None:
+                expanded = self.state.show_tool_results or updated_item.always_show_tool_result
+                await transcript.update_item(
+                    updated_item,
+                    theme=theme,
+                    show_tool_results=expanded,
+                    invocation=self.state.resolve_tool_invocation(updated_item),
+                    result_markup=self.state.resolve_tool_result(updated_item, expanded=expanded),
+                )
+            self._refresh_chrome()
             return
         if isinstance(event, QueueUpdateEvent):
             self._refresh_chrome()
@@ -4172,10 +4313,17 @@ class TauTuiApp(App[None]):
         self.run_worker(self._cycle_scoped_model(), exclusive=False)
 
     def action_toggle_tool_results(self) -> None:
-        """Toggle inline tool result details in the transcript."""
+        """Toggle inline tool result details without rebuilding unrelated history."""
         expanded = self.state.toggle_tool_results()
-        self._refresh()
+        self.run_worker(self._update_tool_results_visibility(), exclusive=False)
         self._notify("Tool results expanded." if expanded else "Tool results collapsed.")
+
+    async def _update_tool_results_visibility(self) -> None:
+        transcript = self.query_one("#transcript", TranscriptView)
+        await transcript.update_tool_results_visibility(
+            self.state,
+            theme=self.tui_settings.resolved_theme,
+        )
 
     def action_toggle_thinking(self) -> None:
         """Toggle thinking-token display in the transcript."""
@@ -4741,8 +4889,16 @@ class TauTuiApp(App[None]):
         compact_info = self.query_one("#compact-session-info", CompactSessionInfo)
         compact_info.update_from_session(self.session, theme=theme)
         queued_messages = self.query_one("#queued-messages", Static)
-        queued_messages.display = self.state.queued_message_count > 0
-        queued_messages.update(_render_queued_messages(self.state, theme=theme))
+        queue_render_key = (
+            self.state.queued_steering,
+            self.state.queued_follow_up,
+            theme.name,
+            theme.muted_text,
+        )
+        if queue_render_key != self._last_queue_render_key:
+            self._last_queue_render_key = queue_render_key
+            queued_messages.display = self.state.queued_message_count > 0
+            queued_messages.update(_render_queued_messages(self.state, theme=theme))
         self._sync_activity_indicator()
         self._refresh_footer_bindings()
 
@@ -4776,7 +4932,10 @@ class TauTuiApp(App[None]):
         self._activity_frame += 1
         self._apply_activity_indicator()
         self._sync_terminal_title()
-        self.call_later(self._refresh_pending_tool_timer)
+        now = asyncio.get_running_loop().time()
+        if now - self._last_tool_timer_refresh_at >= 1.0:
+            self._last_tool_timer_refresh_at = now
+            self.call_later(self._refresh_pending_tool_timer)
 
     async def _refresh_pending_tool_timer(self) -> None:
         """Refresh elapsed time on the tool row that is currently executing."""
@@ -4812,13 +4971,26 @@ class TauTuiApp(App[None]):
             prompt_prefix = self.query_one("#prompt-prefix", Static)
         except NoMatches:
             return
+        shell_mode = _is_terminal_command_prompt(prompt.text)
+        render_key = (
+            theme.name,
+            theme.accent,
+            theme.screen_background,
+            theme.prompt_border,
+            self._activity_frame,
+            self.state.running,
+            shell_mode,
+        )
+        if render_key == self._last_activity_indicator_key:
+            return
+        self._last_activity_indicator_key = render_key
         prompt.styles.border = (
             "tall",
             _activity_prompt_border_color(
                 theme,
                 frame=self._activity_frame,
                 running=self.state.running,
-                shell_mode=_is_terminal_command_prompt(prompt.text),
+                shell_mode=shell_mode,
             ),
         )
         prompt_prefix.update(
@@ -4826,7 +4998,8 @@ class TauTuiApp(App[None]):
                 theme,
                 frame=self._activity_frame,
                 running=self.state.running,
-            )
+            ),
+            layout=False,
         )
 
     def _refresh_completions(self) -> None:
@@ -5204,6 +5377,22 @@ def _session_picker_label(record: SessionCompletionRecord) -> str:
     if title is not None:
         parts.append(title)
     return " - ".join(parts)
+
+
+def _filter_session_records(
+    records: Sequence[SessionCompletionRecord],
+    query: str,
+) -> tuple[SessionCompletionRecord, ...]:
+    normalized = query.strip().casefold()
+    if not normalized:
+        return tuple(records)
+    return tuple(
+        record
+        for record in records
+        if normalized in (record.title or "").casefold()
+        or normalized in record.model.casefold()
+        or normalized in _short_path(record.cwd).casefold()
+    )
 
 
 def _tree_picker_label(
