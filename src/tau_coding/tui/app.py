@@ -2563,12 +2563,12 @@ class TauTuiApp(App[None]):
         border: tall $tau-border;
     }
 
-    ListView > ListItem.--highlight {
+    ListView > ListItem.-highlight {
         background: $tau-highlight-background;
         color: $tau-highlight-text;
     }
 
-    ListView > ListItem.--highlight Label {
+    ListView > ListItem.-highlight Label {
         background: $tau-highlight-background;
         color: $tau-highlight-text;
     }
@@ -2723,6 +2723,14 @@ class TauTuiApp(App[None]):
     #theme-picker-list ListItem Label,
     #model-picker-list ListItem Label {
         color: $tau-screen-text;
+    }
+
+    #login-method-list ListItem.-highlight Label,
+    #login-provider-list ListItem.-highlight Label,
+    #theme-picker-list ListItem.-highlight Label,
+    #model-picker-list ListItem.-highlight Label {
+        background: $tau-highlight-background;
+        color: $tau-highlight-text;
     }
 
     #login-method-intro {

@@ -2955,6 +2955,30 @@ async def test_tui_app_theme_command_opens_picker_and_persists_selection(
         assert app.get_theme_variable_defaults()["tau-screen-background"] == "#ffffff"
 
 
+@pytest.mark.parametrize(
+    "theme",
+    [TAU_DARK_THEME, TAU_LIGHT_THEME, HIGH_CONTRAST_THEME],
+)
+@pytest.mark.anyio
+async def test_theme_picker_highlight_uses_theme_selection_palette(theme: TuiTheme) -> None:
+    theme_names = (TAU_DARK_THEME.name, TAU_LIGHT_THEME.name, HIGH_CONTRAST_THEME.name)
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(theme=theme.name))
+
+    async with app.run_test() as pilot:
+        picker = ThemePickerScreen(
+            current_theme=theme.name,
+            theme=theme,
+            theme_names=theme_names,
+        )
+        app.push_screen(picker)
+        await pilot.pause()
+
+        highlighted_item = picker.query_one("ListItem.-highlight", ListItem)
+        highlighted_label = highlighted_item.query_one(Label)
+        assert highlighted_label.styles.background == Color.parse(theme.highlight_background)
+        assert highlighted_label.styles.color == Color.parse(theme.highlight_text)
+
+
 @pytest.mark.anyio
 async def test_extension_select_dialog_returns_choice() -> None:
     app = TauTuiApp(FakeSession())  # type: ignore[arg-type]
