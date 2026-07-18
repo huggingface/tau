@@ -172,6 +172,14 @@ def _session_summary_fingerprint(
 class TauMarkdownBlock(MarkdownBlock):
     """Markdown block that applies Tau's themed inline link color."""
 
+    DEFAULT_CSS = """
+    TauMarkdownBlock {
+        link-style: none;
+        link-style-hover: underline;
+        link-background-hover: transparent;
+    }
+    """
+
     @property
     def allow_select(self) -> bool:
         """Only allow native selection once Textual has mounted the block.

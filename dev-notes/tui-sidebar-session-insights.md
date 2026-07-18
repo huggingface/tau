@@ -89,4 +89,6 @@ padding replaces the removed top and bottom border space, preserving the origina
 block height and full background area. User transcript blocks share that prompt
 background in every built-in theme, matching both the composer and sidebar. A
 small vertical inset gives each submitted message a block silhouette instead of
-making only its text line appear highlighted.
+making only its text line appear highlighted. Markdown blocks disable the default
+resting underline and apply underline as a link-hover style; clickable spans remain
+bounded to their exact link text so the decoration cannot run across the row.

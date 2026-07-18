@@ -11,6 +11,7 @@ from rich.panel import Panel
 from textual import events
 from textual.color import Color
 from textual.containers import Container, VerticalScroll
+from textual.content import Style as TextualStyle
 from textual.geometry import Offset
 from textual.selection import SELECT_ALL, Selection
 from textual.widgets import Input, Label, ListItem, ListView, Static, TextArea
@@ -1151,8 +1152,18 @@ async def test_textual_markdown_widget_uses_theme_link_style() -> None:
         await pilot.pause()
 
         markdown = app.query_one(ThemedMarkdownWidget)
+        block = app.query_one(TauMarkdownBlock)
 
+    link_spans = [
+        span
+        for span in block.content.spans
+        if isinstance(span.style, TextualStyle) and "@click" in span.style.meta
+    ]
     assert markdown.tau_link_style == TAU_DARK_THEME.markdown_link
+    assert not block.styles.link_style
+    assert block.styles.link_style_hover.underline is True
+    assert [(span.start, span.end) for span in link_spans] == [(5, 9)]
+    assert block.content.plain[5:9] == "docs"
 
 
 def test_textual_markdown_uses_theme_highlight_and_aqua_inline_code() -> None:
