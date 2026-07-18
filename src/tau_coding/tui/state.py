@@ -317,7 +317,10 @@ class TuiState:
                     details=message.details if isinstance(message.details, dict) else None,
                 )
             elif isinstance(message, AssistantMessage):
-                self.add_assistant_message(message)
+                if message.stop_reason in {"error", "aborted"}:
+                    self.add_assistant_error(message)
+                else:
+                    self.add_assistant_message(message)
             elif isinstance(message, ToolResultMessage):
                 self.record_tool_result(
                     message.tool_call_id,
@@ -354,6 +357,13 @@ class TuiState:
                     self.add_item("assistant", block.text)
             elif include_tool_calls:
                 self.add_tool_call(block)
+
+    def add_assistant_error(self, message: AssistantMessage) -> None:
+        """Project any partial response followed by its terminal error."""
+        self.add_assistant_message(message, include_tool_calls=False)
+        text = message.error_message or "Error"
+        self.error = text
+        self.add_item("error", f"Error: {text}")
 
     def _read_skill_name(self, tool_call: ToolCall) -> str | None:
         if tool_call.name != "read":

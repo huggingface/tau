@@ -114,7 +114,7 @@ async def run_agent_loop(
                 provider=provider,
                 model=model,
                 system=system,
-                messages=messages,
+                messages=_provider_context(messages),
                 tools=tools,
                 signal=signal,
             ):
@@ -166,6 +166,24 @@ async def run_agent_loop(
         break
 
     yield AgentEndEvent(messages=new_messages)
+
+
+def _provider_context(messages: list[AgentMessage]) -> list[AgentMessage]:
+    """Return replayable messages while retaining failures in durable history.
+
+    Providers cannot consistently accept an assistant turn with no content. Tau
+    persists terminal failures for diagnostics, but an empty failed or aborted
+    turn is not model context and must not poison the next request.
+    """
+    return [
+        message
+        for message in messages
+        if not (
+            isinstance(message, AssistantMessage)
+            and message.stop_reason in {"error", "aborted"}
+            and not message.content
+        )
+    ]
 
 
 async def _assistant_events(

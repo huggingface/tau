@@ -3924,6 +3924,12 @@ class TauTuiApp(App[None]):
                 self._sync_header_title()
                 return
             if isinstance(event.message, AssistantMessage):
+                if event.message.stop_reason in {"error", "aborted"}:
+                    # The adapter projected any partial response plus the error
+                    # into canonical display state. Rebuild once at this terminal
+                    # boundary so the mounted transcript cannot drop the error.
+                    self._refresh()
+                    return
                 visible_blocks = [
                     block
                     for block in event.message.content

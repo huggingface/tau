@@ -60,17 +60,15 @@ class TuiEventAdapter:
                     details=message.details if isinstance(message.details, dict) else None,
                 )
             elif isinstance(message, AssistantMessage):
+                # Replace provisional delta rows with the final canonical
+                # message so persisted block boundaries and ordering win.
+                start = self._assistant_start_item_index
+                if start is not None:
+                    del self.state.items[start:]
                 if message.stop_reason in {"error", "aborted"}:
-                    text = message.error_message or "Error"
-                    self.state.error = text
+                    self.state.add_assistant_error(message)
                     self.state.running = False
-                    self.state.add_item("error", f"Error: {text}")
                 else:
-                    # Replace provisional delta rows with the final canonical
-                    # message so persisted block boundaries and ordering win.
-                    start = self._assistant_start_item_index
-                    if start is not None:
-                        del self.state.items[start:]
                     self.state.add_assistant_message(message, include_tool_calls=False)
                 self.state.assistant_buffer = ""
                 self._assistant_start_item_index = None

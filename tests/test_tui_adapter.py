@@ -209,6 +209,26 @@ def test_tui_adapter_records_assistant_error_and_aborted_message() -> None:
     assert state.assistant_buffer == ""
 
 
+def test_tui_state_restores_partial_assistant_response_and_error() -> None:
+    state = TuiState()
+
+    state.load_messages(
+        [
+            AssistantMessage(
+                content="partial response",
+                stop_reason="error",
+                error_message="provider failed",
+            )
+        ]
+    )
+
+    assert [(item.role, item.text) for item in state.items] == [
+        ("assistant", "partial response"),
+        ("error", "Error: provider failed"),
+    ]
+    assert state.error == "provider failed"
+
+
 def test_tool_formatters_keep_human_readable_output() -> None:
     from tau_agent import ToolCall
 

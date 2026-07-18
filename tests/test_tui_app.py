@@ -6053,6 +6053,31 @@ async def test_tui_prompt_worker_shows_diagnostic_log_path_for_error_event(tmp_p
 
 
 @pytest.mark.anyio
+async def test_tui_prompt_worker_mounts_provider_error_in_live_transcript() -> None:
+    error = AssistantMessage(stop_reason="error", error_message="provider failed")
+    app = TauTuiApp(
+        FakeSession(
+            events=[
+                AgentStartEvent(),
+                MessageStartEvent(message=error),
+                MessageEndEvent(message=error),
+                AgentEndEvent(),
+            ]
+        )
+    )
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await app._run_prompt("continue")
+        await pilot.pause()
+
+        errors = [
+            widget for widget in app.query(TranscriptMessageWidget) if widget.item.role == "error"
+        ]
+        assert [widget.item.text for widget in errors] == ["Error: provider failed"]
+        assert app.state.running is False
+
+
+@pytest.mark.anyio
 async def test_tui_prompt_worker_shows_diagnostic_log_path_on_failure(tmp_path: Path) -> None:
     class EmptyMessageError(Exception):
         def __str__(self) -> str:

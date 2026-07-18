@@ -2686,9 +2686,15 @@ async def test_session_compacts_and_retries_once_after_context_overflow(
         "Second answer",
         "Trigger overflow.",
     ]
-    overflow_error = provider.calls[4][2][4]
-    assert isinstance(overflow_error, AssistantMessage)
-    assert overflow_error.stop_reason == "error"
+    assert len(provider.calls[4][2]) == 4
+    overflow_errors = [
+        entry.message
+        for entry in entries
+        if entry.type == "message"
+        and isinstance(entry.message, AssistantMessage)
+        and entry.message.stop_reason == "error"
+    ]
+    assert len(overflow_errors) == 1
 
 
 @pytest.mark.anyio
