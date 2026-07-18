@@ -2374,12 +2374,12 @@ class TauTuiApp(App[None]):
     }
 
     #sidebar {
-        width: 36;
-        min-width: 32;
+        width: 40;
+        min-width: 36;
         height: 1fr;
         padding: 1 1 1 0;
         background: $tau-prompt-background;
-        border-right: tall $tau-border;
+        border: none;
     }
 
     #sidebar-content {
@@ -2401,8 +2401,6 @@ class TauTuiApp(App[None]):
 
     TauTuiApp.-sidebar-right #sidebar {
         dock: right;
-        border-right: none;
-        border-left: tall $tau-border;
     }
 
     #main-pane {

@@ -560,11 +560,14 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
     console.print(render_compact_session_info(FakeSession()))
 
     output = console.export_text()
+    lines = output.splitlines()
+    provider_line = next(index for index, line in enumerate(lines) if "openai:fake-model" in line)
+    context_line = next(index for index, line in enumerate(lines) if "12k/200k" in line)
     assert "/workspace/project (--)" in output
-    assert "12k/200k" in output
     assert "12k/200k context" not in output
-    assert "openai:fake-model" in output
-    assert "(medium)" in output
+    assert "openai:fake-model" in lines[provider_line]
+    assert "(medium)" in lines[provider_line]
+    assert context_line == provider_line + 1
 
 
 def test_compact_session_info_styles_parent_path_as_metadata() -> None:
@@ -2369,7 +2372,11 @@ async def test_tui_sidebar_is_visible_on_medium_windows() -> None:
         sidebar_brand = app.query_one("#sidebar-brand", Static)
         compact_info = app.query_one("#compact-session-info")
         assert sidebar.display is True
-        assert sidebar.region.width == 36
+        assert sidebar.region.width == 40
+        assert sidebar.styles.border_left[0] == ""
+        assert sidebar.styles.border_right[0] == ""
+        assert sidebar.styles.border_top[0] == ""
+        assert sidebar.styles.border_bottom[0] == ""
         assert sidebar_brand.region.bottom == sidebar.content_region.bottom
         assert sidebar.styles.background == Color.parse(TAU_DARK_THEME.prompt_background)
         assert compact_info.display is True

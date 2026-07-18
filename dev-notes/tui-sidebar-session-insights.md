@@ -31,11 +31,11 @@ project-relative; paths outside it are absolute so user-level instructions are
 unambiguous.
 
 Spaced dividers separate each section. Section headings use the bright prompt
-text color while values use the quieter metadata gray. The sidebar is slightly
-wider, uses the same theme variable as the prompt field for its background, and
-hides on shorter terminals rather than clipping the expanded content. The versioned `τ = 2π` brand
-is a separate bottom-aligned widget, so it stays at the lower edge regardless of
-content height.
+text color while values use the quieter metadata gray. The sidebar is wider and
+borderless, uses the same theme variable as the prompt field for its background,
+and hides on shorter terminals rather than clipping the expanded content. The
+versioned `τ = 2π` brand is a separate bottom-aligned widget, so it stays at the
+lower edge regardless of content height.
 
 ## Activity and usage semantics
 
@@ -78,9 +78,10 @@ the session name. In a tall window, confirm the versioned Tau mark stays at the
 bottom of the wider sidebar. The session name uses bold accent styling without a
 redundant `session` section heading, so it stands apart from other values.
 
-The compact status line below the prompt omits the redundant word `context`,
-showing only `used/limit`. It styles the parent portion of the working-directory
-path and Git branch as metadata while keeping the directory basename prominent.
+The compact status block below the prompt places `provider:model (thinking)` on
+its first line and context consumption as only `used/limit` on its second. It
+styles the parent portion of the working-directory path and Git branch as metadata
+while keeping the directory basename prominent.
 The prompt editor keeps only its left border; focus, shell-mode, and activity
 colors update that edge without surrounding the input on all four sides. Vertical
 padding replaces the removed top and bottom border space, preserving the original

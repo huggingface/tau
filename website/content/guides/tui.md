@@ -119,9 +119,9 @@ names use compact comma-separated lists. Skills and context files use bullet
 lists, with one item or path per line. Project context paths are relative to the
 working directory; context loaded from outside the project uses its full path.
 
-The wider sidebar uses the prompt field's background color, bright section
-headings, quieter gray values, and keeps Tau's versioned `τ = 2π` mark pinned to
-its bottom edge. Tau does not render separate
+The wider, borderless sidebar uses the prompt field's background color, bright
+section headings, quieter gray values, and keeps Tau's versioned `τ = 2π` mark
+pinned to its bottom edge. Tau does not render separate
 top-header or shortcut-footer rows. Named sessions remain visible in the sidebar
 and terminal tab title; `/hotkeys` lists shortcuts when needed. The sidebar hides
 automatically when the terminal is small, while the tab title continues to
@@ -131,9 +131,10 @@ Usage and cost cover the active branch, including history replaced by compaction
 Cost is an estimate based on provider-reported usage and configured catalog rates;
 the sidebar shows `$N/A` when Tau lacks complete pricing data.
 
-The compact status line below the prompt shows context consumption as just
-`used/limit`. Its working-directory name is emphasized while the parent path and
-Git branch use the quieter metadata color.
+The compact status block below the prompt puts `provider:model (thinking)` on its
+first line and context consumption as just `used/limit` on the second. Its
+working-directory name is emphasized while the parent path and Git branch use the
+quieter metadata color.
 
 The sidebar can be moved to the **right** or turned **off** entirely by setting
 `sidebar_position` in `~/.tau/tui.json` — see

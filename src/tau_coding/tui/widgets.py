@@ -1565,11 +1565,11 @@ def render_compact_session_info(
     """Render the session facts below the prompt."""
     left = _styled_cwd(session.cwd, theme=theme)
     right = Text(style=theme.muted_text, overflow="fold", no_wrap=False, justify="right")
-    right.append(_context_usage(session), style=theme.completion_description)
-    right.append("  ")
     right.append(f"{session.provider_name}:{session.model}", style=theme.prompt_text)
     right.append(" ")
     right.append(f"({_thinking_level(session)})", style=theme.completion_description)
+    right.append("\n")
+    right.append(_context_usage(session), style=theme.completion_description)
 
     table = Table.grid(expand=True)
     table.add_column(ratio=1)
