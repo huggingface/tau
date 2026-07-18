@@ -39,6 +39,7 @@ class FakeSession:
         self.auto_compact_token_threshold = 200
         self.context_window_tokens = 584
         self.thinking_level = "medium"
+        self.thinking_level_label = "medium"
         self.available_thinking_levels = ("off", "minimal", "low", "medium", "high", "xhigh")
         self.thinking_unavailable_reason: str | None = None
         self.tui_theme = "tau-dark"

@@ -67,6 +67,9 @@ class CommandSession(Protocol):
     def thinking_level(self) -> str: ...
 
     @property
+    def thinking_level_label(self) -> str: ...
+
+    @property
     def available_thinking_levels(self) -> Sequence[str]: ...
 
     @property
@@ -662,7 +665,7 @@ def _thinking_command(context: CommandContext) -> CommandResult:
 
 def _thinking_status_lines(session: CommandSession) -> list[str]:
     if tuple(session.available_thinking_levels):
-        return [f"Thinking mode: {session.thinking_level}"]
+        return [f"Thinking mode: {session.thinking_level_label}"]
     if getattr(session, "thinking_is_always_on", False):
         return ["Thinking mode: always on"]
     lines = ["Thinking mode: unavailable"]

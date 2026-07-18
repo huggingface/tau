@@ -53,6 +53,7 @@ class ModelCatalogMetadata:
     compat: dict[str, JSONValue] = field(default_factory=dict)
     thinking_level_map: ThinkingLevelMap = field(default_factory=dict)
     thinking_level_labels: dict[ThinkingLevel, str] = field(default_factory=dict)
+    thinking_parameter: ThinkingParameter | None = None
 
 
 def model_cost_for_input_tokens(

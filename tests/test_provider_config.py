@@ -1324,3 +1324,51 @@ def test_openai_compatible_provider_config_rejects_invalid_retries() -> None:
         OpenAICompatibleProviderConfig(name="local", max_retries=-1)
     with pytest.raises(ProviderConfigError, match="0 or greater"):
         OpenAICompatibleProviderConfig(name="local", max_retry_delay_seconds=-1)
+
+
+# --- Thinking level label tests ---
+
+
+def test_thinking_level_labels_from_model_metadata() -> None:
+    """Model-specific thinking_level_labels override canonical level names."""
+    from tau_coding.provider_config import (
+        ProviderSettings,
+        provider_thinking_level_label,
+    )
+
+    settings = ProviderSettings()
+    opencode_go = settings.get_provider("opencode-go")
+
+    # deepseek-v4-pro: xhigh -> "max"
+    assert provider_thinking_level_label(opencode_go, "xhigh", model="deepseek-v4-pro") == "max"
+    assert provider_thinking_level_label(opencode_go, "high", model="deepseek-v4-pro") == "high"
+
+    # minimax-m3: high -> "on", off -> "off"
+    assert provider_thinking_level_label(opencode_go, "high", model="minimax-m3") == "on"
+    assert provider_thinking_level_label(opencode_go, "off", model="minimax-m3") == "off"
+
+    # qwen3.7-max: no custom labels, returns canonical
+    assert provider_thinking_level_label(opencode_go, "high", model="qwen3.7-max") == "high"
+    assert provider_thinking_level_label(opencode_go, "xhigh", model="qwen3.7-max") == "xhigh"
+
+
+def test_provider_model_metadata_thinking_parameter_roundtrip() -> None:
+    """thinking_parameter survives JSON serialization and catalog reload."""
+    from tau_coding.provider_config import ProviderSettings
+
+    settings = ProviderSettings()
+    opencode_go = settings.get_provider("opencode-go")
+
+    # Verify thinking_parameter is preserved in model metadata
+    minimax_m3_metadata = opencode_go.model_metadata.get("minimax-m3")
+    assert minimax_m3_metadata is not None
+    assert minimax_m3_metadata.thinking_parameter == "anthropic.thinking"
+
+    qwen_metadata = opencode_go.model_metadata.get("qwen3.7-max")
+    assert qwen_metadata is not None
+    assert qwen_metadata.thinking_parameter == "anthropic.thinking"
+
+    # OpenAI-compatible models have no model-level thinking_parameter
+    deepseek_metadata = opencode_go.model_metadata.get("deepseek-v4-pro")
+    assert deepseek_metadata is not None
+    assert deepseek_metadata.thinking_parameter is None

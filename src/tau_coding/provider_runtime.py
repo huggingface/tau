@@ -8,7 +8,7 @@ from typing import Protocol
 
 from tau_agent.provider import ModelProvider
 from tau_ai.anthropic import AnthropicProvider
-from tau_ai.env import AnthropicConfig, RuntimeProviderAuth
+from tau_ai.env import AnthropicConfig, OpenAICompatibleConfig, RuntimeProviderAuth
 from tau_ai.google import GoogleGenerativeAIProvider
 from tau_ai.mistral import MistralConversationsProvider
 from tau_ai.openai_codex import (
@@ -125,16 +125,12 @@ def create_model_provider(
             )
         selected_api = compatible_config.api
         if selected_api == "anthropic-messages":
-            anthropic_config = AnthropicConfig(
-                api_key=compatible_config.api_key,
-                base_url=compatible_config.base_url,
-                headers=compatible_config.headers,
-                timeout_seconds=compatible_config.timeout_seconds,
-                max_retries=compatible_config.max_retries,
-                max_retry_delay_seconds=compatible_config.max_retry_delay_seconds,
-                provider_name=compatible_config.provider_name,
+            anthropic_config = _anthropic_config_from_compatible(
+                compatible_config,
+                provider=provider,
+                model=model,
+                thinking_level=thinking_level,
                 bearer_auth=credential is not None,
-                credential_resolver=compatible_config.credential_resolver,
             )
             return AnthropicProvider(anthropic_config)
         if selected_api == "google-generative-ai":
@@ -169,6 +165,72 @@ def _codex_reasoning_effort(
     if normalized == "minimal":
         return "low"
     return reasoning_effort_for_level(normalized)
+
+
+def _anthropic_config_from_compatible(
+    compatible_config: OpenAICompatibleConfig,
+    *,
+    provider: ProviderConfig,
+    model: str | None,
+    thinking_level: ThinkingLevel | None,
+    bearer_auth: bool,
+) -> AnthropicConfig:
+    """Build AnthropicConfig from an OpenAI-compatible config with model-specific thinking."""
+    from tau_coding.provider_config import _metadata_for_model
+
+    selected_model = model or provider.default_model
+    metadata = _metadata_for_model(provider, selected_model)
+
+    # Determine thinking parameter: model-specific overrides provider-level
+    thinking_parameter = None
+    if metadata is not None and metadata.thinking_parameter is not None:
+        thinking_parameter = metadata.thinking_parameter
+    elif isinstance(provider, OpenAICompatibleProviderConfig):
+        thinking_parameter = provider.thinking_parameter
+
+    # Build thinking config based on the thinking parameter type
+    thinking_budget_tokens = None
+    thinking_effort = None
+    thinking_mode = "budget"
+
+    if thinking_parameter == "anthropic.thinking" and thinking_level is not None:
+        normalized = normalize_thinking_level(thinking_level)
+        # Check if forceAdaptiveThinking is set in compat
+        compat = metadata.compat if metadata is not None else {}
+        if compat.get("forceAdaptiveThinking") is True:
+            thinking_mode = "disabled" if normalized == "off" else "adaptive"
+        else:
+            # Map thinking level to budget tokens
+            if normalized == "off":
+                thinking_mode = "disabled"
+            else:
+                thinking_budget_tokens = {
+                    "minimal": 1024,
+                    "low": 2048,
+                    "medium": 4096,
+                    "high": 8192,
+                    "xhigh": 16384,
+                }.get(normalized)
+    elif thinking_parameter in {"reasoning_effort", "reasoning.effort"}:
+        # For OpenAI-style reasoning_effort, pass it as thinking_effort
+        if thinking_level is not None:
+            normalized = normalize_thinking_level(thinking_level)
+            if normalized != "off":
+                thinking_effort = reasoning_effort_for_level(normalized)
+
+    return AnthropicConfig(
+        api_key=compatible_config.api_key,
+        base_url=compatible_config.base_url,
+        headers=dict(compatible_config.headers) if compatible_config.headers else None,
+        timeout_seconds=compatible_config.timeout_seconds,
+        max_retries=compatible_config.max_retries,
+        max_retry_delay_seconds=compatible_config.max_retry_delay_seconds,
+        provider_name=compatible_config.provider_name,
+        bearer_auth=bearer_auth,
+        thinking_budget_tokens=thinking_budget_tokens,
+        thinking_effort=thinking_effort,
+        thinking_mode=thinking_mode,
+    )
 
 
 class OpenAICodexCredentialResolver:

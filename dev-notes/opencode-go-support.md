@@ -7,8 +7,10 @@
 | `deepseek-v4-flash` | DeepSeek V4 Flash | `https://opencode.ai/zen/go/v1` | OpenAI | Always on | `high` | `high`, `xhigh` (max) | `reasoning_effort` | 1,000,000 | 384,000 | Effort values: `"high"`, `"max"`. Inherits from `deepseek/deepseek-v4-flash`. |
 | `glm-5.2` | GLM 5.2 | `https://opencode.ai/zen/go/v1` | OpenAI | Always on | `high` | `high`, `xhigh` (max) | `reasoning_effort` | 1,000,000 | 131,072 | Effort values: `"high"`, `"max"`. Inherits from `zhipuai/glm-5.2`. |
 | `glm-5.1` | GLM 5.1 | `https://opencode.ai/zen/go/v1` | OpenAI | Always on | N/A | None | None | 202,752 | 32,768 | Always-on reasoning. No reasoning options defined in TOML. |
+| `grok-4.5` | Grok 4.5 | `https://opencode.ai/zen/go/v1` | OpenAI | Toggleable | `medium` | `off` (none), `low`, `medium`, `high` | `reasoning_effort` | 1,000,000 | — | Tiered pricing: 200K+ tokens cost 2x. Inherits from `xai/grok-4.5`. |
 | `kimi-k2.7-code` | Kimi K2.7 Code | `https://opencode.ai/zen/go/v1` | OpenAI | Always on | N/A | None | None | 262,144 | 262,144 | Always-on reasoning. Resolved from compiled models.dev catalog. |
 | `kimi-k2.6` | Kimi K2.6 | `https://opencode.ai/zen/go/v1` | OpenAI | Always on | N/A | None | None | 262,144 | 65,536 | Always-on reasoning. No reasoning options defined in TOML. |
+| `kimi-k3` | Kimi K3 | `https://opencode.ai/zen/go/v1` | OpenAI | Toggleable | `xhigh` | `xhigh` (max) | `reasoning_effort` | 262,144 | — | Effort value: `"max"` only. Inherits from `moonshotai/kimi-k3`. 2x usage pricing. |
 | `mimo-v2.5-pro` | MiMo V2.5 Pro | `https://opencode.ai/zen/go/v1` | OpenAI | Always on | N/A | None | None | 1,048,576 | 128,000 | Always-on reasoning. No reasoning options defined in TOML. |
 | `mimo-v2.5` | MiMo V2.5 | `https://opencode.ai/zen/go/v1` | OpenAI | Always on | N/A | None | None | 1,000,000 | 128,000 | Always-on reasoning. No reasoning options defined in TOML. |
 | `minimax-m3` | MiniMax M3 | `https://opencode.ai/zen/go/v1` | Anthropic | Toggleable | `high` | `off`, `high` (on) | `thinking` type (`adaptive` / `disabled`) | 1,000,000 | 131,072 | Mapped toggle: `high` -> `"adaptive"`. Inherits from `minimax/MiniMax-M3`. |
@@ -52,3 +54,11 @@ The following capabilities of OpenCode Go / Zen Free models are currently unsupp
 ### 4. Always-On Reasoning Models
 - **Problem**: Upstream has no native way to declare always-on reasoning models (models where reasoning cannot be toggled off or customized, but thinking parameters must NOT be sent in the API payload to prevent errors). In upstream, excluding a model from the provider's `thinking_models` list disables its reasoning display entirely (rendering it as `"unavailable"` in the UI).
 - **Solution**: Set `reasoning = true` on the model metadata and exclude the model from the provider's `thinking_models` list. Our implementation detects these models by verifying that `reasoning` is `True` while supported `levels` is empty `()`. The TUI and CLI then format these models with the static `"always on"` label and disable custom level adjustments.
+
+### 5. Anthropic-Protocol Model Routing (minimax-m3, minimax-m2.7, qwen3.7-max, qwen3.7-plus, qwen3.6-plus)
+- **Problem**: These models use `@ai-sdk/anthropic` but were routed through the OpenAI-compatible endpoint because the catalog did not specify `api = "anthropic-messages"` in model_metadata.
+- **Solution**: Added `api = "anthropic-messages"` and `thinking_parameter = "anthropic.thinking"` to model_metadata for each Anthropic-protocol model. The runtime now correctly morphs to `AnthropicProvider` with model-specific thinking configuration (budget tokens for Qwen, adaptive toggle for MiniMax M3, no controls for always-on models).
+
+### 6. Model-Specific Thinking Parameter Override
+- **Problem**: Provider-level `thinking_parameter` cannot describe mixed-transport providers where some models use `reasoning_effort` (OpenAI) and others use `anthropic.thinking` (Anthropic).
+- **Solution**: Added `thinking_parameter` field to `ProviderModelMetadata` and `ModelCatalogMetadata`. Model-specific values override the provider-level default when constructing runtime configs.

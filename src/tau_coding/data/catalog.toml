@@ -6273,8 +6273,10 @@ models = [
   "deepseek-v4-flash",
   "glm-5.2",
   "glm-5.1",
+  "grok-4.5",
   "kimi-k2.7-code",
   "kimi-k2.6",
+  "kimi-k3",
   "minimax-m3",
   "minimax-m2.7",
   "mimo-v2.5-pro",
@@ -6296,6 +6298,8 @@ thinking_models = [
   "deepseek-v4-pro",
   "deepseek-v4-flash",
   "glm-5.2",
+  "grok-4.5",
+  "kimi-k3",
   "minimax-m3",
   "qwen3.7-max",
   "qwen3.7-plus",
@@ -6326,6 +6330,8 @@ thinking_parameter = "reasoning_effort"
 "north-mini-code-free" = 256000
 "nemotron-3-ultra-free" = 1000000
 "hy3-free" = 256000
+"kimi-k3" = 262144
+"grok-4.5" = 1000000
 
 [providers.model_metadata."deepseek-v4-flash-free"]
 base_url = "https://opencode.ai/zen/v1"
@@ -6377,6 +6383,54 @@ unsupported_thinking_levels = ["off", "minimal", "low", "medium"]
 thinking_level_map = {high = "high", xhigh = "max"}
 thinking_level_labels = {xhigh = "max"}
 unsupported_thinking_levels = ["off", "minimal", "low", "medium"]
+
+[providers.model_metadata."kimi-k3"]
+thinking_level_map = {xhigh = "max"}
+thinking_level_labels = {xhigh = "max"}
+unsupported_thinking_levels = ["off", "minimal", "low", "medium", "high"]
+
+[providers.model_metadata."grok-4.5"]
+thinking_level_map = {off = "none", low = "low", medium = "medium", high = "high"}
+thinking_level_labels = {}
+unsupported_thinking_levels = ["minimal", "xhigh"]
+
+[providers.model_metadata."minimax-m3"]
+api = "anthropic-messages"
+reasoning = true
+thinking_level_map = {off = "disabled", high = "adaptive"}
+thinking_level_labels = {off = "off", high = "on"}
+unsupported_thinking_levels = ["minimal", "low", "medium", "xhigh"]
+compat = {forceAdaptiveThinking = true}
+thinking_parameter = "anthropic.thinking"
+
+[providers.model_metadata."minimax-m2.7"]
+api = "anthropic-messages"
+reasoning = true
+unsupported_thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
+
+[providers.model_metadata."qwen3.7-max"]
+api = "anthropic-messages"
+reasoning = true
+thinking_level_map = {off = "disabled", low = "low", medium = "medium", high = "high", xhigh = "xhigh"}
+thinking_level_labels = {}
+unsupported_thinking_levels = ["minimal"]
+thinking_parameter = "anthropic.thinking"
+
+[providers.model_metadata."qwen3.7-plus"]
+api = "anthropic-messages"
+reasoning = true
+thinking_level_map = {off = "disabled", low = "low", medium = "medium", high = "high", xhigh = "xhigh"}
+thinking_level_labels = {}
+unsupported_thinking_levels = ["minimal"]
+thinking_parameter = "anthropic.thinking"
+
+[providers.model_metadata."qwen3.6-plus"]
+api = "anthropic-messages"
+reasoning = true
+thinking_level_map = {off = "disabled", low = "low", medium = "medium", high = "high", xhigh = "xhigh"}
+thinking_level_labels = {}
+unsupported_thinking_levels = ["minimal"]
+thinking_parameter = "anthropic.thinking"
 
 [[providers]]
 name = "opencode"

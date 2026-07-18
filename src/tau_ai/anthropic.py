@@ -362,9 +362,14 @@ def _build_messages_payload(
         ),
         "messages": [_anthropic_message(message) for message in messages],
     }
-    if thinking_mode == "adaptive" and thinking_effort is not None:
+    if thinking_mode == "disabled":
+        payload["thinking"] = {"type": "disabled"}
+    elif thinking_mode == "adaptive" and thinking_effort is not None:
         payload["thinking"] = {"type": "adaptive", "display": "summarized"}
         payload["output_config"] = {"effort": thinking_effort}
+    elif thinking_mode == "adaptive":
+        # Toggle-only model with thinking enabled (no effort field)
+        payload["thinking"] = {"type": "adaptive", "display": "summarized"}
     elif thinking_budget_tokens is not None:
         payload["thinking"] = {
             "type": "enabled",

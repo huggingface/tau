@@ -82,6 +82,7 @@ class _CatalogModelMetadata(BaseModel):
     thinking_level_map: dict[ThinkingLevel, _NonEmptyString] = {}
     thinking_level_labels: dict[ThinkingLevel, _NonEmptyString] = {}
     unsupported_thinking_levels: tuple[ThinkingLevel, ...] = ()
+    thinking_parameter: ThinkingParameter | None = None
 
 
 class _CatalogProvider(BaseModel):
@@ -398,6 +399,7 @@ def _model_metadata_from_provider(metadata: _CatalogModelMetadata) -> ModelCatal
         compat=_json_object(metadata.compat, "model_metadata.compat"),
         thinking_level_map=thinking_level_map,
         thinking_level_labels=dict(metadata.thinking_level_labels),
+        thinking_parameter=metadata.thinking_parameter,
     )
 
 
@@ -527,6 +529,8 @@ def _raw_model_metadata_from_entry(metadata: ModelCatalogMetadata) -> dict[str, 
         raw["unsupported_thinking_levels"] = unsupported
     if metadata.thinking_level_labels:
         raw["thinking_level_labels"] = dict(metadata.thinking_level_labels)
+    if metadata.thinking_parameter is not None:
+        raw["thinking_parameter"] = metadata.thinking_parameter
     return raw
 
 

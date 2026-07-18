@@ -1571,6 +1571,10 @@ def _thinking_level(session: SessionSummarySource) -> str:
         if getattr(session, "thinking_is_always_on", False):
             return "always on"
         return "unavailable"
+    # Prefer model-specific thinking level label over raw level
+    label = getattr(session, "thinking_level_label", None)
+    if label:
+        return str(label)
     explicit_level = getattr(session, "thinking_level", None)
     if explicit_level:
         return str(explicit_level)

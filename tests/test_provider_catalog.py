@@ -533,3 +533,173 @@ def test_user_catalog_provider_appears_with_existing_settings_file(tmp_path: Pat
     )
     settings = load_provider_settings(paths)
     assert settings.get_provider("nebius").models[0] == "deepseek-ai/DeepSeek-V4-Pro"
+
+
+# --- OpenCode Go regression tests ---
+
+
+def test_opencode_go_provider_membership_and_default_model() -> None:
+    entry = builtin_provider_entry("opencode-go")
+    assert entry is not None
+    assert entry.display_name == "OpenCode Go"
+    assert entry.kind == "openai-compatible"
+    assert entry.base_url == "https://opencode.ai/zen/go/v1"
+    assert entry.api_key_env == "OPENCODE_API_KEY"
+    assert entry.default_model == "deepseek-v4-pro"
+    assert "minimax-m3" in entry.models
+    assert "qwen3.7-max" in entry.models
+    assert "kimi-k3" in entry.models
+    assert "grok-4.5" in entry.models
+
+
+def test_opencode_go_context_windows() -> None:
+    entry = builtin_provider_entry("opencode-go")
+    assert entry is not None
+    assert entry.context_windows is not None
+    assert entry.context_windows["deepseek-v4-pro"] == 1_000_000
+    assert entry.context_windows["minimax-m3"] == 1_000_000
+    assert entry.context_windows["qwen3.7-max"] == 1_000_000
+    assert entry.context_windows["kimi-k3"] == 262_144
+    assert entry.context_windows["grok-4.5"] == 1_000_000
+
+
+def test_opencode_go_anthropic_protocol_transport() -> None:
+    """Anthropic-protocol models must have api = anthropic-messages in metadata."""
+    entry = builtin_provider_entry("opencode-go")
+    assert entry is not None
+    for model in ["minimax-m3", "minimax-m2.7", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus"]:
+        metadata = entry.model_metadata.get(model)
+        assert metadata is not None, f"{model} missing from model_metadata"
+        assert metadata.api == "anthropic-messages", f"{model} api should be anthropic-messages"
+
+
+def test_opencode_go_thinking_levels_per_model() -> None:
+    from tau_coding.provider_config import ProviderSettings, provider_thinking_levels
+
+    settings = ProviderSettings()
+    opencode_go = settings.get_provider("opencode-go")
+
+    # Anthropic-protocol toggle models
+    assert provider_thinking_levels(opencode_go, model="minimax-m3") == ("off", "high")
+    assert provider_thinking_levels(opencode_go, model="qwen3.7-max") == (
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    )
+    assert provider_thinking_levels(opencode_go, model="qwen3.7-plus") == (
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    )
+    assert provider_thinking_levels(opencode_go, model="qwen3.6-plus") == (
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    )
+
+    # Always-on models (no configurable levels)
+    assert provider_thinking_levels(opencode_go, model="minimax-m2.7") == ()
+    assert provider_thinking_levels(opencode_go, model="glm-5.1") == ()
+    assert provider_thinking_levels(opencode_go, model="kimi-k2.7-code") == ()
+
+    # OpenAI-compatible effort models
+    assert provider_thinking_levels(opencode_go, model="kimi-k3") == ("xhigh",)
+    assert provider_thinking_levels(opencode_go, model="grok-4.5") == (
+        "off",
+        "low",
+        "medium",
+        "high",
+    )
+    assert provider_thinking_levels(opencode_go, model="deepseek-v4-pro") == ("high", "xhigh")
+
+
+def test_opencode_go_thinking_parameter_per_model() -> None:
+    entry = builtin_provider_entry("opencode-go")
+    assert entry is not None
+
+    # Anthropic-protocol models should have anthropic.thinking parameter
+    for model in ["minimax-m3", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus"]:
+        metadata = entry.model_metadata.get(model)
+        assert metadata is not None
+        assert metadata.thinking_parameter == "anthropic.thinking", f"{model} thinking_parameter"
+
+    # minimax-m2.7 has no thinking parameter (always-on)
+    metadata = entry.model_metadata.get("minimax-m2.7")
+    assert metadata is not None
+    assert metadata.thinking_parameter is None
+
+
+def test_opencode_go_wire_payloads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify wire payload construction for distinct thinking shapes."""
+    from tau_coding.provider_config import ProviderSettings
+    from tau_coding.provider_runtime import create_model_provider
+
+    monkeypatch.setenv("OPENCODE_API_KEY", "test-key")
+    settings = ProviderSettings()
+    opencode_go = settings.get_provider("opencode-go")
+
+    # DeepSeek/GLM: OpenAI-compatible with reasoning_effort
+    provider = create_model_provider(opencode_go, model="deepseek-v4-pro", thinking_level="high")
+    assert type(provider).__name__ == "OpenAICompatibleProvider"
+
+    # Qwen: Anthropic with budget thinking
+    provider = create_model_provider(opencode_go, model="qwen3.7-max", thinking_level="high")
+    assert type(provider).__name__ == "AnthropicProvider"
+    assert provider._config.thinking_mode == "budget"
+    assert provider._config.thinking_budget_tokens == 8192
+
+    # MiniMax M3: Anthropic with adaptive toggle
+    provider = create_model_provider(opencode_go, model="minimax-m3", thinking_level="high")
+    assert type(provider).__name__ == "AnthropicProvider"
+    assert provider._config.thinking_mode == "adaptive"
+    assert provider._config.thinking_budget_tokens is None
+
+    # MiniMax M3 off: disabled
+    provider = create_model_provider(opencode_go, model="minimax-m3", thinking_level="off")
+    assert provider._config.thinking_mode == "disabled"
+
+    # Always-on model: no thinking controls
+    provider = create_model_provider(opencode_go, model="minimax-m2.7")
+    assert type(provider).__name__ == "AnthropicProvider"
+    assert provider._config.thinking_budget_tokens is None
+    assert provider._config.thinking_effort is None
+
+
+def test_opencode_go_zen_base_url_overrides() -> None:
+    """Free models and some Go models route to Zen v1 or v2 endpoints."""
+    entry = builtin_provider_entry("opencode-go")
+    assert entry is not None
+
+    # Zen v1 models
+    assert entry.model_metadata["big-pickle"].base_url == "https://opencode.ai/zen/v1"
+    assert entry.model_metadata["deepseek-v4-flash-free"].base_url == "https://opencode.ai/zen/v1"
+    assert entry.model_metadata["hy3-free"].base_url == "https://opencode.ai/zen/v1"
+
+    # Go models use provider base_url (zen/go/v1) - no model_metadata override
+    assert (
+        entry.model_metadata.get("deepseek-v4-pro") is None
+        or entry.model_metadata["deepseek-v4-pro"].base_url is None
+    )
+
+
+def test_opencode_go_always_on_models_detected() -> None:
+    from tau_coding.provider_config import ProviderSettings, provider_thinking_is_always_on
+
+    settings = ProviderSettings()
+    opencode_go = settings.get_provider("opencode-go")
+
+    assert provider_thinking_is_always_on(opencode_go, model="minimax-m2.7") is True
+    assert provider_thinking_is_always_on(opencode_go, model="glm-5.1") is True
+    assert provider_thinking_is_always_on(opencode_go, model="kimi-k2.7-code") is True
+    assert provider_thinking_is_always_on(opencode_go, model="big-pickle") is True
+
+    # Models with configurable thinking are not always-on
+    assert provider_thinking_is_always_on(opencode_go, model="minimax-m3") is False
+    assert provider_thinking_is_always_on(opencode_go, model="qwen3.7-max") is False
+    assert provider_thinking_is_always_on(opencode_go, model="deepseek-v4-pro") is False
