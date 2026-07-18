@@ -1174,8 +1174,10 @@ def _chat_item_role_style(item: ChatItem, theme: TuiTheme) -> TuiRoleStyle:
 
 
 def _tool_accent_style(item: ChatItem, *, theme: TuiTheme) -> str | None:
-    if item.role != "tool" or not item.tool_result_text:
+    if item.role != "tool":
         return None
+    if item.tool_result_text is None:
+        return theme.role_styles["tool"].border
     if item.tool_result_text.startswith("✓"):
         return _tool_success_style(theme)
     if item.tool_result_text.startswith("✗"):

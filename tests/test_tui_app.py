@@ -100,7 +100,7 @@ from tau_coding.tui.config import (
     TuiTheme,
     tui_settings_path,
 )
-from tau_coding.tui.state import TOOL_SPINNER_FRAMES, ChatItem, TuiState
+from tau_coding.tui.state import ChatItem, TuiState
 from tau_coding.tui.terminal_title import TerminalTitleController
 from tau_coding.tui.widgets import (
     LeftAlignedMarkdownHeading,
@@ -1110,6 +1110,25 @@ def test_light_theme_markdown_code_uses_aqua_without_background() -> None:
 
     assert "38;2;15;118;110" in output
     assert "38;2;15;118;110;48;2" not in output
+
+
+def test_pending_tool_invocation_uses_tool_accent_color() -> None:
+    console = Console(record=True, width=80)
+    item = ChatItem(role="tool", text="→ read README.md")
+    console.print(
+        _transcript_plain_body_text(
+            item,
+            text=item.text,
+            body_style=TAU_DARK_THEME.role_styles["tool"].body,
+            theme=TAU_DARK_THEME,
+        )
+    )
+
+    output = console.export_text(styles=True)
+
+    accent = "38;2;138;122;82;48;2;0;0;0m"
+    assert f"{accent}read" in output
+    assert f"{accent} README.md" in output
 
 
 def test_tool_chat_items_color_status_metadata_not_tool_name_or_results() -> None:
@@ -2938,7 +2957,7 @@ async def test_restored_tool_results_render_via_render_result() -> None:
 
 
 @pytest.mark.anyio
-async def test_pending_tool_row_shows_spinner_while_running() -> None:
+async def test_pending_tool_row_keeps_static_marker_while_running() -> None:
     session = FakeSession()
     session.extension_runtime = _RenderCallRuntime()
     app = TauTuiApp(session)  # type: ignore[arg-type]
@@ -2957,35 +2976,28 @@ async def test_pending_tool_row_shows_spinner_while_running() -> None:
                 args={"prompt": "x", "description": "Summarize codebase"},
             )
         )
-        app._tick_activity()
-        await pilot.pause()
 
         widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool")
-        # The spinner frame stands in for the static ▸ marker while running.
-        assert widget.selection_text[0] in TOOL_SPINNER_FRAMES
-        assert "▸" not in widget.selection_text
-        assert "Summarize codebase" in widget.selection_text
+        assert widget.selection_text == "▸ agent · Summarize codebase"
 
-        # Ticks must update the mounted widget in place — remounting every
-        # frame reads as transcript flicker.
-        first_frame = widget.selection_text[0]
+        # The run-wide activity indicator continues ticking without replacing
+        # the transcript marker with a second spinner.
+        app._tick_activity()
         app._tick_activity()
         await pilot.pause()
         same_widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool")
         assert same_widget is widget
-        assert same_widget.selection_text[0] in TOOL_SPINNER_FRAMES
-        assert same_widget.selection_text[0] != first_frame
+        assert same_widget.selection_text == "▸ agent · Summarize codebase"
 
-        # Once the tool has been working for a while, the row shows a live
-        # elapsed timer after the description.
+        # Long-running tools retain useful elapsed-time feedback alongside the
+        # same static marker.
         tool_item = next(item for item in app.state.items if item.role == "tool")
         assert tool_item.started_at is not None
         tool_item.started_at -= 83
         app._tick_activity()
         await pilot.pause()
-        assert "(1m 23s)" in widget.selection_text
+        assert widget.selection_text == "▸ agent · Summarize codebase (1m 23s)"
 
-        # Once the result lands the static marker returns.
         await stream(
             ToolExecutionEndEvent(
                 tool_call_id="call-1",

@@ -140,11 +140,7 @@ from tau_coding.tui.config import (
     load_tui_settings,
     save_tui_settings,
 )
-from tau_coding.tui.state import (
-    TOOL_SPINNER_FRAMES,
-    TuiState,
-    format_terminal_command_result_block,
-)
+from tau_coding.tui.state import TuiState, format_terminal_command_result_block
 from tau_coding.tui.terminal_title import TerminalTitleController
 from tau_coding.tui.widgets import (
     CompactSessionInfo,
@@ -4788,7 +4784,6 @@ class TauTuiApp(App[None]):
             self._apply_activity_indicator()
             return
         self._activity_frame = 0
-        self.state.tool_spinner = None
         if self._activity_timer is not None:
             self._activity_timer.pause()
         self._apply_activity_indicator()
@@ -4799,13 +4794,10 @@ class TauTuiApp(App[None]):
         self._activity_frame += 1
         self._apply_activity_indicator()
         self._sync_terminal_title()
-        self.state.tool_spinner = TOOL_SPINNER_FRAMES[
-            self._activity_frame % len(TOOL_SPINNER_FRAMES)
-        ]
-        self.call_later(self._respin_pending_tool)
+        self.call_later(self._refresh_pending_tool_timer)
 
-    async def _respin_pending_tool(self) -> None:
-        """Advance the spinner on the tool row that is currently executing."""
+    async def _refresh_pending_tool_timer(self) -> None:
+        """Refresh elapsed time on the tool row that is currently executing."""
         if not self.state.running:
             return
         item = next(

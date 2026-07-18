@@ -71,6 +71,11 @@ a path like `@src/app.py`. Tau skips hidden and generated directories (`.git`,
 
 ## Tool output
 
+Tool calls keep a static marker in the transcript while they run: orange means
+in progress, green means success, and red means failure. The prompt-area activity
+indicator provides the run-wide animation without adding a second spinner to each
+tool row.
+
 Tool results (like long `read` or `bash` output) render as compact previews so
 the transcript stays readable. Toggle full tool output with **Ctrl+O**.
 
