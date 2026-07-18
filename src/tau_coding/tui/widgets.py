@@ -173,6 +173,13 @@ class ThemedMarkdownWidget(TextualMarkdown):
         scrollbar-size-horizontal: 1;
     }
 
+    /* Textual's built-in `MarkdownFence:light` rule (type + pseudo-class)
+       outranks the plain descendant selector above, so restate the themed
+       background for light themes. */
+    ThemedMarkdownWidget MarkdownFence:light {
+        background: $tau-markdown-code-block-background;
+    }
+
     ThemedMarkdownWidget MarkdownTableContent {
         keyline: thin $tau-markdown-table-border;
     }
