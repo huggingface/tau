@@ -1472,7 +1472,7 @@ def render_session_sidebar(
     theme: TuiTheme = TAU_DARK_THEME,
 ) -> RenderableType:
     """Render a dark, minimalist summary of the active coding session."""
-    title = Text(session.session_title or "Untitled session", style=theme.prompt_text)
+    title = Text(session.session_title or "Untitled session", style=f"bold {theme.prompt_text}")
     stats = session.session_stats
     activity = Text(
         f"{stats.turn_count} {_plural(stats.turn_count, 'turn')}, "
@@ -1484,7 +1484,7 @@ def render_session_sidebar(
     usage.append(f"{_compact_usage_count(stats.output_tokens)} out")
     usage.append(" · ", style=theme.completion_description)
     if stats.estimated_cost is None:
-        usage.append("cost unavailable", style=theme.completion_description)
+        usage.append("$N/A", style=theme.completion_description)
     else:
         usage.append(f"~{_format_cost(stats.estimated_cost)}")
 
@@ -1563,12 +1563,7 @@ def render_compact_session_info(
     theme: TuiTheme = TAU_DARK_THEME,
 ) -> RenderableType:
     """Render the session facts below the prompt."""
-    left = Text(
-        f"{_short_path(session.cwd)} ({_git_branch(session.cwd)})",
-        style=theme.prompt_text,
-        overflow="fold",
-        no_wrap=False,
-    )
+    left = _styled_cwd(session.cwd, theme=theme)
     right = Text(style=theme.muted_text, overflow="fold", no_wrap=False, justify="right")
     right.append(_context_usage(session), style=theme.completion_description)
     right.append("  ")
@@ -2003,15 +1998,22 @@ def _plain_text(text: str, *, body_style: str) -> Text:
 
 def _context_usage(session: SessionSummarySource) -> str:
     threshold = session.auto_compact_token_threshold
-    if threshold is None or threshold <= 0:
-        return (
-            f"{_compact_token_count(session.context_token_estimate)}"
-            f"/{_compact_token_count(session.context_window_tokens)} context"
-        )
-    return (
-        f"{_compact_token_count(session.context_token_estimate)}"
-        f"/{_compact_token_count(threshold)} context"
-    )
+    limit = session.context_window_tokens if threshold is None or threshold <= 0 else threshold
+    return f"{_compact_token_count(session.context_token_estimate)}/{_compact_token_count(limit)}"
+
+
+def _styled_cwd(cwd: Path, *, theme: TuiTheme) -> Text:
+    """Style the parent path as metadata while emphasizing the working directory."""
+    short_path = _short_path(cwd)
+    parent, separator, name = short_path.rpartition("/")
+    text = Text(overflow="fold", no_wrap=False)
+    if separator and name:
+        text.append(f"{parent}{separator}", style=theme.completion_description)
+        text.append(name, style=theme.prompt_text)
+    else:
+        text.append(short_path, style=theme.prompt_text)
+    text.append(f" ({_git_branch(cwd)})", style=theme.completion_description)
+    return text
 
 
 def _compact_token_count(value: int) -> str:

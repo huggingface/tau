@@ -117,6 +117,7 @@ from tau_coding.tui.widgets import (
     _compact_token_count,
     _sidebar_brand,
     _split_rich_style_colors,
+    _styled_cwd,
     _syntax_language,
     _transcript_plain_body_text,
     render_chat_item,
@@ -447,7 +448,7 @@ class FakeSession:
 
 
 def _visible_footer_bindings(app: TauTuiApp) -> dict[str, str]:
-    """Return visible bindings that Textual's built-in Footer will render."""
+    """Return active bindings that a Textual Footer would render if mounted."""
     return {
         binding.description: binding.key_display or binding.key
         for _, binding, _enabled, _tooltip in app.screen.active_bindings.values()
@@ -483,6 +484,18 @@ def test_session_sidebar_renders_session_metadata() -> None:
     assert "permission-gate, subagents" in output
 
 
+def test_session_sidebar_uses_na_when_cost_is_unavailable() -> None:
+    session = FakeSession()
+    session.session_stats = SessionStats(input_tokens=1200, output_tokens=300)
+    console = Console(record=True, width=80)
+
+    console.print(render_session_sidebar(session))
+
+    output = console.export_text()
+    assert "$N/A" in output
+    assert "cost unavailable" not in output
+
+
 def test_session_sidebar_brand_includes_current_version() -> None:
     console = Console(record=True, width=80)
 
@@ -497,6 +510,7 @@ def test_session_sidebar_uses_accented_aligned_headers_without_section_borders()
     panels = [renderable for renderable in sidebar.renderables if isinstance(renderable, Panel)]
     session_section = sidebar.renderables[0]
     header = session_section.renderables[0]
+    session_name = session_section.renderables[1]
 
     console.print(sidebar)
 
@@ -504,6 +518,7 @@ def test_session_sidebar_uses_accented_aligned_headers_without_section_borders()
     assert panels == []
     assert header.left == 1
     assert str(header.renderable.style) == f"bold {TAU_DARK_THEME.accent}"
+    assert str(session_name.renderable.style) == f"bold {TAU_DARK_THEME.prompt_text}"
     assert " session" in output
     assert " context" in output
     assert " tools" in output
@@ -541,9 +556,19 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
 
     output = console.export_text()
     assert "/workspace/project (--)" in output
-    assert "12k/200k context" in output
+    assert "12k/200k" in output
+    assert "12k/200k context" not in output
     assert "openai:fake-model" in output
     assert "(medium)" in output
+
+
+def test_compact_session_info_styles_parent_path_as_metadata() -> None:
+    cwd = _styled_cwd(Path("/workspace/project"), theme=TAU_DARK_THEME)
+
+    assert cwd.plain == "/workspace/project (--)"
+    assert str(cwd.spans[0].style) == TAU_DARK_THEME.completion_description
+    assert str(cwd.spans[1].style) == TAU_DARK_THEME.prompt_text
+    assert str(cwd.spans[2].style) == TAU_DARK_THEME.completion_description
 
 
 def test_compact_token_count_uses_thousands_suffix() -> None:

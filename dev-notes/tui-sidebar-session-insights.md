@@ -47,8 +47,7 @@ Input totals include fresh input, cache reads, and cache writes. Output totals u
 the provider's reported output count. Cost is calculated per assistant response
 from that response's provider/model metadata, including tiered rates and separate
 input, output, cache-read, and cache-write prices. If any billed response lacks
-pricing, Tau labels the branch cost unavailable rather than showing a misleading
-partial estimate.
+pricing, Tau displays `$N/A` rather than showing a misleading partial estimate.
 
 ## Architecture
 
@@ -75,4 +74,9 @@ prompts that call tools, and confirm that activity, usage, and cost update. Run
 context indicator shrinks. Resize the terminal until the sidebar disappears and
 confirm there is no top header or shortcut footer and the terminal tab retains
 the session name. In a tall window, confirm the versioned Tau mark stays at the
-bottom of the wider sidebar.
+bottom of the wider sidebar. The session name is bold so it stands apart from
+other values.
+
+The compact status line below the prompt omits the redundant word `context`,
+showing only `used/limit`. It styles the parent portion of the working-directory
+path and Git branch as metadata while keeping the directory basename prominent.

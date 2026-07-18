@@ -123,7 +123,11 @@ identify the session.
 
 Usage and cost cover the active branch, including history replaced by compaction.
 Cost is an estimate based on provider-reported usage and configured catalog rates;
-it is shown as unavailable when Tau lacks complete pricing data.
+the sidebar shows `$N/A` when Tau lacks complete pricing data.
+
+The compact status line below the prompt shows context consumption as just
+`used/limit`. Its working-directory name is emphasized while the parent path and
+Git branch use the quieter metadata color.
 
 The sidebar can be moved to the **right** or turned **off** entirely by setting
 `sidebar_position` in `~/.tau/tui.json` — see
