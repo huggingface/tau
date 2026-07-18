@@ -1138,7 +1138,7 @@ def test_markdown_tables_use_highlight_color_for_headers() -> None:
 
     output = console.export_text(styles=True)
 
-    assert "38;2;219;148;90" in output
+    assert _style_color_escape(TAU_DARK_THEME.accent) in output
     assert "\x1b[36" not in output
 
 
@@ -2652,14 +2652,37 @@ def test_textual_theme_mapping_uses_tau_theme_values() -> None:
     assert textual_theme.variables["tau-screen-background"] == TAU_LIGHT_THEME.screen_background
 
 
-def test_tau_dark_theme_matches_user_and_prompt_backgrounds() -> None:
+def test_tau_dark_theme_uses_aqua_as_its_shared_accent() -> None:
     theme = TuiSettings().resolved_theme
 
+    assert theme.accent == "#a7f3f0"
+    assert theme.highlight_background == theme.accent
+    assert theme.markdown_heading == theme.accent
+    assert theme.markdown_bullet == theme.accent
     assert theme.screen_background == "#000000"
     assert theme.transcript_background == "#000000"
     assert theme.prompt_background == "#101419"
     assert theme.role_styles["user"].body.endswith(f"on {theme.prompt_background}")
     assert theme.role_styles["assistant"].body.endswith("on #000000")
+
+
+@pytest.mark.parametrize(
+    "theme",
+    [TAU_DARK_THEME, TAU_LIGHT_THEME, HIGH_CONTRAST_THEME],
+)
+def test_autocomplete_and_picker_share_theme_highlight(theme: TuiTheme) -> None:
+    completion_text, completion_background = _split_rich_style_colors(theme.completion_selected)
+    description_text, description_background = _split_rich_style_colors(
+        theme.completion_selected_description
+    )
+    variables = _theme_css_variables(theme)
+
+    assert completion_text == theme.highlight_text
+    assert completion_background == theme.highlight_background
+    assert description_text == theme.highlight_text
+    assert description_background == theme.highlight_background
+    assert variables["tau-highlight-background"] == theme.highlight_background
+    assert variables["tau-highlight-text"] == theme.highlight_text
 
 
 def test_tau_light_theme_uses_light_chat_backgrounds() -> None:

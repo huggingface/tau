@@ -109,6 +109,9 @@ when you want to reduce what is sent to the model.
   opening the picker. Manage that list with `/scoped-models` or by pressing
   `Space` on a model in the `/model` picker.
 - **`/theme`** switches between `tau-dark`, `tau-light`, and `high-contrast`.
+  Each theme uses one shared selection palette for prompt autocomplete and modal
+  lists such as `/resume`. In `tau-dark`, the aqua selection color is also the
+  global accent used for headings, prompt activity, and other emphasized UI.
 
 ## The sidebar
 

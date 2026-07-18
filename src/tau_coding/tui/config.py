@@ -89,11 +89,19 @@ class TuiTheme:
     markdown_code_block_background: str
     markdown_link: str
     markdown_bullet: str
-    completion_selected: str
-    completion_selected_description: str
     completion_description: str
     syntax_theme: str
     role_styles: dict[str, TuiRoleStyle]
+
+    @property
+    def completion_selected(self) -> str:
+        """Return the shared highlighted-row style used by autocomplete."""
+        return f"bold {self.highlight_text} on {self.highlight_background}"
+
+    @property
+    def completion_selected_description(self) -> str:
+        """Return the shared highlighted-row description style."""
+        return f"{self.highlight_text} on {self.highlight_background}"
 
 
 TAU_DARK_THEME = TuiTheme(
@@ -110,18 +118,16 @@ TAU_DARK_THEME = TuiTheme(
     prompt_text="#e5e7eb",
     prompt_border="#2d3748",
     autocomplete_background="#000000",
-    accent="#db945a",
+    accent="#a7f3f0",
     highlight_background="#a7f3f0",
     highlight_text="#061a1a",
-    markdown_heading="#db945a",
+    markdown_heading="#a7f3f0",
     markdown_table_header="#7b7b7b",
     markdown_table_border="#7b7b7b",
     markdown_inline_code="#759e95",
     markdown_code_block_background="#161b21",
     markdown_link="#93c5fd",
-    markdown_bullet="#db945a",
-    completion_selected="bold #061a1a on #a7f3f0",
-    completion_selected_description="#123333 on #a7f3f0",
+    markdown_bullet="#a7f3f0",
     completion_description="#667085",
     syntax_theme="ansi_dark",
     role_styles={
@@ -163,8 +169,6 @@ HIGH_CONTRAST_THEME = TuiTheme(
     markdown_code_block_background="#161b21",
     markdown_link="#80d8ff",
     markdown_bullet="#ffb454",
-    completion_selected="bold black on #7fffd4",
-    completion_selected_description="black on #7fffd4",
     completion_description="white",
     syntax_theme="ansi_dark",
     role_styles={
@@ -206,8 +210,6 @@ TAU_LIGHT_THEME = TuiTheme(
     markdown_code_block_background="#f1f5f9",
     markdown_link="#2563eb",
     markdown_bullet="#b45309",
-    completion_selected="bold #0f172a on #dbeafe",
-    completion_selected_description="#334155 on #dbeafe",
     completion_description="#667085",
     syntax_theme="ansi_light",
     role_styles={

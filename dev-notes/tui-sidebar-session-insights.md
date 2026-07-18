@@ -92,3 +92,10 @@ small vertical inset gives each submitted message a block silhouette instead of
 making only its text line appear highlighted. Markdown blocks disable the default
 resting underline and apply underline as a link-hover style; clickable spans remain
 bounded to their exact link text so the decoration cannot run across the row.
+
+Theme selection colors now have one source of truth: autocomplete derives its
+selected-row foreground and background from the same `highlight_text` and
+`highlight_background` values used by picker `ListView`s such as `/resume`. The
+dark theme promotes its existing aqua highlight (`#a7f3f0`) to the global accent,
+replacing the previous orange across headings, bullets, prompt activity, and other
+accent-driven UI.
