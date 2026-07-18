@@ -2477,18 +2477,19 @@ class TauTuiApp(App[None]):
         height: auto;
         background: $tau-prompt-background;
         color: $tau-prompt-text;
-        border: tall transparent;
+        border: none;
+        border-left: tall transparent;
         margin: 0;
         padding: 0 1;
-        max-height: 8;
+        max-height: 6;
     }
 
     #prompt:focus {
-        border: tall $tau-prompt-border;
+        border-left: tall $tau-prompt-border;
     }
 
     #prompt.-shell-mode {
-        border: tall $tau-accent;
+        border-left: tall $tau-accent;
     }
 
     #compact-session-info {
@@ -4984,7 +4985,7 @@ class TauTuiApp(App[None]):
         if render_key == self._last_activity_indicator_key:
             return
         self._last_activity_indicator_key = render_key
-        prompt.styles.border = (
+        prompt.styles.border_left = (
             "tall",
             _activity_prompt_border_color(
                 theme,

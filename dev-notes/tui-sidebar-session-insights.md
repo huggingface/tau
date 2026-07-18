@@ -80,3 +80,5 @@ other values.
 The compact status line below the prompt omits the redundant word `context`,
 showing only `used/limit`. It styles the parent portion of the working-directory
 path and Git branch as metadata while keeping the directory basename prominent.
+The prompt editor keeps only its left border; focus, shell-mode, and activity
+colors update that edge without surrounding the input on all four sides.

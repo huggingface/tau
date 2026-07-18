@@ -9,7 +9,9 @@ see [Keyboard shortcuts]({{< relref "../reference/keybindings.md" >}}).
 
 ## Sending a prompt
 
-Type into the prompt box at the bottom and press **Enter** to submit.
+Type into the prompt box at the bottom and press **Enter** to submit. Its single
+left border changes color to reflect focus, shell mode, and active runs without
+boxing in the editor.
 **Shift+Enter** inserts a newline for multi-line prompts. Tau streams the
 assistant's reply above the prompt, showing tool calls as they run. In supported
 terminal emulators, Tau also updates the tab title: named sessions show as
