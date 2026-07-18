@@ -504,22 +504,25 @@ def test_session_sidebar_brand_includes_current_version() -> None:
     assert "τ = 2π  0.2.1" in console.export_text()
 
 
-def test_session_sidebar_uses_accented_aligned_headers_without_section_borders() -> None:
+def test_session_sidebar_uses_prominent_title_and_accented_section_headers() -> None:
     console = Console(record=True, width=80)
-    sidebar = render_session_sidebar(FakeSession())
+    session = FakeSession()
+    session._session_title = "Customer bugfix"
+    sidebar = render_session_sidebar(session)
     panels = [renderable for renderable in sidebar.renderables if isinstance(renderable, Panel)]
-    session_section = sidebar.renderables[0]
-    header = session_section.renderables[0]
-    session_name = session_section.renderables[1]
+    session_name = sidebar.renderables[0]
+    activity_section = sidebar.renderables[2]
+    activity_header = activity_section.renderables[0]
 
     console.print(sidebar)
 
     output = console.export_text()
     assert panels == []
-    assert header.left == 1
-    assert str(header.renderable.style) == f"bold {TAU_DARK_THEME.accent}"
-    assert str(session_name.renderable.style) == f"bold {TAU_DARK_THEME.prompt_text}"
-    assert " session" in output
+    assert session_name.left == 1
+    assert str(session_name.renderable.style) == f"bold {TAU_DARK_THEME.accent}"
+    assert activity_header.left == 1
+    assert str(activity_header.renderable.style) == f"bold {TAU_DARK_THEME.accent}"
+    assert " session" not in output
     assert " context" in output
     assert " tools" in output
     assert "─" in output
@@ -2341,10 +2344,12 @@ async def test_tui_prompt_grows_to_six_lines_then_scrolls() -> None:
     async with app.run_test(size=(120, 30)) as pilot:
         prompt = app.query_one("#prompt", TextArea)
         assert prompt.size.height == 1
+        assert prompt.outer_size.height == 3
 
         prompt.text = "x" * 700
         await pilot.pause()
         assert prompt.size.height == 6
+        assert prompt.outer_size.height == 8
 
         prompt.text = "x" * 1000
         await pilot.pause()

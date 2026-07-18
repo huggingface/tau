@@ -74,11 +74,13 @@ prompts that call tools, and confirm that activity, usage, and cost update. Run
 context indicator shrinks. Resize the terminal until the sidebar disappears and
 confirm there is no top header or shortcut footer and the terminal tab retains
 the session name. In a tall window, confirm the versioned Tau mark stays at the
-bottom of the wider sidebar. The session name is bold so it stands apart from
-other values.
+bottom of the wider sidebar. The session name uses bold accent styling without a
+redundant `session` section heading, so it stands apart from other values.
 
 The compact status line below the prompt omits the redundant word `context`,
 showing only `used/limit`. It styles the parent portion of the working-directory
 path and Git branch as metadata while keeping the directory basename prominent.
 The prompt editor keeps only its left border; focus, shell-mode, and activity
-colors update that edge without surrounding the input on all four sides.
+colors update that edge without surrounding the input on all four sides. Vertical
+padding replaces the removed top and bottom border space, preserving the original
+block height and full background area.

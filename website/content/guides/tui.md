@@ -9,9 +9,9 @@ see [Keyboard shortcuts]({{< relref "../reference/keybindings.md" >}}).
 
 ## Sending a prompt
 
-Type into the prompt box at the bottom and press **Enter** to submit. Its single
-left border changes color to reflect focus, shell mode, and active runs without
-boxing in the editor.
+Type into the prompt box at the bottom and press **Enter** to submit. The editor
+keeps its padded block size and background, while a single left border changes
+color to reflect focus, shell mode, and active runs without boxing it in.
 **Shift+Enter** inserts a newline for multi-line prompts. Tau streams the
 assistant's reply above the prompt, showing tool calls as they run. In supported
 terminal emulators, Tau also updates the tab title: named sessions show as
@@ -108,7 +108,8 @@ when you want to reduce what is sent to the model.
 
 ## The sidebar
 
-On wide-enough terminals Tau shows a sidebar with the session name, active-branch
+On wide-enough terminals Tau shows the session name prominently without a
+redundant section label, followed by active-branch
 turn and tool-call totals, provider-reported token usage, estimated cost,
 automatic-compaction threshold, and loaded tools, skills, prompt templates,
 extensions, and context files such as `AGENTS.md`. Tool, prompt, and extension

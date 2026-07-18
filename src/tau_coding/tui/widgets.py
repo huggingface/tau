@@ -1472,7 +1472,7 @@ def render_session_sidebar(
     theme: TuiTheme = TAU_DARK_THEME,
 ) -> RenderableType:
     """Render a dark, minimalist summary of the active coding session."""
-    title = Text(session.session_title or "Untitled session", style=f"bold {theme.prompt_text}")
+    title = Text(session.session_title or "Untitled session", style=f"bold {theme.accent}")
     stats = session.session_stats
     activity = Text(
         f"{stats.turn_count} {_plural(stats.turn_count, 'turn')}, "
@@ -1515,7 +1515,7 @@ def render_session_sidebar(
         theme=theme,
     )
     sections = (
-        _sidebar_section("session", title, theme=theme),
+        Padding(title, (0, 0, 0, 1)),
         _sidebar_section("activity", activity, theme=theme),
         _sidebar_section("usage", usage, theme=theme),
         _sidebar_section("compaction", compaction, theme=theme),

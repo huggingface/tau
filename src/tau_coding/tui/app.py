@@ -2480,8 +2480,8 @@ class TauTuiApp(App[None]):
         border: none;
         border-left: tall transparent;
         margin: 0;
-        padding: 0 1;
-        max-height: 6;
+        padding: 1 1;
+        max-height: 8;
     }
 
     #prompt:focus {
