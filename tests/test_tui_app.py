@@ -2,6 +2,7 @@ import asyncio
 import re
 from collections.abc import AsyncIterator
 from datetime import datetime
+from io import StringIO
 from pathlib import Path
 
 import pytest
@@ -10,9 +11,10 @@ from rich.panel import Panel
 from textual import events
 from textual.color import Color
 from textual.containers import Container, VerticalScroll
+from textual.content import Style as TextualStyle
 from textual.geometry import Offset
 from textual.selection import SELECT_ALL, Selection
-from textual.widgets import Footer, Input, Label, ListItem, ListView, Static, TextArea
+from textual.widgets import Input, Label, ListItem, ListView, Static, TextArea
 from textual.widgets import Markdown as TextualMarkdown
 from textual.widgets.markdown import MarkdownStream
 
@@ -58,6 +60,7 @@ from tau_coding.session import (
     TerminalCommandResult,
 )
 from tau_coding.session_manager import CodingSessionRecord
+from tau_coding.session_stats import SessionStats
 from tau_coding.skills import Skill, format_skill_invocation
 from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.tools import create_coding_tools
@@ -113,7 +116,9 @@ from tau_coding.tui.widgets import (
     TranscriptView,
     TranscriptWindowBoundary,
     _compact_token_count,
+    _sidebar_brand,
     _split_rich_style_colors,
+    _styled_cwd,
     _syntax_language,
     _transcript_plain_body_text,
     render_chat_item,
@@ -173,6 +178,14 @@ class FakeSession:
         self.available_thinking_levels = ("off", "minimal", "low", "medium", "high", "xhigh")
         self.state = FakeSessionState()
         self.resource_diagnostics = ()
+        self.extension_names = ("permission-gate", "subagents")
+        self.session_stats = SessionStats(
+            turn_count=14,
+            tool_call_count=23,
+            input_tokens=1_200_000,
+            output_tokens=48_000,
+            estimated_cost=1.24,
+        )
         self.system_prompt = "You are Tau."
         self.session_manager = None
         self._session_title: str | None = None
@@ -436,7 +449,7 @@ class FakeSession:
 
 
 def _visible_footer_bindings(app: TauTuiApp) -> dict[str, str]:
-    """Return visible bindings that Textual's built-in Footer will render."""
+    """Return active bindings that a Textual Footer would render if mounted."""
     return {
         binding.description: binding.key_display or binding.key
         for _, binding, _enabled, _tooltip in app.screen.active_bindings.values()
@@ -451,39 +464,70 @@ def test_session_sidebar_renders_session_metadata() -> None:
 
     output = console.export_text()
     assert "████████" not in output
-    assert "τ = 2π" in output
+    assert "τ = 2π" not in output
     assert "session" in output
     assert "context" in output
     assert "AGENTS.md" in output
     assert "12k" not in output
-    assert "provider" in output
-    assert "openai" in output
-    assert "fake-model" in output
-    assert "thinking" in output
-    assert "medium" in output
+    assert "Untitled session" in output
+    assert "provider" not in output
+    assert "openai" not in output
+    assert "fake-model" not in output
+    assert "thinking" not in output
     assert "location" not in output
     assert "branch" not in output
-    assert "tools" in output
-    assert "read" in output
-    assert "skills" in output
-    assert "review" in output
+    assert "14 turns, 23 tool calls" in output
+    assert "1.2m in, 48k out" in output
+    assert "1.2m in, 48k out · ~$1.24" in output
+    assert "auto at 200k" in output
+    assert "read, write, edit, bash" in output
+    assert "• review" in output
+    assert "permission-gate, subagents" in output
 
 
-def test_session_sidebar_uses_accented_aligned_headers_without_section_borders() -> None:
+def test_session_sidebar_uses_na_when_cost_is_unavailable() -> None:
+    session = FakeSession()
+    session.session_stats = SessionStats(input_tokens=1200, output_tokens=300)
     console = Console(record=True, width=80)
-    sidebar = render_session_sidebar(FakeSession())
+
+    console.print(render_session_sidebar(session))
+
+    output = console.export_text()
+    assert "$N/A" in output
+    assert "cost unavailable" not in output
+
+
+def test_session_sidebar_brand_includes_current_version() -> None:
+    console = Console(record=True, width=80)
+
+    console.print(_sidebar_brand(theme=TAU_DARK_THEME))
+
+    assert "τ = 2π  0.2.1" in console.export_text()
+
+
+def test_session_sidebar_uses_prominent_title_and_accented_section_headers() -> None:
+    console = Console(record=True, width=80)
+    session = FakeSession()
+    session._session_title = "Customer bugfix"
+    sidebar = render_session_sidebar(session)
     panels = [renderable for renderable in sidebar.renderables if isinstance(renderable, Panel)]
-    session_section = sidebar.renderables[1]
-    header = session_section.renderables[0]
+    session_name = sidebar.renderables[0]
+    activity_section = sidebar.renderables[2]
+    activity_header = activity_section.renderables[0]
+    activity_content = activity_section.renderables[1]
 
     console.print(sidebar)
 
     output = console.export_text()
     assert panels == []
-    assert header.left == 1
-    assert str(header.renderable.style) == f"bold {TAU_DARK_THEME.accent}"
-    assert " session" in output
+    assert session_name.left == 1
+    assert str(session_name.renderable.style) == f"bold {TAU_DARK_THEME.accent}"
+    assert activity_header.left == 1
+    assert str(activity_header.renderable.style) == f"bold {TAU_DARK_THEME.prompt_text}"
+    assert str(activity_content.renderable.style) == TAU_DARK_THEME.completion_description
+    assert " session" not in output
     assert " context" in output
+    assert " tools" in output
     assert "─" in output
     assert "┌" not in output
     assert "│" not in output
@@ -498,6 +542,7 @@ def test_session_sidebar_lists_multiple_context_files() -> None:
             content="Agent rules.",
         ),
         ProjectContextFile(path="docs/AGENTS.md", content="Docs rules."),
+        ProjectContextFile(path="/Users/alex/.agents/AGENTS.md", content="User rules."),
     )
     console = Console(record=True, width=100)
 
@@ -507,6 +552,7 @@ def test_session_sidebar_lists_multiple_context_files() -> None:
     assert "AGENTS.md" in output
     assert ".agents/AGENTS.md" in output
     assert "docs/AGENTS.md" in output
+    assert "/Users/alex/.agents/AGENTS.md" in output
 
 
 def test_compact_session_info_renders_sidebar_facts() -> None:
@@ -515,10 +561,23 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
     console.print(render_compact_session_info(FakeSession()))
 
     output = console.export_text()
+    lines = output.splitlines()
+    provider_line = next(index for index, line in enumerate(lines) if "openai:fake-model" in line)
+    context_line = next(index for index, line in enumerate(lines) if "12k/200k" in line)
     assert "/workspace/project (--)" in output
-    assert "12k/200k context" in output
-    assert "openai:fake-model" in output
-    assert "(medium)" in output
+    assert "12k/200k context" not in output
+    assert "openai:fake-model" in lines[provider_line]
+    assert "(medium)" in lines[provider_line]
+    assert context_line == provider_line + 1
+
+
+def test_compact_session_info_styles_parent_path_as_metadata() -> None:
+    cwd = _styled_cwd(Path("/workspace/project"), theme=TAU_DARK_THEME)
+
+    assert cwd.plain == "/workspace/project (--)"
+    assert str(cwd.spans[0].style) == TAU_DARK_THEME.completion_description
+    assert str(cwd.spans[1].style) == TAU_DARK_THEME.prompt_text
+    assert str(cwd.spans[2].style) == TAU_DARK_THEME.completion_description
 
 
 def test_compact_token_count_uses_thousands_suffix() -> None:
@@ -1079,7 +1138,7 @@ def test_markdown_tables_use_highlight_color_for_headers() -> None:
 
     output = console.export_text(styles=True)
 
-    assert "38;2;219;148;90" in output
+    assert _style_color_escape(TAU_DARK_THEME.accent) in output
     assert "\x1b[36" not in output
 
 
@@ -1093,8 +1152,18 @@ async def test_textual_markdown_widget_uses_theme_link_style() -> None:
         await pilot.pause()
 
         markdown = app.query_one(ThemedMarkdownWidget)
+        block = app.query_one(TauMarkdownBlock)
 
+    link_spans = [
+        span
+        for span in block.content.spans
+        if isinstance(span.style, TextualStyle) and "@click" in span.style.meta
+    ]
     assert markdown.tau_link_style == TAU_DARK_THEME.markdown_link
+    assert not block.styles.link_style
+    assert block.styles.link_style_hover.underline is True
+    assert [(span.start, span.end) for span in link_spans] == [(5, 9)]
+    assert block.content.plain[5:9] == "docs"
 
 
 def test_textual_markdown_uses_theme_highlight_and_aqua_inline_code() -> None:
@@ -1263,6 +1332,7 @@ async def test_transcript_message_widget_renders_full_height_role_block() -> Non
 
     role_style = HIGH_CONTRAST_THEME.role_styles["user"]
     _, expected_background = _split_rich_style_colors(role_style.body)
+    assert expected_background == HIGH_CONTRAST_THEME.prompt_background
     background = Color.parse(expected_background)
     border = Color.parse(role_style.border)
 
@@ -1279,6 +1349,8 @@ async def test_transcript_message_widget_renders_full_height_role_block() -> Non
         # block is rectangular and the accent spans every wrapped line.
         assert widget.styles.background == background
         assert body.styles.background == background
+        assert widget.styles.padding.top == 1
+        assert widget.styles.padding.bottom == 1
         edge_type, edge_color = widget.styles.border_left
         assert edge_type != "none"
         assert edge_color == border
@@ -2231,11 +2303,11 @@ async def test_tui_app_highlights_prompt_shell_mode() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_app_uses_textual_footer_for_shortcut_hints() -> None:
+async def test_tui_app_omits_footer_but_keeps_shortcuts_active() -> None:
     app = TauTuiApp(FakeSession())
 
-    async with app.run_test(size=(120, 30)):
-        assert app.query_one(Footer) is not None
+    async with app.run_test(size=(120, 40)):
+        assert not app.query("Footer")
         assert len(app.query("#shortcut-hints")) == 0
         assert _visible_footer_bindings(app) == {
             "Quit": "ctrl+d",
@@ -2285,25 +2357,18 @@ async def test_tui_app_footer_hints_update_while_running() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_app_keeps_textual_footer_on_short_windows() -> None:
-    app = TauTuiApp(FakeSession())
-
-    async with app.run_test(size=(120, 18)):
-        assert app.query_one(Footer).display is True
-        assert len(app.query("#shortcut-hints")) == 0
-
-
-@pytest.mark.anyio
 async def test_tui_prompt_grows_to_six_lines_then_scrolls() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test(size=(120, 30)) as pilot:
         prompt = app.query_one("#prompt", TextArea)
         assert prompt.size.height == 1
+        assert prompt.outer_size.height == 3
 
-        prompt.text = "x" * 500
+        prompt.text = "x" * 700
         await pilot.pause()
         assert prompt.size.height == 6
+        assert prompt.outer_size.height == 8
 
         prompt.text = "x" * 1000
         await pilot.pause()
@@ -2315,10 +2380,19 @@ async def test_tui_prompt_grows_to_six_lines_then_scrolls() -> None:
 async def test_tui_sidebar_is_visible_on_medium_windows() -> None:
     app = TauTuiApp(FakeSession())
 
-    async with app.run_test(size=(120, 30)):
+    async with app.run_test(size=(120, 40)):
         sidebar = app.query_one("#sidebar")
+        sidebar_brand = app.query_one("#sidebar-brand", Static)
         compact_info = app.query_one("#compact-session-info")
         assert sidebar.display is True
+        assert sidebar.region.width == 40
+        assert sidebar.styles.padding.left == 2
+        assert sidebar.styles.border_left[0] == ""
+        assert sidebar.styles.border_right[0] == ""
+        assert sidebar.styles.border_top[0] == ""
+        assert sidebar.styles.border_bottom[0] == ""
+        assert sidebar_brand.region.bottom == sidebar.content_region.bottom
+        assert sidebar.styles.background == Color.parse(TAU_DARK_THEME.prompt_background)
         assert compact_info.display is True
         assert not app.has_class("-hide-sidebar")
 
@@ -2327,7 +2401,7 @@ async def test_tui_sidebar_is_visible_on_medium_windows() -> None:
 async def test_tui_sidebar_fills_workspace_height() -> None:
     app = TauTuiApp(FakeSession())
 
-    async with app.run_test(size=(120, 30)):
+    async with app.run_test(size=(120, 40)):
         workspace = app.query_one("#workspace")
         sidebar = app.query_one("#sidebar")
 
@@ -2351,7 +2425,7 @@ async def test_tui_sidebar_hides_on_narrow_windows() -> None:
 async def test_tui_sidebar_hides_on_short_windows() -> None:
     app = TauTuiApp(FakeSession())
 
-    async with app.run_test(size=(120, 18)):
+    async with app.run_test(size=(120, 30)):
         sidebar = app.query_one("#sidebar")
         compact_info = app.query_one("#compact-session-info")
         assert sidebar.display is False
@@ -2363,23 +2437,23 @@ async def test_tui_sidebar_hides_on_short_windows() -> None:
 async def test_tui_sidebar_visibility_updates_on_resize() -> None:
     app = TauTuiApp(FakeSession())
 
-    async with app.run_test(size=(120, 30)) as pilot:
+    async with app.run_test(size=(120, 40)) as pilot:
         sidebar = app.query_one("#sidebar")
         compact_info = app.query_one("#compact-session-info")
         assert sidebar.display is True
         assert compact_info.display is True
 
-        await pilot.resize_terminal(width=80, height=30)
-        await pilot.pause()
-        assert sidebar.display is False
-        assert compact_info.display is True
-
-        await pilot.resize_terminal(width=120, height=18)
+        await pilot.resize_terminal(width=80, height=40)
         await pilot.pause()
         assert sidebar.display is False
         assert compact_info.display is True
 
         await pilot.resize_terminal(width=120, height=30)
+        await pilot.pause()
+        assert sidebar.display is False
+        assert compact_info.display is True
+
+        await pilot.resize_terminal(width=120, height=40)
         await pilot.pause()
         assert sidebar.display is True
         assert compact_info.display is True
@@ -2389,7 +2463,7 @@ async def test_tui_sidebar_visibility_updates_on_resize() -> None:
 async def test_tui_sidebar_shows_on_right_when_configured() -> None:
     app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(sidebar_position="right"))
 
-    async with app.run_test(size=(120, 30)):
+    async with app.run_test(size=(120, 40)):
         sidebar = app.query_one("#sidebar")
         assert sidebar.display is True
         assert app.has_class("-sidebar-right")
@@ -2615,14 +2689,37 @@ def test_textual_theme_mapping_uses_tau_theme_values() -> None:
     assert textual_theme.variables["tau-screen-background"] == TAU_LIGHT_THEME.screen_background
 
 
-def test_tau_dark_theme_uses_black_chat_backgrounds() -> None:
+def test_tau_dark_theme_uses_aqua_as_its_shared_accent() -> None:
     theme = TuiSettings().resolved_theme
 
+    assert theme.accent == "#a7f3f0"
+    assert theme.highlight_background == theme.accent
+    assert theme.markdown_heading == theme.accent
+    assert theme.markdown_bullet == theme.accent
     assert theme.screen_background == "#000000"
     assert theme.transcript_background == "#000000"
     assert theme.prompt_background == "#101419"
-    assert theme.role_styles["user"].body.endswith("on #000000")
+    assert theme.role_styles["user"].body.endswith(f"on {theme.prompt_background}")
     assert theme.role_styles["assistant"].body.endswith("on #000000")
+
+
+@pytest.mark.parametrize(
+    "theme",
+    [TAU_DARK_THEME, TAU_LIGHT_THEME, HIGH_CONTRAST_THEME],
+)
+def test_autocomplete_and_picker_share_theme_highlight(theme: TuiTheme) -> None:
+    completion_text, completion_background = _split_rich_style_colors(theme.completion_selected)
+    description_text, description_background = _split_rich_style_colors(
+        theme.completion_selected_description
+    )
+    variables = _theme_css_variables(theme)
+
+    assert completion_text == theme.highlight_text
+    assert completion_background == theme.highlight_background
+    assert description_text == theme.highlight_text
+    assert description_background == theme.highlight_background
+    assert variables["tau-highlight-background"] == theme.highlight_background
+    assert variables["tau-highlight-text"] == theme.highlight_text
 
 
 def test_tau_light_theme_uses_light_chat_backgrounds() -> None:
@@ -2632,7 +2729,7 @@ def test_tau_light_theme_uses_light_chat_backgrounds() -> None:
     assert theme.transcript_background == "#ffffff"
     assert theme.prompt_text == "#111827"
     assert theme.syntax_theme == "ansi_light"
-    assert theme.role_styles["user"].body == "#111827"
+    assert theme.role_styles["user"].body == f"#111827 on {theme.prompt_background}"
     assert theme.role_styles["assistant"].body == "#111827"
     assert theme.role_styles["tool"].body == "#1f2937"
     assert theme.role_styles["error"].border == "#b91c1c"
@@ -2688,7 +2785,10 @@ async def test_tui_app_shows_activity_indicator_while_running() -> None:
 
         assert not app.query("#status")
         assert not app.query("#activity-status")
-        assert prompt.styles.border.top[1].hex.lower() == "#2d3748"
+        assert prompt.styles.border_left[1].hex.lower() == "#2d3748"
+        assert prompt.styles.border_top[0] == ""
+        assert prompt.styles.border_right[0] == ""
+        assert prompt.styles.border_bottom[0] == ""
         assert indicator.render().plain == "τ"
 
         app.adapter.apply(AgentStartEvent())
@@ -2696,19 +2796,19 @@ async def test_tui_app_shows_activity_indicator_while_running() -> None:
 
         assert pytest.approx(tui_app.ACTIVITY_TICK_SECONDS) == 0.15
         assert tui_app.ACTIVITY_COLOR_FADE_STEPS == 24
-        assert prompt.styles.border.top[1].hex.lower() == "#2d3748"
+        assert prompt.styles.border_left[1].hex.lower() == "#2d3748"
         assert indicator.render().plain.startswith("■")
 
         app._tick_activity()
 
-        assert prompt.styles.border.top[1].hex.lower() == "#2d3748"
+        assert prompt.styles.border_left[1].hex.lower() == "#2d3748"
         assert indicator.render().plain.splitlines()[1] == "■"
 
         app.adapter.apply(AgentEndEvent())
         app._refresh()
 
         assert not app.query("#status")
-        assert prompt.styles.border.top[1].hex.lower() == "#2d3748"
+        assert prompt.styles.border_left[1].hex.lower() == "#2d3748"
         assert indicator.render().plain == "τ"
 
 
@@ -2770,7 +2870,10 @@ async def test_tui_app_updates_terminal_title_after_auto_session_naming() -> Non
         await app._run_prompt("debug the login flow")
 
         assert "\x1b]0;τ | Debug login\x07" in writes
-        assert app.sub_title == "Debug login"
+        sidebar_content = app.query_one("#sidebar-content", Static)
+        console = Console(record=True, width=80, file=StringIO())
+        console.print(sidebar_content.content)
+        assert "Debug login" in console.export_text()
         assert writes[-1] == "\x1b]0;τ | Debug login\x07"
 
 
@@ -2792,7 +2895,10 @@ async def test_tui_app_clears_activity_status_on_error() -> None:
 
         assert not app.query("#status")
         assert not app.query("#activity-status")
-        assert prompt.styles.border.top[1].hex.lower() == "#2d3748"
+        assert prompt.styles.border_left[1].hex.lower() == "#2d3748"
+        assert prompt.styles.border_top[0] == ""
+        assert prompt.styles.border_right[0] == ""
+        assert prompt.styles.border_bottom[0] == ""
         assert indicator.render().plain == "τ"
 
 
@@ -4762,27 +4868,15 @@ async def test_tui_app_system_appends_command_output_to_transcript() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_app_uses_session_name_in_header() -> None:
-    session = FakeSession()
-    session._session_title = "Customer bugfix"
-    app = TauTuiApp(session)
-
-    async with app.run_test():
-        assert app.title == "Tau"
-        assert app.sub_title == "Customer bugfix"
-
-
-@pytest.mark.anyio
-async def test_tui_app_uses_default_header_for_unnamed_session() -> None:
+async def test_tui_app_omits_textual_header() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test():
-        assert app.title == "Tau"
-        assert app.sub_title == "Untitled session"
+        assert not app.query("Header")
 
 
 @pytest.mark.anyio
-async def test_tui_app_name_updates_header() -> None:
+async def test_tui_app_name_updates_sidebar() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
@@ -4791,7 +4885,10 @@ async def test_tui_app_name_updates_header() -> None:
         await pilot.press("enter")
         await pilot.pause()
 
-        assert app.sub_title == "Customer bugfix"
+        sidebar_content = app.query_one("#sidebar-content", Static)
+        console = Console(record=True, width=80, file=StringIO())
+        console.print(sidebar_content.content)
+        assert "Customer bugfix" in console.export_text()
 
 
 @pytest.mark.anyio

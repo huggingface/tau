@@ -9,7 +9,9 @@ see [Keyboard shortcuts]({{< relref "../reference/keybindings.md" >}}).
 
 ## Sending a prompt
 
-Type into the prompt box at the bottom and press **Enter** to submit.
+Type into the prompt box at the bottom and press **Enter** to submit. The editor
+keeps its padded block size and background, while a single left border changes
+color to reflect focus, shell mode, and active runs without boxing it in.
 **Shift+Enter** inserts a newline for multi-line prompts. Tau streams the
 assistant's reply above the prompt, showing tool calls as they run. In supported
 terminal emulators, Tau also updates the tab title: named sessions show as
@@ -82,7 +84,11 @@ indicator provides the run-wide animation without adding a second spinner to eac
 tool row.
 
 Tool results (like long `read` or `bash` output) render as compact previews so
-the transcript stays readable. Toggle full tool output with **Ctrl+O**.
+the transcript stays readable. Toggle full tool output with **Ctrl+O**. Markdown
+link hover styling underlines only the linked text, never the rest of its row. User
+message blocks use the same theme background as the prompt field and sidebar,
+with light vertical padding so they read as blocks rather than highlighted lines.
+This visually ties submitted prompts to the composer.
 
 ## Long sessions
 
@@ -103,14 +109,39 @@ when you want to reduce what is sent to the model.
   opening the picker. Manage that list with `/scoped-models` or by pressing
   `Space` on a model in the `/model` picker.
 - **`/theme`** switches between `tau-dark`, `tau-light`, `high-contrast`, and
-  any custom themes you have installed — see
+  any custom themes you have installed. Each theme uses one shared selection
+  palette for prompt autocomplete and modal lists such as `/resume`. In
+  `tau-dark`, the aqua selection color is also the global accent used for
+  headings, prompt activity, and other emphasized UI. See
   [Themes]({{< relref "./themes.md" >}}).
 
 ## The sidebar
 
-On wide-enough terminals Tau shows a sidebar with the active provider/model,
-thinking mode, loaded tools, skills, prompt templates, and context files such as
-`AGENTS.md`. It hides automatically when the terminal is small.
+On wide-enough terminals Tau shows the session name prominently without a
+redundant section label, followed by active-branch
+turn and tool-call totals, provider-reported token usage, estimated cost,
+automatic-compaction threshold, and loaded tools, skills, prompt templates,
+extensions, and context files such as `AGENTS.md`. Tool, prompt, and extension
+names use compact comma-separated lists. Skills and context files use bullet
+lists, with one item or path per line. Project context paths are relative to the
+working directory; context loaded from outside the project uses its full path.
+
+The wider, borderless sidebar uses the prompt field's background color, bright
+section headings, quieter gray values, and keeps Tau's versioned `τ = 2π` mark
+pinned to its bottom edge. Tau does not render separate
+top-header or shortcut-footer rows. Named sessions remain visible in the sidebar
+and terminal tab title; `/hotkeys` lists shortcuts when needed. The sidebar hides
+automatically when the terminal is small, while the tab title continues to
+identify the session.
+
+Usage and cost cover the active branch, including history replaced by compaction.
+Cost is an estimate based on provider-reported usage and configured catalog rates;
+the sidebar shows `$N/A` when Tau lacks complete pricing data.
+
+The compact status block below the prompt puts `provider:model (thinking)` on its
+first line and context consumption as just `used/limit` on the second. Its
+working-directory name is emphasized while the parent path and Git branch use the
+quieter metadata color.
 
 The sidebar can be moved to the **right** or turned **off** entirely by setting
 `sidebar_position` in `~/.tau/tui.json` — see

@@ -20,7 +20,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Style as TextualStyle  # type: ignore[attr-defined]
 from textual.css.query import NoMatches
 from textual.geometry import Offset
@@ -32,11 +32,13 @@ from textual.widgets.markdown import MarkdownBlock, MarkdownStream
 
 from tau_agent.tools import AgentTool
 from tau_coding.prompt_templates import PromptTemplate
+from tau_coding.session_stats import SessionStats
 from tau_coding.skills import Skill
 from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.tui.autocomplete import CompletionState
 from tau_coding.tui.config import TAU_DARK_THEME, TuiRoleStyle, TuiTheme
 from tau_coding.tui.state import ChatItem, TuiState
+from tau_coding.version import current_version
 
 TAU_SIDEBAR_LOGO = "τ = 2π"
 
@@ -84,9 +86,22 @@ class SessionSummarySource(Protocol):
     @property
     def thinking_level(self) -> str: ...
 
+    @property
+    def session_title(self) -> str | None: ...
 
-class SessionSidebar(Static):
-    """Compact sidebar with current session metadata."""
+    @property
+    def extension_names(self) -> Sequence[str]: ...
+
+    @property
+    def session_stats(self) -> SessionStats: ...
+
+
+class SessionSidebar(Vertical):
+    """Compact sidebar with session metadata and bottom-aligned branding."""
+
+    def compose(self) -> Any:
+        yield Static("", id="sidebar-content")
+        yield Static("", id="sidebar-brand")
 
     _summary_fingerprint: tuple[object, ...] | None = None
 
@@ -101,7 +116,14 @@ class SessionSidebar(Static):
         if fingerprint == self._summary_fingerprint:
             return
         self._summary_fingerprint = fingerprint
-        self.update(render_session_sidebar(session, theme=theme), layout=False)
+        self.query_one("#sidebar-content", Static).update(
+            render_session_sidebar(session, theme=theme),
+            layout=False,
+        )
+        self.query_one("#sidebar-brand", Static).update(
+            _sidebar_brand(theme=theme),
+            layout=False,
+        )
 
 
 class CompactSessionInfo(Static):
@@ -137,6 +159,9 @@ def _session_summary_fingerprint(
         session.context_token_estimate,
         session.auto_compact_token_threshold,
         session.context_window_tokens,
+        session.session_title,
+        session.session_stats,
+        tuple(session.extension_names),
         tuple(tool.name for tool in session.tools),
         tuple(skill.name for skill in session.skills),
         tuple(template.name for template in session.prompt_templates),
@@ -146,6 +171,14 @@ def _session_summary_fingerprint(
 
 class TauMarkdownBlock(MarkdownBlock):
     """Markdown block that applies Tau's themed inline link color."""
+
+    DEFAULT_CSS = """
+    TauMarkdownBlock {
+        link-style: none;
+        link-style-hover: underline;
+        link-background-hover: transparent;
+    }
+    """
 
     @property
     def allow_select(self) -> bool:
@@ -327,6 +360,8 @@ class TranscriptMessageWidget(Horizontal):
             self._result_markup,
         )
         super().__init__(classes="transcript-message")
+        if item.role == "user":
+            self.styles.padding = (1, 0)
         foreground, background = _split_rich_style_colors(self._role_style.body)
         self._body_foreground = foreground
         if item.role in _BORDERLESS_TRANSCRIPT_ROLES:
@@ -1447,24 +1482,41 @@ def render_session_sidebar(
     theme: TuiTheme = TAU_DARK_THEME,
 ) -> RenderableType:
     """Render a dark, minimalist summary of the active coding session."""
-    metadata = Table.grid(padding=(0, 1))
-    metadata.add_column(style=theme.completion_description, no_wrap=True)
-    metadata.add_column(style=theme.prompt_text)
-    metadata.add_row("provider", session.provider_name)
-    metadata.add_row("model", session.model)
-    metadata.add_row("thinking", _thinking_level(session))
-    metadata.add_row("tools", str(len(session.tools)))
-    metadata.add_row("skills", str(len(session.skills)))
+    title = Text(session.session_title or "Untitled session", style=f"bold {theme.accent}")
+    stats = session.session_stats
+    activity = Text(
+        f"{stats.turn_count} {_plural(stats.turn_count, 'turn')}, "
+        f"{stats.tool_call_count} tool {_plural(stats.tool_call_count, 'call')}",
+        style=theme.completion_description,
+    )
+    usage = Text(style=theme.completion_description)
+    usage.append(f"{_compact_usage_count(stats.input_tokens)} in, ")
+    usage.append(f"{_compact_usage_count(stats.output_tokens)} out")
+    usage.append(" · ", style=theme.completion_description)
+    if stats.estimated_cost is None:
+        usage.append("$N/A", style=theme.completion_description)
+    else:
+        usage.append(f"~{_format_cost(stats.estimated_cost)}")
 
-    tools = _bullet_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
+    threshold = session.auto_compact_token_threshold
+    compaction = Text(
+        "off" if threshold is None else f"auto at {_compact_token_count(threshold)}",
+        style=theme.completion_description,
+    )
+    tools = _comma_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
     skills = _bullet_list(
         [skill.name for skill in session.skills],
-        empty="No skills loaded yet",
+        empty="No skills loaded",
         theme=theme,
     )
-    prompts = _bullet_list(
+    prompts = _comma_list(
         [template.name for template in session.prompt_templates],
         empty="No prompt templates",
+        theme=theme,
+    )
+    extensions = _comma_list(
+        list(session.extension_names),
+        empty="No extensions",
         theme=theme,
     )
     context = _bullet_list(
@@ -1472,20 +1524,24 @@ def render_session_sidebar(
         empty="No context files",
         theme=theme,
     )
-    equation = Text(TAU_SIDEBAR_LOGO, style=f"bold {theme.prompt_text}")
-
-    return Group(
-        Padding(Align.center(equation), (0, 0, 1, 0)),
-        _sidebar_section("session", metadata, theme=theme),
-        _sidebar_separator(theme=theme),
+    sections = (
+        Padding(title, (0, 0, 0, 1)),
+        _sidebar_section("activity", activity, theme=theme),
+        _sidebar_section("usage", usage, theme=theme),
+        _sidebar_section("compaction", compaction, theme=theme),
         _sidebar_section("context", context, theme=theme),
-        _sidebar_separator(theme=theme),
         _sidebar_section("tools", tools, theme=theme),
-        _sidebar_separator(theme=theme),
         _sidebar_section("skills", skills, theme=theme),
-        _sidebar_separator(theme=theme),
         _sidebar_section("prompts", prompts, theme=theme),
+        _sidebar_section("extensions", extensions, theme=theme),
     )
+    separated_sections: list[RenderableType] = []
+    for index, section in enumerate(sections):
+        if index:
+            separated_sections.append(_sidebar_separator(theme=theme))
+        separated_sections.append(section)
+
+    return Group(*separated_sections)
 
 
 def _sidebar_section(
@@ -1495,13 +1551,20 @@ def _sidebar_section(
     theme: TuiTheme,
 ) -> RenderableType:
     """Render one sidebar section without a surrounding border."""
-    header = Text(title, style=f"bold {theme.accent}")
-    return Group(Padding(header, (0, 0, 0, 1)), Padding(body, (0, 0, 1, 1)))
+    header = Text(title, style=f"bold {theme.prompt_text}")
+    return Group(Padding(header, (0, 0, 0, 1)), Padding(body, (0, 0, 0, 1)))
 
 
 def _sidebar_separator(*, theme: TuiTheme) -> RenderableType:
-    """Render a subtle divider between sidebar sections."""
+    """Render a spaced divider between adjacent sidebar sections."""
     return Padding(Rule(style=theme.border), (0, 0, 1, 0))
+
+
+def _sidebar_brand(*, theme: TuiTheme) -> RenderableType:
+    brand = Text(style=f"bold {theme.prompt_text}")
+    brand.append(TAU_SIDEBAR_LOGO)
+    brand.append(f"  {current_version()}", style=theme.completion_description)
+    return Align.center(brand)
 
 
 def render_compact_session_info(
@@ -1510,18 +1573,13 @@ def render_compact_session_info(
     theme: TuiTheme = TAU_DARK_THEME,
 ) -> RenderableType:
     """Render the session facts below the prompt."""
-    left = Text(
-        f"{_short_path(session.cwd)} ({_git_branch(session.cwd)})",
-        style=theme.prompt_text,
-        overflow="fold",
-        no_wrap=False,
-    )
+    left = _styled_cwd(session.cwd, theme=theme)
     right = Text(style=theme.muted_text, overflow="fold", no_wrap=False, justify="right")
-    right.append(_context_usage(session), style=theme.completion_description)
-    right.append("  ")
     right.append(f"{session.provider_name}:{session.model}", style=theme.prompt_text)
     right.append(" ")
     right.append(f"({_thinking_level(session)})", style=theme.completion_description)
+    right.append("\n")
+    right.append(_context_usage(session), style=theme.completion_description)
 
     table = Table.grid(expand=True)
     table.add_column(ratio=1)
@@ -1930,15 +1988,22 @@ def _plain_text(text: str, *, body_style: str) -> Text:
 
 def _context_usage(session: SessionSummarySource) -> str:
     threshold = session.auto_compact_token_threshold
-    if threshold is None or threshold <= 0:
-        return (
-            f"{_compact_token_count(session.context_token_estimate)}"
-            f"/{_compact_token_count(session.context_window_tokens)} context"
-        )
-    return (
-        f"{_compact_token_count(session.context_token_estimate)}"
-        f"/{_compact_token_count(threshold)} context"
-    )
+    limit = session.context_window_tokens if threshold is None or threshold <= 0 else threshold
+    return f"{_compact_token_count(session.context_token_estimate)}/{_compact_token_count(limit)}"
+
+
+def _styled_cwd(cwd: Path, *, theme: TuiTheme) -> Text:
+    """Style the parent path as metadata while emphasizing the working directory."""
+    short_path = _short_path(cwd)
+    parent, separator, name = short_path.rpartition("/")
+    text = Text(overflow="fold", no_wrap=False)
+    if separator and name:
+        text.append(f"{parent}{separator}", style=theme.completion_description)
+        text.append(name, style=theme.prompt_text)
+    else:
+        text.append(short_path, style=theme.prompt_text)
+    text.append(f" ({_git_branch(cwd)})", style=theme.completion_description)
+    return text
 
 
 def _compact_token_count(value: int) -> str:
@@ -1964,7 +2029,10 @@ def _context_file_label(path: Path, *, cwd: Path) -> str:
     try:
         return str(expanded_path.resolve().relative_to(cwd.expanduser().resolve()))
     except (OSError, ValueError):
-        return _short_path(expanded_path)
+        try:
+            return str(expanded_path.resolve())
+        except OSError:
+            return str(expanded_path.absolute())
 
 
 def _thinking_level(session: SessionSummarySource) -> str:
@@ -2051,6 +2119,40 @@ def render_completion_suggestions(
     return table
 
 
+def _comma_list(
+    items: Sequence[str],
+    *,
+    empty: str,
+    theme: TuiTheme,
+) -> Text:
+    if not items:
+        return Text(empty, style=theme.completion_description)
+    return Text(
+        ", ".join(items),
+        style=theme.completion_description,
+        overflow="fold",
+        no_wrap=False,
+    )
+
+
+def _compact_usage_count(value: int) -> str:
+    if value < 1_000:
+        return str(value)
+    if value < 1_000_000:
+        return f"{value / 1_000:.1f}".rstrip("0").rstrip(".") + "k"
+    return f"{value / 1_000_000:.1f}".rstrip("0").rstrip(".") + "m"
+
+
+def _format_cost(value: float) -> str:
+    if 0 < value < 0.01:
+        return f"${value:.3f}"
+    return f"${value:.2f}"
+
+
+def _plural(count: int, singular: str) -> str:
+    return singular if count == 1 else f"{singular}s"
+
+
 def _bullet_list(
     items: Sequence[str],
     *,
@@ -2066,7 +2168,7 @@ def _bullet_list(
         if index:
             text.append("\n")
         text.append("• ", style=theme.completion_description)
-        text.append(item, style=theme.prompt_text)
+        text.append(item, style=theme.completion_description)
     return text
 
 
