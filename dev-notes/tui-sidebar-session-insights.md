@@ -29,8 +29,9 @@ comma-separated lists. Context files remain bullets because paths are longer and
 need clear boundaries. Paths inside the working directory are project-relative;
 paths outside it are absolute so user-level instructions are unambiguous.
 
-The sidebar sections no longer use a divider between every section. This keeps the
-larger set of useful facts readable in shorter terminals.
+A compact divider separates each section without adding blank padding. This keeps
+the expanded set of useful facts visually distinct while still fitting typical
+terminal heights.
 
 ## Activity and usage semantics
 

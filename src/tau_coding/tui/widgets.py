@@ -14,6 +14,7 @@ from rich.align import Align
 from rich.console import Console, Group, RenderableType
 from rich.markdown import CodeBlock, Heading, Markdown
 from rich.padding import Padding
+from rich.rule import Rule
 from rich.style import Style
 from rich.syntax import Syntax
 from rich.table import Table
@@ -1053,11 +1054,11 @@ def render_session_sidebar(
     usage = Text(style=theme.prompt_text)
     usage.append(f"{_compact_usage_count(stats.input_tokens)} in, ")
     usage.append(f"{_compact_usage_count(stats.output_tokens)} out")
-    usage.append("\n")
+    usage.append(" · ", style=theme.completion_description)
     if stats.estimated_cost is None:
         usage.append("cost unavailable", style=theme.completion_description)
     else:
-        usage.append(f"~{_format_cost(stats.estimated_cost)} estimated")
+        usage.append(f"~{_format_cost(stats.estimated_cost)}")
 
     threshold = session.auto_compact_token_threshold
     compaction = Text(
@@ -1087,8 +1088,7 @@ def render_session_sidebar(
     )
     equation = Text(TAU_SIDEBAR_LOGO, style=f"bold {theme.prompt_text}")
 
-    return Group(
-        Padding(Align.center(equation), (0, 0, 1, 0)),
+    sections = (
         _sidebar_section("session", title, theme=theme),
         _sidebar_section("activity", activity, theme=theme),
         _sidebar_section("usage", usage, theme=theme),
@@ -1098,6 +1098,16 @@ def render_session_sidebar(
         _sidebar_section("skills", skills, theme=theme),
         _sidebar_section("prompts", prompts, theme=theme),
         _sidebar_section("extensions", extensions, theme=theme),
+    )
+    separated_sections: list[RenderableType] = []
+    for index, section in enumerate(sections):
+        if index:
+            separated_sections.append(_sidebar_separator(theme=theme))
+        separated_sections.append(section)
+
+    return Group(
+        Padding(Align.center(equation), (0, 0, 1, 0)),
+        *separated_sections,
     )
 
 
@@ -1110,6 +1120,11 @@ def _sidebar_section(
     """Render one sidebar section without a surrounding border."""
     header = Text(title, style=f"bold {theme.accent}")
     return Group(Padding(header, (0, 0, 0, 1)), Padding(body, (0, 0, 0, 1)))
+
+
+def _sidebar_separator(*, theme: TuiTheme) -> RenderableType:
+    """Render a compact divider between adjacent sidebar sections."""
+    return Rule(style=theme.border)
 
 
 def render_compact_session_info(

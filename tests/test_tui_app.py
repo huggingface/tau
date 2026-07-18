@@ -472,7 +472,7 @@ def test_session_sidebar_renders_session_metadata() -> None:
     assert "branch" not in output
     assert "14 turns, 23 tool calls" in output
     assert "1.2m in, 48k out" in output
-    assert "~$1.24 estimated" in output
+    assert "1.2m in, 48k out · ~$1.24" in output
     assert "auto at 200k" in output
     assert "read, write, edit, bash" in output
     assert "review" in output
@@ -495,6 +495,7 @@ def test_session_sidebar_uses_accented_aligned_headers_without_section_borders()
     assert " session" in output
     assert " context" in output
     assert " tools" in output
+    assert "─" in output
     assert "┌" not in output
     assert "│" not in output
 
