@@ -468,10 +468,12 @@ thinking_default = "medium"
 thinking_parameter = "reasoning.effort"
 
 [providers.context_windows]
-"gpt-5.6" = 1050000
-"gpt-5.6-sol" = 1050000
-"gpt-5.6-terra" = 1050000
-"gpt-5.6-luna" = 1050000
+# Conservative Codex-subscription fallbacks. The authenticated live catalog
+# overrides these values because Codex limits can vary by rollout/account.
+"gpt-5.6" = 272000
+"gpt-5.6-sol" = 272000
+"gpt-5.6-terra" = 272000
+"gpt-5.6-luna" = 272000
 "gpt-5.5" = 272000
 "gpt-5.4" = 272000
 "gpt-5.4-mini" = 400000
@@ -483,7 +485,7 @@ thinking_parameter = "reasoning.effort"
 name = "GPT-5.6"
 reasoning = true
 input = ["text", "image"]
-context_window = 1050000
+context_window = 272000
 max_tokens = 128000
 cost = { input = 5, output = 30, cacheRead = 0.5, cacheWrite = 6.25 }
 thinking_level_map = { off = "none", xhigh = "xhigh" }
@@ -493,7 +495,7 @@ unsupported_thinking_levels = ["minimal"]
 name = "GPT-5.6 Sol"
 reasoning = true
 input = ["text", "image"]
-context_window = 1050000
+context_window = 272000
 max_tokens = 128000
 cost = { input = 5, output = 30, cacheRead = 0.5, cacheWrite = 6.25 }
 thinking_level_map = { off = "none", xhigh = "xhigh" }
@@ -503,7 +505,7 @@ unsupported_thinking_levels = ["minimal"]
 name = "GPT-5.6 Terra"
 reasoning = true
 input = ["text", "image"]
-context_window = 1050000
+context_window = 272000
 max_tokens = 128000
 cost = { input = 2.5, output = 15, cacheRead = 0.25, cacheWrite = 3.125 }
 thinking_level_map = { off = "none", xhigh = "xhigh" }
@@ -513,7 +515,7 @@ unsupported_thinking_levels = ["minimal"]
 name = "GPT-5.6 Luna"
 reasoning = true
 input = ["text", "image"]
-context_window = 1050000
+context_window = 272000
 max_tokens = 128000
 cost = { input = 1, output = 6, cacheRead = 0.1, cacheWrite = 1.25 }
 thinking_level_map = { off = "none", xhigh = "xhigh" }

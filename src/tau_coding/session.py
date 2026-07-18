@@ -39,6 +39,7 @@ from tau_agent.session.jsonl import entry_to_json_line
 from tau_agent.session.tree import SessionTreeError, path_to_entry
 from tau_agent.tools import AgentTool
 from tau_agent.types import JSONValue
+from tau_ai.model_limits import ModelLimitsProvider, RuntimeModelLimits
 from tau_coding.branch_summary import summarize_branch_messages_with_model
 from tau_coding.commands import CommandRegistry, CommandResult, create_default_command_registry
 from tau_coding.context import discover_project_context_with_diagnostics
@@ -287,6 +288,9 @@ class CodingSession:
             credentials_path(self._resource_paths.paths) if self._resource_paths.paths else None
         )
         self._last_diagnostic_log_path: Path | None = None
+        self._runtime_model_limits: RuntimeModelLimits | None = None
+        self._runtime_model_limits_key: tuple[str, str] | None = None
+        self._model_limits_discovery_error: str | None = None
 
     @classmethod
     async def load(cls, config: CodingSessionConfig) -> CodingSession:
@@ -384,6 +388,7 @@ class CodingSession:
         await session._persist_loaded_interrupted_tool_repairs()
         session._sync_thinking_level_to_active_model()
         session._refresh_runtime_provider()
+        await session._refresh_runtime_model_limits()
         if fresh_extension_runtime:
             extension_runtime.bind(session)
             # Attach to session._harness, not the local `harness`:
@@ -654,15 +659,38 @@ class CodingSession:
             return None
         if self._auto_compact_token_threshold is not None:
             return self._auto_compact_token_threshold
+        if self._runtime_model_limits_key == (self.provider_name, self.model):
+            limits = self._runtime_model_limits
+            if limits is not None:
+                return limits.effective_auto_compact_token_limit
         return auto_compaction_threshold_for_context_window(self.context_window_tokens)
 
     @property
     def context_window_tokens(self) -> int:
-        """Return the active model's configured context window, or Tau's fallback."""
+        """Return the active model's discovered or configured context window."""
+        if self._runtime_model_limits_key == (self.provider_name, self.model):
+            limits = self._runtime_model_limits
+            if limits is not None:
+                return limits.context_window
         provider = self._active_provider_config()
         if provider is None:
             return DEFAULT_CONTEXT_WINDOW_TOKENS
         return provider.context_windows.get(self.model, DEFAULT_CONTEXT_WINDOW_TOKENS)
+
+    @property
+    def context_window_source(self) -> str:
+        """Return where the active context-window limit came from."""
+        if (
+            self._runtime_model_limits_key == (self.provider_name, self.model)
+            and self._runtime_model_limits is not None
+        ):
+            return "provider live catalog"
+        return "configured catalog"
+
+    @property
+    def model_limits_discovery_error(self) -> str | None:
+        """Return the last non-fatal live model-limit discovery error."""
+        return self._model_limits_discovery_error
 
     @property
     def command_registry(self) -> CommandRegistry:
@@ -910,6 +938,7 @@ class CodingSession:
         self._harness.config.provider = provider
         self._provider_name = provider_config.name
         self._runtime_provider_config = provider_config
+        self._invalidate_runtime_model_limits()
         self._harness.config.model = model
         self._thinking_level = thinking_level
         if persist_default:
@@ -1033,6 +1062,27 @@ class CodingSession:
         self._owned_providers.append(provider)
         self._harness.config.provider = provider
         self._runtime_provider_config = provider_config
+        self._invalidate_runtime_model_limits()
+
+    def _invalidate_runtime_model_limits(self) -> None:
+        self._runtime_model_limits = None
+        self._runtime_model_limits_key = None
+        self._model_limits_discovery_error = None
+
+    async def _refresh_runtime_model_limits(self) -> None:
+        key = (self.provider_name, self.model)
+        if self._runtime_model_limits_key == key:
+            return
+        self._runtime_model_limits = None
+        self._runtime_model_limits_key = key
+        self._model_limits_discovery_error = None
+        provider = self._harness.config.provider
+        if not isinstance(provider, ModelLimitsProvider):
+            return
+        try:
+            self._runtime_model_limits = await provider.discover_model_limits(self.model)
+        except Exception as exc:  # noqa: BLE001 - static catalog remains the safe fallback
+            self._model_limits_discovery_error = f"{type(exc).__name__}: {exc}"
 
     async def reload(self) -> CodingReloadSummary:
         """Reload resources and extensions with an awaited lifecycle boundary.
@@ -1466,6 +1516,7 @@ class CodingSession:
                 "CodingSession is already running; pass streaming_behavior to queue a message."
             )
 
+        await self._refresh_runtime_model_limits()
         await self._try_auto_compact(context=context, phase="auto_compact_before_prompt")
         persisted_count = len(self._harness.messages)
         auto_name_attempted = False
@@ -1583,6 +1634,7 @@ class CodingSession:
     async def continue_(self) -> AsyncIterator[CodingSessionEvent]:
         """Continue the agent from restored state and persist new messages."""
         context = self._diagnostic_context()
+        await self._refresh_runtime_model_limits()
         persisted_count = len(self._harness.messages)
         try:
             events = self._harness.continue_()

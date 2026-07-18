@@ -27,7 +27,7 @@ from tau_agent.session import (
     SessionInfoEntry,
     ThinkingLevelChangeEntry,
 )
-from tau_ai import CancellationToken, FakeProvider, ModelProvider
+from tau_ai import CancellationToken, FakeProvider, ModelProvider, RuntimeModelLimits
 from tau_ai.events import AssistantMessageEvent
 from tau_coding import (
     CodingSession,
@@ -85,6 +85,26 @@ class SwitchableFakeProvider:
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+class ModelLimitsFakeProvider(FakeProvider):
+    def __init__(
+        self,
+        scripts: list[list[AssistantMessageEvent]],
+        *,
+        limits: RuntimeModelLimits | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        super().__init__(scripts)
+        self.limits = limits
+        self.error = error
+        self.discovery_calls: list[str] = []
+
+    async def discover_model_limits(self, model: str) -> RuntimeModelLimits | None:
+        self.discovery_calls.append(model)
+        if self.error is not None:
+            raise self.error
+        return self.limits
 
 
 class RaisingProvider:
@@ -2513,6 +2533,82 @@ async def test_session_auto_compacts_with_pi_style_default_threshold(
 
     assert len(compactions) == 1
     assert compactions[0].summary == "Default threshold summary"
+
+
+@pytest.mark.anyio
+async def test_session_uses_live_provider_limits_for_compaction_threshold(
+    tmp_path: Path,
+) -> None:
+    provider = ModelLimitsFakeProvider(
+        [],
+        limits=RuntimeModelLimits(
+            context_window=372_000,
+            max_output_tokens=128_000,
+            effective_context_window_percent=95,
+        ),
+    )
+    settings = ProviderSettings(
+        default_provider="openai-codex",
+        providers=(
+            OpenAICodexProviderConfig(
+                models=("gpt-5.6-sol",),
+                default_model="gpt-5.6-sol",
+                context_windows={"gpt-5.6-sol": 272_000},
+            ),
+        ),
+    )
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="gpt-5.6-sol",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai-codex",
+            provider_settings=settings,
+        )
+    )
+
+    assert provider.discovery_calls == ["gpt-5.6-sol"]
+    assert session.context_window_tokens == 372_000
+    assert session.auto_compact_token_threshold == 334_800
+    assert session.context_window_source == "provider live catalog"
+    assert session.model_limits_discovery_error is None
+
+
+@pytest.mark.anyio
+async def test_session_falls_back_when_live_model_limit_discovery_fails(
+    tmp_path: Path,
+) -> None:
+    provider = ModelLimitsFakeProvider([], error=RuntimeError("catalog unavailable"))
+    settings = ProviderSettings(
+        default_provider="openai-codex",
+        providers=(
+            OpenAICodexProviderConfig(
+                models=("gpt-5.6-sol",),
+                default_model="gpt-5.6-sol",
+                context_windows={"gpt-5.6-sol": 272_000},
+            ),
+        ),
+    )
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="gpt-5.6-sol",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai-codex",
+            provider_settings=settings,
+        )
+    )
+
+    assert session.context_window_tokens == 272_000
+    assert session.auto_compact_token_threshold == 255_616
+    assert session.context_window_source == "configured catalog"
+    assert session.model_limits_discovery_error == "RuntimeError: catalog unavailable"
 
 
 @pytest.mark.anyio

@@ -60,6 +60,26 @@ OAuth tokens refresh automatically. `/logout` removes Tau's local credential,
 but does not revoke the grant remotely; use the provider's account settings for
 remote revocation.
 
+#### Codex subscription context limits
+
+OpenAI's public API and the ChatGPT/Codex subscription are separate serving
+surfaces. A model with the same ID can have a smaller, rollout-specific context
+window through Codex OAuth than through an API key. For example, the public
+GPT-5.6 Sol API advertises a 1.05M-token window, while Codex has advertised
+substantially smaller limits through its authenticated model catalog.
+
+Tau queries that catalog when a Codex session starts and uses the returned
+context window and automatic-compaction threshold for the session. If discovery
+is unavailable, Tau falls back to conservative Codex-specific values from its
+built-in catalog; it does not reuse the public API limit. `/session` reports both
+the active value and whether it came from the live provider catalog or Tau's
+configured fallback.
+
+Live limits can vary by account or rollout and may change independently of Tau.
+A discovery failure is non-fatal: Tau reports it in `/session` and continues with
+the fallback. Direct OpenAI API sessions retain the context limits documented on
+the API model page.
+
 ### OpenCode Go and Zen
 
 OpenCode Go and OpenCode Zen are **API-key providers**, not OAuth providers.

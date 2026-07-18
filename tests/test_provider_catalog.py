@@ -131,6 +131,21 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
     assert entry.auth_methods == ("api_key", "oauth")
 
 
+def test_builtin_catalog_separates_openai_api_and_codex_context_limits() -> None:
+    openai = builtin_provider_entry("openai")
+    codex = builtin_provider_entry("openai-codex")
+
+    assert openai is not None
+    assert codex is not None
+    assert openai.context_windows is not None
+    assert codex.context_windows is not None
+    assert openai.context_windows["gpt-5.6-sol"] == 1_050_000
+    assert codex.context_windows["gpt-5.6-sol"] == 272_000
+    assert codex.context_windows["gpt-5.6-terra"] == 272_000
+    assert codex.context_windows["gpt-5.6-luna"] == 272_000
+    assert codex.model_metadata["gpt-5.6-sol"].context_window == 272_000
+
+
 def test_builtin_catalog_oauth_and_opencode_auth_methods() -> None:
     codex = builtin_provider_entry("openai-codex")
     copilot = builtin_provider_entry("github-copilot")
