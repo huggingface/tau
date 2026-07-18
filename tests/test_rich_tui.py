@@ -70,3 +70,14 @@ def test_renderer_keeps_session_details_in_one_status_line(tmp_path: Path) -> No
     assert "test-provider:test-model" in output
     assert "medium" in output
     assert "ctx 25%" in output
+    assert "Layout(name='queue'" not in output
+
+
+def test_renderer_only_allocates_queue_space_when_messages_are_queued(tmp_path: Path) -> None:
+    state = TuiState(queued_follow_up=("check the tests",))
+    renderer = RichTuiRenderer(fake_session(tmp_path), state)
+    console = Console(record=True, width=100, height=12)
+
+    console.print(renderer.layout())
+
+    assert "↪ follow-up: check the tests" in console.export_text()

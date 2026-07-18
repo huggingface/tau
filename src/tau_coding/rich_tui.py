@@ -66,12 +66,13 @@ class RichTuiRenderer:
     notice: str | None = None
 
     def layout(self) -> Layout:
-        root = Layout(name="root")
-        root.split_column(
-            Layout(self._transcript(), name="transcript", ratio=1),
-            Layout(self._queue(), name="queue", size=self._queue_height()),
-            Layout(self._status(), name="status", size=1),
-        )
+        root = Layout(name="root", size=max(4, Console().height - 3))
+        sections = [Layout(self._transcript(), name="transcript", ratio=1)]
+        queue_height = self._queue_height()
+        if queue_height:
+            sections.append(Layout(self._queue(), name="queue", size=queue_height))
+        sections.append(Layout(self._status(), name="status", size=1))
+        root.split_column(*sections)
         return root
 
     def _transcript(self) -> RenderableType:
@@ -100,7 +101,7 @@ class RichTuiRenderer:
                     vertical="middle",
                 )
             )
-        return Group(*rows)
+        return Align.left(Group(*rows), vertical="bottom")
 
     def _queue(self) -> RenderableType:
         lines = [f"↪ steer: {text}" for text in self.state.queued_steering]
@@ -204,18 +205,11 @@ class RichPromptTui:
     async def run(self) -> None:
         """Run until EOF or /quit, keeping all session ownership outside the UI."""
         await self.session.emit_pending_session_start()
-        self._live = Live(
-            self.renderer.layout(),
-            console=self.console,
-            screen=True,
-            auto_refresh=False,
-            vertical_overflow="ellipsis",
-        )
-        self._live.start(refresh=True)
         pending = self.initial_prompt
         try:
             with patch_stdout(raw=True):
                 while not self._exit:
+                    self._show_static_transcript()
                     try:
                         text = (
                             pending
@@ -227,10 +221,37 @@ class RichPromptTui:
                         break
                     text = text.strip()
                     if text:
-                        await self._submit(text)
+                        self._start_live_transcript()
+                        try:
+                            await self._submit(text)
+                        finally:
+                            self._stop_live_transcript()
         finally:
             self._title.restore()
-            self._live.stop()
+            self._stop_live_transcript()
+
+    def _show_static_transcript(self) -> None:
+        """Render a stable frame before prompt_toolkit takes control of input."""
+        self.console.clear()
+        self.console.print(self.renderer.layout())
+
+    def _start_live_transcript(self) -> None:
+        """Let Rich own the terminal only while output is actively changing."""
+        self.console.clear()
+        self._live = Live(
+            self.renderer.layout(),
+            console=self.console,
+            screen=False,
+            auto_refresh=False,
+            vertical_overflow="crop",
+        )
+        self._live.start(refresh=True)
+
+    def _stop_live_transcript(self) -> None:
+        live = self._live
+        self._live = None
+        if live is not None:
+            live.stop()
 
     async def _submit(self, text: str) -> None:
         terminal = parse_terminal_command(text)
