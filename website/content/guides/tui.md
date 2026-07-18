@@ -84,6 +84,17 @@ tool row.
 Tool results (like long `read` or `bash` output) render as compact previews so
 the transcript stays readable. Toggle full tool output with **Ctrl+O**.
 
+## Long sessions
+
+Tau keeps long transcripts responsive by mounting only a window of messages in
+the terminal at once. Your complete session remains in display state and durable
+history. When older or newer messages are outside the current window, a small
+boundary row appears; keep scrolling toward it to page through the rest of the
+conversation.
+
+Paging does not summarize, delete, or compact context. Use `/compact` separately
+when you want to reduce what is sent to the model.
+
 ## Picking models and themes
 
 - **`/model`** opens the model picker. Selecting a model from another provider
