@@ -95,9 +95,21 @@ the transcript stays readable. Toggle full tool output with **Ctrl+O**.
 
 ## The sidebar
 
-On wide-enough terminals Tau shows a sidebar with the active provider/model,
-thinking mode, loaded tools, skills, prompt templates, and context files such as
-`AGENTS.md`. It hides automatically when the terminal is small.
+On wide-enough terminals Tau shows a sidebar with the session name, active-branch
+turn and tool-call totals, provider-reported token usage, estimated cost,
+automatic-compaction threshold, and loaded tools, skills, prompt templates,
+extensions, and context files such as `AGENTS.md`. Resource names use compact
+comma-separated lists, while context files remain one path per line. Project
+context paths are relative to the working directory; context loaded from outside
+the project uses its full path.
+
+Tau does not render a separate top header. Named sessions remain visible in the
+sidebar and in the terminal tab title. The sidebar hides automatically when the
+terminal is small, while the tab title continues to identify the session.
+
+Usage and cost cover the active branch, including history replaced by compaction.
+Cost is an estimate based on provider-reported usage and configured catalog rates;
+it is shown as unavailable when Tau lacks complete pricing data.
 
 The sidebar can be moved to the **right** or turned **off** entirely by setting
 `sidebar_position` in `~/.tau/tui.json` — see

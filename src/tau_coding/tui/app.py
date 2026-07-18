@@ -29,7 +29,6 @@ from textual.widget import Widget
 from textual.widgets import (
     Button,
     Footer,
-    Header,
     Input,
     Label,
     ListItem,
@@ -2273,12 +2272,6 @@ class TauTuiApp(App[None]):
         color: $tau-screen-text;
     }
 
-    Header {
-        background: $tau-chrome-background;
-        color: $tau-muted-text;
-        dock: top;
-    }
-
     Footer {
         background: $tau-chrome-background;
         color: $tau-chrome-text;
@@ -2780,12 +2773,10 @@ class TauTuiApp(App[None]):
         self._terminal_title = TerminalTitleController()
         self._active_notification_keys: set[tuple[str, str]] = set()
         self._supports_pyperclip: bool | None = None
-        self._sync_header_title()
+        self._sync_session_title()
 
-    def _sync_header_title(self) -> None:
-        """Reflect the active session name in Textual's header state."""
-        self.title = "Tau"
-        self.sub_title = _session_header_sub_title(self.session)
+    def _sync_session_title(self) -> None:
+        """Reflect the active session name in the terminal tab title."""
         self._sync_terminal_title()
 
     def _sync_terminal_title(self) -> None:
@@ -2848,7 +2839,6 @@ class TauTuiApp(App[None]):
 
     def compose(self) -> ComposeResult:
         """Compose the TUI widgets."""
-        yield Header()
         with Horizontal(id="workspace"):
             yield SessionSidebar(id="sidebar")
             with Vertical(id="main-pane"):
@@ -3276,7 +3266,7 @@ class TauTuiApp(App[None]):
                     item.text = event.message.text
                     break
             self._refresh()
-            self._sync_header_title()
+            self._sync_session_title()
             return True
         return False
 
@@ -3917,7 +3907,7 @@ class TauTuiApp(App[None]):
         if isinstance(event, MessageEndEvent):
             if isinstance(event.message, (UserMessage, CustomMessage)):
                 await self._append_confirmed_user_message(event.message)
-                self._sync_header_title()
+                self._sync_session_title()
                 return
             if isinstance(event.message, AssistantMessage):
                 if event.message.stop_reason in {"error", "aborted"}:
@@ -4757,7 +4747,7 @@ class TauTuiApp(App[None]):
     def _refresh_chrome(self, *, theme: TuiTheme | None = None) -> None:
         """Refresh non-transcript chrome without remounting transcript blocks."""
         theme = theme or self.tui_settings.resolved_theme
-        self._sync_header_title()
+        self._sync_session_title()
         self._sync_text_selection_state()
         self._sync_queue_state()
         sidebar = self.query_one("#sidebar", SessionSidebar)
@@ -4907,7 +4897,7 @@ class TauTuiApp(App[None]):
             return COMPLETION_MAX_VISIBLE_LINES
 
         reserved_rows = COMPLETION_MIN_TRANSCRIPT_LINES + COMPLETION_WIDGET_CHROME_LINES
-        reserved_rows += 2  # Header and footer.
+        reserved_rows += 1  # Footer.
         for selector in ("#prompt-row", "#compact-session-info", "#queued-messages"):
             with suppress(NoMatches):
                 widget = self.query_one(selector)
@@ -5279,12 +5269,6 @@ def _named_session_title(title: str | None) -> str | None:
     if not stripped or stripped.lower() == "untitled session":
         return None
     return stripped
-
-
-def _session_header_sub_title(session: CodingSession) -> str:
-    """Return the session label shown beside Tau in the TUI header."""
-    title = _named_session_title(getattr(session, "session_title", None))
-    return title or "Untitled session"
 
 
 def _login_provider_label(provider: ProviderCatalogEntry) -> str:

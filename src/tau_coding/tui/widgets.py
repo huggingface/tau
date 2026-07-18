@@ -14,7 +14,6 @@ from rich.align import Align
 from rich.console import Console, Group, RenderableType
 from rich.markdown import CodeBlock, Heading, Markdown
 from rich.padding import Padding
-from rich.rule import Rule
 from rich.style import Style
 from rich.syntax import Syntax
 from rich.table import Table
@@ -33,6 +32,7 @@ from textual.widgets.markdown import MarkdownBlock, MarkdownStream
 
 from tau_agent.tools import AgentTool
 from tau_coding.prompt_templates import PromptTemplate
+from tau_coding.session_stats import SessionStats
 from tau_coding.skills import Skill
 from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.tui.autocomplete import CompletionState
@@ -84,6 +84,15 @@ class SessionSummarySource(Protocol):
 
     @property
     def thinking_level(self) -> str: ...
+
+    @property
+    def session_title(self) -> str | None: ...
+
+    @property
+    def extension_names(self) -> Sequence[str]: ...
+
+    @property
+    def session_stats(self) -> SessionStats: ...
 
 
 class SessionSidebar(Static):
@@ -1034,24 +1043,41 @@ def render_session_sidebar(
     theme: TuiTheme = TAU_DARK_THEME,
 ) -> RenderableType:
     """Render a dark, minimalist summary of the active coding session."""
-    metadata = Table.grid(padding=(0, 1))
-    metadata.add_column(style=theme.completion_description, no_wrap=True)
-    metadata.add_column(style=theme.prompt_text)
-    metadata.add_row("provider", session.provider_name)
-    metadata.add_row("model", session.model)
-    metadata.add_row("thinking", _thinking_level(session))
-    metadata.add_row("tools", str(len(session.tools)))
-    metadata.add_row("skills", str(len(session.skills)))
+    title = Text(session.session_title or "Untitled session", style=theme.prompt_text)
+    stats = session.session_stats
+    activity = Text(
+        f"{stats.turn_count} {_plural(stats.turn_count, 'turn')}, "
+        f"{stats.tool_call_count} tool {_plural(stats.tool_call_count, 'call')}",
+        style=theme.prompt_text,
+    )
+    usage = Text(style=theme.prompt_text)
+    usage.append(f"{_compact_usage_count(stats.input_tokens)} in, ")
+    usage.append(f"{_compact_usage_count(stats.output_tokens)} out")
+    usage.append("\n")
+    if stats.estimated_cost is None:
+        usage.append("cost unavailable", style=theme.completion_description)
+    else:
+        usage.append(f"~{_format_cost(stats.estimated_cost)} estimated")
 
-    tools = _bullet_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
-    skills = _bullet_list(
+    threshold = session.auto_compact_token_threshold
+    compaction = Text(
+        "off" if threshold is None else f"auto at {_compact_token_count(threshold)}",
+        style=theme.prompt_text,
+    )
+    tools = _comma_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
+    skills = _comma_list(
         [skill.name for skill in session.skills],
-        empty="No skills loaded yet",
+        empty="No skills loaded",
         theme=theme,
     )
-    prompts = _bullet_list(
+    prompts = _comma_list(
         [template.name for template in session.prompt_templates],
         empty="No prompt templates",
+        theme=theme,
+    )
+    extensions = _comma_list(
+        list(session.extension_names),
+        empty="No extensions",
         theme=theme,
     )
     context = _bullet_list(
@@ -1063,15 +1089,15 @@ def render_session_sidebar(
 
     return Group(
         Padding(Align.center(equation), (0, 0, 1, 0)),
-        _sidebar_section("session", metadata, theme=theme),
-        _sidebar_separator(theme=theme),
+        _sidebar_section("session", title, theme=theme),
+        _sidebar_section("activity", activity, theme=theme),
+        _sidebar_section("usage", usage, theme=theme),
+        _sidebar_section("compaction", compaction, theme=theme),
         _sidebar_section("context", context, theme=theme),
-        _sidebar_separator(theme=theme),
         _sidebar_section("tools", tools, theme=theme),
-        _sidebar_separator(theme=theme),
         _sidebar_section("skills", skills, theme=theme),
-        _sidebar_separator(theme=theme),
         _sidebar_section("prompts", prompts, theme=theme),
+        _sidebar_section("extensions", extensions, theme=theme),
     )
 
 
@@ -1083,12 +1109,7 @@ def _sidebar_section(
 ) -> RenderableType:
     """Render one sidebar section without a surrounding border."""
     header = Text(title, style=f"bold {theme.accent}")
-    return Group(Padding(header, (0, 0, 0, 1)), Padding(body, (0, 0, 1, 1)))
-
-
-def _sidebar_separator(*, theme: TuiTheme) -> RenderableType:
-    """Render a subtle divider between sidebar sections."""
-    return Padding(Rule(style=theme.border), (0, 0, 1, 0))
+    return Group(Padding(header, (0, 0, 0, 1)), Padding(body, (0, 0, 0, 1)))
 
 
 def render_compact_session_info(
@@ -1571,7 +1592,10 @@ def _context_file_label(path: Path, *, cwd: Path) -> str:
     try:
         return str(expanded_path.resolve().relative_to(cwd.expanduser().resolve()))
     except (OSError, ValueError):
-        return _short_path(expanded_path)
+        try:
+            return str(expanded_path.resolve())
+        except OSError:
+            return str(expanded_path.absolute())
 
 
 def _thinking_level(session: SessionSummarySource) -> str:
@@ -1656,6 +1680,35 @@ def render_completion_suggestions(
         command.append("  ", style=style)
         table.add_row(command, Text(item.description or "", style=description_style))
     return table
+
+
+def _comma_list(
+    items: Sequence[str],
+    *,
+    empty: str,
+    theme: TuiTheme,
+) -> Text:
+    if not items:
+        return Text(empty, style=theme.completion_description)
+    return Text(", ".join(items), style=theme.prompt_text, overflow="fold", no_wrap=False)
+
+
+def _compact_usage_count(value: int) -> str:
+    if value < 1_000:
+        return str(value)
+    if value < 1_000_000:
+        return f"{value / 1_000:.1f}".rstrip("0").rstrip(".") + "k"
+    return f"{value / 1_000_000:.1f}".rstrip("0").rstrip(".") + "m"
+
+
+def _format_cost(value: float) -> str:
+    if 0 < value < 0.01:
+        return f"${value:.3f}"
+    return f"${value:.2f}"
+
+
+def _plural(count: int, singular: str) -> str:
+    return singular if count == 1 else f"{singular}s"
 
 
 def _bullet_list(

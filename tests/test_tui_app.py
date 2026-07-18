@@ -2,6 +2,7 @@ import asyncio
 import re
 from collections.abc import AsyncIterator
 from datetime import datetime
+from io import StringIO
 from pathlib import Path
 
 import pytest
@@ -58,6 +59,7 @@ from tau_coding.session import (
     TerminalCommandResult,
 )
 from tau_coding.session_manager import CodingSessionRecord
+from tau_coding.session_stats import SessionStats
 from tau_coding.skills import Skill, format_skill_invocation
 from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.tools import create_coding_tools
@@ -170,6 +172,14 @@ class FakeSession:
         self.available_thinking_levels = ("off", "minimal", "low", "medium", "high", "xhigh")
         self.state = FakeSessionState()
         self.resource_diagnostics = ()
+        self.extension_names = ("permission-gate", "subagents")
+        self.session_stats = SessionStats(
+            turn_count=14,
+            tool_call_count=23,
+            input_tokens=1_200_000,
+            output_tokens=48_000,
+            estimated_cost=1.24,
+        )
         self.system_prompt = "You are Tau."
         self.session_manager = None
         self._session_title: str | None = None
@@ -453,17 +463,20 @@ def test_session_sidebar_renders_session_metadata() -> None:
     assert "context" in output
     assert "AGENTS.md" in output
     assert "12k" not in output
-    assert "provider" in output
-    assert "openai" in output
-    assert "fake-model" in output
-    assert "thinking" in output
-    assert "medium" in output
+    assert "Untitled session" in output
+    assert "provider" not in output
+    assert "openai" not in output
+    assert "fake-model" not in output
+    assert "thinking" not in output
     assert "location" not in output
     assert "branch" not in output
-    assert "tools" in output
-    assert "read" in output
-    assert "skills" in output
+    assert "14 turns, 23 tool calls" in output
+    assert "1.2m in, 48k out" in output
+    assert "~$1.24 estimated" in output
+    assert "auto at 200k" in output
+    assert "read, write, edit, bash" in output
     assert "review" in output
+    assert "permission-gate, subagents" in output
 
 
 def test_session_sidebar_uses_accented_aligned_headers_without_section_borders() -> None:
@@ -481,7 +494,7 @@ def test_session_sidebar_uses_accented_aligned_headers_without_section_borders()
     assert str(header.renderable.style) == f"bold {TAU_DARK_THEME.accent}"
     assert " session" in output
     assert " context" in output
-    assert "─" in output
+    assert " tools" in output
     assert "┌" not in output
     assert "│" not in output
 
@@ -495,6 +508,7 @@ def test_session_sidebar_lists_multiple_context_files() -> None:
             content="Agent rules.",
         ),
         ProjectContextFile(path="docs/AGENTS.md", content="Docs rules."),
+        ProjectContextFile(path="/Users/alex/.agents/AGENTS.md", content="User rules."),
     )
     console = Console(record=True, width=100)
 
@@ -504,6 +518,7 @@ def test_session_sidebar_lists_multiple_context_files() -> None:
     assert "AGENTS.md" in output
     assert ".agents/AGENTS.md" in output
     assert "docs/AGENTS.md" in output
+    assert "/Users/alex/.agents/AGENTS.md" in output
 
 
 def test_compact_session_info_renders_sidebar_facts() -> None:
@@ -2596,7 +2611,10 @@ async def test_tui_app_updates_terminal_title_after_auto_session_naming() -> Non
         await app._run_prompt("debug the login flow")
 
         assert "\x1b]0;τ | Debug login\x07" in writes
-        assert app.sub_title == "Debug login"
+        sidebar = app.query_one("#sidebar", Static)
+        console = Console(record=True, width=80, file=StringIO())
+        console.print(sidebar.content)
+        assert "Debug login" in console.export_text()
         assert writes[-1] == "\x1b]0;τ | Debug login\x07"
 
 
@@ -4397,27 +4415,15 @@ async def test_tui_app_system_appends_command_output_to_transcript() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_app_uses_session_name_in_header() -> None:
-    session = FakeSession()
-    session._session_title = "Customer bugfix"
-    app = TauTuiApp(session)
-
-    async with app.run_test():
-        assert app.title == "Tau"
-        assert app.sub_title == "Customer bugfix"
-
-
-@pytest.mark.anyio
-async def test_tui_app_uses_default_header_for_unnamed_session() -> None:
+async def test_tui_app_omits_textual_header() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test():
-        assert app.title == "Tau"
-        assert app.sub_title == "Untitled session"
+        assert not app.query("Header")
 
 
 @pytest.mark.anyio
-async def test_tui_app_name_updates_header() -> None:
+async def test_tui_app_name_updates_sidebar() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
@@ -4426,7 +4432,10 @@ async def test_tui_app_name_updates_header() -> None:
         await pilot.press("enter")
         await pilot.pause()
 
-        assert app.sub_title == "Customer bugfix"
+        sidebar = app.query_one("#sidebar", Static)
+        console = Console(record=True, width=80, file=StringIO())
+        console.print(sidebar.content)
+        assert "Customer bugfix" in console.export_text()
 
 
 @pytest.mark.anyio

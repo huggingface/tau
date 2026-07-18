@@ -106,6 +106,7 @@ from tau_coding.session_export import (
     normalize_export_format,
 )
 from tau_coding.session_manager import SessionManager
+from tau_coding.session_stats import SessionStats, calculate_session_stats
 from tau_coding.skills import Skill, expand_skill_command, load_skills_with_diagnostics
 from tau_coding.system_prompt import (
     BuildSystemPromptOptions,
@@ -706,6 +707,40 @@ class CodingSession:
     def extension_runtime(self) -> ExtensionRuntime:
         """Return the extension runtime bound to this session."""
         return self._extension_runtime
+
+    @property
+    def extension_names(self) -> tuple[str, ...]:
+        """Return loaded extension names in load order."""
+        return self._extension_runtime.extension_names
+
+    @property
+    def session_stats(self) -> SessionStats:
+        """Return cumulative activity and billed usage for the active branch."""
+        return calculate_session_stats(
+            self._state.entries,
+            pricing=self._pricing_for_response,
+        )
+
+    def _pricing_for_response(
+        self,
+        provider_name: str,
+        model: str,
+        input_tokens: int,
+    ) -> dict[str, float] | None:
+        provider = _provider_config_for_name(self._config, provider_name)
+        if (
+            provider is None
+            or provider.name != provider_name
+            or not hasattr(provider, "model_metadata")
+        ):
+            return None
+        metadata = provider.model_metadata.get(model)
+        if metadata is None:
+            return None
+        for tier in metadata.cost_tiers:
+            if tier.max_input_tokens is None or input_tokens <= tier.max_input_tokens:
+                return dict(tier.cost)
+        return dict(metadata.cost) if metadata.cost else None
 
     async def emit_pending_session_start(self) -> None:
         """Emit the `session_start` deferred by `load`, once per session.
