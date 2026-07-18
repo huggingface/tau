@@ -98,14 +98,17 @@ the transcript stays readable. Toggle full tool output with **Ctrl+O**.
 On wide-enough terminals Tau shows a sidebar with the session name, active-branch
 turn and tool-call totals, provider-reported token usage, estimated cost,
 automatic-compaction threshold, and loaded tools, skills, prompt templates,
-extensions, and context files such as `AGENTS.md`. Resource names use compact
-comma-separated lists, while context files remain one path per line. Project
-context paths are relative to the working directory; context loaded from outside
-the project uses its full path.
+extensions, and context files such as `AGENTS.md`. Tool, prompt, and extension
+names use compact comma-separated lists. Skills and context files use bullet
+lists, with one item or path per line. Project context paths are relative to the
+working directory; context loaded from outside the project uses its full path.
 
-Tau does not render a separate top header. Named sessions remain visible in the
-sidebar and in the terminal tab title. The sidebar hides automatically when the
-terminal is small, while the tab title continues to identify the session.
+The wider sidebar uses the prompt field's background color and keeps Tau's
+versioned `τ = 2π` mark pinned to its bottom edge. Tau does not render separate
+top-header or shortcut-footer rows. Named sessions remain visible in the sidebar
+and terminal tab title; `/hotkeys` lists shortcuts when needed. The sidebar hides
+automatically when the terminal is small, while the tab title continues to
+identify the session.
 
 Usage and cost cover the active branch, including history replaced by compaction.
 Cost is an estimate based on provider-reported usage and configured catalog rates;

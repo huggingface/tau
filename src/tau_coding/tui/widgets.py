@@ -20,7 +20,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Style as TextualStyle  # type: ignore[attr-defined]
 from textual.css.query import NoMatches
 from textual.events import Resize
@@ -39,6 +39,7 @@ from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.tui.autocomplete import CompletionState
 from tau_coding.tui.config import TAU_DARK_THEME, TuiRoleStyle, TuiTheme
 from tau_coding.tui.state import ChatItem, TuiState
+from tau_coding.version import current_version
 
 TAU_SIDEBAR_LOGO = "τ = 2π"
 
@@ -96,8 +97,12 @@ class SessionSummarySource(Protocol):
     def session_stats(self) -> SessionStats: ...
 
 
-class SessionSidebar(Static):
-    """Compact sidebar with current session metadata."""
+class SessionSidebar(Vertical):
+    """Compact sidebar with session metadata and bottom-aligned branding."""
+
+    def compose(self) -> Any:
+        yield Static("", id="sidebar-content")
+        yield Static("", id="sidebar-brand")
 
     def update_from_session(
         self,
@@ -106,7 +111,10 @@ class SessionSidebar(Static):
         theme: TuiTheme = TAU_DARK_THEME,
     ) -> None:
         """Redraw the sidebar from current session metadata."""
-        self.update(render_session_sidebar(session, theme=theme))
+        self.query_one("#sidebar-content", Static).update(
+            render_session_sidebar(session, theme=theme)
+        )
+        self.query_one("#sidebar-brand", Static).update(_sidebar_brand(theme=theme))
 
 
 class CompactSessionInfo(Static):
@@ -1066,7 +1074,7 @@ def render_session_sidebar(
         style=theme.prompt_text,
     )
     tools = _comma_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
-    skills = _comma_list(
+    skills = _bullet_list(
         [skill.name for skill in session.skills],
         empty="No skills loaded",
         theme=theme,
@@ -1086,8 +1094,6 @@ def render_session_sidebar(
         empty="No context files",
         theme=theme,
     )
-    equation = Text(TAU_SIDEBAR_LOGO, style=f"bold {theme.prompt_text}")
-
     sections = (
         _sidebar_section("session", title, theme=theme),
         _sidebar_section("activity", activity, theme=theme),
@@ -1105,10 +1111,7 @@ def render_session_sidebar(
             separated_sections.append(_sidebar_separator(theme=theme))
         separated_sections.append(section)
 
-    return Group(
-        Padding(Align.center(equation), (0, 0, 1, 0)),
-        *separated_sections,
-    )
+    return Group(*separated_sections)
 
 
 def _sidebar_section(
@@ -1123,8 +1126,15 @@ def _sidebar_section(
 
 
 def _sidebar_separator(*, theme: TuiTheme) -> RenderableType:
-    """Render a compact divider between adjacent sidebar sections."""
-    return Rule(style=theme.border)
+    """Render a spaced divider between adjacent sidebar sections."""
+    return Padding(Rule(style=theme.border), (0, 0, 1, 0))
+
+
+def _sidebar_brand(*, theme: TuiTheme) -> RenderableType:
+    brand = Text(style=f"bold {theme.prompt_text}")
+    brand.append(TAU_SIDEBAR_LOGO)
+    brand.append(f"  {current_version()}", style=theme.completion_description)
+    return Align.center(brand)
 
 
 def render_compact_session_info(

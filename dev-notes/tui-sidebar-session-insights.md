@@ -5,9 +5,9 @@ title: "TUI sidebar session insights"
 ## What changed
 
 Tau's interactive TUI now uses the sidebar as the detailed session summary and
-removes Textual's top header. The terminal tab title still follows the generated
-or user-assigned session name, so removing the header recovers a row without
-losing session identity.
+removes Textual's top header and shortcut footer. The terminal tab title still
+follows the generated or user-assigned session name, so removing the chrome
+recovers two rows without losing session identity or keyboard functionality.
 
 The sidebar now shows:
 
@@ -24,14 +24,17 @@ model state.
 
 ## Display choices
 
-Tools, skills, prompts, and extensions are short names, so they render as wrapping
-comma-separated lists. Context files remain bullets because paths are longer and
-need clear boundaries. Paths inside the working directory are project-relative;
-paths outside it are absolute so user-level instructions are unambiguous.
+Tools, prompts, and extensions are short names, so they render as wrapping
+comma-separated lists. Skills and context files remain bullets so each loaded
+instruction source has a clear row. Paths inside the working directory are
+project-relative; paths outside it are absolute so user-level instructions are
+unambiguous.
 
-A compact divider separates each section without adding blank padding. This keeps
-the expanded set of useful facts visually distinct while still fitting typical
-terminal heights.
+Spaced dividers separate each section. The sidebar is slightly wider, uses the
+same theme variable as the prompt field for its background, and hides on shorter
+terminals rather than clipping the expanded content. The versioned `τ = 2π` brand
+is a separate bottom-aligned widget, so it stays at the lower edge regardless of
+content height.
 
 ## Activity and usage semantics
 
@@ -70,4 +73,6 @@ For manual verification, open a named TUI session in a wide terminal, run severa
 prompts that call tools, and confirm that activity, usage, and cost update. Run
 `/compact` and verify that lifetime totals remain unchanged while the current
 context indicator shrinks. Resize the terminal until the sidebar disappears and
-confirm there is no top header and the terminal tab retains the session name.
+confirm there is no top header or shortcut footer and the terminal tab retains
+the session name. In a tall window, confirm the versioned Tau mark stays at the
+bottom of the wider sidebar.

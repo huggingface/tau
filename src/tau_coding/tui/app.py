@@ -28,7 +28,6 @@ from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import (
     Button,
-    Footer,
     Input,
     Label,
     ListItem,
@@ -151,7 +150,7 @@ from tau_coding.tui.widgets import (
 
 type BindingEntry = Binding | tuple[str, str] | tuple[str, str, str]
 SIDEBAR_MIN_WIDTH = 96
-SIDEBAR_MIN_HEIGHT = 24
+SIDEBAR_MIN_HEIGHT = 38
 ACTIVITY_TICK_SECONDS = 0.15
 ACTIVITY_COLOR_FADE_STEPS = 24
 ACTIVITY_INDICATOR_HEIGHT = 3
@@ -2272,27 +2271,6 @@ class TauTuiApp(App[None]):
         color: $tau-screen-text;
     }
 
-    Footer {
-        background: $tau-chrome-background;
-        color: $tau-chrome-text;
-    }
-
-    Footer FooterKey {
-        background: $tau-chrome-background;
-        color: $tau-chrome-text;
-    }
-
-    Footer FooterKey .footer-key--key {
-        background: $tau-chrome-background;
-        color: $tau-accent;
-    }
-
-    Footer FooterKey .footer-key--description,
-    Footer FooterLabel {
-        background: $tau-chrome-background;
-        color: $tau-chrome-text;
-    }
-
     Toast {
         background: $tau-chrome-background;
         color: $tau-chrome-text;
@@ -2307,12 +2285,21 @@ class TauTuiApp(App[None]):
     }
 
     #sidebar {
-        width: 32;
-        min-width: 28;
+        width: 36;
+        min-width: 32;
         height: 1fr;
-        padding: 1 1 0 0;
-        background: $tau-sidebar-background;
+        padding: 1 1 1 0;
+        background: $tau-prompt-background;
         border-right: tall $tau-border;
+    }
+
+    #sidebar-content {
+        height: 1fr;
+    }
+
+    #sidebar-brand {
+        height: auto;
+        color: $tau-prompt-text;
     }
 
     TauTuiApp.-hide-sidebar #sidebar {
@@ -2864,7 +2851,6 @@ class TauTuiApp(App[None]):
                 yield CompactSessionInfo(id="compact-session-info")
                 yield Static("", id="autocomplete")
                 yield Container(id="below-prompt-slot")
-        yield Footer()
 
     async def on_mount(self) -> None:
         """Focus the prompt when the app starts."""
@@ -4897,7 +4883,6 @@ class TauTuiApp(App[None]):
             return COMPLETION_MAX_VISIBLE_LINES
 
         reserved_rows = COMPLETION_MIN_TRANSCRIPT_LINES + COMPLETION_WIDGET_CHROME_LINES
-        reserved_rows += 1  # Footer.
         for selector in ("#prompt-row", "#compact-session-info", "#queued-messages"):
             with suppress(NoMatches):
                 widget = self.query_one(selector)

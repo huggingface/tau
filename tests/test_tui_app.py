@@ -13,7 +13,7 @@ from textual.color import Color
 from textual.containers import Container, VerticalScroll
 from textual.geometry import Offset
 from textual.selection import SELECT_ALL, Selection
-from textual.widgets import Footer, Input, Label, ListItem, ListView, Static, TextArea
+from textual.widgets import Input, Label, ListItem, ListView, Static, TextArea
 from textual.widgets import Markdown as TextualMarkdown
 from textual.widgets.markdown import MarkdownStream
 
@@ -112,6 +112,7 @@ from tau_coding.tui.widgets import (
     TranscriptMessageWidget,
     TranscriptView,
     _compact_token_count,
+    _sidebar_brand,
     _split_rich_style_colors,
     _syntax_language,
     _transcript_plain_body_text,
@@ -458,7 +459,7 @@ def test_session_sidebar_renders_session_metadata() -> None:
 
     output = console.export_text()
     assert "████████" not in output
-    assert "τ = 2π" in output
+    assert "τ = 2π" not in output
     assert "session" in output
     assert "context" in output
     assert "AGENTS.md" in output
@@ -475,15 +476,23 @@ def test_session_sidebar_renders_session_metadata() -> None:
     assert "1.2m in, 48k out · ~$1.24" in output
     assert "auto at 200k" in output
     assert "read, write, edit, bash" in output
-    assert "review" in output
+    assert "• review" in output
     assert "permission-gate, subagents" in output
+
+
+def test_session_sidebar_brand_includes_current_version() -> None:
+    console = Console(record=True, width=80)
+
+    console.print(_sidebar_brand(theme=TAU_DARK_THEME))
+
+    assert "τ = 2π  0.2.1" in console.export_text()
 
 
 def test_session_sidebar_uses_accented_aligned_headers_without_section_borders() -> None:
     console = Console(record=True, width=80)
     sidebar = render_session_sidebar(FakeSession())
     panels = [renderable for renderable in sidebar.renderables if isinstance(renderable, Panel)]
-    session_section = sidebar.renderables[1]
+    session_section = sidebar.renderables[0]
     header = session_section.renderables[0]
 
     console.print(sidebar)
@@ -2110,11 +2119,11 @@ async def test_tui_app_highlights_prompt_shell_mode() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_app_uses_textual_footer_for_shortcut_hints() -> None:
+async def test_tui_app_omits_footer_but_keeps_shortcuts_active() -> None:
     app = TauTuiApp(FakeSession())
 
-    async with app.run_test(size=(120, 30)):
-        assert app.query_one(Footer) is not None
+    async with app.run_test(size=(120, 40)):
+        assert not app.query("Footer")
         assert len(app.query("#shortcut-hints")) == 0
         assert _visible_footer_bindings(app) == {
             "Quit": "ctrl+d",
@@ -2164,15 +2173,6 @@ async def test_tui_app_footer_hints_update_while_running() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_app_keeps_textual_footer_on_short_windows() -> None:
-    app = TauTuiApp(FakeSession())
-
-    async with app.run_test(size=(120, 18)):
-        assert app.query_one(Footer).display is True
-        assert len(app.query("#shortcut-hints")) == 0
-
-
-@pytest.mark.anyio
 async def test_tui_prompt_grows_to_six_lines_then_scrolls() -> None:
     app = TauTuiApp(FakeSession())
 
@@ -2180,7 +2180,7 @@ async def test_tui_prompt_grows_to_six_lines_then_scrolls() -> None:
         prompt = app.query_one("#prompt", TextArea)
         assert prompt.size.height == 1
 
-        prompt.text = "x" * 500
+        prompt.text = "x" * 700
         await pilot.pause()
         assert prompt.size.height == 6
 
@@ -2194,10 +2194,14 @@ async def test_tui_prompt_grows_to_six_lines_then_scrolls() -> None:
 async def test_tui_sidebar_is_visible_on_medium_windows() -> None:
     app = TauTuiApp(FakeSession())
 
-    async with app.run_test(size=(120, 30)):
+    async with app.run_test(size=(120, 40)):
         sidebar = app.query_one("#sidebar")
+        sidebar_brand = app.query_one("#sidebar-brand", Static)
         compact_info = app.query_one("#compact-session-info")
         assert sidebar.display is True
+        assert sidebar.region.width == 36
+        assert sidebar_brand.region.bottom == sidebar.content_region.bottom
+        assert sidebar.styles.background == Color.parse(TAU_DARK_THEME.prompt_background)
         assert compact_info.display is True
         assert not app.has_class("-hide-sidebar")
 
@@ -2206,7 +2210,7 @@ async def test_tui_sidebar_is_visible_on_medium_windows() -> None:
 async def test_tui_sidebar_fills_workspace_height() -> None:
     app = TauTuiApp(FakeSession())
 
-    async with app.run_test(size=(120, 30)):
+    async with app.run_test(size=(120, 40)):
         workspace = app.query_one("#workspace")
         sidebar = app.query_one("#sidebar")
 
@@ -2230,7 +2234,7 @@ async def test_tui_sidebar_hides_on_narrow_windows() -> None:
 async def test_tui_sidebar_hides_on_short_windows() -> None:
     app = TauTuiApp(FakeSession())
 
-    async with app.run_test(size=(120, 18)):
+    async with app.run_test(size=(120, 30)):
         sidebar = app.query_one("#sidebar")
         compact_info = app.query_one("#compact-session-info")
         assert sidebar.display is False
@@ -2242,23 +2246,23 @@ async def test_tui_sidebar_hides_on_short_windows() -> None:
 async def test_tui_sidebar_visibility_updates_on_resize() -> None:
     app = TauTuiApp(FakeSession())
 
-    async with app.run_test(size=(120, 30)) as pilot:
+    async with app.run_test(size=(120, 40)) as pilot:
         sidebar = app.query_one("#sidebar")
         compact_info = app.query_one("#compact-session-info")
         assert sidebar.display is True
         assert compact_info.display is True
 
-        await pilot.resize_terminal(width=80, height=30)
-        await pilot.pause()
-        assert sidebar.display is False
-        assert compact_info.display is True
-
-        await pilot.resize_terminal(width=120, height=18)
+        await pilot.resize_terminal(width=80, height=40)
         await pilot.pause()
         assert sidebar.display is False
         assert compact_info.display is True
 
         await pilot.resize_terminal(width=120, height=30)
+        await pilot.pause()
+        assert sidebar.display is False
+        assert compact_info.display is True
+
+        await pilot.resize_terminal(width=120, height=40)
         await pilot.pause()
         assert sidebar.display is True
         assert compact_info.display is True
@@ -2268,7 +2272,7 @@ async def test_tui_sidebar_visibility_updates_on_resize() -> None:
 async def test_tui_sidebar_shows_on_right_when_configured() -> None:
     app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(sidebar_position="right"))
 
-    async with app.run_test(size=(120, 30)):
+    async with app.run_test(size=(120, 40)):
         sidebar = app.query_one("#sidebar")
         assert sidebar.display is True
         assert app.has_class("-sidebar-right")
@@ -2612,9 +2616,9 @@ async def test_tui_app_updates_terminal_title_after_auto_session_naming() -> Non
         await app._run_prompt("debug the login flow")
 
         assert "\x1b]0;τ | Debug login\x07" in writes
-        sidebar = app.query_one("#sidebar", Static)
+        sidebar_content = app.query_one("#sidebar-content", Static)
         console = Console(record=True, width=80, file=StringIO())
-        console.print(sidebar.content)
+        console.print(sidebar_content.content)
         assert "Debug login" in console.export_text()
         assert writes[-1] == "\x1b]0;τ | Debug login\x07"
 
@@ -4433,9 +4437,9 @@ async def test_tui_app_name_updates_sidebar() -> None:
         await pilot.press("enter")
         await pilot.pause()
 
-        sidebar = app.query_one("#sidebar", Static)
+        sidebar_content = app.query_one("#sidebar-content", Static)
         console = Console(record=True, width=80, file=StringIO())
-        console.print(sidebar.content)
+        console.print(sidebar_content.content)
         assert "Customer bugfix" in console.export_text()
 
 
