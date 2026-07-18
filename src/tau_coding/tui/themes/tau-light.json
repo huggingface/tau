@@ -29,12 +29,12 @@
     "markdown_code_block_background": "#f1f5f9",
     "markdown_link": "#2563eb",
     "markdown_bullet": "#b45309",
-    "completion_selected": "bold #0f172a on #dbeafe",
-    "completion_selected_description": "#334155 on #dbeafe",
+    "completion_selected": "bold #1d4ed8 on #dbeafe",
+    "completion_selected_description": "#1d4ed8 on #dbeafe",
     "completion_description": "#667085"
   },
   "roles": {
-    "user": { "border": "#2563eb", "body": "#111827" },
+    "user": { "border": "#2563eb", "body": "#111827 on #f8fafc" },
     "assistant": { "border": "#0f766e", "body": "#111827" },
     "tool": { "border": "#a16207", "body": "#1f2937" },
     "error": { "border": "#b91c1c", "body": "#7f1d1d" },
