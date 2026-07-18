@@ -32,8 +32,9 @@ unambiguous.
 
 Spaced dividers separate each section. Section headings use the bright prompt
 text color while values use the quieter metadata gray. The sidebar is wider and
-borderless, uses the same theme variable as the prompt field for its background,
-and hides on shorter terminals rather than clipping the expanded content. The
+borderless, uses a comfortable left content inset and the same theme variable as
+the prompt field for its background, and hides on shorter terminals rather than
+clipping the expanded content. The
 versioned `τ = 2π` brand is a separate bottom-aligned widget, so it stays at the
 lower edge regardless of content height.
 

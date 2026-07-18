@@ -2375,6 +2375,7 @@ async def test_tui_sidebar_is_visible_on_medium_windows() -> None:
         compact_info = app.query_one("#compact-session-info")
         assert sidebar.display is True
         assert sidebar.region.width == 40
+        assert sidebar.styles.padding.left == 2
         assert sidebar.styles.border_left[0] == ""
         assert sidebar.styles.border_right[0] == ""
         assert sidebar.styles.border_top[0] == ""

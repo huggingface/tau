@@ -2377,7 +2377,7 @@ class TauTuiApp(App[None]):
         width: 40;
         min-width: 36;
         height: 1fr;
-        padding: 1 1 1 0;
+        padding: 1 1 1 2;
         background: $tau-prompt-background;
         border: none;
     }
