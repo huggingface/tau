@@ -914,8 +914,48 @@ class ExtensionInputScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class SessionPickerSearchInput(Input):
+    """Search input that keeps session-picker navigation local to the picker."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Cancel", show=False, priority=True),
+        Binding("up", "cursor_up", "Up", show=False, priority=True),
+        Binding("down", "cursor_down", "Down", show=False, priority=True),
+    ]
+
+    def _picker(self) -> SessionPickerScreen:
+        return cast(SessionPickerScreen, self.screen)
+
+    def on_key(self, event: Key) -> None:
+        """Route picker control keys before the input edits its text."""
+        if event.key == "up":
+            event.stop()
+            event.prevent_default()
+            self.action_cursor_up()
+        elif event.key == "down":
+            event.stop()
+            event.prevent_default()
+            self.action_cursor_down()
+        elif event.key == "escape":
+            event.stop()
+            event.prevent_default()
+            self.action_cancel()
+
+    def action_cursor_up(self) -> None:
+        """Move the session picker selection up."""
+        self._picker().action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        """Move the session picker selection down."""
+        self._picker().action_cursor_down()
+
+    def action_cancel(self) -> None:
+        """Close the session picker."""
+        self._picker().action_cancel()
+
+
 class SessionPickerScreen(ModalScreen[str | None]):
-    """Minimal modal picker for indexed sessions."""
+    """Minimal modal picker for indexed sessions, with a search field."""
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
         Binding("escape", "cancel", "Cancel"),
@@ -932,12 +972,18 @@ class SessionPickerScreen(ModalScreen[str | None]):
     ) -> None:
         super().__init__()
         self.records = tuple(records)
+        self.visible_records = self.records
         self.theme = theme
+        self.search_value = ""
 
     def compose(self) -> ComposeResult:
         """Compose the session picker."""
         with Vertical(id="session-picker"):
             yield Static("Sessions", id="session-picker-title")
+            yield SessionPickerSearchInput(
+                placeholder="Search sessions",
+                id="session-picker-search",
+            )
             yield ListView(
                 *[
                     ListItem(Label(_session_picker_label(record), markup=False))
@@ -948,10 +994,25 @@ class SessionPickerScreen(ModalScreen[str | None]):
             yield Static("Enter selects - Escape closes", id="session-picker-help")
 
     def on_mount(self) -> None:
-        """Focus the session list for keyboard navigation."""
-        session_list = self.query_one("#session-picker-list", ListView)
-        session_list.index = 0
-        session_list.focus()
+        """Focus the search field for keyboard navigation."""
+        search = self.query_one("#session-picker-search", Input)
+        search.focus()
+        self._refresh_session_list()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Filter session choices as the search value changes."""
+        if event.input.id != "session-picker-search":
+            return
+        event.stop()
+        self.search_value = event.value
+        self._refresh_session_list()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Select the highlighted session from the search field."""
+        if event.input.id != "session-picker-search":
+            return
+        event.stop()
+        self._select_visible_record()
 
     def on_key(self, event: Key) -> None:
         """Route session picker keys to the list."""
@@ -967,7 +1028,8 @@ class SessionPickerScreen(ModalScreen[str | None]):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Dismiss with the selected session id."""
-        self.dismiss(self.records[event.index].id)
+        event.stop()
+        self._select_visible_record()
 
     def action_cursor_up(self) -> None:
         """Move to the previous session."""
@@ -979,11 +1041,38 @@ class SessionPickerScreen(ModalScreen[str | None]):
 
     def action_select_cursor(self) -> None:
         """Select the highlighted session."""
-        self.query_one("#session-picker-list", ListView).action_select_cursor()
+        self._select_visible_record()
 
     def action_cancel(self) -> None:
         """Close the picker without selecting a session."""
         self.dismiss(None)
+
+    def _select_visible_record(self) -> None:
+        if not self.visible_records:
+            return
+        session_list = self.query_one("#session-picker-list", ListView)
+        index = session_list.index
+        if index is None:
+            return
+        self.dismiss(self.visible_records[index].id)
+
+    def _refresh_session_list(self) -> None:
+        self.visible_records = _filter_session_records(self.records, self.search_value)
+        session_list = self.query_one("#session-picker-list", ListView)
+        session_list.clear()
+        session_list.extend(
+            [
+                ListItem(Label(_session_picker_label(record), markup=False))
+                for record in self.visible_records
+            ]
+        )
+        session_list.index = 0 if self.visible_records else None
+        help_text = (
+            "Enter selects - Escape closes"
+            if self.visible_records
+            else "No matching sessions - Escape closes"
+        )
+        self.query_one("#session-picker-help", Static).update(help_text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2464,6 +2553,14 @@ class TauTuiApp(App[None]):
         color: $tau-chrome-text;
         text-style: bold;
         margin-bottom: 1;
+    }
+
+    #session-picker-search {
+        height: 3;
+        margin-bottom: 1;
+        background: $tau-prompt-background;
+        color: $tau-prompt-text;
+        border: tall $tau-prompt-border;
     }
 
     #session-picker-list,
@@ -5229,6 +5326,22 @@ def _session_picker_label(record: SessionCompletionRecord) -> str:
     if title is not None:
         parts.append(title)
     return " - ".join(parts)
+
+
+def _filter_session_records(
+    records: Sequence[SessionCompletionRecord],
+    query: str,
+) -> tuple[SessionCompletionRecord, ...]:
+    normalized = query.strip().casefold()
+    if not normalized:
+        return tuple(records)
+    return tuple(
+        record
+        for record in records
+        if normalized in (record.title or "").casefold()
+        or normalized in record.model.casefold()
+        or normalized in _short_path(record.cwd).casefold()
+    )
 
 
 def _tree_picker_label(

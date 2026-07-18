@@ -3811,6 +3811,86 @@ async def test_tui_app_session_picker_arrow_keys_select_session() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_app_session_picker_search_filters_sessions() -> None:
+    updated_at = datetime(2026, 6, 19, 14, 30).timestamp()
+    session = FakeSession(messages=[UserMessage(content="Earlier")])
+    session.session_manager = _FakeSessionManager(
+        [
+            CodingSessionRecord(
+                id="session-1",
+                path=Path("/tmp/session-1.jsonl"),
+                cwd=Path("/workspace/project"),
+                model="fake-model",
+                title="Refactor auth",
+                created_at=1.0,
+                updated_at=updated_at,
+            ),
+            CodingSessionRecord(
+                id="session-2",
+                path=Path("/tmp/session-2.jsonl"),
+                cwd=Path("/workspace/project"),
+                model="other-model",
+                title="Add search bar",
+                created_at=1.0,
+                updated_at=updated_at,
+            ),
+        ]
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+r")
+        assert isinstance(app.screen, SessionPickerScreen)
+
+        search = app.screen.query_one("#session-picker-search", Input)
+        assert search.has_focus
+
+        search.value = "search bar"
+        await pilot.pause()
+
+        session_list = app.screen.query_one("#session-picker-list", ListView)
+        labels = [str(item.query_one(Label).render()) for item in session_list.children]
+        assert labels == ["2026-06-19 14:30 - other-model - Add search bar"]
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert session.resumed_session_ids == ["session-2"]
+
+
+@pytest.mark.anyio
+async def test_tui_app_session_picker_search_with_no_matches_shows_help_text() -> None:
+    session = FakeSession()
+    session.session_manager = _FakeSessionManager(
+        [
+            CodingSessionRecord(
+                id="session-1",
+                path=Path("/tmp/session-1.jsonl"),
+                cwd=Path("/workspace/project"),
+                model="fake-model",
+                title="Refactor auth",
+                created_at=1.0,
+                updated_at=2.0,
+            ),
+        ]
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+r")
+        assert isinstance(app.screen, SessionPickerScreen)
+
+        search = app.screen.query_one("#session-picker-search", Input)
+        search.value = "nonexistent"
+        await pilot.pause()
+
+        session_list = app.screen.query_one("#session-picker-list", ListView)
+        assert list(session_list.children) == []
+        help_text = app.screen.query_one("#session-picker-help", Static)
+        assert str(help_text.render()) == "No matching sessions - Escape closes"
+
+
+@pytest.mark.anyio
 async def test_tui_app_blocks_tree_picker_while_agent_is_running() -> None:
     session = FakeSession()
     app = TauTuiApp(session)
