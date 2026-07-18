@@ -125,7 +125,7 @@ TAU_DARK_THEME = TuiTheme(
     completion_description="#667085",
     syntax_theme="ansi_dark",
     role_styles={
-        "user": TuiRoleStyle(border="#7c8ea6", body="#d8dee9 on #000000"),
+        "user": TuiRoleStyle(border="#7c8ea6", body="#d8dee9 on #101419"),
         "assistant": TuiRoleStyle(border="#6ea6a0", body="#d8dee9 on #000000"),
         "tool": TuiRoleStyle(border="#8a7a52", body="#cbd5e1 on #000000"),
         "error": TuiRoleStyle(border="#ff4f4f", body="#ffb4b4 on #000000"),
@@ -168,7 +168,7 @@ HIGH_CONTRAST_THEME = TuiTheme(
     completion_description="white",
     syntax_theme="ansi_dark",
     role_styles={
-        "user": TuiRoleStyle(border="#00b7ff", body="white on #001626"),
+        "user": TuiRoleStyle(border="#00b7ff", body="white on #1a1a1a"),
         "assistant": TuiRoleStyle(border="#00ff66", body="white on #001a0b"),
         "tool": TuiRoleStyle(border="#ffd000", body="white on #211900"),
         "error": TuiRoleStyle(border="#ff4f4f", body="white on #260000"),
@@ -211,7 +211,7 @@ TAU_LIGHT_THEME = TuiTheme(
     completion_description="#667085",
     syntax_theme="ansi_light",
     role_styles={
-        "user": TuiRoleStyle(border="#2563eb", body="#111827"),
+        "user": TuiRoleStyle(border="#2563eb", body="#111827 on #f8fafc"),
         "assistant": TuiRoleStyle(border="#0f766e", body="#111827"),
         "tool": TuiRoleStyle(border="#a16207", body="#1f2937"),
         "error": TuiRoleStyle(border="#b91c1c", body="#7f1d1d"),

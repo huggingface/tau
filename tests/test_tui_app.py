@@ -1316,6 +1316,7 @@ async def test_transcript_message_widget_renders_full_height_role_block() -> Non
 
     role_style = HIGH_CONTRAST_THEME.role_styles["user"]
     _, expected_background = _split_rich_style_colors(role_style.body)
+    assert expected_background == HIGH_CONTRAST_THEME.prompt_background
     background = Color.parse(expected_background)
     border = Color.parse(role_style.border)
 
@@ -2628,13 +2629,13 @@ def test_textual_theme_mapping_uses_tau_theme_values() -> None:
     assert textual_theme.variables["tau-screen-background"] == TAU_LIGHT_THEME.screen_background
 
 
-def test_tau_dark_theme_uses_black_chat_backgrounds() -> None:
+def test_tau_dark_theme_matches_user_and_prompt_backgrounds() -> None:
     theme = TuiSettings().resolved_theme
 
     assert theme.screen_background == "#000000"
     assert theme.transcript_background == "#000000"
     assert theme.prompt_background == "#101419"
-    assert theme.role_styles["user"].body.endswith("on #000000")
+    assert theme.role_styles["user"].body.endswith(f"on {theme.prompt_background}")
     assert theme.role_styles["assistant"].body.endswith("on #000000")
 
 
@@ -2645,7 +2646,7 @@ def test_tau_light_theme_uses_light_chat_backgrounds() -> None:
     assert theme.transcript_background == "#ffffff"
     assert theme.prompt_text == "#111827"
     assert theme.syntax_theme == "ansi_light"
-    assert theme.role_styles["user"].body == "#111827"
+    assert theme.role_styles["user"].body == f"#111827 on {theme.prompt_background}"
     assert theme.role_styles["assistant"].body == "#111827"
     assert theme.role_styles["tool"].body == "#1f2937"
     assert theme.role_styles["error"].border == "#b91c1c"

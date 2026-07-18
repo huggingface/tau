@@ -84,7 +84,9 @@ indicator provides the run-wide animation without adding a second spinner to eac
 tool row.
 
 Tool results (like long `read` or `bash` output) render as compact previews so
-the transcript stays readable. Toggle full tool output with **Ctrl+O**.
+the transcript stays readable. Toggle full tool output with **Ctrl+O**. User
+message blocks use the same theme background as the prompt field and sidebar,
+visually tying submitted prompts to the composer.
 
 ## Long sessions
 
