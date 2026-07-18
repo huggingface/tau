@@ -245,6 +245,7 @@ class TuiSettings:
     keybindings: TuiKeybindings = field(default_factory=TuiKeybindings)
     theme: TuiThemeName = "tau-dark"
     auto_copy_selection: bool = False
+    notifications: bool = False
     sidebar_position: Literal["left", "right", "off"] = "left"
 
     def to_json(self) -> dict[str, Any]:
@@ -252,6 +253,7 @@ class TuiSettings:
         return {
             "auto_copy_selection": self.auto_copy_selection,
             "keybindings": self.keybindings.to_json(),
+            "notifications": self.notifications,
             "sidebar_position": self.sidebar_position,
             "theme": self.theme,
         }
@@ -288,7 +290,13 @@ def save_tui_settings(settings: TuiSettings, paths: TauPaths | None = None) -> P
 
 def tui_settings_from_json(data: dict[str, Any]) -> TuiSettings:
     """Parse TUI settings from JSON-compatible data."""
-    allowed_fields = {"auto_copy_selection", "keybindings", "sidebar_position", "theme"}
+    allowed_fields = {
+        "auto_copy_selection",
+        "keybindings",
+        "notifications",
+        "sidebar_position",
+        "theme",
+    }
     unknown_fields = set(data) - allowed_fields
     if unknown_fields:
         raise TuiConfigError(f"Unknown TUI settings field: {sorted(unknown_fields)[0]}")
@@ -305,6 +313,10 @@ def tui_settings_from_json(data: dict[str, Any]) -> TuiSettings:
         auto_copy_selection=_bool_setting(
             data.get("auto_copy_selection", False),
             "auto_copy_selection",
+        ),
+        notifications=_bool_setting(
+            data.get("notifications", False),
+            "notifications",
         ),
         sidebar_position=cast(Literal["left", "right", "off"], raw_sidebar),
     )

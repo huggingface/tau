@@ -183,3 +183,22 @@ def test_tui_sidebar_position_rejects_invalid() -> None:
 
     with pytest.raises(TuiConfigError, match="sidebar_position"):
         tui_settings_from_json({"sidebar_position": 123})
+
+
+def test_tui_notifications_defaults_to_false() -> None:
+    assert TuiSettings().notifications is False
+
+
+def test_tui_notifications_roundtrips() -> None:
+    settings = tui_settings_from_json({"notifications": True})
+    assert settings.notifications is True
+    assert settings.to_json()["notifications"] is True
+
+    settings = tui_settings_from_json({"notifications": False})
+    assert settings.notifications is False
+    assert settings.to_json()["notifications"] is False
+
+
+def test_tui_notifications_rejects_non_bool() -> None:
+    with pytest.raises(TuiConfigError, match="notifications"):
+        tui_settings_from_json({"notifications": "yes"})
