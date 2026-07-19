@@ -563,9 +563,9 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
     output = console.export_text()
     lines = output.splitlines()
     provider_line = next(index for index, line in enumerate(lines) if "openai:fake-model" in line)
-    context_line = next(index for index, line in enumerate(lines) if "context 12k/200k" in line)
+    context_line = next(index for index, line in enumerate(lines) if "12k/200k" in line)
     assert "/workspace/project (--)" in output
-    assert "context 12k/200k" in output
+    assert "context 12k/200k" not in output
     assert "openai:fake-model" in lines[provider_line]
     assert "(medium)" in lines[provider_line]
     assert context_line == provider_line + 1

@@ -141,8 +141,8 @@ request. Cost is an estimate based on provider-reported usage and configured
 catalog rates; the sidebar shows `$N/A` when Tau lacks complete pricing data.
 
 The compact status block below the prompt puts `provider:model (thinking)` on its
-first line and the approximate active context as `context used/limit` on the
-second. Unlike session usage, this estimate describes the system prompt, tools,
+first line and the approximate active context as `used/limit` on the second.
+Unlike session usage, this estimate describes the system prompt, tools,
 and active messages Tau expects to send on the next request. It can decrease
 after compaction while session usage continues to accumulate. The
 working-directory name is emphasized while the parent path and Git branch use

@@ -9,8 +9,8 @@ history) and lets you tune how hard the model works with **thinking modes**.
 
 ## Seeing context usage
 
-The compact status below the TUI prompt labels the approximate active context as
-`context used/limit`. Run `/session` to see its detailed breakdown:
+The compact status below the TUI prompt shows the approximate active context as
+`used/limit`. Run `/session` to see its detailed breakdown:
 
 ```text
 Estimated context tokens: <count>

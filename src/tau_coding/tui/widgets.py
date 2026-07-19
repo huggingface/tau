@@ -1989,10 +1989,7 @@ def _plain_text(text: str, *, body_style: str) -> Text:
 def _context_usage(session: SessionSummarySource) -> str:
     threshold = session.auto_compact_token_threshold
     limit = session.context_window_tokens if threshold is None or threshold <= 0 else threshold
-    return (
-        f"context {_compact_token_count(session.context_token_estimate)}/"
-        f"{_compact_token_count(limit)}"
-    )
+    return f"{_compact_token_count(session.context_token_estimate)}/{_compact_token_count(limit)}"
 
 
 def _styled_cwd(cwd: Path, *, theme: TuiTheme) -> Text:
