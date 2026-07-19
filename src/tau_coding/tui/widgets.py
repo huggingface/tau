@@ -1527,7 +1527,7 @@ def render_session_sidebar(
     sections = (
         Padding(title, (0, 0, 0, 1)),
         _sidebar_section("activity", activity, theme=theme),
-        _sidebar_section("session usage", usage, theme=theme),
+        _sidebar_section("cumulative usage", usage, theme=theme),
         _sidebar_section("compaction", compaction, theme=theme),
         _sidebar_section("context", context, theme=theme),
         _sidebar_section("tools", tools, theme=theme),

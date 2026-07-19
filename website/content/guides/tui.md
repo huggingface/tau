@@ -119,7 +119,7 @@ when you want to reduce what is sent to the model.
 
 On wide-enough terminals Tau shows the session name prominently without a
 redundant section label, followed by active-branch
-turn and tool-call totals, provider-reported token usage under **session usage**,
+turn and tool-call totals, provider-reported token usage under **cumulative usage**,
 estimated cost, automatic-compaction threshold, and loaded tools, skills, prompt
 templates, extensions, and context files such as `AGENTS.md`. Tool, prompt, and extension
 names use compact comma-separated lists. Skills and context files use bullet
@@ -134,17 +134,17 @@ and terminal tab title; `/hotkeys` lists shortcuts when needed. The sidebar hide
 automatically when the terminal is small, while the tab title continues to
 identify the session.
 
-Session usage and cost are cumulative totals for the active branch, including
-history replaced by compaction. Input usage counts tokens processed on every
+Cumulative usage and cost cover the active branch, including history replaced by
+compaction. Input usage counts tokens processed on every
 provider request, so it can be much larger than the context used by the next
 request. Cost is an estimate based on provider-reported usage and configured
 catalog rates; the sidebar shows `$N/A` when Tau lacks complete pricing data.
 
 The compact status block below the prompt puts `provider:model (thinking)` on its
 first line and the approximate active context as `used/limit` on the second.
-Unlike session usage, this estimate describes the system prompt, tools,
+Unlike cumulative usage, this estimate describes the system prompt, tools,
 and active messages Tau expects to send on the next request. It can decrease
-after compaction while session usage continues to accumulate. The
+after compaction while cumulative usage continues to increase. The
 working-directory name is emphasized while the parent path and Git branch use
 the quieter metadata color.
 

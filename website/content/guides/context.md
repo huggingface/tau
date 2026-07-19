@@ -25,10 +25,10 @@ and per-tool overhead), not a provider tokenizer — treat it as approximate. It
 covers the system prompt, project context (`AGENTS.md`), skill metadata, the
 active message history, and tool schemas.
 
-This is different from **session usage** in the sidebar. Session usage adds the
-provider-reported input and output tokens from every request on the active
+This is different from **cumulative usage** in the sidebar. Cumulative usage adds
+the provider-reported input and output tokens from every request on the active
 branch, including history later replaced by compaction. Repeatedly sending the
-same context therefore increases session input usage, while active context
+same context therefore increases cumulative input usage, while active context
 consumption describes only what Tau expects to send next. The two figures are
 not expected to match.
 

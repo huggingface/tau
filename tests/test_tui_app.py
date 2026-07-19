@@ -477,7 +477,7 @@ def test_session_sidebar_renders_session_metadata() -> None:
     assert "location" not in output
     assert "branch" not in output
     assert "14 turns, 23 tool calls" in output
-    assert "session usage" in output
+    assert "cumulative usage" in output
     assert "1.2m in, 48k out" in output
     assert "1.2m in, 48k out · ~$1.24" in output
     assert "auto at 200k" in output
