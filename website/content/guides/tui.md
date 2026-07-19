@@ -148,9 +148,9 @@ after compaction while cumulative usage continues to increase. The
 working-directory name is emphasized while the parent path and Git branch use
 the quieter metadata color.
 
-The sidebar can be moved to the **right** or turned **off** entirely by setting
-`sidebar_position` in `~/.tau/tui.json` — see
-[Configuration]({{< relref "../reference/configuration.md#tui-settings" >}}).
+The sidebar appears on the **right** by default. It can be moved to the **left**
+or turned **off** entirely by setting `sidebar_position` in `~/.tau/tui.json` —
+see [Configuration]({{< relref "../reference/configuration.md#tui-settings" >}}).
 
 ## Next
 

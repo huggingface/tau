@@ -2460,13 +2460,24 @@ async def test_tui_sidebar_visibility_updates_on_resize() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_sidebar_shows_on_right_when_configured() -> None:
-    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(sidebar_position="right"))
+async def test_tui_sidebar_shows_on_right_by_default() -> None:
+    app = TauTuiApp(FakeSession())
 
     async with app.run_test(size=(120, 40)):
         sidebar = app.query_one("#sidebar")
         assert sidebar.display is True
         assert app.has_class("-sidebar-right")
+        assert not app.has_class("-sidebar-off")
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_shows_on_left_when_configured() -> None:
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(sidebar_position="left"))
+
+    async with app.run_test(size=(120, 40)):
+        sidebar = app.query_one("#sidebar")
+        assert sidebar.display is True
+        assert not app.has_class("-sidebar-right")
         assert not app.has_class("-sidebar-off")
 
 
