@@ -1,33 +1,29 @@
 # Bundled Tau self-knowledge
 
-Tau now follows Pi's progressive-disclosure approach to product knowledge. The default system prompt identifies installed documentation and examples, while first-party skills provide detailed contributor workflows only when a task matches.
+Tau follows Pi's progressive-disclosure approach to product knowledge. The default system prompt identifies installed documentation and examples, then routes Tau-specific requests to those files without loading them into every conversation.
 
-## What changed
+## Packaged resources
 
-Packaged resources now live under `src/tau_coding/data/`:
+Self-knowledge lives under `src/tau_coding/data/`:
 
 ```text
-docs/       concise routing references for Tau topics
+docs/       concise routing references and contributor workflows
 examples/   readable extension examples
-skills/     first-party Agent Skills
 ```
 
-The prompt mirrors Pi's documentation block, adapted to Tau's Python architecture and published concepts. It points to extensions, skills, models, CLI commands, TUI behavior, and architecture without injecting those documents into every request. The default guidelines also add general coding discipline for inspecting project instructions, preserving unrelated work, using repository-native commands, validating changes, reporting checks honestly, and asking before destructive or materially ambiguous operations.
+The prompt points directly to extension creation, skills, custom and built-in providers/models, CLI commands, TUI behavior, and architecture. It tells the agent to read relevant documents and examples completely and follow their cross-references before implementing.
 
-Two skills ship initially:
-
-- `create-tau-extension`
-- `tau-model-catalog`
-
-Bundled skills have the lowest precedence. User and project skills can override them by name, preserving Tau's existing resource precedence model.
+Tau does not expose its own maintenance workflows as Agent Skills. Skills are user and project resources, so Tau's product documentation does not appear in the skills sidebar, compete with user skill names, or disappear when skill loading is disabled.
 
 ## Why
 
-The old prompt knew how to operate tools but did not tell the model where Tau's own APIs and workflows were documented. Repository `AGENTS.md` helped only when Tau was running inside its source checkout. Installed Tau sessions now retain product knowledge without bloating the base prompt, and general coding tasks remain governed by project context and task-specific skills.
+Repository `AGENTS.md` helps only when Tau is running inside its source checkout. Packaged documentation lets an installed Tau retain product knowledge without bloating the base prompt. Keeping that documentation separate from skills also preserves a clean user-owned skill namespace and matches Pi's design.
+
+The extension and model/provider documents contain the detailed workflows previously carried by the bundled `create-tau-extension` and `tau-model-catalog` skills. The packaged extension example remains available as a concrete starting point.
 
 ## Architecture
 
-Self-documentation belongs to `tau_coding`, not the portable `tau_agent` harness. `self_docs.py` resolves installed resource paths, `resources.py` includes bundled skills before filesystem resources, and `system_prompt.py` emits Pi-style routing hints. Hatch packages the resources as part of `tau_coding`.
+Self-documentation belongs to `tau_coding`, not the portable `tau_agent` harness. `self_docs.py` resolves installed documentation and example paths, while `system_prompt.py` emits the routing hints. `TauResourcePaths` discovers only user and project skills. Hatch packages the documentation and examples as part of `tau_coding`.
 
 ## Verification
 

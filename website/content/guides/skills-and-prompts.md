@@ -13,13 +13,10 @@ Skills are loaded from these locations, in increasing precedence (later
 overrides earlier on name clashes):
 
 ```text
-Tau's bundled first-party skills
 ~/.tau/skills/
 ~/.agents/skills/
-~/.agents/
 <cwd>/.tau/skills/
 <cwd>/.agents/skills/
-<cwd>/.agents/
 ```
 
 Prompt templates load from:
@@ -71,12 +68,12 @@ This matches the Agent Skills spec and applies uniformly across `.tau/` and
 `.agents/` locations.
 {{% /tip %}}
 
-Tau ships with first-party `create-tau-extension` and `tau-model-catalog`
-skills so installed copies know the supported workflows for extending Tau and
-maintaining its built-in provider catalog. Define a user or project skill with
-the same name to override the bundled workflow.
+Tau's own extension and provider workflows are packaged documentation rather
+than built-in skills. They remain available to the agent without appearing in
+your skill list, competing with your skill names, or being disabled by
+`--no-skills`.
 
-Tau lists loaded skills in the system prompt so the model knows they exist and
+Tau lists loaded user and project skills in the system prompt so the model knows they exist and
 can read the full file (via the `read` tool) when relevant. Invoke one
 explicitly:
 

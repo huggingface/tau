@@ -21,8 +21,3 @@ def tau_docs_path() -> Path:
 def tau_examples_path() -> Path:
     """Return the installed Tau example directory."""
     return _DATA_ROOT / "examples"
-
-
-def tau_builtin_skills_path() -> Path:
-    """Return the directory containing first-party Tau skills."""
-    return _DATA_ROOT / "skills"
