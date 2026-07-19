@@ -9,9 +9,7 @@ def test_resource_paths_use_tau_subdirectories(tmp_path: Path) -> None:
 
     assert paths.skills_dir == tmp_path / "skills"
     assert paths.prompts_dir == tmp_path / "prompts"
-    assert paths.skills_dirs[1:] == (tmp_path / "skills",)
-    assert paths.skills_dirs[0].name == "skills"
-    assert paths.skills_dirs[0].parent.name == "data"
+    assert paths.skills_dirs == (tmp_path / "skills",)
     assert paths.prompts_dirs == (tmp_path / "prompts",)
 
 
@@ -26,7 +24,7 @@ def test_resource_paths_include_agents_and_project_directories(tmp_path: Path) -
         paths=TauPaths(home=tau_home, agents_home=agents_home),
     )
 
-    assert paths.skills_dirs[1:] == (
+    assert paths.skills_dirs == (
         tau_home / "skills",
         agents_home / "skills",
         cwd / ".tau" / "skills",

@@ -15,11 +15,10 @@ from tau_coding import (
 from tau_coding.resources import ResourceError
 
 
-def test_load_skills_includes_bundled_first_party_skills(tmp_path: Path) -> None:
+def test_load_skills_does_not_include_tau_self_knowledge(tmp_path: Path) -> None:
     skills = load_skills(TauResourcePaths(root=tmp_path, agents_root=None))
 
-    assert [skill.name for skill in skills] == ["create-tau-extension", "tau-model-catalog"]
-    assert all("tau_coding/data/skills" in skill.path.as_posix() for skill in skills)
+    assert skills == []
 
 
 def test_load_skills_from_directory(tmp_path: Path) -> None:
@@ -38,12 +37,7 @@ def test_load_skills_from_directory(tmp_path: Path) -> None:
     skills = load_skills(TauResourcePaths(root=tmp_path, agents_root=None))
 
     skill_by_name = {skill.name: skill for skill in skills}
-    assert set(skill_by_name) == {
-        "create-tau-extension",
-        "git-review",
-        "python-testing",
-        "tau-model-catalog",
-    }
+    assert set(skill_by_name) == {"git-review", "python-testing"}
     assert skill_by_name["git-review"].description == "Git Review"
     assert skill_by_name["python-testing"].description == "Test Python code"
 
@@ -64,15 +58,10 @@ def test_load_skills_includes_user_and_project_agents_directories(tmp_path: Path
 
     skills = load_skills(TauResourcePaths(root=tau_home, agents_root=agents_home, cwd=cwd))
 
-    assert {skill.name for skill in skills} == {
-        "create-tau-extension",
-        "project-skill",
-        "tau-model-catalog",
-        "user-skill",
-    }
+    assert {skill.name for skill in skills} == {"project-skill", "user-skill"}
 
 
-def test_user_skill_overrides_bundled_skill(tmp_path: Path) -> None:
+def test_user_skill_can_use_a_former_bundled_skill_name(tmp_path: Path) -> None:
     skill_dir = tmp_path / "skills" / "tau-model-catalog"
     skill_dir.mkdir(parents=True)
     skill_path = skill_dir / "SKILL.md"
@@ -82,13 +71,8 @@ def test_user_skill_overrides_bundled_skill(tmp_path: Path) -> None:
         TauResourcePaths(root=tmp_path, agents_root=None)
     )
 
-    catalog_skill = next(skill for skill in skills if skill.name == "tau-model-catalog")
-    assert catalog_skill.path == skill_path
-    assert any(
-        diagnostic.name == "tau-model-catalog"
-        and "overrides lower-precedence resource" in diagnostic.message
-        for diagnostic in diagnostics
-    )
+    assert [(skill.name, skill.path) for skill in skills] == [("tau-model-catalog", skill_path)]
+    assert diagnostics == []
 
 
 def test_project_agents_skill_overrides_user_agents_skill(tmp_path: Path) -> None:
@@ -176,7 +160,7 @@ def test_agents_root_is_not_a_skills_directory(tmp_path: Path) -> None:
 
     skills = load_skills(TauResourcePaths(root=tmp_path / ".tau", agents_root=agents_home))
 
-    assert {skill.name for skill in skills} == {"create-tau-extension", "tau-model-catalog"}
+    assert skills == []
 
 
 def test_agents_skills_dir_ignores_bare_md_files(tmp_path: Path) -> None:
@@ -292,6 +276,6 @@ def test_build_skill_index(tmp_path: Path) -> None:
     index = build_skill_index(load_skills(TauResourcePaths(root=tmp_path, agents_root=None)))
 
     assert "Available skills:" in index
-    assert "- create-tau-extension:" in index
-    assert "- tau-model-catalog:" in index
     assert "- testing: Test things" in index
+    assert "create-tau-extension" not in index
+    assert "tau-model-catalog" not in index

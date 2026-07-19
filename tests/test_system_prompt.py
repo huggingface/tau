@@ -43,8 +43,8 @@ def test_default_prompt_includes_tools_guidelines_date_and_cwd(tmp_path: Path) -
     assert "- Do not overwrite or discard unrelated user changes" in prompt
     assert "- Report checks honestly; never claim a command passed unless you ran it" in prompt
     assert "Tau documentation (read only when the user asks about Tau itself" in prompt
-    assert "adding models (docs/models.md)" in prompt
-    assert "extensions (docs/extensions.md, examples/extensions/)" in prompt
+    assert "custom providers or adding built-in providers/models (docs/models.md)" in prompt
+    assert "creating or modifying extensions (docs/extensions.md" in prompt
     assert prompt.endswith(f"Current date: 2026-06-17\nCurrent working directory: {tmp_path}")
 
 
