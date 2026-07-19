@@ -477,6 +477,7 @@ def test_session_sidebar_renders_session_metadata() -> None:
     assert "location" not in output
     assert "branch" not in output
     assert "14 turns, 23 tool calls" in output
+    assert "cumulative usage" in output
     assert "1.2m in, 48k out" in output
     assert "1.2m in, 48k out · ~$1.24" in output
     assert "auto at 200k" in output
@@ -525,7 +526,6 @@ def test_session_sidebar_uses_prominent_title_and_accented_section_headers() -> 
     assert activity_header.left == 1
     assert str(activity_header.renderable.style) == f"bold {TAU_DARK_THEME.prompt_text}"
     assert str(activity_content.renderable.style) == TAU_DARK_THEME.completion_description
-    assert " session" not in output
     assert " context" in output
     assert " tools" in output
     assert "─" in output
@@ -565,7 +565,7 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
     provider_line = next(index for index, line in enumerate(lines) if "openai:fake-model" in line)
     context_line = next(index for index, line in enumerate(lines) if "12k/200k" in line)
     assert "/workspace/project (--)" in output
-    assert "12k/200k context" not in output
+    assert "context 12k/200k" not in output
     assert "openai:fake-model" in lines[provider_line]
     assert "(medium)" in lines[provider_line]
     assert context_line == provider_line + 1

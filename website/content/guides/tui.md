@@ -119,9 +119,9 @@ when you want to reduce what is sent to the model.
 
 On wide-enough terminals Tau shows the session name prominently without a
 redundant section label, followed by active-branch
-turn and tool-call totals, provider-reported token usage, estimated cost,
-automatic-compaction threshold, and loaded tools, skills, prompt templates,
-extensions, and context files such as `AGENTS.md`. Tool, prompt, and extension
+turn and tool-call totals, provider-reported token usage under **cumulative usage**,
+estimated cost, automatic-compaction threshold, and loaded tools, skills, prompt
+templates, extensions, and context files such as `AGENTS.md`. Tool, prompt, and extension
 names use compact comma-separated lists. Skills and context files use bullet
 lists, with one item or path per line. Project context paths are relative to the
 working directory; context loaded from outside the project uses its full path.
@@ -134,14 +134,19 @@ and terminal tab title; `/hotkeys` lists shortcuts when needed. The sidebar hide
 automatically when the terminal is small, while the tab title continues to
 identify the session.
 
-Usage and cost cover the active branch, including history replaced by compaction.
-Cost is an estimate based on provider-reported usage and configured catalog rates;
-the sidebar shows `$N/A` when Tau lacks complete pricing data.
+Cumulative usage and cost cover the active branch, including history replaced by
+compaction. Input usage counts tokens processed on every
+provider request, so it can be much larger than the context used by the next
+request. Cost is an estimate based on provider-reported usage and configured
+catalog rates; the sidebar shows `$N/A` when Tau lacks complete pricing data.
 
 The compact status block below the prompt puts `provider:model (thinking)` on its
-first line and context consumption as just `used/limit` on the second. Its
-working-directory name is emphasized while the parent path and Git branch use the
-quieter metadata color.
+first line and the approximate active context as `used/limit` on the second.
+Unlike cumulative usage, this estimate describes the system prompt, tools,
+and active messages Tau expects to send on the next request. It can decrease
+after compaction while cumulative usage continues to increase. The
+working-directory name is emphasized while the parent path and Git branch use
+the quieter metadata color.
 
 The sidebar can be moved to the **right** or turned **off** entirely by setting
 `sidebar_position` in `~/.tau/tui.json` — see
