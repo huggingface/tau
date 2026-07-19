@@ -15,7 +15,7 @@ those locations and file formats.
 ├── providers.json      # provider/model preferences
 ├── credentials.json    # saved API keys / OAuth tokens (0600, atomic writes)
 ├── settings.json       # general settings (e.g. shell command prefix)
-├── tui.json            # TUI theme + keybindings
+├── tui.json            # TUI theme, keybindings, and layout
 ├── sessions/           # saved sessions, per project
 ├── skills/             # user-level skills
 ├── prompts/            # user-level prompt templates
@@ -223,6 +223,7 @@ The built-in frontend reads optional settings from `~/.tau/tui.json`:
 ```json
 {
   "theme": "high-contrast",
+  "sidebar_position": "right",
   "keybindings": {
     "cancel": "escape",
     "command_palette": "ctrl+k",
@@ -250,7 +251,7 @@ to `tau-dark` with a startup notice, without overwriting the setting. Keys use
 Textual syntax; omitted keys keep their defaults. Tau rejects unknown
 keybinding names, empty keys, and duplicate assignments.
 
-- `sidebar_position`: `"left"` (default), `"right"`, or `"off"`. Controls
+- `sidebar_position`: `"right"` (default), `"left"`, or `"off"`. Controls
   placement of the session metadata sidebar. `"off"` hides the sidebar entirely;
   the compact session info row below the prompt still works.
 
