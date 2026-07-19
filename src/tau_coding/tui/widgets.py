@@ -1995,7 +1995,13 @@ def _context_usage(session: SessionSummarySource) -> str:
 def _styled_cwd(cwd: Path, *, theme: TuiTheme) -> Text:
     """Style the parent path as metadata while emphasizing the working directory."""
     short_path = _short_path(cwd)
-    parent, separator, name = short_path.rpartition("/")
+    # Windows paths use backslashes, so split on whichever separator comes last.
+    split_at = max(short_path.rfind("/"), short_path.rfind("\\"))
+    parent, separator, name = (
+        (short_path[:split_at], short_path[split_at], short_path[split_at + 1 :])
+        if split_at != -1
+        else ("", "", short_path)
+    )
     text = Text(overflow="fold", no_wrap=False)
     if separator and name:
         text.append(f"{parent}{separator}", style=theme.completion_description)
