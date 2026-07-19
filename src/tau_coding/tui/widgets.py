@@ -1527,7 +1527,7 @@ def render_session_sidebar(
     sections = (
         Padding(title, (0, 0, 0, 1)),
         _sidebar_section("activity", activity, theme=theme),
-        _sidebar_section("usage", usage, theme=theme),
+        _sidebar_section("session usage", usage, theme=theme),
         _sidebar_section("compaction", compaction, theme=theme),
         _sidebar_section("context", context, theme=theme),
         _sidebar_section("tools", tools, theme=theme),
@@ -1989,7 +1989,10 @@ def _plain_text(text: str, *, body_style: str) -> Text:
 def _context_usage(session: SessionSummarySource) -> str:
     threshold = session.auto_compact_token_threshold
     limit = session.context_window_tokens if threshold is None or threshold <= 0 else threshold
-    return f"{_compact_token_count(session.context_token_estimate)}/{_compact_token_count(limit)}"
+    return (
+        f"context {_compact_token_count(session.context_token_estimate)}/"
+        f"{_compact_token_count(limit)}"
+    )
 
 
 def _styled_cwd(cwd: Path, *, theme: TuiTheme) -> Text:
