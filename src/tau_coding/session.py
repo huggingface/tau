@@ -1570,11 +1570,12 @@ class CodingSession:
             events = self._harness.prompt_message(prompt_message)
             self._invalidate_context_usage_cache()
             async for event in events:
+                auto_name_message: str | None = None
                 if isinstance(event, MessageEndEvent):
                     persisted_count = await self._persist_messages_since(persisted_count)
                     if not auto_name_attempted and isinstance(event.message, UserMessage):
                         auto_name_attempted = True
-                        await self._try_auto_name_session(event.message.text, context=context)
+                        auto_name_message = event.message.text
                 if isinstance(event, ToolExecutionEndEvent):
                     self._invalidate_context_usage_cache()
                 if (
@@ -1593,6 +1594,10 @@ class CodingSession:
                     yield SessionAgentEndEvent(messages=event.messages, will_retry=False)
                 else:
                     yield event
+                # Let frontends render the confirmed, expanded prompt before
+                # session naming performs its separate provider request.
+                if auto_name_message is not None:
+                    await self._try_auto_name_session(auto_name_message, context=context)
             persisted_count = await self._persist_messages_since(persisted_count)
             if overflow_message is not None:
                 session_event_1 = CompactionStartEvent(reason="overflow")

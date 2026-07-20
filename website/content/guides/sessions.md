@@ -30,9 +30,9 @@ From inside the TUI:
 /resume <id>       # resume a specific session
 ```
 
-The `/resume` picker has a search field so you can filter by title, model, or
-working directory. Start typing to narrow the list, then use the arrow keys
-and Enter (or click) to pick a session.
+The `/resume` picker has a search field that filters by session name or model.
+Start typing to narrow the list, then use the arrow keys and Enter (or click) to
+pick a session.
 
 To deliberately start fresh instead of resuming, use `tau --new-session` (or
 `/new` in the TUI).
@@ -54,9 +54,16 @@ If a summary request fails, Tau falls back to a deterministic summary.
 ## Renaming
 
 New sessions are automatically given a short name from the first message when
-Tau can generate one. The name appears anywhere session names are already shown,
-including the `/resume` picker and id completions. If naming fails, the session
-continues normally and Tau falls back to a short local name when possible.
+Tau can generate one. Tau shows the confirmed message first—including the
+expanded text from a prompt-template slash command—then performs naming without
+holding up that transcript update. The name appears anywhere session names are
+already shown, including the `/resume` picker and id completions.
+
+Auto-naming makes one high-level provider request. The provider adapter may retry
+transient failures according to its configured `max_retries`. If those attempts
+are exhausted, or the response is not a usable title, Tau does not start another
+naming request: the session continues normally and uses a short local fallback
+when possible.
 
 ```text
 /name My refactor session
