@@ -86,7 +86,7 @@ class TuiSettings:
     keybindings: TuiKeybindings = field(default_factory=TuiKeybindings)
     theme: TuiThemeName = "tau-dark"
     auto_copy_selection: bool = False
-    sidebar_position: Literal["left", "right", "off"] = "left"
+    sidebar_position: Literal["left", "right", "off"] = "right"
 
     def to_json(self) -> dict[str, Any]:
         """Serialize these settings to JSON-compatible data."""
@@ -140,7 +140,7 @@ def tui_settings_from_json(data: dict[str, Any]) -> TuiSettings:
     keybindings_data = data.get("keybindings", {})
     if not isinstance(keybindings_data, dict):
         raise TuiConfigError("TUI keybindings must be a JSON object")
-    raw_sidebar = data.get("sidebar_position", "left")
+    raw_sidebar = data.get("sidebar_position", "right")
     if not isinstance(raw_sidebar, str) or raw_sidebar not in {"left", "right", "off"}:
         raise TuiConfigError("sidebar_position must be 'left', 'right', or 'off'")
     return TuiSettings(

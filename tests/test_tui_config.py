@@ -175,8 +175,9 @@ def test_get_tui_theme_returns_builtin_theme() -> None:
     assert get_tui_theme("tau-dark").screen_background == "#000000"
 
 
-def test_tui_sidebar_position_defaults_to_left() -> None:
-    assert TuiSettings().sidebar_position == "left"
+def test_tui_sidebar_position_defaults_to_right() -> None:
+    assert TuiSettings().sidebar_position == "right"
+    assert tui_settings_from_json({}).sidebar_position == "right"
 
 
 def test_tui_sidebar_position_roundtrips() -> None:

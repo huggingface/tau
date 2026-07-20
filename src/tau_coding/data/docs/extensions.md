@@ -21,9 +21,12 @@ An extension defines `setup(tau)`. Project extensions execute arbitrary Python a
 
 ## Development checklist
 
-1. Confirm the requested capability exists in the extension API before inventing a workaround.
-2. Keep extension behavior out of `tau_agent`; extensions belong to `tau_coding`.
-3. Use `tau_agent` types for portable messages and tools, and keep Textual behind Tau's UI adapter APIs.
-4. Start from the closest installed example.
-5. Add deterministic tests with fake providers/tools when changing Tau's extension implementation.
-6. Run the repository's documented tests, Ruff checks, formatting, and mypy.
+1. Read this document and the closest installed example under `examples/extensions/` completely before implementing.
+2. In a Tau checkout, also read `website/content/guides/extensions.md` and the relevant public extension API implementation.
+3. Confirm the requested capability exists in the extension API before inventing a workaround.
+4. Define `setup(tau)` and use documented registration APIs; do not reach into private session or Textual internals.
+5. Keep extension behavior out of `tau_agent`; extensions belong to `tau_coding`. Use `tau_agent` types for portable messages and tools, and keep Textual behind Tau's UI adapter APIs.
+6. Put user extensions in `~/.tau/extensions/`. Project extensions require explicit trust through `--project-extensions`; never enable one from an untrusted repository. Use `tau -x PATH` for isolated testing.
+7. Test through the real extension runtime so discovery, imports, and `setup` registration are exercised. For Tau core changes, add deterministic tests with fake providers/tools and cover reload and lifecycle behavior when applicable.
+8. Run focused tests followed by the repository's full pytest, Ruff, formatting, and mypy checks.
+9. Update `website/content/guides/extensions.md` and add a development note for user-facing architectural changes.

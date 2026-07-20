@@ -10,13 +10,14 @@ A skill follows the Agent Skills structure:
 <skills-dir>/<skill-name>/SKILL.md
 ```
 
-Tau loads skills in increasing precedence:
+Tau loads user and project skills in increasing precedence:
 
-1. first-party skills bundled with Tau
-2. `~/.tau/skills/`
-3. `~/.agents/skills/`
-4. `<cwd>/.tau/skills/`
-5. `<cwd>/.agents/skills/`
+1. `~/.tau/skills/`
+2. `~/.agents/skills/`
+3. `<cwd>/.tau/skills/`
+4. `<cwd>/.agents/skills/`
+
+Tau's own product knowledge is regular packaged documentation, not a built-in skill, so it does not appear in the user's skill list or compete with user skill names.
 
 A higher-precedence skill with the same name overrides the lower one. Tau places only each skill's name, description, and path in the system prompt; the model reads the full file when its description matches the task. Use `/skill:<name>` for explicit invocation.
 

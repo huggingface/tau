@@ -9,7 +9,8 @@ history) and lets you tune how hard the model works with **thinking modes**.
 
 ## Seeing context usage
 
-Run `/session` in the TUI to see a rough estimate:
+The compact status below the TUI prompt shows the approximate active context as
+`used/limit`. Run `/session` to see its detailed breakdown:
 
 ```text
 Estimated context tokens: <count>
@@ -22,7 +23,14 @@ Thinking mode: <mode>
 The estimate is deterministic (roughly `characters / 4` plus small per-message
 and per-tool overhead), not a provider tokenizer — treat it as approximate. It
 covers the system prompt, project context (`AGENTS.md`), skill metadata, the
-message history, and tool schemas.
+active message history, and tool schemas.
+
+This is different from **cumulative usage** in the sidebar. Cumulative usage adds
+the provider-reported input and output tokens from every request on the active
+branch, including history later replaced by compaction. Repeatedly sending the
+same context therefore increases cumulative input usage, while active context
+consumption describes only what Tau expects to send next. The two figures are
+not expected to match.
 
 ## Automatic compaction
 

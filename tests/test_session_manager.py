@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from tau_coding.paths import TauPaths
 from tau_coding.session_manager import SessionManager
 
@@ -26,6 +28,20 @@ def test_session_manager_creates_and_lists_sessions(tmp_path: Path) -> None:
     assert record.path.name == f"{record.id}.jsonl"
     assert manager.get_session(record.id) == record
     assert manager.list_sessions() == [record]
+    assert manager.list_sessions(cwd) == [record]
+
+
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\u0085"])
+def test_session_manager_round_trips_unicode_line_separator_in_title(
+    tmp_path: Path, separator: str
+) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+
+    record = manager.create_session(cwd=cwd, model="fake", title=f"line one{separator}line two")
+
+    assert manager.get_session(record.id) == record
     assert manager.list_sessions(cwd) == [record]
 
 
