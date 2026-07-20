@@ -1,5 +1,20 @@
 [
   {
+    "version": "0.2.3",
+    "date": "2026-07-20",
+    "sections": {
+      "Changed": [
+        "Default the TUI sidebar to the right side while preserving explicit left, right, and off preferences.",
+        "Label TUI sidebar token totals as cumulative session usage and document why cumulative provider usage can exceed the active context estimate.",
+        "Keep Tau's internal extension and model-catalog maintenance guidance in packaged self-documentation so it no longer appears in or competes with user skills."
+      ],
+      "Fixed": [
+        "Fix session JSONL reads splitting records on Unicode line separators (U+2028, U+2029, U+0085), which made affected sessions and the session index fail to load; the read-side fix also repairs already-affected session files.",
+        "Fix picker highlight text contrast so focused labels use each theme's configured highlight foreground and background colors."
+      ]
+    }
+  },
+  {
     "version": "0.2.2",
     "date": "2026-07-18",
     "sections": {
