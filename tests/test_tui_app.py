@@ -542,7 +542,11 @@ def test_session_sidebar_lists_multiple_context_files() -> None:
             content="Agent rules.",
         ),
         ProjectContextFile(path="docs/AGENTS.md", content="Docs rules."),
-        ProjectContextFile(path="/Users/alex/.agents/AGENTS.md", content="User rules."),
+        ProjectContextFile(
+            path=str(Path.home() / ".agents" / "AGENTS.md"),
+            content="User rules.",
+        ),
+        ProjectContextFile(path="/Users/alex/.agents/AGENTS.md", content="External rules."),
     )
     console = Console(record=True, width=100)
 
@@ -552,6 +556,8 @@ def test_session_sidebar_lists_multiple_context_files() -> None:
     assert "AGENTS.md" in output
     assert ".agents/AGENTS.md" in output
     assert "docs/AGENTS.md" in output
+    assert "~/.agents/AGENTS.md" in output
+    assert str(Path.home() / ".agents" / "AGENTS.md") not in output
     assert "/Users/alex/.agents/AGENTS.md" in output
 
 
