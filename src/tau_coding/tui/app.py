@@ -5424,7 +5424,11 @@ def _filter_session_records(
     normalized = query.strip().casefold()
     if not normalized:
         return tuple(records)
-    return tuple(record for record in records if normalized in (record.title or "").casefold())
+    return tuple(
+        record
+        for record in records
+        if normalized in (record.title or "").casefold() or normalized in record.model.casefold()
+    )
 
 
 def _tree_picker_label(

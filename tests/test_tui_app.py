@@ -4285,7 +4285,7 @@ async def test_tui_app_session_picker_search_filters_sessions() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_app_session_picker_search_filters_only_by_session_name() -> None:
+async def test_tui_app_session_picker_search_does_not_match_workspace_path() -> None:
     session = FakeSession()
     session.session_manager = _FakeSessionManager(
         [
@@ -4309,14 +4309,14 @@ async def test_tui_app_session_picker_search_filters_only_by_session_name() -> N
         search = app.screen.query_one("#session-picker-search", Input)
         session_list = app.screen.query_one("#session-picker-list", ListView)
 
-        for query in ("path-query", "model-query"):
+        search.value = "path-query"
+        await pilot.pause()
+        assert list(session_list.children) == []
+
+        for query in ("model-query", "named"):
             search.value = query
             await pilot.pause()
-            assert list(session_list.children) == []
-
-        search.value = "named"
-        await pilot.pause()
-        assert len(session_list.children) == 1
+            assert len(session_list.children) == 1
 
 
 @pytest.mark.anyio
