@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from inspect import isawaitable
+from json import dumps, loads
 from pathlib import Path
+from re import sub
+from tempfile import NamedTemporaryFile
 from time import time_ns
 from typing import Literal, Protocol
 
@@ -44,6 +47,7 @@ from tau_coding.extensions.api import (
     MessageRenderer,
     MessageRenderOptions,
     NullUiBridge,
+    OpenAICompatibleProvider,
     RegisteredExtension,
     SessionLifecycleReason,
     SessionShutdownEvent,
@@ -60,6 +64,11 @@ from tau_coding.extensions.loader import (
     LoadedExtension,
     load_extensions,
     unload_extension_modules,
+)
+from tau_coding.provider_config import (
+    OpenAICompatibleProviderConfig,
+    ProviderSettings,
+    upsert_provider,
 )
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
 
@@ -112,6 +121,20 @@ class BoundSession(Protocol):
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None: ...
 
+    def sync_extension_providers(
+        self,
+        providers: tuple[OpenAICompatibleProviderConfig, ...],
+        owned_names: frozenset[str],
+    ) -> None: ...
+
+    def select_provider_model(
+        self,
+        provider_name: str,
+        model: str,
+        *,
+        persist_default: bool,
+    ) -> None: ...
+
 
 @dataclass(frozen=True, slots=True)
 class ExtensionCommand:
@@ -131,6 +154,15 @@ class RegisteredExtensionTool:
 
     extension: str
     tool: AgentTool
+
+
+@dataclass(frozen=True, slots=True)
+class RegisteredExtensionProvider:
+    """An OpenAI-compatible provider registered by an extension."""
+
+    extension: str
+    descriptor: OpenAICompatibleProvider
+    config: OpenAICompatibleProviderConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +187,8 @@ class ExtensionRuntime:
     def __init__(self, *, ui: UiBridge | None = None) -> None:
         self._extensions: list[RegisteredExtension] = []
         self._tools: dict[str, RegisteredExtensionTool] = {}
+        self._providers: dict[str, RegisteredExtensionProvider] = {}
+        self._provider_names_seen: set[str] = set()
         self._commands: dict[str, ExtensionCommand] = {}
         self._prompt_guidelines: list[tuple[str, str]] = []
         self._message_renderers: dict[str, tuple[str, MessageRenderer]] = {}
@@ -167,6 +201,7 @@ class ExtensionRuntime:
         self._harness_unsubscribe: Callable[[], None] | None = None
         self._extension_turn_index = 0
         self._generation = ExtensionGeneration()
+        self._resource_paths: TauResourcePaths | None = None
 
     # -- loading -----------------------------------------------------------
 
@@ -179,6 +214,7 @@ class ExtensionRuntime:
         include_project_dir: bool = False,
     ) -> None:
         """Discover extensions and run each `setup` with an isolated API."""
+        self._resource_paths = paths
         result = load_extensions(
             paths,
             extra_paths=extra_paths,
@@ -211,10 +247,12 @@ class ExtensionRuntime:
             self._harness_unsubscribe = None
         self._extensions.clear()
         self._tools.clear()
+        self._providers.clear()
         self._commands.clear()
         self._prompt_guidelines.clear()
         self._message_renderers.clear()
         self._renderer_failures_reported.clear()
+        self._sync_bound_providers()
         self._load_diagnostics.clear()
         self._runtime_diagnostics.clear()
         unload_extension_modules()
@@ -249,6 +287,11 @@ class ExtensionRuntime:
             for name, command in self._commands.items()
             if command.extension != extension_name
         }
+        self._providers = {
+            name: registration
+            for name, registration in self._providers.items()
+            if registration.extension != extension_name
+        }
         self._prompt_guidelines = [
             (extension, guideline)
             for extension, guideline in self._prompt_guidelines
@@ -259,6 +302,7 @@ class ExtensionRuntime:
             for custom_type, registration in self._message_renderers.items()
             if registration[0] != extension_name
         }
+        self._sync_bound_providers()
 
     # -- registration (called through ExtensionAPI) -------------------------
 
@@ -278,6 +322,83 @@ class ExtensionRuntime:
             )
             return
         self._tools[tool.name] = RegisteredExtensionTool(extension=extension_name, tool=tool)
+
+    def register_provider(
+        self,
+        extension_name: str,
+        descriptor: OpenAICompatibleProvider,
+    ) -> None:
+        """Register or replace an OpenAI-compatible provider owned by an extension."""
+        name = descriptor.name.strip()
+        models = tuple(dict.fromkeys(model.strip() for model in descriptor.models if model.strip()))
+        if not name or not models or descriptor.default_model not in models:
+            raise ExtensionError(
+                "provider name/models must be non-empty and default_model must be in models"
+            )
+        existing = self._providers.get(name)
+        if existing is not None and existing.extension != extension_name:
+            raise ExtensionError(
+                f"provider `{name}` already registered by extension `{existing.extension}`"
+            )
+        config = OpenAICompatibleProviderConfig(
+            name=name,
+            base_url=descriptor.base_url.rstrip("/"),
+            api=descriptor.api,
+            api_key_env=descriptor.api_key_env,
+            credential_name=None,
+            auth=descriptor.auth,
+            models=models,
+            default_model=descriptor.default_model,
+            headers=dict(descriptor.headers),
+            timeout_seconds=descriptor.timeout_seconds,
+            max_retries=descriptor.max_retries,
+            max_retry_delay_seconds=descriptor.max_retry_delay_seconds,
+        )
+        self._providers[name] = RegisteredExtensionProvider(
+            extension=extension_name,
+            descriptor=replace(descriptor, name=name, models=models),
+            config=config,
+        )
+        self._provider_names_seen.add(name)
+        self._sync_bound_providers()
+
+    def update_provider_models(
+        self,
+        extension_name: str,
+        name: str,
+        models: Sequence[str],
+        *,
+        default_model: str | None,
+    ) -> None:
+        """Replace the models exposed by one extension-owned provider."""
+        registration = self._providers.get(name)
+        if registration is None or registration.extension != extension_name:
+            raise ExtensionError(f"extension `{extension_name}` does not own provider `{name}`")
+        normalized = tuple(dict.fromkeys(model.strip() for model in models if model.strip()))
+        selected = default_model or registration.config.default_model
+        if not normalized or selected not in normalized:
+            raise ExtensionError("provider models must include the default model")
+        descriptor = replace(
+            registration.descriptor,
+            models=normalized,
+            default_model=selected,
+        )
+        self._providers[name] = replace(
+            registration,
+            descriptor=descriptor,
+            config=replace(registration.config, models=normalized, default_model=selected),
+        )
+        self._sync_bound_providers()
+
+    def unregister_provider(self, extension_name: str, name: str) -> None:
+        """Remove one provider owned by an extension."""
+        registration = self._providers.get(name)
+        if registration is None:
+            return
+        if registration.extension != extension_name:
+            raise ExtensionError(f"extension `{extension_name}` does not own provider `{name}`")
+        del self._providers[name]
+        self._sync_bound_providers()
 
     def register_command(
         self,
@@ -485,6 +606,22 @@ class ExtensionRuntime:
     def bind(self, session: BoundSession) -> None:
         """Bind (or re-bind) the runtime to a coding session."""
         self._session = session
+        self._sync_bound_providers()
+
+    def compose_provider_settings(self, settings: ProviderSettings) -> ProviderSettings:
+        """Layer process-local extension providers over durable host settings."""
+        composed = settings
+        for registration in self._providers.values():
+            composed = upsert_provider(composed, registration.config)
+        return composed
+
+    def _sync_bound_providers(self) -> None:
+        if self._session is None:
+            return
+        self._session.sync_extension_providers(
+            tuple(registration.config for registration in self._providers.values()),
+            frozenset(self._provider_names_seen),
+        )
 
     def attach_harness_listener(
         self,
@@ -523,6 +660,11 @@ class ExtensionRuntime:
     def ui(self) -> UiBridge:
         """Return the active UI bridge."""
         return self._ui
+
+    @property
+    def is_bound(self) -> bool:
+        """Return whether this runtime is already attached to a session."""
+        return self._session is not None
 
     @property
     def session_view(self) -> BoundSession:
@@ -604,6 +746,63 @@ class ExtensionRuntime:
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         """Persist a `CustomEntry` through the bound session."""
         await self.session_view.append_custom_entry(namespace, data)
+
+    def select_model(
+        self,
+        provider: str,
+        model: str,
+        *,
+        persist_default: bool,
+    ) -> None:
+        """Switch the bound session through its provider-neutral model action."""
+        self.session_view.select_provider_model(
+            provider,
+            model,
+            persist_default=persist_default,
+        )
+
+    def load_extension_settings(self, extension_name: str) -> dict[str, JSONValue]:
+        """Read extension-scoped user settings."""
+        path = self._extension_settings_path(extension_name)
+        if not path.exists():
+            return {}
+        value = loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise ExtensionError(f"extension settings must be a JSON object: {path}")
+        return value
+
+    def save_extension_settings(
+        self,
+        extension_name: str,
+        settings: Mapping[str, JSONValue],
+    ) -> Path:
+        """Atomically write extension-scoped user settings."""
+        path = self._extension_settings_path(extension_name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temp = Path(handle.name)
+            handle.write(dumps(dict(settings), indent=2, sort_keys=True) + "\n")
+        temp.replace(path)
+        return path
+
+    def clear_extension_settings(self, extension_name: str) -> None:
+        """Delete extension-scoped settings."""
+        self._extension_settings_path(extension_name).unlink(missing_ok=True)
+
+    def _extension_settings_path(self, extension_name: str) -> Path:
+        if self._resource_paths is None:
+            raise ExtensionError("extension settings are unavailable before extension loading")
+        slug = sub(r"[^a-zA-Z0-9._-]+", "-", extension_name).strip(".-")
+        if not slug:
+            raise ExtensionError("extension name cannot be used for settings")
+        return self._resource_paths.root / "extensions" / "settings" / f"{slug}.json"
 
     # -- tools ----------------------------------------------------------------
 

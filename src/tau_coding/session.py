@@ -78,6 +78,7 @@ from tau_coding.prompt_templates import (
     load_prompt_templates_with_diagnostics,
 )
 from tau_coding.provider_config import (
+    OpenAICompatibleProviderConfig,
     ProviderConfig,
     ProviderConfigError,
     ProviderSettings,
@@ -90,6 +91,7 @@ from tau_coding.provider_config import (
     save_default_provider_model,
     save_provider_thinking_level,
     toggle_saved_scoped_model,
+    upsert_provider,
     validate_provider_model,
 )
 from tau_coding.provider_runtime import ClosableModelProvider, create_model_provider
@@ -329,7 +331,7 @@ class CodingSession:
         )
 
         extension_runtime = config.extension_runtime
-        fresh_extension_runtime = extension_runtime is None
+        needs_extension_binding = extension_runtime is None or not extension_runtime.is_bound
         if extension_runtime is None:
             extension_runtime = ExtensionRuntime()
             if config.extensions_enabled or config.extension_paths:
@@ -390,7 +392,7 @@ class CodingSession:
         session._sync_thinking_level_to_active_model()
         session._refresh_runtime_provider()
         await session._refresh_runtime_model_limits()
-        if fresh_extension_runtime:
+        if needs_extension_binding:
             extension_runtime.bind(session)
             # Attach to session._harness, not the local `harness`:
             # _persist_loaded_interrupted_tool_repairs() above may have
@@ -887,10 +889,54 @@ class CodingSession:
 
     def set_model_choice(self, choice: ModelChoice) -> None:
         """Switch provider/model as one operation."""
-        if choice.provider_name == self.provider_name:
-            self.set_model(choice.model)
+        self.select_provider_model(choice.provider_name, choice.model, persist_default=True)
+
+    def select_provider_model(
+        self,
+        provider_name: str,
+        model: str,
+        *,
+        persist_default: bool,
+    ) -> None:
+        """Switch provider/model through the extension-safe public action."""
+        if provider_name == self.provider_name:
+            provider = self._active_provider_config()
+            if provider is not None:
+                validate_provider_model(provider, model)
+            self._harness.config.model = model
+            self._sync_thinking_level_to_active_model()
+            self._refresh_runtime_provider()
+            if persist_default:
+                self._persist_default_model_choice()
             return
-        self._set_provider_model(choice.provider_name, choice.model)
+        self._set_provider_model(provider_name, model, persist_default=persist_default)
+
+    def sync_extension_providers(
+        self,
+        providers: tuple[OpenAICompatibleProviderConfig, ...],
+        owned_names: frozenset[str],
+    ) -> None:
+        """Refresh process-local providers registered by the extension runtime."""
+        if self._provider_settings is None:
+            return
+        retained = tuple(
+            provider
+            for provider in self._provider_settings.providers
+            if provider.name not in owned_names
+        )
+        default_provider = self._provider_settings.default_provider
+        if default_provider in owned_names and default_provider not in {
+            provider.name for provider in providers
+        }:
+            default_provider = retained[0].name if retained else self.provider_name
+        settings = ProviderSettings(
+            default_provider=default_provider,
+            providers=retained,
+            scoped_models=self._provider_settings.scoped_models,
+        )
+        for provider in providers:
+            settings = upsert_provider(settings, provider)
+        self._provider_settings = settings
 
     def is_scoped_model(self, choice: ModelChoice) -> bool:
         """Return whether a provider/model pair is in the scoped model list."""

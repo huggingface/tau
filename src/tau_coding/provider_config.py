@@ -9,7 +9,7 @@ from os import environ
 from pathlib import Path
 from shutil import copy2
 from tempfile import NamedTemporaryFile
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from tau_ai.env import (
     DEFAULT_ANTHROPIC_BASE_URL,
@@ -111,6 +111,7 @@ class OpenAICompatibleProviderConfig:
     api: ProviderApi = "openai-completions"
     api_key_env: str = "OPENAI_API_KEY"
     credential_name: str | None = None
+    auth: Literal["required", "optional", "none"] = "required"
     models: tuple[str, ...] = (DEFAULT_MODEL,)
     default_model: str = DEFAULT_MODEL
     context_windows: dict[str, int] = field(default_factory=dict)
@@ -152,6 +153,7 @@ class OpenAICompatibleProviderConfig:
             "api": self.api,
             "api_key_env": self.api_key_env,
             "credential_name": self.credential_name,
+            "auth": self.auth,
             "models": list(self.models),
             "default_model": self.default_model,
             "context_windows": dict(self.context_windows),
@@ -1489,7 +1491,7 @@ def openai_compatible_config_from_provider(
     )
     compat = _model_compat(provider, selected_model)
     return OpenAICompatibleConfig(
-        api_key=api_key,
+        api_key=api_key or "",
         provider_name=provider.name,
         api=str(_provider_api(provider, selected_model)),
         base_url=base_url.rstrip("/"),
@@ -1506,6 +1508,7 @@ def openai_compatible_config_from_provider(
             model=selected_model,
             thinking_level=thinking_level,
         ),
+        omit_authorization_header=api_key is None,
     )
 
 
@@ -1518,6 +1521,8 @@ def anthropic_config_from_provider(
 ) -> AnthropicConfig:
     """Build Anthropic runtime config from durable settings."""
     api_key = _api_key_from_provider(provider, credential_reader=credential_reader)
+    if api_key is None:
+        raise RuntimeError(f"Missing provider API key for {provider.name}.")
     selected_model = model or provider.default_model
     thinking_budget_tokens = _anthropic_thinking_budget_from_provider(
         provider,
@@ -1562,6 +1567,11 @@ def provider_has_usable_credentials(
     credential_reader: CredentialReader | None = None,
 ) -> bool:
     """Return whether Tau can attempt calls for this provider without prompting setup."""
+    if isinstance(provider, OpenAICompatibleProviderConfig) and provider.auth in {
+        "optional",
+        "none",
+    }:
+        return True
     if provider.credential_name and credential_reader is not None:
         get_oauth = getattr(credential_reader, "get_oauth", None)
         if (
@@ -1731,6 +1741,7 @@ def _provider_from_json(data: object) -> ProviderConfig:
     credential_name = _optional_string(
         data.get("credential_name"), f"providers[{name}].credential_name"
     )
+    auth = _provider_auth(data.get("auth", "required"), f"providers[{name}].auth")
     models = _string_tuple(data.get("models"), f"providers[{name}].models")
     default_model = _string(data.get("default_model"), f"providers[{name}].default_model")
     context_windows = _context_window_dict(
@@ -1823,6 +1834,7 @@ def _provider_from_json(data: object) -> ProviderConfig:
         api=api or _default_api_for_kind(provider_type),
         api_key_env=api_key_env,
         credential_name=credential_name,
+        auth=auth,
         models=models,
         default_model=default_model,
         context_windows=context_windows,
@@ -1844,7 +1856,9 @@ def _api_key_from_provider(
     provider: ProviderConfig,
     *,
     credential_reader: CredentialReader | None,
-) -> str:
+) -> str | None:
+    if isinstance(provider, OpenAICompatibleProviderConfig) and provider.auth == "none":
+        return None
     if provider.credential_name and credential_reader is not None:
         credential = credential_reader.get(provider.credential_name)
         if credential:
@@ -1860,6 +1874,8 @@ def _api_key_from_provider(
     api_key = environ.get(provider.api_key_env)
     if api_key:
         return api_key
+    if isinstance(provider, OpenAICompatibleProviderConfig) and provider.auth == "optional":
+        return None
     credential_hint = f" or run /login {provider.name}" if provider.credential_name else ""
     raise RuntimeError(f"Missing provider API key. Set {provider.api_key_env}{credential_hint}.")
 
@@ -2032,6 +2048,17 @@ def _reject_unimplemented_thinking_config(
 ) -> None:
     if thinking_levels is not None:
         raise ProviderConfigError(f"{provider_type} thinking controls are not implemented yet")
+
+
+def _provider_auth(
+    value: object,
+    field_name: str,
+) -> Literal["required", "optional", "none"]:
+    if value not in {"required", "optional", "none"}:
+        raise ProviderConfigError(
+            f"Provider field must be required, optional, or none: {field_name}"
+        )
+    return cast(Literal["required", "optional", "none"], value)
 
 
 def _optional_provider_api(value: object, field_name: str) -> ProviderApi | None:

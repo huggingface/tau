@@ -40,7 +40,9 @@ are called out inline as **Ruling:** notes.
   These have reserved names and documented extension points but no
   implementation yet.
 
-  **Implemented since:** custom **message** renderers
+  **Implemented since:** OpenAI-compatible **provider registration** and
+  provider/model selection (see `dev-notes/architecture/extension-providers.md`),
+  custom **message** renderers
   (`register_message_renderer` + `send_custom_message`) — the subset of Pi's
   renderer surface that formats messages which *do* participate in LLM context
   (see "Custom message rendering" below) — and extension-authored **component

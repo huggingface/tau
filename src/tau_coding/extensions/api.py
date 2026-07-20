@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 from tau_agent.messages import AgentMessage, ToolResultMessage
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
+from tau_coding.provider_catalog import ProviderApi
 
 if TYPE_CHECKING:
     from textual import events
@@ -57,6 +58,30 @@ LIFECYCLE_EVENT_TYPES: frozenset[str] = frozenset(
 SessionLifecycleReason = Literal["startup", "reload", "new", "resume", "branch", "quit"]
 DeliverAs = Literal["steer", "follow_up"]
 NotifyLevel = Literal["info", "warning", "error"]
+ProviderAuth = Literal["required", "optional", "none"]
+
+
+@dataclass(frozen=True, slots=True)
+class OpenAICompatibleProvider:
+    """Extension-owned OpenAI-compatible provider registration.
+
+    Registrations are process-local. Extensions should persist discovery data
+    with :meth:`ExtensionAPI.save_settings` and register it again from
+    ``setup(tau)`` on the next launch.
+    """
+
+    name: str
+    base_url: str
+    models: tuple[str, ...]
+    default_model: str
+    display_name: str | None = None
+    api: ProviderApi = "openai-completions"
+    api_key_env: str = "OPENAI_API_KEY"
+    auth: ProviderAuth = "required"
+    headers: Mapping[str, str] = field(default_factory=dict)
+    timeout_seconds: float = 60.0
+    max_retries: int = 2
+    max_retry_delay_seconds: float = 10.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -868,6 +893,62 @@ class ExtensionAPI:
         """Register an agent tool (first registration per name wins)."""
         self._generation.assert_active()
         self._runtime.register_tool(self._extension_name, tool)
+
+    def register_provider(self, provider: OpenAICompatibleProvider) -> None:
+        """Register or replace an extension-owned OpenAI-compatible provider."""
+        self._generation.assert_active()
+        self._runtime.register_provider(self._extension_name, provider)
+
+    def update_provider_models(
+        self,
+        name: str,
+        models: Sequence[str],
+        *,
+        default_model: str | None = None,
+    ) -> None:
+        """Replace a registered provider's dynamic model list."""
+        self._generation.assert_active()
+        self._runtime.update_provider_models(
+            self._extension_name,
+            name,
+            models,
+            default_model=default_model,
+        )
+
+    def unregister_provider(self, name: str) -> None:
+        """Remove a provider owned by this extension from host model surfaces."""
+        self._generation.assert_active()
+        self._runtime.unregister_provider(self._extension_name, name)
+
+    def select_model(
+        self,
+        provider: str,
+        model: str,
+        *,
+        persist_default: bool = False,
+    ) -> None:
+        """Switch the active session to a registered provider/model.
+
+        ``persist_default`` updates the active Tau preference when possible;
+        extensions should also save their selected model in extension settings.
+        """
+        self._generation.assert_active()
+        self._runtime.select_model(provider, model, persist_default=persist_default)
+
+    def load_settings(self) -> dict[str, JSONValue]:
+        """Read this extension's user-level, non-secret JSON settings."""
+        self._generation.assert_active()
+        return self._runtime.load_extension_settings(self._extension_name)
+
+    def save_settings(self, settings: Mapping[str, JSONValue]) -> Path:
+        """Atomically save this extension's user-level, non-secret settings."""
+        self._generation.assert_active()
+        return self._runtime.save_extension_settings(self._extension_name, settings)
+
+    def clear_settings(self) -> None:
+        """Delete this extension's user-level settings file, if present."""
+        self._generation.assert_active()
+        self._runtime.clear_extension_settings(self._extension_name)
 
     def register_command(
         self,

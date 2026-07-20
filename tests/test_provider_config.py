@@ -680,6 +680,44 @@ def test_openai_compatible_config_from_provider_uses_configured_env_var(
     assert config.max_retry_delay_seconds == 1.0
 
 
+def test_openai_compatible_config_from_provider_allows_optional_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("LOCAL_API_KEY", raising=False)
+    provider = OpenAICompatibleProviderConfig(
+        name="local",
+        base_url="http://localhost:8080/v1",
+        api_key_env="LOCAL_API_KEY",
+        auth="optional",
+        models=("qwen",),
+        default_model="qwen",
+    )
+
+    config = openai_compatible_config_from_provider(provider)
+
+    assert config.api_key == ""
+    assert config.omit_authorization_header is True
+    assert provider_has_usable_credentials(provider) is True
+
+
+def test_openai_compatible_config_from_provider_uses_optional_auth_when_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "protected")
+    provider = OpenAICompatibleProviderConfig(
+        name="local",
+        api_key_env="LOCAL_API_KEY",
+        auth="optional",
+        models=("qwen",),
+        default_model="qwen",
+    )
+
+    config = openai_compatible_config_from_provider(provider)
+
+    assert config.api_key == "protected"
+    assert config.omit_authorization_header is False
+
+
 def test_openai_compatible_config_from_provider_preserves_openai_base_url_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

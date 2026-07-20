@@ -22,7 +22,7 @@ from tau_ai.env import (
 from tau_coding.catalog_loader import user_catalog_path
 from tau_coding.commands import format_reload_summary
 from tau_coding.credentials import FileCredentialStore
-from tau_coding.extensions import StderrUiBridge
+from tau_coding.extensions import ExtensionRuntime, StderrUiBridge
 from tau_coding.provider_config import (
     DEFAULT_MODEL,
     DEFAULT_PROVIDER_NAME,
@@ -657,7 +657,16 @@ async def run_openai_print_mode(
     project_extensions_enabled: bool = False,
 ) -> bool:
     """Run print mode with the OpenAI-compatible provider configured from the environment."""
-    settings = load_provider_settings()
+    resource_paths = TauResourcePaths(cwd=cwd)
+    extension_runtime = ExtensionRuntime()
+    if extensions_enabled or extension_paths:
+        extension_runtime.load(
+            resource_paths,
+            extra_paths=extension_paths,
+            include_resource_dirs=extensions_enabled,
+            include_project_dir=project_extensions_enabled,
+        )
+    settings = extension_runtime.compose_provider_settings(load_provider_settings())
     shell_settings = load_shell_settings()
     selection = resolve_provider_selection(settings, provider_name=provider_name, model=model)
     provider = create_model_provider(
@@ -681,6 +690,8 @@ async def run_openai_print_mode(
             provider_settings=settings,
             runtime_provider_config=selection.provider,
             shell_command_prefix=shell_settings.shell_command_prefix,
+            resource_paths=resource_paths,
+            extension_runtime=extension_runtime,
             extension_paths=extension_paths,
             extensions_enabled=extensions_enabled,
             project_extensions_enabled=project_extensions_enabled,
@@ -707,6 +718,7 @@ async def run_print_mode(
     extension_paths: tuple[Path, ...] = (),
     extensions_enabled: bool = True,
     project_extensions_enabled: bool = False,
+    extension_runtime: ExtensionRuntime | None = None,
 ) -> bool:
     """Run one non-interactive prompt and print streamed events.
 
@@ -729,6 +741,7 @@ async def run_print_mode(
             extension_paths=extension_paths,
             extensions_enabled=extensions_enabled,
             project_extensions_enabled=project_extensions_enabled,
+            extension_runtime=extension_runtime,
         )
     )
     session.extension_runtime.set_ui_bridge(StderrUiBridge())

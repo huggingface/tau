@@ -73,6 +73,7 @@ from tau_coding.commands import (
 )
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.events import AutoRetryStartEvent, CodingSessionEvent, QueueUpdateEvent
+from tau_coding.extensions import ExtensionRuntime
 from tau_coding.extensions.api import (
     KeyInterceptor,
     MainViewFactory,
@@ -6021,13 +6022,23 @@ async def run_tui_app(
     if new_session and session_id is not None:
         raise RuntimeError("--session and --new-session cannot be used together")
 
-    provider_settings = load_provider_settings()
     shell_settings = load_shell_settings()
     manager = session_manager or SessionManager()
     record = _explicit_resume_record(
         manager,
         session_id=session_id,
     )
+    startup_cwd = record.cwd if record is not None else cwd
+    resource_paths = TauResourcePaths(cwd=startup_cwd)
+    extension_runtime = ExtensionRuntime()
+    if extensions_enabled or extension_paths:
+        extension_runtime.load(
+            resource_paths,
+            extra_paths=extension_paths,
+            include_resource_dirs=extensions_enabled,
+            include_project_dir=project_extensions_enabled,
+        )
+    provider_settings = extension_runtime.compose_provider_settings(load_provider_settings())
     selection = _resolve_tui_startup_selection(
         provider_settings,
         record=record,
@@ -6086,6 +6097,8 @@ async def run_tui_app(
                 auto_compact_token_threshold=auto_compact_token_threshold,
                 index_on_first_persist=index_on_first_persist,
                 shell_command_prefix=shell_settings.shell_command_prefix,
+                resource_paths=resource_paths,
+                extension_runtime=extension_runtime,
                 extension_paths=extension_paths,
                 extensions_enabled=extensions_enabled,
                 project_extensions_enabled=project_extensions_enabled,

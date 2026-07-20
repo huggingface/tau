@@ -24,11 +24,13 @@ from tau_coding.extensions import (
     InputEvent,
     InputHookResult,
     MessageRenderOptions,
+    OpenAICompatibleProvider,
     ToolCallHookResult,
     ToolResultHookResult,
     discover_extensions,
     load_extensions,
 )
+from tau_coding.provider_config import ProviderSettings
 
 pytestmark = pytest.mark.anyio
 
@@ -109,6 +111,8 @@ class RecordingSession:
         self.followed_up: list[str] = []
         self.custom_entries: list[tuple[str, dict[str, JSONValue]]] = []
         self.queued_custom: list[tuple[str, str | None, dict[str, JSONValue] | None]] = []
+        self.extension_providers: tuple[object, ...] = ()
+        self.selected_model: tuple[str, str, bool] | None = None
 
     def queue_steering_message(
         self,
@@ -132,6 +136,22 @@ class RecordingSession:
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         self.custom_entries.append((namespace, data))
+
+    def sync_extension_providers(
+        self,
+        providers: tuple[object, ...],
+        owned_names: frozenset[str],
+    ) -> None:
+        self.extension_providers = providers
+
+    def select_provider_model(
+        self,
+        provider_name: str,
+        model: str,
+        *,
+        persist_default: bool,
+    ) -> None:
+        self.selected_model = (provider_name, model, persist_default)
 
 
 # -- discovery and loading ----------------------------------------------------
@@ -2030,6 +2050,75 @@ async def test_inflight_handler_touching_stale_api_records_diagnostic(
 
 def _inline_api(runtime: ExtensionRuntime, name: str) -> ExtensionAPI:
     return cast(ExtensionAPI, _register_inline_extension(runtime, name))
+
+
+def test_extension_provider_registration_refresh_selection_and_unregister(
+    tmp_path: Path,
+) -> None:
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "local-provider")
+    session = RecordingSession(tmp_path)
+    runtime.bind(session)
+
+    api.register_provider(
+        OpenAICompatibleProvider(
+            name="local",
+            display_name="Local server",
+            base_url="http://127.0.0.1:8080/v1/",
+            api_key_env="LOCAL_API_KEY",
+            auth="optional",
+            models=("coder-a",),
+            default_model="coder-a",
+        )
+    )
+    settings = runtime.compose_provider_settings(ProviderSettings())
+    provider = settings.get_provider("local")
+    assert provider.base_url == "http://127.0.0.1:8080/v1"
+    assert provider.models == ("coder-a",)
+    assert provider.auth == "optional"  # type: ignore[union-attr]
+
+    api.update_provider_models("local", ("coder-a", "coder-b"), default_model="coder-b")
+    assert session.extension_providers[0].models == ("coder-a", "coder-b")  # type: ignore[union-attr]
+    api.select_model("local", "coder-b")
+    assert session.selected_model == ("local", "coder-b", False)
+
+    api.unregister_provider("local")
+    assert session.extension_providers == ()
+
+
+def test_extension_provider_registration_is_owner_isolated(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    first = _inline_api(runtime, "first")
+    second = _inline_api(runtime, "second")
+    provider = OpenAICompatibleProvider(
+        name="shared",
+        base_url="http://localhost:9000/v1",
+        models=("model",),
+        default_model="model",
+        auth="none",
+    )
+    first.register_provider(provider)
+
+    with pytest.raises(ExtensionError, match="already registered"):
+        second.register_provider(provider)
+    with pytest.raises(ExtensionError, match="does not own"):
+        second.update_provider_models("shared", ("other",), default_model="other")
+
+
+def test_extension_settings_are_user_scoped_and_survive_reload(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    runtime = ExtensionRuntime()
+    runtime.load(paths, include_resource_dirs=False)
+    api = _inline_api(runtime, "local-provider")
+
+    path = api.save_settings({"endpoint": "http://127.0.0.1:8080/v1", "models": ["coder.gguf"]})
+    assert path == paths.root / "extensions" / "settings" / "local-provider.json"
+    runtime.reset_for_reload()
+    reloaded_api = _inline_api(runtime, "local-provider")
+    assert reloaded_api.load_settings()["models"] == ["coder.gguf"]
+
+    reloaded_api.clear_settings()
+    assert reloaded_api.load_settings() == {}
 
 
 def test_render_custom_message_uses_registered_renderer(tmp_path: Path) -> None:
