@@ -76,6 +76,12 @@ If you prefer `uv`, install it with:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
+Tau is also available on [conda-forge](https://conda-forge.org), and can be installed using [pixi](https://pixi.prefix.dev/latest/#installation):
+
+```bash
+pixi global install tau-ai
+```
+
 For local development:
 
 ```bash
