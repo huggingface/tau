@@ -5644,9 +5644,10 @@ async def test_tui_login_api_provider_picker_filters_by_name_and_display_name() 
 
         assert isinstance(app.screen, LoginProviderPickerScreen)
         search = app.screen.query_one("#login-provider-search", Input)
-        assert search.has_focus
         search.value = "kimi"
-        await pilot.pause()
+
+        # Flush the asynchronous filter events completely
+        await pilot.wait_for_scheduled_animations()
 
         provider_list = app.screen.query_one("#login-provider-list", ListView)
         labels = [str(item.query_one(Label).render()) for item in provider_list.children]
@@ -5654,7 +5655,10 @@ async def test_tui_login_api_provider_picker_filters_by_name_and_display_name() 
         assert "Kimi Code subscription — kimi-code" in labels
 
         search.value = "moonshotai"
-        await pilot.pause()
+
+        # Flush the second async filter event
+        await pilot.wait_for_scheduled_animations()
+
         labels = [str(item.query_one(Label).render()) for item in provider_list.children]
         assert labels == [
             "Moonshot AI (Kimi) — moonshotai",
@@ -8177,3 +8181,23 @@ async def test_component_rebind_clears_slots_and_interceptors() -> None:
         assert app.query_one("#transcript", TranscriptView).display
         assert not app.query("#ext-rebind")
         assert not app.query("#ext-view")
+
+
+@pytest.mark.anyio
+async def test_tui_login_provider_search_autofocus() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/login"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, LoginMethodPickerScreen)
+        app.screen.action_cursor_down()
+        app.screen.action_select_cursor()
+
+        await pilot.wait_for_scheduled_animations()
+
+        search = app.screen.query_one("#login-provider-search", Input)
+        assert search.has_focus, "Search input failed to automatically gain focus on screen mount."
