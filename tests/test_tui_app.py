@@ -4285,6 +4285,41 @@ async def test_tui_app_session_picker_search_filters_sessions() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_app_session_picker_search_does_not_match_workspace_path() -> None:
+    session = FakeSession()
+    session.session_manager = _FakeSessionManager(
+        [
+            CodingSessionRecord(
+                id="session-1",
+                path=Path("/tmp/session-1.jsonl"),
+                cwd=Path("/workspace/path-query"),
+                model="model-query",
+                title="Named session",
+                created_at=1.0,
+                updated_at=2.0,
+            ),
+        ]
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+r")
+        assert isinstance(app.screen, SessionPickerScreen)
+
+        search = app.screen.query_one("#session-picker-search", Input)
+        session_list = app.screen.query_one("#session-picker-list", ListView)
+
+        search.value = "path-query"
+        await pilot.pause()
+        assert list(session_list.children) == []
+
+        for query in ("model-query", "named"):
+            search.value = query
+            await pilot.pause()
+            assert len(session_list.children) == 1
+
+
+@pytest.mark.anyio
 async def test_tui_app_session_picker_search_with_no_matches_shows_help_text() -> None:
     session = FakeSession()
     session.session_manager = _FakeSessionManager(

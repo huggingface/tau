@@ -30,9 +30,9 @@ From inside the TUI:
 /resume <id>       # resume a specific session
 ```
 
-The `/resume` picker has a search field so you can filter by title, model, or
-working directory. Start typing to narrow the list, then use the arrow keys
-and Enter (or click) to pick a session.
+The `/resume` picker has a search field that filters by session name or model.
+Start typing to narrow the list, then use the arrow keys and Enter (or click) to
+pick a session.
 
 To deliberately start fresh instead of resuming, use `tau --new-session` (or
 `/new` in the TUI).
