@@ -36,7 +36,12 @@ from tau_coding.session_stats import SessionStats
 from tau_coding.skills import Skill
 from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.tui.autocomplete import CompletionState
-from tau_coding.tui.config import TAU_DARK_THEME, TuiRoleStyle, TuiTheme
+from tau_coding.tui.config import (
+    TAU_DARK_THEME,
+    ContextUsageDisplay,
+    TuiRoleStyle,
+    TuiTheme,
+)
 from tau_coding.tui.state import ChatItem, TuiState
 from tau_coding.version import current_version
 
@@ -82,6 +87,9 @@ class SessionSummarySource(Protocol):
 
     @property
     def context_window_tokens(self) -> int: ...
+
+    @property
+    def context_usage_percent(self) -> int: ...
 
     @property
     def thinking_level(self) -> str: ...
@@ -136,13 +144,23 @@ class CompactSessionInfo(Static):
         session: SessionSummarySource,
         *,
         theme: TuiTheme = TAU_DARK_THEME,
+        context_usage_display: ContextUsageDisplay = "tokens",
     ) -> None:
         """Redraw compact session metadata only when its inputs changed."""
-        fingerprint = _session_summary_fingerprint(session, theme=theme)
+        fingerprint = (
+            *_session_summary_fingerprint(session, theme=theme),
+            context_usage_display,
+        )
         if fingerprint == self._summary_fingerprint:
             return
         self._summary_fingerprint = fingerprint
-        self.update(render_compact_session_info(session, theme=theme))
+        self.update(
+            render_compact_session_info(
+                session,
+                theme=theme,
+                context_usage_display=context_usage_display,
+            )
+        )
 
 
 def _session_summary_fingerprint(
@@ -1571,6 +1589,7 @@ def render_compact_session_info(
     session: SessionSummarySource,
     *,
     theme: TuiTheme = TAU_DARK_THEME,
+    context_usage_display: ContextUsageDisplay = "tokens",
 ) -> RenderableType:
     """Render the session facts below the prompt."""
     left = _styled_cwd(session.cwd, theme=theme)
@@ -1579,8 +1598,10 @@ def render_compact_session_info(
     right.append(f":{session.model}", style=theme.prompt_text)
     right.append(" ")
     right.append(f"({_thinking_level(session)})", style=theme.completion_description)
-    right.append("\n")
-    right.append(_context_usage(session), style=theme.completion_description)
+    context_usage = _context_usage(session, display=context_usage_display)
+    if context_usage:
+        right.append("\n")
+        right.append(context_usage, style=theme.completion_description)
 
     table = Table.grid(expand=True)
     table.add_column(ratio=1)
@@ -1987,7 +2008,23 @@ def _plain_text(text: str, *, body_style: str) -> Text:
     return Text(text, style=body_style, overflow="fold", no_wrap=False)
 
 
-def _context_usage(session: SessionSummarySource) -> str:
+def _context_usage(session: SessionSummarySource, *, display: ContextUsageDisplay) -> str:
+    if display == "off":
+        return ""
+
+    tokens = _context_usage_tokens(session)
+    percent_text = f"{session.context_usage_percent}%"
+
+    if display == "tokens":
+        return tokens
+    if display == "percent":
+        return percent_text
+    if display == "both":
+        return f"{tokens} · {percent_text}"
+    return tokens
+
+
+def _context_usage_tokens(session: SessionSummarySource) -> str:
     threshold = session.auto_compact_token_threshold
     limit = session.context_window_tokens if threshold is None or threshold <= 0 else threshold
     return f"{_compact_token_count(session.context_token_estimate)}/{_compact_token_count(limit)}"

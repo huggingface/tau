@@ -108,6 +108,7 @@ from tau_coding.tui.terminal_title import TerminalTitleController
 from tau_coding.tui.widgets import (
     TRANSCRIPT_WINDOW_ITEMS,
     TRANSCRIPT_WINDOW_OVERSCAN_ITEMS,
+    CompactSessionInfo,
     LeftAlignedMarkdownHeading,
     StreamingTranscriptMessageWidget,
     TauMarkdownBlock,
@@ -174,6 +175,7 @@ class FakeSession:
         self.context_token_estimate = 12034
         self.auto_compact_token_threshold = 200000
         self.context_window_tokens = 216384
+        self.context_usage_percent = 6
         self.thinking_level = "medium"
         self.available_thinking_levels = ("off", "minimal", "low", "medium", "high", "xhigh")
         self.state = FakeSessionState()
@@ -594,6 +596,39 @@ def test_compact_session_info_styles_parent_path_as_metadata() -> None:
     assert str(cwd.spans[0].style) == TAU_DARK_THEME.completion_description
     assert str(cwd.spans[1].style) == TAU_DARK_THEME.prompt_text
     assert str(cwd.spans[2].style) == TAU_DARK_THEME.completion_description
+
+
+def test_compact_session_info_can_render_context_usage_percent() -> None:
+    console = Console(record=True, width=120)
+
+    console.print(render_compact_session_info(FakeSession(), context_usage_display="percent"))
+
+    output = console.export_text()
+    assert "6%" in output
+    assert "12k/200k context" not in output
+    assert "openai:fake-model" in output
+
+
+def test_compact_session_info_can_render_context_usage_tokens_and_percent() -> None:
+    console = Console(record=True, width=120)
+
+    console.print(render_compact_session_info(FakeSession(), context_usage_display="both"))
+
+    output = console.export_text()
+    assert "12k/200k · 6%" in output
+    assert "openai:fake-model" in output
+
+
+def test_compact_session_info_can_hide_context_usage() -> None:
+    console = Console(record=True, width=120)
+
+    console.print(render_compact_session_info(FakeSession(), context_usage_display="off"))
+
+    output = console.export_text()
+    assert "12k/200k context" not in output
+    assert "6% context" not in output
+    assert "openai:fake-model" in output
+    assert "(medium)" in output
 
 
 def test_compact_token_count_uses_thousands_suffix() -> None:
@@ -2411,6 +2446,45 @@ async def test_tui_sidebar_is_visible_on_medium_windows() -> None:
         assert sidebar.styles.background == Color.parse(TAU_DARK_THEME.prompt_background)
         assert compact_info.display is True
         assert not app.has_class("-hide-sidebar")
+
+
+@pytest.mark.anyio
+async def test_tui_app_uses_configured_context_usage_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_displays: list[str] = []
+
+    def capture_update_from_session(
+        self: CompactSessionInfo,
+        session: object,
+        *,
+        theme: object = None,
+        context_usage_display: str = "tokens",
+    ) -> None:
+        del self, session, theme
+        captured_displays.append(context_usage_display)
+
+    monkeypatch.setattr(CompactSessionInfo, "update_from_session", capture_update_from_session)
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(context_usage_display="percent"))
+
+    async with app.run_test(size=(120, 30)):
+        app._refresh_chrome()
+
+    assert captured_displays
+    assert all(display == "percent" for display in captured_displays)
+
+
+def test_compact_session_info_redraws_when_context_usage_display_changes() -> None:
+    widget = CompactSessionInfo()
+    session = FakeSession()
+    renders: list[object] = []
+    widget.update = renders.append  # type: ignore[method-assign]
+
+    widget.update_from_session(session, context_usage_display="tokens")
+    widget.update_from_session(session, context_usage_display="tokens")
+    widget.update_from_session(session, context_usage_display="percent")
+
+    assert len(renders) == 2
 
 
 @pytest.mark.anyio

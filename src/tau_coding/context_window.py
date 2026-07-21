@@ -170,6 +170,13 @@ def auto_compaction_threshold_for_context_window(context_window_tokens: int) -> 
     return max(1, context_window_tokens - DEFAULT_COMPACTION_RESERVE_TOKENS)
 
 
+def context_usage_percent(used_tokens: int, context_window_tokens: int) -> int:
+    """Return whole-number context usage percent for a model context window."""
+    if context_window_tokens <= 0:
+        raise ValueError("context_window_tokens must be positive")
+    return min(999, round((used_tokens / context_window_tokens) * 100))
+
+
 def estimate_context_usage(
     *,
     system: str,

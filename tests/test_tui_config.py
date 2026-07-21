@@ -180,6 +180,23 @@ def test_tui_sidebar_position_defaults_to_right() -> None:
     assert tui_settings_from_json({}).sidebar_position == "right"
 
 
+def test_tui_context_usage_display_defaults_to_tokens() -> None:
+    assert TuiSettings().context_usage_display == "tokens"
+
+
+def test_tui_context_usage_display_roundtrips() -> None:
+    for value in ("tokens", "percent", "both", "off"):
+        settings = tui_settings_from_json({"context_usage_display": value})
+        assert settings.context_usage_display == value
+        assert settings.to_json()["context_usage_display"] == value
+
+
+def test_tui_context_usage_display_rejects_invalid() -> None:
+    for value in ("bar", "", 123):
+        with pytest.raises(TuiConfigError, match="context_usage_display"):
+            tui_settings_from_json({"context_usage_display": value})
+
+
 def test_tui_sidebar_position_roundtrips() -> None:
     for value in ("left", "right", "off"):
         settings = tui_settings_from_json({"sidebar_position": value})
