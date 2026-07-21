@@ -76,6 +76,14 @@ Type `@` in the prompt to open file suggestions from the project tree, and inser
 a path like `@src/app.py`. Tau skips hidden and generated directories (`.git`,
 `.venv`, `node_modules`, `__pycache__`, `build`, `dist`).
 
+## Dropping files into the prompt
+
+Drag one or more files from your file manager onto the terminal window and Tau
+inserts their filesystem paths into the prompt at the cursor, separated by
+spaces. Paths that contain spaces are quoted automatically, and any text you
+already typed is preserved. This works anywhere over the TUI, not just above
+the input box, because the terminal delivers the drop as text input.
+
 ## Tool output
 
 Tool calls keep a static marker in the transcript while they run: orange means
