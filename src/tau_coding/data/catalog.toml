@@ -3997,7 +3997,7 @@ kind = "openai-compatible"
 base_url = "https://router.huggingface.co/v1"
 api_key_env = "HF_TOKEN"
 credential_name = "huggingface"
-models = ["MiniMaxAI/MiniMax-M2", "MiniMaxAI/MiniMax-M2.1", "MiniMaxAI/MiniMax-M2.5", "MiniMaxAI/MiniMax-M2.7", "MiniMaxAI/MiniMax-M3", "Qwen/Qwen3-235B-A22B", "Qwen/Qwen3-235B-A22B-Thinking-2507", "Qwen/Qwen3-32B", "Qwen/Qwen3-Coder-30B-A3B-Instruct", "Qwen/Qwen3-Coder-480B-A35B-Instruct", "Qwen/Qwen3-Coder-Next", "Qwen/Qwen3-Next-80B-A3B-Instruct", "Qwen/Qwen3-Next-80B-A3B-Thinking", "Qwen/Qwen3.5-122B-A10B", "Qwen/Qwen3.5-27B", "Qwen/Qwen3.5-35B-A3B", "Qwen/Qwen3.5-397B-A17B", "Qwen/Qwen3.5-9B", "Qwen/Qwen3.6-27B", "Qwen/Qwen3.6-35B-A3B", "XiaomiMiMo/MiMo-V2-Flash", "XiaomiMiMo/MiMo-V2.5-Pro", "deepseek-ai/DeepSeek-R1", "deepseek-ai/DeepSeek-R1-0528", "deepseek-ai/DeepSeek-V3.2", "deepseek-ai/DeepSeek-V4-Flash", "deepseek-ai/DeepSeek-V4-Pro", "google/gemma-4-26B-A4B-it", "google/gemma-4-31B-it", "meta-llama/Llama-3.3-70B-Instruct", "moonshotai/Kimi-K2-Instruct", "moonshotai/Kimi-K2-Instruct-0905", "moonshotai/Kimi-K2-Thinking", "moonshotai/Kimi-K2.5", "moonshotai/Kimi-K2.6", "moonshotai/Kimi-K2.7-Code", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "stepfun-ai/Step-3.5-Flash", "stepfun-ai/Step-3.7-Flash", "zai-org/GLM-4.5", "zai-org/GLM-4.5-Air", "zai-org/GLM-4.5V", "zai-org/GLM-4.6", "zai-org/GLM-4.7", "zai-org/GLM-4.7-Flash", "zai-org/GLM-5", "zai-org/GLM-5.1", "zai-org/GLM-5.2"]
+models = ["MiniMaxAI/MiniMax-M2", "MiniMaxAI/MiniMax-M2.1", "MiniMaxAI/MiniMax-M2.5", "MiniMaxAI/MiniMax-M2.7", "MiniMaxAI/MiniMax-M3", "Qwen/Qwen3-235B-A22B", "Qwen/Qwen3-235B-A22B-Thinking-2507", "Qwen/Qwen3-32B", "Qwen/Qwen3-Coder-30B-A3B-Instruct", "Qwen/Qwen3-Coder-480B-A35B-Instruct", "Qwen/Qwen3-Coder-Next", "Qwen/Qwen3-Next-80B-A3B-Instruct", "Qwen/Qwen3.5-122B-A10B", "Qwen/Qwen3.5-27B", "Qwen/Qwen3.5-35B-A3B", "Qwen/Qwen3.5-397B-A17B", "Qwen/Qwen3.5-9B", "Qwen/Qwen3.6-27B", "Qwen/Qwen3.6-35B-A3B", "XiaomiMiMo/MiMo-V2.5-Pro", "deepseek-ai/DeepSeek-R1", "deepseek-ai/DeepSeek-R1-0528", "deepseek-ai/DeepSeek-V3.2", "deepseek-ai/DeepSeek-V4-Flash", "deepseek-ai/DeepSeek-V4-Pro", "google/gemma-4-26B-A4B-it", "google/gemma-4-31B-it", "meta-llama/Llama-3.3-70B-Instruct", "moonshotai/Kimi-K2-Instruct", "moonshotai/Kimi-K2-Instruct-0905", "moonshotai/Kimi-K2.5", "moonshotai/Kimi-K2.6", "moonshotai/Kimi-K2.7-Code", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "stepfun-ai/Step-3.5-Flash", "stepfun-ai/Step-3.7-Flash", "zai-org/GLM-4.5", "zai-org/GLM-4.5-Air", "zai-org/GLM-4.5V", "zai-org/GLM-4.6", "zai-org/GLM-4.7", "zai-org/GLM-4.7-Flash", "zai-org/GLM-5", "zai-org/GLM-5.1", "zai-org/GLM-5.2"]
 default_model = "moonshotai/Kimi-K2.6"
 docs_url = "https://huggingface.co/docs/inference-providers"
 api = "openai-completions"
@@ -4018,7 +4018,6 @@ thinking_parameter = "reasoning_effort"
 "Qwen/Qwen3-Coder-480B-A35B-Instruct" = 262144
 "Qwen/Qwen3-Coder-Next" = 262144
 "Qwen/Qwen3-Next-80B-A3B-Instruct" = 262144
-"Qwen/Qwen3-Next-80B-A3B-Thinking" = 262144
 "Qwen/Qwen3.5-122B-A10B" = 262144
 "Qwen/Qwen3.5-27B" = 262144
 "Qwen/Qwen3.5-35B-A3B" = 262144
@@ -4026,7 +4025,6 @@ thinking_parameter = "reasoning_effort"
 "Qwen/Qwen3.5-9B" = 262144
 "Qwen/Qwen3.6-27B" = 262144
 "Qwen/Qwen3.6-35B-A3B" = 262144
-"XiaomiMiMo/MiMo-V2-Flash" = 262144
 "XiaomiMiMo/MiMo-V2.5-Pro" = 1048576
 "deepseek-ai/DeepSeek-R1" = 64000
 "deepseek-ai/DeepSeek-R1-0528" = 163840
@@ -4038,7 +4036,6 @@ thinking_parameter = "reasoning_effort"
 "meta-llama/Llama-3.3-70B-Instruct" = 131072
 "moonshotai/Kimi-K2-Instruct" = 131072
 "moonshotai/Kimi-K2-Instruct-0905" = 262144
-"moonshotai/Kimi-K2-Thinking" = 262144
 "moonshotai/Kimi-K2.5" = 262144
 "moonshotai/Kimi-K2.6" = 262144
 "moonshotai/Kimi-K2.7-Code" = 262144
@@ -4263,15 +4260,6 @@ max_tokens = 65536
 compat = { supportsDeveloperRole = false }
 cost = { input = 0.07, output = 0.26, cacheRead = 0, cacheWrite = 0 }
 
-[providers.model_metadata."Qwen/Qwen3-Next-80B-A3B-Thinking"]
-name = "Qwen3-Next-80B-A3B-Thinking"
-reasoning = false
-input = ["text"]
-context_window = 262144
-max_tokens = 131072
-compat = { supportsDeveloperRole = false }
-cost = { input = 0.3, output = 2, cacheRead = 0, cacheWrite = 0 }
-
 [providers.model_metadata."Qwen/Qwen3.5-122B-A10B"]
 name = "Qwen3.5 122B-A10B"
 reasoning = true
@@ -4325,15 +4313,6 @@ context_window = 262144
 max_tokens = 65536
 compat = { supportsDeveloperRole = false }
 cost = { input = 0.15, output = 0.95, cacheRead = 0, cacheWrite = 0 }
-
-[providers.model_metadata."XiaomiMiMo/MiMo-V2-Flash"]
-name = "MiMo-V2-Flash"
-reasoning = true
-input = ["text"]
-context_window = 262144
-max_tokens = 4096
-compat = { supportsDeveloperRole = false }
-cost = { input = 0.1, output = 0.3, cacheRead = 0, cacheWrite = 0 }
 
 [providers.model_metadata."XiaomiMiMo/MiMo-V2.5-Pro"]
 name = "MiMo-V2.5-Pro"
@@ -4397,15 +4376,6 @@ context_window = 131072
 max_tokens = 4096
 compat = { supportsDeveloperRole = false }
 cost = { input = 0.59, output = 0.79, cacheRead = 0, cacheWrite = 0 }
-
-[providers.model_metadata."moonshotai/Kimi-K2-Thinking"]
-name = "Kimi-K2-Thinking"
-reasoning = true
-input = ["text"]
-context_window = 262144
-max_tokens = 262144
-compat = { supportsDeveloperRole = false }
-cost = { input = 0.6, output = 2.5, cacheRead = 0.15, cacheWrite = 0 }
 
 [providers.model_metadata."moonshotai/Kimi-K2.7-Code"]
 name = "Kimi K2.7 Code"

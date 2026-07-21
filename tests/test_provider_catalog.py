@@ -210,7 +210,7 @@ def test_builtin_catalog_golden_nvidia_entry() -> None:
     assert gpt_oss_metadata.max_tokens == 65_536
 
 
-def test_builtin_catalog_huggingface_model_parity() -> None:
+def test_builtin_catalog_huggingface_model_expansion() -> None:
     entry = builtin_provider_entry("huggingface")
     assert entry is not None
     added_models = {
@@ -219,14 +219,12 @@ def test_builtin_catalog_huggingface_model_parity() -> None:
         "Qwen/Qwen3-235B-A22B",
         "Qwen/Qwen3-32B",
         "Qwen/Qwen3-Coder-30B-A3B-Instruct",
-        "Qwen/Qwen3-Next-80B-A3B-Thinking",
         "Qwen/Qwen3.5-122B-A10B",
         "Qwen/Qwen3.5-27B",
         "Qwen/Qwen3.5-35B-A3B",
         "Qwen/Qwen3.5-9B",
         "Qwen/Qwen3.6-27B",
         "Qwen/Qwen3.6-35B-A3B",
-        "XiaomiMiMo/MiMo-V2-Flash",
         "XiaomiMiMo/MiMo-V2.5-Pro",
         "deepseek-ai/DeepSeek-R1",
         "deepseek-ai/DeepSeek-V4-Flash",
@@ -234,7 +232,6 @@ def test_builtin_catalog_huggingface_model_parity() -> None:
         "google/gemma-4-26B-A4B-it",
         "google/gemma-4-31B-it",
         "meta-llama/Llama-3.3-70B-Instruct",
-        "moonshotai/Kimi-K2-Thinking",
         "moonshotai/Kimi-K2.7-Code",
         "openai/gpt-oss-120b",
         "openai/gpt-oss-20b",
@@ -247,7 +244,7 @@ def test_builtin_catalog_huggingface_model_parity() -> None:
         "zai-org/GLM-5.2",
     }
 
-    assert len(entry.models) == 49
+    assert len(entry.models) == 46
     assert added_models <= set(entry.models)
     assert set(entry.context_windows or {}) == set(entry.models)
     assert set(entry.model_metadata) == set(entry.models)

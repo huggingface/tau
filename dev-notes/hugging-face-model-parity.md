@@ -2,7 +2,7 @@
 
 ## What changed
 
-Tau's built-in Hugging Face Inference Providers catalog now contains all 49 models in Pi's generated Hugging Face catalog. This adds 31 models across DeepSeek, Gemma, GLM, GPT OSS, Kimi, Llama, MiniMax, MiMo, Qwen, and Step families.
+Tau's built-in Hugging Face Inference Providers catalog now contains 46 models. This adds 28 live-routable models from Pi's generated Hugging Face catalog across DeepSeek, Gemma, GLM, GPT OSS, Kimi, Llama, MiniMax, MiMo, Qwen, and Step families. Live testing excluded three Pi entries that no enabled Hugging Face inference provider could serve: `Qwen/Qwen3-Next-80B-A3B-Thinking`, `XiaomiMiMo/MiMo-V2-Flash`, and `moonshotai/Kimi-K2-Thinking`.
 
 Each addition includes the provider model ID, display name, reasoning and input capabilities, context window, output limit, compatibility metadata, and token pricing. The existing `moonshotai/Kimi-K2.6` default remains unchanged.
 

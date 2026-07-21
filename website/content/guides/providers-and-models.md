@@ -100,7 +100,7 @@ needed. Available models and plan limits change over time; consult the
 ### Hugging Face Inference Providers
 
 Log in with `/login huggingface` or set `HF_TOKEN`. Tau's built-in Hugging Face
-catalog includes 49 coding-capable models routed through
+catalog includes 46 coding-capable models routed through
 `https://router.huggingface.co/v1`, including DeepSeek, Gemma, GLM, GPT OSS,
 Kimi, Llama, MiniMax, MiMo, Qwen, and Step families. Use `/model` to search the
 full list; model availability and the inference provider selected by Hugging

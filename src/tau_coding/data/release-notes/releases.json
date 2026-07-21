@@ -4,7 +4,7 @@
     "date": "2026-07-20",
     "sections": {
       "New": [
-        "Add 31 Hugging Face Inference Providers models for full parity with Pi's built-in Hugging Face catalog."
+        "Add 28 live-routable Hugging Face Inference Providers models from Pi's built-in catalog."
       ],
       "Changed": [
         "Default the TUI sidebar to the right side while preserving explicit left, right, and off preferences.",
