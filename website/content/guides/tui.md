@@ -124,7 +124,8 @@ estimated cost, automatic-compaction threshold, and loaded tools, skills, prompt
 templates, extensions, and context files such as `AGENTS.md`. Tool, prompt, and extension
 names use compact comma-separated lists. Skills and context files use bullet
 lists, with one item or path per line. Project context paths are relative to the
-working directory; context loaded from outside the project uses its full path.
+working directory; context loaded from the home directory starts with `~/`, while
+other context loaded from outside the project uses its full path.
 
 The wider, borderless sidebar uses the prompt field's background color, bright
 section headings, quieter gray values, and keeps Tau's versioned `τ = 2π` mark
@@ -145,8 +146,8 @@ first line and the approximate active context as `used/limit` on the second.
 Unlike cumulative usage, this estimate describes the system prompt, tools,
 and active messages Tau expects to send on the next request. It can decrease
 after compaction while cumulative usage continues to increase. The
-working-directory name is emphasized while the parent path and Git branch use
-the quieter metadata color.
+working-directory name and model are emphasized while the parent path, Git
+branch, and provider use the quieter metadata color.
 
 The sidebar appears on the **right** by default. It can be moved to the **left**
 or turned **off** entirely by setting `sidebar_position` in `~/.tau/tui.json` —
