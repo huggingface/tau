@@ -85,6 +85,24 @@ def test_tool_result_message_records_canonical_tool_output() -> None:
     assert message.model_dump(by_alias=True)["toolCallId"] == "call-1"
 
 
+def test_tool_result_message_accepts_pi_camel_case_wire_keys() -> None:
+    message = ToolResultMessage.model_validate(
+        {
+            "role": "toolResult",
+            "toolCallId": "call-1",
+            "toolName": "read",
+            "content": [{"type": "text", "text": "file contents"}],
+            "timestamp": 123,
+            "isError": False,
+        }
+    )
+
+    assert message.tool_call_id == "call-1"
+    assert message.tool_name == "read"
+    assert message.is_error is False
+    assert message.text == "file contents"
+
+
 def test_models_reject_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         UserMessage(content="hello", unexpected=True)  # type: ignore[call-arg]

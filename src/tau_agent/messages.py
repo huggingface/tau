@@ -25,8 +25,8 @@ class WireModel(BaseModel):
 
     model_config = ConfigDict(
         extra="forbid",
-        populate_by_name=True,
         validate_by_name=True,
+        validate_by_alias=True,
         serialize_by_alias=True,
         alias_generator=_to_camel,
     )
