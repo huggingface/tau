@@ -25,13 +25,14 @@ tau
 /login github-copilot # authenticate GitHub Copilot with a device code
 /login opencode-go  # save an OpenCode Go API key
 /login nvidia       # save an NVIDIA NIM API key
+/login nebius       # save a Nebius Token Factory API key
 /login custom       # add an OpenAI-compatible custom provider
 ```
 
 Built-in providers include **OpenAI**, **Anthropic**, **OpenAI Codex**
 (subscription), **GitHub Copilot**, **OpenCode Go**, **OpenCode Zen**,
 **Moonshot AI (Kimi)**, **Kimi Code** (subscription), **OpenRouter**, **Hugging Face**,
-and **NVIDIA NIM**.
+**NVIDIA NIM**, and **Nebius Token Factory**.
 
 ### OAuth subscriptions
 

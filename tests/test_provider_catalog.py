@@ -24,15 +24,15 @@ from tau_coding.provider_config import load_provider_settings
 
 VALID_PROVIDER = """
 [[providers]]
-name = "nebius"
-display_name = "Nebius AI Studio"
+name = "example-vendor"
+display_name = "Example Vendor"
 kind = "openai-compatible"
-base_url = "https://api.studio.nebius.ai/v1"
-api_key_env = "NEBIUS_API_KEY"
-credential_name = "nebius"
+base_url = "https://api.example-vendor.test/v1"
+api_key_env = "EXAMPLE_VENDOR_API_KEY"
+credential_name = "example-vendor"
 models = ["deepseek-ai/DeepSeek-V4-Pro", "Qwen/Qwen3-Coder-480B-A35B-Instruct"]
 default_model = "deepseek-ai/DeepSeek-V4-Pro"
-docs_url = "https://studio.nebius.ai/docs"
+docs_url = "https://example-vendor.test/docs"
 thinking_levels = ["off", "low", "medium", "high"]
 thinking_models = ["deepseek-ai/DeepSeek-V4-Pro"]
 thinking_default = "medium"
@@ -81,6 +81,7 @@ def test_builtin_catalog_matches_expected_providers() -> None:
         "opencode-go",
         "opencode",
         "github-copilot",
+        "nebius",
     ]
 
 
@@ -210,6 +211,23 @@ def test_builtin_catalog_golden_nvidia_entry() -> None:
     assert gpt_oss_metadata.max_tokens == 65_536
 
 
+def test_builtin_catalog_golden_nebius_entry() -> None:
+    entry = builtin_provider_entry("nebius")
+    assert entry is not None
+    assert entry.display_name == "Nebius Token Factory"
+    assert entry.kind == "openai-compatible"
+    assert entry.base_url == "https://api.tokenfactory.nebius.com/v1"
+    assert entry.api_key_env == "NEBIUS_API_KEY"
+    assert entry.credential_name == "nebius"
+    assert entry.default_model == "deepseek-ai/DeepSeek-V4-Pro"
+    assert entry.default_model in entry.models
+    assert entry.docs_url == "https://docs.tokenfactory.nebius.com"
+    assert entry.api == "openai-completions"
+    assert entry.thinking_levels == ("off", "minimal", "low", "medium", "high")
+    assert entry.thinking_default == "medium"
+    assert entry.thinking_parameter == "reasoning_effort"
+
+
 def test_builtin_catalog_golden_kimi_entries() -> None:
     moonshot = builtin_provider_entry("moonshotai")
     assert moonshot is not None
@@ -322,7 +340,7 @@ def test_user_catalog_adds_new_provider(tmp_path: Path) -> None:
     catalog = effective_catalog(paths)
     assert [entry.name for entry in catalog[:-1]] == [e.name for e in builtin_catalog()]
     entry = catalog[-1]
-    assert entry.name == "nebius"
+    assert entry.name == "example-vendor"
     assert entry.default_model == "deepseek-ai/DeepSeek-V4-Pro"
     assert entry.context_windows == {"deepseek-ai/DeepSeek-V4-Pro": 163_840}
     assert entry.thinking_levels == ("off", "low", "medium", "high")
@@ -427,7 +445,7 @@ cost_tiers = [
 
 def test_user_catalog_rejects_unknown_keys(tmp_path: Path) -> None:
     paths = _write_user_catalog(tmp_path / ".tau", VALID_PROVIDER.replace("docs_url", "docs_ur1"))
-    with pytest.raises(CatalogError, match=r"providers\.nebius"):
+    with pytest.raises(CatalogError, match=r"providers\.example-vendor"):
         effective_catalog(paths)
 
 
@@ -438,7 +456,7 @@ def test_user_catalog_rejects_default_model_not_in_models(tmp_path: Path) -> Non
             'default_model = "deepseek-ai/DeepSeek-V4-Pro"', 'default_model = "missing"'
         ),
     )
-    with pytest.raises(CatalogError, match=r"providers\.nebius\.default_model"):
+    with pytest.raises(CatalogError, match=r"providers\.example-vendor\.default_model"):
         effective_catalog(paths)
 
 
@@ -446,47 +464,47 @@ def test_user_catalog_rejects_default_model_not_in_models(tmp_path: Path) -> Non
     ("body", "match"),
     [
         (
-            VALID_PROVIDER.replace('display_name = "Nebius AI Studio"', 'display_name = ""'),
-            r"providers\.nebius\.display_name",
+            VALID_PROVIDER.replace('display_name = "Example Vendor"', 'display_name = ""'),
+            r"providers\.example-vendor\.display_name",
         ),
         (
             VALID_PROVIDER.replace(
                 'models = ["deepseek-ai/DeepSeek-V4-Pro", "Qwen/Qwen3-Coder-480B-A35B-Instruct"]',
                 'models = [""]',
             ),
-            r"providers\.nebius\.models",
+            r"providers\.example-vendor\.models",
         ),
         (
             VALID_PROVIDER.replace('"deepseek-ai/DeepSeek-V4-Pro" = 163840', '"" = 163840'),
-            r"providers\.nebius\.context_windows",
+            r"providers\.example-vendor\.context_windows",
         ),
         (
             VALID_PROVIDER.replace(
                 '"deepseek-ai/DeepSeek-V4-Pro" = 163840',
                 '"deepseek-ai/DeepSeek-V4-Pro" = 0',
             ),
-            r"providers\.nebius\.context_windows",
+            r"providers\.example-vendor\.context_windows",
         ),
         (
             VALID_PROVIDER.replace(
                 '"deepseek-ai/DeepSeek-V4-Pro" = 163840',
                 '"deepseek-ai/DeepSeek-V4-Pro" = -1',
             ),
-            r"providers\.nebius\.context_windows",
+            r"providers\.example-vendor\.context_windows",
         ),
         (
             VALID_PROVIDER.replace(
                 '"deepseek-ai/DeepSeek-V4-Pro" = 163840',
                 '"deepseek-ai/DeepSeek-V4-Pro" = true',
             ),
-            r"providers\.nebius\.context_windows",
+            r"providers\.example-vendor\.context_windows",
         ),
         (
             VALID_PROVIDER.replace(
                 '"deepseek-ai/DeepSeek-V4-Pro" = 163840',
                 '"deepseek-ai/DeepSeek-V4-Pro" = "163840"',
             ),
-            r"providers\.nebius\.context_windows",
+            r"providers\.example-vendor\.context_windows",
         ),
     ],
 )
@@ -517,8 +535,8 @@ def test_user_catalog_rejects_malformed_toml(tmp_path: Path) -> None:
 def test_user_catalog_provider_appears_in_settings(tmp_path: Path) -> None:
     paths = _write_user_catalog(tmp_path / ".tau", VALID_PROVIDER)
     settings = load_provider_settings(paths)
-    provider = settings.get_provider("nebius")
-    assert provider.base_url == "https://api.studio.nebius.ai/v1"
+    provider = settings.get_provider("example-vendor")
+    assert provider.base_url == "https://api.example-vendor.test/v1"
     assert provider.default_model == "deepseek-ai/DeepSeek-V4-Pro"
 
 
@@ -532,4 +550,4 @@ def test_user_catalog_provider_appears_with_existing_settings_file(tmp_path: Pat
         encoding="utf-8",
     )
     settings = load_provider_settings(paths)
-    assert settings.get_provider("nebius").models[0] == "deepseek-ai/DeepSeek-V4-Pro"
+    assert settings.get_provider("example-vendor").models[0] == "deepseek-ai/DeepSeek-V4-Pro"
