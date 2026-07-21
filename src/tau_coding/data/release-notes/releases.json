@@ -1,11 +1,26 @@
 [
   {
+    "version": "0.2.4",
+    "date": "2026-07-21",
+    "sections": {
+      "New": [
+        "Add 28 live-routable Hugging Face Inference Providers models from Pi's built-in catalog.",
+        "Insert files dragged onto the terminal as normalized prompt paths while preserving existing text and quoting paths that contain spaces."
+      ],
+      "Changed": [
+        "Shorten TUI sidebar context paths under the home directory with ~/ and give provider metadata quieter styling.",
+        "Raise the minimum supported Pydantic version to 2.11 for explicit wire-model alias validation and serialization behavior."
+      ],
+      "Fixed": [
+        "Show expanded prompt-template text before automatic session naming starts, and avoid redundant naming attempts after provider retries are exhausted.",
+        "Fix the resume picker search to avoid matching workspace paths while retaining session-name and model matches."
+      ]
+    }
+  },
+  {
     "version": "0.2.3",
     "date": "2026-07-20",
     "sections": {
-      "New": [
-        "Add 28 live-routable Hugging Face Inference Providers models from Pi's built-in catalog."
-      ],
       "Changed": [
         "Default the TUI sidebar to the right side while preserving explicit left, right, and off preferences.",
         "Label TUI sidebar token totals as cumulative session usage and document why cumulative provider usage can exceed the active context estimate.",
@@ -13,8 +28,7 @@
       ],
       "Fixed": [
         "Fix session JSONL reads splitting records on Unicode line separators (U+2028, U+2029, U+0085), which made affected sessions and the session index fail to load; the read-side fix also repairs already-affected session files.",
-        "Fix picker highlight text contrast so focused labels use each theme's configured highlight foreground and background colors.",
-        "Fix the resume picker search to avoid matching workspace paths while retaining session-name and model matches."
+        "Fix picker highlight text contrast so focused labels use each theme's configured highlight foreground and background colors."
       ]
     }
   },
