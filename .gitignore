@@ -10,6 +10,9 @@ wheels/
 # Virtual environments
 .venv
 
+# macOS
+.DS_Store
+
 # Hugo docs site (website/)
 website/public/
 website/resources/
