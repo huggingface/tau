@@ -577,6 +577,16 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
     assert context_line == provider_line + 1
 
 
+def test_compact_session_info_styles_provider_as_metadata() -> None:
+    console = Console(record=True, width=120, color_system="truecolor")
+
+    console.print(render_compact_session_info(FakeSession()))
+
+    output = console.export_text(styles=True)
+    assert f"\x1b[{_style_color_escape(TAU_DARK_THEME.completion_description)}mopenai" in output
+    assert f"\x1b[{_style_color_escape(TAU_DARK_THEME.prompt_text)}m:fake-model" in output
+
+
 def test_compact_session_info_styles_parent_path_as_metadata() -> None:
     cwd = _styled_cwd(Path("/workspace/project"), theme=TAU_DARK_THEME)
 
