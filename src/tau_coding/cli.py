@@ -60,6 +60,7 @@ from tau_coding.update_check import (
     startup_release_notes_notice,
     startup_update_notice,
 )
+from tau_coding.updater import update_tau
 from tau_coding.version import current_version as _current_version
 
 
@@ -246,6 +247,12 @@ def main(
     command = positional_args[0] if positional_args else None
     initial_prompt = " ".join(positional_args) if positional_args else None
 
+    if prompt_option is None and command == "update":
+        if len(positional_args) != 1:
+            raise typer.BadParameter("Usage: tau update")
+        update_command()
+        raise typer.Exit()
+
     if prompt_option is None and command == "sessions" and len(positional_args) == 1:
         render_session_list(SessionManager().list_sessions())
         raise typer.Exit()
@@ -349,14 +356,7 @@ async def run_openai_tui(
 ) -> None:
     """Run the Textual TUI with the default OpenAI-compatible provider."""
     release_notes_notice = startup_release_notes_notice(_current_version())
-    startup_notices = [
-        notice
-        for notice in (
-            release_notes_notice.message if release_notes_notice is not None else None,
-            update_notice.message if update_notice is not None else None,
-        )
-        if notice is not None
-    ]
+    startup_notices = (release_notes_notice.message,) if release_notes_notice is not None else ()
     await run_tui_app(
         model=model,
         cwd=cwd,
@@ -365,7 +365,8 @@ async def run_openai_tui(
         provider_name=provider_name,
         auto_compact_token_threshold=auto_compact_token_threshold,
         initial_prompt=initial_prompt,
-        startup_notices=tuple(startup_notices),
+        startup_update_notice=update_notice.message if update_notice is not None else None,
+        startup_notices=startup_notices,
         extension_paths=extension_paths,
         extensions_enabled=extensions_enabled,
         project_extensions_enabled=project_extensions_enabled,
@@ -374,6 +375,21 @@ async def run_openai_tui(
 
 def _startup_update_notice() -> UpdateNotice | None:
     return startup_update_notice(_current_version())
+
+
+def update_command() -> None:
+    """Upgrade Tau using the installer that manages the current environment."""
+    result = update_tau()
+    if not result.succeeded:
+        typer.echo("Could not update Tau with uv, pipx, or pip:", err=True)
+        for failure in result.failures:
+            typer.echo(f"- {failure}", err=True)
+        raise typer.Exit(1)
+    if result.stdout:
+        typer.echo(result.stdout)
+    if result.stderr:
+        typer.echo(result.stderr, err=True)
+    typer.echo(f"Tau update completed with: {' '.join(result.command or ())}")
 
 
 def render_session_list(records: list[CodingSessionRecord]) -> None:

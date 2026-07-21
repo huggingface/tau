@@ -32,7 +32,7 @@ def test_startup_update_notice_reports_newer_stable_release(tmp_path) -> None:
     assert notice.current_version == "0.1.0"
     assert notice.latest_version == "0.2.0"
     assert "Tau 0.2.0 is available (installed: 0.1.0)" in notice.message
-    assert "uv tool upgrade tau-ai" in notice.message
+    assert "Run `tau update` to upgrade" in notice.message
     assert calls == [(PYPI_JSON_URL, UPDATE_CHECK_TIMEOUT_SECONDS)]
 
 

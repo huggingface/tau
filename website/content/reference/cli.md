@@ -15,10 +15,12 @@ tau [OPTIONS] [PROMPT] [COMMAND] [ARGS]
 - `-p/--prompt` runs a single prompt in [print mode]({{< relref "../guides/print-mode.md" >}}).
 
 On TUI and text print-mode startup, Tau may show a non-blocking notice when a
-newer `tau-ai` release is available on PyPI. Disable it with
-`TAU_NO_UPDATE_CHECK=1`; utility commands such as `tau --version`, `tau sessions`,
-and `tau export` do not run the check. After an upgrade, the TUI also adds a
-one-time release-notes message to the transcript with the new features and fixes.
+newer `tau-ai` release is available on PyPI. In the TUI, this notice is the first
+transcript item and appears in bright yellow. Run `tau update` to upgrade. Disable
+the check with `TAU_NO_UPDATE_CHECK=1`; utility commands such as `tau --version`,
+`tau update`, `tau sessions`, and `tau export` do not run it. After an upgrade,
+the TUI also adds a one-time release-notes message to the transcript with the new
+features and fixes.
 
 ## Commands
 
@@ -26,6 +28,7 @@ one-time release-notes message to the transcript with the new features and fixes
 | --- | --- |
 | `tau` | Open the interactive TUI |
 | `tau "<prompt>"` | Open the TUI with an initial prompt |
+| `tau update` | Upgrade Tau with uv, pipx, or pip |
 | `tau sessions` | List indexed sessions (id, title, model, cwd) |
 | `tau export <ref> [dest] [--format html\|jsonl]` | Export a session id or JSONL path (HTML default) |
 | `tau providers` | List configured providers and how each authenticates |

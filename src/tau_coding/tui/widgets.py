@@ -1353,7 +1353,7 @@ def _split_rich_style_colors(style: str) -> tuple[str | None, str | None]:
 
 def _use_plain_transcript_body(item: ChatItem) -> bool:
     """Return whether a transcript item can use fast selectable plain text."""
-    return item.role in {"user", "tool", "skill", "error"}
+    return item.highlight == "update" or item.role in {"user", "tool", "skill", "error"}
 
 
 def _transcript_plain_body_text(
@@ -1634,6 +1634,8 @@ def render_chat_item(
 
 
 def _chat_item_role_style(item: ChatItem, theme: TuiTheme) -> TuiRoleStyle:
+    if item.highlight == "update":
+        return TuiRoleStyle(border="#ffff00", body="bold #ffff00")
     if item.role == "tool" and item.tool_result_text:
         if item.tool_result_text.startswith("✓"):
             return TuiRoleStyle(border=theme.success, body=theme.role_styles["tool"].body)

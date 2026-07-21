@@ -30,6 +30,7 @@ from tau_coding.update_check import (
     ReleaseNotesNotice,
     UpdateNotice,
 )
+from tau_coding.updater import UpdateResult
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
@@ -123,6 +124,42 @@ def test_version_command_does_not_check_for_updates(monkeypatch: pytest.MonkeyPa
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "tau 1.2.3"
+
+
+def test_update_command_upgrades_without_startup_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        cli,
+        "_startup_update_notice",
+        lambda: (_ for _ in ()).throw(AssertionError("no update check")),
+    )
+    monkeypatch.setattr(
+        cli,
+        "update_tau",
+        lambda: UpdateResult(
+            command=("uv", "tool", "upgrade", "tau-ai"),
+            stdout="Updated tau-ai",
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["update"])
+
+    assert result.exit_code == 0
+    assert "Updated tau-ai" in result.stdout
+    assert "Tau update completed with: uv tool upgrade tau-ai" in result.stdout
+
+
+def test_update_command_reports_installer_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        cli,
+        "update_tau",
+        lambda: UpdateResult(command=None, failures=("uv: not found", "pipx: not found")),
+    )
+
+    result = CliRunner().invoke(app, ["update"])
+
+    assert result.exit_code == 1
+    assert "Could not update Tau with uv, pipx, or pip" in result.stderr
+    assert "uv: not found" in result.stderr
 
 
 def test_print_mode_writes_update_notice_to_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -271,10 +308,12 @@ def test_cli_positional_prompt_invokes_tui_runner(
 async def test_run_openai_tui_combines_release_notes_and_update_notice(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    calls: list[tuple[str, ...]] = []
+    calls: list[tuple[str | None, tuple[str, ...]]] = []
 
     async def fake_run_tui_app(**kwargs: object) -> None:
-        calls.append(kwargs["startup_notices"])  # type: ignore[arg-type]
+        calls.append(  # type: ignore[arg-type]
+            (kwargs["startup_update_notice"], kwargs["startup_notices"])
+        )
 
     monkeypatch.setattr(cli, "run_tui_app", fake_run_tui_app)
     monkeypatch.setattr(cli, "_current_version", lambda: "0.1.2")
@@ -302,8 +341,8 @@ async def test_run_openai_tui_combines_release_notes_and_update_notice(
 
     assert calls == [
         (
-            "Tau updated to 0.1.2\n\n**New**\n- Release note",
-            "Tau 0.1.3 is available (installed: 0.1.2). Update with: uv tool upgrade tau-ai",
+            "Tau 0.1.3 is available (installed: 0.1.2). Run `tau update` to upgrade.",
+            ("Tau updated to 0.1.2\n\n**New**\n- Release note",),
         )
     ]
 

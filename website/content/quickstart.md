@@ -33,10 +33,10 @@ You can install Tau with `pipx install tau-ai` or
 
 ### Upgrade Tau
 
-For a normal tool install, upgrade with:
+For a normal install, let Tau use uv, pipx, or pip to upgrade itself:
 
 ```bash
-uv tool upgrade tau-ai
+tau update
 ```
 
 If you installed a local checkout with `uv tool install --editable .`, run the

@@ -6798,9 +6798,13 @@ async def test_tui_resume_refreshes_context_after_session_swap() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_app_shows_startup_update_notice_in_transcript_only() -> None:
+async def test_tui_app_shows_startup_update_notice_first_in_bright_yellow() -> None:
     session = FakeSession(messages=[UserMessage(content="Earlier prompt")])
-    app = TauTuiApp(session, startup_notices=("Tau updated to 0.2.0", "Tau 0.2.0 is available"))
+    app = TauTuiApp(
+        session,
+        startup_update_notice="Tau 0.2.0 is available",
+        startup_notices=("Tau updated to 0.2.0",),
+    )
     notifications: list[tuple[str, str | None]] = []
 
     def fake_notify(message: str, **kwargs: object) -> None:
@@ -6813,10 +6817,14 @@ async def test_tui_app_shows_startup_update_notice_in_transcript_only() -> None:
         await pilot.pause()
         transcript = app.query_one("#transcript", TranscriptView)
         assert [line.text for line in transcript.lines] == [
-            "Tau updated to 0.2.0",
             "Tau 0.2.0 is available",
+            "Tau updated to 0.2.0",
             "Earlier prompt",
         ]
+        update_widget = transcript.query(TranscriptMessageWidget).first()
+        assert update_widget.item.highlight == "update"
+        assert update_widget._role_style.border == "#ffff00"
+        assert update_widget._role_style.body == "bold #ffff00"
 
     assert notifications == []
     assert [message.text for message in session.messages] == ["Earlier prompt"]
