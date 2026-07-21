@@ -10,7 +10,8 @@
       ],
       "Fixed": [
         "Fix session JSONL reads splitting records on Unicode line separators (U+2028, U+2029, U+0085), which made affected sessions and the session index fail to load; the read-side fix also repairs already-affected session files.",
-        "Fix picker highlight text contrast so focused labels use each theme's configured highlight foreground and background colors."
+        "Fix picker highlight text contrast so focused labels use each theme's configured highlight foreground and background colors.",
+        "Fix the resume picker search to avoid matching workspace paths while retaining session-name and model matches."
       ]
     }
   },
