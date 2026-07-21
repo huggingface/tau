@@ -210,6 +210,56 @@ def test_builtin_catalog_golden_nvidia_entry() -> None:
     assert gpt_oss_metadata.max_tokens == 65_536
 
 
+def test_builtin_catalog_huggingface_model_expansion() -> None:
+    entry = builtin_provider_entry("huggingface")
+    assert entry is not None
+    added_models = {
+        "MiniMaxAI/MiniMax-M2",
+        "MiniMaxAI/MiniMax-M3",
+        "Qwen/Qwen3-235B-A22B",
+        "Qwen/Qwen3-32B",
+        "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+        "Qwen/Qwen3.5-122B-A10B",
+        "Qwen/Qwen3.5-27B",
+        "Qwen/Qwen3.5-35B-A3B",
+        "Qwen/Qwen3.5-9B",
+        "Qwen/Qwen3.6-27B",
+        "Qwen/Qwen3.6-35B-A3B",
+        "XiaomiMiMo/MiMo-V2.5-Pro",
+        "deepseek-ai/DeepSeek-R1",
+        "deepseek-ai/DeepSeek-V4-Flash",
+        "deepseek-ai/DeepSeek-V4-Pro",
+        "google/gemma-4-26B-A4B-it",
+        "google/gemma-4-31B-it",
+        "meta-llama/Llama-3.3-70B-Instruct",
+        "moonshotai/Kimi-K2.7-Code",
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "stepfun-ai/Step-3.5-Flash",
+        "stepfun-ai/Step-3.7-Flash",
+        "zai-org/GLM-4.5",
+        "zai-org/GLM-4.5-Air",
+        "zai-org/GLM-4.5V",
+        "zai-org/GLM-4.6",
+        "zai-org/GLM-5.2",
+    }
+
+    assert len(entry.models) == 46
+    assert added_models <= set(entry.models)
+    assert set(entry.context_windows or {}) == set(entry.models)
+    assert set(entry.model_metadata) == set(entry.models)
+    assert entry.default_model == "moonshotai/Kimi-K2.6"
+
+    minimax_m3 = entry.model_metadata["MiniMaxAI/MiniMax-M3"]
+    assert minimax_m3.input == ("text", "image")
+    assert minimax_m3.context_window == 524_288
+    assert minimax_m3.max_tokens == 128_000
+
+    llama = entry.model_metadata["meta-llama/Llama-3.3-70B-Instruct"]
+    assert llama.reasoning is False
+    assert llama.context_window == 131_072
+
+
 def test_builtin_catalog_golden_kimi_entries() -> None:
     moonshot = builtin_provider_entry("moonshotai")
     assert moonshot is not None
