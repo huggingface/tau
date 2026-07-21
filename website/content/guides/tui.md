@@ -12,8 +12,9 @@ see [Keyboard shortcuts]({{< relref "../reference/keybindings.md" >}}).
 Type into the prompt box at the bottom and press **Enter** to submit. The editor
 keeps its padded block size and background, while a single left border changes
 color to reflect focus, shell mode, and active runs without boxing it in.
-**Shift+Enter** inserts a newline for multi-line prompts. Tau streams the
-assistant's reply above the prompt, showing tool calls as they run. In supported
+**Shift+Enter** inserts a newline for multi-line prompts. Submitted prompts render
+as Markdown, including fenced code blocks with syntax highlighting. Tau streams
+the assistant's reply above the prompt, showing tool calls as they run. In supported
 terminal emulators, Tau also updates the tab title: named sessions show as
 `τ | <name>`, and active runs add an animated running indicator so you can see
 work continuing from another tab.

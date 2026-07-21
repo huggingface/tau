@@ -1296,15 +1296,15 @@ def test_assistant_chat_items_render_markdown_tables() -> None:
     assert "---" not in output
 
 
-def test_user_chat_items_keep_markdown_literal() -> None:
+def test_user_chat_items_render_markdown() -> None:
     console = Console(record=True, width=60)
-    item = ChatItem(role="user", text="- keep this literal")
+    item = ChatItem(role="user", text="- render this item")
 
     console.print(render_chat_item(item))
     output = console.export_text()
 
-    assert "- keep this literal" in output
-    assert "• keep this literal" not in output
+    assert "• render this item" in output
+    assert "- render this item" not in output
 
 
 def test_chat_items_preserve_malformed_fenced_code() -> None:
@@ -1340,7 +1340,7 @@ async def test_transcript_message_widget_extracts_plain_text_selection() -> None
 
 @pytest.mark.anyio
 async def test_transcript_message_widget_renders_full_height_role_block() -> None:
-    plain_text = "alpha beta gamma\nsecond line\nthird line"
+    plain_text = "alpha beta gamma\n\nsecond paragraph\n\nthird paragraph"
     app = TauTuiApp(
         FakeSession(messages=[UserMessage(content=plain_text)]),
         tui_settings=TuiSettings(theme="high-contrast"),
@@ -2554,6 +2554,21 @@ async def test_tui_transcript_reflows_when_terminal_resizes() -> None:
 
         assert transcript.virtual_size.width <= transcript.scrollable_content_region.width
         assert transcript.scroll_offset.x == 0
+
+
+@pytest.mark.anyio
+async def test_user_message_code_block_uses_syntax_highlighting() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content='```python\nprint("hello")\n```')]))
+
+    async with app.run_test(size=(64, 30)) as pilot:
+        await pilot.pause()
+        markdown = app.query_one(ThemedMarkdownWidget)
+        fence = app.query_one("MarkdownFence")
+
+        assert markdown.parent is not None
+        assert fence.lexer == "python"
+        assert fence.code == 'print("hello")'
+        assert fence._highlighted_code.spans
 
 
 @pytest.mark.anyio
