@@ -544,7 +544,11 @@ def test_session_sidebar_lists_multiple_context_files() -> None:
             content="Agent rules.",
         ),
         ProjectContextFile(path="docs/AGENTS.md", content="Docs rules."),
-        ProjectContextFile(path="/Users/alex/.agents/AGENTS.md", content="User rules."),
+        ProjectContextFile(
+            path=str(Path.home() / ".agents" / "AGENTS.md"),
+            content="User rules.",
+        ),
+        ProjectContextFile(path="/Users/alex/.agents/AGENTS.md", content="External rules."),
     )
     console = Console(record=True, width=100)
 
@@ -554,6 +558,8 @@ def test_session_sidebar_lists_multiple_context_files() -> None:
     assert "AGENTS.md" in output
     assert ".agents/AGENTS.md" in output
     assert "docs/AGENTS.md" in output
+    assert "~/.agents/AGENTS.md" in output
+    assert str(Path.home() / ".agents" / "AGENTS.md") not in output
     assert "/Users/alex/.agents/AGENTS.md" in output
 
 
@@ -571,6 +577,16 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
     assert "openai:fake-model" in lines[provider_line]
     assert "(medium)" in lines[provider_line]
     assert context_line == provider_line + 1
+
+
+def test_compact_session_info_styles_provider_as_metadata() -> None:
+    console = Console(record=True, width=120, color_system="truecolor")
+
+    console.print(render_compact_session_info(FakeSession()))
+
+    output = console.export_text(styles=True)
+    assert f"\x1b[{_style_color_escape(TAU_DARK_THEME.completion_description)}mopenai" in output
+    assert f"\x1b[{_style_color_escape(TAU_DARK_THEME.prompt_text)}m:fake-model" in output
 
 
 def test_compact_session_info_styles_parent_path_as_metadata() -> None:
@@ -5764,9 +5780,10 @@ async def test_tui_login_api_provider_picker_filters_by_name_and_display_name() 
 
         assert isinstance(app.screen, LoginProviderPickerScreen)
         search = app.screen.query_one("#login-provider-search", Input)
-        assert search.has_focus
         search.value = "kimi"
-        await pilot.pause()
+
+        # Flush the asynchronous filter events completely
+        await pilot.wait_for_scheduled_animations()
 
         provider_list = app.screen.query_one("#login-provider-list", ListView)
         labels = [str(item.query_one(Label).render()) for item in provider_list.children]
@@ -5774,7 +5791,10 @@ async def test_tui_login_api_provider_picker_filters_by_name_and_display_name() 
         assert "Kimi Code subscription — kimi-code" in labels
 
         search.value = "moonshotai"
-        await pilot.pause()
+
+        # Flush the second async filter event
+        await pilot.wait_for_scheduled_animations()
+
         labels = [str(item.query_one(Label).render()) for item in provider_list.children]
         assert labels == [
             "Moonshot AI (Kimi) — moonshotai",
@@ -8297,3 +8317,23 @@ async def test_component_rebind_clears_slots_and_interceptors() -> None:
         assert app.query_one("#transcript", TranscriptView).display
         assert not app.query("#ext-rebind")
         assert not app.query("#ext-view")
+
+
+@pytest.mark.anyio
+async def test_tui_login_provider_search_autofocus() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/login"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, LoginMethodPickerScreen)
+        app.screen.action_cursor_down()
+        app.screen.action_select_cursor()
+
+        await pilot.wait_for_scheduled_animations()
+
+        search = app.screen.query_one("#login-provider-search", Input)
+        assert search.has_focus, "Search input failed to automatically gain focus on screen mount."

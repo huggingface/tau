@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+import tau_coding.provider_config as provider_config
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.paths import TauPaths
 from tau_coding.provider_catalog import ModelCostTier
@@ -262,7 +263,15 @@ def test_save_provider_settings_writes_backup_when_replacing(tmp_path: Path) -> 
     )
 
 
-def test_save_and_load_provider_settings_round_trip(tmp_path: Path) -> None:
+def test_save_and_load_provider_settings_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Isolate provider_config from the host environment so built-in provider
+    # discovery (credential filtering) is deterministic and the loaded settings
+    # contain only the user-saved providers.
+    monkeypatch.setattr(provider_config, "environ", {})
+
     paths = TauPaths(home=tmp_path / ".tau")
     settings = ProviderSettings(
         default_provider="local",
@@ -1157,14 +1166,9 @@ def test_load_provider_settings_restores_builtin_providers_with_stored_credentia
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    for env_name in (
-        "OPENAI_API_KEY",
-        "OPENAI_CODEX_ACCESS_TOKEN",
-        "ANTHROPIC_API_KEY",
-        "OPENROUTER_API_KEY",
-        "HF_TOKEN",
-    ):
-        monkeypatch.delenv(env_name, raising=False)
+    # Isolate from the host environment so built-in provider discovery depends
+    # only on the credential store, not on stray env vars (e.g. GEMINI_API_KEY).
+    monkeypatch.setattr(provider_config, "environ", {})
     tau_home = tmp_path / ".tau"
     tau_home.mkdir()
     (tau_home / "providers.json").write_text(
@@ -1200,11 +1204,14 @@ def test_load_provider_settings_restores_builtin_providers_with_stored_credentia
 
     settings = load_provider_settings(TauPaths(home=tau_home))
 
-    assert [provider.name for provider in settings.providers] == [
+    # Provider order is an implementation detail of BUILTIN_PROVIDER_CATALOG and
+    # shifts when built-ins are added; use set equality (not position) so the
+    # test still verifies that only credentialed built-ins are restored.
+    assert {provider.name for provider in settings.providers} == {
         "local",
         "openai-codex",
         "openrouter",
-    ]
+    }
     assert settings.default_provider == "local"
     assert settings.get_provider("openrouter").credential_name == "openrouter"
     assert settings.get_provider("openai-codex").credential_name == "openai-codex"

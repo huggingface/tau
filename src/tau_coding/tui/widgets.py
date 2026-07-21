@@ -1594,7 +1594,8 @@ def render_compact_session_info(
     """Render the session facts below the prompt."""
     left = _styled_cwd(session.cwd, theme=theme)
     right = Text(style=theme.muted_text, overflow="fold", no_wrap=False, justify="right")
-    right.append(f"{session.provider_name}:{session.model}", style=theme.prompt_text)
+    right.append(session.provider_name, style=theme.completion_description)
+    right.append(f":{session.model}", style=theme.prompt_text)
     right.append(" ")
     right.append(f"({_thinking_level(session)})", style=theme.completion_description)
     context_usage = _context_usage(session, display=context_usage_display)
@@ -2067,9 +2068,10 @@ def _context_file_label(path: Path, *, cwd: Path) -> str:
         return str(expanded_path.resolve().relative_to(cwd.expanduser().resolve()))
     except (OSError, ValueError):
         try:
-            return str(expanded_path.resolve())
+            absolute_path = expanded_path.resolve()
         except OSError:
-            return str(expanded_path.absolute())
+            absolute_path = expanded_path.absolute()
+        return _short_path(absolute_path)
 
 
 def _thinking_level(session: SessionSummarySource) -> str:
