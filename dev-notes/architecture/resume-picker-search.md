@@ -9,8 +9,9 @@ has a search field, matching the existing search UX in the model picker
 
 - Opening `/resume` (or pressing `Ctrl+R`) focuses a new
   `#session-picker-search` input above the session list.
-- Typing filters the visible sessions by title, model, or working directory
-  (case-insensitive substring match), live as you type.
+- Typing filters the visible sessions by session name or model (case-insensitive
+  substring match), live as you type. The working directory does not affect
+  search results.
 - Arrow keys, Enter, and Escape keep working the same way, whether focus is on
   the search field or the list — the search input forwards those keys to the
   picker screen instead of editing its own text.
@@ -47,6 +48,8 @@ harness free of Textual-specific code.
 
 - `test_tui_app_session_picker_search_filters_sessions` — typing a query
   narrows the list and Enter still resumes the highlighted (filtered) session.
+- `test_tui_app_session_picker_search_does_not_match_workspace_path` — session
+  names and models match while working-directory matches are ignored.
 - `test_tui_app_session_picker_search_with_no_matches_shows_help_text` —
   typing a query with no matches empties the list and updates the help text.
 - Existing `/resume` picker tests (arrow-key navigation, Enter-to-resume,
@@ -57,8 +60,9 @@ harness free of Textual-specific code.
 1. Create a few sessions with different titles/models (or resume real
    history) so `/resume` has more than one row.
 2. Run `tau`, then press `Ctrl+R` (or type `/resume` and press Enter).
-3. Confirm the search field is focused and type part of a session title or
-   model name — the list should narrow live.
+3. Confirm the search field is focused and type part of a session name or model
+   name — the list should narrow live. Workspace path fragments should not
+   produce matches.
 4. Press Enter to resume the highlighted session.
 5. Try a query that matches nothing and confirm the help text changes to
    "No matching sessions - Escape closes".

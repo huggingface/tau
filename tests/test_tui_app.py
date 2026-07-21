@@ -542,7 +542,11 @@ def test_session_sidebar_lists_multiple_context_files() -> None:
             content="Agent rules.",
         ),
         ProjectContextFile(path="docs/AGENTS.md", content="Docs rules."),
-        ProjectContextFile(path="/Users/alex/.agents/AGENTS.md", content="User rules."),
+        ProjectContextFile(
+            path=str(Path.home() / ".agents" / "AGENTS.md"),
+            content="User rules.",
+        ),
+        ProjectContextFile(path="/Users/alex/.agents/AGENTS.md", content="External rules."),
     )
     console = Console(record=True, width=100)
 
@@ -552,6 +556,8 @@ def test_session_sidebar_lists_multiple_context_files() -> None:
     assert "AGENTS.md" in output
     assert ".agents/AGENTS.md" in output
     assert "docs/AGENTS.md" in output
+    assert "~/.agents/AGENTS.md" in output
+    assert str(Path.home() / ".agents" / "AGENTS.md") not in output
     assert "/Users/alex/.agents/AGENTS.md" in output
 
 
@@ -569,6 +575,16 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
     assert "openai:fake-model" in lines[provider_line]
     assert "(medium)" in lines[provider_line]
     assert context_line == provider_line + 1
+
+
+def test_compact_session_info_styles_provider_as_metadata() -> None:
+    console = Console(record=True, width=120, color_system="truecolor")
+
+    console.print(render_compact_session_info(FakeSession()))
+
+    output = console.export_text(styles=True)
+    assert f"\x1b[{_style_color_escape(TAU_DARK_THEME.completion_description)}mopenai" in output
+    assert f"\x1b[{_style_color_escape(TAU_DARK_THEME.prompt_text)}m:fake-model" in output
 
 
 def test_compact_session_info_styles_parent_path_as_metadata() -> None:
@@ -4282,6 +4298,41 @@ async def test_tui_app_session_picker_search_filters_sessions() -> None:
         await pilot.pause()
 
         assert session.resumed_session_ids == ["session-2"]
+
+
+@pytest.mark.anyio
+async def test_tui_app_session_picker_search_does_not_match_workspace_path() -> None:
+    session = FakeSession()
+    session.session_manager = _FakeSessionManager(
+        [
+            CodingSessionRecord(
+                id="session-1",
+                path=Path("/tmp/session-1.jsonl"),
+                cwd=Path("/workspace/path-query"),
+                model="model-query",
+                title="Named session",
+                created_at=1.0,
+                updated_at=2.0,
+            ),
+        ]
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+r")
+        assert isinstance(app.screen, SessionPickerScreen)
+
+        search = app.screen.query_one("#session-picker-search", Input)
+        session_list = app.screen.query_one("#session-picker-list", ListView)
+
+        search.value = "path-query"
+        await pilot.pause()
+        assert list(session_list.children) == []
+
+        for query in ("model-query", "named"):
+            search.value = query
+            await pilot.pause()
+            assert len(session_list.children) == 1
 
 
 @pytest.mark.anyio

@@ -12,6 +12,7 @@ from tau_agent import (
     AgentMessage,
     AgentTool,
     AssistantMessage,
+    MessageEndEvent,
     TextContent,
     ThinkingContent,
     ToolCall,
@@ -1834,6 +1835,56 @@ async def test_session_auto_names_first_unnamed_managed_session(tmp_path: Path) 
     _assert_messages(
         provider.calls[1][2], [UserMessage(content="Please fix the broken CLI output.")]
     )
+
+
+@pytest.mark.anyio
+async def test_session_yields_expanded_custom_prompt_before_auto_naming(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(cwd=tmp_path, model="fake")
+    resources_root = tmp_path / "resources"
+    prompts_dir = resources_root / "prompts"
+    prompts_dir.mkdir(parents=True)
+    (prompts_dir / "review.md").write_text("Review this target:\n{{ arguments }}")
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Review target")),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+            resource_paths=TauResourcePaths(root=resources_root, agents_root=None),
+        )
+    )
+
+    stream = session.prompt("/review src/app.py")
+    for _ in range(3):
+        await anext(stream)
+    prompt_event = await asyncio.wait_for(anext(stream), timeout=1)
+
+    assert isinstance(prompt_event, MessageEndEvent)
+    assert isinstance(prompt_event.message, UserMessage)
+    assert prompt_event.message.text == "Review this target:\nsrc/app.py"
+    assert provider.calls == []
+
+    await _collect_session_events(stream)
+    renamed = manager.get_session(record.id)
+    assert renamed is not None
+    assert renamed.title == "Review target"
 
 
 @pytest.mark.anyio
