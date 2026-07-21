@@ -97,6 +97,15 @@ needed. Available models and plan limits change over time; consult the
 [OpenCode Go](https://opencode.ai/docs/go) and
 [OpenCode Zen](https://opencode.ai/docs/zen) pages for the current list.
 
+### Hugging Face Inference Providers
+
+Log in with `/login huggingface` or set `HF_TOKEN`. Tau's built-in Hugging Face
+catalog includes 46 coding-capable models routed through
+`https://router.huggingface.co/v1`, including DeepSeek, Gemma, GLM, GPT OSS,
+Kimi, Llama, MiniMax, MiMo, Qwen, and Step families. Use `/model` to search the
+full list; model availability and the inference provider selected by Hugging
+Face can vary over time and by account.
+
 ### Moonshot AI API vs. Kimi Code
 
 Both Kimi providers authenticate requests with Bearer API keys; neither uses

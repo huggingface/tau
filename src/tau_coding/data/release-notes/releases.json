@@ -3,6 +3,9 @@
     "version": "0.2.3",
     "date": "2026-07-20",
     "sections": {
+      "New": [
+        "Add 28 live-routable Hugging Face Inference Providers models from Pi's built-in catalog."
+      ],
       "Changed": [
         "Default the TUI sidebar to the right side while preserving explicit left, right, and off preferences.",
         "Label TUI sidebar token totals as cumulative session usage and document why cumulative provider usage can exceed the active context estimate.",
