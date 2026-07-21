@@ -1580,6 +1580,33 @@ async def test_long_transcript_incremental_appends_keep_mounted_window_bounded()
 
 
 @pytest.mark.anyio
+async def test_transcript_redraw_hides_stale_assistant_before_mounting_replacement() -> None:
+    app = TauTuiApp(FakeSession(messages=[AssistantMessage(content="final answer")]))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        original = app.query_one(TranscriptMessageWidget)
+
+        # A full refresh schedules Textual's child removal asynchronously, so
+        # inspect the transition before the next message cycle drains it.
+        app._refresh()
+
+        matching = [
+            widget
+            for widget in app.query(TranscriptMessageWidget)
+            if widget.selection_text == "final answer"
+        ]
+        assert len(matching) == 2
+        assert original.display is False
+        assert sum(widget.display for widget in matching) == 1
+
+        await pilot.pause()
+        assert [widget.selection_text for widget in app.query(TranscriptMessageWidget)] == [
+            "final answer"
+        ]
+
+
+@pytest.mark.anyio
 async def test_transcript_resize_preserves_mounted_message_widgets() -> None:
     app = TauTuiApp(
         FakeSession(messages=[AssistantMessage(content=f"answer {index}") for index in range(20)])

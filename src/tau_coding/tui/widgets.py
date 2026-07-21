@@ -774,7 +774,7 @@ class TranscriptView(VerticalScroll):
             child for child in message_children if child.item.role != "thinking"
         ]
         if thinking_children:
-            self.remove_children(thinking_children)
+            self._hide_and_remove_children(thinking_children)
         for item_id, widget in tuple(self._item_widgets.items()):
             if widget in thinking_children:
                 del self._item_widgets[item_id]
@@ -868,7 +868,7 @@ class TranscriptView(VerticalScroll):
             )
         ]
         if removable:
-            self.remove_children(removable)
+            self._hide_and_remove_children(removable)
         self._active_assistant_widget = None
         self._active_thinking_widget = None
         self._active_message_widgets = []
@@ -930,6 +930,18 @@ class TranscriptView(VerticalScroll):
         self.refresh(layout=True)
         if scroll_end:
             self._request_follow_scroll()
+
+    def _hide_and_remove_children(self, children: Sequence[Widget]) -> None:
+        """Hide stale rows before Textual removes them on its next message cycle.
+
+        ``remove_children`` schedules asynchronous pruning. Replacement rows are
+        mounted immediately, so leaving the old rows visible can paint both
+        projections for a frame, which is especially noticeable for a final
+        assistant response. Hiding first keeps the transition visually atomic.
+        """
+        for child in children:
+            child.display = False
+        self.remove_children(children)
 
     async def append_item(
         self,
