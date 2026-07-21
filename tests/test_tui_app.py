@@ -1597,8 +1597,8 @@ async def test_transcript_redraw_hides_stale_assistant_before_mounting_replaceme
             if widget.selection_text == "final answer"
         ]
         assert len(matching) == 2
-        assert original.display is False
-        assert sum(widget.display for widget in matching) == 1
+        assert original.visible is False
+        assert sum(widget.visible for widget in matching) == 1
 
         await pilot.pause()
         assert [widget.selection_text for widget in app.query(TranscriptMessageWidget)] == [

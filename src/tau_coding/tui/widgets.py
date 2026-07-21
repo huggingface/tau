@@ -932,15 +932,19 @@ class TranscriptView(VerticalScroll):
             self._request_follow_scroll()
 
     def _hide_and_remove_children(self, children: Sequence[Widget]) -> None:
-        """Hide stale rows before Textual removes them on its next message cycle.
+        """Hide the trailing visible row before scheduling asynchronous pruning.
 
-        ``remove_children`` schedules asynchronous pruning. Replacement rows are
-        mounted immediately, so leaving the old rows visible can paint both
-        projections for a frame, which is especially noticeable for a final
-        assistant response. Hiding first keeps the transition visually atomic.
+        Replacement rows mount before Textual finishes ``remove_children``. The
+        boundary between those projections can therefore paint the final row
+        twice for a frame. Hide only that boundary row to avoid adding work
+        proportional to the full transcript window.
         """
-        for child in children:
-            child.display = False
+        viewport = self.scrollable_content_region
+        visible_children = [child for child in children if child.region.overlaps(viewport)]
+        if visible_children:
+            # The bottom-most stale row borders the replacement projection and
+            # is the one that can appear duplicated while pruning catches up.
+            visible_children[-1].styles.visibility = "hidden"
         self.remove_children(children)
 
     async def append_item(
