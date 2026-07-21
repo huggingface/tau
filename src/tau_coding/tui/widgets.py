@@ -2030,9 +2030,10 @@ def _context_file_label(path: Path, *, cwd: Path) -> str:
         return str(expanded_path.resolve().relative_to(cwd.expanduser().resolve()))
     except (OSError, ValueError):
         try:
-            return str(expanded_path.resolve())
+            absolute_path = expanded_path.resolve()
         except OSError:
-            return str(expanded_path.absolute())
+            absolute_path = expanded_path.absolute()
+        return _short_path(absolute_path)
 
 
 def _thinking_level(session: SessionSummarySource) -> str:
