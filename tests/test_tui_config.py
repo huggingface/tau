@@ -107,9 +107,18 @@ def test_tui_keybindings_reject_duplicate_keys() -> None:
         )
 
 
-def test_tui_settings_reject_unknown_theme() -> None:
-    with pytest.raises(TuiConfigError, match="Unknown TUI theme"):
-        tui_settings_from_json({"theme": "solarized"})
+def test_tui_settings_accept_unknown_theme_and_fall_back_when_resolving() -> None:
+    settings = tui_settings_from_json({"theme": "solarized"})
+
+    assert settings.theme == "solarized"
+    assert settings.resolved_theme == get_tui_theme("tau-dark")
+
+
+def test_tui_settings_reject_non_string_theme() -> None:
+    with pytest.raises(TuiConfigError, match="theme"):
+        tui_settings_from_json({"theme": 7})
+    with pytest.raises(TuiConfigError, match="theme"):
+        tui_settings_from_json({"theme": "  "})
 
 
 def test_tui_settings_accept_light_theme() -> None:
@@ -166,8 +175,9 @@ def test_get_tui_theme_returns_builtin_theme() -> None:
     assert get_tui_theme("tau-dark").screen_background == "#000000"
 
 
-def test_tui_sidebar_position_defaults_to_left() -> None:
-    assert TuiSettings().sidebar_position == "left"
+def test_tui_sidebar_position_defaults_to_right() -> None:
+    assert TuiSettings().sidebar_position == "right"
+    assert tui_settings_from_json({}).sidebar_position == "right"
 
 
 def test_tui_sidebar_position_roundtrips() -> None:

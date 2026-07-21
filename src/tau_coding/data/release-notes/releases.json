@@ -1,5 +1,119 @@
 [
   {
+    "version": "0.2.3",
+    "date": "2026-07-20",
+    "sections": {
+      "New": [
+        "Add 28 live-routable Hugging Face Inference Providers models from Pi's built-in catalog."
+      ],
+      "Changed": [
+        "Default the TUI sidebar to the right side while preserving explicit left, right, and off preferences.",
+        "Label TUI sidebar token totals as cumulative session usage and document why cumulative provider usage can exceed the active context estimate.",
+        "Keep Tau's internal extension and model-catalog maintenance guidance in packaged self-documentation so it no longer appears in or competes with user skills."
+      ],
+      "Fixed": [
+        "Fix session JSONL reads splitting records on Unicode line separators (U+2028, U+2029, U+0085), which made affected sessions and the session index fail to load; the read-side fix also repairs already-affected session files.",
+        "Fix picker highlight text contrast so focused labels use each theme's configured highlight foreground and background colors.",
+        "Fix the resume picker search to avoid matching workspace paths while retaining session-name and model matches."
+      ]
+    }
+  },
+  {
+    "version": "0.2.2",
+    "date": "2026-07-18",
+    "sections": {
+      "New": [
+        "Add data-driven JSON themes with built-in palettes plus user and project theme discovery.",
+        "Add live search to the resume session picker across session titles, models, and working directories."
+      ],
+      "Changed": [
+        "Keep long TUI sessions responsive by mounting a bounded transcript window while preserving access to the complete conversation.",
+        "Redesign the TUI sidebar around session identity, lifetime activity, token usage, estimated cost, compaction status, and loaded capabilities."
+      ]
+    }
+  },
+  {
+    "version": "0.2.1",
+    "date": "2026-07-18",
+    "sections": {
+      "New": [
+        "Persist thinking/reasoning blocks and provider replay metadata across Tau's Pi-compatible event streams, session storage, exports, and TUI rendering.",
+        "Bundle Tau self-knowledge docs, examples, and skills so installed copies can answer Tau-specific questions without a source checkout."
+      ],
+      "Changed": [
+        "Discover Codex context and compaction limits at runtime from the authenticated model catalog, with conservative static fallbacks and a visible limit source in session diagnostics.",
+        "Remove the redundant animated tool-row spinner while keeping static status-colored markers and elapsed-time feedback."
+      ],
+      "Fixed": [
+        "Fix provider-error recovery so a failed or aborted assistant turn no longer poisons the next prompt, while keeping the error visible in the TUI and session history.",
+        "Fix tool-call labels in the session tree for assistant turns without visible text.",
+        "Fix light theme code block background in fenced code blocks.",
+        "Coerce the startup thinking level to a mode the remembered default model supports, preventing crashes on incompatible saved preferences.",
+        "Fix tests launching the real Anthropic OAuth browser during test runs."
+      ]
+    }
+  },
+  {
+    "version": "0.2.0",
+    "date": "2026-07-16",
+    "sections": {
+      "New": [
+        "Add Pi-compatible agent, provider, coding-session, and extension event streams with canonical lifecycle and settlement events.",
+        "Add OAuth login parity for Anthropic, GitHub Copilot, and OpenCode providers.",
+        "Add Kimi K3 model support."
+      ],
+      "Changed": [
+        "Replace the legacy runtime message, event, tool, session, and extension protocol with strict Pi-compatible contracts.",
+        "Enrich extension turn events with turn indexes and timestamps.",
+        "Keep tau_agent independent of tau_ai by moving portable provider contracts into the agent package."
+      ],
+      "Fixed": [
+        "Migrate legacy Tau v1 sessions, including null usage costs, at the persistence boundary.",
+        "Improve interactive OAuth login modal navigation."
+      ]
+    }
+  },
+  {
+    "version": "0.1.6",
+    "date": "2026-07-15",
+    "sections": {
+      "New": [
+        "Add Python extensions for custom tools, slash commands, lifecycle hooks, dialogs, and message rendering.",
+        "Add Kimi K2.7 Code, Kimi Code subscription, and MiniMax-M3 model catalog entries.",
+        "Add tiered model pricing metadata for models whose rates change with input size."
+      ],
+      "Changed": [
+        "Require Textual 8.2.8 or newer so CJK input methods work correctly.",
+        "Pass unknown slash-prefixed input through as prompts instead of rejecting it as an unknown command.",
+        "Retry Anthropic HTTP 425 and all 5xx responses consistently with other providers."
+      ],
+      "Fixed": [
+        "Fix extension reload lifecycle ordering.",
+        "Ignore saved provider preferences when their providers are no longer configured.",
+        "Prevent missing or malformed bundled release notes from crashing startup."
+      ]
+    }
+  },
+  {
+    "version": "0.1.5",
+    "date": "2026-07-09",
+    "sections": {
+      "New": [
+        "Add OpenAI GPT-5.6, GPT-5.6 Sol, GPT-5.6 Terra, and GPT-5.6 Luna model catalog entries for OpenAI and OpenAI Codex.",
+        "Add NVIDIA NIM as a built-in provider.",
+        "Redesign session HTML export with a cleaner, icon-based interface."
+      ],
+      "Changed": [
+        "Improve the documentation website with a roadmap page, clearer Pi links, and refreshed navigation and homepage polish."
+      ],
+      "Fixed": [
+        "Fix release-note packaging so installed wheels include the bundled release notes file.",
+        "Fix Windows test isolation by avoiding accidental writes to a real ~/.tau directory.",
+        "Fix TUI theme selection edge cases."
+      ]
+    }
+  },
+  {
     "version": "0.1.4",
     "date": "2026-07-08",
     "sections": {

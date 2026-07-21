@@ -1,0 +1,95 @@
+{{ define "main" }}
+{{ $groups := site.Data.roadmap.groups }}
+{{ $shipped := 0 }}
+{{ $inProgress := 0 }}
+{{ $planned := 0 }}
+{{ range $groups }}
+  {{ range .phases }}
+    {{ if eq .status "shipped" }}
+      {{ $shipped = add $shipped 1 }}
+    {{ else if eq .status "in_progress" }}
+      {{ $inProgress = add $inProgress 1 }}
+    {{ else }}
+      {{ $planned = add $planned 1 }}
+    {{ end }}
+  {{ end }}
+{{ end }}
+
+<div class="wrap">
+  <header class="release-header">
+    <div class="release-hero">
+      <p class="eyebrow-hand">Building in the open</p>
+      <h1>The roadmap.</h1>
+      <p class="lede">
+        Tau ships in small, documented phases &mdash; each one a readable slice
+        of the agent, not a hidden branch. This page tracks what's shipped and
+        what's next; the reasoning behind each phase lives in
+        <code>dev-notes/</code>.
+      </p>
+    </div>
+
+    <div class="release-meta-row">
+      <div class="meta-cell">
+        <span class="meta-num">{{ $shipped }}</span>
+        <span class="meta-cap">phases shipped</span>
+      </div>
+      <div class="meta-cell">
+        <span class="meta-num">{{ $inProgress }}</span>
+        <span class="meta-cap">in progress</span>
+      </div>
+      <div class="meta-cell">
+        <span class="meta-num">{{ $planned }}</span>
+        <span class="meta-cap">planned</span>
+      </div>
+    </div>
+  </header>
+</div>
+
+<div class="wrap">
+  {{ range $gi, $group := $groups }}
+  <section class="roadmap-group">
+    <div class="sec-head">
+      <span class="mark">{{ printf "%02d" (add $gi 1) }}</span>
+      <div>
+        <p class="eyebrow-hand">{{ $group.note }}</p>
+        <h2>{{ $group.label }}</h2>
+      </div>
+    </div>
+
+    <div class="roadmap-list">
+      {{ range $group.phases }}
+      <div class="roadmap-item roadmap-{{ .status }}">
+        <div class="roadmap-item-mark">
+          {{ if eq .status "shipped" }}
+          <span class="roadmap-check" aria-hidden="true">&#10003;</span>
+          {{ else if eq .status "in_progress" }}
+          <span class="roadmap-dot" aria-hidden="true">&#9679;</span>
+          {{ else }}
+          <span class="roadmap-dot roadmap-dot-planned" aria-hidden="true">&#9675;</span>
+          {{ end }}
+        </div>
+        <div class="roadmap-item-body">
+          <div class="roadmap-item-head">
+            <span class="roadmap-phase">Phase {{ .id }}</span>
+            <h3>{{ .title }}</h3>
+            {{ if eq .status "in_progress" }}<span class="badge badge-next">Up next</span>{{ else if eq .status "planned" }}<span class="badge badge-planned">Planned</span>{{ end }}
+          </div>
+          <p>{{ .summary }}</p>
+        </div>
+      </div>
+      {{ end }}
+    </div>
+  </section>
+  {{ end }}
+
+  <section class="closing">
+    <span class="turn">&#964;</span>
+    <p>Roadmap phases turn into build journals under <code>dev-notes/</code>,
+      then into these docs. Follow along or open an issue with ideas.</p>
+    <div class="cta-row">
+      <a class="ghost" href="{{ "/internals/architecture/" | relURL }}">See the architecture <span class="arr">&rarr;</span></a>
+      <a class="ghost" href="{{ .Site.Params.githubUrl }}/issues">Suggest a phase <span class="arr">&rarr;</span></a>
+    </div>
+  </section>
+</div>
+{{ end }}

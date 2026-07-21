@@ -337,6 +337,21 @@ def test_login_argument_completion_uses_available_providers() -> None:
     assert [item.display for item in state.items] == ["openai", "openrouter"]
 
 
+def test_login_argument_completion_includes_anthropic_auth_aliases() -> None:
+    state = build_completion_state(
+        "/login anthropic-",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        provider_names=("anthropic", "anthropic-api", "anthropic-subscription"),
+    )
+
+    assert [item.display for item in state.items] == [
+        "anthropic-api",
+        "anthropic-subscription",
+    ]
+
+
 def test_logout_argument_completion_uses_available_providers() -> None:
     state = build_completion_state(
         "/logout op",

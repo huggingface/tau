@@ -45,6 +45,16 @@ uv run tau
 uv run tau -p "explain this repo"
 ```
 
+To expose the checkout as a global `tau` command, use:
+
+```bash
+uv tool install --editable --force .
+```
+
+Repeat that command after `git pull`. The editable link makes source changes
+live, but uv must reinstall the tool to refresh package metadata (including the
+version), dependencies, and entry points.
+
 ## Checks before submitting
 
 Run the relevant focused tests while developing, then run the full checks before opening a pull request when practical:
@@ -109,7 +119,7 @@ For substantial architectural or phase-oriented work, add beginner-friendly note
 For user-facing behavior, update the published docs under:
 
 ```text
-website/src/content/docs/
+website/content/
 ```
 
 ## Release process
@@ -140,6 +150,6 @@ Avoid unrelated refactors in feature or bug-fix PRs. If a larger design change i
 
 Tau is developed incrementally. For larger changes, check the roadmap issue before starting:
 
-<https://github.com/alejandro-ao/tau/issues/1>
+<https://github.com/huggingface/tau/issues/1>
 
 When in doubt, favor the smallest step that preserves the architecture and teaches the design clearly.

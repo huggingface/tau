@@ -8,20 +8,23 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
-from tau_agent import (
-    AgentEvent,
-    AgentHarness,
-    AgentHarnessConfig,
-    ErrorEvent,
-    MessageEndEvent,
-    QueuedMessages,
-    QueueUpdateEvent,
-    ToolExecutionEndEvent,
+from tau_agent.events import AgentEndEvent, MessageEndEvent, ToolExecutionEndEvent
+from tau_agent.harness import AgentHarness, AgentHarnessConfig, QueuedMessages
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    CustomMessage,
+    TextContent,
+    ToolResultMessage,
+    UserMessage,
+    message_text,
 )
-from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
+from tau_agent.provider import ModelProvider
+from tau_agent.provider_events import AssistantDoneEvent, AssistantErrorEvent, TextDeltaEvent
 from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
+    CustomEntry,
     JsonlSessionStorage,
     LeafEntry,
     MessageEntry,
@@ -35,8 +38,8 @@ from tau_agent.session.entries import SessionEntry
 from tau_agent.session.jsonl import entry_to_json_line
 from tau_agent.session.tree import SessionTreeError, path_to_entry
 from tau_agent.tools import AgentTool
-from tau_ai import ModelProvider
-from tau_ai.events import ProviderErrorEvent, ProviderResponseEndEvent, ProviderTextDeltaEvent
+from tau_agent.types import JSONValue
+from tau_ai.model_limits import ModelLimitsProvider, RuntimeModelLimits
 from tau_coding.branch_summary import summarize_branch_messages_with_model
 from tau_coding.commands import CommandRegistry, CommandResult, create_default_command_registry
 from tau_coding.context import discover_project_context_with_diagnostics
@@ -57,6 +60,17 @@ from tau_coding.diagnostics import (
     AgentCallDiagnosticLogger,
     new_agent_call_run_id,
 )
+from tau_coding.events import (
+    AgentSettledEvent,
+    AutoRetryEndEvent,
+    AutoRetryStartEvent,
+    CodingSessionEvent,
+    CompactionEndEvent,
+    CompactionStartEvent,
+    QueueUpdateEvent,
+    SessionAgentEndEvent,
+)
+from tau_coding.extensions.runtime import ExtensionRuntime
 from tau_coding.paths import TauPaths
 from tau_coding.prompt_templates import (
     PromptTemplate,
@@ -92,6 +106,7 @@ from tau_coding.session_export import (
     normalize_export_format,
 )
 from tau_coding.session_manager import SessionManager
+from tau_coding.session_stats import SessionStats, calculate_session_stats
 from tau_coding.skills import Skill, expand_skill_command, load_skills_with_diagnostics
 from tau_coding.system_prompt import (
     BuildSystemPromptOptions,
@@ -203,6 +218,23 @@ class CodingSessionConfig:
     thinking_level: ThinkingLevel = DEFAULT_THINKING_LEVEL
     index_on_first_persist: bool = False
     shell_command_prefix: str | None = None
+    skills_enabled: bool = True
+    """Whether skill discovery is enabled for this session.
+
+    When ``True`` (the default), skills are discovered from the resource paths
+    and their index is injected into the system prompt as ``<available_skills>``,
+    and ``/skill:`` commands expand against them. When ``False``, skill discovery
+    is suppressed for the whole session: no skills load, the ``<available_skills>``
+    index is omitted, and ``/skill:`` commands find nothing to expand. This mirrors
+    Pi's loader-level ``noSkills`` flag, which suppresses only skill discovery and
+    leaves prompt templates and project context files (AGENTS.md) unaffected. It is
+    the seam hosts use to construct skill-less sessions (e.g. a subagent type that
+    gets no skills).
+    """
+    extension_paths: tuple[Path, ...] = ()
+    extensions_enabled: bool = True
+    project_extensions_enabled: bool = False
+    extension_runtime: ExtensionRuntime | None = None
 
 
 class CodingSession:
@@ -226,10 +258,13 @@ class CodingSession:
         resource_diagnostics: tuple[ResourceDiagnostic, ...] = (),
         command_registry: CommandRegistry | None = None,
         pending_initial_entries: tuple[SessionEntry, ...] = (),
+        extension_runtime: ExtensionRuntime | None = None,
     ) -> None:
         self._config = config
         self._state = state
         self._harness = harness
+        self._extension_runtime = extension_runtime or ExtensionRuntime()
+        self._session_start_pending = False
         self._last_parent_id = last_parent_id
         self._pending_initial_entries = pending_initial_entries
         self._skills = skills
@@ -254,6 +289,9 @@ class CodingSession:
             credentials_path(self._resource_paths.paths) if self._resource_paths.paths else None
         )
         self._last_diagnostic_log_path: Path | None = None
+        self._runtime_model_limits: RuntimeModelLimits | None = None
+        self._runtime_model_limits_key: tuple[str, str] | None = None
+        self._model_limits_discovery_error: str | None = None
 
     @classmethod
     async def load(cls, config: CodingSessionConfig) -> CodingSession:
@@ -283,7 +321,26 @@ class CodingSession:
             if latest_leaf is not None
             else linear_state
         )
-        tools = (
+        resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
+        resources = _load_session_resources(
+            resource_paths,
+            config.context_files,
+            skills_enabled=config.skills_enabled,
+        )
+
+        extension_runtime = config.extension_runtime
+        fresh_extension_runtime = extension_runtime is None
+        if extension_runtime is None:
+            extension_runtime = ExtensionRuntime()
+            if config.extensions_enabled or config.extension_paths:
+                extension_runtime.load(
+                    resource_paths,
+                    extra_paths=config.extension_paths,
+                    include_resource_dirs=config.extensions_enabled,
+                    include_project_dir=config.project_extensions_enabled,
+                )
+
+        base_tools = (
             config.tools
             if config.tools is not None
             else create_coding_tools(
@@ -291,8 +348,7 @@ class CodingSession:
                 shell_command_prefix=config.shell_command_prefix,
             )
         )
-        resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
-        resources = _load_session_resources(resource_paths, config.context_files)
+        tools = extension_runtime.compose_tools(base_tools)
         system = (
             config.system
             if config.system is not None
@@ -304,6 +360,7 @@ class CodingSession:
                     custom_prompt=config.custom_system_prompt,
                     append_system_prompt=config.append_system_prompt,
                     context_files=resources.context_files,
+                    extra_guidelines=extension_runtime.prompt_guidelines,
                 )
             )
         )
@@ -325,12 +382,26 @@ class CodingSession:
             prompt_templates=resources.prompt_templates,
             context_files=resources.context_files,
             resource_diagnostics=resources.diagnostics,
-            command_registry=config.command_registry,
+            command_registry=config.command_registry or extension_runtime.build_command_registry(),
             pending_initial_entries=pending_initial_entries,
+            extension_runtime=extension_runtime,
         )
         await session._persist_loaded_interrupted_tool_repairs()
         session._sync_thinking_level_to_active_model()
         session._refresh_runtime_provider()
+        await session._refresh_runtime_model_limits()
+        if fresh_extension_runtime:
+            extension_runtime.bind(session)
+            # Attach to session._harness, not the local `harness`:
+            # _persist_loaded_interrupted_tool_repairs() above may have
+            # replaced the harness, and listeners on the discarded one would
+            # never see an agent event.
+            extension_runtime.attach_harness_listener(session._harness.subscribe)
+            # session_start is deferred: hosts emit it via
+            # emit_pending_session_start() after installing their UI bridge,
+            # so handlers can use notifications and dialogs (Pi starts the UI
+            # before initializing extensions for the same reason).
+            session._session_start_pending = True
         return session
 
     @property
@@ -467,7 +538,7 @@ class CodingSession:
                 target_id = summary_entry.id
         elif selected_entry.type == "message" and isinstance(selected_entry.message, UserMessage):
             target_id = selected_entry.parent_id
-            input_prefill = selected_entry.message.content
+            input_prefill = selected_entry.message.text
 
         leaf = LeafEntry(parent_id=target_id, entry_id=target_id)
         await self._append_session_entry(leaf)
@@ -589,15 +660,38 @@ class CodingSession:
             return None
         if self._auto_compact_token_threshold is not None:
             return self._auto_compact_token_threshold
+        if self._runtime_model_limits_key == (self.provider_name, self.model):
+            limits = self._runtime_model_limits
+            if limits is not None:
+                return limits.effective_auto_compact_token_limit
         return auto_compaction_threshold_for_context_window(self.context_window_tokens)
 
     @property
     def context_window_tokens(self) -> int:
-        """Return the active model's configured context window, or Tau's fallback."""
+        """Return the active model's discovered or configured context window."""
+        if self._runtime_model_limits_key == (self.provider_name, self.model):
+            limits = self._runtime_model_limits
+            if limits is not None:
+                return limits.context_window
         provider = self._active_provider_config()
         if provider is None:
             return DEFAULT_CONTEXT_WINDOW_TOKENS
         return provider.context_windows.get(self.model, DEFAULT_CONTEXT_WINDOW_TOKENS)
+
+    @property
+    def context_window_source(self) -> str:
+        """Return where the active context-window limit came from."""
+        if (
+            self._runtime_model_limits_key == (self.provider_name, self.model)
+            and self._runtime_model_limits is not None
+        ):
+            return "provider live catalog"
+        return "configured catalog"
+
+    @property
+    def model_limits_discovery_error(self) -> str | None:
+        """Return the last non-fatal live model-limit discovery error."""
+        return self._model_limits_discovery_error
 
     @property
     def command_registry(self) -> CommandRegistry:
@@ -606,8 +700,104 @@ class CodingSession:
 
     @property
     def resource_diagnostics(self) -> tuple[ResourceDiagnostic, ...]:
-        """Return non-fatal resource discovery diagnostics."""
-        return self._resource_diagnostics
+        """Return non-fatal resource and extension diagnostics."""
+        return self._resource_diagnostics + self._extension_runtime.diagnostics
+
+    @property
+    def extension_runtime(self) -> ExtensionRuntime:
+        """Return the extension runtime bound to this session."""
+        return self._extension_runtime
+
+    @property
+    def extension_names(self) -> tuple[str, ...]:
+        """Return loaded extension names in load order."""
+        return self._extension_runtime.extension_names
+
+    @property
+    def session_stats(self) -> SessionStats:
+        """Return cumulative activity and billed usage for the active branch."""
+        return calculate_session_stats(
+            self._state.entries,
+            pricing=self._pricing_for_response,
+        )
+
+    def _pricing_for_response(
+        self,
+        provider_name: str,
+        model: str,
+        input_tokens: int,
+    ) -> dict[str, float] | None:
+        provider = _provider_config_for_name(self._config, provider_name)
+        if (
+            provider is None
+            or provider.name != provider_name
+            or not hasattr(provider, "model_metadata")
+        ):
+            return None
+        metadata = provider.model_metadata.get(model)
+        if metadata is None:
+            return None
+        for tier in metadata.cost_tiers:
+            if tier.max_input_tokens is None or input_tokens <= tier.max_input_tokens:
+                return dict(tier.cost)
+        return dict(metadata.cost) if metadata.cost else None
+
+    async def emit_pending_session_start(self) -> None:
+        """Emit the `session_start` deferred by `load`, once per session.
+
+        Hosts call this after installing their UI bridge so `session_start`
+        handlers can use notifications and dialogs (Pi's ordering: the UI
+        starts before extensions initialize). Idempotent; a no-op for
+        sessions that adopted an already-started extension runtime.
+        """
+        if not self._session_start_pending:
+            return
+        self._session_start_pending = False
+        await self._extension_runtime.emit_session_start("startup")
+
+    def queue_steering_message(
+        self,
+        content: str,
+        *,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None:
+        """Queue a steering user message (extension runtime seam)."""
+        message: AgentMessage = (
+            CustomMessage(custom_type=custom_type, content=content, details=details)
+            if custom_type is not None
+            else UserMessage(content=content)
+        )
+        self._harness.steer_message(message)
+
+    def queue_follow_up_message(
+        self,
+        content: str,
+        *,
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> None:
+        """Queue a follow-up user message (extension runtime seam)."""
+        message: AgentMessage = (
+            CustomMessage(custom_type=custom_type, content=content, details=details)
+            if custom_type is not None
+            else UserMessage(content=content)
+        )
+        self._harness.follow_up_message(message)
+
+    async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
+        """Persist an extension-owned custom entry on the active branch path.
+
+        The entry advances the append-only tree parent chain so it stays on the
+        replayed root-to-leaf path (off-path custom entries would be invisible
+        to `SessionState` after resume).
+        """
+        entry = CustomEntry(parent_id=self._last_parent_id, namespace=namespace, data=data)
+        await self._append_session_entry(entry)
+        self._last_parent_id = entry.id
+        leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
+        await self._append_session_entry(leaf)
+        await self._refresh_persisted_state(leaf_id=entry.id)
 
     @property
     def session_id(self) -> str | None:
@@ -642,12 +832,12 @@ class CodingSession:
     @property
     def queued_steering_messages(self) -> tuple[str, ...]:
         """Return queued steering message text for UI display."""
-        return tuple(message.content for message in self._harness.queued_messages.steering)
+        return tuple(message_text(message) for message in self._harness.queued_messages.steering)
 
     @property
     def queued_follow_up_messages(self) -> tuple[str, ...]:
         """Return queued follow-up message text for UI display."""
-        return tuple(message.content for message in self._harness.queued_messages.follow_up)
+        return tuple(message_text(message) for message in self._harness.queued_messages.follow_up)
 
     @property
     def last_diagnostic_log_path(self) -> Path | None:
@@ -659,8 +849,11 @@ class CodingSession:
         self._harness.cancel()
 
     def queue_update_event(self) -> QueueUpdateEvent:
-        """Return the current queue state as an agent event."""
-        return self._harness.queue_update_event()
+        """Return the current queue state as a coding-session event."""
+        return QueueUpdateEvent(
+            steering=self.queued_steering_messages,
+            follow_up=self.queued_follow_up_messages,
+        )
 
     def clear_queued_messages(self) -> QueuedMessages:
         """Clear queued steering and follow-up messages."""
@@ -669,12 +862,12 @@ class CodingSession:
     def pop_latest_follow_up_message(self) -> str | None:
         """Remove and return the most recently queued follow-up message."""
         message = self._harness.pop_latest_follow_up()
-        return None if message is None else message.content
+        return None if message is None else message_text(message)
 
     def pop_latest_steering_message(self) -> str | None:
         """Remove and return the most recently queued steering message."""
         message = self._harness.pop_latest_steering()
-        return None if message is None else message.content
+        return None if message is None else message_text(message)
 
     def set_model(self, model: str) -> None:
         """Switch the active model for future turns and make it the default."""
@@ -780,6 +973,7 @@ class CodingSession:
         self._harness.config.provider = provider
         self._provider_name = provider_config.name
         self._runtime_provider_config = provider_config
+        self._invalidate_runtime_model_limits()
         self._harness.config.model = model
         self._thinking_level = thinking_level
         if persist_default:
@@ -903,34 +1097,74 @@ class CodingSession:
         self._owned_providers.append(provider)
         self._harness.config.provider = provider
         self._runtime_provider_config = provider_config
+        self._invalidate_runtime_model_limits()
 
-    def reload(self) -> CodingReloadSummary:
-        """Reload local coding resources and project context for future turns."""
+    def _invalidate_runtime_model_limits(self) -> None:
+        self._runtime_model_limits = None
+        self._runtime_model_limits_key = None
+        self._model_limits_discovery_error = None
+
+    async def _refresh_runtime_model_limits(self) -> None:
+        key = (self.provider_name, self.model)
+        if self._runtime_model_limits_key == key:
+            return
+        self._runtime_model_limits = None
+        self._runtime_model_limits_key = key
+        self._model_limits_discovery_error = None
+        provider = self._harness.config.provider
+        if not isinstance(provider, ModelLimitsProvider):
+            return
+        try:
+            self._runtime_model_limits = await provider.discover_model_limits(self.model)
+        except Exception as exc:  # noqa: BLE001 - static catalog remains the safe fallback
+            self._model_limits_discovery_error = f"{type(exc).__name__}: {exc}"
+
+    async def reload(self) -> CodingReloadSummary:
+        """Reload resources and extensions with an awaited lifecycle boundary.
+
+        Outgoing handlers finish ``session_shutdown(reason="reload")`` while
+        their API generation is still active. The runtime then clears UI,
+        invalidates/reloads registrations, and awaits the new generation's
+        ``session_start(reason="reload")`` so startup-mounted UI is restored
+        before the command reports completion.
+        """
+        await self._extension_runtime.emit_session_shutdown("reload")
         before_skills = _skill_signatures(self._skills)
         before_prompt_templates = _prompt_template_signatures(self._prompt_templates)
         before_context_files = _context_file_signatures(self._context_files)
-        before_diagnostics = _diagnostic_signatures(self._resource_diagnostics)
+        before_diagnostics = _diagnostic_signatures(self.resource_diagnostics)
         before_system_prompt_inputs = _system_prompt_resource_signatures(
             skills=self._skills,
             context_files=self._context_files,
         )
+        before_extensions = _extension_signatures(self._extension_runtime)
+        before_tool_names = tuple(tool.name for tool in self._harness.config.tools)
+        before_guidelines = self._extension_runtime.prompt_guidelines
 
-        resources = _load_session_resources(self._resource_paths, self._config.context_files)
+        resources = _load_session_resources(
+            self._resource_paths,
+            self._config.context_files,
+            skills_enabled=self._config.skills_enabled,
+        )
+        self._reload_extensions()
 
         after_skills = _skill_signatures(resources.skills)
         after_prompt_templates = _prompt_template_signatures(resources.prompt_templates)
         after_context_files = _context_file_signatures(resources.context_files)
-        after_diagnostics = _diagnostic_signatures(resources.diagnostics)
         after_system_prompt_inputs = _system_prompt_resource_signatures(
             skills=resources.skills,
             context_files=resources.context_files,
         )
+        after_extensions = _extension_signatures(self._extension_runtime)
+        after_tool_names = tuple(tool.name for tool in self._harness.config.tools)
+        after_guidelines = self._extension_runtime.prompt_guidelines
 
         rebuilt_system_prompt: str | None = None
         system_prompt_rebuilt = False
-        if (
-            self._config.system is None
-            and before_system_prompt_inputs != after_system_prompt_inputs
+        if self._config.system is None and (
+            before_system_prompt_inputs != after_system_prompt_inputs
+            or before_tool_names != after_tool_names
+            or before_guidelines != after_guidelines
         ):
             rebuilt_system_prompt = build_system_prompt(
                 BuildSystemPromptOptions(
@@ -940,6 +1174,7 @@ class CodingSession:
                     custom_prompt=self._config.custom_system_prompt,
                     append_system_prompt=self._config.append_system_prompt,
                     context_files=resources.context_files,
+                    extra_guidelines=after_guidelines,
                 )
             )
             system_prompt_rebuilt = True
@@ -948,9 +1183,12 @@ class CodingSession:
         self._prompt_templates = resources.prompt_templates
         self._context_files = resources.context_files
         self._resource_diagnostics = resources.diagnostics
+        after_diagnostics = _diagnostic_signatures(self.resource_diagnostics)
         if rebuilt_system_prompt is not None:
             self._harness.config.system = rebuilt_system_prompt
             self._invalidate_context_usage_cache()
+
+        await self._extension_runtime.emit_session_start("reload")
 
         return CodingReloadSummary(
             skills=_category_summary(before_skills, after_skills),
@@ -959,9 +1197,39 @@ class CodingSession:
                 after_prompt_templates,
             ),
             context_files=_category_summary(before_context_files, after_context_files),
+            extensions=_category_summary(before_extensions, after_extensions),
             diagnostics=_category_summary(before_diagnostics, after_diagnostics),
             system_prompt_rebuilt=system_prompt_rebuilt,
         )
+
+    def _reload_extensions(self) -> None:
+        """Re-discover extensions and rebuild dependent tools and commands.
+
+        Extension `setup` re-runs against freshly imported modules. Wrapped
+        tools are rebuilt in place on the live harness config, the session
+        command registry is rebuilt (unless the caller supplied its own), and
+        the harness event fan-out is re-subscribed.
+        """
+        self._extension_runtime.reset_for_reload()
+        if self._config.extensions_enabled or self._config.extension_paths:
+            self._extension_runtime.load(
+                self._resource_paths,
+                extra_paths=self._config.extension_paths,
+                include_resource_dirs=self._config.extensions_enabled,
+                include_project_dir=self._config.project_extensions_enabled,
+            )
+        base_tools = (
+            self._config.tools
+            if self._config.tools is not None
+            else create_coding_tools(
+                cwd=self._config.cwd,
+                shell_command_prefix=self._config.shell_command_prefix,
+            )
+        )
+        self._harness.config.tools = self._extension_runtime.compose_tools(base_tools)
+        if self._config.command_registry is None:
+            self._command_registry = self._extension_runtime.build_command_registry()
+        self._extension_runtime.attach_harness_listener(self._harness.subscribe)
 
     def reload_provider_settings(self) -> None:
         """Reload provider settings for login and model-selection flows."""
@@ -1021,7 +1289,7 @@ class CodingSession:
                 resource_paths=self._config.resource_paths,
                 session_id=record.id,
                 session_manager=manager,
-                command_registry=self._command_registry,
+                command_registry=self._config.command_registry,
                 provider_name=provider_name,
                 provider_settings=self._provider_settings,
                 runtime_provider_config=runtime_provider_config,
@@ -1029,6 +1297,11 @@ class CodingSession:
                 auto_compact_enabled=self._auto_compact_enabled,
                 thinking_level=self._thinking_level,
                 shell_command_prefix=self._config.shell_command_prefix,
+                skills_enabled=self._config.skills_enabled,
+                extension_paths=self._config.extension_paths,
+                extensions_enabled=self._config.extensions_enabled,
+                project_extensions_enabled=self._config.project_extensions_enabled,
+                extension_runtime=self._extension_runtime,
             )
         )
         if restore_record_model:
@@ -1039,23 +1312,7 @@ class CodingSession:
             replacement._harness.config.model = self.model
             replacement._sync_thinking_level_to_active_model()
             replacement._refresh_runtime_provider()
-        self._config = replacement._config
-        self._state = replacement._state
-        self._harness = replacement._harness
-        self._invalidate_context_usage_cache()
-        self._last_parent_id = replacement._last_parent_id
-        self._skills = replacement._skills
-        self._prompt_templates = replacement._prompt_templates
-        self._context_files = replacement._context_files
-        self._resource_diagnostics = replacement._resource_diagnostics
-        self._command_registry = replacement._command_registry
-        self._provider_name = replacement._provider_name
-        self._provider_settings = replacement._provider_settings
-        self._runtime_provider_config = replacement._runtime_provider_config
-        self._resource_paths = replacement._resource_paths
-        self._auto_compact_token_threshold = replacement._auto_compact_token_threshold
-        self._auto_compact_enabled = replacement._auto_compact_enabled
-        self._thinking_level = replacement._thinking_level
+        await self._adopt_replacement(replacement, reason="resume")
         return f"Resumed session: {record.id}"
 
     async def new_session(self) -> str:
@@ -1097,8 +1354,31 @@ class CodingSession:
                 runtime_provider_config=runtime_provider_config,
                 thinking_level=thinking_level,
                 index_on_first_persist=True,
+                extension_runtime=self._extension_runtime,
             )
         )
+        await self._adopt_replacement(replacement, reason="new")
+        return f"Started new session: {record.id}"
+
+    async def _adopt_replacement(
+        self,
+        replacement: CodingSession,
+        *,
+        reason: Literal["new", "resume", "branch"],
+    ) -> None:
+        """Adopt a replacement session's state and re-bind the extension runtime.
+
+        The extension runtime is long-lived and shared with the replacement; it
+        must be re-bound to this outer session object because later state
+        (transcript persistence, parent ids) mutates here, not on the discarded
+        replacement instance.
+        """
+        await self._extension_runtime.emit_session_shutdown(reason)
+        # Tear down extension-owned UI (slot widgets, main views, key
+        # interceptors) from the outgoing session after its shutdown handlers
+        # run and before session_start fires, so start handlers can re-mount
+        # into a clean frontend.
+        self._extension_runtime.clear_ui_components()
         self._config = replacement._config
         self._state = replacement._state
         self._harness = replacement._harness
@@ -1116,7 +1396,11 @@ class CodingSession:
         self._auto_compact_token_threshold = replacement._auto_compact_token_threshold
         self._auto_compact_enabled = replacement._auto_compact_enabled
         self._thinking_level = replacement._thinking_level
-        return f"Started new session: {record.id}"
+        self._pending_initial_entries = replacement._pending_initial_entries
+        self._extension_runtime = replacement._extension_runtime
+        self._extension_runtime.bind(self)
+        self._extension_runtime.attach_harness_listener(self._harness.subscribe)
+        await self._extension_runtime.emit_session_start(reason)
 
     async def compact(self, instructions: str | None = None) -> str:
         """Generate a manual compaction summary and rebuild active context."""
@@ -1133,6 +1417,7 @@ class CodingSession:
 
     async def aclose(self) -> None:
         """Close runtime providers created by this coding session."""
+        await self._extension_runtime.emit_session_shutdown("quit")
         for provider in self._owned_providers:
             await provider.aclose()
         self._owned_providers.clear()
@@ -1184,10 +1469,10 @@ class CodingSession:
             cwd=self.cwd,
             shell_command_prefix=self._config.shell_command_prefix,
         )
-        result = await bash_tool.execute({"command": normalized_command})
+        result = await bash_tool.execute("terminal-command", {"command": normalized_command})
         exit_code = None
-        if result.data is not None:
-            raw_exit_code = result.data.get("exit_code")
+        if isinstance(result.details, dict):
+            raw_exit_code = result.details.get("exit_code")
             exit_code = raw_exit_code if isinstance(raw_exit_code, int) else None
 
         if add_to_context:
@@ -1196,7 +1481,7 @@ class CodingSession:
                 UserMessage(
                     content=_terminal_command_context_message(
                         normalized_command,
-                        result.content,
+                        result.text,
                     )
                 )
             )
@@ -1205,9 +1490,9 @@ class CodingSession:
 
         return TerminalCommandResult(
             command=normalized_command,
-            output=result.content,
+            output=result.text,
             exit_code=exit_code,
-            ok=result.ok,
+            ok=exit_code == 0,
             added_to_context=add_to_context,
         )
 
@@ -1216,9 +1501,27 @@ class CodingSession:
         content: str,
         *,
         streaming_behavior: StreamingBehavior | None = None,
-    ) -> AsyncIterator[AgentEvent]:
-        """Append a user prompt, run the agent, and persist new messages."""
+        source: Literal["interactive", "extension"] = "interactive",
+        custom_type: str | None = None,
+        details: dict[str, JSONValue] | None = None,
+    ) -> AsyncIterator[CodingSessionEvent]:
+        """Append a user prompt, run the agent, and persist new messages.
+
+        ``custom_type``/``details`` attach custom-message render metadata to the
+        appended ``UserMessage`` (used when an extension delivers a custom
+        message that starts an idle session's turn). ``source`` marks who
+        initiated the turn for the `input` hook (``"extension"`` when an
+        extension started it, ``"interactive"`` otherwise).
+        """
         context = self._diagnostic_context()
+        input_outcome = await self._extension_runtime.run_input_hooks(
+            content, source=source, streaming_behavior=streaming_behavior
+        )
+        if input_outcome.handled:
+            if input_outcome.message:
+                self._extension_runtime.ui.notify(input_outcome.message)
+            return
+        content = input_outcome.text
         try:
             expanded_content = self.expand_prompt_text(content)
         except ResourceError:
@@ -1233,43 +1536,92 @@ class CodingSession:
 
         if self._harness.is_running:
             if streaming_behavior == "steer":
-                yield self._harness.steer(expanded_content)
+                self._harness.steer(expanded_content)
+                session_event_0 = self.queue_update_event()
+                await self._extension_runtime.emit_event(session_event_0)
+                yield session_event_0
                 return
             if streaming_behavior == "follow_up":
-                yield self._harness.follow_up(expanded_content)
+                self._harness.follow_up(expanded_content)
+                session_event_0 = self.queue_update_event()
+                await self._extension_runtime.emit_event(session_event_0)
+                yield session_event_0
                 return
             raise RuntimeError(
                 "CodingSession is already running; pass streaming_behavior to queue a message."
             )
 
+        await self._refresh_runtime_model_limits()
         await self._try_auto_compact(context=context, phase="auto_compact_before_prompt")
         persisted_count = len(self._harness.messages)
         auto_name_attempted = False
-        overflow_event: ErrorEvent | None = None
+        overflow_message: AssistantMessage | None = None
         try:
-            events = self._harness.prompt(expanded_content)
+            prompt_message: AgentMessage
+            if custom_type is not None:
+                prompt_message = CustomMessage(
+                    custom_type=custom_type,
+                    content=expanded_content,
+                    display=True,
+                    details=details,
+                )
+            else:
+                prompt_message = UserMessage(content=expanded_content)
+            events = self._harness.prompt_message(prompt_message)
             self._invalidate_context_usage_cache()
             async for event in events:
+                auto_name_message: str | None = None
                 if isinstance(event, MessageEndEvent):
                     persisted_count = await self._persist_messages_since(persisted_count)
                     if not auto_name_attempted and isinstance(event.message, UserMessage):
                         auto_name_attempted = True
-                        await self._try_auto_name_session(event.message.content, context=context)
+                        auto_name_message = event.message.text
                 if isinstance(event, ToolExecutionEndEvent):
                     self._invalidate_context_usage_cache()
-                if isinstance(event, ErrorEvent) and not event.recoverable:
-                    self._last_diagnostic_log_path = self._diagnostic_logger.log_error_event(
+                if (
+                    isinstance(event, MessageEndEvent)
+                    and isinstance(event.message, AssistantMessage)
+                    and event.message.stop_reason == "error"
+                ):
+                    self._last_diagnostic_log_path = self._diagnostic_logger.log_assistant_error(
                         context=context,
                         phase="agent_loop",
-                        event=event,
+                        message=event.message,
                     )
-                    if _is_context_overflow_error(event):
-                        overflow_event = event
-                yield event
+                    if _is_context_overflow_error(event.message):
+                        overflow_message = event.message
+                if isinstance(event, AgentEndEvent):
+                    yield SessionAgentEndEvent(messages=event.messages, will_retry=False)
+                else:
+                    yield event
+                # Let frontends render the confirmed, expanded prompt before
+                # session naming performs its separate provider request.
+                if auto_name_message is not None:
+                    await self._try_auto_name_session(auto_name_message, context=context)
             persisted_count = await self._persist_messages_since(persisted_count)
-            if overflow_event is not None:
+            if overflow_message is not None:
+                session_event_1 = CompactionStartEvent(reason="overflow")
+                await self._extension_runtime.emit_event(session_event_1)
+                yield session_event_1
                 compacted = await self._try_overflow_compact(context=context)
+                compaction_end = CompactionEndEvent(
+                    reason="overflow",
+                    result=None,
+                    aborted=not compacted,
+                    will_retry=compacted,
+                    error_message=None if compacted else "Overflow compaction failed",
+                )
+                await self._extension_runtime.emit_event(compaction_end)
+                yield compaction_end
                 if compacted:
+                    retry_start = AutoRetryStartEvent(
+                        attempt=1,
+                        max_attempts=1,
+                        delay_ms=0,
+                        error_message=overflow_message.error_message or "Context overflow",
+                    )
+                    await self._extension_runtime.emit_event(retry_start)
+                    yield retry_start
                     retry_persisted_count = len(self._harness.messages)
                     retry_events = self._harness.continue_()
                     self._invalidate_context_usage_cache()
@@ -1280,18 +1632,37 @@ class CodingSession:
                             )
                         if isinstance(retry_event, ToolExecutionEndEvent):
                             self._invalidate_context_usage_cache()
-                        if isinstance(retry_event, ErrorEvent) and not retry_event.recoverable:
+                        if (
+                            isinstance(retry_event, MessageEndEvent)
+                            and isinstance(retry_event.message, AssistantMessage)
+                            and retry_event.message.stop_reason == "error"
+                        ):
                             self._last_diagnostic_log_path = (
-                                self._diagnostic_logger.log_error_event(
+                                self._diagnostic_logger.log_assistant_error(
                                     context=context,
                                     phase="agent_loop_retry",
-                                    event=retry_event,
+                                    message=retry_event.message,
                                 )
                             )
-                        yield retry_event
+                        if isinstance(retry_event, AgentEndEvent):
+                            yield SessionAgentEndEvent(
+                                messages=retry_event.messages,
+                                will_retry=False,
+                            )
+                        else:
+                            yield retry_event
                     await self._persist_messages_since(retry_persisted_count)
+                    session_event_4 = AutoRetryEndEvent(success=True, attempt=1, final_error=None)
+                    await self._extension_runtime.emit_event(session_event_4)
+                    yield session_event_4
+                session_event_5 = AgentSettledEvent()
+                await self._extension_runtime.emit_event(session_event_5)
+                yield session_event_5
                 return
             await self._try_auto_compact(context=context, phase="auto_compact_after_prompt")
+            session_event_5 = AgentSettledEvent()
+            await self._extension_runtime.emit_event(session_event_5)
+            yield session_event_5
         except Exception as exc:
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
@@ -1300,9 +1671,10 @@ class CodingSession:
             )
             raise
 
-    async def continue_(self) -> AsyncIterator[AgentEvent]:
+    async def continue_(self) -> AsyncIterator[CodingSessionEvent]:
         """Continue the agent from restored state and persist new messages."""
         context = self._diagnostic_context()
+        await self._refresh_runtime_model_limits()
         persisted_count = len(self._harness.messages)
         try:
             events = self._harness.continue_()
@@ -1312,15 +1684,25 @@ class CodingSession:
                     persisted_count = await self._persist_messages_since(persisted_count)
                 if isinstance(event, ToolExecutionEndEvent):
                     self._invalidate_context_usage_cache()
-                if isinstance(event, ErrorEvent) and not event.recoverable:
-                    self._last_diagnostic_log_path = self._diagnostic_logger.log_error_event(
+                if (
+                    isinstance(event, MessageEndEvent)
+                    and isinstance(event.message, AssistantMessage)
+                    and event.message.stop_reason == "error"
+                ):
+                    self._last_diagnostic_log_path = self._diagnostic_logger.log_assistant_error(
                         context=context,
                         phase="agent_loop",
-                        event=event,
+                        message=event.message,
                     )
-                yield event
+                if isinstance(event, AgentEndEvent):
+                    yield SessionAgentEndEvent(messages=event.messages, will_retry=False)
+                else:
+                    yield event
             await self._persist_messages_since(persisted_count)
             await self._try_auto_compact(context=context, phase="auto_compact_after_continue")
+            session_event_5 = AgentSettledEvent()
+            await self._extension_runtime.emit_event(session_event_5)
+            yield session_event_5
         except Exception as exc:
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
                 context=context,
@@ -1533,13 +1915,14 @@ class CodingSession:
             messages=[UserMessage(content=prompt)],
             tools=[],
         ):
-            if isinstance(event, ProviderTextDeltaEvent):
+            if isinstance(event, TextDeltaEvent):
                 text_parts.append(event.delta)
-            elif isinstance(event, ProviderResponseEndEvent):
-                final_text = event.message.content
-            elif isinstance(event, ProviderErrorEvent):
-                details = f": {event.data}" if event.data is not None else ""
-                raise RuntimeError(f"Session naming failed: {event.message}{details}")
+            elif isinstance(event, AssistantDoneEvent):
+                final_text = event.message.text
+            elif isinstance(event, AssistantErrorEvent):
+                raise RuntimeError(
+                    f"Session naming failed: {event.error.error_message or event.reason}"
+                )
         return _sanitize_session_name(final_text if final_text is not None else "".join(text_parts))
 
     def _set_auto_session_title(self, title: str) -> None:
@@ -1604,13 +1987,14 @@ class CodingSession:
             messages=summary_messages,
             tools=[],
         ):
-            if isinstance(event, ProviderTextDeltaEvent):
+            if isinstance(event, TextDeltaEvent):
                 text_parts.append(event.delta)
-            elif isinstance(event, ProviderResponseEndEvent):
-                final_text = event.message.content
-            elif isinstance(event, ProviderErrorEvent):
-                details = f": {event.data}" if event.data is not None else ""
-                raise RuntimeError(f"Compaction summarization failed: {event.message}{details}")
+            elif isinstance(event, AssistantDoneEvent):
+                final_text = event.message.text
+            elif isinstance(event, AssistantErrorEvent):
+                raise RuntimeError(
+                    f"Compaction summarization failed: {event.error.error_message or event.reason}"
+                )
 
         summary = (final_text if final_text is not None else "".join(text_parts)).strip()
         if not summary:
@@ -1725,7 +2109,7 @@ def _first_recent_context_index(
         return next_user_index
 
     for index in range(candidate_index, len(rows)):
-        if rows[index][1].role != "tool":
+        if rows[index][1].role != "toolResult":
             return index
     return len(rows)
 
@@ -1741,10 +2125,8 @@ def _next_user_message_index(
     return None
 
 
-def _is_context_overflow_error(event: ErrorEvent) -> bool:
-    text = event.message
-    if event.data is not None:
-        text = f"{text} {event.data}"
+def _is_context_overflow_error(message: AssistantMessage) -> bool:
+    text = message.error_message or ""
     normalized = text.lower()
     markers = (
         "context length",
@@ -1875,7 +2257,11 @@ def _tree_entry_title(entry: SessionEntry) -> str:
     match entry.type:
         case "message":
             message = entry.message
-            if isinstance(message, AssistantMessage) and message.tool_calls and not message.content:
+            if (
+                isinstance(message, AssistantMessage)
+                and message.tool_calls
+                and not message.text.strip()
+            ):
                 tool_names = ", ".join(call.name for call in message.tool_calls)
                 return f"tool call: {tool_names}"
             return f"{message.role}: {_message_text_preview(message)}"
@@ -1888,10 +2274,7 @@ def _tree_entry_title(entry: SessionEntry) -> str:
 
 
 def _message_text_preview(message: AgentMessage) -> str:
-    content = message.content
-    if isinstance(content, str):
-        return _short_preview(content)
-    return _short_preview(str(content))
+    return _short_preview(message_text(message))
 
 
 def _short_preview(text: str, *, limit: int = 72) -> str:
@@ -2168,6 +2551,10 @@ def _diagnostic_signatures(
     )
 
 
+def _extension_signatures(runtime: ExtensionRuntime) -> tuple[tuple[object, ...], ...]:
+    return tuple((name,) for name in runtime.extension_names)
+
+
 def _system_prompt_resource_signatures(
     *,
     skills: tuple[Skill, ...],
@@ -2183,8 +2570,15 @@ def _system_prompt_resource_signatures(
 def _load_session_resources(
     resource_paths: TauResourcePaths,
     explicit_context_files: tuple[ProjectContextFile, ...],
+    *,
+    skills_enabled: bool = True,
 ) -> SessionResources:
-    loaded_skills, skill_diagnostics = load_skills_with_diagnostics(resource_paths)
+    loaded_skills: list[Skill]
+    skill_diagnostics: list[ResourceDiagnostic]
+    if skills_enabled:
+        loaded_skills, skill_diagnostics = load_skills_with_diagnostics(resource_paths)
+    else:
+        loaded_skills, skill_diagnostics = [], []
     loaded_prompt_templates, prompt_diagnostics = load_prompt_templates_with_diagnostics(
         resource_paths
     )
@@ -2234,10 +2628,9 @@ def _interrupted_tool_repair_plan(
             repaired.append(
                 ToolResultMessage(
                     tool_call_id=tool_call.id,
-                    name=tool_call.name,
-                    content=content,
-                    ok=False,
-                    error=content,
+                    tool_name=tool_call.name,
+                    content=[TextContent(text=content)],
+                    is_error=True,
                 )
             )
 

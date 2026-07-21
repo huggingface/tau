@@ -15,10 +15,8 @@ overrides earlier on name clashes):
 ```text
 ~/.tau/skills/
 ~/.agents/skills/
-~/.agents/
 <cwd>/.tau/skills/
 <cwd>/.agents/skills/
-<cwd>/.agents/
 ```
 
 Prompt templates load from:
@@ -70,7 +68,12 @@ This matches the Agent Skills spec and applies uniformly across `.tau/` and
 `.agents/` locations.
 {{% /tip %}}
 
-Tau lists loaded skills in the system prompt so the model knows they exist and
+Tau's own extension and provider workflows are packaged documentation rather
+than built-in skills. They remain available to the agent without appearing in
+your skill list, competing with your skill names, or being disabled by
+`--no-skills`.
+
+Tau lists loaded user and project skills in the system prompt so the model knows they exist and
 can read the full file (via the `read` tool) when relevant. Invoke one
 explicitly:
 

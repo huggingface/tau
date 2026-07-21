@@ -11,22 +11,24 @@ from shutil import copy2
 from tempfile import NamedTemporaryFile
 from typing import Any, Protocol, cast
 
-from tau_ai import (
+from tau_ai.env import (
     DEFAULT_ANTHROPIC_BASE_URL,
-    DEFAULT_OPENAI_CODEX_BASE_URL,
+    DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
     DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES,
     DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS,
     DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS,
     AnthropicConfig,
     OpenAICompatibleConfig,
 )
-from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL
+from tau_ai.openai_codex import DEFAULT_OPENAI_CODEX_BASE_URL
 from tau_coding.catalog_loader import effective_catalog, save_user_catalog_entries
 from tau_coding.credentials import FileCredentialStore, credentials_path
+from tau_coding.oauth_registry import get_oauth_provider
 from tau_coding.paths import TauPaths
 from tau_coding.provider_catalog import (
     BUILTIN_PROVIDER_CATALOG,
     ModelCatalogMetadata,
+    ModelCostTier,
     ProviderApi,
     ProviderCatalogEntry,
     ProviderKind,
@@ -65,6 +67,7 @@ class ProviderModelMetadata:
     reasoning: bool | None = None
     input: tuple[str, ...] = ()
     cost: dict[str, float] = field(default_factory=dict)
+    cost_tiers: tuple[ModelCostTier, ...] = ()
     context_window: int | None = None
     max_tokens: int | None = None
     headers: dict[str, str] = field(default_factory=dict)
@@ -80,6 +83,17 @@ class ProviderModelMetadata:
             "reasoning": self.reasoning,
             "input": list(self.input),
             "cost": dict(self.cost),
+            "cost_tiers": [
+                {
+                    **(
+                        {"max_input_tokens": tier.max_input_tokens}
+                        if tier.max_input_tokens is not None
+                        else {}
+                    ),
+                    **tier.cost,
+                }
+                for tier in self.cost_tiers
+            ],
             "context_window": self.context_window,
             "max_tokens": self.max_tokens,
             "headers": dict(self.headers),
@@ -448,6 +462,7 @@ def _provider_model_metadata_from_catalog(
             reasoning=metadata.reasoning,
             input=tuple(metadata.input),
             cost=dict(metadata.cost or {}),
+            cost_tiers=metadata.cost_tiers,
             context_window=metadata.context_window,
             max_tokens=metadata.max_tokens,
             headers=dict(metadata.headers),
@@ -883,6 +898,7 @@ def _merge_provider_model_metadata(
             reasoning=metadata.reasoning if metadata.reasoning is not None else base.reasoning,
             input=metadata.input or base.input,
             cost={**base.cost, **metadata.cost},
+            cost_tiers=metadata.cost_tiers or base.cost_tiers,
             context_window=metadata.context_window or base.context_window,
             max_tokens=metadata.max_tokens or base.max_tokens,
             headers={**base.headers, **metadata.headers},
@@ -1026,6 +1042,7 @@ def _catalog_model_metadata_from_provider(
             reasoning=metadata.reasoning,
             input=tuple(item for item in metadata.input if item in {"text", "image"}),
             cost=dict(metadata.cost) or None,
+            cost_tiers=metadata.cost_tiers,
             context_window=metadata.context_window,
             max_tokens=metadata.max_tokens,
             headers=dict(metadata.headers),
@@ -1094,7 +1111,11 @@ def _providers_with_preferences(
         if provider_name in seen:
             raise ProviderConfigError("Provider preference names must be unique")
         if provider_name not in catalog_configs:
-            raise ProviderConfigError(f"Unknown provider preference: {provider_name}")
+            # Preferences contain runtime overrides, not provider definitions. A
+            # catalog entry may be removed independently, leaving an orphaned
+            # preference behind. Ignore it so one stale entry cannot prevent Tau
+            # from starting or running `tau setup` to register it again.
+            continue
         providers.append(
             _apply_provider_preference(
                 catalog_configs[provider_name],
@@ -1421,6 +1442,33 @@ def provider_default_thinking_level(
     return levels[0]
 
 
+def resolve_startup_thinking_level(
+    provider: ProviderConfig,
+    model: str,
+    *,
+    preferred: ThinkingLevel = DEFAULT_THINKING_LEVEL,
+) -> ThinkingLevel | None:
+    """Pick a valid startup thinking level for a provider/model pair.
+
+    Startup (TUI and print mode) must never crash just because the remembered
+    default model does not support the global default level. The level is
+    resolved with the same precedence used when switching models mid-session:
+    the remembered per-model preference wins, then the global ``preferred``
+    level, then the provider/catalog default, then the first available level.
+
+    Returns ``None`` when the model has no configurable thinking levels.
+    """
+    levels = provider_thinking_levels(provider, model=model)
+    if not levels:
+        return None
+    remembered = provider.thinking_defaults.get(model)
+    if remembered in levels:
+        return remembered
+    if preferred in levels:
+        return preferred
+    return provider_default_thinking_level(provider, model=model) or levels[0]
+
+
 def openai_compatible_config_from_provider(
     provider: OpenAICompatibleProviderConfig,
     *,
@@ -1515,11 +1563,14 @@ def provider_has_usable_credentials(
 ) -> bool:
     """Return whether Tau can attempt calls for this provider without prompting setup."""
     if provider.credential_name and credential_reader is not None:
-        if isinstance(provider, OpenAICodexProviderConfig):
-            get_oauth = getattr(credential_reader, "get_oauth", None)
-            if get_oauth is not None and get_oauth(provider.credential_name) is not None:
-                return True
-        elif credential_reader.get(provider.credential_name):
+        get_oauth = getattr(credential_reader, "get_oauth", None)
+        if (
+            get_oauth_provider(provider.name) is not None
+            and get_oauth is not None
+            and get_oauth(provider.credential_name) is not None
+        ):
+            return True
+        if credential_reader.get(provider.credential_name):
             return True
     return bool(environ.get(provider.api_key_env))
 
@@ -1798,6 +1849,13 @@ def _api_key_from_provider(
         credential = credential_reader.get(provider.credential_name)
         if credential:
             return credential
+        get_oauth = getattr(credential_reader, "get_oauth", None)
+        if get_oauth_provider(provider.name) is not None and get_oauth is not None:
+            oauth_credential = get_oauth(provider.credential_name)
+            if oauth_credential is not None:
+                access = getattr(oauth_credential, "access", None)
+                if isinstance(access, str) and access:
+                    return access
 
     api_key = environ.get(provider.api_key_env)
     if api_key:
@@ -1852,6 +1910,7 @@ def _validate_model_metadata(
             raise ProviderConfigError("Provider model_metadata input must contain text or image")
         if any(value < 0 for value in metadata.cost.values()):
             raise ProviderConfigError("Provider model_metadata cost values must be non-negative")
+        _validate_runtime_cost_tiers(metadata.cost_tiers)
         _validate_json_object(metadata.compat, "Provider model_metadata compat")
         _validate_string_dict(metadata.headers, "Provider model_metadata headers")
         for level, value in metadata.thinking_level_map.items():
@@ -1860,6 +1919,26 @@ def _validate_model_metadata(
                 raise ProviderConfigError(
                     "Provider model_metadata thinking_level_map values must be strings or null"
                 )
+
+
+def _validate_runtime_cost_tiers(tiers: tuple[ModelCostTier, ...]) -> None:
+    if tiers and tiers[-1].max_input_tokens is not None:
+        raise ProviderConfigError(
+            "Provider model_metadata final cost tier must omit max_input_tokens"
+        )
+    previous_limit = 0
+    for tier in tiers:
+        if any(value < 0 for value in tier.cost.values()):
+            raise ProviderConfigError(
+                "Provider model_metadata cost tier values must be non-negative"
+            )
+        if tier.max_input_tokens is None:
+            continue
+        if tier.max_input_tokens <= previous_limit:
+            raise ProviderConfigError(
+                "Provider model_metadata cost tier limits must be strictly increasing"
+            )
+        previous_limit = tier.max_input_tokens
 
 
 def _validate_string_dict(value: dict[str, str], field_name: str) -> None:
@@ -2096,6 +2175,7 @@ def _model_metadata_dict(
             reasoning=_optional_bool(item.get("reasoning"), f"{field_name}.{model}.reasoning"),
             input=_optional_string_tuple(item.get("input"), f"{field_name}.{model}.input"),
             cost=_float_dict(item.get("cost", {}), f"{field_name}.{model}.cost"),
+            cost_tiers=_cost_tiers(item.get("cost_tiers", []), f"{field_name}.{model}.cost_tiers"),
             context_window=_optional_positive_int(
                 item.get("context_window"), f"{field_name}.{model}.context_window"
             ),
@@ -2110,6 +2190,34 @@ def _model_metadata_dict(
             ),
         )
     return items
+
+
+def _cost_tiers(value: object, field_name: str) -> tuple[ModelCostTier, ...]:
+    if not isinstance(value, list):
+        raise ProviderConfigError(f"Provider field must be an array: {field_name}")
+    tiers: list[ModelCostTier] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ProviderConfigError(f"Provider cost tiers must be objects: {field_name}")
+        tier_field = f"{field_name}.{index}"
+        allowed = {"max_input_tokens", "input", "output", "cacheRead", "cacheWrite"}
+        if set(item) - allowed:
+            raise ProviderConfigError(f"Provider cost tier has unknown fields: {tier_field}")
+        cost = {
+            key: _non_negative_float(item.get(key), f"{tier_field}.{key}")
+            for key in ("input", "output", "cacheRead", "cacheWrite")
+        }
+        tiers.append(
+            ModelCostTier(
+                max_input_tokens=_optional_positive_int(
+                    item.get("max_input_tokens"), f"{tier_field}.max_input_tokens"
+                ),
+                cost=cost,
+            )
+        )
+    result = tuple(tiers)
+    _validate_runtime_cost_tiers(result)
+    return result
 
 
 def _thinking_level_map_dict(

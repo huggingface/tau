@@ -5,10 +5,12 @@ from tau_agent import (
     CompactionEntry,
     LeafEntry,
     MessageEntry,
+    TextContent,
     ToolCall,
     ToolResultMessage,
     UserMessage,
 )
+from tau_agent.messages import assistant_content
 from tau_coding.session_export import export_session_html, render_session_html
 
 
@@ -24,8 +26,10 @@ def test_render_session_html_preserves_branch_tree() -> None:
             id="right",
             parent_id="root",
             message=AssistantMessage(
-                content="Right branch",
-                tool_calls=[ToolCall(id="call-1", name="read", arguments={"path": "README.md"})],
+                content=assistant_content(
+                    "Right branch",
+                    [ToolCall(id="call-1", name="read", arguments={"path": "README.md"})],
+                )
             ),
         ),
         MessageEntry(
@@ -33,10 +37,9 @@ def test_render_session_html_preserves_branch_tree() -> None:
             parent_id="right",
             message=ToolResultMessage(
                 tool_call_id="call-1",
-                name="read",
-                content="File contents",
-                ok=True,
-                data={"bytes": 13},
+                tool_name="read",
+                content=[TextContent(text="File contents")],
+                details={"bytes": 13},
             ),
         ),
         CompactionEntry(
@@ -61,6 +64,53 @@ def test_render_session_html_preserves_branch_tree() -> None:
     assert "active-path" in html
     assert "active-leaf" in html
     assert "Replaces entries" in html
+
+
+def test_render_session_html_uses_static_document_layout() -> None:
+    entries = [MessageEntry(id="root", message=UserMessage(content="Export layout"))]
+
+    html = render_session_html(entries, title="Layout Export")
+
+    assert '<p class="eyebrow">Tau session export</p>' in html
+    assert '<main class="session-shell">' in html
+    assert '<aside class="tree-rail">' in html
+    assert '<section class="entry-stream" aria-label="Session entries">' in html
+    assert 'class="entry-card active-entry"' in html
+    assert "Session" in html
+    assert "Transcript" in html
+    assert "border-right: 1px solid var(--line);" in html
+    assert 'id="themeToggle"' in html
+    assert "<link" not in html.lower()
+    assert "http://" not in html and "https://" not in html
+
+
+def test_render_session_html_syntax_highlights_tool_call_arguments() -> None:
+    entries = [
+        MessageEntry(
+            id="root",
+            message=AssistantMessage(
+                content=assistant_content(
+                    "Reading a file",
+                    [ToolCall(id="call-1", name="read", arguments={"path": "README.md"})],
+                )
+            ),
+        ),
+    ]
+
+    html = render_session_html(entries, title="Highlight Export")
+
+    assert 'class="highlight"' in html
+    assert '<span class="nt">' in html or '<span class="s2">' in html
+
+
+def test_render_session_html_includes_theme_toggle_script() -> None:
+    entries = [MessageEntry(id="root", message=UserMessage(content="Hello"))]
+
+    html = render_session_html(entries, title="Toggle Export")
+
+    assert 'id="themeToggle"' in html
+    assert "localStorage" in html
+    assert "data-theme" in html
 
 
 def test_export_session_html_writes_file(tmp_path: Path) -> None:

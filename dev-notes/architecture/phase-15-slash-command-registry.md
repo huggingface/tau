@@ -127,6 +127,11 @@ The registry intentionally returns `handled=False` for skill and prompt-template
 expansion directives so `CodingSession.prompt()` can replace them before sending
 the prompt to the model.
 
+Like Pi, Tau also returns `handled=False` for every unregistered slash-prefixed
+input. Only recognized commands are consumed locally; unknown command-like text
+and absolute paths such as `/tmp` or `/Users/me/file.png` continue as normal
+prompts.
+
 There is no plain `/skill` slash command in the Pi-aligned registry.
 
 ## Future use

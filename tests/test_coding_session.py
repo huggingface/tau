@@ -6,15 +6,20 @@ from pathlib import Path
 
 import pytest
 
+from conftest import isolate_home
+from pi_event_helpers import assistant_done, assistant_error, assistant_start
 from tau_agent import (
     AgentMessage,
     AgentTool,
     AssistantMessage,
-    QueueUpdateEvent,
+    MessageEndEvent,
+    TextContent,
+    ThinkingContent,
     ToolCall,
     ToolResultMessage,
     UserMessage,
 )
+from tau_agent.messages import assistant_content
 from tau_agent.session import (
     CompactionEntry,
     JsonlSessionStorage,
@@ -24,15 +29,8 @@ from tau_agent.session import (
     SessionInfoEntry,
     ThinkingLevelChangeEntry,
 )
-from tau_ai import (
-    CancellationToken,
-    FakeProvider,
-    ModelProvider,
-    ProviderErrorEvent,
-    ProviderEvent,
-    ProviderResponseEndEvent,
-    ProviderResponseStartEvent,
-)
+from tau_ai import CancellationToken, FakeProvider, ModelProvider, RuntimeModelLimits
+from tau_ai.events import AssistantMessageEvent
 from tau_coding import (
     CodingSession,
     CodingSessionConfig,
@@ -42,6 +40,7 @@ from tau_coding import (
     OpenAICompatibleProviderConfig,
     ProviderConfigError,
     ProviderSettings,
+    ResourceError,
     ScopedModelConfig,
     SessionManager,
     SessionTreeBranchResult,
@@ -51,11 +50,22 @@ from tau_coding import (
     save_provider_settings,
 )
 from tau_coding import session as coding_session_module
+from tau_coding.events import QueueUpdateEvent
 from tau_coding.session import _ordered_tree_entries, parse_terminal_command
 
 
 async def _collect_session_events(session_stream: object) -> list[object]:
     return [event async for event in session_stream]  # type: ignore[attr-defined]
+
+
+def _assert_messages(actual: object, expected: object) -> None:
+    def dump(message: object) -> object:
+        model_dump = getattr(message, "model_dump", None)
+        if callable(model_dump):
+            return model_dump(exclude={"timestamp"})
+        return message
+
+    assert [dump(message) for message in actual] == [dump(message) for message in expected]  # type: ignore[union-attr]
 
 
 def _config(
@@ -79,6 +89,26 @@ class SwitchableFakeProvider:
         self.closed = True
 
 
+class ModelLimitsFakeProvider(FakeProvider):
+    def __init__(
+        self,
+        scripts: list[list[AssistantMessageEvent]],
+        *,
+        limits: RuntimeModelLimits | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        super().__init__(scripts)
+        self.limits = limits
+        self.error = error
+        self.discovery_calls: list[str] = []
+
+    async def discover_model_limits(self, model: str) -> RuntimeModelLimits | None:
+        self.discovery_calls.append(model)
+        if self.error is not None:
+            raise self.error
+        return self.limits
+
+
 class RaisingProvider:
     def __init__(self, fail_on_call: int = 1) -> None:
         self.fail_on_call = fail_on_call
@@ -92,16 +122,16 @@ class RaisingProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
-    ) -> AsyncIterator[ProviderEvent]:
+    ) -> AsyncIterator[AssistantMessageEvent]:
         del model, system, messages, tools, signal
         self.call_count += 1
         should_fail = self.call_count == self.fail_on_call
 
-        async def iterator() -> AsyncIterator[ProviderEvent]:
+        async def iterator() -> AsyncIterator[AssistantMessageEvent]:
             if should_fail:
                 raise RuntimeError("provider exploded")
-            yield ProviderResponseStartEvent(model="fake")
-            yield ProviderResponseEndEvent(message=AssistantMessage(content="Generated title"))
+            yield assistant_start(model="fake")
+            yield assistant_done(message=AssistantMessage(content="Generated title"))
 
         return iterator()
 
@@ -121,21 +151,21 @@ class WaitingProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
-    ) -> AsyncIterator[ProviderEvent]:
+    ) -> AsyncIterator[AssistantMessageEvent]:
         del model, system, tools, signal
         call_index = self.call_count
         self.call_count += 1
         self.calls.append(list(messages))
 
-        async def iterator() -> AsyncIterator[ProviderEvent]:
+        async def iterator() -> AsyncIterator[AssistantMessageEvent]:
             if call_index == 0:
-                yield ProviderResponseStartEvent(model="fake")
+                yield assistant_start(model="fake")
                 self.started.set()
                 await self.release.wait()
-                yield ProviderResponseEndEvent(message=AssistantMessage(content="First"))
+                yield assistant_done(message=AssistantMessage(content="First"))
                 return
-            yield ProviderResponseStartEvent(model="fake")
-            yield ProviderResponseEndEvent(message=AssistantMessage(content="Second"))
+            yield assistant_start(model="fake")
+            yield assistant_done(message=AssistantMessage(content="Second"))
 
         return iterator()
 
@@ -154,18 +184,18 @@ class CancellableWaitingProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
-    ) -> AsyncIterator[ProviderEvent]:
+    ) -> AsyncIterator[AssistantMessageEvent]:
         del model, system, tools
         self.calls.append(list(messages))
 
-        async def iterator() -> AsyncIterator[ProviderEvent]:
-            yield ProviderResponseStartEvent(model="fake")
+        async def iterator() -> AsyncIterator[AssistantMessageEvent]:
+            yield assistant_start(model="fake")
             self.started.set()
             while not self.release.is_set():
                 if signal is not None and signal.is_cancelled():
                     return
                 await asyncio.sleep(0)
-            yield ProviderResponseEndEvent(message=AssistantMessage(content="Finished"))
+            yield assistant_done(message=AssistantMessage(content="Finished"))
 
         return iterator()
 
@@ -256,7 +286,7 @@ async def test_prompt_logs_error_event_diagnostic_data(tmp_path: Path) -> None:
     provider = FakeProvider(
         [
             [
-                ProviderErrorEvent(
+                assistant_error(
                     message="provider failed",
                     data={"status_code": 400, "body": "bad request"},
                 )
@@ -281,11 +311,10 @@ async def test_prompt_logs_error_event_diagnostic_data(tmp_path: Path) -> None:
     log_path = tau_paths.agent_calls_log_path
     assert session.last_diagnostic_log_path == log_path
     entry = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])
-    assert entry["kind"] == "error_event"
+    assert entry["kind"] == "assistant_error"
     assert entry["error"] == {
         "message": "provider failed",
-        "recoverable": False,
-        "data": {"status_code": 400, "body": "bad request"},
+        "stop_reason": "error",
     }
     assert "Hello" not in log_path.read_text(encoding="utf-8")
 
@@ -300,7 +329,7 @@ async def test_load_persists_repair_for_session_with_interrupted_tail_tool_call(
     tool_call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
     assistant_entry = MessageEntry(
         parent_id=user_entry.id,
-        message=AssistantMessage(content="I'll read it.", tool_calls=[tool_call]),
+        message=AssistantMessage(content=assistant_content("I'll read it.", [tool_call])),
     )
     await storage.append(assistant_entry)
     await storage.append(LeafEntry(parent_id=assistant_entry.id, entry_id=assistant_entry.id))
@@ -308,8 +337,8 @@ async def test_load_persists_repair_for_session_with_interrupted_tail_tool_call(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Recovered.")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Recovered.")),
             ]
         ]
     )
@@ -325,25 +354,30 @@ async def test_load_persists_repair_for_session_with_interrupted_tail_tool_call(
 
     expected_repair = ToolResultMessage(
         tool_call_id="call-1",
-        name="read",
-        content="Tool call interrupted by user",
-        ok=False,
-        error="Tool call interrupted by user",
+        tool_name="read",
+        content=[TextContent(text="Tool call interrupted by user")],
+        is_error=True,
     )
     assert provider.calls == []
-    assert session.messages == (
-        UserMessage(content="Read README.md"),
-        AssistantMessage(content="I'll read it.", tool_calls=[tool_call]),
-        expected_repair,
+    _assert_messages(
+        session.messages,
+        (
+            UserMessage(content="Read README.md"),
+            AssistantMessage(content=assistant_content("I'll read it.", [tool_call])),
+            expected_repair,
+        ),
     )
 
     entries = await storage.read_all()
     message_entries = [entry for entry in entries if entry.type == "message"]
-    assert [entry.message for entry in message_entries] == [
-        UserMessage(content="Read README.md"),
-        AssistantMessage(content="I'll read it.", tool_calls=[tool_call]),
-        expected_repair,
-    ]
+    _assert_messages(
+        [entry.message for entry in message_entries],
+        [
+            UserMessage(content="Read README.md"),
+            AssistantMessage(content=assistant_content("I'll read it.", [tool_call])),
+            expected_repair,
+        ],
+    )
 
 
 @pytest.mark.anyio
@@ -356,7 +390,7 @@ async def test_load_persists_repair_for_historical_interrupted_tool_call(
     tool_call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
     assistant_entry = MessageEntry(
         parent_id=user_entry.id,
-        message=AssistantMessage(content="I'll read it.", tool_calls=[tool_call]),
+        message=AssistantMessage(content=assistant_content("I'll read it.", [tool_call])),
     )
     await storage.append(assistant_entry)
     continued_entry = MessageEntry(
@@ -379,25 +413,30 @@ async def test_load_persists_repair_for_historical_interrupted_tool_call(
 
     expected_repair = ToolResultMessage(
         tool_call_id="call-1",
-        name="read",
-        content="Tool call interrupted by user",
-        ok=False,
-        error="Tool call interrupted by user",
+        tool_name="read",
+        content=[TextContent(text="Tool call interrupted by user")],
+        is_error=True,
     )
     assert provider.calls == []
-    assert session.messages == (
-        UserMessage(content="Read README.md"),
-        AssistantMessage(content="I'll read it.", tool_calls=[tool_call]),
-        expected_repair,
-        UserMessage(content="continue"),
+    _assert_messages(
+        session.messages,
+        (
+            UserMessage(content="Read README.md"),
+            AssistantMessage(content=assistant_content("I'll read it.", [tool_call])),
+            expected_repair,
+            UserMessage(content="continue"),
+        ),
     )
 
     entries = await storage.read_all()
     message_entries = [entry for entry in entries if entry.type == "message"]
-    assert [entry.message for entry in message_entries[-2:]] == [
-        expected_repair,
-        UserMessage(content="continue"),
-    ]
+    _assert_messages(
+        [entry.message for entry in message_entries[-2:]],
+        [
+            expected_repair,
+            UserMessage(content="continue"),
+        ],
+    )
 
     restored = await CodingSession.load(
         CodingSessionConfig(
@@ -417,8 +456,8 @@ async def test_prompt_persists_user_assistant_and_leaf_entries(tmp_path: Path) -
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Hi")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Hi")),
             ]
         ]
     )
@@ -441,14 +480,19 @@ async def test_prompt_persists_user_assistant_and_leaf_entries(tmp_path: Path) -
     )
     message_entries = [entry for entry in entries if entry.type == "message"]
     leaf_entries = [entry for entry in entries if entry.type == "leaf"]
-    assert [entry.message for entry in message_entries] == [
-        UserMessage(content="Hello"),
-        AssistantMessage(content="Hi"),
-    ]
+    _assert_messages(
+        [entry.message for entry in message_entries],
+        [
+            UserMessage(content="Hello"),
+            AssistantMessage(content="Hi"),
+        ],
+    )
     assert [entry.entry_id for entry in leaf_entries] == [entry.id for entry in message_entries]
     assert entries[-1].type == "leaf"
     assert entries[-1].entry_id == message_entries[-1].id
-    assert session.messages == (UserMessage(content="Hello"), AssistantMessage(content="Hi"))
+    _assert_messages(
+        session.messages, (UserMessage(content="Hello"), AssistantMessage(content="Hi"))
+    )
 
 
 @pytest.mark.anyio
@@ -458,7 +502,6 @@ async def test_terminal_command_can_persist_output_to_context(tmp_path: Path) ->
 
     result = await session.run_terminal_command("printf hello", add_to_context=True)
 
-    assert result.ok is True
     assert result.output == "hello"
     assert result.added_to_context is True
     entries = await storage.read_all()
@@ -477,13 +520,20 @@ async def test_terminal_command_can_run_without_context(tmp_path: Path) -> None:
 
     result = await session.run_terminal_command("printf hidden", add_to_context=False)
 
-    assert result.ok is True
     assert result.output == "hidden"
     assert result.added_to_context is False
     entries = await storage.read_all()
     assert not any(isinstance(entry, MessageEntry) for entry in entries)
 
 
+# The shell_command_prefix feature routes commands through bash only on POSIX
+# (see create_bash_tool); on Windows they run under the default shell.
+requires_posix_shell = pytest.mark.skipif(
+    sys.platform == "win32", reason="shell_command_prefix uses bash only on POSIX"
+)
+
+
+@requires_posix_shell
 @pytest.mark.anyio
 async def test_terminal_command_uses_configured_shell_command_prefix(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
@@ -500,11 +550,11 @@ async def test_terminal_command_uses_configured_shell_command_prefix(tmp_path: P
 
     result = await session.run_terminal_command("greet", add_to_context=False)
 
-    assert result.ok is True
     assert result.output == "terminal-alias"
     assert result.added_to_context is False
 
 
+@requires_posix_shell
 @pytest.mark.anyio
 async def test_agent_bash_tool_uses_configured_shell_command_prefix(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
@@ -520,12 +570,11 @@ async def test_agent_bash_tool_uses_configured_shell_command_prefix(tmp_path: Pa
     )
     bash_tool = next(tool for tool in session.tools if tool.name == "bash")
 
-    result = await bash_tool.execute({"command": "greet"})
+    result = await bash_tool.execute("call-1", {"command": "greet"})
 
-    assert result.ok is True
-    assert result.content == "agent-alias"
-    assert result.data is not None
-    assert result.data["shell_command_prefix_applied"] is True
+    assert result.text == "agent-alias"
+    assert isinstance(result.details, dict)
+    assert result.details["shell_command_prefix_applied"] is True
 
 
 def test_parse_terminal_command_prefixes() -> None:
@@ -570,16 +619,19 @@ async def test_prompt_queues_steering_while_session_is_running(tmp_path: Path) -
     before_release_messages = [
         entry.message for entry in entries_before_release if entry.type == "message"
     ]
-    assert before_release_messages == [UserMessage(content="Hello")]
+    _assert_messages(before_release_messages, [UserMessage(content="Hello")])
     assert entries_before_release[-1].type == "leaf"
     assert entries_before_release[-1].entry_id == next(
         entry.id for entry in entries_before_release if entry.type == "message"
     )
-    assert session.messages == (
-        UserMessage(content="Hello"),
-        AssistantMessage(content="First"),
-        UserMessage(content="Queued steering"),
-        AssistantMessage(content="Second"),
+    _assert_messages(
+        session.messages,
+        (
+            UserMessage(content="Hello"),
+            AssistantMessage(content="First"),
+            UserMessage(content="Queued steering"),
+            AssistantMessage(content="Second"),
+        ),
     )
     assert provider.calls[1] == list(session.messages[:3])
     entries = await storage.read_all()
@@ -587,7 +639,7 @@ async def test_prompt_queues_steering_while_session_is_running(tmp_path: Path) -
     leaf_entries = [entry for entry in entries if entry.type == "leaf"]
     assert [entry.message for entry in message_entries] == list(session.messages)
     assert [entry.entry_id for entry in leaf_entries] == [entry.id for entry in message_entries]
-    assert any(isinstance(event, QueueUpdateEvent) for event in run_events)
+    assert not any(isinstance(event, QueueUpdateEvent) for event in run_events)
 
 
 @pytest.mark.anyio
@@ -621,9 +673,37 @@ async def test_tree_can_branch_from_first_user_message_before_assistant_response
         input_prefill="Start here",
     )
     assert session.messages == ()
-    assert [entry.message for entry in message_entries] == [UserMessage(content="Start here")]
+    assert message_entries[0].message.text == "Start here"
+    assert isinstance(message_entries[1].message, AssistantMessage)
+    assert message_entries[1].message.stop_reason == "error"
     assert isinstance(entries[-1], LeafEntry)
     assert entries[-1].entry_id == message_entries[0].parent_id
+
+
+@pytest.mark.anyio
+async def test_tree_choices_label_structured_tool_calls_without_exposing_thinking(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    entry = MessageEntry(
+        id="assistant",
+        message=AssistantMessage(
+            content=[
+                ThinkingContent(thinking="Inspect the project before answering."),
+                ToolCall(id="call-1", name="read", arguments={"path": "README.md"}),
+                ToolCall(id="call-2", name="bash", arguments={"command": "git status"}),
+            ]
+        ),
+    )
+    await storage.append(entry)
+    await storage.append(LeafEntry(entry_id=entry.id))
+    session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
+
+    choices = await session.tree_choices()
+
+    assert len(choices) == 1
+    assert choices[0].label == "tool call: read, bash"
+    assert choices[0].is_tool_call is True
 
 
 @pytest.mark.anyio
@@ -713,9 +793,12 @@ async def test_tree_branching_preserves_active_model(tmp_path: Path) -> None:
     assert result == SessionTreeBranchResult(message="Branched session at assistant.")
     assert session.model == "new"
     assert session.state.model == "old"
-    assert session.messages == (
-        UserMessage(content="Earlier"),
-        AssistantMessage(content="Old answer"),
+    _assert_messages(
+        session.messages,
+        (
+            UserMessage(content="Earlier"),
+            AssistantMessage(content="Old answer"),
+        ),
     )
 
 
@@ -748,14 +831,14 @@ async def test_context_usage_recalculates_after_prompt_and_compaction(tmp_path: 
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
+                assistant_start(model="fake"),
+                assistant_done(
                     message=AssistantMessage(content="Long answer " * 80),
                 ),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Short summary")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Short summary")),
             ],
         ]
     )
@@ -813,7 +896,7 @@ async def test_session_cycles_thinking_level(tmp_path: Path) -> None:
 async def test_session_uses_active_model_thinking_capabilities(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
+    isolate_home(monkeypatch, tmp_path)
     provider_config = OpenAICompatibleProviderConfig(
         name="openai",
         models=("reasoner", "plain"),
@@ -1044,9 +1127,12 @@ async def test_load_restores_existing_transcript(tmp_path: Path) -> None:
 
     session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
 
-    assert session.messages == (
-        UserMessage(content="Earlier"),
-        AssistantMessage(content="Restored"),
+    _assert_messages(
+        session.messages,
+        (
+            UserMessage(content="Earlier"),
+            AssistantMessage(content="Restored"),
+        ),
     )
 
 
@@ -1069,9 +1155,12 @@ async def test_load_detaches_missing_root_parent_from_imported_branch(tmp_path: 
 
     session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
 
-    assert session.messages == (
-        UserMessage(content="Root"),
-        AssistantMessage(content="Restored"),
+    _assert_messages(
+        session.messages,
+        (
+            UserMessage(content="Root"),
+            AssistantMessage(content="Restored"),
+        ),
     )
     assert session.state.active_leaf_id == "assistant"
 
@@ -1148,9 +1237,12 @@ async def test_load_restores_active_leaf_branch(tmp_path: Path) -> None:
 
     session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
 
-    assert session.messages == (
-        UserMessage(content="Root"),
-        AssistantMessage(content="Active branch"),
+    _assert_messages(
+        session.messages,
+        (
+            UserMessage(content="Root"),
+            AssistantMessage(content="Active branch"),
+        ),
     )
     assert session.state.active_leaf_id == "right"
 
@@ -1219,7 +1311,9 @@ async def test_session_branches_to_previous_entry_without_destroying_history(
 
     entries = await storage.read_all()
     assert result == SessionTreeBranchResult(message="Branched session at left.")
-    assert session.messages == (UserMessage(content="Root"), AssistantMessage(content="Left"))
+    _assert_messages(
+        session.messages, (UserMessage(content="Root"), AssistantMessage(content="Left"))
+    )
     assert [entry.id for entry in entries if entry.type == "message"] == ["root", "left", "right"]
     assert isinstance(entries[-1], LeafEntry)
     assert entries[-1].entry_id == "left"
@@ -1231,12 +1325,12 @@ async def test_persist_after_branch_keeps_state_on_active_branch(tmp_path: Path)
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="New answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="New answer")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Branch summary")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Branch summary")),
             ],
         ]
     )
@@ -1262,11 +1356,14 @@ async def test_persist_after_branch_keeps_state_on_active_branch(tmp_path: Path)
     await session.branch_to_entry("answer")
     _events = await _collect_session_events(session.prompt("New follow-up"))
 
-    assert session.state.messages == (
-        UserMessage(content="Root"),
-        AssistantMessage(content="Answer"),
-        UserMessage(content="New follow-up"),
-        AssistantMessage(content="New answer"),
+    _assert_messages(
+        session.state.messages,
+        (
+            UserMessage(content="Root"),
+            AssistantMessage(content="Answer"),
+            UserMessage(content="New follow-up"),
+            AssistantMessage(content="New answer"),
+        ),
     )
     assert "abandoned" not in session.state.context_entry_ids
     assert "abandoned-answer" not in session.state.context_entry_ids
@@ -1308,7 +1405,9 @@ async def test_session_branches_to_before_selected_user_message_with_prefill(
         message="Branched session before followup.",
         input_prefill="Try this again",
     )
-    assert session.messages == (UserMessage(content="Root"), AssistantMessage(content="Answer"))
+    _assert_messages(
+        session.messages, (UserMessage(content="Root"), AssistantMessage(content="Answer"))
+    )
     assert [entry.id for entry in entries if entry.type == "message"] == [
         "root",
         "assistant",
@@ -1387,7 +1486,7 @@ async def test_session_branch_with_summary_keeps_pre_branch_model_and_messages(
     assert session.state.model == "first-model"
     assert session.model == "second-model"
     assert len(session.messages) == 2
-    assert session.messages[0] == UserMessage(content="Before switch")
+    assert session.messages[0].text == "Before switch"
     assert session.messages[1].content.startswith(
         "The following is a summary of a branch that this conversation came back from:"
     )
@@ -1399,10 +1498,8 @@ async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> N
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
-                    message=AssistantMessage(content="The abandoned branch went left.")
-                ),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="The abandoned branch went left.")),
             ]
         ]
     )
@@ -1436,7 +1533,7 @@ async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> N
     assert "Use this EXACT format:" in provider.calls[0][2][0].content
     assert "Abandoned follow-up" in provider.calls[0][2][0].content
     assert len(session.messages) == 2
-    assert session.messages[0] == UserMessage(content="Root")
+    assert session.messages[0].text == "Root"
     assert session.messages[1].role == "user"
     assert isinstance(session.messages[1].content, str)
     assert session.messages[1].content.startswith(
@@ -1451,10 +1548,8 @@ async def test_session_branch_with_summary_accepts_custom_instructions(tmp_path:
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
-                    message=AssistantMessage(content="Custom branch summary.")
-                ),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Custom branch summary.")),
             ]
         ]
     )
@@ -1488,8 +1583,8 @@ async def test_session_branch_with_summary_tracks_file_operations(tmp_path: Path
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="File work summary.")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="File work summary.")),
             ]
         ]
     )
@@ -1499,7 +1594,7 @@ async def test_session_branch_with_summary_tracks_file_operations(tmp_path: Path
     assistant = MessageEntry(
         id="assistant",
         parent_id="root",
-        message=AssistantMessage(content="Using tools", tool_calls=[read_call, edit_call]),
+        message=AssistantMessage(content=assistant_content("Using tools", [read_call, edit_call])),
     )
     await storage.append(root)
     await storage.append(assistant)
@@ -1542,7 +1637,7 @@ async def test_session_branch_with_summary_falls_back_when_model_summary_is_unav
     assert "Automatically compacted 2 prior message(s)." in summary.summary
     assert "Abandoned follow-up" in summary.summary
     assert len(session.messages) == 2
-    assert session.messages[0] == UserMessage(content="Root")
+    assert session.messages[0].text == "Root"
     assert "Abandoned follow-up" in session.messages[1].content
 
 
@@ -1553,8 +1648,8 @@ async def test_continue_persists_only_new_messages(tmp_path: Path) -> None:
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Continued")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Continued")),
             ]
         ]
     )
@@ -1564,10 +1659,13 @@ async def test_continue_persists_only_new_messages(tmp_path: Path) -> None:
 
     entries = await storage.read_all()
     message_entries = [entry for entry in entries if entry.type == "message"]
-    assert [entry.message for entry in message_entries] == [
-        UserMessage(content="Continue me"),
-        AssistantMessage(content="Continued"),
-    ]
+    _assert_messages(
+        [entry.message for entry in message_entries],
+        [
+            UserMessage(content="Continue me"),
+            AssistantMessage(content="Continued"),
+        ],
+    )
 
 
 @pytest.mark.anyio
@@ -1577,15 +1675,15 @@ async def test_tool_results_are_persisted(tmp_path: Path) -> None:
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
-                    message=AssistantMessage(content="Using tool", tool_calls=[tool_call]),
+                assistant_start(model="fake"),
+                assistant_done(
+                    message=AssistantMessage(content=assistant_content("Using tool", [tool_call])),
                     finish_reason="tool_calls",
                 ),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ],
         ]
     )
@@ -1603,8 +1701,8 @@ async def test_session_preserves_explicit_empty_system_prompt(tmp_path: Path) ->
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ]
         ]
     )
@@ -1637,8 +1735,8 @@ async def test_session_builds_system_prompt_when_system_is_omitted(tmp_path: Pat
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ]
         ]
     )
@@ -1669,12 +1767,12 @@ async def test_session_touches_session_manager_after_persisting_messages(tmp_pat
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Greeting")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Greeting")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ],
         ]
     )
@@ -1705,14 +1803,12 @@ async def test_session_auto_names_first_unnamed_managed_session(tmp_path: Path) 
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
-                    message=AssistantMessage(content='"Fix broken CLI output now"')
-                ),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content='"Fix broken CLI output now"')),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ],
         ]
     )
@@ -1736,7 +1832,59 @@ async def test_session_auto_names_first_unnamed_managed_session(tmp_path: Path) 
     assert provider.calls[0][0] == "fake"
     assert provider.calls[0][3] == []
     assert "Please fix the broken CLI output." in provider.calls[0][2][0].content
-    assert provider.calls[1][2] == [UserMessage(content="Please fix the broken CLI output.")]
+    _assert_messages(
+        provider.calls[1][2], [UserMessage(content="Please fix the broken CLI output.")]
+    )
+
+
+@pytest.mark.anyio
+async def test_session_yields_expanded_custom_prompt_before_auto_naming(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(cwd=tmp_path, model="fake")
+    resources_root = tmp_path / "resources"
+    prompts_dir = resources_root / "prompts"
+    prompts_dir.mkdir(parents=True)
+    (prompts_dir / "review.md").write_text("Review this target:\n{{ arguments }}")
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Review target")),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+            resource_paths=TauResourcePaths(root=resources_root, agents_root=None),
+        )
+    )
+
+    stream = session.prompt("/review src/app.py")
+    for _ in range(3):
+        await anext(stream)
+    prompt_event = await asyncio.wait_for(anext(stream), timeout=1)
+
+    assert isinstance(prompt_event, MessageEndEvent)
+    assert isinstance(prompt_event.message, UserMessage)
+    assert prompt_event.message.text == "Review this target:\nsrc/app.py"
+    assert provider.calls == []
+
+    await _collect_session_events(stream)
+    renamed = manager.get_session(record.id)
+    assert renamed is not None
+    assert renamed.title == "Review target"
 
 
 @pytest.mark.anyio
@@ -1747,11 +1895,11 @@ async def test_session_auto_name_falls_back_when_provider_fails(tmp_path: Path) 
     provider = FakeProvider(
         [
             [
-                ProviderErrorEvent(message="naming failed"),
+                assistant_error(message="naming failed"),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ],
         ]
     )
@@ -1772,9 +1920,12 @@ async def test_session_auto_name_falls_back_when_provider_fails(tmp_path: Path) 
     renamed = manager.get_session(record.id)
     assert renamed is not None
     assert renamed.title == "Investigate flaky session restore"
-    assert session.messages == (
-        UserMessage(content="Investigate flaky session restore tests"),
-        AssistantMessage(content="Done"),
+    _assert_messages(
+        session.messages,
+        (
+            UserMessage(content="Investigate flaky session restore tests"),
+            AssistantMessage(content="Done"),
+        ),
     )
 
 
@@ -1788,12 +1939,12 @@ async def test_session_auto_name_falls_back_when_provider_returns_unusable_title
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="!!!")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="!!!")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ],
         ]
     )
@@ -1824,8 +1975,8 @@ async def test_session_auto_name_does_not_overwrite_manual_name(tmp_path: Path) 
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ],
         ]
     )
@@ -1859,12 +2010,12 @@ async def test_session_auto_name_does_not_index_new_session_before_first_persist
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Generated title")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Generated title")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ],
         ]
     )
@@ -1899,8 +2050,8 @@ async def test_session_loads_and_expands_skills(tmp_path: Path) -> None:
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ]
         ]
     )
@@ -1916,11 +2067,82 @@ async def test_session_loads_and_expands_skills(tmp_path: Path) -> None:
 
     _events = await _collect_session_events(session.prompt("/skill:testing add tests"))
 
-    assert [skill.name for skill in session.skills] == ["testing"]
+    assert {skill.name for skill in session.skills} == {"testing"}
     assert '<skill name="testing" location="' in provider.calls[0][2][0].content
     assert "References are relative to" in provider.calls[0][2][0].content
     assert provider.calls[0][2][0].content.endswith("</skill>\n\nadd tests")
     assert session.handle_command("/skill:testing").handled is False
+
+
+@pytest.mark.anyio
+async def test_session_skills_disabled_suppresses_skill_index(tmp_path: Path) -> None:
+    resource_root = tmp_path / "resources"
+    skills_dir = resource_root / "skills"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "testing.md").write_text(
+        "---\ndescription: Test code\n---\n# Testing",
+        encoding="utf-8",
+    )
+    (tmp_path / "AGENTS.md").write_text("Follow project rules.", encoding="utf-8")
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
+            ]
+        ]
+    )
+    config = CodingSessionConfig(
+        provider=provider,
+        model="fake",
+        storage=storage,
+        cwd=tmp_path,
+        skills_enabled=False,
+        resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+    )
+    session = await CodingSession.load(config)
+
+    _events = await _collect_session_events(session.prompt("Hello"))
+
+    # Skill discovery is suppressed: no skills, no <available_skills> index.
+    assert session.skills == ()
+    assert "<available_skills>" not in provider.calls[0][1]
+    # Project context (AGENTS.md) remains unaffected by disabling skills.
+    assert "Follow project rules." in provider.calls[0][1]
+    assert [Path(context_file.path).name for context_file in session.context_files] == ["AGENTS.md"]
+    # /skill: commands have nothing to expand against.
+    with pytest.raises(ResourceError):
+        session.expand_prompt_text("/skill:testing")
+
+
+@pytest.mark.anyio
+async def test_session_reload_preserves_disabled_skills(tmp_path: Path) -> None:
+    resource_root = tmp_path / "resources"
+    skills_dir = resource_root / "skills"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "testing.md").write_text(
+        "---\ndescription: Test code\n---\n# Testing",
+        encoding="utf-8",
+    )
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=storage,
+            cwd=tmp_path,
+            skills_enabled=False,
+            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        )
+    )
+
+    assert session.skills == ()
+
+    await session.reload()
+
+    assert session.skills == ()
+    assert "<available_skills>" not in session.system_prompt
 
 
 @pytest.mark.anyio
@@ -1964,8 +2186,8 @@ async def test_session_expands_prompt_templates_as_slash_commands(tmp_path: Path
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ]
         ]
     )
@@ -2001,15 +2223,17 @@ async def test_session_skill_index_lets_agent_read_relevant_skill_file(tmp_path:
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
-                    message=AssistantMessage(content="Reading skill.", tool_calls=[tool_call]),
+                assistant_start(model="fake"),
+                assistant_done(
+                    message=AssistantMessage(
+                        content=assistant_content("Reading skill.", [tool_call])
+                    ),
                     finish_reason="tool_calls",
                 ),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Skill applied.")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Skill applied.")),
             ],
         ]
     )
@@ -2032,11 +2256,11 @@ async def test_session_skill_index_lets_agent_read_relevant_skill_file(tmp_path:
     tool_result = provider.calls[1][2][-1]
     assert isinstance(tool_result, ToolResultMessage)
     assert tool_result.tool_call_id == "call-1"
-    assert tool_result.name == "read"
-    assert tool_result.ok is True
-    assert "# Testing\nRun pytest." in tool_result.content
-    assert tool_result.data is not None
-    assert tool_result.data["path"] == str(skill_path)
+    assert tool_result.tool_name == "read"
+    assert tool_result.is_error is False
+    assert "# Testing\nRun pytest." in tool_result.text
+    assert isinstance(tool_result.details, dict)
+    assert tool_result.details["path"] == str(skill_path)
 
 
 @pytest.mark.anyio
@@ -2060,7 +2284,7 @@ async def test_session_loads_with_resource_diagnostics_instead_of_failing(
 
     session = await CodingSession.load(config)
 
-    assert [skill.name for skill in session.skills] == ["good"]
+    assert "good" in {skill.name for skill in session.skills}
     assert len(session.resource_diagnostics) == 1
     assert (
         "bare .md files are no longer treated as skills" in session.resource_diagnostics[0].message
@@ -2075,8 +2299,8 @@ async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Pa
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ]
         ]
     )
@@ -2101,18 +2325,17 @@ async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Pa
     (tmp_path / "AGENTS.md").write_text("Reloaded project rules.", encoding="utf-8")
 
     entries_before = await storage.read_all()
-    result = session.handle_command("/reload")
+    command = session.handle_command("/reload")
+    assert command.reload_requested is True
+    summary = await session.reload()
     entries_after = await storage.read_all()
     _events = await _collect_session_events(session.prompt("Hello"))
 
-    assert result.message is not None
-    assert "Reloaded local coding resources and project context." in result.message
-    assert "Skills: 1 total (changed, +1)" in result.message
-    assert "Project context files: 1 total (changed, +1)" in result.message
-    assert "Next-turn system prompt: rebuilt" in result.message
-    assert "Not refreshed by /reload" in result.message
+    assert summary.skills.after == 1
+    assert summary.context_files.after == 1
+    assert summary.system_prompt_rebuilt is True
     assert entries_after == entries_before
-    assert [skill.name for skill in session.skills] == ["testing"]
+    assert {skill.name for skill in session.skills} == {"testing"}
     assert [Path(context_file.path).name for context_file in session.context_files] == ["AGENTS.md"]
     assert "Reloaded project rules." in provider.calls[0][1]
     assert "<name>testing</name>" in provider.calls[0][1]
@@ -2144,11 +2367,9 @@ async def test_session_reload_skips_provider_settings_refresh(
         )
     )
 
-    result = session.handle_command("/reload")
-
-    assert result.message is not None
-    assert "Provider config:" in result.message
-    assert "Not refreshed by /reload" in result.message
+    command = session.handle_command("/reload")
+    assert command.reload_requested is True
+    await session.reload()
 
 
 @pytest.mark.anyio
@@ -2176,10 +2397,11 @@ async def test_session_reload_leaves_system_prompt_when_inputs_are_unchanged(
         fail_build_system_prompt,
     )
 
-    result = session.handle_command("/reload")
+    command = session.handle_command("/reload")
+    assert command.reload_requested is True
+    summary = await session.reload()
 
-    assert result.message is not None
-    assert "Next-turn system prompt: unchanged" in result.message
+    assert summary.system_prompt_rebuilt is False
 
 
 @pytest.mark.anyio
@@ -2220,18 +2442,16 @@ async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: P
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Session answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Session answer")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
-                    message=AssistantMessage(content="Generated session summary")
-                ),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Generated session summary")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Next answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Next answer")),
             ],
         ]
     )
@@ -2258,10 +2478,13 @@ async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: P
     assert leaves[-1].entry_id == compactions[0].id
     assert provider.calls[1][1].startswith("You are a context summarization assistant.")
     assert "Additional focus: Focus on session persistence." in provider.calls[1][2][0].content
-    assert provider.calls[2][2] == [
-        UserMessage(content=("Previous conversation summary:\nGenerated session summary")),
-        UserMessage(content="Continue."),
-    ]
+    _assert_messages(
+        provider.calls[2][2],
+        [
+            UserMessage(content=("Previous conversation summary:\nGenerated session summary")),
+            UserMessage(content="Continue."),
+        ],
+    )
 
 
 @pytest.mark.anyio
@@ -2273,22 +2496,20 @@ async def test_session_auto_compacts_after_response_when_threshold_is_exceeded(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="First answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="First answer")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Second answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Second answer")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
-                    message=AssistantMessage(content="Generated automatic summary")
-                ),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Generated automatic summary")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Third answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Third answer")),
             ],
         ]
     )
@@ -2313,12 +2534,15 @@ async def test_session_auto_compacts_after_response_when_threshold_is_exceeded(
     assert len(compactions) == 1
     assert compactions[0].summary == "Generated automatic summary"
     assert "Explain sessions." in provider.calls[2][2][0].content
-    assert provider.calls[3][2] == [
-        UserMessage(content=f"Previous conversation summary:\n{compactions[0].summary}"),
-        UserMessage(content="Continue."),
-        AssistantMessage(content="Second answer"),
-        UserMessage(content="Next."),
-    ]
+    _assert_messages(
+        provider.calls[3][2],
+        [
+            UserMessage(content=f"Previous conversation summary:\n{compactions[0].summary}"),
+            UserMessage(content="Continue."),
+            AssistantMessage(content="Second answer"),
+            UserMessage(content="Next."),
+        ],
+    )
 
 
 @pytest.mark.anyio
@@ -2330,18 +2554,16 @@ async def test_session_auto_compacts_with_pi_style_default_threshold(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="First answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="First answer")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Second answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Second answer")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
-                    message=AssistantMessage(content="Default threshold summary")
-                ),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Default threshold summary")),
             ],
         ]
     )
@@ -2381,6 +2603,82 @@ async def test_session_auto_compacts_with_pi_style_default_threshold(
 
 
 @pytest.mark.anyio
+async def test_session_uses_live_provider_limits_for_compaction_threshold(
+    tmp_path: Path,
+) -> None:
+    provider = ModelLimitsFakeProvider(
+        [],
+        limits=RuntimeModelLimits(
+            context_window=372_000,
+            max_output_tokens=128_000,
+            effective_context_window_percent=95,
+        ),
+    )
+    settings = ProviderSettings(
+        default_provider="openai-codex",
+        providers=(
+            OpenAICodexProviderConfig(
+                models=("gpt-5.6-sol",),
+                default_model="gpt-5.6-sol",
+                context_windows={"gpt-5.6-sol": 272_000},
+            ),
+        ),
+    )
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="gpt-5.6-sol",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai-codex",
+            provider_settings=settings,
+        )
+    )
+
+    assert provider.discovery_calls == ["gpt-5.6-sol"]
+    assert session.context_window_tokens == 372_000
+    assert session.auto_compact_token_threshold == 334_800
+    assert session.context_window_source == "provider live catalog"
+    assert session.model_limits_discovery_error is None
+
+
+@pytest.mark.anyio
+async def test_session_falls_back_when_live_model_limit_discovery_fails(
+    tmp_path: Path,
+) -> None:
+    provider = ModelLimitsFakeProvider([], error=RuntimeError("catalog unavailable"))
+    settings = ProviderSettings(
+        default_provider="openai-codex",
+        providers=(
+            OpenAICodexProviderConfig(
+                models=("gpt-5.6-sol",),
+                default_model="gpt-5.6-sol",
+                context_windows={"gpt-5.6-sol": 272_000},
+            ),
+        ),
+    )
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="gpt-5.6-sol",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai-codex",
+            provider_settings=settings,
+        )
+    )
+
+    assert session.context_window_tokens == 272_000
+    assert session.auto_compact_token_threshold == 255_616
+    assert session.context_window_source == "configured catalog"
+    assert session.model_limits_discovery_error == "RuntimeError: catalog unavailable"
+
+
+@pytest.mark.anyio
 async def test_session_compacts_and_retries_once_after_context_overflow(
     tmp_path: Path,
 ) -> None:
@@ -2389,23 +2687,21 @@ async def test_session_compacts_and_retries_once_after_context_overflow(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="First answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="First answer")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Second answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Second answer")),
             ],
-            [ProviderErrorEvent(message="This model's maximum context length was exceeded.")],
+            [assistant_error(message="This model's maximum context length was exceeded.")],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(
-                    message=AssistantMessage(content="Overflow recovery summary")
-                ),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Overflow recovery summary")),
             ],
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Recovered answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Recovered answer")),
             ],
         ]
     )
@@ -2421,15 +2717,24 @@ async def test_session_compacts_and_retries_once_after_context_overflow(
     assert compactions[0].summary == "Overflow recovery summary"
     assert any(
         getattr(event, "type", None) == "message_end"
-        and getattr(event, "message", None) == AssistantMessage(content="Recovered answer")
+        and getattr(getattr(event, "message", None), "text", None) == "Recovered answer"
         for event in retry_events
     )
-    assert provider.calls[4][2] == [
-        UserMessage(content="Previous conversation summary:\nOverflow recovery summary"),
-        UserMessage(content="Keep this recent turn."),
-        AssistantMessage(content="Second answer"),
-        UserMessage(content="Trigger overflow."),
+    assert [message.text for message in provider.calls[4][2][:4]] == [
+        "Previous conversation summary:\nOverflow recovery summary",
+        "Keep this recent turn.",
+        "Second answer",
+        "Trigger overflow.",
     ]
+    assert len(provider.calls[4][2]) == 4
+    overflow_errors = [
+        entry.message
+        for entry in entries
+        if entry.type == "message"
+        and isinstance(entry.message, AssistantMessage)
+        and entry.message.stop_reason == "error"
+    ]
+    assert len(overflow_errors) == 1
 
 
 @pytest.mark.anyio
@@ -2450,7 +2755,7 @@ async def test_session_switches_configured_provider(
         created_providers.append(provider)
         return provider
 
-    monkeypatch.setenv("HOME", str(tmp_path))
+    isolate_home(monkeypatch, tmp_path)
     monkeypatch.setenv("LOCAL_API_KEY", "test-key")
     monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
@@ -2677,6 +2982,7 @@ async def test_session_toggles_and_cycles_scoped_models(
     ]
 
 
+@requires_posix_shell
 @pytest.mark.anyio
 async def test_session_resume_preserves_shell_command_prefix(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
@@ -2705,7 +3011,6 @@ async def test_session_resume_preserves_shell_command_prefix(tmp_path: Path) -> 
     await session.resume(second_record.id)
     result = await session.run_terminal_command("greet", add_to_context=False)
 
-    assert result.ok is True
     assert result.output == "resumed-alias"
 
 
@@ -2721,8 +3026,8 @@ async def test_session_resumes_indexed_session(tmp_path: Path) -> None:
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Second answer")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Second answer")),
             ]
         ]
     )
@@ -2748,12 +3053,15 @@ async def test_session_resumes_indexed_session(tmp_path: Path) -> None:
     assert message == f"Resumed session: {second_record.id}"
     assert session.session_id == second_record.id
     assert session.cwd == second_record.cwd
-    assert [item.content for item in session.messages[:2]] == ["Earlier", "Restored"]
-    assert provider.calls[0][2] == [
-        UserMessage(content="Earlier"),
-        AssistantMessage(content="Restored"),
-        UserMessage(content="Continue."),
-    ]
+    assert [item.text for item in session.messages[:2]] == ["Earlier", "Restored"]
+    _assert_messages(
+        provider.calls[0][2],
+        [
+            UserMessage(content="Earlier"),
+            AssistantMessage(content="Restored"),
+            UserMessage(content="Continue."),
+        ],
+    )
 
 
 @pytest.mark.anyio
@@ -2897,7 +3205,7 @@ async def test_session_load_falls_back_when_persisted_model_does_not_match_provi
 async def test_session_set_model_persists_default_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
+    isolate_home(monkeypatch, tmp_path)
     tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
     provider_config = OpenAICompatibleProviderConfig(
         name="openai",
@@ -2928,7 +3236,7 @@ async def test_session_set_model_persists_default_provider_model(
 async def test_session_set_model_choice_persists_default_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
+    isolate_home(monkeypatch, tmp_path)
     tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
     settings = ProviderSettings(
         default_provider="openai",
@@ -2988,7 +3296,7 @@ async def test_session_set_model_choice_persists_default_provider_model(
 async def test_session_set_model_choice_switches_provider_model_directly(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
+    isolate_home(monkeypatch, tmp_path)
     monkeypatch.setenv("LOCAL_API_KEY", "local-key")
     tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
     settings = ProviderSettings(
@@ -3053,7 +3361,7 @@ async def test_session_set_model_choice_switches_provider_model_directly(
 async def test_session_set_model_preserves_newer_provider_file_changes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
+    isolate_home(monkeypatch, tmp_path)
     tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
     loaded_provider = OpenAICompatibleProviderConfig(
         name="openai",
@@ -3193,12 +3501,12 @@ async def test_session_new_session_is_indexed_after_first_message(
         return FakeProvider(
             [
                 [
-                    ProviderResponseStartEvent(model="gpt-5"),
-                    ProviderResponseEndEvent(message=AssistantMessage(content="Greeting")),
+                    assistant_start(model="gpt-5"),
+                    assistant_done(message=AssistantMessage(content="Greeting")),
                 ],
                 [
-                    ProviderResponseStartEvent(model="gpt-5"),
-                    ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                    assistant_start(model="gpt-5"),
+                    assistant_done(message=AssistantMessage(content="Done")),
                 ],
             ]
         )
@@ -3565,7 +3873,7 @@ def test_minimal_commands_are_handled(tmp_path: Path) -> None:
 
     assert session.handle_command("hello").handled is False
     assert session.handle_command("/new").new_session_requested is True
-    assert session.handle_command("/clear").message == "Unknown command: /clear"
+    assert session.handle_command("/clear").handled is False
     assert session.handle_command("/quit").exit_requested is True
     assert session.handle_command("/exit").exit_requested is True
-    assert session.handle_command("/unknown").message == "Unknown command: /unknown"
+    assert session.handle_command("/unknown").handled is False

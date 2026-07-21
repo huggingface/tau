@@ -1,10 +1,10 @@
 {{ define "main" }}
 <div class="wrap">
-  <header class="hero">
+  <header class="hero hero-compact">
     <div class="hero-grid">
       <div>
-        <p class="eyebrow">A small rant about a big circle</p>
-        <h1>&#960; is <em>wrong</em>.</h1>
+        <p class="eyebrow-hand">Why the project is named &#964;</p>
+        <h1 class="h1-compact">&#960; is <em>wrong</em>.</h1>
         <p class="lede">
           Not <em>incorrect</em> &mdash; the number 3.14159&hellip; is fine. Wrong
           as in a concept we've politely declined to fix for a few thousand years.
@@ -72,7 +72,7 @@
   <section>
     <div class="two">
       <div>
-        <p class="eyebrow">Why &#964; and not &#960;</p>
+        <p class="eyebrow-hand">Why &#964; and not &#960;</p>
         <h2>We build circles from a radius.</h2>
         <p>Nobody draws a circle by picking a diameter. You pin one end, hold out a radius, and swing it around. The radius is the thing that <em>makes</em> the circle &mdash; so the circle's constant should be built from the radius too.</p>
         <p>Lay that radius along the rim and count how many fit. The answer is always the same: about <strong>6.28</strong> of them, big circle or small. That's &#964;. Literally <em>"how many radii go around."</em></p>
@@ -89,7 +89,7 @@
   <section>
     <div class="two boundary-two">
       <div>
-        <p class="eyebrow">The original mistake</p>
+        <p class="eyebrow-hand">The original mistake</p>
         <h2>&#960; measures the wrong thing.</h2>
         <p>&#960; is the ratio of the circumference to the <em>diameter</em> &mdash; which is just two radii stuck together. It's a perfectly real number; it's simply answering a question nobody asked.</p>
         <p>Define the constant from the radius instead and you get &#964; &mdash; and a surprising amount of math quietly gets easier. Same circle, honest measurement, one fewer stray factor of 2 haunting your formulas forever.</p>
@@ -116,7 +116,7 @@
 
     <div class="two" style="margin-bottom:48px;">
       <div>
-        <p class="eyebrow">Euler's identity</p>
+        <p class="eyebrow-hand">Euler's identity</p>
         <h2>"But you'll <em>ruin</em> e<sup>i&#960;</sup>!"</h2>
         <p>Relax &mdash; nobody's killing Euler's identity. &#964; makes it clearer. Start from Euler's formula, \(e^{i\theta} = \cos\theta + i\sin\theta\), and spin a full turn by setting \(\theta = \tau\).</p>
         <p>After one full turn the height (sine) is 0 and the width (cosine) is 1. So \(e^{i\tau} = 1\): <em>go all the way around, and you're back to 1.</em> No mysterious &minus;1 to decode &mdash; it just says what it does.</p>
@@ -171,10 +171,12 @@
   <section>
     <div class="two boundary-two">
       <div>
-        <p class="eyebrow">So why name the project &#964;?</p>
+        <p class="eyebrow-hand">So why name the project &#964;?</p>
         <h2>Find the right radius.</h2>
         <p>A lot of "how AI agents work" material is like &#960; &mdash; technically correct, but centered on the wrong thing, so simple ideas end up looking complicated and people bounce off.</p>
         <p>This project tries to do what &#964; does: find the small, honest core, then build outward so the rest becomes obvious. Pick the definition that makes everything else make sense.</p>
+        <p>Tau is a Python implementation of that idea applied to coding agents, directly inspired by <a href="https://pi.dev" target="_blank" rel="noopener">Pi</a> &mdash; the minimalist coding-agent harness whose architectural split (agent brain, coding session, UI) Tau borrows and re-derives in Python. Not a port; the same honest core, rebuilt as a teaching example.</p>
+        <p><a class="ghost" href="https://pi.dev" target="_blank" rel="noopener">See Pi, the inspiration <span class="arr">&rarr;</span></a></p>
       </div>
       <div class="terminal" aria-hidden="true">
         <div class="bar"><span></span><span></span><span></span><span class="t">tau &mdash; the idea</span></div>

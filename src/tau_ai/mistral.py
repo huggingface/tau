@@ -8,11 +8,18 @@ from typing import Any, Protocol
 
 import httpx
 
-from tau_agent.messages import AgentMessage, AssistantMessage, UserMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    ThinkingContent,
+    ToolResultMessage,
+    UserMessage,
+    assistant_content,
+    message_to_user,
+)
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
-from tau_ai.env import OpenAICompatibleConfig
-from tau_ai.events import (
+from tau_ai._provider_events import (
     ProviderErrorEvent,
     ProviderEvent,
     ProviderResponseEndEvent,
@@ -21,10 +28,13 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.env import OpenAICompatibleConfig
+from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
+from tau_ai.stream import canonicalize_provider_stream
 
 
 class MistralConversationsProvider:
@@ -47,6 +57,23 @@ class MistralConversationsProvider:
             self._client = None
 
     def stream_response(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[AgentMessage],
+        tools: list[AgentTool],
+        signal: CancellationToken | None = None,
+    ) -> AsyncIterator[AssistantMessageEvent]:
+        """Stream one response as Pi-compatible assistant message events."""
+        raw = self._stream_provider_events(
+            model=model, system=system, messages=messages, tools=tools, signal=signal
+        )
+        return canonicalize_provider_stream(
+            raw, api="mistral-conversations", provider="mistral", model=model
+        )
+
+    def _stream_provider_events(
         self,
         *,
         model: str,
@@ -182,6 +209,7 @@ class _MistralStreamParser:
     def __init__(self) -> None:
         self.emitted_content = False
         self._content_parts: list[str] = []
+        self._thinking_parts: list[str] = []
         self._tool_call_builders: dict[int, _ToolCallBuilder] = {}
         self._finish_reason: str | None = None
 
@@ -207,6 +235,7 @@ class _MistralStreamParser:
             events.append(ProviderTextDeltaEvent(delta=content))
         for thinking in _thinking_deltas(delta):
             self.emitted_content = True
+            self._thinking_parts.append(thinking)
             events.append(ProviderThinkingDeltaEvent(delta=thinking))
         for tool_call_delta in _tool_call_deltas(delta):
             self.emitted_content = True
@@ -222,11 +251,12 @@ class _MistralStreamParser:
         events: list[ProviderEvent] = [
             ProviderToolCallEvent(tool_call=tool_call) for tool_call in tool_calls
         ]
+        content = assistant_content("".join(self._content_parts), tool_calls)
+        if self._thinking_parts:
+            content.insert(0, ThinkingContent(thinking="".join(self._thinking_parts)))
         events.append(
             ProviderResponseEndEvent(
-                message=AssistantMessage(
-                    content="".join(self._content_parts), tool_calls=tool_calls
-                ),
+                message=AssistantMessage(content=content),
                 finish_reason=self._finish_reason or ("tool_calls" if tool_calls else "stop"),
             )
         )
@@ -302,20 +332,24 @@ def _system_messages(system: str) -> list[dict[str, JSONValue]]:
 
 def _message_to_mistral(message: AgentMessage) -> dict[str, JSONValue]:
     if isinstance(message, UserMessage):
-        return {"role": "user", "content": message.content}
+        return {"role": "user", "content": message.text}
     if isinstance(message, AssistantMessage):
-        item: dict[str, JSONValue] = {"role": "assistant", "content": message.content}
+        item: dict[str, JSONValue] = {"role": "assistant", "content": message.text}
+        if message.thinking_text:
+            item["reasoning_content"] = message.thinking_text
         if message.tool_calls:
             item["tool_calls"] = [
                 _tool_call_to_mistral(tool_call) for tool_call in message.tool_calls
             ]
         return item
-    return {
-        "role": "tool",
-        "tool_call_id": message.tool_call_id,
-        "name": message.name,
-        "content": message.content,
-    }
+    if isinstance(message, ToolResultMessage):
+        return {
+            "role": "tool",
+            "tool_call_id": message.tool_call_id,
+            "name": message.tool_name,
+            "content": message.text,
+        }
+    return _message_to_mistral(message_to_user(message))
 
 
 def _tool_to_mistral(tool: AgentTool) -> dict[str, JSONValue]:

@@ -61,6 +61,12 @@ Guidelines:
 
 Guidelines are de-duplicated in deterministic order.
 
+The default prompt also mirrors Pi's progressive-disclosure documentation block,
+adapted for Tau. It points to packaged Tau docs and examples for extensions,
+skills, providers/models, commands, TUI behavior, and architecture, and tells the
+model to read them only for Tau-specific questions. Custom prompts still replace
+this default documentation block.
+
 ## Custom prompts
 
 If `custom_prompt` is supplied, it replaces the default Tau identity, tools, and guidelines sections.

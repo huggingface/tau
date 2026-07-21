@@ -16,13 +16,19 @@ import mimetypes
 import os
 import signal
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from time import monotonic
 from typing import Any
 
-from tau_agent.tools import AgentTool, AgentToolResult, ToolCancellationToken, ToolExecutor
+from tau_agent.messages import TextContent
+from tau_agent.tools import (
+    AgentTool,
+    AgentToolResult,
+    ToolCancellationToken,
+    ToolUpdateCallback,
+)
 from tau_agent.types import JSONValue
 
 DEFAULT_MAX_OUTPUT_BYTES = 50 * 1024
@@ -77,14 +83,28 @@ class ToolDefinition:
     prompt_snippet: str
     prompt_guidelines: tuple[str, ...]
     input_schema: Mapping[str, JSONValue]
-    executor: ToolExecutor
+    executor: Callable[
+        [Mapping[str, JSONValue], ToolCancellationToken | None], Awaitable[AgentToolResult]
+    ]
 
     def to_agent_tool(self) -> AgentTool:
+        """Convert the coding definition to the Pi-compatible core tool."""
+
+        async def execute(
+            tool_call_id: str,
+            arguments: Mapping[str, JSONValue],
+            signal: ToolCancellationToken | None = None,
+            on_update: ToolUpdateCallback | None = None,
+        ) -> AgentToolResult:
+            del tool_call_id, on_update
+            return await self.executor(arguments, signal)
+
         return AgentTool(
             name=self.name,
+            label=self.name,
             description=self.description,
-            input_schema=self.input_schema,
-            executor=self.executor,
+            parameters=self.input_schema,
+            execute_fn=execute,
             prompt_snippet=self.prompt_snippet,
             prompt_guidelines=self.prompt_guidelines,
         )
@@ -156,11 +176,8 @@ def create_read_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
         if mime_type is not None:
             data = path.read_bytes()
             return AgentToolResult(
-                tool_call_id="",
-                name="read",
-                ok=True,
-                content=f"Read image file [{mime_type}]",
-                data={
+                content=[TextContent(text=f"Read image file [{mime_type}]")],
+                details={
                     "path": str(path),
                     "mime_type": mime_type,
                     "bytes": len(data),
@@ -221,11 +238,8 @@ def create_read_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
             output = truncation.content
 
         return AgentToolResult(
-            tool_call_id="",
-            name="read",
-            ok=True,
-            content=output,
-            data=details,
+            content=[TextContent(text=output)],
+            details=details,
         )
 
     return ToolDefinition(
@@ -285,11 +299,8 @@ def create_write_tool_definition(*, cwd: str | Path | None = None) -> ToolDefini
             path.write_text(content, encoding="utf-8")
 
         return AgentToolResult(
-            tool_call_id="",
-            name="write",
-            ok=True,
-            content=f"Successfully wrote to {path}.",
-            data={"path": str(path), "characters": len(content)},
+            content=[TextContent(text=f"Successfully wrote to {path}.")],
+            details={"path": str(path), "characters": len(content)},
         )
 
     return ToolDefinition(
@@ -365,11 +376,8 @@ def create_edit_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
         diff_text, first_changed_line = generate_diff_string(base_content, new_content)
         patch = generate_unified_patch(str(path), base_content, new_content)
         return AgentToolResult(
-            tool_call_id="",
-            name="edit",
-            ok=True,
-            content=f"Successfully replaced {len(edits)} block(s) in {path}.",
-            data={
+            content=[TextContent(text=f"Successfully replaced {len(edits)} block(s) in {path}.")],
+            details={
                 "path": str(path),
                 "edits": len(edits),
                 "diff": diff_text,
@@ -527,14 +535,9 @@ def create_bash_tool_definition(
         if status:
             output_text = append_status_block(output_text, status)
 
-        ok = exit_code == 0 and not timed_out and not cancelled
         return AgentToolResult(
-            tool_call_id="",
-            name="bash",
-            ok=ok,
-            content=output_text,
-            error=None if ok else status,
-            data={
+            content=[TextContent(text=output_text)],
+            details={
                 "command": command,
                 "exit_code": exit_code,
                 "timed_out": timed_out,

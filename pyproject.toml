@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tau-ai"
-version = "0.1.4"
+version = "0.2.3"
 description = "A Python implementation of a minimalist Pi-style coding-agent harness."
 readme = "README.md"
 license = "MIT"
@@ -14,17 +14,18 @@ dependencies = [
     "anyio>=4.0",
     "httpx[socks]>=0.27",
     "packaging>=24.0",
-    "pydantic>=2.0",
+    "pydantic>=2.11",
+    "pygments>=2.18",
     "rich>=13.0",
-    "textual>=1.0",
+    "textual>=8.2.8",
     "typer>=0.12",
 ]
 
 [project.urls]
 Homepage = "https://twotimespi.dev"
 Documentation = "https://twotimespi.dev"
-Repository = "https://github.com/alejandro-ao/tau"
-Issues = "https://github.com/alejandro-ao/tau/issues"
+Repository = "https://github.com/huggingface/tau"
+Issues = "https://github.com/huggingface/tau/issues"
 
 [project.scripts]
 tau = "tau_coding.cli:app"
@@ -55,6 +56,10 @@ indent-style = "space"
 python_version = "3.12"
 strict = true
 packages = ["tau_ai", "tau_agent", "tau_coding"]
+
+[[tool.mypy.overrides]]
+module = "pygments.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
