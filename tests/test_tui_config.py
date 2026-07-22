@@ -175,9 +175,9 @@ def test_get_tui_theme_returns_builtin_theme() -> None:
     assert get_tui_theme("tau-dark").screen_background == "#000000"
 
 
-def test_tui_turn_notification_defaults_to_bell() -> None:
-    assert TuiSettings().turn_notification == "bell"
-    assert tui_settings_from_json({}).turn_notification == "bell"
+def test_tui_turn_notification_defaults_to_desktop() -> None:
+    assert TuiSettings().turn_notification == "desktop"
+    assert tui_settings_from_json({}).turn_notification == "desktop"
 
 
 def test_tui_turn_notification_roundtrips() -> None:

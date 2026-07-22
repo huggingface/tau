@@ -6,8 +6,8 @@ Tau's Textual frontend can now request terminal attention after an agent run ful
 settles while its terminal surface is unfocused. The `turn_notification` setting
 in `~/.tau/tui.json` accepts:
 
-- `"bell"` (default): write the standard BEL control character;
-- `"desktop"`: write an OSC 9 desktop-notification sequence;
+- `"desktop"` (default): write an OSC 9 desktop-notification sequence;
+- `"bell"`: write the standard BEL control character;
 - `"off"`: write nothing.
 
 Terminal emulators decide how these sequences appear. For example, a bell may

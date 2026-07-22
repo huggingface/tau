@@ -91,7 +91,7 @@ class TuiSettings:
     theme: TuiThemeName = "tau-dark"
     auto_copy_selection: bool = False
     sidebar_position: Literal["left", "right", "off"] = "right"
-    turn_notification: TurnNotificationMode = "bell"
+    turn_notification: TurnNotificationMode = "desktop"
 
     def to_json(self) -> dict[str, Any]:
         """Serialize these settings to JSON-compatible data."""
@@ -155,7 +155,7 @@ def tui_settings_from_json(data: dict[str, Any]) -> TuiSettings:
     raw_sidebar = data.get("sidebar_position", "right")
     if not isinstance(raw_sidebar, str) or raw_sidebar not in {"left", "right", "off"}:
         raise TuiConfigError("sidebar_position must be 'left', 'right', or 'off'")
-    raw_notification = data.get("turn_notification", "bell")
+    raw_notification = data.get("turn_notification", "desktop")
     if not isinstance(raw_notification, str) or raw_notification not in {
         "off",
         "bell",
