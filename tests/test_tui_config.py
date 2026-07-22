@@ -90,9 +90,28 @@ def test_tui_settings_ignores_removed_message_selection_keybindings() -> None:
     assert settings == TuiSettings()
 
 
-def test_tui_settings_reject_unknown_fields() -> None:
-    with pytest.raises(TuiConfigError, match="Unknown TUI settings field"):
-        tui_settings_from_json({"palette": {}})
+def test_tui_settings_ignore_unknown_fields() -> None:
+    settings = tui_settings_from_json(
+        {
+            "theme": "tau-light",
+            "future_setting": {"enabled": True},
+        }
+    )
+
+    assert settings.theme == "tau-light"
+
+
+def test_tui_keybindings_ignore_unknown_actions() -> None:
+    settings = tui_settings_from_json(
+        {
+            "keybindings": {
+                "quit": "f12",
+                "future_action": "ctrl+g",
+            }
+        }
+    )
+
+    assert settings.keybindings.quit == "f12"
 
 
 def test_tui_keybindings_reject_duplicate_keys() -> None:

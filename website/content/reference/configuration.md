@@ -253,8 +253,10 @@ themes are JSON files in `~/.tau/themes/` or a project's `.tau/themes/` — see
 Textual's native theme picker is mapped to the same Tau themes and persists
 the same `theme` setting. A configured theme that cannot be found falls back
 to `tau-dark` with a startup notice, without overwriting the setting. Keys use
-Textual syntax; omitted keys keep their defaults. Tau rejects unknown
-keybinding names, empty keys, and duplicate assignments.
+Textual syntax; omitted keys keep their defaults. Tau ignores unrecognized
+settings and keybinding names so a `tui.json` written by a newer Tau version does
+not prevent an older version from starting. Recognized settings remain strict:
+Tau rejects invalid values, empty keys, and duplicate assignments.
 
 - `sidebar_position`: `"right"` (default), `"left"`, or `"off"`. Controls
   placement of the session metadata sidebar. `"off"` hides the sidebar entirely;

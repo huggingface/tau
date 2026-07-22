@@ -138,17 +138,9 @@ def save_tui_settings(settings: TuiSettings, paths: TauPaths | None = None) -> P
 
 def tui_settings_from_json(data: dict[str, Any]) -> TuiSettings:
     """Parse TUI settings from JSON-compatible data."""
-    allowed_fields = {
-        "auto_copy_selection",
-        "keybindings",
-        "sidebar_position",
-        "theme",
-        "turn_notification",
-    }
-    unknown_fields = set(data) - allowed_fields
-    if unknown_fields:
-        raise TuiConfigError(f"Unknown TUI settings field: {sorted(unknown_fields)[0]}")
-
+    # Ignore settings added by newer Tau versions so sharing this user-level
+    # file across upgrades, downgrades, and multiple installations cannot block
+    # TUI startup. Recognized settings remain strictly validated below.
     keybindings_data = data.get("keybindings", {})
     if not isinstance(keybindings_data, dict):
         raise TuiConfigError("TUI keybindings must be a JSON object")
@@ -182,12 +174,8 @@ def _bool_setting(value: object, field_name: str) -> bool:
 
 def _keybindings_from_json(data: dict[str, Any]) -> TuiKeybindings:
     defaults = TuiKeybindings()
-    allowed_fields = set(defaults.to_json())
-    legacy_fields = {"message_previous", "message_next"}
-    unknown_fields = set(data) - allowed_fields - legacy_fields
-    if unknown_fields:
-        raise TuiConfigError(f"Unknown TUI keybinding: {sorted(unknown_fields)[0]}")
-
+    # Future versions may add actions to this nested object. Read only actions
+    # this version understands, just as the top-level settings parser does.
     values = {
         field_name: _key_string(data.get(field_name, default_value), field_name)
         for field_name, default_value in defaults.to_json().items()
