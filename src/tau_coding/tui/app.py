@@ -138,6 +138,7 @@ from tau_coding.tui.config import (
     load_tui_settings,
     save_tui_settings,
 )
+from tau_coding.tui.file_drop import normalize_dropped_paths
 from tau_coding.tui.state import TuiState, format_terminal_command_result_block
 from tau_coding.tui.terminal_title import TerminalTitleController
 from tau_coding.tui.themes import (
@@ -616,12 +617,34 @@ class PromptInput(TextArea):
         self.action_completion_previous()
 
     def on_paste(self, event: events.Paste) -> None:
-        """Show a compact placeholder instead of rendering very large pasted text."""
+        """Handle file drops and collapse very large pastes to a placeholder.
+
+        Terminals deliver OS drag-and-drop as typed text, which Textual reports
+        as a paste; when the pasted text is only existing file paths, insert the
+        normalized paths instead of the raw (possibly escaped) drop text.
+        """
+        dropped_paths = normalize_dropped_paths(event.text)
+        if dropped_paths is not None:
+            event.stop()
+            event.prevent_default()
+            self._insert_dropped_paths(dropped_paths)
+            return
         if len(event.text) <= PASTE_DISPLAY_THRESHOLD:
             return
         event.stop()
         event.prevent_default()
         self._show_large_paste_placeholder(event.text)
+
+    def _insert_dropped_paths(self, insertion: str) -> None:
+        """Insert dropped paths at the cursor, separated from surrounding text."""
+        position = self.cursor_position
+        before = self.text[:position]
+        after = self.text[position:]
+        if before and not before[-1].isspace():
+            insertion = f" {insertion}"
+        if not after or not after[0].isspace():
+            insertion = f"{insertion} "
+        self.insert(insertion)
 
     def _show_large_paste_placeholder(self, content: str) -> None:
         """Store large pasted text and render a compact placeholder."""
