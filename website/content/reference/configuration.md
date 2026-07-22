@@ -175,9 +175,11 @@ Provider preferences live in `~/.tau/providers.json`:
   CLI/TUI selections, or scoped models.
 - `scoped_models` are favorites for the **Ctrl+P** quick-cycle.
 - Older `providers.json` files that contain full `providers` entries are still
-  accepted for compatibility. When Tau saves settings again, provider definitions
-  are moved to `~/.tau/catalog.toml` and `providers.json` is rewritten as runtime
-  preferences.
+  accepted for compatibility. Tau ignores unrecognized top-level settings and
+  provider-preference fields so files written by newer Tau versions do not block
+  older versions from starting. Recognized fields remain strictly validated.
+  When Tau saves settings again, provider definitions are moved to
+  `~/.tau/catalog.toml` and `providers.json` is rewritten as runtime preferences.
 - Custom models declare thinking support in `catalog.toml` with
   `thinking_levels`, `thinking_default`, `thinking_models`, and
   `thinking_parameter` (`"reasoning_effort"`, `"reasoning.effort"`, or
@@ -219,6 +221,8 @@ Then start a new session and try `! gst`. Notes:
 - Changing `settings.json` affects **new** sessions; an already-running session
   keeps the prefix it started with.
 - The snake_case key `shell_command_prefix` is also accepted.
+- Unrecognized fields are ignored for compatibility with newer Tau versions;
+  recognized fields remain strictly validated.
 
 ## TUI settings
 

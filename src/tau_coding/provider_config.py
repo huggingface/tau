@@ -1132,19 +1132,9 @@ def _apply_provider_preference(
 ) -> ProviderConfig:
     if not isinstance(value, dict):
         raise ProviderConfigError("Provider preference entries must be objects")
-    allowed = {
-        "default_model",
-        "headers",
-        "timeout_seconds",
-        "max_retries",
-        "max_retry_delay_seconds",
-        "thinking_defaults",
-    }
-    unknown = sorted(set(value) - allowed)
-    if unknown:
-        raise ProviderConfigError(
-            f"Unknown provider preference fields for {provider.name}: {', '.join(unknown)}"
-        )
+    # Provider preferences are user-level state shared across Tau versions.
+    # Ignore options introduced by newer versions while continuing to validate
+    # every recognized option below.
     default_model = (
         _string(value.get("default_model"), f"provider_preferences.{provider.name}.default_model")
         if "default_model" in value

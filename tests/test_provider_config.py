@@ -204,6 +204,25 @@ docs_url = "http://localhost:11434/v1"
     assert settings.scoped_models == (ScopedModelConfig(provider="local", model="qwen"),)
 
 
+def test_provider_settings_ignore_unknown_fields(tmp_path: Path) -> None:
+    settings = provider_settings_from_json(
+        {
+            "default_provider": "openai",
+            "future_top_level_option": True,
+            "provider_preferences": {
+                "openai": {
+                    "default_model": "gpt-5-mini",
+                    "future_provider_option": {"enabled": True},
+                }
+            },
+        },
+        paths=TauPaths(home=tmp_path / ".tau"),
+    )
+
+    assert settings.default_provider == "openai"
+    assert settings.get_provider("openai").default_model == "gpt-5-mini"
+
+
 def test_load_provider_settings_ignores_preference_without_catalog_entry(
     tmp_path: Path,
 ) -> None:
