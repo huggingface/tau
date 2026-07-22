@@ -381,7 +381,7 @@ def update_command() -> None:
     """Upgrade Tau using the installer that manages the current environment."""
     result = update_tau()
     if not result.succeeded:
-        typer.echo("Could not update Tau with uv, pipx, or pip:", err=True)
+        typer.echo("Could not safely update Tau:", err=True)
         for failure in result.failures:
             typer.echo(f"- {failure}", err=True)
         raise typer.Exit(1)

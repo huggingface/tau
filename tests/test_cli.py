@@ -158,7 +158,7 @@ def test_update_command_reports_installer_failures(monkeypatch: pytest.MonkeyPat
     result = CliRunner().invoke(app, ["update"])
 
     assert result.exit_code == 1
-    assert "Could not update Tau with uv, pipx, or pip" in result.stderr
+    assert "Could not safely update Tau" in result.stderr
     assert "uv: not found" in result.stderr
 
 

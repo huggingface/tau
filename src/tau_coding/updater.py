@@ -1,15 +1,20 @@
-"""Upgrade the installed Tau CLI with common Python tool managers."""
+"""Upgrade Tau with the package manager that owns its environment."""
 
 from __future__ import annotations
 
+import json
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, distribution
+from pathlib import Path
 from subprocess import CompletedProcess, run
+from typing import Literal
 
 from tau_coding.update_check import PYPI_PACKAGE_NAME
 
 CommandRunner = Callable[..., CompletedProcess[str]]
+InstallMethod = Literal["uv-tool", "uv-pip", "pipx", "pip"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,41 +35,123 @@ def update_tau(
     *,
     runner: CommandRunner = run,
     python_executable: str | None = None,
-    commands: Sequence[Sequence[str]] | None = None,
+    environment_prefix: Path | None = None,
+    direct_url: str | None = None,
+    installer: str | None = None,
+    inspect_distribution: bool = True,
 ) -> UpdateResult:
-    """Upgrade Tau, trying uv, pipx, then the current interpreter's pip.
+    """Upgrade Tau with the installer that owns the active environment.
 
-    A failed or unavailable installer falls through to the next option. Output from
-    unsuccessful attempts is kept for the final diagnostic instead of cluttering the
-    successful update path.
+    Python distributions record their installer in ``INSTALLER``. uv and pipx
+    tool environments also leave ownership receipts. Managed, editable,
+    direct-URL, and unrecognized installations stop with instructions instead
+    of trying unrelated package managers.
     """
-    candidates = commands or (
-        ("uv", "tool", "upgrade", PYPI_PACKAGE_NAME),
-        ("pipx", "upgrade", PYPI_PACKAGE_NAME),
-        (
-            python_executable or sys.executable,
-            "-m",
+    prefix = (environment_prefix or Path(sys.prefix)).resolve()
+    if inspect_distribution:
+        direct_url = _installed_direct_url()
+        installer = _installed_installer()
+    if direct_url:
+        return _failure(
+            "Tau was installed from a local or direct URL, so it cannot be safely "
+            f"updated from PyPI. Reinstall it from its original source: {direct_url}"
+        )
+
+    method = detect_install_method(prefix, installer=installer)
+    if method is None:
+        if (prefix / "conda-meta").is_dir():
+            return _failure(
+                "Tau is installed in a Conda/Pixi-managed environment. "
+                "Update it with the manager that created that environment."
+            )
+        installed_by = installer or "unknown"
+        return _failure(
+            "Could not identify a supported installer for this Tau environment "
+            f"({prefix}). Package metadata reports: {installed_by}."
+        )
+
+    executable = python_executable or sys.executable
+    command = _update_command(method, executable)
+    completed = _run(runner, command)
+    if isinstance(completed, str):
+        return _failure(f"{' '.join(command)}: {completed}")
+    if completed.returncode != 0:
+        return _failure(f"{' '.join(command)}: {_result_detail(completed)}")
+    return UpdateResult(
+        command=command,
+        stdout=completed.stdout.strip(),
+        stderr=completed.stderr.strip(),
+    )
+
+
+def detect_install_method(prefix: Path, *, installer: str | None = None) -> InstallMethod | None:
+    """Detect installer ownership from receipts and distribution metadata."""
+    if (prefix / "uv-receipt.toml").is_file():
+        return "uv-tool"
+    if (prefix / "pipx_metadata.json").is_file():
+        return "pipx"
+    normalized_installer = installer.strip().lower() if installer else None
+    if normalized_installer == "uv":
+        return "uv-pip"
+    if normalized_installer == "pip":
+        return "pip"
+    return None
+
+
+def _update_command(method: InstallMethod, python_executable: str) -> tuple[str, ...]:
+    if method == "uv-tool":
+        return ("uv", "tool", "upgrade", PYPI_PACKAGE_NAME)
+    if method == "uv-pip":
+        return (
+            "uv",
             "pip",
             "install",
+            "--python",
+            python_executable,
             "--upgrade",
             PYPI_PACKAGE_NAME,
-        ),
-    )
-    failures: list[str] = []
-    for candidate in candidates:
-        command = tuple(candidate)
-        try:
-            result = runner(command, capture_output=True, text=True, check=False)
-        except OSError as exc:
-            failures.append(f"{' '.join(command)}: {exc}")
-            continue
-        if result.returncode == 0:
-            return UpdateResult(
-                command=command,
-                stdout=result.stdout.strip(),
-                stderr=result.stderr.strip(),
-                failures=tuple(failures),
-            )
-        detail = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
-        failures.append(f"{' '.join(command)}: {detail}")
-    return UpdateResult(command=None, failures=tuple(failures))
+        )
+    if method == "pipx":
+        return ("pipx", "upgrade", PYPI_PACKAGE_NAME)
+    return (python_executable, "-m", "pip", "install", "--upgrade", PYPI_PACKAGE_NAME)
+
+
+def _installed_direct_url() -> str | None:
+    raw = _distribution_file("direct_url.json")
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return "an unrecognized direct source"
+    url = data.get("url") if isinstance(data, dict) else None
+    return url if isinstance(url, str) and url else "an unrecognized direct source"
+
+
+def _installed_installer() -> str | None:
+    raw = _distribution_file("INSTALLER")
+    if not raw:
+        return None
+    return raw.strip() or None
+
+
+def _distribution_file(filename: str) -> str | None:
+    try:
+        return distribution(PYPI_PACKAGE_NAME).read_text(filename)
+    except PackageNotFoundError:
+        return None
+
+
+def _run(runner: CommandRunner, command: tuple[str, ...]) -> CompletedProcess[str] | str:
+    try:
+        return runner(command, capture_output=True, text=True, check=False)
+    except OSError as exc:
+        return str(exc)
+
+
+def _result_detail(result: CompletedProcess[str]) -> str:
+    return result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
+
+
+def _failure(message: str) -> UpdateResult:
+    return UpdateResult(command=None, failures=(message,))

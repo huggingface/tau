@@ -9,7 +9,7 @@ Tau now performs a small, best-effort update check in CLI startup paths that lau
 - The result is cached under `~/.tau/cache/update-check.json` and refreshed at most once per day.
 - Failures are quiet no-ops: network errors, malformed JSON, missing fields, and invalid versions do not stop startup.
 - `TAU_NO_UPDATE_CHECK=1` disables the check, and the check is skipped automatically when `CI` is set.
-- `tau update` upgrades `tau-ai`, trying uv, pipx, and then the current Python interpreter's pip.
+- `tau update` upgrades `tau-ai` with the package manager that owns the active Tau environment.
 
 ## Where it belongs
 
@@ -24,13 +24,13 @@ This lives in `tau_coding`, not `tau_agent`, because update notification is CLI 
 
 ## Update command
 
-`tau update` tries installers in this order:
+`tau update` inspects the active environment before running anything:
 
-1. `uv tool upgrade tau-ai`
-2. `pipx upgrade tau-ai`
-3. `<current-python> -m pip install --upgrade tau-ai`
+- `uv-receipt.toml` means uv owns the tool, so Tau runs `uv tool upgrade tau-ai`.
+- `pipx_metadata.json` means pipx owns it, so Tau runs `pipx upgrade tau-ai`.
+- The distribution's standard `INSTALLER` metadata identifies ordinary uv and pip installs. Tau runs either `uv pip install --python <current-python> --upgrade tau-ai` or `<current-python> -m pip install --upgrade tau-ai`, targeting the environment that is running Tau.
 
-Unavailable or failed installers fall through without cluttering successful output. If every installer fails, Tau exits nonzero and prints each diagnostic. Editable checkout installs should still be refreshed explicitly with `uv tool install --editable --force .`.
+Tau does not fall through to another installer when the selected command fails. Direct-URL and editable installs are sent back to their original source; Conda/Pixi-managed and unrecognized environments get manual instructions rather than being modified with pip. Editable checkout installs can be refreshed with `uv tool install --editable --force .`.
 
 ## Testing
 
