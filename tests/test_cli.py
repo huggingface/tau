@@ -206,7 +206,7 @@ def test_json_print_mode_suppresses_update_notice(monkeypatch: pytest.MonkeyPatc
     )
     monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
 
-    result = CliRunner().invoke(app, ["-p", "hello", "--output", "json"])
+    result = CliRunner().invoke(app, ["-p", "--mode", "json", "hello"])
 
     assert result.exit_code == 0
     assert result.stderr == ""
@@ -780,6 +780,124 @@ def test_legacy_resume_flag_errors_with_migration_hint(tmp_path: Path) -> None:
     output = _strip_ansi(result.output)
     assert "--resume was renamed to --session" in output
     assert "session-1" in output
+
+
+def test_legacy_prompt_flag_errors_with_migration_hint() -> None:
+    result = CliRunner().invoke(app, ["--prompt", "hello"])
+
+    assert result.exit_code != 0
+    output = _strip_ansi(result.output)
+    assert "--prompt was removed" in output
+    assert "--print" in output
+
+
+def test_legacy_output_flag_errors_with_migration_hint() -> None:
+    result = CliRunner().invoke(app, ["-p", "--output", "json", "hello"])
+
+    assert result.exit_code != 0
+    output = _strip_ansi(result.output)
+    assert "--output was renamed to --mode" in output
+
+
+def test_legacy_extension_short_flag_errors_with_migration_hint(tmp_path: Path) -> None:
+    result = CliRunner().invoke(app, ["-x", str(tmp_path)])
+
+    assert result.exit_code != 0
+    output = _strip_ansi(result.output)
+    assert "-x was renamed to -e/--extension" in output
+
+
+def test_mode_flag_alone_triggers_print_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, PrintOutputMode]] = []
+
+    async def fake_run_openai_print_mode(
+        prompt: str,
+        model: str | None,
+        cwd: Path,
+        output: PrintOutputMode,
+        provider_name: str | None,
+        *extra: object,
+    ) -> bool:
+        del model, cwd, provider_name, extra
+        calls.append((prompt, output))
+        return True
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(app, ["--mode", "json", "hello"])
+
+    assert result.exit_code == 0
+    assert calls == [("hello", PrintOutputMode.json)]
+
+
+def test_print_mode_requires_a_prompt() -> None:
+    result = CliRunner().invoke(app, ["-p"])
+
+    assert result.exit_code != 0
+    assert "Usage: tau --print" in _strip_ansi(result.output)
+
+
+def test_print_mode_merges_piped_stdin_into_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    async def fake_run_openai_print_mode(
+        prompt: str,
+        model: str | None,
+        cwd: Path,
+        output: PrintOutputMode,
+        provider_name: str | None,
+        *extra: object,
+    ) -> bool:
+        del model, cwd, output, provider_name, extra
+        calls.append(prompt)
+        return True
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(app, ["-p", "Summarize"], input="piped content\n")
+
+    assert result.exit_code == 0
+    assert calls == ["piped content\n\n\nSummarize"]
+
+
+def test_export_flag_invokes_exporter(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[tuple[str, Path | None, str | None]] = []
+    output_path = tmp_path / "out.html"
+
+    async def fake_export_session_command(
+        session_ref: str,
+        requested_output_path: Path | None = None,
+        requested_export_format: str | None = None,
+    ) -> Path:
+        calls.append((session_ref, requested_output_path, requested_export_format))
+        return output_path
+
+    monkeypatch.setattr(cli, "export_session_command", fake_export_session_command)
+
+    result = CliRunner().invoke(app, ["--export", "session-1", str(output_path)])
+
+    assert result.exit_code == 0
+    assert calls == [("session-1", output_path, None)]
+    assert f"Exported session to {output_path}" in result.stdout
+
+
+def test_export_flag_rejects_combination_with_print() -> None:
+    result = CliRunner().invoke(app, ["--export", "-p", "session-1"])
+
+    assert result.exit_code != 0
+    assert "--export cannot be combined with --print/--mode" in _strip_ansi(result.output)
+
+
+def test_version_short_flag_prints_version() -> None:
+    result = CliRunner().invoke(app, ["-v"])
+
+    assert result.exit_code == 0
+    assert result.stdout.startswith("tau ")
 
 
 def _constrained_provider_settings() -> ProviderSettings:

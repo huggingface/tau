@@ -139,9 +139,21 @@ def main(
         list[str] | None,
         typer.Argument(help="Initial prompt to run in interactive TUI mode."),
     ] = None,
+    print_mode: Annotated[
+        bool,
+        typer.Option(
+            "--print",
+            "-p",
+            help="Run the positional prompt in non-interactive print mode.",
+        ),
+    ] = False,
     prompt_option: Annotated[
         str | None,
-        typer.Option("--prompt", "-p", help="Prompt to run in non-interactive print mode."),
+        typer.Option(
+            "--prompt",
+            help="Removed; pass the prompt positionally and use --print instead.",
+            hidden=True,
+        ),
     ] = None,
     provider: Annotated[
         str | None,
@@ -185,10 +197,23 @@ def main(
         Path | None,
         typer.Option("--cwd", help="Working directory for built-in coding tools."),
     ] = None,
+    mode: Annotated[
+        PrintOutputMode | None,
+        typer.Option(
+            "--mode",
+            help="Run in non-interactive print mode with this output format "
+            "(text, json, or transcript).",
+        ),
+    ] = None,
     output: Annotated[
-        PrintOutputMode,
-        typer.Option("--output", "-o", help="Output mode for print mode."),
-    ] = PrintOutputMode.text,
+        PrintOutputMode | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Removed; use --mode instead.",
+            hidden=True,
+        ),
+    ] = None,
     session: Annotated[
         str | None,
         typer.Option("--session", help="Resume a session id in TUI mode."),
@@ -216,15 +241,30 @@ def main(
         list[Path] | None,
         typer.Option(
             "--extension",
-            "-x",
+            "-e",
             help="Load an extension file or directory (repeatable).",
         ),
     ] = None,
+    extension_legacy: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "-x",
+            help="Removed; use -e/--extension instead.",
+            hidden=True,
+        ),
+    ] = None,
+    export: Annotated[
+        bool,
+        typer.Option(
+            "--export",
+            help="Export the given session id or JSONL path (mirrors `tau export`).",
+        ),
+    ] = False,
     no_extensions: Annotated[
         bool,
         typer.Option(
             "--no-extensions",
-            help="Disable extension directory discovery (explicit -x paths still load).",
+            help="Disable extension directory discovery (explicit -e paths still load).",
         ),
     ] = False,
     project_extensions: Annotated[
@@ -236,7 +276,7 @@ def main(
     ] = False,
     version: Annotated[
         bool,
-        typer.Option("--version", help="Show Tau's version and exit."),
+        typer.Option("--version", "-v", help="Show Tau's version and exit."),
     ] = False,
 ) -> None:
     """Run the Tau CLI."""
@@ -256,42 +296,50 @@ def main(
     if session is not None and new_session:
         raise typer.BadParameter("--session and --new-session cannot be used together")
 
+    if prompt_option is not None:
+        raise typer.BadParameter(
+            "--prompt was removed. Pass the prompt positionally and use --print, e.g. "
+            f'`tau --print "{prompt_option}"`.'
+        )
+
+    if output is not None:
+        raise typer.BadParameter(
+            f"--output was renamed to --mode. Use `tau --mode {output.value}` instead."
+        )
+
+    if extension_legacy is not None:
+        raise typer.BadParameter("-x was renamed to -e/--extension.")
+
+    print_requested = print_mode or mode is not None
+    effective_output = mode or PrintOutputMode.text
+
     positional_args = prompt_args or []
     command = positional_args[0] if positional_args else None
     initial_prompt = " ".join(positional_args) if positional_args else None
 
-    if prompt_option is None and command == "update":
+    if not print_requested and not export and command == "update":
         if len(positional_args) != 1:
             raise typer.BadParameter("Usage: tau update")
         update_command()
         raise typer.Exit()
 
-    if prompt_option is None and command == "sessions" and len(positional_args) == 1:
+    if not print_requested and not export and command == "sessions" and len(positional_args) == 1:
         render_session_list(SessionManager().list_sessions())
         raise typer.Exit()
 
-    if prompt_option is None and command == "export":
-        try:
-            session_ref, output_path, export_format = _parse_export_cli_args(positional_args[1:])
-        except RuntimeError as exc:
-            raise typer.BadParameter(str(exc)) from exc
-        try:
-            exported_path = anyio.run(
-                export_session_command,
-                session_ref,
-                output_path,
-                export_format,
-            )
-        except (RuntimeError, ValueError) as exc:
-            raise typer.BadParameter(str(exc)) from exc
-        typer.echo(f"Exported session to {exported_path}")
-        raise typer.Exit()
+    if not print_requested and not export and command == "export":
+        _run_export_cli(positional_args[1:])
 
-    if prompt_option is None and command == "providers" and len(positional_args) == 1:
+    if export:
+        if print_requested:
+            raise typer.BadParameter("--export cannot be combined with --print/--mode.")
+        _run_export_cli(positional_args)
+
+    if not print_requested and command == "providers" and len(positional_args) == 1:
         providers_command()
         raise typer.Exit()
 
-    if prompt_option is None and command == "setup" and len(positional_args) == 1:
+    if not print_requested and command == "setup" and len(positional_args) == 1:
         setup_command(
             provider_name=provider or DEFAULT_PROVIDER_NAME,
             base_url=setup_base_url,
@@ -306,7 +354,7 @@ def main(
 
     extension_paths = tuple(extension or ())
 
-    if prompt_option is None:
+    if not print_requested:
         notice = _startup_update_notice()
         try:
             resumable_session_id = anyio.run(
@@ -329,12 +377,14 @@ def main(
             typer.echo(f"To resume this session: tau --session {resumable_session_id}")
         raise typer.Exit()
 
-    prompt = prompt_option
-    if prompt is None:
-        raise AssertionError("prompt option should be set outside TUI mode")
+    if not positional_args:
+        raise typer.BadParameter(
+            'Usage: tau --print "<prompt>" (or --mode text|json|transcript "<prompt>")'
+        )
+    prompt = _merge_stdin_prompt(initial_prompt or "")
 
     notice = _startup_update_notice()
-    if notice is not None and output is PrintOutputMode.text:
+    if notice is not None and effective_output is PrintOutputMode.text:
         typer.echo(notice.message, err=True)
 
     try:
@@ -343,7 +393,7 @@ def main(
             prompt,
             model,
             cwd or Path.cwd(),
-            output,
+            effective_output,
             provider,
             None,
             extension_paths,
@@ -442,6 +492,50 @@ async def export_session_command(
         source=str(session_path),
         format=normalized_format,
     )
+
+
+def _run_export_cli(args: list[str]) -> None:
+    """Run `tau export`/`tau --export` and exit."""
+    try:
+        session_ref, output_path, export_format = _parse_export_cli_args(args)
+    except RuntimeError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    try:
+        exported_path = anyio.run(
+            export_session_command,
+            session_ref,
+            output_path,
+            export_format,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"Exported session to {exported_path}")
+    raise typer.Exit()
+
+
+def _merge_stdin_prompt(prompt: str) -> str:
+    """Merge piped stdin content into a print-mode prompt, mirroring Pi.
+
+    When stdin is not a terminal (e.g. `cat file | tau -p "..."`), its
+    contents are prepended to the prompt text.
+    """
+    stdin = sys.stdin
+    if stdin is None:
+        return prompt
+    try:
+        if stdin.isatty():
+            return prompt
+    except (AttributeError, ValueError):
+        return prompt
+    try:
+        piped = stdin.read()
+    except (OSError, ValueError):
+        return prompt
+    if not piped:
+        return prompt
+    if not prompt:
+        return piped
+    return f"{piped}\n\n{prompt}"
 
 
 def _parse_export_cli_args(args: list[str]) -> tuple[str, Path | None, str | None]:

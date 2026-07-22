@@ -48,7 +48,7 @@ defining `setup(tau)`, which runs once at startup with the extension API.
 |---|---|
 | `~/.tau/extensions/` | by default |
 | `<project>/.tau/extensions/` | only with `--project-extensions` |
-| any file or directory | with `tau -x PATH` (repeatable) |
+| any file or directory | with `tau -e PATH` (repeatable) |
 
 Within a directory, `*.py` files are extensions, and a subdirectory
 containing `extension.py` is a package-style extension — its sibling
@@ -70,14 +70,14 @@ directory, so sibling modules stay importable with relative imports. The
 extension is named after the entry's parent directory (or after the file
 itself when it isn't named `extension.py`).
 
-One caveat: `tau -x` on an entry **file** loads it standalone — no
+One caveat: `tau -e` on an entry **file** loads it standalone — no
 package, so relative imports fail. Once an extension has sibling
 modules, always pass a directory: the package directory itself, or the
 repo root when a manifest declares the entry.
 
 Extensions load project-first; on name conflicts (extension names, tool
 names, command names) the first registration wins. `--no-extensions`
-disables directory discovery entirely (explicit `-x` paths still load).
+disables directory discovery entirely (explicit `-e` paths still load).
 `/reload` awaits `session_shutdown(reason="reload")` on the outgoing
 extension generation, clears its UI, re-imports every extension and re-runs
 `setup`, then awaits `session_start(reason="reload")` on the new generation.
@@ -497,7 +497,7 @@ package that feature-detects newer API seams).
 
 ```bash
 git clone git@github.com:rian-dolphin/tau-subagents.git
-tau -x ./tau-subagents
+tau -e ./tau-subagents
 # then: "Use a subagent to summarize this repository's architecture."
 ```
 

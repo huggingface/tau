@@ -19,7 +19,7 @@ This lives in `tau_coding`, not `tau_agent`, because update notification is CLI 
 
 - TUI startup renders the update notice as the first transcript item in fixed bright-yellow, bold styling, before release notes, provider errors, theme diagnostics, or session history.
 - Print mode writes the notice to stderr for normal text output.
-- Structured print output (`--output json`) suppresses the notice to avoid corrupting scripted output.
+- Structured print output (`--mode json`) suppresses the notice to avoid corrupting scripted output.
 - Utility commands (`tau --version`, `tau update`, `tau sessions`, `tau export`, `tau providers`, `tau setup`) do not run the update check.
 
 ## Update command
