@@ -1,0 +1,8 @@
+{{ partial "video-demo.html" (dict
+  "LibraryID" .Page.Site.Params.bunnyStreamLibraryId
+  "VideoID" (.Get "id")
+  "Poster" (.Get "poster")
+  "PosterHeight" (.Get "posterHeight")
+  "Title" (.Get "title")
+  "Caption" (.Get "caption")
+) }}

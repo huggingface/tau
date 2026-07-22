@@ -1,0 +1,18 @@
+{{- $poster := .Poster | relURL -}}
+{{- $embedURL := printf "https://iframe.mediadelivery.net/embed/%s/%s" .LibraryID .VideoID -}}
+<figure class="video-demo{{ with .Class }} {{ . }}{{ end }}">
+  <div class="video-demo-player" data-video-embed="{{ $embedURL }}" data-video-title="{{ .Title }}">
+    <button class="video-demo-play" type="button" aria-label="Play video: {{ .Title }}">
+      <img src="{{ $poster }}" width="1200" height="{{ .PosterHeight | default 876 }}"
+        alt="" loading="lazy" decoding="async" />
+      <span class="video-demo-play-icon" aria-hidden="true">
+        <svg viewBox="0 0 48 48" width="48" height="48"><path d="M19 14.5v19l16-9.5-16-9.5Z" fill="currentColor"/></svg>
+      </span>
+    </button>
+    <noscript><a href="{{ $embedURL }}" target="_blank" rel="noopener">Watch {{ .Title }}</a></noscript>
+  </div>
+  <figcaption>
+    <strong>{{ .Title }}</strong>
+    {{ with .Caption }}<span>{{ . }}</span>{{ end }}
+  </figcaption>
+</figure>

@@ -42,6 +42,8 @@ While the agent is working you don't have to wait:
 - Press **Up** on an empty prompt while running to pull the most recently queued
   follow-up back into the prompt for editing.
 
+{{< video id="73dfaa99-edf9-4aad-91d0-2af7e26c7e22" poster="/images/demos/follow-up-and-steering.webp" title="Follow up and steer" caption="Add guidance to the active run or queue a prompt for when it finishes." >}}
+
 ## The command palette and slash commands
 
 In-session commands start with `/`. Open the **command palette** with **Ctrl+K**
@@ -54,6 +56,8 @@ to search and run them. Common ones:
 - `/hotkeys` — show the keyboard shortcuts
 
 The full list is in the [Slash commands reference]({{< relref "../reference/slash-commands.md" >}}).
+
+{{< video id="8772f817-e0ee-485b-9c14-6b4e235b617b" poster="/images/demos/tree.webp" title="Explore the session tree" caption="Jump back to an earlier turn and continue along a new branch without losing history." >}}
 
 ## Running shell commands directly
 

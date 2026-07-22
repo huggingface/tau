@@ -72,6 +72,8 @@ are exhausted, or the response is not a usable title, Tau does not start another
 naming request: the session continues normally and uses a short local fallback
 when possible.
 
+{{< video id="64ac23db-e4ec-451f-909f-6bb99c24cfbc" poster="/images/demos/session-names.webp" title="Name sessions automatically" caption="Tau turns the first request into a useful session name without interrupting the conversation." >}}
+
 ```text
 /name My refactor session
 ```

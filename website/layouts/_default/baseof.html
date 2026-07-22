@@ -13,6 +13,11 @@
       {{ $navJs = $navJs | js.Build | minify | fingerprint }}
     {{ end }}
     <script src="{{ $navJs.RelPermalink }}"></script>
+    {{ $videoJs := resources.Get "js/video-embed.js" }}
+    {{ if hugo.IsProduction }}
+      {{ $videoJs = $videoJs | js.Build | minify | fingerprint }}
+    {{ end }}
+    <script src="{{ $videoJs.RelPermalink }}"></script>
     {{ block "scripts" . }}{{ end }}
   </body>
 </html>

@@ -22,6 +22,8 @@ from starting. Select a theme with `/theme <name>`, the `/theme` picker, or
 Textual's command palette. The selection is persisted in `~/.tau/tui.json` —
 see [Configuration]({{< relref "../reference/configuration.md#tui-settings" >}}).
 
+{{< video id="ea990951-7317-42fa-902f-140807b720ee" poster="/images/demos/themes.webp" title="Switch themes in place" caption="Preview Tau's built-in themes and apply a new palette from the command menu." >}}
+
 ## Theme format
 
 ```json

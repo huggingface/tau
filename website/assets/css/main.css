@@ -362,6 +362,67 @@ h1 .big-tau{
   .tui-preview figcaption{ font-size:18px; }
 }
 
+/* ---- video demos ---- */
+.video-demo{ margin:0; min-width:0; }
+.video-demo-player{
+  position:relative;
+  aspect-ratio:37 / 27;
+  overflow:hidden;
+  border-radius:10px;
+  background:#0E1A30;
+  box-shadow:0 24px 54px -24px rgba(19,33,60,.48);
+}
+.video-demo-player iframe{
+  position:absolute; inset:0;
+  width:100%; height:100%; border:0;
+}
+.video-demo-play{
+  display:block; width:100%; height:100%; padding:0; border:0;
+  background:#0E1A30; color:#fff; cursor:pointer;
+}
+.video-demo-play img{
+  display:block; width:100%; height:100%; object-fit:cover;
+  transition:transform .25s ease, opacity .25s ease;
+}
+.video-demo-play-icon{
+  position:absolute; left:50%; top:50%;
+  display:grid; place-items:center;
+  width:66px; height:66px;
+  border:1px solid rgba(255,255,255,.55); border-radius:50%;
+  background:rgba(14,26,48,.82);
+  box-shadow:0 12px 30px rgba(0,0,0,.32);
+  transform:translate(-50%,-50%);
+  transition:transform .2s ease, background .2s ease;
+}
+.video-demo-play:hover img{ transform:scale(1.015); opacity:.88; }
+.video-demo-play:hover .video-demo-play-icon{
+  background:var(--accent); transform:translate(-50%,-50%) scale(1.07);
+}
+.video-demo-play:focus-visible{ outline:3px solid var(--red); outline-offset:-3px; }
+.video-demo figcaption{
+  margin-top:14px;
+  font-family:var(--grotesk); font-size:14px; line-height:1.5;
+  color:var(--ink-soft);
+}
+.video-demo figcaption strong{
+  display:block; margin-bottom:2px;
+  font-family:var(--hand); font-size:23px; line-height:1.1;
+  color:var(--ink); font-weight:600;
+}
+.video-demo figcaption span{ display:block; }
+.demo-intro{ max-width:38em; margin:-22px 0 36px; color:var(--ink-soft); }
+.demo-grid{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:42px 32px; }
+.demo-grid .video-demo-featured{ grid-column:1 / -1; width:min(820px,100%); }
+.docs-content .video-demo{ margin:28px 0 34px; }
+@media (max-width:720px){
+  .demo-grid{ grid-template-columns:1fr; }
+  .demo-grid .video-demo-featured{ grid-column:auto; }
+  .video-demo-play-icon{ width:56px; height:56px; }
+}
+@media (prefers-reduced-motion:reduce){
+  .video-demo-play img, .video-demo-play-icon{ transition:none; }
+}
+
 /* ---- canvas figure ---- */
 .figure{
   position:relative;

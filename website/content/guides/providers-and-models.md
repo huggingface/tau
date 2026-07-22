@@ -155,6 +155,8 @@ Use these slash commands inside Tau:
 Saved credentials take precedence over environment variables. `/logout` only
 edits saved credentials — it never touches your environment or `providers.json`.
 
+{{< video id="40ba0a1a-c91b-4c18-8734-1fbd8f1e52b3" poster="/images/demos/login.webp" posterHeight="874" title="Log in from the TUI" caption="Choose a provider and complete authentication without leaving your session." >}}
+
 {{% note title="OAuth troubleshooting" %}}
 Browser login can fall back to a pasted redirect URL/code when the callback
 port is unavailable or the browser runs on another machine. Copilot uses a
@@ -178,6 +180,8 @@ Tau validates the selected model against the active provider's configured model
 list before creating or refreshing a runtime provider. This prevents accidental
 provider/model mismatches, such as trying to send an API-only OpenAI model to the
 separate `openai-codex` subscription provider.
+
+{{< video id="40220dac-86c3-457c-af14-a57a28c4c9b8" poster="/images/demos/scoped-models.webp" title="Keep favorite models close" caption="Scope the models you use most, then cycle through them quickly with Ctrl+P." >}}
 
 ## Adding a custom / local provider
 

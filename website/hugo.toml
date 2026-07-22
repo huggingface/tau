@@ -23,6 +23,7 @@ publishDir = "public"
   githubUrl = "https://github.com/huggingface/tau"
   editRepoUrl = "https://github.com/huggingface/tau/edit/main/website/content"
   githubRepo = "huggingface/tau"
+  bunnyStreamLibraryId = "506199"
 
 [outputs]
   home = ["HTML", "RSS"]

@@ -58,6 +58,8 @@ tau --auto-compact-threshold 100000
 Automatic compaction is best-effort: if summarization fails, Tau logs it, keeps
 the original context, and carries on.
 
+{{< video id="4eef06d2-765c-4c22-94b3-bed068f9a801" poster="/images/demos/compaction.webp" title="Compact a long session" caption="Run compaction on demand and keep working from a smaller, focused context." >}}
+
 ## Manual compaction
 
 Compact on demand any time:

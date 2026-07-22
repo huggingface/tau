@@ -46,6 +46,41 @@
 </div>
 
 <div class="wrap">
+  <section class="demo-section" aria-labelledby="demo-heading">
+    <div class="sec-head">
+      <span class="mark">demo</span>
+      <div>
+        <p class="eyebrow-hand">see Tau at work</p>
+        <h2 id="demo-heading">A real agent, in a readable terminal.</h2>
+      </div>
+    </div>
+    <p class="demo-intro">Guide a running agent, explore session history, and shape the interface around the way you work.</p>
+    <div class="demo-grid">
+      {{ partial "video-demo.html" (dict
+        "LibraryID" .Site.Params.bunnyStreamLibraryId
+        "VideoID" "73dfaa99-edf9-4aad-91d0-2af7e26c7e22"
+        "Poster" "/images/demos/follow-up-and-steering.webp"
+        "Title" "Steer without stopping"
+        "Caption" "Queue guidance for the current run or line up the next task while Tau keeps working."
+        "Class" "video-demo-featured"
+      ) }}
+      {{ partial "video-demo.html" (dict
+        "LibraryID" .Site.Params.bunnyStreamLibraryId
+        "VideoID" "8772f817-e0ee-485b-9c14-6b4e235b617b"
+        "Poster" "/images/demos/tree.webp"
+        "Title" "Branch from any point"
+        "Caption" "Open the session tree, revisit an earlier turn, and take the work in a new direction."
+      ) }}
+      {{ partial "video-demo.html" (dict
+        "LibraryID" .Site.Params.bunnyStreamLibraryId
+        "VideoID" "ea990951-7317-42fa-902f-140807b720ee"
+        "Poster" "/images/demos/themes.webp"
+        "Title" "Make Tau yours"
+        "Caption" "Switch themes without leaving the terminal, from Tau's defaults to your own palettes."
+      ) }}
+    </div>
+  </section>
+
   <section id="start">
     <div class="sec-head">
       <span class="mark">01</span>
