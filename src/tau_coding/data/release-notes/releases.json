@@ -4,7 +4,9 @@
     "date": "2026-07-22",
     "sections": {
       "Changed": [
-        "Breaking: rename the non-interactive `tau --resume <session-id>` flag to `tau --session <session-id>`, matching Pi's `--session` naming; `--resume` now errors with a migration hint instead of resuming."
+        "Breaking: mirror Pi's non-interactive CLI flags. `--resume` is now `--session`, `-p`/`--prompt <text>` is now `-p`/`--print` with a positional prompt, `-o`/`--output` is now `--mode`, and `-x` is now `-e` for `--extension`; the old flags now error with a migration hint instead of running.",
+        "Add a top-level `--export <session-id> [out]` flag alongside the existing `tau export` subcommand, and add `-v` as a short flag for `--version`, both matching Pi's flag names.",
+        "Merge piped stdin into the print-mode prompt (e.g. `cat file | tau -p \"...\"`), matching Pi's behavior."
       ]
     }
   },
