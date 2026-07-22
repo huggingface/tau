@@ -7,11 +7,19 @@ from json import JSONDecodeError, loads
 
 import httpx
 
-from tau_agent.messages import AgentMessage, AssistantMessage, UserMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    TextContent,
+    ThinkingContent,
+    ToolResultMessage,
+    UserMessage,
+    assistant_content,
+    message_to_user,
+)
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
-from tau_ai.env import OpenAICompatibleConfig
-from tau_ai.events import (
+from tau_ai._provider_events import (
     ProviderErrorEvent,
     ProviderEvent,
     ProviderResponseEndEvent,
@@ -20,10 +28,13 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.env import OpenAICompatibleConfig
+from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
+from tau_ai.stream import canonicalize_provider_stream
 
 
 class GoogleGenerativeAIProvider:
@@ -46,6 +57,23 @@ class GoogleGenerativeAIProvider:
             self._client = None
 
     def stream_response(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[AgentMessage],
+        tools: list[AgentTool],
+        signal: CancellationToken | None = None,
+    ) -> AsyncIterator[AssistantMessageEvent]:
+        """Stream one response as Pi-compatible assistant message events."""
+        raw = self._stream_provider_events(
+            model=model, system=system, messages=messages, tools=tools, signal=signal
+        )
+        return canonicalize_provider_stream(
+            raw, api="google-generative-ai", provider="google", model=model
+        )
+
+    def _stream_provider_events(
         self,
         *,
         model: str,
@@ -216,11 +244,12 @@ class _GoogleStreamParser:
         return events
 
     def finalize(self) -> list[ProviderEvent]:
+        content = assistant_content("".join(self._content_parts), self._tool_calls)
+        if self._thinking_parts:
+            content.insert(0, ThinkingContent(thinking="".join(self._thinking_parts)))
         return [
             ProviderResponseEndEvent(
-                message=AssistantMessage(
-                    content="".join(self._content_parts), tool_calls=self._tool_calls
-                ),
+                message=AssistantMessage(content=content),
                 finish_reason=_normalize_finish_reason(
                     self._finish_reason, has_tool_calls=bool(self._tool_calls)
                 ),
@@ -321,30 +350,38 @@ def _is_gemma4_model(model: str) -> bool:
 
 def _message_to_google(message: AgentMessage) -> dict[str, JSONValue]:
     if isinstance(message, UserMessage):
-        return {"role": "user", "parts": [{"text": message.content}]}
+        return {"role": "user", "parts": [{"text": message.text}]}
     if isinstance(message, AssistantMessage):
         parts: list[JSONValue] = []
-        if message.content:
-            parts.append({"text": message.content})
-        for tool_call in message.tool_calls:
-            part: dict[str, JSONValue] = {
-                "functionCall": {
-                    "id": tool_call.id,
-                    "name": tool_call.name,
-                    "args": dict(tool_call.arguments),
+        for block in message.content:
+            if isinstance(block, TextContent):
+                parts.append({"text": block.text})
+            elif isinstance(block, ThinkingContent):
+                part: dict[str, JSONValue] = {"text": block.thinking, "thought": True}
+                if block.thinking_signature is not None:
+                    part["thoughtSignature"] = block.thinking_signature
+                parts.append(part)
+            elif isinstance(block, ToolCall):
+                part = {
+                    "functionCall": {
+                        "id": block.id,
+                        "name": block.name,
+                        "args": dict(block.arguments),
+                    }
                 }
-            }
-            if tool_call.thought_signature is not None:
-                part["thoughtSignature"] = tool_call.thought_signature
-            parts.append(part)
+                if block.thought_signature is not None:
+                    part["thoughtSignature"] = block.thought_signature
+                parts.append(part)
         return {"role": "model", "parts": parts or [{"text": ""}]}
-    response: dict[str, JSONValue] = {
-        "name": message.name,
-        "response": {"output" if message.ok else "error": message.content},
-    }
-    if message.tool_call_id:
-        response["id"] = message.tool_call_id
-    return {"role": "user", "parts": [{"functionResponse": response}]}
+    if isinstance(message, ToolResultMessage):
+        response: dict[str, JSONValue] = {
+            "name": message.tool_name,
+            "response": {"output" if not message.is_error else "error": message.text},
+        }
+        if message.tool_call_id:
+            response["id"] = message.tool_call_id
+        return {"role": "user", "parts": [{"functionResponse": response}]}
+    return _message_to_google(message_to_user(message))
 
 
 def _tool_to_google(tool: AgentTool) -> dict[str, JSONValue]:

@@ -25,12 +25,12 @@ material. The published docs distill the result; see
 
 The published, phase-by-phase roadmap and status lives on the
 [roadmap page]({{< relref "./roadmap.md" >}}). The underlying checklist is
-tracked in [GitHub issue #1](https://github.com/alejandro-ao/tau/issues/1).
+tracked in [GitHub issue #1](https://github.com/huggingface/tau/issues/1).
 
 ## Running the project locally
 
 ```bash
-git clone https://github.com/alejandro-ao/tau.git
+git clone https://github.com/huggingface/tau.git
 cd tau
 uv sync --dev
 uv run tau --version
@@ -64,4 +64,4 @@ templates in `website/layouts/`.
 Each substantial phase should leave beginner-friendly notes in `dev-notes/`
 explaining what was added, why it exists, how it maps to [Pi](https://pi.dev)'s
 design, and how to test or use it. When a feature is user-facing, also update or
-add the relevant page under `website/src/content/docs/`.
+add the relevant page under `website/content/`.

@@ -13,7 +13,15 @@ from pygments import highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import JsonLexer
 
-from tau_agent.messages import AssistantMessage, ToolResultMessage, UserMessage
+from tau_agent.messages import (
+    AssistantMessage,
+    TextContent,
+    ThinkingContent,
+    ToolCall,
+    ToolResultMessage,
+    UserMessage,
+    message_text,
+)
 from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
@@ -765,45 +773,40 @@ def _render_message_entry(entry: MessageEntry) -> str:
     if isinstance(message, UserMessage):
         return (
             f'<p class="message-role"><span class="icon">{_ICON_USER}</span>user</p>'
-            f"<pre>{_escape(message.content)}</pre>"
+            f"<pre>{_escape(message.text)}</pre>"
         )
     if isinstance(message, AssistantMessage):
-        tool_calls = ""
-        if message.tool_calls:
-            tool_calls = (
-                "<h4>Tool calls</h4>"
-                "<ul>"
-                + "".join(
-                    "<li>"
-                    f"<code>{_escape(call.name)}</code> "
-                    f"<code>{_escape(call.id)}</code>"
-                    f"{_render_json_block(call.arguments)}"
-                    "</li>"
-                    for call in message.tool_calls
+        blocks: list[str] = []
+        for block in message.content:
+            if isinstance(block, ThinkingContent):
+                blocks.append(f"<h4>Thinking</h4><pre>{_escape(block.thinking)}</pre>")
+            elif isinstance(block, TextContent):
+                blocks.append(f"<pre>{_escape(block.text)}</pre>")
+            elif isinstance(block, ToolCall):
+                blocks.append(
+                    "<h4>Tool call</h4><ul><li>"
+                    f"<code>{_escape(block.name)}</code> "
+                    f"<code>{_escape(block.id)}</code>"
+                    f"{_render_json_block(block.arguments)}"
+                    "</li></ul>"
                 )
-                + "</ul>"
-            )
-        content = message.content or "(no assistant text)"
+        content = "".join(blocks) or "<pre>(no assistant text)</pre>"
         return (
             f'<p class="message-role"><span class="icon">{_ICON_ASSISTANT}</span>assistant</p>'
-            f"<pre>{_escape(content)}</pre>{tool_calls}"
+            f"{content}"
         )
     if isinstance(message, ToolResultMessage):
         metadata = [
-            ("tool", message.name),
+            ("tool", message.tool_name),
             ("tool_call_id", message.tool_call_id),
-            ("ok", str(message.ok)),
+            ("is_error", str(message.is_error)),
         ]
-        if message.error:
-            metadata.append(("error", message.error))
         body = (
             f'<p class="message-role"><span class="icon">{_ICON_TOOL}</span>tool result</p>'
             f"{_render_metadata(metadata)}"
-            f"<pre>{_escape(message.content)}</pre>"
+            f"<pre>{_escape(message.text)}</pre>"
         )
-        if message.data is not None:
-            body += f"<h4>Data</h4>{_render_json_block(message.data)}"
-        if message.details is not None:
+        if isinstance(message.details, dict):
             body += f"<h4>Details</h4>{_render_json_block(message.details)}"
         return body
     return f"<pre>{_escape(entry.model_dump_json(indent=2))}</pre>"
@@ -961,12 +964,12 @@ def _entry_summary(entry: SessionEntry) -> str:
     if isinstance(entry, MessageEntry):
         message = entry.message
         if isinstance(message, ToolResultMessage):
-            return f"{message.name}: {_summarize_text(message.content)}"
+            return f"{message.tool_name}: {_summarize_text(message.text)}"
         if isinstance(message, AssistantMessage) and message.tool_calls:
             tool_names = ", ".join(call.name for call in message.tool_calls)
-            text = _summarize_text(message.content) or "tool call"
+            text = _summarize_text(message.text) or "tool call"
             return f"{text} [{tool_names}]"
-        return _summarize_text(message.content)
+        return _summarize_text(message_text(message))
     if isinstance(entry, ModelChangeEntry):
         return entry.model
     if isinstance(entry, ThinkingLevelChangeEntry):

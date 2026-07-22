@@ -15,7 +15,7 @@
   ·
   <a href="https://pypi.org/project/tau-ai/">PyPI</a>
   ·
-  <a href="https://github.com/alejandro-ao/tau/issues/1">Roadmap</a>
+  <a href="https://github.com/huggingface/tau/issues/1">Roadmap</a>
 </p>
 
 ---
@@ -76,14 +76,32 @@ If you prefer `uv`, install it with:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
+Tau is also available on [conda-forge](https://conda-forge.org), and can be installed using [pixi](https://pixi.prefix.dev/latest/#installation):
+
+```bash
+pixi global install tau-ai
+```
+
 For local development:
 
 ```bash
-git clone https://github.com/alejandro-ao/tau.git
+git clone https://github.com/huggingface/tau.git
 cd tau
 uv sync --dev
 uv run tau --version
 ```
+
+To make the checkout-backed command available globally, install it as an
+editable tool:
+
+```bash
+uv tool install --editable --force .
+```
+
+Run that command again after `git pull`. Editable installs expose source-code
+changes immediately, but the tool environment's package metadata, dependencies,
+and entry points are only refreshed when uv reinstalls the tool. Without the
+refresh, `tau --version` can still show the version from the previous install.
 
 ## Quickstart
 
@@ -136,7 +154,7 @@ no code changes required.
 - Slash commands for login, model selection, sessions, compaction, export, theme,
   and more.
 - Project instructions from `AGENTS.md`, `.tau/`, and `.agents/` resources.
-- User skills and prompt templates.
+- User skills, prompt templates, and custom TUI themes.
 - Context accounting, manual compaction, and optional automatic compaction.
 - Provider-neutral event rendering for Rich, plain text, JSON, transcripts, and
   custom frontends.
@@ -221,7 +239,7 @@ Useful entry points:
 - [CLI reference](https://twotimespi.dev/reference/cli/)
 
 Tau is under active development. The implementation roadmap is tracked in
-[GitHub issue #1](https://github.com/alejandro-ao/tau/issues/1).
+[GitHub issue #1](https://github.com/huggingface/tau/issues/1).
 
 ## License
 

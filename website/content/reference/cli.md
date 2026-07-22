@@ -43,6 +43,9 @@ one-time release-notes message to the transcript with the new features and fixes
 | `--resume TEXT` | Resume a session id in the TUI |
 | `--new-session` | Start a new session instead of resuming the default |
 | `--auto-compact-threshold INT` | Auto-compact above this rough token estimate |
+| `-x, --extension PATH` | Load an [extension]({{< relref "../guides/extensions.md" >}}) file or directory (repeatable) |
+| `--no-extensions` | Disable extension directory discovery (explicit `-x` paths still load) |
+| `--project-extensions` | Also load `<project>/.tau/extensions` (runs project-supplied code at startup) |
 | `--version` | Print the version and exit |
 
 ### Provider setup options

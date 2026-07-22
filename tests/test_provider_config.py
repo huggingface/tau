@@ -3,14 +3,17 @@ from pathlib import Path
 
 import pytest
 
+import tau_coding.provider_config as provider_config
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.paths import TauPaths
+from tau_coding.provider_catalog import ModelCostTier
 from tau_coding.provider_config import (
     DEFAULT_MODEL,
     AnthropicProviderConfig,
     OpenAICodexProviderConfig,
     OpenAICompatibleProviderConfig,
     ProviderConfigError,
+    ProviderModelMetadata,
     ProviderSettings,
     ScopedModelConfig,
     anthropic_config_from_provider,
@@ -22,6 +25,7 @@ from tau_coding.provider_config import (
     provider_thinking_levels,
     provider_thinking_unavailable_reason,
     resolve_provider_selection,
+    resolve_startup_thinking_level,
     save_provider_settings,
     set_default_provider_model,
     set_provider_thinking_level,
@@ -49,6 +53,7 @@ def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path)
         "minimax",
         "minimax-cn",
         "moonshotai",
+        "kimi-code",
         "moonshotai-cn",
         "huggingface",
         "fireworks",
@@ -58,6 +63,9 @@ def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path)
         "xiaomi-token-plan-cn",
         "xiaomi-token-plan-ams",
         "xiaomi-token-plan-sgp",
+        "opencode-go",
+        "opencode",
+        "github-copilot",
     ]
     assert settings.providers[0].default_model == DEFAULT_MODEL
     assert settings.get_provider("anthropic").api_key_env == "ANTHROPIC_API_KEY"
@@ -196,6 +204,30 @@ docs_url = "http://localhost:11434/v1"
     assert settings.scoped_models == (ScopedModelConfig(provider="local", model="qwen"),)
 
 
+def test_load_provider_settings_ignores_preference_without_catalog_entry(
+    tmp_path: Path,
+) -> None:
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    (tau_home / "providers.json").write_text(
+        json.dumps(
+            {
+                "default_provider": "openai",
+                "provider_preferences": {
+                    "openai": {"default_model": "gpt-5-mini"},
+                    "llama-cpp": {"default_model": "local"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_provider_settings(TauPaths(home=tau_home))
+
+    assert settings.get_provider("openai").default_model == "gpt-5-mini"
+    assert "llama-cpp" not in {provider.name for provider in settings.providers}
+
+
 def test_save_provider_settings_writes_backup_when_replacing(tmp_path: Path) -> None:
     paths = TauPaths(home=tmp_path / ".tau")
     initial = ProviderSettings(
@@ -231,7 +263,15 @@ def test_save_provider_settings_writes_backup_when_replacing(tmp_path: Path) -> 
     )
 
 
-def test_save_and_load_provider_settings_round_trip(tmp_path: Path) -> None:
+def test_save_and_load_provider_settings_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Isolate provider_config from the host environment so built-in provider
+    # discovery (credential filtering) is deterministic and the loaded settings
+    # contain only the user-saved providers.
+    monkeypatch.setattr(provider_config, "environ", {})
+
     paths = TauPaths(home=tmp_path / ".tau")
     settings = ProviderSettings(
         default_provider="local",
@@ -257,6 +297,167 @@ def test_save_and_load_provider_settings_round_trip(tmp_path: Path) -> None:
 
     assert path == tmp_path / ".tau" / "providers.json"
     assert loaded == settings
+
+
+def test_legacy_provider_model_cost_tiers_round_trip() -> None:
+    raw = {
+        "default_provider": "local",
+        "providers": [
+            {
+                "type": "openai-compatible",
+                "name": "local",
+                "base_url": "http://localhost:11434/v1",
+                "api_key_env": "LOCAL_API_KEY",
+                "models": ["qwen"],
+                "default_model": "qwen",
+                "model_metadata": {
+                    "qwen": {
+                        "cost": {
+                            "input": 0.3,
+                            "output": 1.2,
+                            "cacheRead": 0.06,
+                            "cacheWrite": 0,
+                        },
+                        "cost_tiers": [
+                            {
+                                "max_input_tokens": 512000,
+                                "input": 0.3,
+                                "output": 1.2,
+                                "cacheRead": 0.06,
+                                "cacheWrite": 0,
+                            },
+                            {
+                                "input": 0.6,
+                                "output": 2.4,
+                                "cacheRead": 0.12,
+                                "cacheWrite": 0,
+                            },
+                        ],
+                    }
+                },
+            }
+        ],
+        "scoped_models": [],
+    }
+
+    settings = provider_settings_from_json(raw)
+    provider = settings.get_provider("local")
+    assert isinstance(provider, OpenAICompatibleProviderConfig)
+    assert (
+        provider.model_metadata["qwen"].to_json()["cost_tiers"]
+        == raw["providers"][0]["model_metadata"]["qwen"]["cost_tiers"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("cost_tiers", "match"),
+    [
+        (
+            [
+                {
+                    "max_input_tokens": 512000,
+                    "input": 0.3,
+                    "output": 1.2,
+                    "cacheRead": 0.06,
+                    "cacheWrite": 0,
+                }
+            ],
+            "final cost tier must omit max_input_tokens",
+        ),
+        (
+            [
+                {
+                    "max_input_tokens": 512000,
+                    "input": 0.3,
+                    "output": 1.2,
+                    "cacheRead": 0.06,
+                    "cacheWrite": 0,
+                },
+                {
+                    "max_input_tokens": 400000,
+                    "input": 0.4,
+                    "output": 1.6,
+                    "cacheRead": 0.08,
+                    "cacheWrite": 0,
+                },
+                {
+                    "input": 0.6,
+                    "output": 2.4,
+                    "cacheRead": 0.12,
+                    "cacheWrite": 0,
+                },
+            ],
+            "limits must be strictly increasing",
+        ),
+        (
+            [
+                {
+                    "unexpected": 1,
+                    "input": 0.3,
+                    "output": 1.2,
+                    "cacheRead": 0.06,
+                    "cacheWrite": 0,
+                }
+            ],
+            "unknown fields",
+        ),
+        (
+            [
+                {
+                    "input": -0.3,
+                    "output": 1.2,
+                    "cacheRead": 0.06,
+                    "cacheWrite": 0,
+                }
+            ],
+            "0 or greater",
+        ),
+    ],
+)
+def test_legacy_provider_rejects_invalid_cost_tiers(
+    cost_tiers: list[dict[str, object]],
+    match: str,
+) -> None:
+    raw = {
+        "default_provider": "local",
+        "providers": [
+            {
+                "type": "openai-compatible",
+                "name": "local",
+                "base_url": "http://localhost:11434/v1",
+                "api_key_env": "LOCAL_API_KEY",
+                "models": ["qwen"],
+                "default_model": "qwen",
+                "model_metadata": {"qwen": {"cost_tiers": cost_tiers}},
+            }
+        ],
+    }
+
+    with pytest.raises(ProviderConfigError, match=match):
+        provider_settings_from_json(raw)
+
+
+def test_runtime_metadata_rejects_invalid_cost_tier_values() -> None:
+    with pytest.raises(ProviderConfigError, match="cost tier values must be non-negative"):
+        OpenAICompatibleProviderConfig(
+            name="local",
+            models=("qwen",),
+            default_model="qwen",
+            model_metadata={
+                "qwen": ProviderModelMetadata(
+                    cost_tiers=(
+                        ModelCostTier(
+                            cost={
+                                "input": -0.3,
+                                "output": 1.2,
+                                "cacheRead": 0.06,
+                                "cacheWrite": 0,
+                            }
+                        ),
+                    )
+                )
+            },
+        )
 
 
 def test_provider_settings_parses_scoped_models() -> None:
@@ -345,6 +546,73 @@ def test_resolve_provider_selection_uses_configured_defaults() -> None:
 def test_resolve_provider_selection_rejects_unknown_provider() -> None:
     with pytest.raises(ProviderConfigError, match="Unknown provider"):
         resolve_provider_selection(ProviderSettings(), provider_name="missing")
+
+
+def _kimi_code_like_provider() -> OpenAICompatibleProviderConfig:
+    # Mirrors the catalog kimi-code entry: k3 only supports xhigh (mapped to
+    # "max"); every other level is marked unsupported (None) in the map.
+    return OpenAICompatibleProviderConfig(
+        name="kimi-code",
+        models=("k3", "kimi-for-coding"),
+        default_model="k3",
+        thinking_levels=("medium", "xhigh"),
+        thinking_default="medium",
+        thinking_parameter="reasoning_effort",
+        model_metadata={
+            "k3": ProviderModelMetadata(
+                reasoning=True,
+                thinking_level_map={
+                    "off": None,
+                    "minimal": None,
+                    "low": None,
+                    "medium": None,
+                    "high": None,
+                    "xhigh": "max",
+                },
+            ),
+        },
+    )
+
+
+def test_resolve_startup_thinking_level_falls_back_when_default_unsupported() -> None:
+    provider = _kimi_code_like_provider()
+
+    # k3 only supports xhigh, so the global "medium" default must be coerced
+    # instead of crashing startup.
+    assert resolve_startup_thinking_level(provider, "k3") == "xhigh"
+
+
+def test_resolve_startup_thinking_level_prefers_remembered_model_default() -> None:
+    provider = _kimi_code_like_provider()
+    remembered = OpenAICompatibleProviderConfig(
+        name=provider.name,
+        models=provider.models,
+        default_model=provider.default_model,
+        thinking_levels=provider.thinking_levels,
+        thinking_default=provider.thinking_default,
+        thinking_parameter=provider.thinking_parameter,
+        thinking_defaults={"k3": "xhigh"},
+        model_metadata=provider.model_metadata,
+    )
+
+    assert resolve_startup_thinking_level(remembered, "k3") == "xhigh"
+
+
+def test_resolve_startup_thinking_level_keeps_supported_default() -> None:
+    provider = _kimi_code_like_provider()
+
+    # kimi-for-coding supports the provider default (medium).
+    assert resolve_startup_thinking_level(provider, "kimi-for-coding") == "medium"
+
+
+def test_resolve_startup_thinking_level_returns_none_without_levels() -> None:
+    provider = OpenAICompatibleProviderConfig(
+        name="local",
+        models=("qwen",),
+        default_model="qwen",
+    )
+
+    assert resolve_startup_thinking_level(provider, "qwen") is None
 
 
 def test_resolve_provider_selection_rejects_model_not_declared_for_provider() -> None:
@@ -499,6 +767,21 @@ def test_openai_compatible_config_from_provider_sets_reasoning_effort(
 
     assert reasoner.reasoning_effort == "none"
     assert plain.reasoning_effort is None
+
+
+def test_kimi_k3_maps_xhigh_thinking_to_max(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KIMI_CODE_API_KEY", "test-key")
+    settings = load_provider_settings(TauPaths(home=Path("/missing")))
+    provider = settings.get_provider("kimi-code")
+
+    config = openai_compatible_config_from_provider(
+        provider,
+        model="k3",
+        thinking_level="xhigh",
+    )
+
+    assert provider_thinking_levels(provider, model="k3") == ("xhigh",)
+    assert config.reasoning_effort == "max"
 
 
 def test_openai_compatible_config_from_provider_rejects_unsupported_thinking_level(
@@ -883,14 +1166,9 @@ def test_load_provider_settings_restores_builtin_providers_with_stored_credentia
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    for env_name in (
-        "OPENAI_API_KEY",
-        "OPENAI_CODEX_ACCESS_TOKEN",
-        "ANTHROPIC_API_KEY",
-        "OPENROUTER_API_KEY",
-        "HF_TOKEN",
-    ):
-        monkeypatch.delenv(env_name, raising=False)
+    # Isolate from the host environment so built-in provider discovery depends
+    # only on the credential store, not on stray env vars (e.g. GEMINI_API_KEY).
+    monkeypatch.setattr(provider_config, "environ", {})
     tau_home = tmp_path / ".tau"
     tau_home.mkdir()
     (tau_home / "providers.json").write_text(
@@ -926,11 +1204,14 @@ def test_load_provider_settings_restores_builtin_providers_with_stored_credentia
 
     settings = load_provider_settings(TauPaths(home=tau_home))
 
-    assert [provider.name for provider in settings.providers] == [
+    # Provider order is an implementation detail of BUILTIN_PROVIDER_CATALOG and
+    # shifts when built-ins are added; use set equality (not position) so the
+    # test still verifies that only credentialed built-ins are restored.
+    assert {provider.name for provider in settings.providers} == {
         "local",
         "openai-codex",
         "openrouter",
-    ]
+    }
     assert settings.default_provider == "local"
     assert settings.get_provider("openrouter").credential_name == "openrouter"
     assert settings.get_provider("openai-codex").credential_name == "openai-codex"

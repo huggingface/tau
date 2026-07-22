@@ -9,6 +9,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 from tau_agent.tools import AgentTool
+from tau_coding.self_docs import tau_docs_path, tau_examples_path, tau_readme_path
 from tau_coding.skills import Skill
 
 
@@ -57,6 +58,7 @@ def build_system_prompt(options: BuildSystemPromptOptions) -> str:
         "\n\nIn addition to the tools above, you may have access to other custom tools "
         "depending on the project."
         f"\n\nGuidelines:\n{format_guidelines(options.tools, options.extra_guidelines)}"
+        f"\n\n{format_tau_documentation()}"
     )
 
     prompt += append_section
@@ -66,6 +68,30 @@ def build_system_prompt(options: BuildSystemPromptOptions) -> str:
     prompt += f"\nCurrent date: {current_date.isoformat()}"
     prompt += f"\nCurrent working directory: {cwd}"
     return prompt
+
+
+def format_tau_documentation() -> str:
+    """Format Pi-style routing hints to Tau's installed reference material."""
+    readme_path = _format_path(tau_readme_path())
+    docs_path = _format_path(tau_docs_path())
+    examples_path = _format_path(tau_examples_path())
+    return (
+        "Tau documentation (read only when the user asks about Tau itself, its SDK, "
+        "extensions, skills, providers, models, commands, or TUI):\n"
+        f"- Main documentation: {readme_path}\n"
+        f"- Additional docs: {docs_path}\n"
+        f"- Examples: {examples_path} (extensions and custom tools)\n"
+        "- When reading Tau docs or examples, resolve docs/... under Additional docs and "
+        "examples/... under Examples, not the current working directory\n"
+        "- When asked about: creating or modifying extensions (docs/extensions.md, "
+        "examples/extensions/), skills and prompt templates (docs/skills.md), custom "
+        "providers or adding built-in providers/models (docs/models.md), CLI and slash "
+        "commands (docs/cli.md), TUI usage "
+        "(docs/tui.md), Tau architecture and packages (docs/architecture.md)\n"
+        "- When working on Tau topics, read the docs and examples, and follow .md "
+        "cross-references before implementing\n"
+        "- Always read relevant Tau .md files completely and follow links to related docs"
+    )
 
 
 def format_available_tools(tools: Sequence[AgentTool]) -> str:
@@ -104,6 +130,13 @@ def collect_prompt_guidelines(
     for guideline in extra_guidelines:
         add(guideline)
 
+    add("Inspect relevant files and project instructions before editing")
+    add("Make focused changes that preserve the project's architecture and style")
+    add("Do not overwrite or discard unrelated user changes")
+    add("Use the project's documented commands and package manager")
+    add("Run relevant tests, formatting, linting, and type checks after changes")
+    add("Report checks honestly; never claim a command passed unless you ran it")
+    add("Ask before destructive operations or materially ambiguous design choices")
     add("Be concise in your responses")
     add("Show file paths clearly when working with files")
     return guidelines

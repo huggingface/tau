@@ -5,14 +5,11 @@ import pytest
 from typer.testing import CliRunner
 
 from conftest import isolate_home
+from pi_event_helpers import assistant_done, assistant_error, assistant_start, text_delta
 from tau_agent import AssistantMessage, UserMessage
 from tau_agent.session import JsonlSessionStorage, MessageEntry
 from tau_ai import (
     FakeProvider,
-    ProviderErrorEvent,
-    ProviderResponseEndEvent,
-    ProviderResponseStartEvent,
-    ProviderTextDeltaEvent,
 )
 from tau_coding import CodingSessionRecord, SessionManager, cli
 from tau_coding.cli import app, run_print_mode
@@ -24,6 +21,7 @@ from tau_coding.provider_config import (
 )
 from tau_coding.rendering import PrintOutputMode
 from tau_coding.resources import TauResourcePaths
+from tau_coding.skills import load_skills
 from tau_coding.system_prompt import BuildSystemPromptOptions, build_system_prompt
 from tau_coding.tools import create_coding_tools
 from tau_coding.update_check import (
@@ -134,8 +132,9 @@ def test_print_mode_writes_update_notice_to_stderr(monkeypatch: pytest.MonkeyPat
         cwd: Path,
         output: PrintOutputMode,
         provider_name: str | None,
+        *extra: object,
     ) -> bool:
-        del prompt, model, cwd, output, provider_name
+        del prompt, model, cwd, output, provider_name, extra
         return True
 
     monkeypatch.setattr(
@@ -158,8 +157,9 @@ def test_json_print_mode_suppresses_update_notice(monkeypatch: pytest.MonkeyPatc
         cwd: Path,
         output: PrintOutputMode,
         provider_name: str | None,
+        *extra: object,
     ) -> bool:
-        del prompt, model, cwd, output, provider_name
+        del prompt, model, cwd, output, provider_name, extra
         return True
 
     monkeypatch.setattr(
@@ -203,8 +203,9 @@ def test_cli_without_prompt_invokes_tui_runner(
         auto_compact_token_threshold: int | None,
         initial_prompt: str | None,
         update_notice: object | None = None,
+        *extra: object,
     ) -> None:
-        del update_notice
+        del update_notice, extra
         calls.append(
             (
                 model,
@@ -241,8 +242,9 @@ def test_cli_positional_prompt_invokes_tui_runner(
         auto_compact_token_threshold: int | None,
         initial_prompt: str | None,
         update_notice: object | None = None,
+        *extra: object,
     ) -> None:
-        del update_notice
+        del update_notice, extra
         calls.append(
             (
                 model,
@@ -313,10 +315,10 @@ async def test_run_print_mode_prints_final_assistant_text(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderTextDeltaEvent(delta="Hel"),
-                ProviderTextDeltaEvent(delta="lo"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Hello")),
+                assistant_start(model="fake"),
+                text_delta(delta="Hel"),
+                text_delta(delta="lo"),
+                assistant_done(message=AssistantMessage(content="Hello")),
             ]
         ]
     )
@@ -334,8 +336,13 @@ async def test_run_print_mode_prints_final_assistant_text(
     assert captured.out == "Hello\n"
     assert captured.err == ""
     assert provider.calls[0][0] == "fake"
+    resource_paths = TauResourcePaths(root=tmp_path / "resources", agents_root=None)
     assert provider.calls[0][1] == build_system_prompt(
-        BuildSystemPromptOptions(cwd=tmp_path, tools=create_coding_tools(cwd=tmp_path))
+        BuildSystemPromptOptions(
+            cwd=tmp_path,
+            tools=create_coding_tools(cwd=tmp_path),
+            skills=load_skills(resource_paths),
+        )
     )
     assert [tool.name for tool in provider.calls[0][3]] == ["read", "write", "edit", "bash"]
 
@@ -358,7 +365,11 @@ async def test_run_print_mode_system_command_prints_prompt_without_provider_call
 
     captured = capsys.readouterr()
     expected_system = build_system_prompt(
-        BuildSystemPromptOptions(cwd=tmp_path, tools=create_coding_tools(cwd=tmp_path))
+        BuildSystemPromptOptions(
+            cwd=tmp_path,
+            tools=create_coding_tools(cwd=tmp_path),
+            skills=load_skills(TauResourcePaths(root=tmp_path / "resources", agents_root=None)),
+        )
     )
     assert ok is True
     assert captured.out == f"{expected_system}\n"
@@ -374,8 +385,8 @@ async def test_run_print_mode_fails_on_non_recoverable_error(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderErrorEvent(message="provider failed"),
+                assistant_start(model="fake"),
+                assistant_error(message="provider failed"),
             ]
         ]
     )
@@ -396,8 +407,8 @@ async def test_run_print_mode_includes_discovered_context(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ]
         ]
     )
@@ -424,8 +435,8 @@ async def test_run_print_mode_persists_session_entries(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ]
         ]
     )
@@ -445,7 +456,7 @@ async def test_run_print_mode_persists_session_entries(
     assert ok is True
     assert [message.role for message in messages] == ["user", "assistant"]
     assert messages[0].content == "Say hello"
-    assert messages[1].content == "Done"
+    assert messages[1].text == "Done"
     assert any(entry.type == "leaf" for entry in entries)
 
 
@@ -514,8 +525,8 @@ async def test_run_print_mode_expands_skill_commands(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Done")),
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
             ]
         ]
     )
@@ -543,9 +554,9 @@ async def test_run_print_mode_can_emit_json_events(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderTextDeltaEvent(delta="Hello"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Hello")),
+                assistant_start(model="fake"),
+                text_delta(delta="Hello"),
+                assistant_done(message=AssistantMessage(content="Hello")),
             ]
         ]
     )
@@ -561,7 +572,8 @@ async def test_run_print_mode_can_emit_json_events(
     captured = capsys.readouterr()
     assert ok is True
     assert '"type":"agent_start"' in captured.out
-    assert '"type":"message_delta"' in captured.out
+    assert '"type":"message_update"' in captured.out
+    assert '"assistantMessageEvent":{"type":"text_delta"' in captured.out
     assert captured.err == ""
 
 
@@ -572,10 +584,10 @@ async def test_run_print_mode_can_emit_live_transcript(
     provider = FakeProvider(
         [
             [
-                ProviderResponseStartEvent(model="fake"),
-                ProviderTextDeltaEvent(delta="Hel"),
-                ProviderTextDeltaEvent(delta="lo"),
-                ProviderResponseEndEvent(message=AssistantMessage(content="Hello")),
+                assistant_start(model="fake"),
+                text_delta(delta="Hel"),
+                text_delta(delta="lo"),
+                assistant_done(message=AssistantMessage(content="Hello")),
             ]
         ]
     )
@@ -601,6 +613,7 @@ def test_cli_exits_nonzero_when_print_mode_fails(monkeypatch: pytest.MonkeyPatch
         cwd: Path,
         output: PrintOutputMode,
         provider_name: str | None,
+        *extra: object,
     ) -> bool:
         return False
 
@@ -626,8 +639,9 @@ def test_default_tui_invokes_tui_runner_with_flags(
         auto_compact_token_threshold: int | None,
         initial_prompt: str | None,
         update_notice: object | None = None,
+        *extra: object,
     ) -> None:
-        del update_notice
+        del update_notice, extra
         calls.append(
             (
                 model,
@@ -722,7 +736,7 @@ def test_tui_surfaces_bad_model_as_clean_error(
 ) -> None:
     """Regression: ``tau --model <bad>`` must exit with a clean error, not a traceback.
 
-    See https://github.com/alejandro-ao/tau/issues/265. The TUI startup path
+    See https://github.com/huggingface/tau/issues/265. The TUI startup path
     previously only caught ``RuntimeError``, so a ``ProviderConfigError`` (a
     ``ValueError`` subclass) raised while resolving the provider/model selection
     escaped the ``anyio`` event loop as an unhandled traceback.

@@ -16,8 +16,8 @@ tau_coding   CLI app, resources, skills, extensions, commands, UI integration
 ## Current status
 
 Phases 0 through 20.4, 22, and 23 are implemented and documented. Phase 21
-extensions are intentionally deferred so the core harness, coding session, and
-TUI can stay stable before extension loading is introduced.
+extensions were deferred until the core harness, coding session, and TUI were
+stable; they are now implemented (see architecture/phase-21-extensions.md).
 
 The latest pre-extension hardening pass added context accounting refreshes,
 thinking-mode controls, optional thinking-token display, provider retries,
@@ -58,7 +58,7 @@ provider error with one compact-and-retry attempt. See
 20.2. Thinking mode controls.
 20.3. Skill invocation reliability.
 20.4. Session visualization and export.
-21. Extensions. Deferred.
+21. Extensions. Implemented.
 22. Compaction and context management.
 23. Advanced TUI and product polish.
 

@@ -8,11 +8,20 @@ from typing import Any
 
 import httpx
 
-from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    TextContent,
+    ThinkingContent,
+    ToolResultMessage,
+    Usage,
+    UserMessage,
+    assistant_content,
+    message_to_user,
+)
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
-from tau_ai.env import AnthropicConfig
-from tau_ai.events import (
+from tau_ai._provider_events import (
     ProviderErrorEvent,
     ProviderEvent,
     ProviderResponseEndEvent,
@@ -21,10 +30,13 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.env import AnthropicConfig
+from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
+from tau_ai.stream import canonicalize_provider_stream
 
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_MAX_TOKENS = 4096
@@ -57,14 +69,43 @@ class AnthropicProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+    ) -> AsyncIterator[AssistantMessageEvent]:
+        """Stream one response as Pi-compatible assistant message events."""
+        raw = self._stream_provider_events(
+            model=model, system=system, messages=messages, tools=tools, signal=signal
+        )
+        return canonicalize_provider_stream(
+            raw, api="anthropic-messages", provider="anthropic", model=model
+        )
+
+    def _stream_provider_events(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[AgentMessage],
+        tools: list[AgentTool],
+        signal: CancellationToken | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Stream one Anthropic response as provider-neutral events."""
 
         async def iterator() -> AsyncIterator[ProviderEvent]:
             client = self._get_client()
+            api_key = self._config.api_key
+            base_url = self._config.base_url
+            auth_headers: dict[str, str] = {}
+            if self._config.credential_resolver is not None:
+                auth = await self._config.credential_resolver()
+                api_key = auth.api_key
+                if auth.base_url is not None:
+                    base_url = auth.base_url.rstrip("/")
+                    if not base_url.endswith("/v1"):
+                        base_url = f"{base_url}/v1"
+                auth_headers.update(auth.headers or {})
             payload = _build_messages_payload(
                 model=model,
                 system=system,
+                oauth_system_prompt=self._config.oauth_system_prompt,
                 messages=messages,
                 tools=tools,
                 max_tokens=self._config.max_tokens,
@@ -73,12 +114,16 @@ class AnthropicProvider:
                 thinking_mode=self._config.thinking_mode,
             )
             headers = {
-                **(dict(self._config.headers or {})),
                 "anthropic-version": ANTHROPIC_VERSION,
                 "content-type": "application/json",
-                "x-api-key": self._config.api_key,
+                **(dict(self._config.headers or {})),
+                **auth_headers,
             }
-            url = f"{self._config.base_url.rstrip('/')}/messages"
+            if self._config.bearer_auth:
+                headers.setdefault("Authorization", f"Bearer {api_key}")
+            else:
+                headers["x-api-key"] = api_key
+            url = f"{base_url.rstrip('/')}/messages"
 
             attempt = 0
             while True:
@@ -126,8 +171,11 @@ class AnthropicProvider:
 
                         yield ProviderResponseStartEvent(model=model)
                         content_parts: list[str] = []
+                        thinking_parts: list[str] = []
+                        thinking_signature: str | None = None
                         tool_builders: dict[int, _AnthropicToolBuilder] = {}
                         finish_reason: str | None = None
+                        usage: Usage | None = None
 
                         async for line in response.aiter_lines():
                             if signal is not None and signal.is_cancelled():
@@ -144,7 +192,11 @@ class AnthropicProvider:
                                 return
 
                             event_type = chunk.get("type")
-                            if event_type == "content_block_start":
+                            if event_type == "message_start":
+                                message = chunk.get("message")
+                                if isinstance(message, Mapping):
+                                    usage = _usage_from_message_start(message.get("usage"))
+                            elif event_type == "content_block_start":
                                 block = chunk.get("content_block")
                                 if isinstance(block, Mapping) and block.get("type") == "tool_use":
                                     index = int(chunk.get("index", 0))
@@ -169,7 +221,14 @@ class AnthropicProvider:
                                     thinking = _string_or_empty(delta.get("thinking"))
                                     if thinking:
                                         emitted_content = True
+                                        thinking_parts.append(thinking)
                                         yield ProviderThinkingDeltaEvent(delta=thinking)
+                                elif delta_type == "signature_delta":
+                                    signature = _string_or_empty(delta.get("signature"))
+                                    if signature:
+                                        thinking_signature = (
+                                            f"{thinking_signature or ''}{signature}"
+                                        )
                                 elif delta_type == "input_json_delta":
                                     index = int(chunk.get("index", 0))
                                     builder = tool_builders.setdefault(
@@ -185,6 +244,7 @@ class AnthropicProvider:
                                     finish_reason = (
                                         _string_or_empty(delta.get("stop_reason")) or finish_reason
                                     )
+                                usage = _apply_message_delta_usage(usage, chunk.get("usage"))
                             elif event_type == "error":
                                 error = chunk.get("error")
                                 message = "Provider returned an error"
@@ -199,10 +259,19 @@ class AnthropicProvider:
                         for tool_call in tool_calls:
                             yield ProviderToolCallEvent(tool_call=tool_call)
 
+                        content = assistant_content("".join(content_parts), tool_calls)
+                        if thinking_parts:
+                            content.insert(
+                                0,
+                                ThinkingContent(
+                                    thinking="".join(thinking_parts),
+                                    thinking_signature=thinking_signature,
+                                ),
+                            )
                         yield ProviderResponseEndEvent(
                             message=AssistantMessage(
-                                content="".join(content_parts),
-                                tool_calls=tool_calls,
+                                content=content,
+                                usage=usage or Usage(),
                             ),
                             finish_reason=finish_reason,
                         )
@@ -243,7 +312,7 @@ class AnthropicProvider:
     def _should_retry(self, attempt: int, *, status_code: int | None = None) -> bool:
         if attempt >= self._config.max_retries:
             return False
-        return status_code is None or status_code in {408, 409, 429, 500, 502, 503, 504}
+        return status_code is None or status_code in {408, 409, 425, 429} or status_code >= 500
 
 
 class _AnthropicToolBuilder:
@@ -269,6 +338,7 @@ def _build_messages_payload(
     model: str,
     system: str,
     messages: list[AgentMessage],
+    oauth_system_prompt: str | None = None,
     tools: list[AgentTool],
     max_tokens: int | None = None,
     thinking_budget_tokens: int | None = None,
@@ -282,7 +352,14 @@ def _build_messages_payload(
         "model": model,
         "max_tokens": resolved_max_tokens,
         "stream": True,
-        "system": system,
+        "system": (
+            [
+                {"type": "text", "text": oauth_system_prompt},
+                {"type": "text", "text": system},
+            ]
+            if oauth_system_prompt
+            else system
+        ),
         "messages": [_anthropic_message(message) for message in messages],
     }
     if thinking_mode == "adaptive" and thinking_effort is not None:
@@ -300,20 +377,29 @@ def _build_messages_payload(
 
 def _anthropic_message(message: AgentMessage) -> dict[str, JSONValue]:
     if isinstance(message, UserMessage):
-        return {"role": "user", "content": message.content}
+        return {"role": "user", "content": message.text}
     if isinstance(message, AssistantMessage):
         content: list[JSONValue] = []
-        if message.content:
-            content.append({"type": "text", "text": message.content})
-        for tool_call in message.tool_calls:
-            content.append(
-                {
-                    "type": "tool_use",
-                    "id": tool_call.id,
-                    "name": tool_call.name,
-                    "input": tool_call.arguments,
+        for block in message.content:
+            if isinstance(block, TextContent):
+                content.append({"type": "text", "text": block.text})
+            elif isinstance(block, ThinkingContent):
+                thinking: dict[str, JSONValue] = {
+                    "type": "thinking",
+                    "thinking": block.thinking,
                 }
-            )
+                if block.thinking_signature is not None:
+                    thinking["signature"] = block.thinking_signature
+                content.append(thinking)
+            elif isinstance(block, ToolCall):
+                content.append(
+                    {
+                        "type": "tool_use",
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.arguments,
+                    }
+                )
         return {"role": "assistant", "content": content}
     if isinstance(message, ToolResultMessage):
         return {
@@ -322,12 +408,12 @@ def _anthropic_message(message: AgentMessage) -> dict[str, JSONValue]:
                 {
                     "type": "tool_result",
                     "tool_use_id": message.tool_call_id,
-                    "content": message.content,
-                    "is_error": not message.ok,
+                    "content": message.text,
+                    "is_error": bool(message.is_error),
                 }
             ],
         }
-    raise TypeError(f"Unsupported message type: {type(message).__name__}")
+    return _anthropic_message(message_to_user(message))
 
 
 def _anthropic_tool(tool: AgentTool) -> dict[str, JSONValue]:
@@ -354,3 +440,57 @@ def _loads_object(text: str) -> dict[str, Any] | None:
 
 def _string_or_empty(value: object) -> str:
     return value if isinstance(value, str) else ""
+
+
+def _int_or_none(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _usage_from_message_start(raw: object) -> Usage:
+    """Build a Usage from the ``message_start`` event's ``message.usage``.
+
+    Ports Pi's anthropic-messages.ts message_start handling. Cost is left unset
+    (None) because Tau has no per-model pricing table.
+    """
+    data = raw if isinstance(raw, Mapping) else {}
+    cache_creation = data.get("cache_creation")
+    cache_write_1h = (
+        _int_or_none(cache_creation.get("ephemeral_1h_input_tokens"))
+        if isinstance(cache_creation, Mapping)
+        else None
+    )
+    usage = Usage(
+        input=_int_or_none(data.get("input_tokens")) or 0,
+        output=_int_or_none(data.get("output_tokens")) or 0,
+        cache_read=_int_or_none(data.get("cache_read_input_tokens")) or 0,
+        cache_write=_int_or_none(data.get("cache_creation_input_tokens")) or 0,
+        cache_write_1h=cache_write_1h,
+    )
+    usage.total_tokens = usage.input + usage.output + usage.cache_read + usage.cache_write
+    return usage
+
+
+def _apply_message_delta_usage(usage: Usage | None, raw: object) -> Usage | None:
+    """Apply the ``message_delta`` event's ``usage`` onto the running Usage.
+
+    Ports Pi's anthropic-messages.ts message_delta handling: only overwrite
+    fields the provider reports (non-null), then recompute the token total.
+    """
+    if not isinstance(raw, Mapping):
+        return usage
+    usage = usage or Usage()
+    if (value := _int_or_none(raw.get("input_tokens"))) is not None:
+        usage.input = value
+    if (value := _int_or_none(raw.get("output_tokens"))) is not None:
+        usage.output = value
+    if (value := _int_or_none(raw.get("cache_read_input_tokens"))) is not None:
+        usage.cache_read = value
+    if (value := _int_or_none(raw.get("cache_creation_input_tokens"))) is not None:
+        usage.cache_write = value
+    details = raw.get("output_tokens_details")
+    if isinstance(details, Mapping):
+        thinking = _int_or_none(details.get("thinking_tokens"))
+        if thinking is not None:
+            usage.reasoning = thinking
+    usage.total_tokens = usage.input + usage.output + usage.cache_read + usage.cache_write
+    return usage

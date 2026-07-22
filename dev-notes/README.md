@@ -4,8 +4,8 @@ These are the internal, phase-by-phase build journals and design records for Tau
 They are **not** published on the docs site — they live here for contributors who
 want to trace how the system was assembled.
 
-User-facing documentation lives in `website/src/content/docs/` and is published at
-<https://alejandro-ao.github.io/tau/>.
+User-facing documentation lives in `website/content/` and is published at
+<https://twotimespi.dev/>.
 
 ## Contents
 
@@ -22,5 +22,7 @@ User-facing documentation lives in `website/src/content/docs/` and is published 
   later phases use it.
 - `adr/` — architecture decision records.
 - `catalog-model-safety.md` — checklist for adding providers and models to the built-in catalog safely.
+- `startup-thinking-level-fallback.md` — why startup resolves a valid thinking
+  level per model instead of assuming the global `medium` default.
 
-The roadmap is tracked in [GitHub issue #1](https://github.com/alejandro-ao/tau/issues/1).
+The roadmap is tracked in [GitHub issue #1](https://github.com/huggingface/tau/issues/1).

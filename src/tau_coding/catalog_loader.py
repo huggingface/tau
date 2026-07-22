@@ -25,7 +25,9 @@ from pydantic import (
 from tau_agent.types import JSONValue
 from tau_coding.paths import TauPaths
 from tau_coding.provider_catalog import (
+    AuthMethod,
     ModelCatalogMetadata,
+    ModelCostTier,
     ModelInput,
     ProviderApi,
     ProviderCatalogEntry,
@@ -53,6 +55,16 @@ class CatalogError(ValueError):
     """Raised when a Tau catalog file is invalid."""
 
 
+class _CatalogCostTier(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    max_input_tokens: _PositiveInt | None = None
+    input: _NonNegativeFloat
+    output: _NonNegativeFloat
+    cacheRead: _NonNegativeFloat
+    cacheWrite: _NonNegativeFloat
+
+
 class _CatalogModelMetadata(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -62,6 +74,7 @@ class _CatalogModelMetadata(BaseModel):
     reasoning: StrictBool | None = None
     input: tuple[ModelInput, ...] = ()
     cost: dict[_NonEmptyString, _NonNegativeFloat] | None = None
+    cost_tiers: tuple[_CatalogCostTier, ...] = ()
     context_window: _PositiveInt | None = None
     max_tokens: _PositiveInt | None = None
     headers: dict[_NonEmptyString, _NonEmptyString] = {}
@@ -91,6 +104,7 @@ class _CatalogProvider(BaseModel):
     thinking_models: tuple[_NonEmptyString, ...] = ()
     thinking_default: ThinkingLevel | None = None
     thinking_parameter: ThinkingParameter | None = None
+    auth_methods: tuple[AuthMethod, ...] = ("api_key",)
 
 
 class _CatalogFile(BaseModel):
@@ -296,6 +310,12 @@ def _entry_from_provider(provider: _CatalogProvider, *, source: str) -> Provider
             f"{prefix}.thinking_default: {provider.thinking_default!r} is not in thinking_levels"
         )
 
+    for model, catalog_metadata in provider.model_metadata.items():
+        _validate_cost_tiers(
+            catalog_metadata.cost_tiers,
+            field_name=f"{prefix}.model_metadata.{model}",
+        )
+
     model_metadata = {
         model: _model_metadata_from_provider(metadata)
         for model, metadata in provider.model_metadata.items()
@@ -324,7 +344,28 @@ def _entry_from_provider(provider: _CatalogProvider, *, source: str) -> Provider
         thinking_models=provider.thinking_models,
         thinking_default=provider.thinking_default,
         thinking_parameter=provider.thinking_parameter,
+        auth_methods=provider.auth_methods,
     )
+
+
+def _validate_cost_tiers(
+    tiers: tuple[_CatalogCostTier, ...],
+    *,
+    field_name: str,
+) -> None:
+    if not tiers:
+        return
+    if tiers[-1].max_input_tokens is not None:
+        raise CatalogError(f"{field_name}.cost_tiers: final tier must omit max_input_tokens")
+    previous_limit = 0
+    for index, tier in enumerate(tiers[:-1]):
+        limit = tier.max_input_tokens
+        if limit is None or limit <= previous_limit:
+            raise CatalogError(
+                f"{field_name}.cost_tiers.{index}.max_input_tokens: "
+                "limits must be strictly increasing"
+            )
+        previous_limit = limit
 
 
 def _model_metadata_from_provider(metadata: _CatalogModelMetadata) -> ModelCatalogMetadata:
@@ -338,6 +379,18 @@ def _model_metadata_from_provider(metadata: _CatalogModelMetadata) -> ModelCatal
         reasoning=metadata.reasoning,
         input=metadata.input,
         cost=dict(metadata.cost) if metadata.cost else None,
+        cost_tiers=tuple(
+            ModelCostTier(
+                max_input_tokens=tier.max_input_tokens,
+                cost={
+                    "input": tier.input,
+                    "output": tier.output,
+                    "cacheRead": tier.cacheRead,
+                    "cacheWrite": tier.cacheWrite,
+                },
+            )
+            for tier in metadata.cost_tiers
+        ),
         context_window=metadata.context_window,
         max_tokens=metadata.max_tokens,
         headers=dict(metadata.headers),
@@ -423,6 +476,8 @@ def _raw_provider_from_entry(entry: ProviderCatalogEntry) -> dict[str, Any]:
         raw["thinking_default"] = entry.thinking_default
     if entry.thinking_parameter is not None:
         raw["thinking_parameter"] = entry.thinking_parameter
+    if entry.auth_methods != ("api_key",):
+        raw["auth_methods"] = list(entry.auth_methods)
     return raw
 
 
@@ -440,6 +495,18 @@ def _raw_model_metadata_from_entry(metadata: ModelCatalogMetadata) -> dict[str, 
         raw["input"] = list(metadata.input)
     if metadata.cost:
         raw["cost"] = dict(metadata.cost)
+    if metadata.cost_tiers:
+        raw["cost_tiers"] = [
+            {
+                **(
+                    {"max_input_tokens": tier.max_input_tokens}
+                    if tier.max_input_tokens is not None
+                    else {}
+                ),
+                **tier.cost,
+            }
+            for tier in metadata.cost_tiers
+        ]
     if metadata.context_window is not None:
         raw["context_window"] = metadata.context_window
     if metadata.max_tokens is not None:
@@ -480,6 +547,7 @@ def _catalog_to_toml(raw: dict[str, Any]) -> str:
             "thinking_models",
             "thinking_default",
             "thinking_parameter",
+            "auth_methods",
         ):
             if key in provider:
                 lines.append(f"{key} = {_toml_value(provider[key])}")

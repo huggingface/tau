@@ -14,9 +14,14 @@ from tau_coding.system_prompt import (
 from tau_coding.tools import create_coding_tools
 
 
-async def _unused_executor(_arguments: object, signal: object | None = None) -> AgentToolResult:
-    del signal
-    return AgentToolResult(tool_call_id="", name="hidden", ok=True, content="")
+async def _unused_executor(
+    tool_call_id: str,
+    _arguments: object,
+    signal: object | None = None,
+    on_update: object | None = None,
+) -> AgentToolResult:
+    del tool_call_id, signal, on_update
+    return AgentToolResult(content="")
 
 
 def test_default_prompt_includes_tools_guidelines_date_and_cwd(tmp_path: Path) -> None:
@@ -34,15 +39,22 @@ def test_default_prompt_includes_tools_guidelines_date_and_cwd(tmp_path: Path) -
     assert "Available tools:\n- read: Read file contents" in prompt
     assert "- Use bash for file operations like ls, rg, find" in prompt
     assert "- Use read to examine files instead of cat or sed." in prompt
+    assert "- Inspect relevant files and project instructions before editing" in prompt
+    assert "- Do not overwrite or discard unrelated user changes" in prompt
+    assert "- Report checks honestly; never claim a command passed unless you ran it" in prompt
+    assert "Tau documentation (read only when the user asks about Tau itself" in prompt
+    assert "custom providers or adding built-in providers/models (docs/models.md)" in prompt
+    assert "creating or modifying extensions (docs/extensions.md" in prompt
     assert prompt.endswith(f"Current date: 2026-06-17\nCurrent working directory: {tmp_path}")
 
 
 def test_tool_without_prompt_snippet_is_hidden_from_available_tools() -> None:
     tool = AgentTool(
         name="hidden",
+        label="Hidden",
         description="Still sent to provider",
-        input_schema={"type": "object"},
-        executor=_unused_executor,
+        parameters={"type": "object"},
+        execute_fn=_unused_executor,  # type: ignore[arg-type]
     )
 
     assert format_available_tools([tool]) == "(none)"
@@ -71,6 +83,7 @@ def test_custom_prompt_replaces_default_but_keeps_append_context_and_date(tmp_pa
 
     assert prompt.startswith("Custom base.\n\nExtra rules.")
     assert "Available tools:" not in prompt
+    assert "Tau documentation" not in prompt
     assert '<project_instructions path="/repo/AGENTS.md">' in prompt
     assert "Follow rules." in prompt
     assert "Current date: 2026-06-17" in prompt
@@ -113,9 +126,10 @@ def test_skills_are_included_only_when_read_tool_is_available(tmp_path: Path) ->
     skill = Skill(name="testing", path=tmp_path / "testing.md", content="", description="Test")
     no_read_tool = AgentTool(
         name="custom",
+        label="Custom",
         description="Custom",
-        input_schema={"type": "object"},
-        executor=_unused_executor,
+        parameters={"type": "object"},
+        execute_fn=_unused_executor,  # type: ignore[arg-type]
         prompt_snippet="Custom tool",
     )
 

@@ -16,11 +16,19 @@ from typing import Any, Protocol
 
 import httpx
 
-from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    ThinkingContent,
+    ToolResultMessage,
+    Usage,
+    UserMessage,
+    assistant_content,
+    message_to_user,
+)
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
-from tau_ai.env import OpenAICompatibleConfig
-from tau_ai.events import (
+from tau_ai._provider_events import (
     ProviderErrorEvent,
     ProviderEvent,
     ProviderResponseEndEvent,
@@ -29,10 +37,13 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.env import OpenAICompatibleConfig
+from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
+from tau_ai.stream import canonicalize_provider_stream
 
 # Models that reject function tools + reasoning_effort on /chat/completions and
 # must use the /v1/responses endpoint instead.
@@ -70,6 +81,26 @@ class OpenAICompatibleProvider:
             self._client = None
 
     def stream_response(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[AgentMessage],
+        tools: list[AgentTool],
+        signal: CancellationToken | None = None,
+    ) -> AsyncIterator[AssistantMessageEvent]:
+        """Stream one response as Pi-compatible assistant message events."""
+        raw = self._stream_provider_events(
+            model=model, system=system, messages=messages, tools=tools, signal=signal
+        )
+        return canonicalize_provider_stream(
+            raw,
+            api=self._config.api,
+            provider=getattr(self._config, "provider_name", "openai-compatible"),
+            model=model,
+        )
+
+    def _stream_provider_events(
         self,
         *,
         model: str,
@@ -170,17 +201,31 @@ class OpenAICompatibleProvider:
 
         async def iterator() -> AsyncIterator[ProviderEvent]:
             client = self._get_client()
-            headers = {
-                **(dict(self._config.headers or {})),
-                "Authorization": f"Bearer {self._config.api_key}",
-            }
+            api_key = self._config.api_key
+            request_url = url
+            headers = dict(self._config.headers or {})
+            if self._config.credential_resolver is not None:
+                auth = await self._config.credential_resolver()
+                api_key = auth.api_key
+                headers.update(auth.headers or {})
+                if auth.base_url is not None:
+                    endpoint = (
+                        "/responses"
+                        if url.rstrip("/").endswith("/responses")
+                        else "/chat/completions"
+                    )
+                    request_url = f"{auth.base_url.rstrip('/')}{endpoint}"
+            if not self._config.omit_authorization_header:
+                has_authorization = any(key.casefold() == "authorization" for key in headers)
+                if not has_authorization:
+                    headers["Authorization"] = f"Bearer {api_key}"
 
             attempt = 0
             while True:
                 parser = parser_factory()
                 try:
                     async with client.stream(
-                        "POST", url, json=payload, headers=headers
+                        "POST", request_url, json=payload, headers=headers
                     ) as response:
                         if response.status_code >= 400:
                             body = await response.aread()
@@ -305,8 +350,11 @@ class _ChatStreamParser:
         self.emitted_content = False
         self.fatal = False
         self._content_parts: list[str] = []
+        self._thinking_parts: list[str] = []
+        self._thinking_signature: str | None = None
         self._tool_call_builders: dict[int, _ToolCallBuilder] = {}
         self._finish_reason: str | None = None
+        self._usage: Usage | None = None
 
     def feed(self, event: str) -> tuple[list[ProviderEvent], bool]:
         if event == "[DONE]":
@@ -317,9 +365,22 @@ class _ChatStreamParser:
             self.fatal = True
             return [ProviderErrorEvent(message="Provider returned invalid JSON chunk")], True
 
+        # The final usage chunk (from stream_options) carries usage at the top
+        # level and often has empty choices.
+        chunk_usage = chunk.get("usage")
+        if isinstance(chunk_usage, Mapping):
+            self._usage = _parse_chunk_usage(chunk_usage)
+
         choice = _first_choice(chunk)
         if choice is None:
             return [], False
+
+        # Fallback: some providers (e.g. Moonshot) attach usage to the choice
+        # instead of the chunk. Matches Pi's per-chunk `!chunk.usage` guard: the
+        # fallback applies whenever this chunk lacks top-level usage.
+        choice_usage = choice.get("usage")
+        if not isinstance(chunk_usage, Mapping) and isinstance(choice_usage, Mapping):
+            self._usage = _parse_chunk_usage(choice_usage)
 
         self._finish_reason = choice.get("finish_reason") or self._finish_reason
         delta = choice.get("delta")
@@ -333,10 +394,13 @@ class _ChatStreamParser:
             self._content_parts.append(content)
             events.append(ProviderTextDeltaEvent(delta=content))
 
-        thinking = _thinking_delta_text(delta)
-        if thinking:
+        thinking = _thinking_delta(delta)
+        if thinking is not None:
+            field_name, text = thinking
             self.emitted_content = True
-            events.append(ProviderThinkingDeltaEvent(delta=thinking))
+            self._thinking_parts.append(text)
+            self._thinking_signature = self._thinking_signature or field_name
+            events.append(ProviderThinkingDeltaEvent(delta=text))
 
         for tool_call_delta in _tool_call_deltas(delta):
             self.emitted_content = True
@@ -353,10 +417,20 @@ class _ChatStreamParser:
         events: list[ProviderEvent] = [
             ProviderToolCallEvent(tool_call=tool_call) for tool_call in tool_calls
         ]
+        content = assistant_content("".join(self._content_parts), tool_calls)
+        if self._thinking_parts:
+            content.insert(
+                0,
+                ThinkingContent(
+                    thinking="".join(self._thinking_parts),
+                    thinking_signature=self._thinking_signature,
+                ),
+            )
         events.append(
             ProviderResponseEndEvent(
                 message=AssistantMessage(
-                    content="".join(self._content_parts), tool_calls=tool_calls
+                    content=content,
+                    usage=self._usage or Usage(),
                 ),
                 finish_reason=self._finish_reason,
             )
@@ -371,8 +445,11 @@ class _ResponsesStreamParser:
         self.emitted_content = False
         self.fatal = False
         self._content_parts: list[str] = []
+        self._thinking_parts: list[str] = []
+        self._reasoning_items: dict[str, dict[str, JSONValue]] = {}
         self._tool_call_builders: dict[str, _ResponsesToolCallBuilder] = {}
         self._status: str | None = None
+        self._usage: Usage | None = None
 
     def feed(self, event: str) -> tuple[list[ProviderEvent], bool]:
         # The Responses API has no [DONE] sentinel; it ends with a terminal
@@ -402,12 +479,15 @@ class _ResponsesStreamParser:
             delta = chunk.get("delta")
             if isinstance(delta, str) and delta:
                 self.emitted_content = True
+                self._thinking_parts.append(delta)
                 return [ProviderThinkingDeltaEvent(delta=delta)], False
 
         elif chunk_type == "response.output_item.added":
+            item = chunk.get("item")
+            _register_reasoning_item(self._reasoning_items, item)
             _register_responses_item(
                 self._tool_call_builders,
-                chunk.get("item"),
+                item,
                 output_index=chunk.get("output_index"),
             )
 
@@ -425,14 +505,17 @@ class _ResponsesStreamParser:
                 builder.set_final(arguments=chunk.get("arguments"))
 
         elif chunk_type == "response.output_item.done":
+            item = chunk.get("item")
+            _register_reasoning_item(self._reasoning_items, item)
             _finalize_responses_item(
                 self._tool_call_builders,
-                chunk.get("item"),
+                item,
                 output_index=chunk.get("output_index"),
             )
 
         elif chunk_type in ("response.completed", "response.incomplete"):
             self._status = _responses_finish_reason(chunk)
+            self._usage = _usage_from_responses_event(chunk) or self._usage
             return [], True
 
         elif chunk_type == "response.failed":
@@ -456,10 +539,24 @@ class _ResponsesStreamParser:
             ProviderToolCallEvent(tool_call=tool_call) for tool_call in tool_calls
         ]
         finish_reason = _normalize_finish_reason(self._status, has_tool_calls=bool(tool_calls))
+        content = assistant_content("".join(self._content_parts), tool_calls)
+        if self._thinking_parts:
+            content.insert(
+                0,
+                ThinkingContent(
+                    thinking="".join(self._thinking_parts),
+                    thinking_signature=(
+                        dumps(next(iter(self._reasoning_items.values())))
+                        if self._reasoning_items
+                        else None
+                    ),
+                ),
+            )
         events.append(
             ProviderResponseEndEvent(
                 message=AssistantMessage(
-                    content="".join(self._content_parts), tool_calls=tool_calls
+                    content=content,
+                    usage=self._usage or Usage(),
                 ),
                 finish_reason=finish_reason,
             )
@@ -700,10 +797,18 @@ def _messages_to_responses_input(
     items: list[JSONValue] = []
     for message in messages:
         if isinstance(message, UserMessage):
-            items.append({"role": "user", "content": message.content})
+            items.append({"role": "user", "content": message.text})
         elif isinstance(message, AssistantMessage):
-            if message.content:
-                items.append({"role": "assistant", "content": message.content})
+            for block in message.content:
+                if isinstance(block, ThinkingContent) and block.thinking_signature:
+                    try:
+                        reasoning_item = loads(block.thinking_signature)
+                    except (TypeError, ValueError):
+                        reasoning_item = None
+                    if isinstance(reasoning_item, dict):
+                        items.append(reasoning_item)
+            if message.text:
+                items.append({"role": "assistant", "content": message.text})
             for tool_call in message.tool_calls:
                 items.append(
                     {
@@ -718,7 +823,7 @@ def _messages_to_responses_input(
                 {
                     "type": "function_call_output",
                     "call_id": message.tool_call_id,
-                    "output": message.content,
+                    "output": message.text,
                 }
             )
     return items
@@ -731,6 +836,17 @@ def _tool_to_responses(tool: AgentTool) -> dict[str, JSONValue]:
         "description": tool.description,
         "parameters": dict(tool.input_schema),
     }
+
+
+def _register_reasoning_item(
+    items: dict[str, dict[str, JSONValue]],
+    item: object,
+) -> None:
+    if not isinstance(item, Mapping) or item.get("type") != "reasoning":
+        return
+    item_id = item.get("id")
+    if isinstance(item_id, str):
+        items[item_id] = dict(item)
 
 
 def _register_responses_item(
@@ -828,20 +944,21 @@ def _str_or_none(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _int_or_none(value: object) -> int | None:
-    return value if isinstance(value, int) else None
-
-
 def _system_message(system: str) -> dict[str, JSONValue]:
     return {"role": "system", "content": system}
 
 
 def _message_to_openai(message: AgentMessage) -> dict[str, JSONValue]:
     if isinstance(message, UserMessage):
-        return {"role": "user", "content": message.content}
+        return {"role": "user", "content": message.text}
 
     if isinstance(message, AssistantMessage):
-        item: dict[str, JSONValue] = {"role": "assistant", "content": message.content}
+        item: dict[str, JSONValue] = {"role": "assistant", "content": message.text}
+        thinking = [block for block in message.content if isinstance(block, ThinkingContent)]
+        if thinking:
+            signature = thinking[0].thinking_signature or "reasoning_content"
+            if signature in {"reasoning_content", "reasoning", "thinking"}:
+                item[signature] = "".join(block.thinking for block in thinking)
         if message.tool_calls:
             item["tool_calls"] = [
                 _tool_call_to_openai(tool_call) for tool_call in message.tool_calls
@@ -852,9 +969,10 @@ def _message_to_openai(message: AgentMessage) -> dict[str, JSONValue]:
         return {
             "role": "tool",
             "tool_call_id": message.tool_call_id,
-            "name": message.name,
-            "content": message.content,
+            "name": message.tool_name,
+            "content": message.text,
         }
+    return _message_to_openai(message_to_user(message))
 
 
 def _tool_to_openai(tool: AgentTool) -> dict[str, JSONValue]:
@@ -906,6 +1024,89 @@ def _first_choice(chunk: Mapping[str, Any]) -> Mapping[str, Any] | None:
     return choice
 
 
+def _int_or_zero(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _int_or_none(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _parse_chunk_usage(raw: Mapping[str, Any]) -> Usage:
+    """Parse an OpenAI-compatible ``usage`` payload into a Usage.
+
+    Ports Pi's openai-completions.ts parseChunkUsage: ``cached_tokens`` are
+    cache reads, writes are subtracted from the prompt to leave the fresh input,
+    and ``completion_tokens`` already includes reasoning tokens. Cost is left
+    unset (None) because Tau has no per-model pricing table.
+    """
+    prompt_tokens = _int_or_zero(raw.get("prompt_tokens"))
+    prompt_details = raw.get("prompt_tokens_details")
+    cached_tokens: int | None = None
+    cache_write = 0
+    if isinstance(prompt_details, Mapping):
+        cached_tokens = _int_or_none(prompt_details.get("cached_tokens"))
+        cache_write = _int_or_zero(prompt_details.get("cache_write_tokens"))
+    # Nullish fallback, matching Pi's `cached_tokens ?? prompt_cache_hit_tokens
+    # ?? 0` (DeepSeek reports cache hits in prompt_cache_hit_tokens): a reported
+    # 0 does not fall through.
+    if cached_tokens is None:
+        cached_tokens = _int_or_none(raw.get("prompt_cache_hit_tokens"))
+    cache_read = cached_tokens or 0
+    fresh_input = max(0, prompt_tokens - cache_read - cache_write)
+    output = _int_or_zero(raw.get("completion_tokens"))
+    reasoning = None
+    completion_details = raw.get("completion_tokens_details")
+    if isinstance(completion_details, Mapping):
+        reasoning = _int_or_zero(completion_details.get("reasoning_tokens"))
+    return Usage(
+        input=fresh_input,
+        output=output,
+        cache_read=cache_read,
+        cache_write=cache_write,
+        reasoning=reasoning,
+        total_tokens=fresh_input + output + cache_read + cache_write,
+    )
+
+
+def _usage_from_responses_event(chunk: Mapping[str, Any]) -> Usage | None:
+    """Parse billed usage from a `/v1/responses` terminal event.
+
+    Mirrors the Codex adapter's ``_usage_from_response``: ``cached_tokens`` are
+    cache reads subtracted from ``input_tokens`` to leave fresh input, the
+    Responses API does not report cache writes (``cache_write`` stays 0), and
+    cost is left unset because Tau has no per-model pricing table.
+    """
+    response = chunk.get("response")
+    if not isinstance(response, Mapping):
+        return None
+    raw = response.get("usage")
+    if not isinstance(raw, Mapping):
+        return None
+    input_details = raw.get("input_tokens_details")
+    cache_read = (
+        _int_or_zero(input_details.get("cached_tokens"))
+        if isinstance(input_details, Mapping)
+        else 0
+    )
+    output_details = raw.get("output_tokens_details")
+    # Leave reasoning None (not 0) when the provider reports no breakdown,
+    # honoring the "None = not reported" contract on Usage.
+    reasoning = (
+        _int_or_zero(output_details.get("reasoning_tokens"))
+        if isinstance(output_details, Mapping)
+        else None
+    )
+    return Usage(
+        input=max(0, _int_or_zero(raw.get("input_tokens")) - cache_read),
+        output=_int_or_zero(raw.get("output_tokens")),
+        cache_read=cache_read,
+        cache_write=0,
+        reasoning=reasoning,
+        total_tokens=_int_or_zero(raw.get("total_tokens")),
+    )
+
+
 def _tool_call_deltas(delta: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     tool_calls = delta.get("tool_calls")
     if not isinstance(tool_calls, list):
@@ -913,12 +1114,12 @@ def _tool_call_deltas(delta: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return [tool_call for tool_call in tool_calls if isinstance(tool_call, Mapping)]
 
 
-def _thinking_delta_text(delta: Mapping[str, Any]) -> str:
+def _thinking_delta(delta: Mapping[str, Any]) -> tuple[str, str] | None:
     for field_name in ("reasoning_content", "reasoning", "thinking"):
         value = delta.get(field_name)
         if isinstance(value, str) and value:
-            return value
-    return ""
+            return field_name, value
+    return None
 
 
 def _is_transient_status(status_code: int) -> bool:
