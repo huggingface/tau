@@ -117,6 +117,7 @@ from tau_coding.session import (
     ModelChoice,
     SessionTreeBranchResult,
     SessionTreeChoice,
+    is_context_overflow_error,
     jsonl_session_storage,
     parse_terminal_command,
 )
@@ -4024,6 +4025,7 @@ class TauTuiApp(App[None]):
                     and event.message.stop_reason == "error"
                 ):
                     _attach_diagnostic_log_path_to_error(self.state, self.session)
+                    _attach_retry_hint_to_error(self.state, event.message)
                 await self._apply_streaming_transcript_event(event)
         except Exception as exc:  # noqa: BLE001 - surface unexpected worker errors in the TUI
             if active_run_id != self._prompt_run_id:
@@ -5847,6 +5849,26 @@ def _format_prompt_error(exc: BaseException, session: CodingSession) -> str:
     if isinstance(log_path, Path):
         return f"{message}\nLog: {log_path}"
     return message
+
+
+_TERMINAL_ERROR_RETRY_HINT = "Run ended before completion. Send a message to retry."
+
+
+def _attach_retry_hint_to_error(state: TuiState, message: AssistantMessage) -> None:
+    """Clarify that a terminal provider error ended the run and can be retried.
+
+    Context-overflow errors are auto-compacted and retried by the session, so
+    they are skipped to avoid asking the user to retry while Tau already is.
+    """
+    if is_context_overflow_error(message):
+        return
+    if state.error is not None and _TERMINAL_ERROR_RETRY_HINT not in state.error:
+        state.error = f"{state.error}\n{_TERMINAL_ERROR_RETRY_HINT}"
+    for item in reversed(state.items):
+        if item.role == "error":
+            if _TERMINAL_ERROR_RETRY_HINT not in item.text:
+                item.text = f"{item.text}\n{_TERMINAL_ERROR_RETRY_HINT}"
+            return
 
 
 def _attach_diagnostic_log_path_to_error(state: TuiState, session: CodingSession) -> None:

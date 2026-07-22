@@ -19,7 +19,8 @@ from tau_agent import (
     ToolResultMessage,
     UserMessage,
 )
-from tau_agent.messages import assistant_content
+from tau_agent.messages import AssistantMessageDiagnostic, assistant_content
+from tau_agent.provider_events import AssistantErrorEvent
 from tau_agent.session import (
     CompactionEntry,
     JsonlSessionStorage,
@@ -315,6 +316,69 @@ async def test_prompt_logs_error_event_diagnostic_data(tmp_path: Path) -> None:
     assert entry["error"] == {
         "message": "provider failed",
         "stop_reason": "error",
+    }
+    assert "Hello" not in log_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.anyio
+async def test_prompt_logs_safe_provider_stream_error_details(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    error = AssistantMessage(
+        stop_reason="error",
+        error_message="Our servers are currently overloaded. Please try again later.",
+        diagnostics=[
+            AssistantMessageDiagnostic(
+                type="provider_error",
+                details={
+                    "event": {
+                        "type": "error",
+                        "error": {
+                            "type": "service_unavailable_error",
+                            "code": "server_is_overloaded",
+                            "message": "Our servers are currently overloaded. "
+                            "Please try again later.",
+                            "param": None,
+                        },
+                        "sequence_number": 2,
+                    }
+                },
+            )
+        ],
+    )
+    provider = FakeProvider([[AssistantErrorEvent(reason="error", error=error)]])
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            provider_name="openai-codex",
+            session_id="session-1",
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    await _collect_session_events(session.prompt("Hello"))
+
+    log_path = tau_paths.agent_calls_log_path
+    entry = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])
+    assert entry["kind"] == "assistant_error"
+    assert entry["error"] == {
+        "message": "Our servers are currently overloaded. Please try again later.",
+        "stop_reason": "error",
+        "provider": {
+            "event": {
+                "type": "error",
+                "sequence_number": 2,
+                "error": {
+                    "type": "service_unavailable_error",
+                    "code": "server_is_overloaded",
+                    "message": "Our servers are currently overloaded. Please try again later.",
+                },
+            }
+        },
     }
     assert "Hello" not in log_path.read_text(encoding="utf-8")
 

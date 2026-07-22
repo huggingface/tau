@@ -22,6 +22,15 @@ transient status codes such as `408`, `409`, `429`, and `5xx` responses before
 surfacing a final provider error. The default is two retries, for three total
 request attempts.
 
+The OpenAI Codex adapter also retries transient *in-stream* failures. The Codex
+Responses endpoint can return HTTP 200 and then send an SSE `error` or
+`response.failed` event (for example `server_is_overloaded`). When such an event
+arrives before any content or thinking deltas, the adapter classifies it against
+transient markers (overloaded, service unavailable, rate limit, internal/server
+errors, timeouts), emits `ProviderRetryEvent`, and reissues the request under
+the same `max_retries` budget. Errors after partial content, and non-transient
+errors such as `invalid_api_key`, stay terminal.
+
 Backoff is short, exponential, and capped by `max_retry_delay_seconds`.
 Cancellation is checked during the backoff delay so Escape/TUI cancellation does
 not wait for the entire retry sleep to finish.

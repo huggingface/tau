@@ -1588,7 +1588,7 @@ class CodingSession:
                         phase="agent_loop",
                         message=event.message,
                     )
-                    if _is_context_overflow_error(event.message):
+                    if is_context_overflow_error(event.message):
                         overflow_message = event.message
                 if isinstance(event, AgentEndEvent):
                     yield SessionAgentEndEvent(messages=event.messages, will_retry=False)
@@ -2125,7 +2125,8 @@ def _next_user_message_index(
     return None
 
 
-def _is_context_overflow_error(message: AssistantMessage) -> bool:
+def is_context_overflow_error(message: AssistantMessage) -> bool:
+    """Return True when an assistant error looks like a context overflow."""
     text = message.error_message or ""
     normalized = text.lower()
     markers = (

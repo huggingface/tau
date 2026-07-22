@@ -6671,9 +6671,41 @@ async def test_tui_prompt_worker_shows_diagnostic_log_path_for_error_event(tmp_p
 
     await app._run_prompt("break")
 
-    assert app.state.error == f"Error: provider failed\nLog: {session.last_diagnostic_log_path}"
+    assert app.state.error == (
+        f"Error: provider failed\nLog: {session.last_diagnostic_log_path}\n"
+        "Run ended before completion. Send a message to retry."
+    )
     assert app.state.items[-1].role == "error"
     assert app.state.items[-1].text == app.state.error
+    assert app.state.running is False
+
+
+@pytest.mark.anyio
+async def test_tui_prompt_worker_skips_retry_hint_for_context_overflow() -> None:
+    class OverflowSession(FakeSession):
+        def __init__(self) -> None:
+            super().__init__(
+                events=[
+                    AgentStartEvent(),
+                    MessageEndEvent(
+                        message=AssistantMessage(
+                            stop_reason="error",
+                            error_message="prompt is too long: context window exceeded",
+                        )
+                    ),
+                    AgentEndEvent(),
+                ]
+            )
+
+    session = OverflowSession()
+    app = TauTuiApp(session)
+    app._refresh = lambda: None  # type: ignore[method-assign]
+
+    await app._run_prompt("break")
+
+    assert app.state.error == "prompt is too long: context window exceeded"
+    assert app.state.items[-1].role == "error"
+    assert app.state.items[-1].text == "Error: prompt is too long: context window exceeded"
     assert app.state.running is False
 
 
@@ -6698,7 +6730,9 @@ async def test_tui_prompt_worker_mounts_provider_error_in_live_transcript() -> N
         errors = [
             widget for widget in app.query(TranscriptMessageWidget) if widget.item.role == "error"
         ]
-        assert [widget.item.text for widget in errors] == ["Error: provider failed"]
+        assert [widget.item.text for widget in errors] == [
+            "Error: provider failed\nRun ended before completion. Send a message to retry."
+        ]
         assert app.state.running is False
 
 

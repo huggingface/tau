@@ -22,9 +22,12 @@ Clicking anywhere in the window returns focus to the prompt, so you can scroll
 the transcript and keep typing without tabbing back.
 
 If a provider request fails after retries, Tau shows the failure as an explicit
-error block in the transcript. You can submit another prompt without starting a
-new session; empty failed provider turns are retained for diagnostics but are not
-replayed to the model as invalid conversation history.
+error block in the transcript, using the provider's own error message (for
+example `server_is_overloaded` details instead of a generic failure). The block
+includes a diagnostic log path and a reminder that the run ended. You can submit
+another prompt without starting a new session; empty failed provider turns are
+retained for diagnostics but are not replayed to the model as invalid
+conversation history.
 
 ## Cancelling and steering a run
 

@@ -167,6 +167,7 @@ class OpenAICodexProvider:
             attempt = 0
             while True:
                 emitted_content = False
+                emitted_thinking = False
                 try:
                     credentials = await self._config.credential_resolver()
                     headers = _build_codex_headers(
@@ -223,14 +224,43 @@ class OpenAICodexProvider:
                             return
 
                         yield ProviderResponseStartEvent(model=model)
+                        stream_error: dict[str, JSONValue] | None = None
                         async for event in _codex_provider_events(response, signal=signal):
                             if isinstance(
                                 event,
                                 ProviderTextDeltaEvent | ProviderToolCallEvent,
                             ):
                                 emitted_content = True
+                            elif isinstance(event, ProviderThinkingDeltaEvent):
+                                emitted_thinking = True
+                            if (
+                                isinstance(event, ProviderErrorEvent)
+                                and not emitted_content
+                                and not emitted_thinking
+                                and self._should_retry(attempt)
+                                and _retryable_stream_error_event(event)
+                            ):
+                                stream_error = _stream_error_event_data(event)
+                                break
                             yield event
-                        return
+                        if stream_error is None:
+                            return
+                        code, _message = _stream_error_details(stream_error)
+                        delay = retry_delay_seconds(
+                            attempt,
+                            max_delay_seconds=self._config.max_retry_delay_seconds,
+                        )
+                        yield provider_retry_event(
+                            attempt=attempt,
+                            max_retries=self._config.max_retries,
+                            delay_seconds=delay,
+                            reason=f"stream error ({code or 'unknown'})",
+                            data={"event": stream_error},
+                        )
+                        attempt += 1
+                        if not await wait_for_retry(delay, signal=signal):
+                            return
+                        continue
                 except httpx.HTTPError as exc:
                     if not emitted_content and self._should_retry(attempt):
                         delay = retry_delay_seconds(
@@ -790,27 +820,90 @@ def _usage_from_response(event: Mapping[str, Any]) -> Usage | None:
 
 
 def _response_error_message(event: Mapping[str, Any]) -> str:
-    response = event.get("response")
-    if isinstance(response, Mapping):
-        error = response.get("error")
-        if isinstance(error, Mapping):
-            message = error.get("message")
-            code = error.get("code")
-            if isinstance(message, str) and message:
-                return message
-            if isinstance(code, str) and code:
-                return f"OpenAI Codex response failed: {code}"
+    code, message = _stream_error_details(event)
+    if message:
+        return message
+    if code:
+        return f"OpenAI Codex response failed: {code}"
     return "OpenAI Codex response failed"
 
 
 def _error_message(event: Mapping[str, Any], *, fallback: str) -> str:
-    message = event.get("message")
-    if isinstance(message, str) and message:
+    code, message = _stream_error_details(event)
+    if message:
         return message
-    code = event.get("code")
-    if isinstance(code, str) and code:
+    if code:
         return code
     return fallback
+
+
+def _stream_error_details(event: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    """Extract the machine code and human message from a Codex stream error.
+
+    Codex reports failures either as a top-level ``error`` SSE event with a
+    nested ``error`` object (``{"type":"error","error":{"code":...}}``) or
+    as ``response.failed`` with the failure under ``response.error``. Looking
+    only at top-level fields hides details such as ``server_is_overloaded``
+    behind a generic fallback message.
+    """
+    sources: list[Mapping[str, Any]] = [event]
+    nested = event.get("error")
+    if isinstance(nested, Mapping):
+        sources.append(nested)
+    response = event.get("response")
+    if isinstance(response, Mapping):
+        response_error = response.get("error")
+        if isinstance(response_error, Mapping):
+            sources.append(response_error)
+
+    message: str | None = None
+    code: str | None = None
+    for source in sources:
+        if message is None:
+            raw_message = source.get("message")
+            if isinstance(raw_message, str) and raw_message:
+                message = raw_message
+        if code is None:
+            raw_code = source.get("code")
+            if isinstance(raw_code, str) and raw_code:
+                code = raw_code
+    if code is None and isinstance(nested, Mapping):
+        nested_type = nested.get("type")
+        if isinstance(nested_type, str) and nested_type:
+            code = nested_type
+    return code, message
+
+
+_TRANSIENT_STREAM_ERROR_MARKERS = (
+    "overloaded",
+    "service_unavailable",
+    "temporarily_unavailable",
+    "rate_limit",
+    "internal_error",
+    "server_error",
+    "timeout",
+)
+
+
+def _stream_error_event_data(event: ProviderErrorEvent) -> dict[str, JSONValue] | None:
+    """Return the raw SSE event attached to a provider stream error."""
+    data = event.data
+    if not isinstance(data, dict):
+        return None
+    raw = data.get("event")
+    return raw if isinstance(raw, dict) else None
+
+
+def _retryable_stream_error_event(event: ProviderErrorEvent) -> bool:
+    """Return True when an in-stream Codex error looks transient and retryable."""
+    raw = _stream_error_event_data(event)
+    if raw is None:
+        return False
+    code, message = _stream_error_details(raw)
+    haystack = " ".join(part for part in (code, message) if part).lower()
+    if not haystack or _is_terminal_rate_limit(haystack):
+        return False
+    return any(marker in haystack for marker in _TRANSIENT_STREAM_ERROR_MARKERS)
 
 
 def _build_codex_headers(
