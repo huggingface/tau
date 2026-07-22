@@ -265,6 +265,39 @@ def test_cli_without_prompt_invokes_tui_runner(
     assert calls == [(None, tmp_path, None, False, None, None, None)]
 
 
+def test_cli_prints_resume_hint_after_tui_exit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def fake_run_openai_tui(*args: object, **kwargs: object) -> str:
+        del args, kwargs
+        return "session-123"
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, [])
+
+    assert result.exit_code == 0
+    assert result.stdout == "To resume this session: tau --resume session-123\n"
+
+
+def test_cli_suppresses_resume_hint_without_persisted_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def fake_run_openai_tui(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, [])
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+
+
 def test_cli_positional_prompt_invokes_tui_runner(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

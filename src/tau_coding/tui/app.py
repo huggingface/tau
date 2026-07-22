@@ -5994,8 +5994,8 @@ async def run_tui_app(
     extension_paths: tuple[Path, ...] = (),
     extensions_enabled: bool = True,
     project_extensions_enabled: bool = False,
-) -> None:
-    """Create the default provider/session and run the Textual app."""
+) -> str | None:
+    """Run the Textual app and return the active id when its session is persisted."""
     if new_session and session_id is not None:
         raise RuntimeError("--resume and --new-session cannot be used together")
 
@@ -6094,3 +6094,8 @@ async def run_tui_app(
             if close_session is not None:
                 await close_session()
         await provider.aclose()
+
+    active_session_id: str | None = getattr(session, "session_id", None)
+    if active_session_id is None or manager.get_session(active_session_id) is None:
+        return None
+    return active_session_id

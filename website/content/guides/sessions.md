@@ -37,6 +37,13 @@ pick a session.
 To deliberately start fresh instead of resuming, use `tau --new-session` (or
 `/new` in the TUI).
 
+When you quit the TUI and the session was persisted, Tau prints a reminder of
+the exact command to resume it:
+
+```text
+To resume this session: tau --resume <session-id>
+```
+
 ## Branching from history (`/tree`)
 
 A session is a *tree*, not just a line — so you can go back and try a different

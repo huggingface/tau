@@ -7349,6 +7349,101 @@ async def test_run_tui_app_creates_new_session_by_default(
 
 
 @pytest.mark.anyio
+async def test_run_tui_app_returns_session_id_when_persisted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    record = CodingSessionRecord(
+        id="new-session",
+        path=tmp_path / "new-session.jsonl",
+        cwd=tmp_path,
+        model="fake-model",
+        title=None,
+        created_at=1.0,
+        updated_at=1.0,
+    )
+
+    class FakeProvider:
+        async def aclose(self) -> None:
+            return None
+
+    class FakeManager:
+        def __init__(self) -> None:
+            self.persisted = False
+
+        def prepare_session(
+            self,
+            *,
+            cwd: Path,
+            model: str,
+            provider_name: str | None = None,
+        ) -> CodingSessionRecord:
+            return record
+
+        def get_session(self, session_id: str) -> CodingSessionRecord | None:
+            return record if self.persisted else None
+
+    class FakeSession:
+        session_id = "new-session"
+
+        async def aclose(self) -> None:
+            return None
+
+    class FakeCodingSession:
+        @classmethod
+        async def load(cls, config: object) -> FakeSession:
+            return FakeSession()
+
+    class FakeApp:
+        def __init__(self, session: FakeSession, **kwargs: object) -> None:
+            pass
+
+        async def run_async(self) -> None:
+            return None
+
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                models=("local-model",),
+                default_model="local-model",
+            ),
+        ),
+    )
+    monkeypatch.setattr(tui_app, "load_provider_settings", lambda: settings)
+    monkeypatch.setattr(
+        tui_app,
+        "create_model_provider",
+        lambda provider, **kwargs: FakeProvider(),
+    )
+    monkeypatch.setattr(tui_app, "CodingSession", FakeCodingSession)
+    monkeypatch.setattr(tui_app, "TauTuiApp", FakeApp)
+    monkeypatch.setattr(tui_app, "load_tui_settings", lambda: TuiSettings())
+
+    manager = FakeManager()
+    manager.persisted = False
+    result = await tui_app.run_tui_app(
+        model=None,
+        cwd=tmp_path,
+        provider_name="local",
+        session_manager=manager,
+    )
+    assert result is None
+
+    manager.persisted = True
+    result = await tui_app.run_tui_app(
+        model=None,
+        cwd=tmp_path,
+        provider_name="local",
+        session_manager=manager,
+    )
+    assert result == "new-session"
+
+
+@pytest.mark.anyio
 async def test_run_tui_app_opens_when_provider_login_is_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
