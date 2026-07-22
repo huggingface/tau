@@ -17,10 +17,12 @@ assistant's reply above the prompt, showing tool calls as they run. In supported
 terminal emulators, Tau also updates the tab title: named sessions show as
 `τ | <name>`, and active runs add an animated running indicator so you can see
 work continuing from another tab. When a run fully settles while Tau's terminal
-surface is unfocused, Tau emits an OSC 9 desktop notification by default on
-supported terminals. Set `turn_notification` to `"bell"` to let the terminal mark
-the tab or apply its configured bell behavior instead, or `"off"` to disable
-notifications; see
+surface is unfocused, Tau emits a desktop notification by default on supported
+terminals: OSC 9 for Ghostty, iTerm2, and MinTTY, and OSC 99 for Kitty. Unknown
+terminals are left untouched. Set `turn_notification` to `"bell"` to let the
+terminal mark the tab or apply its configured bell behavior instead, or `"off"`
+to disable notifications. BEL and operating-system desktop notifications may
+produce sounds according to the user's terminal and system settings; see
 [Configuration]({{< relref "../reference/configuration.md#tui-settings" >}}).
 
 Clicking anywhere in the window returns focus to the prompt, so you can scroll

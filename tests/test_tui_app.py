@@ -2890,7 +2890,10 @@ async def test_tui_app_notifies_when_agent_settles_while_unfocused() -> None:
     app = TauTuiApp(SettledSession(), tui_settings=TuiSettings(turn_notification="desktop"))
     writes: list[str] = []
     app._terminal_notification = TerminalNotificationController(
-        "desktop", enabled=True, writer=writes.append
+        "desktop",
+        enabled=True,
+        writer=writes.append,
+        environ={"TERM_PROGRAM": "ghostty"},
     )
 
     async with app.run_test():

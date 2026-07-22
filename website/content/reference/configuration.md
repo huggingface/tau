@@ -261,10 +261,12 @@ keybinding names, empty keys, and duplicate assignments.
   the compact session info row below the prompt still works.
 - `turn_notification`: `"desktop"` (default), `"bell"`, or `"off"`. When Tau's
   terminal surface is unfocused and the agent becomes fully idle, `"desktop"`
-  emits an OSC 9 desktop notification. `"bell"` emits the standard terminal bell
-  so the terminal can mark the tab or request attention instead. Support and
-  presentation depend on the terminal emulator; no notification is emitted while
-  Tau has focus.
+  selects OSC 9 for Ghostty, iTerm2, and MinTTY, or Kitty's OSC 99 protocol for
+  Kitty. Unknown terminals receive no sequence rather than an incompatible one.
+  `"bell"` explicitly emits the standard terminal bell so the terminal can mark
+  the tab or request attention instead; depending on terminal settings, BEL may
+  play a sound. Desktop notifications can also use the operating system's
+  configured notification sound. No notification is emitted while Tau has focus.
 
 Full list in [Keyboard shortcuts]({{< relref "./keybindings.md" >}}).
 

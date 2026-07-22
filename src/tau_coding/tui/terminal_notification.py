@@ -6,13 +6,14 @@ import os
 import sys
 from collections.abc import Callable, Mapping
 from contextlib import suppress
-from typing import TextIO, cast
+from typing import Literal, TextIO, cast
 
 from tau_coding.tui.config import TurnNotificationMode
 from tau_coding.tui.terminal_title import sanitize_terminal_title
 
 OSC_TERMINATOR = "\a"
 TURN_FINISHED_MESSAGE = "Tau turn finished"
+type DesktopNotificationProtocol = Literal["osc9", "osc99"]
 
 
 def terminal_notification_supported(
@@ -30,9 +31,42 @@ def terminal_notification_supported(
     return not bool(env.get("CI", ""))
 
 
+def desktop_notification_protocol(
+    *, environ: Mapping[str, str] | None = None
+) -> DesktopNotificationProtocol | None:
+    """Select the notification protocol explicitly supported by this terminal."""
+    env = os.environ if environ is None else environ
+    term = env.get("TERM", "").lower()
+    term_program = env.get("TERM_PROGRAM", "").lower()
+    if env.get("KITTY_WINDOW_ID") or term == "xterm-kitty" or term_program == "kitty":
+        return "osc99"
+    if term_program in {"ghostty", "iterm.app", "iterm2", "mintty"} or env.get("MINTTY_SHORTCUT"):
+        return "osc9"
+    return None
+
+
 def osc9_notification_sequence(message: str) -> str:
     """Build a sanitized OSC 9 desktop-notification sequence."""
     return f"\x1b]9;{sanitize_terminal_title(message)}{OSC_TERMINATOR}"
+
+
+def osc99_notification_sequence(message: str) -> str:
+    """Build a sanitized Kitty OSC 99 desktop-notification sequence."""
+    return f"\x1b]99;;{sanitize_terminal_title(message)}\x1b\\"
+
+
+def desktop_notification_sequence(
+    message: str,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> str | None:
+    """Build the desktop-notification sequence appropriate for this terminal."""
+    protocol = desktop_notification_protocol(environ=environ)
+    if protocol == "osc99":
+        return osc99_notification_sequence(message)
+    if protocol == "osc9":
+        return osc9_notification_sequence(message)
+    return None
 
 
 class TerminalNotificationController:
@@ -48,6 +82,7 @@ class TerminalNotificationController:
         environ: Mapping[str, str] | None = None,
     ) -> None:
         self.mode = mode
+        self._environ = os.environ if environ is None else environ
         self._stream = cast(TextIO, sys.__stdout__) if stream is None else stream
         self.enabled = (
             terminal_notification_supported(environ=environ, stream=self._stream)
@@ -61,8 +96,15 @@ class TerminalNotificationController:
         if not self.enabled or self.mode == "off":
             return
         sequence = (
-            "\a" if self.mode == "bell" else osc9_notification_sequence(TURN_FINISHED_MESSAGE)
+            "\a"
+            if self.mode == "bell"
+            else desktop_notification_sequence(
+                TURN_FINISHED_MESSAGE,
+                environ=self._environ,
+            )
         )
+        if sequence is None:
+            return
         with suppress(OSError, ValueError):
             self._writer(sequence)
             return
