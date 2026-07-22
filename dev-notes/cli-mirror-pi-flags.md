@@ -17,7 +17,7 @@ just the original one.
 | `-x, --extension <path>` | `-e, --extension <path>` | Matches Pi's `-e, --extension`. |
 | `tau export <id> [out]` (subcommand only) | `tau export <id> [out]` **and** `tau --export <id> [out]` | Added `--export` as a top-level flag alias, matching Pi's `--export <in> [out]`, while keeping the subcommand for backward compatibility (it isn't deprecated — it fits Tau's other subcommands). |
 | `--version` | `--version`, `-v` | Added the `-v` short flag, matching Pi's `-v, --version`. |
-| (none) | piped stdin merges into the print-mode prompt | Mirrors Pi's `cat file \| pi -p "..."` behavior: when stdin is not a TTY, its contents are prepended to the prompt. |
+| (none) | piped stdin merges into the print-mode prompt | Mirrors Pi's `cat file \| pi -p "..."` behavior: when stdin is not a TTY, its contents are prepended to the prompt. A piped body can also be the *entire* prompt (`tau -p` with no positional text). |
 
 Every renamed/removed flag keeps a **hidden** option under its old name that
 raises a clear migration error instead of Typer's generic "no such option":
@@ -96,6 +96,7 @@ tau -p "hello"                                 # print mode, text output
 tau -p --mode json "hello"                     # print mode, JSON output
 tau --mode json "hello"                        # --mode alone also triggers print mode
 cat README.md | tau -p "summarize this"        # stdin merged into the prompt
+cat README.md | tau -p                          # stdin alone as the prompt
 tau -e ./my-extension.py "hello"               # load an extension
 tau --export <session-id> out.html             # export via the flag form
 tau --session <session-id>                     # resume a session

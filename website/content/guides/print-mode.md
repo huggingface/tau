@@ -48,6 +48,13 @@ Piped stdin is merged into the prompt, so you can feed file contents in:
 cat README.md | tau -p "Summarize this text"
 ```
 
+A piped body can also be the entire prompt — `tau -p` with no positional text
+and piped stdin is valid:
+
+```bash
+cat README.md | tau -p
+```
+
 ## Choosing provider, model, and directory
 
 The same selection flags work in print mode:

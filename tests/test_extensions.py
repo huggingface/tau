@@ -336,7 +336,7 @@ def test_manifest_empty_list_falls_back_to_extension_py(tmp_path: Path) -> None:
 
 
 def test_explicit_file_path_to_package_entry_cannot_reach_siblings(tmp_path: Path) -> None:
-    """`-x` on an entry *file* loads it standalone: relative imports fail.
+    """`-e` on an entry *file* loads it standalone: relative imports fail.
 
     Package extensions must be loaded through their directory (or a manifest);
     this pins the failure mode the docs warn about.

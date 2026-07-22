@@ -5,7 +5,7 @@ never executes; the model sees the block reason instead.
 
 Install by copying into `~/.tau/extensions/`, or run:
 
-    tau -x examples/extensions/permission_gate.py
+    tau -e examples/extensions/permission_gate.py
 """
 
 import re

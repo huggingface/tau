@@ -862,6 +862,30 @@ def test_print_mode_merges_piped_stdin_into_prompt(monkeypatch: pytest.MonkeyPat
     assert calls == ["piped content\n\n\nSummarize"]
 
 
+def test_print_mode_accepts_stdin_only_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    async def fake_run_openai_print_mode(
+        prompt: str,
+        model: str | None,
+        cwd: Path,
+        output: PrintOutputMode,
+        provider_name: str | None,
+        *extra: object,
+    ) -> bool:
+        del model, cwd, output, provider_name, extra
+        calls.append(prompt)
+        return True
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(app, ["-p"], input="piped content\n")
+
+    assert result.exit_code == 0
+    assert calls == ["piped content\n"]
+
+
 def test_export_flag_invokes_exporter(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

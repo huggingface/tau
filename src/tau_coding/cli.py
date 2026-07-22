@@ -377,11 +377,12 @@ def main(
             typer.echo(f"To resume this session: tau --session {resumable_session_id}")
         raise typer.Exit()
 
-    if not positional_args:
-        raise typer.BadParameter(
-            'Usage: tau --print "<prompt>" (or --mode text|json|transcript "<prompt>")'
-        )
     prompt = _merge_stdin_prompt(initial_prompt or "")
+    if not prompt:
+        raise typer.BadParameter(
+            'Usage: tau --print "<prompt>" (or --mode text|json|transcript "<prompt>"); '
+            "a prompt can also be piped in via stdin"
+        )
 
     notice = _startup_update_notice()
     if notice is not None and effective_output is PrintOutputMode.text:
