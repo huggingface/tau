@@ -14,6 +14,8 @@ html, body{ margin:0; padding:0; }
   --red:#D6435B;
   --green:#1F8A5F;
   --paper-edge:#EEF2FA;
+  /* solid reading surface for long-form text containers (issue #423) */
+  --paper:#FFFFFF;
 
   --serif:"Spectral", Georgia, serif;
   --grotesk:"Space Grotesk", ui-sans-serif, system-ui, sans-serif;
@@ -612,7 +614,18 @@ section{ padding:88px 0; }
 .sidebar-toplink:hover{ color:var(--ink); }
 .sidebar-toplink.active{ color:var(--accent); border-left-color:var(--accent); }
 
-.docs-content{ min-width:0; font-family:var(--serif); font-size:17px; line-height:1.7; }
+/* Long-form doc pages read on a solid "sheet of paper" card, so body text
+   never sits directly on the notebook grid. */
+.docs-content{
+  min-width:0; font-family:var(--serif); font-size:17px; line-height:1.7;
+  background:var(--paper);
+  border:1px solid var(--grid-strong); border-radius:6px;
+  padding:40px 48px 48px;
+  box-shadow:0 24px 48px -32px rgba(19,33,60,.28);
+}
+@media (max-width:860px){
+  .docs-content{ padding:28px 24px 32px; }
+}
 .docs-content h1{
   font-size:clamp(30px,5vw,42px); font-weight:400; margin:0 0 8px; letter-spacing:-0.01em;
 }
@@ -718,7 +731,7 @@ section{ padding:88px 0; }
   display:grid; gap:1px; border:1px solid var(--grid-strong); border-radius:6px;
   overflow:hidden; background:var(--grid-strong);
 }
-.release-card{ background:rgba(255,255,255,.86); }
+.release-card{ background:var(--paper); }
 .release-card-head{
   display:flex; align-items:center; justify-content:space-between; gap:24px;
   padding:22px 32px; cursor:pointer; list-style:none; user-select:none;
@@ -769,7 +782,7 @@ section{ padding:88px 0; }
   position:relative;
   display:flex; flex-direction:column;
   border:1px solid var(--grid-strong); border-radius:6px;
-  background:rgba(255,255,255,.86); margin-bottom:12px;
+  background:var(--paper); margin-bottom:12px;
   overflow:hidden;
 }
 .roadmap-list::before{
