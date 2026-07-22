@@ -228,6 +228,7 @@ The built-in frontend reads optional settings from `~/.tau/tui.json`:
 {
   "theme": "high-contrast",
   "sidebar_position": "right",
+  "turn_notification": "bell",
   "keybindings": {
     "cancel": "escape",
     "command_palette": "ctrl+k",
@@ -258,6 +259,12 @@ keybinding names, empty keys, and duplicate assignments.
 - `sidebar_position`: `"right"` (default), `"left"`, or `"off"`. Controls
   placement of the session metadata sidebar. `"off"` hides the sidebar entirely;
   the compact session info row below the prompt still works.
+- `turn_notification`: `"bell"` (default), `"desktop"`, or `"off"`. When Tau's
+  terminal surface is unfocused and the agent becomes fully idle, `"bell"` emits
+  the standard terminal bell so the terminal can mark the tab or request
+  attention. `"desktop"` emits an OSC 9 desktop notification instead. Support and
+  presentation depend on the terminal emulator; no notification is emitted while
+  Tau has focus.
 
 Full list in [Keyboard shortcuts]({{< relref "./keybindings.md" >}}).
 

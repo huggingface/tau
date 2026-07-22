@@ -72,7 +72,12 @@ from tau_coding.commands import (
     format_reload_summary,
 )
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
-from tau_coding.events import AutoRetryStartEvent, CodingSessionEvent, QueueUpdateEvent
+from tau_coding.events import (
+    AgentSettledEvent,
+    AutoRetryStartEvent,
+    CodingSessionEvent,
+    QueueUpdateEvent,
+)
 from tau_coding.extensions.api import (
     KeyInterceptor,
     MainViewFactory,
@@ -141,6 +146,7 @@ from tau_coding.tui.config import (
 )
 from tau_coding.tui.file_drop import normalize_dropped_paths
 from tau_coding.tui.state import TuiState, format_terminal_command_result_block
+from tau_coding.tui.terminal_notification import TerminalNotificationController
 from tau_coding.tui.terminal_title import TerminalTitleController
 from tau_coding.tui.themes import (
     available_tui_theme_names,
@@ -2917,6 +2923,10 @@ class TauTuiApp(App[None]):
         self._last_activity_indicator_key: tuple[object, ...] | None = None
         self._last_queue_render_key: tuple[object, ...] | None = None
         self._terminal_title = TerminalTitleController()
+        self._terminal_notification = TerminalNotificationController(
+            self.tui_settings.turn_notification
+        )
+        self._app_has_focus = True
         self._active_notification_keys: set[tuple[str, str]] = set()
         self._supports_pyperclip: bool | None = None
         self._sync_session_title()
@@ -3073,6 +3083,14 @@ class TauTuiApp(App[None]):
             self._activity_timer = None
         self._terminal_title.restore()
         self._clear_extension_components()
+
+    def on_app_blur(self) -> None:
+        """Remember that terminal attention should be requested when the run settles."""
+        self._app_has_focus = False
+
+    def on_app_focus(self) -> None:
+        """Suppress turn notifications while the Tau terminal surface is active."""
+        self._app_has_focus = True
 
     def on_resize(self, event: Resize) -> None:
         """Update responsive chrome when the terminal changes size."""
@@ -3966,6 +3984,7 @@ class TauTuiApp(App[None]):
             theme=theme,
             auto_copy_selection=self.tui_settings.auto_copy_selection,
             sidebar_position=self.tui_settings.sidebar_position,
+            turn_notification=self.tui_settings.turn_notification,
         )
 
     def _set_tui_theme(self, theme: TuiThemeName) -> None:
@@ -4027,6 +4046,8 @@ class TauTuiApp(App[None]):
                     _attach_diagnostic_log_path_to_error(self.state, self.session)
                     _attach_retry_hint_to_error(self.state, event.message)
                 await self._apply_streaming_transcript_event(event)
+                if isinstance(event, AgentSettledEvent) and not self._app_has_focus:
+                    self._terminal_notification.notify_turn_finished()
         except Exception as exc:  # noqa: BLE001 - surface unexpected worker errors in the TUI
             if active_run_id != self._prompt_run_id:
                 return

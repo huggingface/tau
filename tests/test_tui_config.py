@@ -175,6 +175,26 @@ def test_get_tui_theme_returns_builtin_theme() -> None:
     assert get_tui_theme("tau-dark").screen_background == "#000000"
 
 
+def test_tui_turn_notification_defaults_to_bell() -> None:
+    assert TuiSettings().turn_notification == "bell"
+    assert tui_settings_from_json({}).turn_notification == "bell"
+
+
+def test_tui_turn_notification_roundtrips() -> None:
+    for value in ("off", "bell", "desktop"):
+        settings = tui_settings_from_json({"turn_notification": value})
+        assert settings.turn_notification == value
+        assert settings.to_json()["turn_notification"] == value
+
+
+def test_tui_turn_notification_rejects_invalid_value() -> None:
+    with pytest.raises(TuiConfigError, match="turn_notification"):
+        tui_settings_from_json({"turn_notification": "sound"})
+
+    with pytest.raises(TuiConfigError, match="turn_notification"):
+        tui_settings_from_json({"turn_notification": True})
+
+
 def test_tui_sidebar_position_defaults_to_right() -> None:
     assert TuiSettings().sidebar_position == "right"
     assert tui_settings_from_json({}).sidebar_position == "right"

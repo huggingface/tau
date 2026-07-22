@@ -16,7 +16,12 @@ color to reflect focus, shell mode, and active runs without boxing it in.
 assistant's reply above the prompt, showing tool calls as they run. In supported
 terminal emulators, Tau also updates the tab title: named sessions show as
 `τ | <name>`, and active runs add an animated running indicator so you can see
-work continuing from another tab.
+work continuing from another tab. When a run fully settles while Tau's terminal
+surface is unfocused, Tau also asks the terminal for attention with a bell by
+default. Supported terminals may mark the tab, bounce an application icon, or
+apply their configured bell behavior. Set `turn_notification` to `"desktop"` for
+an OSC 9 desktop notification, or `"off"` to disable this behavior; see
+[Configuration]({{< relref "../reference/configuration.md#tui-settings" >}}).
 
 Clicking anywhere in the window returns focus to the prompt, so you can scroll
 the transcript and keep typing without tabbing back.

@@ -19,6 +19,9 @@ from tau_coding.tui.themes import (
     get_tui_theme,
 )
 
+type TurnNotificationMode = Literal["off", "bell", "desktop"]
+
+
 __all__ = [
     "BUILTIN_TUI_THEME_NAMES",
     "HIGH_CONTRAST_THEME",
@@ -30,6 +33,7 @@ __all__ = [
     "TuiSettings",
     "TuiTheme",
     "TuiThemeName",
+    "TurnNotificationMode",
     "get_tui_theme",
     "load_tui_settings",
     "save_tui_settings",
@@ -87,6 +91,7 @@ class TuiSettings:
     theme: TuiThemeName = "tau-dark"
     auto_copy_selection: bool = False
     sidebar_position: Literal["left", "right", "off"] = "right"
+    turn_notification: TurnNotificationMode = "bell"
 
     def to_json(self) -> dict[str, Any]:
         """Serialize these settings to JSON-compatible data."""
@@ -95,6 +100,7 @@ class TuiSettings:
             "keybindings": self.keybindings.to_json(),
             "sidebar_position": self.sidebar_position,
             "theme": self.theme,
+            "turn_notification": self.turn_notification,
         }
 
     @property
@@ -132,7 +138,13 @@ def save_tui_settings(settings: TuiSettings, paths: TauPaths | None = None) -> P
 
 def tui_settings_from_json(data: dict[str, Any]) -> TuiSettings:
     """Parse TUI settings from JSON-compatible data."""
-    allowed_fields = {"auto_copy_selection", "keybindings", "sidebar_position", "theme"}
+    allowed_fields = {
+        "auto_copy_selection",
+        "keybindings",
+        "sidebar_position",
+        "theme",
+        "turn_notification",
+    }
     unknown_fields = set(data) - allowed_fields
     if unknown_fields:
         raise TuiConfigError(f"Unknown TUI settings field: {sorted(unknown_fields)[0]}")
@@ -143,6 +155,13 @@ def tui_settings_from_json(data: dict[str, Any]) -> TuiSettings:
     raw_sidebar = data.get("sidebar_position", "right")
     if not isinstance(raw_sidebar, str) or raw_sidebar not in {"left", "right", "off"}:
         raise TuiConfigError("sidebar_position must be 'left', 'right', or 'off'")
+    raw_notification = data.get("turn_notification", "bell")
+    if not isinstance(raw_notification, str) or raw_notification not in {
+        "off",
+        "bell",
+        "desktop",
+    }:
+        raise TuiConfigError("turn_notification must be 'off', 'bell', or 'desktop'")
     return TuiSettings(
         keybindings=_keybindings_from_json(keybindings_data),
         theme=_theme_name(data.get("theme", "tau-dark")),
@@ -151,6 +170,7 @@ def tui_settings_from_json(data: dict[str, Any]) -> TuiSettings:
             "auto_copy_selection",
         ),
         sidebar_position=cast(Literal["left", "right", "off"], raw_sidebar),
+        turn_notification=cast(TurnNotificationMode, raw_notification),
     )
 
 

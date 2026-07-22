@@ -43,7 +43,7 @@ from tau_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
 from tau_coding.catalog_loader import user_catalog_path
 from tau_coding.commands import CommandResult
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
-from tau_coding.events import QueueUpdateEvent
+from tau_coding.events import AgentSettledEvent, CodingSessionEvent, QueueUpdateEvent
 from tau_coding.paths import TauPaths
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_config import (
@@ -104,6 +104,7 @@ from tau_coding.tui.config import (
     tui_settings_path,
 )
 from tau_coding.tui.state import ChatItem, TuiState
+from tau_coding.tui.terminal_notification import TerminalNotificationController
 from tau_coding.tui.terminal_title import TerminalTitleController
 from tau_coding.tui.widgets import (
     TRANSCRIPT_WINDOW_ITEMS,
@@ -2866,6 +2867,43 @@ async def test_tui_app_updates_terminal_title_for_running_and_named_session() ->
         assert writes[-1] == "\x1b]0;τ | ship notes\x07"
 
     assert writes[-1] == "\x1b]0;τ\x07"
+
+
+@pytest.mark.anyio
+async def test_tui_app_notifies_when_agent_settles_while_unfocused() -> None:
+    class SettledSession(FakeSession):
+        async def prompt(
+            self,
+            text: str,
+            *,
+            streaming_behavior: str | None = None,
+            source: str = "interactive",
+            custom_type: str | None = None,
+            details: dict[str, object] | None = None,
+        ) -> AsyncIterator[CodingSessionEvent]:
+            del streaming_behavior, source, custom_type, details
+            self.prompt_texts.append(text)
+            yield AgentStartEvent()
+            yield AgentEndEvent()
+            yield AgentSettledEvent()
+
+    app = TauTuiApp(SettledSession(), tui_settings=TuiSettings(turn_notification="desktop"))
+    writes: list[str] = []
+    app._terminal_notification = TerminalNotificationController(
+        "desktop", enabled=True, writer=writes.append
+    )
+
+    async with app.run_test():
+        await app._run_prompt("focused")
+        assert writes == []
+
+        app.on_app_blur()
+        await app._run_prompt("background")
+        assert writes == ["\x1b]9;Tau turn finished\x07"]
+
+        app.on_app_focus()
+        await app._run_prompt("focused again")
+        assert writes == ["\x1b]9;Tau turn finished\x07"]
 
 
 @pytest.mark.anyio
