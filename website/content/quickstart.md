@@ -120,7 +120,7 @@ tau sessions
 Resume the most recent one for this directory, or pick from a list:
 
 ```bash
-tau --resume <session-id>
+tau --session <session-id>
 ```
 
 …or open the picker inside the TUI with `/resume`. See

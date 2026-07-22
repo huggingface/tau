@@ -6,18 +6,19 @@ When the interactive TUI exits and the session was persisted, Tau now prints
 a one-line reminder of how to resume it:
 
 ```text
-To resume this session: tau --resume <session-id>
+To resume this session: tau --session <session-id>
 ```
 
 This mirrors Pi's exit-time hint (`To resume this session: pi --session
-[session id]`), adapted to Tau's actual resume flag (`tau --resume
-<session-id>` rather than `--session`).
+[session id]`) using Tau's `--session` flag, which was renamed from
+`--resume` in [issue #439](https://github.com/huggingface/tau/issues/439)
+to match Pi's naming (see `dev-notes/cli-mirror-pi-flags.md`).
 
 ## Why
 
 Closing the TUI previously gave no indication of how to pick the
 conversation back up. New users in particular had to already know about
-`tau --resume <id>` or `tau sessions`. A short, low-friction hint at exit
+`tau --session <id>` or `tau sessions`. A short, low-friction hint at exit
 closes that gap without adding new UI surface.
 
 See [issue #438](https://github.com/huggingface/tau/issues/438) for the

@@ -41,7 +41,7 @@ When you quit the TUI and the session was persisted, Tau prints a reminder of
 the exact command to resume it:
 
 ```text
-To resume this session: tau --resume <session-id>
+To resume this session: tau --session <session-id>
 ```
 
 ## Branching from history (`/tree`)

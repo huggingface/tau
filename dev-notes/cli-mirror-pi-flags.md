@@ -43,15 +43,15 @@ equivalent features later, prefer these names with matching semantics.
 
 ## Exit resume hint (issue #438)
 
-Issue #438 (print a resume hint on exit) was still unimplemented at the time
-of this change, so there is no existing hint string to update. Whoever
-implements #438 should print:
+Issue #438 (print a resume hint on exit) landed in #441 while this PR was in
+flight, printing `To resume this session: tau --resume <session-id>`. This
+PR rebases onto that change and updates the printed hint (and the matching
+internal `--resume and --new-session cannot be used together` message in
+`src/tau_coding/tui/app.py`) to use `--session`:
 
 ```text
 To resume this session: tau --session <session-id>
 ```
-
-using the flag name from this change.
 
 ## Testing
 

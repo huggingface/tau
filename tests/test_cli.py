@@ -279,7 +279,7 @@ def test_cli_prints_resume_hint_after_tui_exit(
     result = CliRunner().invoke(app, [])
 
     assert result.exit_code == 0
-    assert result.stdout == "To resume this session: tau --resume session-123\n"
+    assert result.stdout == "To resume this session: tau --session session-123\n"
 
 
 def test_cli_suppresses_resume_hint_without_persisted_session(

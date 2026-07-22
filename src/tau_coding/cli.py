@@ -326,7 +326,7 @@ def main(
         except (RuntimeError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
         if resumable_session_id is not None:
-            typer.echo(f"To resume this session: tau --resume {resumable_session_id}")
+            typer.echo(f"To resume this session: tau --session {resumable_session_id}")
         raise typer.Exit()
 
     prompt = prompt_option

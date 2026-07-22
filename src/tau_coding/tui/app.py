@@ -6019,7 +6019,7 @@ async def run_tui_app(
 ) -> str | None:
     """Run the Textual app and return the active id when its session is persisted."""
     if new_session and session_id is not None:
-        raise RuntimeError("--resume and --new-session cannot be used together")
+        raise RuntimeError("--session and --new-session cannot be used together")
 
     provider_settings = load_provider_settings()
     shell_settings = load_shell_settings()
