@@ -1,6 +1,6 @@
 {{ define "main" }}
-<div class="wrap">
-  <header class="hero">
+<div class="wrap home-hero-wrap">
+  <header class="hero home-hero">
     <div class="hero-grid">
       <div>
         <p class="eyebrow-hand">An educational coding-agent project</p>
@@ -15,7 +15,7 @@
         </p>
         <div class="cta-row">
           <span class="install">
-            <span><span class="dollar">$</span> curl -LsSf https://twotimespi.dev/install.sh | sh</span>
+            <span class="install-command"><span class="dollar">$</span> curl -LsSf https://twotimespi.dev/install.sh | sh</span>
             <button class="copy" id="copyBtn" type="button" aria-label="Copy install command">copy</button>
           </span>
           <a class="ghost" href="{{ "/internals/architecture/" | relURL }}">Start with the architecture <span class="arr">&rarr;</span></a>
@@ -29,11 +29,11 @@
         </div>
       </div>
 
-      <figure class="figure">
-        <span class="figlabel">&#952; sweeps 0 &rarr; &#964;</span>
-        <canvas id="tauCanvas" width="520" height="380" role="img"
-          aria-label="A radius sweeping a unit circle through one full turn, tracing one period of a sine wave on notebook paper."></canvas>
-        <span class="figval" id="thetaVal">&#952; = 0.00</span>
+      <figure class="tui-preview">
+        <figcaption>Tau, running in your terminal</figcaption>
+        <img src="{{ "/images/tau-tui.webp" | relURL }}" width="1600" height="1318"
+          alt="The Tau terminal interface in an active coding session"
+          decoding="async" fetchpriority="high" />
       </figure>
     </div>
 
