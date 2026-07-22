@@ -4,7 +4,7 @@
     var b = document.getElementById(id);
     if(!b) return;
     b.addEventListener("click", function(){
-      navigator.clipboard && navigator.clipboard.writeText("uv tool install tau-ai");
+      navigator.clipboard && navigator.clipboard.writeText("curl -LsSf https://twotimespi.dev/install.sh | sh");
       var t = b.textContent; b.textContent = "copied";
       setTimeout(function(){ b.textContent = t; }, 1400);
     });
