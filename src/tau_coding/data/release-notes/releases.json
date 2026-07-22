@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.3.0",
+    "date": "2026-07-22",
+    "sections": {
+      "Changed": [
+        "Breaking: rename the non-interactive `tau --resume <session-id>` flag to `tau --session <session-id>`, matching Pi's `--session` naming; `--resume` now errors with a migration hint instead of resuming."
+      ]
+    }
+  },
+  {
     "version": "0.2.4",
     "date": "2026-07-21",
     "sections": {

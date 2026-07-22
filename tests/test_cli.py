@@ -738,7 +738,7 @@ def test_default_tui_invokes_tui_runner_with_flags(
             "fake",
             "--provider",
             "local",
-            "--resume",
+            "--session",
             "session-1",
             "--auto-compact-threshold",
             "1000",
@@ -749,7 +749,23 @@ def test_default_tui_invokes_tui_runner_with_flags(
     assert calls == [("fake", tmp_path, "session-1", False, "local", 1000, None)]
 
 
-def test_default_tui_rejects_resume_with_new_session(tmp_path: Path) -> None:
+def test_default_tui_rejects_session_with_new_session(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "--cwd",
+            str(tmp_path),
+            "--session",
+            "session-1",
+            "--new-session",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--session and --new-session cannot be used together" in _strip_ansi(result.output)
+
+
+def test_legacy_resume_flag_errors_with_migration_hint(tmp_path: Path) -> None:
     result = CliRunner().invoke(
         app,
         [
@@ -757,12 +773,13 @@ def test_default_tui_rejects_resume_with_new_session(tmp_path: Path) -> None:
             str(tmp_path),
             "--resume",
             "session-1",
-            "--new-session",
         ],
     )
 
     assert result.exit_code != 0
-    assert "--resume and --new-session cannot be used together" in _strip_ansi(result.output)
+    output = _strip_ansi(result.output)
+    assert "--resume was renamed to --session" in output
+    assert "session-1" in output
 
 
 def _constrained_provider_settings() -> ProviderSettings:

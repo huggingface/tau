@@ -43,7 +43,7 @@ features and fixes.
 | `--provider TEXT` | Configured provider name to use |
 | `--cwd PATH` | Working directory for the built-in tools |
 | `-o, --output [text\|json\|transcript]` | Output mode for print mode (default `text`) |
-| `--resume TEXT` | Resume a session id in the TUI |
+| `--session TEXT` | Resume a session id in the TUI |
 | `--new-session` | Start a new session instead of resuming the default |
 | `--auto-compact-threshold INT` | Auto-compact above this rough token estimate |
 | `-x, --extension PATH` | Load an [extension]({{< relref "../guides/extensions.md" >}}) file or directory (repeatable) |

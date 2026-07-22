@@ -20,7 +20,7 @@ Each row shows the session id, title, model, and working directory.
 From the shell:
 
 ```bash
-tau --resume <session-id>
+tau --session <session-id>
 ```
 
 From inside the TUI:

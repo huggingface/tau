@@ -189,9 +189,17 @@ def main(
         PrintOutputMode,
         typer.Option("--output", "-o", help="Output mode for print mode."),
     ] = PrintOutputMode.text,
+    session: Annotated[
+        str | None,
+        typer.Option("--session", help="Resume a session id in TUI mode."),
+    ] = None,
     resume: Annotated[
         str | None,
-        typer.Option("--resume", help="Resume a session id in TUI mode."),
+        typer.Option(
+            "--resume",
+            help="Removed; use --session <session-id> instead.",
+            hidden=True,
+        ),
     ] = None,
     new_session: Annotated[
         bool,
@@ -240,8 +248,13 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
 
-    if resume is not None and new_session:
-        raise typer.BadParameter("--resume and --new-session cannot be used together")
+    if resume is not None:
+        raise typer.BadParameter(
+            f"--resume was renamed to --session. Use `tau --session {resume}` instead."
+        )
+
+    if session is not None and new_session:
+        raise typer.BadParameter("--session and --new-session cannot be used together")
 
     positional_args = prompt_args or []
     command = positional_args[0] if positional_args else None
@@ -300,7 +313,7 @@ def main(
                 run_openai_tui,
                 model,
                 cwd or Path.cwd(),
-                resume,
+                session,
                 new_session,
                 provider,
                 auto_compact_threshold,
