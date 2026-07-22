@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from inspect import isawaitable
 from json import dumps, loads
 from pathlib import Path
@@ -16,6 +17,7 @@ from tau_agent.events import AgentEvent, AgentStartEvent
 from tau_agent.events import TurnEndEvent as AgentTurnEndEvent
 from tau_agent.events import TurnStartEvent as AgentTurnStartEvent
 from tau_agent.messages import AgentMessage, TextContent
+from tau_agent.provider import ModelProvider
 from tau_agent.tools import (
     AgentTool,
     AgentToolResult,
@@ -47,7 +49,6 @@ from tau_coding.extensions.api import (
     MessageRenderer,
     MessageRenderOptions,
     NullUiBridge,
-    OpenAICompatibleProvider,
     RegisteredExtension,
     SessionLifecycleReason,
     SessionShutdownEvent,
@@ -65,11 +66,14 @@ from tau_coding.extensions.loader import (
     load_extensions,
     unload_extension_modules,
 )
-from tau_coding.provider_config import (
-    OpenAICompatibleProviderConfig,
-    ProviderSettings,
-    upsert_provider,
+from tau_coding.extensions.providers import (
+    DynamicProvider,
+    DynamicProviderRegistry,
+    ProviderModel,
+    ProviderRefreshContext,
+    provider_to_config,
 )
+from tau_coding.provider_config import OpenAICompatibleProviderConfig, ProviderSettings
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
 
 # Host callback that delivers a message through the frontend's serialized run
@@ -127,13 +131,7 @@ class BoundSession(Protocol):
         owned_names: frozenset[str],
     ) -> None: ...
 
-    def select_provider_model(
-        self,
-        provider_name: str,
-        model: str,
-        *,
-        persist_default: bool,
-    ) -> None: ...
+    async def select_extension_provider_model(self, provider_name: str, model: str) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,15 +152,6 @@ class RegisteredExtensionTool:
 
     extension: str
     tool: AgentTool
-
-
-@dataclass(frozen=True, slots=True)
-class RegisteredExtensionProvider:
-    """An OpenAI-compatible provider registered by an extension."""
-
-    extension: str
-    descriptor: OpenAICompatibleProvider
-    config: OpenAICompatibleProviderConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,8 +176,13 @@ class ExtensionRuntime:
     def __init__(self, *, ui: UiBridge | None = None) -> None:
         self._extensions: list[RegisteredExtension] = []
         self._tools: dict[str, RegisteredExtensionTool] = {}
-        self._providers: dict[str, RegisteredExtensionProvider] = {}
+        self._providers = DynamicProviderRegistry()
         self._provider_names_seen: set[str] = set()
+        self._provider_refresh_tasks: dict[
+            tuple[str, str], asyncio.Task[tuple[ProviderModel, ...]]
+        ] = {}
+        self._provider_refresh_cancellations: dict[tuple[str, str], asyncio.Event] = {}
+        self._provider_model_disappearance_reported: set[tuple[str, str]] = set()
         self._commands: dict[str, ExtensionCommand] = {}
         self._prompt_guidelines: list[tuple[str, str]] = []
         self._message_renderers: dict[str, tuple[str, MessageRenderer]] = {}
@@ -247,7 +241,9 @@ class ExtensionRuntime:
             self._harness_unsubscribe = None
         self._extensions.clear()
         self._tools.clear()
+        self._cancel_provider_refreshes()
         self._providers.clear()
+        self._provider_model_disappearance_reported.clear()
         self._commands.clear()
         self._prompt_guidelines.clear()
         self._message_renderers.clear()
@@ -287,11 +283,8 @@ class ExtensionRuntime:
             for name, command in self._commands.items()
             if command.extension != extension_name
         }
-        self._providers = {
-            name: registration
-            for name, registration in self._providers.items()
-            if registration.extension != extension_name
-        }
+        self._cancel_provider_refreshes(extension_name)
+        self._providers.remove_source(extension_name)
         self._prompt_guidelines = [
             (extension, guideline)
             for extension, guideline in self._prompt_guidelines
@@ -323,81 +316,93 @@ class ExtensionRuntime:
             return
         self._tools[tool.name] = RegisteredExtensionTool(extension=extension_name, tool=tool)
 
-    def register_provider(
-        self,
-        extension_name: str,
-        descriptor: OpenAICompatibleProvider,
-    ) -> None:
-        """Register or replace an OpenAI-compatible provider owned by an extension."""
-        name = descriptor.name.strip()
-        models = tuple(dict.fromkeys(model.strip() for model in descriptor.models if model.strip()))
-        if not name or not models or descriptor.default_model not in models:
-            raise ExtensionError(
-                "provider name/models must be non-empty and default_model must be in models"
-            )
-        existing = self._providers.get(name)
-        if existing is not None and existing.extension != extension_name:
-            raise ExtensionError(
-                f"provider `{name}` already registered by extension `{existing.extension}`"
-            )
-        config = OpenAICompatibleProviderConfig(
-            name=name,
-            base_url=descriptor.base_url.rstrip("/"),
-            api=descriptor.api,
-            api_key_env=descriptor.api_key_env,
-            credential_name=None,
-            auth=descriptor.auth,
-            models=models,
-            default_model=descriptor.default_model,
-            headers=dict(descriptor.headers),
-            timeout_seconds=descriptor.timeout_seconds,
-            max_retries=descriptor.max_retries,
-            max_retry_delay_seconds=descriptor.max_retry_delay_seconds,
-        )
-        self._providers[name] = RegisteredExtensionProvider(
-            extension=extension_name,
-            descriptor=replace(descriptor, name=name, models=models),
-            config=config,
-        )
-        self._provider_names_seen.add(name)
+    def register_provider(self, extension_name: str, provider: DynamicProvider) -> None:
+        """Atomically register/replace one source layer; dormant providers are valid."""
+        try:
+            # Validate the concrete v1 projection before changing the layer.
+            provider_to_config(provider)
+            normalized = self._providers.register(extension_name, provider)
+        except (TypeError, ValueError) as exc:
+            raise ExtensionError(str(exc)) from exc
+        self._provider_names_seen.add(normalized.id)
         self._sync_bound_providers()
 
-    def update_provider_models(
+    async def refresh_provider_models(
         self,
         extension_name: str,
-        name: str,
-        models: Sequence[str],
+        provider_id: str,
         *,
-        default_model: str | None,
-    ) -> None:
-        """Replace the models exposed by one extension-owned provider."""
-        registration = self._providers.get(name)
-        if registration is None or registration.extension != extension_name:
-            raise ExtensionError(f"extension `{extension_name}` does not own provider `{name}`")
-        normalized = tuple(dict.fromkeys(model.strip() for model in models if model.strip()))
-        selected = default_model or registration.config.default_model
-        if not normalized or selected not in normalized:
-            raise ExtensionError("provider models must include the default model")
-        descriptor = replace(
-            registration.descriptor,
-            models=normalized,
-            default_model=selected,
-        )
-        self._providers[name] = replace(
-            registration,
-            descriptor=descriptor,
-            config=replace(registration.config, models=normalized, default_model=selected),
-        )
-        self._sync_bound_providers()
+        network_allowed: bool = True,
+    ) -> tuple[ProviderModel, ...]:
+        """Refresh one owned layer, retaining its prior snapshot on failure."""
+        layer = self._providers.layer(extension_name, provider_id)
+        if layer is None:
+            raise ExtensionError(
+                f"extension `{extension_name}` does not own provider `{provider_id}`"
+            )
+        refresh = layer.provider.refresh_models
+        if refresh is None:
+            return layer.provider.models
+        key = (extension_name, provider_id)
+        existing = self._provider_refresh_tasks.get(key)
+        if existing is not None:
+            return await existing
+        cancelled = asyncio.Event()
+        self._provider_refresh_cancellations[key] = cancelled
+
+        async def run() -> tuple[ProviderModel, ...]:
+            context = ProviderRefreshContext(
+                cancelled=cancelled,
+                network_allowed=network_allowed,
+                endpoint=layer.provider.transport.base_url,
+                resolve_auth=layer.provider.auth.resolve,
+                source=extension_name,
+            )
+            try:
+                if layer.provider.refresh_timeout_seconds is None:
+                    discovered = tuple(await refresh(context))
+                else:
+                    async with asyncio.timeout(layer.provider.refresh_timeout_seconds):
+                        discovered = tuple(await refresh(context))
+                if cancelled.is_set():
+                    raise asyncio.CancelledError
+                updated = self._providers.publish_models(extension_name, provider_id, discovered)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - extension discovery boundary
+                self._record_runtime_failure(extension_name, f"provider_refresh:{provider_id}", exc)
+                current = self._providers.layer(extension_name, provider_id)
+                return current.provider.models if current is not None else ()
+            self._sync_bound_providers()
+            if (
+                self._session is not None
+                and self._session.provider_name == provider_id
+                and self._session.model in {model.id for model in updated.models}
+            ):
+                try:
+                    await self._session.select_extension_provider_model(
+                        provider_id, self._session.model
+                    )
+                except Exception as exc:  # noqa: BLE001 - preserve the working runtime
+                    self._record_runtime_failure(
+                        extension_name, f"provider_runtime_refresh:{provider_id}", exc
+                    )
+            return updated.models
+
+        task = asyncio.create_task(run())
+        self._provider_refresh_tasks[key] = task
+        try:
+            return await task
+        finally:
+            self._provider_refresh_tasks.pop(key, None)
+            self._provider_refresh_cancellations.pop(key, None)
 
     def unregister_provider(self, extension_name: str, name: str) -> None:
-        """Remove one provider owned by an extension."""
-        registration = self._providers.get(name)
-        if registration is None:
+        """Remove only the caller's layer, restoring the previous definition."""
+        if self._providers.layer(extension_name, name) is None:
             return
-        if registration.extension != extension_name:
-            raise ExtensionError(f"extension `{extension_name}` does not own provider `{name}`")
-        del self._providers[name]
+        self._cancel_provider_refresh(extension_name, name)
+        self._providers.unregister(extension_name, name)
         self._sync_bound_providers()
 
     def register_command(
@@ -609,19 +614,63 @@ class ExtensionRuntime:
         self._sync_bound_providers()
 
     def compose_provider_settings(self, settings: ProviderSettings) -> ProviderSettings:
-        """Layer process-local extension providers over durable host settings."""
-        composed = settings
-        for registration in self._providers.values():
-            composed = upsert_provider(composed, registration.config)
-        return composed
+        """Overlay effective process-local definitions without durable catalog merging."""
+        effective = {
+            layer.provider.id: provider_to_config(layer.provider)
+            for layer in self._providers.effective_layers()
+        }
+        providers = tuple(
+            effective.pop(provider.name, provider) for provider in settings.providers
+        ) + tuple(effective.values())
+        default_provider = settings.default_provider
+        if default_provider not in {provider.name for provider in providers} and providers:
+            default_provider = providers[0].name
+        return ProviderSettings(
+            default_provider=default_provider,
+            providers=providers,
+            scoped_models=settings.scoped_models,
+        )
 
     def _sync_bound_providers(self) -> None:
         if self._session is None:
             return
+        effective = self._providers.effective_layers()
         self._session.sync_extension_providers(
-            tuple(registration.config for registration in self._providers.values()),
+            tuple(provider_to_config(layer.provider) for layer in effective),
             frozenset(self._provider_names_seen),
         )
+        active = (self._session.provider_name, self._session.model)
+        layer = self._providers.effective_layer(active[0])
+        if (
+            layer is not None
+            and active[1] not in {model.id for model in layer.provider.models}
+            and active not in self._provider_model_disappearance_reported
+        ):
+            self._provider_model_disappearance_reported.add(active)
+            self._runtime_diagnostics.append(
+                ResourceDiagnostic(
+                    kind="extension",
+                    name=layer.source,
+                    message=(
+                        f"active model `{active[0]}:{active[1]}` is no longer advertised; "
+                        "the current runtime remains usable until another model is selected"
+                    ),
+                )
+            )
+
+    def _cancel_provider_refresh(self, extension_name: str, provider_id: str) -> None:
+        key = (extension_name, provider_id)
+        cancellation = self._provider_refresh_cancellations.get(key)
+        if cancellation is not None:
+            cancellation.set()
+        task = self._provider_refresh_tasks.get(key)
+        if task is not None:
+            task.cancel()
+
+    def _cancel_provider_refreshes(self, extension_name: str | None = None) -> None:
+        for source, provider_id in tuple(self._provider_refresh_tasks):
+            if extension_name is None or source == extension_name:
+                self._cancel_provider_refresh(source, provider_id)
 
     def attach_harness_listener(
         self,
@@ -692,6 +741,51 @@ class ExtensionRuntime:
         return tuple(registration.tool for registration in self._tools.values())
 
     @property
+    def dynamic_providers(self) -> tuple[DynamicProvider, ...]:
+        """Return effective dynamic providers in stable registry order."""
+        return tuple(layer.provider for layer in self._providers.effective_layers())
+
+    def provider_display_name(self, provider_id: str) -> str | None:
+        layer = self._providers.effective_layer(provider_id)
+        return layer.provider.display_name if layer is not None else None
+
+    async def refresh_provider(self, provider_id: str) -> tuple[ProviderModel, ...]:
+        """Host-owned targeted refresh for the effective provider layer."""
+        layer = self._providers.effective_layer(provider_id)
+        if layer is None:
+            return ()
+        return await self.refresh_provider_models(layer.source, provider_id)
+
+    async def create_provider_runtime(
+        self, provider_id: str, model_id: str
+    ) -> ModelProvider | None:
+        """Create a custom runtime when the effective provider supplies a factory."""
+        layer = self._providers.effective_layer(provider_id)
+        if layer is None or layer.provider.runtime_factory is None:
+            return None
+        model = next((item for item in layer.provider.models if item.id == model_id), None)
+        if model is None:
+            raise ExtensionError(f"Model is not advertised: {provider_id}:{model_id}")
+        try:
+            value = layer.provider.runtime_factory(model)
+            runtime = await value if isawaitable(value) else value
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - extension factory boundary
+            self._record_runtime_failure(layer.source, f"provider_factory:{provider_id}", exc)
+            raise ExtensionError(
+                f"Provider runtime creation failed for {provider_id}:{model_id}: {exc}"
+            ) from exc
+        return runtime
+
+    async def shutdown_provider_tasks(self) -> None:
+        """Cancel and await provider refresh work during host shutdown/reload."""
+        tasks = tuple(self._provider_refresh_tasks.values())
+        self._cancel_provider_refreshes()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    @property
     def prompt_guidelines(self) -> tuple[str, ...]:
         """Return standalone guideline lines in registration order."""
         return tuple(guideline for _, guideline in self._prompt_guidelines)
@@ -747,19 +841,9 @@ class ExtensionRuntime:
         """Persist a `CustomEntry` through the bound session."""
         await self.session_view.append_custom_entry(namespace, data)
 
-    def select_model(
-        self,
-        provider: str,
-        model: str,
-        *,
-        persist_default: bool,
-    ) -> None:
-        """Switch the bound session through its provider-neutral model action."""
-        self.session_view.select_provider_model(
-            provider,
-            model,
-            persist_default=persist_default,
-        )
+    async def select_model(self, provider: str, model: str) -> None:
+        """Switch safely through the bound session without durable preference writes."""
+        await self.session_view.select_extension_provider_model(provider, model)
 
     def load_extension_settings(self, extension_name: str) -> dict[str, JSONValue]:
         """Read extension-scoped user settings."""

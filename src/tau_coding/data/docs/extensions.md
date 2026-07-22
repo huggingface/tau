@@ -13,16 +13,21 @@ Installed examples are under `examples/extensions/` next to these docs. Read the
 
 ## Provider registration
 
-Use `OpenAICompatibleProvider` with `tau.register_provider(...)` for local or
-remote OpenAI-compatible endpoints. `auth="optional"` uses the configured
-environment variable when present and otherwise sends no Authorization header.
-Refresh discovery with `tau.update_provider_models(...)`, switch the current
-session with `tau.select_model(...)`, and remove the provider with
-`tau.unregister_provider(...)`.
+Register `DynamicProvider` with `ProviderModel` snapshots, an
+`OpenAICompatibleTransport`, and `RequiredEnvApiKey`, `OptionalEnvApiKey`, or
+`NoAuth`. Providers may start with zero models. Optional/no auth omits the
+Authorization header rather than inventing a token.
+
+Provider-owned async discovery runs through `await
+refresh_provider_models(id)`. Successful snapshots publish atomically; failures
+retain cached models and become extension diagnostics. `await
+select_model(provider, model)` safely switches only the current session.
+`unregister_provider(id)` removes the caller's overlay and restores the prior
+extension or built-in definition.
 
 Registrations are process-local and load before startup `--provider`/`--model`
-resolution. Persist non-secret discovery data with `tau.load_settings()`,
-`tau.save_settings(...)`, and `tau.clear_settings()`; files are user-level under
+resolution. Persist only non-secret discovery data with `load_settings()`,
+`save_settings(...)`, and `clear_settings()` under
 `~/.tau/extensions/settings/`. Never store API keys there.
 
 ## Locations

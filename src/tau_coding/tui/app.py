@@ -73,7 +73,6 @@ from tau_coding.commands import (
 )
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.events import AutoRetryStartEvent, CodingSessionEvent, QueueUpdateEvent
-from tau_coding.extensions import ExtensionRuntime
 from tau_coding.extensions.api import (
     KeyInterceptor,
     MainViewFactory,
@@ -110,6 +109,7 @@ from tau_coding.provider_config import (
     upsert_saved_provider,
 )
 from tau_coding.provider_runtime import create_model_provider
+from tau_coding.provider_startup import prepare_provider_startup
 from tau_coding.resources import TauResourcePaths
 from tau_coding.session import (
     TREE_RUNNING_MESSAGE,
@@ -1886,9 +1886,21 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
     def compose(self) -> ComposeResult:
         """Compose the model picker."""
         with Vertical(id="model-picker"):
-            title = (
-                f"Model: {self.provider_name}" if self.picker_kind == "model" else "Scoped models"
+            current_choice = next(
+                (
+                    choice
+                    for choice in self.choices
+                    if choice.provider_name == self.provider_name
+                    and choice.model == self.current_model
+                ),
+                None,
             )
+            provider_label = (
+                current_choice.provider_display_name
+                if current_choice is not None and current_choice.provider_display_name
+                else self.provider_name
+            )
+            title = f"Model: {provider_label}" if self.picker_kind == "model" else "Scoped models"
             yield Static(title, id="model-picker-title")
             yield Static("", id="model-picker-tabs")
             yield ModelPickerSearchInput(placeholder="Search models", id="model-picker-search")
@@ -5567,7 +5579,14 @@ def _model_picker_label(
         else "  "
     )
     suffix = " [scoped]" if scoped else ""
-    return f"{marker}{choice.provider_name}:{choice.model}{suffix}"
+    provider = choice.provider_display_name or choice.provider_name
+    model = choice.model_display_name or choice.model
+    ids = (
+        f" ({choice.provider_name}:{choice.model})"
+        if provider != choice.provider_name or model != choice.model
+        else ""
+    )
+    return f"{marker}{provider}:{model}{ids}{suffix}"
 
 
 def _filter_login_providers(
@@ -5591,7 +5610,10 @@ def _filter_model_choices(choices: Sequence[ModelChoice], query: str) -> tuple[M
     return tuple(
         choice
         for choice in choices
-        if normalized in choice.provider_name.lower() or normalized in choice.model.lower()
+        if normalized in choice.provider_name.lower()
+        or normalized in choice.model.lower()
+        or normalized in (choice.provider_display_name or "").lower()
+        or normalized in (choice.model_display_name or "").lower()
     )
 
 
@@ -6029,16 +6051,20 @@ async def run_tui_app(
         session_id=session_id,
     )
     startup_cwd = record.cwd if record is not None else cwd
-    resource_paths = TauResourcePaths(cwd=startup_cwd)
-    extension_runtime = ExtensionRuntime()
-    if extensions_enabled or extension_paths:
-        extension_runtime.load(
-            resource_paths,
-            extra_paths=extension_paths,
-            include_resource_dirs=extensions_enabled,
-            include_project_dir=project_extensions_enabled,
-        )
-    provider_settings = extension_runtime.compose_provider_settings(load_provider_settings())
+    requested_startup_provider = provider_name or (
+        record.provider_name if record is not None else None
+    )
+    startup = await prepare_provider_startup(
+        cwd=startup_cwd,
+        requested_provider=requested_startup_provider,
+        extension_paths=extension_paths,
+        extensions_enabled=extensions_enabled,
+        project_extensions_enabled=project_extensions_enabled,
+        settings_loader=load_provider_settings,
+    )
+    resource_paths = startup.resource_paths
+    extension_runtime = startup.extension_runtime
+    provider_settings = startup.settings
     selection = _resolve_tui_startup_selection(
         provider_settings,
         record=record,
@@ -6093,6 +6119,7 @@ async def run_tui_app(
                 session_manager=manager,
                 provider_name=selection.provider.name,
                 provider_settings=provider_settings,
+                durable_provider_settings=startup.durable_settings,
                 runtime_provider_config=runtime_provider_config,
                 auto_compact_token_threshold=auto_compact_token_threshold,
                 index_on_first_persist=index_on_first_persist,

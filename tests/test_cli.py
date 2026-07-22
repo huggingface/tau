@@ -1319,17 +1319,18 @@ async def test_print_mode_loads_extension_provider_before_cli_selection(
     extension = tmp_path / "local_provider.py"
     extension.write_text(
         """
-from tau_coding.extensions import OpenAICompatibleProvider
+from tau_coding.extensions import (
+    DynamicProvider, OpenAICompatibleTransport, OptionalEnvApiKey, ProviderModel,
+)
 
 
 def setup(tau):
-    tau.register_provider(OpenAICompatibleProvider(
-        name="local-test",
-        base_url="http://127.0.0.1:8080/v1",
-        api_key_env="LOCAL_TEST_API_KEY",
-        auth="optional",
-        models=("coder.gguf",),
-        default_model="coder.gguf",
+    tau.register_provider(DynamicProvider(
+        id="local-test",
+        display_name="Local test",
+        transport=OpenAICompatibleTransport("http://127.0.0.1:8080/v1"),
+        auth=OptionalEnvApiKey("LOCAL_TEST_API_KEY"),
+        models=(ProviderModel(id="coder.gguf"),),
     ))
 """,
         encoding="utf-8",

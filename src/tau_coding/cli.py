@@ -38,6 +38,7 @@ from tau_coding.provider_config import (
     upsert_openai_compatible_provider,
 )
 from tau_coding.provider_runtime import create_model_provider
+from tau_coding.provider_startup import prepare_provider_startup
 from tau_coding.rendering import PrintOutputMode, create_event_renderer
 from tau_coding.resources import TauResourcePaths
 from tau_coding.session import (
@@ -657,16 +658,17 @@ async def run_openai_print_mode(
     project_extensions_enabled: bool = False,
 ) -> bool:
     """Run print mode with the OpenAI-compatible provider configured from the environment."""
-    resource_paths = TauResourcePaths(cwd=cwd)
-    extension_runtime = ExtensionRuntime()
-    if extensions_enabled or extension_paths:
-        extension_runtime.load(
-            resource_paths,
-            extra_paths=extension_paths,
-            include_resource_dirs=extensions_enabled,
-            include_project_dir=project_extensions_enabled,
-        )
-    settings = extension_runtime.compose_provider_settings(load_provider_settings())
+    startup = await prepare_provider_startup(
+        cwd=cwd,
+        requested_provider=provider_name,
+        extension_paths=extension_paths,
+        extensions_enabled=extensions_enabled,
+        project_extensions_enabled=project_extensions_enabled,
+        settings_loader=load_provider_settings,
+    )
+    resource_paths = startup.resource_paths
+    extension_runtime = startup.extension_runtime
+    settings = startup.settings
     shell_settings = load_shell_settings()
     selection = resolve_provider_selection(settings, provider_name=provider_name, model=model)
     provider = create_model_provider(
@@ -688,6 +690,7 @@ async def run_openai_print_mode(
             session_manager=manager,
             provider_name=selection.provider.name,
             provider_settings=settings,
+            durable_provider_settings=startup.durable_settings,
             runtime_provider_config=selection.provider,
             shell_command_prefix=shell_settings.shell_command_prefix,
             resource_paths=resource_paths,
@@ -713,6 +716,7 @@ async def run_print_mode(
     session_manager: SessionManager | None = None,
     provider_name: str = DEFAULT_PROVIDER_NAME,
     provider_settings: ProviderSettings | None = None,
+    durable_provider_settings: ProviderSettings | None = None,
     runtime_provider_config: ProviderConfig | None = None,
     shell_command_prefix: str | None = None,
     extension_paths: tuple[Path, ...] = (),
@@ -736,6 +740,7 @@ async def run_print_mode(
             session_manager=session_manager,
             provider_name=provider_name,
             provider_settings=provider_settings,
+            durable_provider_settings=durable_provider_settings,
             runtime_provider_config=runtime_provider_config,
             shell_command_prefix=shell_command_prefix,
             extension_paths=extension_paths,

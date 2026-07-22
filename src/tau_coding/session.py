@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import string
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
 
@@ -91,10 +91,9 @@ from tau_coding.provider_config import (
     save_default_provider_model,
     save_provider_thinking_level,
     toggle_saved_scoped_model,
-    upsert_provider,
     validate_provider_model,
 )
-from tau_coding.provider_runtime import ClosableModelProvider, create_model_provider
+from tau_coding.provider_runtime import create_model_provider
 from tau_coding.reload import CodingReloadSummary, ReloadCategorySummary
 from tau_coding.resources import (
     ResourceDiagnostic,
@@ -138,6 +137,8 @@ class ModelChoice:
 
     provider_name: str
     model: str
+    provider_display_name: str | None = field(default=None, compare=False)
+    model_display_name: str | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,6 +215,7 @@ class CodingSessionConfig:
     command_registry: CommandRegistry | None = None
     provider_name: str = "openai"
     provider_settings: ProviderSettings | None = None
+    durable_provider_settings: ProviderSettings | None = None
     runtime_provider_config: ProviderConfig | None = None
     auto_compact_token_threshold: int | None = None
     auto_compact_enabled: bool = True
@@ -276,6 +278,9 @@ class CodingSession:
         self._command_registry = command_registry or create_default_command_registry()
         self._provider_name = config.provider_name
         self._provider_settings = config.provider_settings
+        self._durable_provider_settings = (
+            config.durable_provider_settings or config.provider_settings
+        )
         self._runtime_provider_config = config.runtime_provider_config
         self._resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
         self._auto_compact_token_threshold = config.auto_compact_token_threshold
@@ -285,7 +290,7 @@ class CodingSession:
             default=_default_thinking_level_for_active_model(self),
         )
         self._context_usage_cache: ContextUsageEstimate | None = None
-        self._owned_providers: list[ClosableModelProvider] = []
+        self._owned_providers: list[ModelProvider] = []
         self._diagnostic_logger = AgentCallDiagnosticLogger.from_paths(self._resource_paths.paths)
         self._credential_store = FileCredentialStore(
             credentials_path(self._resource_paths.paths) if self._resource_paths.paths else None
@@ -447,7 +452,14 @@ class CodingSession:
         if self._provider_settings is None:
             return (ModelChoice(provider_name=self._provider_name, model=self.model),)
         return tuple(
-            ModelChoice(provider_name=provider.name, model=model)
+            ModelChoice(
+                provider_name=provider.name,
+                model=model,
+                provider_display_name=(
+                    self._extension_runtime.provider_display_name(provider.name)
+                ),
+                model_display_name=_provider_model_display_name(provider, model),
+            )
             for provider in self._usable_provider_configs()
             for model in provider.models
         )
@@ -911,6 +923,57 @@ class CodingSession:
             return
         self._set_provider_model(provider_name, model, persist_default=persist_default)
 
+    async def select_extension_provider_model(
+        self,
+        provider_name: str,
+        model: str,
+    ) -> None:
+        """Create first, then atomically switch an extension-requested runtime.
+
+        A failed factory/auth/configuration leaves the current provider and model
+        untouched. Replaced Tau-owned runtimes are closed after the switch.
+        """
+        if self._provider_settings is None:
+            raise ProviderConfigError("Provider settings are not available for this session")
+        provider_config = self._provider_settings.get_provider(provider_name)
+        validate_provider_model(provider_config, model)
+        thinking_level = _coerced_thinking_level(
+            provider_config,
+            model=model,
+            current=self._thinking_level,
+        )
+        try:
+            candidate = await self._extension_runtime.create_provider_runtime(provider_name, model)
+            if candidate is None:
+                candidate = create_model_provider(
+                    provider_config,
+                    credential_store=self._credential_store,
+                    model=model,
+                    thinking_level=thinking_level,
+                )
+        except RuntimeError as exc:
+            raise ProviderConfigError(str(exc)) from exc
+
+        previous = self._harness.config.provider
+        self._harness.config.provider = candidate
+        self._provider_name = provider_name
+        self._runtime_provider_config = provider_config
+        self._harness.config.model = model
+        self._thinking_level = thinking_level
+        self._invalidate_runtime_model_limits()
+        self._owned_providers.append(candidate)
+        if previous in self._owned_providers:
+            self._owned_providers.remove(previous)
+            close = getattr(previous, "aclose", None)
+            if close is not None:
+                await close()
+        if self._config.session_id is not None and self._config.session_manager is not None:
+            self._config.session_manager.touch_session(
+                self._config.session_id,
+                model=model,
+                provider_name=provider_name,
+            )
+
     def sync_extension_providers(
         self,
         providers: tuple[OpenAICompatibleProviderConfig, ...],
@@ -919,24 +982,24 @@ class CodingSession:
         """Refresh process-local providers registered by the extension runtime."""
         if self._provider_settings is None:
             return
+        durable = self._durable_provider_settings or self._provider_settings
         retained = tuple(
-            provider
-            for provider in self._provider_settings.providers
-            if provider.name not in owned_names
+            provider for provider in durable.providers if provider.name not in owned_names
         )
-        default_provider = self._provider_settings.default_provider
+        default_provider = durable.default_provider
         if default_provider in owned_names and default_provider not in {
             provider.name for provider in providers
         }:
             default_provider = retained[0].name if retained else self.provider_name
-        settings = ProviderSettings(
-            default_provider=default_provider,
-            providers=retained,
-            scoped_models=self._provider_settings.scoped_models,
+        overlays = {provider.name: provider for provider in providers}
+        composed = tuple(overlays.pop(provider.name, provider) for provider in retained) + tuple(
+            overlays.values()
         )
-        for provider in providers:
-            settings = upsert_provider(settings, provider)
-        self._provider_settings = settings
+        self._provider_settings = ProviderSettings(
+            default_provider=default_provider,
+            providers=composed,
+            scoped_models=durable.scoped_models,
+        )
 
     def is_scoped_model(self, choice: ModelChoice) -> bool:
         """Return whether a provider/model pair is in the scoped model list."""
@@ -1175,6 +1238,7 @@ class CodingSession:
         before the command reports completion.
         """
         await self._extension_runtime.emit_session_shutdown("reload")
+        await self._extension_runtime.shutdown_provider_tasks()
         before_skills = _skill_signatures(self._skills)
         before_prompt_templates = _prompt_template_signatures(self._prompt_templates)
         before_context_files = _context_file_signatures(self._context_files)
@@ -1283,7 +1347,10 @@ class CodingSession:
             return
         previous_settings = self._provider_settings
         previous_thinking_level = self._thinking_level
-        self._provider_settings = load_provider_settings(self._resource_paths.paths)
+        self._durable_provider_settings = load_provider_settings(self._resource_paths.paths)
+        self._provider_settings = self._extension_runtime.compose_provider_settings(
+            self._durable_provider_settings
+        )
         try:
             self._sync_thinking_level_to_active_model()
             self._refresh_runtime_provider()
@@ -1437,6 +1504,7 @@ class CodingSession:
         self._command_registry = replacement._command_registry
         self._provider_name = replacement._provider_name
         self._provider_settings = replacement._provider_settings
+        self._durable_provider_settings = replacement._durable_provider_settings
         self._runtime_provider_config = replacement._runtime_provider_config
         self._resource_paths = replacement._resource_paths
         self._auto_compact_token_threshold = replacement._auto_compact_token_threshold
@@ -1464,8 +1532,11 @@ class CodingSession:
     async def aclose(self) -> None:
         """Close runtime providers created by this coding session."""
         await self._extension_runtime.emit_session_shutdown("quit")
+        await self._extension_runtime.shutdown_provider_tasks()
         for provider in self._owned_providers:
-            await provider.aclose()
+            close = getattr(provider, "aclose", None)
+            if close is not None:
+                await close()
         self._owned_providers.clear()
 
     def handle_command(self, text: str) -> CommandResult:
@@ -2449,6 +2520,12 @@ def _provider_config_for_name(
     if config.runtime_provider_config is not None:
         return config.runtime_provider_config
     return None
+
+
+def _provider_model_display_name(provider: ProviderConfig, model: str) -> str | None:
+    metadata = getattr(provider, "model_metadata", {}).get(model)
+    name = getattr(metadata, "name", None)
+    return name if isinstance(name, str) else None
 
 
 def _state_thinking_level(
