@@ -26,7 +26,7 @@ This lives in `tau_coding`, not `tau_agent`, because update notification is CLI 
 
 `tau update` inspects the active environment before running anything:
 
-- `uv-receipt.toml` means uv owns the tool, so Tau runs `uv tool upgrade tau-ai`.
+- `uv-receipt.toml` means uv owns the tool. Tau fetches the latest stable PyPI version and runs `uv tool install tau-ai@<latest-version>`, explicitly replacing any version pin recorded when the tool was installed.
 - `pipx_metadata.json` means pipx owns it, so Tau runs `pipx upgrade tau-ai`.
 - The distribution's standard `INSTALLER` metadata identifies ordinary uv and pip installs. Tau runs either `uv pip install --python <current-python> --upgrade tau-ai` or `<current-python> -m pip install --upgrade tau-ai`, targeting the environment that is running Tau.
 

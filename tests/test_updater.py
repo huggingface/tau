@@ -34,11 +34,26 @@ def test_update_tau_uses_uv_tool_for_uv_owned_tool_environment(tmp_path: Path) -
         runner=runner,
         environment_prefix=tmp_path,
         inspect_distribution=False,
+        latest_version_fetcher=lambda: "0.2.4",
     )
 
     assert result.succeeded is True
-    assert result.command == ("uv", "tool", "upgrade", "tau-ai")
-    assert calls == [("uv", "tool", "upgrade", "tau-ai")]
+    assert result.command == ("uv", "tool", "install", "tau-ai@0.2.4")
+    assert calls == [("uv", "tool", "install", "tau-ai@0.2.4")]
+
+
+def test_update_tau_reports_uv_latest_version_lookup_failure(tmp_path: Path) -> None:
+    (tmp_path / "uv-receipt.toml").touch()
+
+    result = update_tau(
+        runner=_success,
+        environment_prefix=tmp_path,
+        inspect_distribution=False,
+        latest_version_fetcher=lambda: None,
+    )
+
+    assert result.succeeded is False
+    assert result.failures == ("Could not determine the latest Tau version from PyPI.",)
 
 
 def test_update_tau_uses_pipx_for_pipx_owned_environment(tmp_path: Path) -> None:
@@ -105,11 +120,12 @@ def test_update_tau_does_not_fall_back_when_owner_update_fails(tmp_path: Path) -
         runner=runner,
         environment_prefix=tmp_path,
         inspect_distribution=False,
+        latest_version_fetcher=lambda: "0.2.4",
     )
 
     assert result.succeeded is False
-    assert result.failures == ("uv tool upgrade tau-ai: uv failed",)
-    assert calls == [("uv", "tool", "upgrade", "tau-ai")]
+    assert result.failures == ("uv tool install tau-ai@0.2.4: uv failed",)
+    assert calls == [("uv", "tool", "install", "tau-ai@0.2.4")]
 
 
 def test_update_tau_refuses_direct_url_install(tmp_path: Path) -> None:

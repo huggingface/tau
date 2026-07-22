@@ -136,7 +136,7 @@ def test_update_command_upgrades_without_startup_check(monkeypatch: pytest.Monke
         cli,
         "update_tau",
         lambda: UpdateResult(
-            command=("uv", "tool", "upgrade", "tau-ai"),
+            command=("uv", "tool", "install", "tau-ai@0.2.4"),
             stdout="Updated tau-ai",
         ),
     )
@@ -145,7 +145,7 @@ def test_update_command_upgrades_without_startup_check(monkeypatch: pytest.Monke
 
     assert result.exit_code == 0
     assert "Updated tau-ai" in result.stdout
-    assert "Tau update completed with: uv tool upgrade tau-ai" in result.stdout
+    assert "Tau update completed with: uv tool install tau-ai@0.2.4" in result.stdout
 
 
 def test_update_command_reports_installer_failures(monkeypatch: pytest.MonkeyPatch) -> None:

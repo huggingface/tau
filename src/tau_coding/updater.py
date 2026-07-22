@@ -11,9 +11,10 @@ from pathlib import Path
 from subprocess import CompletedProcess, run
 from typing import Literal
 
-from tau_coding.update_check import PYPI_PACKAGE_NAME
+from tau_coding.update_check import PYPI_PACKAGE_NAME, fetch_latest_pypi_version
 
 CommandRunner = Callable[..., CompletedProcess[str]]
+LatestVersionFetcher = Callable[[], str | None]
 InstallMethod = Literal["uv-tool", "uv-pip", "pipx", "pip"]
 
 
@@ -39,6 +40,7 @@ def update_tau(
     direct_url: str | None = None,
     installer: str | None = None,
     inspect_distribution: bool = True,
+    latest_version_fetcher: LatestVersionFetcher = fetch_latest_pypi_version,
 ) -> UpdateResult:
     """Upgrade Tau with the installer that owns the active environment.
 
@@ -70,8 +72,17 @@ def update_tau(
             f"({prefix}). Package metadata reports: {installed_by}."
         )
 
+    latest_version: str | None = None
+    if method == "uv-tool":
+        try:
+            latest_version = latest_version_fetcher()
+        except Exception as exc:  # noqa: BLE001 - report update lookup failures to the user
+            return _failure(f"Could not determine the latest Tau version from PyPI: {exc}")
+        if latest_version is None:
+            return _failure("Could not determine the latest Tau version from PyPI.")
+
     executable = python_executable or sys.executable
-    command = _update_command(method, executable)
+    command = _update_command(method, executable, latest_version=latest_version)
     completed = _run(runner, command)
     if isinstance(completed, str):
         return _failure(f"{' '.join(command)}: {completed}")
@@ -98,9 +109,16 @@ def detect_install_method(prefix: Path, *, installer: str | None = None) -> Inst
     return None
 
 
-def _update_command(method: InstallMethod, python_executable: str) -> tuple[str, ...]:
+def _update_command(
+    method: InstallMethod,
+    python_executable: str,
+    *,
+    latest_version: str | None = None,
+) -> tuple[str, ...]:
     if method == "uv-tool":
-        return ("uv", "tool", "upgrade", PYPI_PACKAGE_NAME)
+        if latest_version is None:
+            raise ValueError("latest_version is required for uv tool updates")
+        return ("uv", "tool", "install", f"{PYPI_PACKAGE_NAME}@{latest_version}")
     if method == "uv-pip":
         return (
             "uv",

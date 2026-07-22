@@ -39,9 +39,11 @@ For a normal install, let Tau detect and reuse the installer that owns its envir
 tau update
 ```
 
-Tau reuses uv or pipx when their environment receipt is present. For ordinary
-Python installs, standard package metadata tells Tau whether to use uv or pip,
-and Tau targets the exact Python environment running it. It stops instead of
+Tau reuses uv or pipx when their environment receipt is present. For uv tools,
+it installs the latest stable version explicitly so an older version pin cannot
+block the update. For ordinary Python installs, standard package metadata tells
+Tau whether to use uv or pip, and Tau targets the exact Python environment
+running it. It stops instead of
 switching installers for editable, direct-URL, Conda/Pixi, or unrecognized
 installations.
 
