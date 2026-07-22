@@ -296,7 +296,7 @@ def main(
     if prompt_option is None:
         notice = _startup_update_notice()
         try:
-            anyio.run(
+            resumable_session_id = anyio.run(
                 run_openai_tui,
                 model,
                 cwd or Path.cwd(),
@@ -312,6 +312,8 @@ def main(
             )
         except (RuntimeError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
+        if resumable_session_id is not None:
+            typer.echo(f"To resume this session: tau --resume {resumable_session_id}")
         raise typer.Exit()
 
     prompt = prompt_option
@@ -353,11 +355,11 @@ async def run_openai_tui(
     extension_paths: tuple[Path, ...] = (),
     extensions_enabled: bool = True,
     project_extensions_enabled: bool = False,
-) -> None:
-    """Run the Textual TUI with the default OpenAI-compatible provider."""
+) -> str | None:
+    """Run the Textual TUI and return its resumable session id, if any."""
     release_notes_notice = startup_release_notes_notice(_current_version())
     startup_notices = (release_notes_notice.message,) if release_notes_notice is not None else ()
-    await run_tui_app(
+    return await run_tui_app(
         model=model,
         cwd=cwd,
         session_id=session_id,
