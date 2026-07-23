@@ -116,6 +116,7 @@ class CommandResult:
     model_picker_requested: bool = False
     tools_picker_requested: bool = False
     scoped_models_picker_requested: bool = False
+    skills_picker_requested: bool = False
     theme_picker_requested: bool = False
     thinking_level: str | None = None
     theme: str | None = None
@@ -265,6 +266,15 @@ def create_default_command_registry() -> CommandRegistry:
             description="Expand a loaded skill into your prompt.",
             handler=_skill_command,
             search_terms=("skills",),
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="skills",
+            usage="/skills",
+            description="Browse and insert a loaded skill.",
+            handler=_skills_command,
+            search_terms=("skill", "picker", "search"),
         )
     )
     registry.register(
@@ -471,22 +481,9 @@ def _hotkeys_command(context: CommandContext) -> CommandResult:
 
 
 def _skills_command(context: CommandContext) -> CommandResult:
-    if not context.session.skills:
-        lines = ["No skills loaded."]
-        if context.session.resource_diagnostics:
-            lines.append("")
-            lines.extend(_format_diagnostics(context.session.resource_diagnostics, kind="skill"))
-        return CommandResult(handled=True, message="\n".join(lines))
-
-    lines = ["Available skills:"]
-    for skill in sorted(context.session.skills, key=lambda item: item.name):
-        description = skill.description or "No description"
-        lines.append(f"- {skill.name}: {description}")
-    lines.append("Use a skill with /skill:<name> [request].")
-    if context.session.resource_diagnostics:
-        lines.append("")
-        lines.extend(_format_diagnostics(context.session.resource_diagnostics, kind="skill"))
-    return CommandResult(handled=True, message="\n".join(lines))
+    if context.args:
+        return CommandResult(handled=True, message="Usage: /skills")
+    return CommandResult(handled=True, skills_picker_requested=True)
 
 
 def _resources_command(context: CommandContext) -> CommandResult:
