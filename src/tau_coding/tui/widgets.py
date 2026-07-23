@@ -1505,15 +1505,22 @@ def render_session_sidebar(
         "off" if threshold is None else f"auto at {_compact_token_count(threshold)}",
         style=theme.completion_description,
     )
-    tools = _comma_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
+    tools = _comma_list(
+        [tool.name for tool in session.tools],
+        empty="No tools",
+        overflow_hint="Run /tools to see the full list.",
+        theme=theme,
+    )
     skills = _limited_bullet_list(
         [skill.name for skill in session.skills],
         empty="No skills loaded",
+        overflow_hint="Run /skills to see the full list.",
         theme=theme,
     )
     prompts = _comma_list(
         [template.name for template in session.prompt_templates],
         empty="No prompt templates",
+        overflow_hint="Run /prompts to see the full list.",
         theme=theme,
     )
     extensions = _comma_list(
@@ -2130,6 +2137,7 @@ class _LineLimitedCommaList:
     items: tuple[str, ...]
     empty: str
     style: str
+    overflow_hint: str | None
 
     def __rich_console__(
         self,
@@ -2153,6 +2161,8 @@ class _LineLimitedCommaList:
             if visible_count:
                 text.append("\n")
             text.append(f"...({hidden_count} more)", style=self.style)
+            if self.overflow_hint is not None:
+                text.append(f"\n{self.overflow_hint}", style=self.style)
         yield text
 
     def _text(self, items: Sequence[str]) -> Text:
@@ -2169,11 +2179,13 @@ def _comma_list(
     *,
     empty: str,
     theme: TuiTheme,
+    overflow_hint: str | None = None,
 ) -> RenderableType:
     return _LineLimitedCommaList(
         items=tuple(items),
         empty=empty,
         style=theme.completion_description,
+        overflow_hint=overflow_hint,
     )
 
 
@@ -2200,6 +2212,7 @@ def _limited_bullet_list(
     *,
     empty: str,
     theme: TuiTheme,
+    overflow_hint: str | None = None,
 ) -> Text:
     text = _bullet_list(
         items[:SIDEBAR_BULLET_LIST_LIMIT],
@@ -2209,6 +2222,8 @@ def _limited_bullet_list(
     hidden_count = len(items) - SIDEBAR_BULLET_LIST_LIMIT
     if hidden_count > 0:
         text.append(f"\n...({hidden_count} more)", style=theme.completion_description)
+        if overflow_hint is not None:
+            text.append(f"\n{overflow_hint}", style=theme.completion_description)
     return text
 
 

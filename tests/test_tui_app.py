@@ -520,8 +520,10 @@ def test_session_sidebar_limits_skills_to_five(
     assert "skill-7" not in output
     if hidden_label is None:
         assert "more)" not in output
+        assert "Run /skills" not in output
     else:
         assert hidden_label in output
+        assert "Run /skills to see the full list." in output
 
 
 def test_session_sidebar_limits_context_files_to_five() -> None:
@@ -540,6 +542,7 @@ def test_session_sidebar_limits_context_files_to_five() -> None:
     assert "context-6.md" not in output
     assert "context-7.md" not in output
     assert "...(2 more)" in output
+    assert "Run /context" not in output
 
 
 def test_comma_list_limits_by_rendered_lines_instead_of_item_count() -> None:
@@ -562,12 +565,17 @@ def test_comma_list_limits_by_rendered_lines_instead_of_item_count() -> None:
 
 
 @pytest.mark.parametrize(
-    ("attribute", "prefix"),
-    [("tools", "tool"), ("prompt_templates", "prompt"), ("extension_names", "extension")],
+    ("attribute", "prefix", "command"),
+    [
+        ("tools", "tool", "/tools"),
+        ("prompt_templates", "prompt", "/prompts"),
+        ("extension_names", "extension", None),
+    ],
 )
 def test_session_sidebar_limits_comma_separated_sections_to_three_lines(
     attribute: str,
     prefix: str,
+    command: str | None,
 ) -> None:
     session = FakeSession()
     names = tuple(f"{prefix}-item-{index}" for index in range(1, 20))
@@ -583,6 +591,10 @@ def test_session_sidebar_limits_comma_separated_sections_to_three_lines(
     assert names[0] in output
     assert names[-1] not in output
     assert "...(" in output
+    if command is None:
+        assert "Run /extensions" not in output
+    else:
+        assert f"Run {command} to see the full list." in output
 
 
 def test_session_sidebar_uses_na_when_cost_is_unavailable() -> None:
