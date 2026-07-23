@@ -114,7 +114,7 @@ from tau_coding.provider_config import (
     upsert_saved_provider,
 )
 from tau_coding.provider_runtime import create_model_provider
-from tau_coding.resources import TauResourcePaths
+from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
 from tau_coding.session import (
     TREE_RUNNING_MESSAGE,
     CodingSession,
@@ -946,6 +946,90 @@ class ExtensionInputScreen(ModalScreen[str | None]):
     def action_cancel(self) -> None:
         """Close without submitting text."""
         self.dismiss(None)
+
+
+@dataclass(frozen=True, slots=True)
+class ExtensionInventoryItem:
+    """One searchable extension or diagnostic row."""
+
+    name: str
+    detail: str
+    search_text: str
+
+
+class ExtensionsScreen(ModalScreen[None]):
+    """Searchable read-only inventory of extensions and diagnostics."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [Binding("escape", "cancel", "Close")]
+
+    def __init__(self, runtime: object, *, theme: TuiTheme) -> None:
+        super().__init__()
+        info = tuple(getattr(runtime, "extension_info", ()))
+        diagnostics = tuple(
+            diagnostic
+            for diagnostic in getattr(runtime, "diagnostics", ())
+            if isinstance(diagnostic, ResourceDiagnostic) and diagnostic.kind == "extension"
+        )
+        rows = [
+            ExtensionInventoryItem(
+                name=extension.name,
+                detail=f"{extension.scope} · {extension.status}\n{extension.path}",
+                search_text=(
+                    f"{extension.name} {extension.scope} {extension.status} {extension.path}"
+                ).lower(),
+            )
+            for extension in info
+        ]
+        rows.extend(
+            ExtensionInventoryItem(
+                name=diagnostic.name or (diagnostic.path.name if diagnostic.path else "Diagnostic"),
+                detail=f"{diagnostic.severity} · {diagnostic.message}"
+                + (f"\n{diagnostic.path}" if diagnostic.path else ""),
+                search_text=diagnostic.format().lower(),
+            )
+            for diagnostic in diagnostics
+        )
+        self.rows = tuple(rows)
+        self.visible_rows = self.rows
+        self.theme = theme
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="extensions-screen"):
+            yield Static("Extensions", id="extensions-title")
+            yield Input(placeholder="Search extensions", id="extensions-search")
+            yield ListView(id="extensions-list")
+            yield Static("Escape closes", id="extensions-help")
+
+    def on_mount(self) -> None:
+        self.query_one("#extensions-search", Input).focus()
+        self._refresh_rows("")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "extensions-search":
+            event.stop()
+            self._refresh_rows(event.value)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def _refresh_rows(self, query: str) -> None:
+        needle = query.strip().lower()
+        self.visible_rows = tuple(row for row in self.rows if needle in row.search_text)
+        listing = self.query_one("#extensions-list", ListView)
+        listing.clear()
+        if self.visible_rows:
+            listing.extend(
+                ListItem(Label(f"{row.name}\n{row.detail}", markup=False))
+                for row in self.visible_rows
+            )
+            help_text = "Escape closes"
+        else:
+            empty = (
+                "No extensions loaded" if not self.rows and not needle else "No matching extensions"
+            )
+            listing.append(ListItem(Label(empty, markup=False), disabled=True))
+            help_text = f"{empty} · Escape closes"
+        self.query_one("#extensions-help", Static).update(help_text)
 
 
 class SessionPickerSearchInput(Input):
@@ -2554,12 +2638,14 @@ class TauTuiApp(App[None]):
 
     SessionPickerScreen,
     TreePickerScreen,
-    CommandOutputScreen {
+    CommandOutputScreen,
+    ExtensionsScreen {
         align: center middle;
     }
 
     #session-picker,
-    #tree-picker {
+    #tree-picker,
+    #extensions-screen {
         width: 76;
         max-width: 90%;
         height: auto;
@@ -2570,14 +2656,16 @@ class TauTuiApp(App[None]):
     }
 
     #session-picker-title,
-    #tree-picker-title {
+    #tree-picker-title,
+    #extensions-title {
         height: 1;
         color: $tau-chrome-text;
         text-style: bold;
         margin-bottom: 1;
     }
 
-    #session-picker-search {
+    #session-picker-search,
+    #extensions-search {
         height: 3;
         margin-bottom: 1;
         background: $tau-prompt-background;
@@ -2586,7 +2674,8 @@ class TauTuiApp(App[None]):
     }
 
     #session-picker-list,
-    #tree-picker-list {
+    #tree-picker-list,
+    #extensions-list {
         height: auto;
         max-height: 16;
         background: $tau-transcript-background;
@@ -2604,7 +2693,8 @@ class TauTuiApp(App[None]):
     }
 
     #session-picker-help,
-    #tree-picker-help {
+    #tree-picker-help,
+    #extensions-help {
         height: 1;
         margin-top: 1;
         color: $tau-muted-text;
@@ -3261,6 +3351,13 @@ class TauTuiApp(App[None]):
                 self._open_scoped_models_picker()
             if command.theme_picker_requested:
                 self._open_theme_picker()
+            if command.extensions_picker_requested:
+                self.push_screen(
+                    ExtensionsScreen(
+                        self.session.extension_runtime,
+                        theme=self.tui_settings.resolved_theme,
+                    )
+                )
             if command.thinking_level is not None:
                 await self._set_thinking_level(command.thinking_level)
             if command.theme is not None:

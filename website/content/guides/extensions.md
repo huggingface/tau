@@ -87,6 +87,13 @@ Use those lifecycle hooks to stop and restart background work and to remount UI.
 > Project extensions are therefore off by default — enable them with
 > `--project-extensions` only in repositories you trust.
 
+In the TUI, run `/extensions` to open a searchable inventory. Each loaded
+extension shows its name, entry path, source scope (`project`, `user`, or
+`explicit`), and load status. Discovery, import, setup, and runtime diagnostics
+appear in the same view. The inventory is intentionally read-only: Tau does not
+claim ownership of manually placed, project, or `-e` extension files and never
+deletes them.
+
 ## The extension API
 
 ```python

@@ -114,6 +114,16 @@ class BoundSession(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class ExtensionInfo:
+    """User-facing metadata for one loaded extension."""
+
+    name: str
+    path: Path
+    scope: Literal["project", "user", "explicit"]
+    status: Literal["loaded"] = "loaded"
+
+
+@dataclass(frozen=True, slots=True)
 class ExtensionCommand:
     """A slash command registered by an extension."""
 
@@ -167,6 +177,7 @@ class ExtensionRuntime:
         self._harness_unsubscribe: Callable[[], None] | None = None
         self._extension_turn_index = 0
         self._generation = ExtensionGeneration()
+        self._extension_info: list[ExtensionInfo] = []
 
     # -- loading -----------------------------------------------------------
 
@@ -186,8 +197,22 @@ class ExtensionRuntime:
             include_project_dir=include_project_dir,
         )
         self._load_diagnostics.extend(result.diagnostics)
+        project_dir = paths.cwd / ".tau" / "extensions" if paths.cwd is not None else None
+        user_dir = paths.root / "extensions"
         for extension in result.extensions:
             self._setup_extension(extension)
+            if extension.name in self.extension_names:
+                self._extension_info.append(
+                    ExtensionInfo(
+                        name=extension.name,
+                        path=extension.path,
+                        scope=_extension_scope(
+                            extension.path,
+                            project_dir=project_dir,
+                            user_dir=user_dir,
+                        ),
+                    )
+                )
 
     def reset_for_reload(self) -> None:
         """Drop all registrations and imported modules ahead of a re-load.
@@ -210,6 +235,7 @@ class ExtensionRuntime:
             self._harness_unsubscribe()
             self._harness_unsubscribe = None
         self._extensions.clear()
+        self._extension_info.clear()
         self._tools.clear()
         self._commands.clear()
         self._prompt_guidelines.clear()
@@ -538,6 +564,11 @@ class ExtensionRuntime:
     def extension_names(self) -> tuple[str, ...]:
         """Return loaded extension names in load order."""
         return tuple(extension.name for extension in self._extensions)
+
+    @property
+    def extension_info(self) -> tuple[ExtensionInfo, ...]:
+        """Return metadata for loaded extensions in load order."""
+        return tuple(self._extension_info)
 
     @property
     def diagnostics(self) -> tuple[ResourceDiagnostic, ...]:
@@ -895,6 +926,17 @@ class ExtensionRuntime:
                 ),
             )
         )
+
+
+def _extension_scope(
+    path: Path, *, project_dir: Path | None, user_dir: Path
+) -> Literal["project", "user", "explicit"]:
+    resolved = path.resolve()
+    if project_dir is not None and resolved.is_relative_to(project_dir.resolve()):
+        return "project"
+    if resolved.is_relative_to(user_dir.resolve()):
+        return "user"
+    return "explicit"
 
 
 async def _resolve(value: object) -> object:
