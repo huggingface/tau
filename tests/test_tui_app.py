@@ -4031,7 +4031,13 @@ async def test_tui_app_prompts_picker_filters_and_inserts_without_submitting() -
 
         assert isinstance(app.screen, PromptTemplatePickerScreen)
         search = app.screen.query_one("#prompt-template-picker-search", Input)
+        picker_list = app.screen.query_one("#prompt-template-picker-list", ListView)
         assert search.has_focus
+        assert picker_list.index == 0
+        await pilot.press("down")
+        assert picker_list.index == 1
+        await pilot.press("up")
+        assert picker_list.index == 0
         await pilot.press("z")
         assert app.screen.visible_templates == ()
         assert "No matching prompt templates" in str(

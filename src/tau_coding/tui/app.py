@@ -4336,6 +4336,7 @@ class TauTuiApp(App[None]):
         if isinstance(
             self.screen,
             SessionPickerScreen
+            | PromptTemplatePickerScreen
             | TreePickerScreen
             | LoginMethodPickerScreen
             | LoginProviderPickerScreen
@@ -4362,6 +4363,7 @@ class TauTuiApp(App[None]):
         if isinstance(
             self.screen,
             SessionPickerScreen
+            | PromptTemplatePickerScreen
             | TreePickerScreen
             | LoginMethodPickerScreen
             | LoginProviderPickerScreen
@@ -4386,6 +4388,7 @@ class TauTuiApp(App[None]):
         if isinstance(
             self.screen,
             SessionPickerScreen
+            | PromptTemplatePickerScreen
             | TreePickerScreen
             | LoginMethodPickerScreen
             | LoginProviderPickerScreen
