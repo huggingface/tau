@@ -977,36 +977,35 @@ class CodingSession:
     def sync_extension_providers(
         self,
         providers: tuple[OpenAICompatibleProviderConfig, ...],
-        owned_names: frozenset[str],
     ) -> None:
-        """Refresh process-local providers registered by the extension runtime."""
+        """Compose current process-local overlays over every durable provider."""
         if self._provider_settings is None:
             return
         durable = self._durable_provider_settings or self._provider_settings
-        retained = tuple(
-            provider for provider in durable.providers if provider.name not in owned_names
-        )
-        default_provider = durable.default_provider
-        if default_provider in owned_names and default_provider not in {
-            provider.name for provider in providers
-        }:
-            default_provider = retained[0].name if retained else self.provider_name
         overlays = {provider.name: provider for provider in providers}
-        composed = tuple(overlays.pop(provider.name, provider) for provider in retained) + tuple(
-            overlays.values()
-        )
+        composed = tuple(
+            overlays.pop(provider.name, provider) for provider in durable.providers
+        ) + tuple(overlays.values())
         self._provider_settings = ProviderSettings(
-            default_provider=default_provider,
+            default_provider=durable.default_provider,
             providers=composed,
             scoped_models=durable.scoped_models,
         )
+
+    def is_extension_provider(self, provider_name: str) -> bool:
+        """Return whether the effective provider is a process-local extension layer."""
+        return self._extension_runtime.is_dynamic_provider(provider_name)
 
     def is_scoped_model(self, choice: ModelChoice) -> bool:
         """Return whether a provider/model pair is in the scoped model list."""
         return choice in self.scoped_model_choices
 
     def toggle_scoped_model(self, choice: ModelChoice) -> tuple[ModelChoice, ...]:
-        """Add or remove a model from the persisted scoped model list."""
+        """Add or remove a durable model from the persisted scoped model list."""
+        if self.is_extension_provider(choice.provider_name):
+            raise ProviderConfigError(
+                "Process-local extension models cannot be saved as scoped models"
+            )
         if self._provider_settings is None:
             raise ProviderConfigError("Provider settings are not available for this session")
         available = set(self.available_model_choices)
@@ -1159,7 +1158,7 @@ class CodingSession:
         )
 
     def _persist_default_model_choice(self) -> None:
-        if self._provider_settings is None:
+        if self._provider_settings is None or self.is_extension_provider(self.provider_name):
             return
         self._provider_settings = save_default_provider_model(
             provider_name=self.provider_name,
@@ -1170,7 +1169,7 @@ class CodingSession:
         self._sync_thinking_level_to_active_model()
 
     def _persist_thinking_level_choice(self) -> None:
-        if self._provider_settings is None:
+        if self._provider_settings is None or self.is_extension_provider(self.provider_name):
             return
         provider = self._active_provider_config()
         if provider is None or self._thinking_level not in provider_thinking_levels(
@@ -1405,6 +1404,7 @@ class CodingSession:
                 command_registry=self._config.command_registry,
                 provider_name=provider_name,
                 provider_settings=self._provider_settings,
+                durable_provider_settings=self._durable_provider_settings,
                 runtime_provider_config=runtime_provider_config,
                 auto_compact_token_threshold=self._auto_compact_token_threshold,
                 auto_compact_enabled=self._auto_compact_enabled,

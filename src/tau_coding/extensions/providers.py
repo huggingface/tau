@@ -158,7 +158,7 @@ class DynamicProviderRegistry:
 
     def register(self, source: str, provider: DynamicProvider) -> DynamicProvider:
         """Validate then atomically add/replace the caller's layer."""
-        normalized = _validate_provider(provider)
+        normalized = validate_provider(provider)
         layers = self._layers.get(normalized.id, [])
         existing = next((layer for layer in layers if layer.source == source), None)
         sequence = existing.sequence if existing is not None else self._next_sequence
@@ -266,7 +266,7 @@ def provider_to_config(provider: DynamicProvider) -> OpenAICompatibleProviderCon
     )
 
 
-def _validate_provider(provider: DynamicProvider) -> DynamicProvider:
+def validate_provider(provider: DynamicProvider) -> DynamicProvider:
     provider_id = provider.id.strip()
     display_name = provider.display_name.strip()
     base_url = provider.transport.base_url.strip().rstrip("/")

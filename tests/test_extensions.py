@@ -145,7 +145,6 @@ class RecordingSession:
     def sync_extension_providers(
         self,
         providers: tuple[object, ...],
-        owned_names: frozenset[str],
     ) -> None:
         self.extension_providers = providers
 
@@ -1992,6 +1991,56 @@ async def test_reload_awaits_shutdown_before_invalidation_and_starts_new_generat
     ]
 
 
+async def test_resume_preserves_durable_provider_base_for_override_restoration(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    from tau_coding import SessionManager, TauPaths
+
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "override")
+    api.register_provider(
+        DynamicProvider(
+            id="openai",
+            display_name="Local OpenAI override",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+            auth=NoAuth(),
+            models=(ProviderModel(id="local-model"),),
+        )
+    )
+    durable = ProviderSettings()
+    builtin = durable.get_provider("openai")
+    composed = runtime.compose_provider_settings(durable)
+    manager = SessionManager(
+        TauPaths(home=tmp_path / "home-tau", agents_home=tmp_path / "home-agents")
+    )
+    cwd = tmp_path / "project"
+    first = manager.create_session(cwd=cwd, model="local-model", provider_name="openai")
+    resumed = manager.create_session(cwd=cwd, model="local-model", provider_name="openai")
+    config = dataclass_replace(
+        _session_config(tmp_path, FakeProvider([])),
+        model="local-model",
+        cwd=cwd,
+        storage=JsonlSessionStorage(first.path),
+        session_id=first.id,
+        session_manager=manager,
+        provider_name="openai",
+        provider_settings=composed,
+        durable_provider_settings=durable,
+        extension_runtime=runtime,
+    )
+    session = await CodingSession.load(config)
+
+    await session.resume(resumed.id)
+    api.unregister_provider("openai")
+
+    assert session._durable_provider_settings == durable
+    assert session._provider_settings is not None
+    assert session._provider_settings.get_provider("openai") == builtin
+    await session.aclose()
+
+
 async def test_session_rebinding_does_not_invalidate_extension_instances(
     tmp_path: Path,
 ) -> None:
@@ -2120,6 +2169,40 @@ def test_extension_provider_allows_dormant_and_layered_restoration(tmp_path: Pat
 
     second.unregister_provider("shared")
     assert runtime.dynamic_providers[0].display_name == "First"
+
+
+async def test_bound_provider_override_unregister_restores_durable_definition(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "override")
+    durable = ProviderSettings()
+    builtin = durable.get_provider("openai")
+    api.register_provider(
+        DynamicProvider(
+            id="openai",
+            display_name="Local OpenAI override",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+            models=(ProviderModel(id="local-model"),),
+        )
+    )
+    session = await CodingSession.load(
+        dataclass_replace(
+            _session_config(tmp_path, FakeProvider([])),
+            extension_runtime=runtime,
+            provider_settings=runtime.compose_provider_settings(durable),
+            durable_provider_settings=durable,
+        )
+    )
+    assert session._provider_settings is not None
+    assert session._provider_settings.get_provider("openai").models == ("local-model",)
+
+    api.unregister_provider("openai")
+
+    assert session._provider_settings.get_provider("openai") == builtin
+    await session.aclose()
 
 
 def test_extension_provider_override_restores_builtin_definition() -> None:
@@ -2267,6 +2350,51 @@ async def test_refresh_replaces_active_runtime_when_model_remains_advertised(
     await api.refresh_provider_models("local")
 
     assert session.selected_model == ("local", "coder")
+
+
+async def test_reregistration_cancels_stale_provider_refresh() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def stale_refresh(context) -> tuple[ProviderModel, ...]:  # noqa: ANN001
+        started.set()
+        await release.wait()
+        return (ProviderModel(id="stale"),)
+
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "owner")
+    api.register_provider(
+        DynamicProvider(
+            id="local",
+            display_name="Old",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+            models=(ProviderModel(id="cached"),),
+            refresh_models=stale_refresh,
+        )
+    )
+    task = asyncio.create_task(api.refresh_provider_models("local"))
+    await started.wait()
+
+    async def new_refresh(context) -> tuple[ProviderModel, ...]:  # noqa: ANN001
+        return (ProviderModel(id="fresh-new"),)
+
+    api.register_provider(
+        DynamicProvider(
+            id="local",
+            display_name="New",
+            transport=OpenAICompatibleTransport("http://localhost:8081/v1"),
+            models=(ProviderModel(id="new"),),
+            refresh_models=new_refresh,
+        )
+    )
+    refreshed = await api.refresh_provider_models("local")
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert refreshed[0].id == "fresh-new"
+    assert runtime.dynamic_providers[0].display_name == "New"
+    assert tuple(model.id for model in runtime.dynamic_providers[0].models) == ("fresh-new",)
 
 
 async def test_unregister_cancels_owned_provider_refresh() -> None:

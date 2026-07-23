@@ -72,6 +72,7 @@ from tau_coding.extensions.providers import (
     ProviderModel,
     ProviderRefreshContext,
     provider_to_config,
+    validate_provider,
 )
 from tau_coding.provider_config import OpenAICompatibleProviderConfig, ProviderSettings
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
@@ -128,7 +129,6 @@ class BoundSession(Protocol):
     def sync_extension_providers(
         self,
         providers: tuple[OpenAICompatibleProviderConfig, ...],
-        owned_names: frozenset[str],
     ) -> None: ...
 
     async def select_extension_provider_model(self, provider_name: str, model: str) -> None: ...
@@ -177,7 +177,6 @@ class ExtensionRuntime:
         self._extensions: list[RegisteredExtension] = []
         self._tools: dict[str, RegisteredExtensionTool] = {}
         self._providers = DynamicProviderRegistry()
-        self._provider_names_seen: set[str] = set()
         self._provider_refresh_tasks: dict[
             tuple[str, str], asyncio.Task[tuple[ProviderModel, ...]]
         ] = {}
@@ -319,12 +318,14 @@ class ExtensionRuntime:
     def register_provider(self, extension_name: str, provider: DynamicProvider) -> None:
         """Atomically register/replace one source layer; dormant providers are valid."""
         try:
-            # Validate the concrete v1 projection before changing the layer.
-            provider_to_config(provider)
-            normalized = self._providers.register(extension_name, provider)
+            # Fully validate before cancelling or changing the working layer.
+            normalized = validate_provider(provider)
+            provider_to_config(normalized)
         except (TypeError, ValueError) as exc:
             raise ExtensionError(str(exc)) from exc
-        self._provider_names_seen.add(normalized.id)
+        if self._providers.layer(extension_name, normalized.id) is not None:
+            self._cancel_provider_refresh(extension_name, normalized.id)
+        self._providers.register(extension_name, normalized)
         self._sync_bound_providers()
 
     async def refresh_provider_models(
@@ -394,8 +395,10 @@ class ExtensionRuntime:
         try:
             return await task
         finally:
-            self._provider_refresh_tasks.pop(key, None)
-            self._provider_refresh_cancellations.pop(key, None)
+            if self._provider_refresh_tasks.get(key) is task:
+                self._provider_refresh_tasks.pop(key, None)
+            if self._provider_refresh_cancellations.get(key) is cancelled:
+                self._provider_refresh_cancellations.pop(key, None)
 
     def unregister_provider(self, extension_name: str, name: str) -> None:
         """Remove only the caller's layer, restoring the previous definition."""
@@ -637,7 +640,6 @@ class ExtensionRuntime:
         effective = self._providers.effective_layers()
         self._session.sync_extension_providers(
             tuple(provider_to_config(layer.provider) for layer in effective),
-            frozenset(self._provider_names_seen),
         )
         active = (self._session.provider_name, self._session.model)
         layer = self._providers.effective_layer(active[0])
@@ -660,10 +662,10 @@ class ExtensionRuntime:
 
     def _cancel_provider_refresh(self, extension_name: str, provider_id: str) -> None:
         key = (extension_name, provider_id)
-        cancellation = self._provider_refresh_cancellations.get(key)
+        cancellation = self._provider_refresh_cancellations.pop(key, None)
         if cancellation is not None:
             cancellation.set()
-        task = self._provider_refresh_tasks.get(key)
+        task = self._provider_refresh_tasks.pop(key, None)
         if task is not None:
             task.cancel()
 
@@ -744,6 +746,10 @@ class ExtensionRuntime:
     def dynamic_providers(self) -> tuple[DynamicProvider, ...]:
         """Return effective dynamic providers in stable registry order."""
         return tuple(layer.provider for layer in self._providers.effective_layers())
+
+    def is_dynamic_provider(self, provider_id: str) -> bool:
+        """Return whether an extension layer currently owns this provider ID."""
+        return self._providers.effective_layer(provider_id) is not None
 
     def provider_display_name(self, provider_id: str) -> str | None:
         layer = self._providers.effective_layer(provider_id)

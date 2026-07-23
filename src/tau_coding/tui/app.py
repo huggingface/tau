@@ -4864,6 +4864,10 @@ class TauTuiApp(App[None]):
     def _handle_model_picker_result(self, choice: ModelChoice | None) -> None:
         if choice is None:
             return
+        is_extension_provider = getattr(self.session, "is_extension_provider", None)
+        if is_extension_provider is not None and is_extension_provider(choice.provider_name):
+            self.run_worker(self._select_extension_model(choice), exclusive=False)
+            return
         try:
             set_model_choice = getattr(self.session, "set_model_choice", None)
             if set_model_choice is None:
@@ -4872,6 +4876,15 @@ class TauTuiApp(App[None]):
                 self.session.set_model(choice.model)
             else:
                 set_model_choice(choice)
+        except Exception as exc:  # noqa: BLE001 - surface model switch failures in the TUI
+            self._notify(f"Could not switch model: {exc}", severity="error")
+            return
+        self._refresh_chrome()
+
+    async def _select_extension_model(self, choice: ModelChoice) -> None:
+        """Switch a process-local provider without persisting it as a host default."""
+        try:
+            await self.session.select_extension_provider_model(choice.provider_name, choice.model)
         except Exception as exc:  # noqa: BLE001 - surface model switch failures in the TUI
             self._notify(f"Could not switch model: {exc}", severity="error")
             return
