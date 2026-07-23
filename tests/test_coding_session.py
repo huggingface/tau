@@ -2246,6 +2246,10 @@ async def test_session_expands_prompt_templates_as_slash_commands(tmp_path: Path
         "Custom prompt for {{ arguments }}.",
         encoding="utf-8",
     )
+    (prompts_dir / "skills.md").write_text(
+        "This custom prompt must not shadow the built-in command.",
+        encoding="utf-8",
+    )
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(
         [
@@ -2265,8 +2269,11 @@ async def test_session_expands_prompt_templates_as_slash_commands(tmp_path: Path
     )
     session = await CodingSession.load(config)
 
-    assert [template.name for template in session.prompt_templates] == ["example"]
+    assert [template.name for template in session.prompt_templates] == ["example", "skills"]
     assert session.handle_command("/example src/app.py").handled is False
+    skills_result = session.handle_command("/skills")
+    assert skills_result.handled is True
+    assert skills_result.skills_picker_requested is True
 
     _events = await _collect_session_events(session.prompt("/example src/app.py"))
 
