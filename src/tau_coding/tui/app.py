@@ -956,6 +956,7 @@ class ToolsReferenceSearchInput(Input):
         Binding("escape", "cancel", "Cancel", show=False, priority=True),
         Binding("up", "cursor_up", "Up", show=False, priority=True),
         Binding("down", "cursor_down", "Down", show=False, priority=True),
+        Binding("enter", "open_selected", "Open", show=False, priority=True),
     ]
 
     def _reference(self) -> ToolsReferenceScreen:
@@ -975,15 +976,23 @@ class ToolsReferenceSearchInput(Input):
             event.stop()
             event.prevent_default()
             self._reference().action_cancel()
+        elif event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            self._reference().action_open_selected()
+
+    def action_open_selected(self) -> None:
+        self._reference().action_open_selected()
 
 
 class ToolsReferenceScreen(ModalScreen[None]):
-    """Searchable, read-only reference for active session tools."""
+    """Searchable tool table with navigable description details."""
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
         Binding("escape", "cancel", "Close"),
         Binding("up", "cursor_up", "Up", show=False),
         Binding("down", "cursor_down", "Down", show=False),
+        Binding("enter", "open_selected", "Open", show=False),
     ]
 
     def __init__(
@@ -1004,8 +1013,12 @@ class ToolsReferenceScreen(ModalScreen[None]):
         with Vertical(id="tools-reference"):
             yield Static("Available tools", id="tools-reference-title")
             yield ToolsReferenceSearchInput(placeholder="Search tools", id="tools-reference-search")
+            yield Static(
+                self._table_row("Tool", "Origin", "Description"),
+                id="tools-reference-header",
+            )
             yield ListView(id="tools-reference-list")
-            yield Static("Read-only reference - Escape closes", id="tools-reference-help")
+            yield Static("Enter opens description - Escape closes", id="tools-reference-help")
 
     def on_mount(self) -> None:
         """Populate the list and focus search on open."""
@@ -1018,8 +1031,9 @@ class ToolsReferenceScreen(ModalScreen[None]):
             self._refresh_tools(event.value)
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Keep the reference read-only when Enter is pressed."""
+        """Open the selected tool's full description."""
         event.stop()
+        self._open_tool(event.index)
 
     def action_cursor_up(self) -> None:
         self.query_one("#tools-reference-list", ListView).action_cursor_up()
@@ -1027,8 +1041,25 @@ class ToolsReferenceScreen(ModalScreen[None]):
     def action_cursor_down(self) -> None:
         self.query_one("#tools-reference-list", ListView).action_cursor_down()
 
+    def action_open_selected(self) -> None:
+        tool_list = self.query_one("#tools-reference-list", ListView)
+        if tool_list.index is not None:
+            self._open_tool(tool_list.index)
+
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+    def _open_tool(self, index: int) -> None:
+        if index >= len(self.visible_tools):
+            return
+        tool = self.visible_tools[index]
+        self.app.push_screen(
+            CommandOutputScreen(
+                f"{tool.name} — {self._source_label(tool)}",
+                tool.description or "No description",
+                theme=self.theme,
+            )
+        )
 
     def _refresh_tools(self, query: str) -> None:
         needle = query.casefold().strip()
@@ -1050,8 +1081,11 @@ class ToolsReferenceScreen(ModalScreen[None]):
             [
                 ListItem(
                     Label(
-                        f"{tool.name}  [{self._source_label(tool)}]\n"
-                        f"{tool.description or 'No description'}",
+                        self._table_row(
+                            tool.name,
+                            self._source_label(tool),
+                            f"{len(tool.description)} chars",
+                        ),
                         markup=False,
                     )
                 )
@@ -1059,6 +1093,17 @@ class ToolsReferenceScreen(ModalScreen[None]):
             ]
         )
         tool_list.index = 0
+
+    def _table_row(self, name: str, source: str, description: str) -> str:
+        name_width = max((len(tool.name) for tool in self.tools), default=len("Tool"))
+        source_width = max(
+            (len(self._source_label(tool)) for tool in self.tools),
+            default=len("Origin"),
+        )
+        return (
+            f"{name:<{max(name_width, len('Tool'))}}  "
+            f"{source:<{max(source_width, len('Origin'))}}  {description}"
+        )
 
     def _source_label(self, tool: AgentTool) -> str:
         extension = self.extension_sources.get(tool.name)
@@ -2795,6 +2840,12 @@ class TauTuiApp(App[None]):
         border: tall $tau-prompt-border;
     }
 
+    #tools-reference-header {
+        height: 1;
+        color: $tau-muted-text;
+        text-style: bold;
+    }
+
     #session-picker-list,
     #prompt-template-picker-list,
     #tree-picker-list,
@@ -4458,6 +4509,7 @@ class TauTuiApp(App[None]):
             self.screen.action_toggle_mode()
             return
         if isinstance(self.screen, ToolsReferenceScreen):
+            self.screen.action_open_selected()
             return
         if isinstance(
             self.screen,

@@ -5059,14 +5059,34 @@ async def test_tui_app_tools_reference_opens_filters_and_cancels() -> None:
         assert [tool.name for tool in app.screen.visible_tools] == ["bash"]
         [label] = app.screen.query("#tools-reference-list Label")
         rendered = str(label.render())
-        assert "bash  [Built in]" in rendered
-        assert app.screen.visible_tools[0].description in rendered
+        bash_tool = app.screen.visible_tools[0]
+        assert "bash" in rendered
+        assert "Built in" in rendered
+        assert f"{len(bash_tool.description)} chars" in rendered
+        assert bash_tool.description not in rendered
 
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, CommandOutputScreen)
+        assert app.screen.title_text == "bash — Built in"
+        assert app.screen.message == bash_tool.description
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, ToolsReferenceScreen)
         app.screen.extension_sources["bash"] = "shell-tools"
         app.screen._refresh_tools("bash")
         await pilot.pause()
         [label] = app.screen.query("#tools-reference-list Label")
-        assert "bash  [Extension: shell-tools]" in str(label.render())
+        assert "Extension: shell-tools" in str(label.render())
+
+        await pilot.click("#tools-reference-list > ListItem")
+        await pilot.pause()
+        assert isinstance(app.screen, CommandOutputScreen)
+        assert app.screen.title_text == "bash — Extension: shell-tools"
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, ToolsReferenceScreen)
 
         await pilot.press("escape")
         await pilot.pause()
