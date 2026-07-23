@@ -149,8 +149,9 @@ other context loaded from outside the project uses its full path.
 
 The wider, borderless sidebar uses the prompt field's background color, bright
 section headings, quieter gray values, and keeps Tau's versioned `τ = 2π` mark
-pinned to its bottom edge. Tau does not render separate
-top-header or shortcut-footer rows. Named sessions remain visible in the sidebar
+pinned to its bottom edge. When the content is taller than the available space,
+the sidebar scrolls vertically while keeping its scrollbar hidden. Tau does not
+render separate top-header or shortcut-footer rows. Named sessions remain visible in the sidebar
 and terminal tab title; `/hotkeys` lists shortcuts when needed. The sidebar hides
 automatically when the terminal is small, while the tab title continues to
 identify the session.

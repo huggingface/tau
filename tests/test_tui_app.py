@@ -2437,6 +2437,27 @@ async def test_tui_sidebar_fills_workspace_height() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_sidebar_scrolls_overflow_without_showing_a_scrollbar() -> None:
+    session = FakeSession()
+    session.context_files = tuple(
+        ProjectContextFile(path=str(session.cwd / f"rules/{index}/AGENTS.md"), content="Rules.")
+        for index in range(30)
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        sidebar = app.query_one("#sidebar", VerticalScroll)
+
+        assert sidebar.max_scroll_y > 0
+        assert sidebar.styles.overflow_y == "auto"
+        assert sidebar.styles.scrollbar_size_vertical == 0
+
+        sidebar.scroll_down(animate=False)
+        await pilot.pause()
+        assert sidebar.scroll_y > 0
+
+
+@pytest.mark.anyio
 async def test_tui_sidebar_hides_on_narrow_windows() -> None:
     app = TauTuiApp(FakeSession())
 

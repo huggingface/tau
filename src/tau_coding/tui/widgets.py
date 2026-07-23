@@ -20,7 +20,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.content import Style as TextualStyle  # type: ignore[attr-defined]
 from textual.css.query import NoMatches
 from textual.geometry import Offset
@@ -96,8 +96,8 @@ class SessionSummarySource(Protocol):
     def session_stats(self) -> SessionStats: ...
 
 
-class SessionSidebar(Vertical):
-    """Compact sidebar with session metadata and bottom-aligned branding."""
+class SessionSidebar(VerticalScroll):
+    """Scrollable sidebar with session metadata and bottom-aligned branding."""
 
     def compose(self) -> Any:
         yield Static("", id="sidebar-content")
