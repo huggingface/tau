@@ -2091,6 +2091,23 @@ def _syntax_language(raw: str) -> str:
     return language
 
 
+def render_diff_content(
+    diff_text: str,
+    *,
+    syntax_theme: str = "ansi_dark",
+    code_block_background: str = "default",
+) -> RenderableType:
+    """Render a unified diff patch with syntax highlighting."""
+    return Syntax(
+        diff_text,
+        "diff",
+        theme=syntax_theme,
+        word_wrap=True,
+        padding=(1, 2),
+        background_color=code_block_background,
+    )
+
+
 def render_completion_suggestions(
     state: CompletionState,
     *,

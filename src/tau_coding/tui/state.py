@@ -72,6 +72,7 @@ class TuiState:
     custom_renderer: CustomMessageMarkup | None = None
     tool_call_renderer: ToolCallMarkup | None = None
     tool_result_renderer: ToolResultMarkup | None = None
+    last_diff: str | None = None
     _tool_items_by_call_id: dict[str, ChatItem] = field(
         default_factory=dict,
         init=False,
@@ -247,6 +248,13 @@ class TuiState:
             content=result.text,
             data=result.details if isinstance(result.details, dict) else None,
         )
+        patch = _result_patch(
+            name=tool_name,
+            ok=not is_error,
+            data=result.details if isinstance(result.details, dict) else None,
+        )
+        if patch:
+            self.last_diff = patch
         item = self.find_tool_item(tool_call_id)
         if item is not None:
             item.tool_result_text = result_text

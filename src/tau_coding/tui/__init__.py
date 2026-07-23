@@ -31,6 +31,8 @@ from tau_coding.tui.widgets import (
     TranscriptView,
     render_chat_item,
     render_compact_session_info,
+    render_completion_suggestions,
+    render_diff_content,
     render_session_sidebar,
     transcript_item_selection_text,
 )
@@ -61,6 +63,8 @@ __all__ = [
     "load_tui_settings",
     "render_chat_item",
     "render_compact_session_info",
+    "render_completion_suggestions",
+    "render_diff_content",
     "render_session_sidebar",
     "run_tui_app",
     "save_tui_settings",
