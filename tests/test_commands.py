@@ -133,6 +133,7 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
         "scoped-models",
         "session",
         "skill",
+        "skills",
         "system",
         "theme",
         "tree",
@@ -178,6 +179,17 @@ def test_compact_command_accepts_optional_instructions(tmp_path: Path) -> None:
 
     assert default.compact_summary == ""
     assert requested.compact_summary == "Summary of prior work."
+
+
+def test_skills_command_requests_picker(tmp_path: Path) -> None:
+    registry = create_default_command_registry()
+    session = FakeSession(tmp_path)
+
+    result = registry.execute(session, "/skills")
+
+    assert result.handled is True
+    assert result.skills_picker_requested is True
+    assert registry.execute(session, "/skills extra").message == "Usage: /skills"
 
 
 def test_tree_command_requests_picker(tmp_path: Path) -> None:
@@ -356,7 +368,7 @@ def test_non_pi_commands_are_not_registered(tmp_path: Path) -> None:
     registry = create_default_command_registry()
     session = FakeSession(tmp_path)
 
-    for command in ("/provider", "/skills", "/resources", "/context", "/help"):
+    for command in ("/provider", "/resources", "/context", "/help"):
         result = registry.execute(session, command)
         assert result.handled is False
         assert result.message is None

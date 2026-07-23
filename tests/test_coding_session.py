@@ -52,6 +52,7 @@ from tau_coding import (
 )
 from tau_coding import session as coding_session_module
 from tau_coding.events import QueueUpdateEvent
+from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.session import _ordered_tree_entries, parse_terminal_command
 
 
@@ -3955,6 +3956,23 @@ async def test_session_context_usage_recalculates_after_resume(tmp_path: Path) -
     assert after_resume_usage.message_count == 2
     assert after_resume_usage.total_tokens > before_resume_usage.total_tokens
     assert session.context_token_estimate == after_resume_usage.total_tokens
+
+
+def test_custom_prompt_template_retains_precedence_over_other_commands(tmp_path: Path) -> None:
+    session = CodingSession(
+        _config(tmp_path, FakeProvider([]), JsonlSessionStorage(tmp_path / "session.jsonl")),
+        state=object(),  # type: ignore[arg-type]
+        harness=object(),  # type: ignore[arg-type]
+        last_parent_id=None,
+        prompt_templates=(
+            PromptTemplate(name="new", path=tmp_path / "new.md", content="Custom workflow"),
+        ),
+    )
+
+    result = session.handle_command("/new")
+
+    assert result.handled is False
+    assert session.expand_prompt_text("/new") == "Custom workflow"
 
 
 def test_minimal_commands_are_handled(tmp_path: Path) -> None:
