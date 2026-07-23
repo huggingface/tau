@@ -1003,9 +1003,9 @@ class ToolsReferenceScreen(ModalScreen[None]):
         theme: TuiTheme,
     ) -> None:
         super().__init__()
-        self.tools = tuple(sorted(tools, key=lambda tool: tool.name.casefold()))
-        self.visible_tools = self.tools
         self.extension_sources = dict(extension_sources)
+        self.tools = self._order_tools(tools)
+        self.visible_tools = self.tools
         self.theme = theme
 
     def compose(self) -> ComposeResult:
@@ -1070,6 +1070,7 @@ class ToolsReferenceScreen(ModalScreen[None]):
             or needle in tool.name.casefold()
             or needle in tool.label.casefold()
             or needle in tool.description.casefold()
+            or needle in self._source_label(tool).casefold()
         )
         tool_list = self.query_one("#tools-reference-list", ListView)
         tool_list.clear()
@@ -1094,6 +1095,25 @@ class ToolsReferenceScreen(ModalScreen[None]):
         )
         tool_list.index = 0
 
+    def _order_tools(self, tools: Sequence[AgentTool]) -> tuple[AgentTool, ...]:
+        tools_by_name = {tool.name: tool for tool in tools}
+        builtins = sorted(
+            (tool for tool in tools if tool.name not in self.extension_sources),
+            key=lambda tool: tool.name.casefold(),
+        )
+        extension_tools: list[AgentTool] = []
+        seen_extensions: set[str] = set()
+        for extension in self.extension_sources.values():
+            if extension in seen_extensions:
+                continue
+            seen_extensions.add(extension)
+            extension_tools.extend(
+                tools_by_name[tool_name]
+                for tool_name, source in self.extension_sources.items()
+                if source == extension and tool_name in tools_by_name
+            )
+        return tuple([*builtins, *extension_tools])
+
     def _table_row(self, name: str, source: str, description: str) -> str:
         name_width = max((len(tool.name) for tool in self.tools), default=len("Tool"))
         source_width = max(
@@ -1107,7 +1127,7 @@ class ToolsReferenceScreen(ModalScreen[None]):
 
     def _source_label(self, tool: AgentTool) -> str:
         extension = self.extension_sources.get(tool.name)
-        return f"Extension: {extension}" if extension is not None else "Built in"
+        return extension if extension is not None else "Built in"
 
 
 class SessionPickerSearchInput(Input):

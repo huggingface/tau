@@ -1430,12 +1430,16 @@ class CodingSession:
     def handle_command(self, text: str) -> CommandResult:
         """Handle coding-session slash commands.
 
-        Prompt-template slash commands are expansion directives, so they remain
+        Built-in and extension commands take precedence over prompt templates
+        with the same name. Unmatched prompt-template slash commands remain
         unhandled here and flow through `prompt()` for on-the-fly replacement.
         """
+        command = self._command_registry.execute(self, text)
+        if command.handled:
+            return command
         if expand_prompt_template_command(text, self._prompt_templates) is not None:
             return CommandResult(handled=False)
-        return self._command_registry.execute(self, text)
+        return command
 
     def ensure_session_indexed(self) -> None:
         """Persist pending session metadata and add this session to the resume index."""

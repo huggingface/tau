@@ -5078,12 +5078,13 @@ async def test_tui_app_tools_reference_opens_filters_and_cancels() -> None:
         app.screen._refresh_tools("bash")
         await pilot.pause()
         [label] = app.screen.query("#tools-reference-list Label")
-        assert "Extension: shell-tools" in str(label.render())
+        assert "shell-tools" in str(label.render())
+        assert "Extension:" not in str(label.render())
 
         await pilot.click("#tools-reference-list > ListItem")
         await pilot.pause()
         assert isinstance(app.screen, CommandOutputScreen)
-        assert app.screen.title_text == "bash — Extension: shell-tools"
+        assert app.screen.title_text == "bash — shell-tools"
         await pilot.press("escape")
         await pilot.pause()
         assert isinstance(app.screen, ToolsReferenceScreen)
@@ -5092,6 +5093,32 @@ async def test_tui_app_tools_reference_opens_filters_and_cancels() -> None:
         await pilot.pause()
         assert not isinstance(app.screen, ToolsReferenceScreen)
         assert prompt.value == ""
+
+
+@pytest.mark.anyio
+async def test_tui_app_tools_reference_groups_origins_and_searches_extension_names() -> None:
+    session = FakeSession()
+    tools = {tool.name: tool for tool in session.tools}
+    session.tools = (tools["bash"], tools["write"], tools["read"], tools["edit"])
+    session.extension_tool_sources = {
+        "edit": "first-extension",
+        "bash": "first-extension",
+        "write": "second-extension",
+    }
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/tools"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ToolsReferenceScreen)
+        assert [tool.name for tool in app.screen.tools] == ["read", "edit", "bash", "write"]
+
+        await pilot.press(*"first-extension")
+        await pilot.pause()
+        assert [tool.name for tool in app.screen.visible_tools] == ["edit", "bash"]
 
 
 @pytest.mark.anyio
