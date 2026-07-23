@@ -3090,7 +3090,7 @@ async def test_tui_app_skills_picker_previews_description_and_shows_content_in_t
         assert app.screen is not picker
         assert app.state.items[-1].role == "status"
         assert app.state.items[-1].text == (
-            "Skill: review\n# Review\n\nInspect every changed file."
+            "Skill: review (not added to context)\n# Review\n\nInspect every changed file."
         )
         assert prompt.text == "/skills"
         assert session.prompt_texts == []

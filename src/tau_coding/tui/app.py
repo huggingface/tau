@@ -4730,7 +4730,7 @@ class TauTuiApp(App[None]):
             prompt.text = original_text
             self.state.add_item(
                 "status",
-                f"Skill: {result.skill.name}\n{result.skill.content}",
+                f"Skill: {result.skill.name} (not added to context)\n{result.skill.content}",
             )
             self._refresh()
         prompt.move_cursor(_text_end_location(prompt.text))
