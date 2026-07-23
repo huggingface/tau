@@ -11,7 +11,7 @@ from typing import Any, ClassVar, Literal, Protocol
 from pygments.lexers import get_lexer_by_name
 from pygments.util import ClassNotFound
 from rich.align import Align
-from rich.console import Console, Group, RenderableType
+from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.markdown import CodeBlock, Heading, Markdown
 from rich.padding import Padding
 from rich.rule import Rule
@@ -41,7 +41,8 @@ from tau_coding.tui.state import ChatItem, TuiState
 from tau_coding.version import current_version
 
 TAU_SIDEBAR_LOGO = "τ = 2π"
-SIDEBAR_SKILLS_LIMIT = 5
+SIDEBAR_BULLET_LIST_LIMIT = 5
+SIDEBAR_COMMA_LIST_MAX_LINES = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -1505,8 +1506,9 @@ def render_session_sidebar(
         style=theme.completion_description,
     )
     tools = _comma_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
-    skills = _limited_skill_list(
+    skills = _limited_bullet_list(
         [skill.name for skill in session.skills],
+        empty="No skills loaded",
         theme=theme,
     )
     prompts = _comma_list(
@@ -1519,7 +1521,7 @@ def render_session_sidebar(
         empty="No extensions",
         theme=theme,
     )
-    context = _bullet_list(
+    context = _limited_bullet_list(
         _context_file_labels(session.context_files, cwd=session.cwd),
         empty="No context files",
         theme=theme,
@@ -2123,19 +2125,55 @@ def render_completion_suggestions(
     return table
 
 
+@dataclass(frozen=True, slots=True)
+class _LineLimitedCommaList:
+    items: tuple[str, ...]
+    empty: str
+    style: str
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        if not self.items:
+            yield Text(self.empty, style=self.style)
+            return
+
+        visible_count = 0
+        for count in range(1, len(self.items) + 1):
+            candidate = self._text(self.items[:count])
+            if len(candidate.wrap(console, options.max_width)) > SIDEBAR_COMMA_LIST_MAX_LINES:
+                break
+            visible_count = count
+
+        text = self._text(self.items[:visible_count])
+        hidden_count = len(self.items) - visible_count
+        if hidden_count:
+            if visible_count:
+                text.append("\n")
+            text.append(f"...({hidden_count} more)", style=self.style)
+        yield text
+
+    def _text(self, items: Sequence[str]) -> Text:
+        return Text(
+            ", ".join(items),
+            style=self.style,
+            overflow="fold",
+            no_wrap=False,
+        )
+
+
 def _comma_list(
     items: Sequence[str],
     *,
     empty: str,
     theme: TuiTheme,
-) -> Text:
-    if not items:
-        return Text(empty, style=theme.completion_description)
-    return Text(
-        ", ".join(items),
+) -> RenderableType:
+    return _LineLimitedCommaList(
+        items=tuple(items),
+        empty=empty,
         style=theme.completion_description,
-        overflow="fold",
-        no_wrap=False,
     )
 
 
@@ -2157,13 +2195,18 @@ def _plural(count: int, singular: str) -> str:
     return singular if count == 1 else f"{singular}s"
 
 
-def _limited_skill_list(items: Sequence[str], *, theme: TuiTheme) -> Text:
+def _limited_bullet_list(
+    items: Sequence[str],
+    *,
+    empty: str,
+    theme: TuiTheme,
+) -> Text:
     text = _bullet_list(
-        items[:SIDEBAR_SKILLS_LIMIT],
-        empty="No skills loaded",
+        items[:SIDEBAR_BULLET_LIST_LIMIT],
+        empty=empty,
         theme=theme,
     )
-    hidden_count = len(items) - SIDEBAR_SKILLS_LIMIT
+    hidden_count = len(items) - SIDEBAR_BULLET_LIST_LIMIT
     if hidden_count > 0:
         text.append(f"\n...({hidden_count} more)", style=theme.completion_description)
     return text
