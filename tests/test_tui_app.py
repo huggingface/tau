@@ -3092,7 +3092,8 @@ async def test_tui_app_skills_picker_previews_description_and_shows_content_in_t
         assert app.state.items[-1].text == (
             "Skill: review (not added to context)\n# Review\n\nInspect every changed file."
         )
-        assert prompt.text == "/skills"
+        assert prompt.text == ""
+        assert prompt.has_focus
         assert session.prompt_texts == []
         assert session.messages == ()
 

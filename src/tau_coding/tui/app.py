@@ -4727,7 +4727,7 @@ class TauTuiApp(App[None]):
         elif result.action == "insert":
             prompt.text = f"/skill:{result.skill.name}"
         else:
-            prompt.text = original_text
+            prompt.text = ""
             self.state.add_item(
                 "status",
                 f"Skill: {result.skill.name} (not added to context)\n{result.skill.content}",
