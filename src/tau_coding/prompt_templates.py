@@ -17,7 +17,24 @@ from tau_coding.resources import (
 
 _TEMPLATE_VARIABLE_RE = re.compile(r"{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}")
 _ARGUMENT_TEMPLATE_VARIABLES = {"arguments", "args"}
-_RESERVED_TEMPLATE_NAMES = frozenset({"prompts", "skills", "tools"})
+
+
+def builtin_prompt_template_reservations() -> dict[str, str]:
+    """Map case-folded prompt-template stems to the built-in command they collide with.
+
+    Prompt templates are invoked by markdown filename stem before ordinary slash-command
+    dispatch. Any stem that matches a built-in command name or alias is ignored at load
+    time so commands such as ``/new`` and ``/quit`` stay reachable.
+    """
+    from tau_coding.commands import create_default_command_registry
+
+    registry = create_default_command_registry()
+    reservations: dict[str, str] = {}
+    for command in registry.list_commands():
+        reservations[command.name.casefold()] = f"/{command.name}"
+        for alias in command.aliases:
+            reservations[alias.casefold()] = f"/{alias}"
+    return reservations
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,17 +181,19 @@ def _load_prompt_templates_from_dir_with_diagnostics(
     templates: list[PromptTemplate] = []
     diagnostics: list[ResourceDiagnostic] = []
     seen: set[str] = set()
+    reserved_names = builtin_prompt_template_reservations()
     for path in sorted(prompts_dir.glob("*.md"), key=lambda item: item.name):
         name = path.stem
-        if name.casefold() in _RESERVED_TEMPLATE_NAMES:
+        reserved_command = reserved_names.get(name.casefold())
+        if reserved_command is not None:
             diagnostics.append(
                 ResourceDiagnostic(
                     kind="prompt",
                     name=name,
                     path=path,
                     message=(
-                        f"prompt template name is reserved by the built-in /{name.casefold()} "
-                        "command; template ignored"
+                        f"prompt template name is reserved by the built-in "
+                        f"{reserved_command} command; template ignored"
                     ),
                 )
             )

@@ -92,9 +92,11 @@ prompt and runs it as a normal turn.
 A prompt template is a saved prompt you trigger by its filename. For example,
 `~/.agents/prompts/wt.md` is invoked with `/wt`. Run `/prompts` in the TUI to
 search every loaded template and insert its invocation for editing; selection
-does not submit the prompt. The filenames `prompts.md` and `tools.md` are
-reserved for built-in commands; Tau ignores templates with those names and
-reports a resource diagnostic. Templates can include variables with `{{ name }}`:
+does not submit the prompt. Prompt-template filenames that match a built-in slash
+command or alias (for example `new.md`, `quit.md`, or `exit.md`) are reserved;
+Tau ignores those templates and reports a resource diagnostic so `/new`, `/quit`,
+and other built-ins stay reachable. Non-conflicting templates can include variables
+with `{{ name }}`:
 
 ```md
 ---
@@ -109,9 +111,9 @@ If a template has no placeholders, your arguments are appended after a blank
 line. Variables are filled from the arguments you pass after the invocation,
 for example `/wt add caching`.
 
-The filenames `prompts.md` and `skills.md` are reserved for the built-in `/prompts`
-and `/skills` pickers. Tau ignores either template and reports a resource diagnostic;
-rename the file to load it as a custom prompt.
+Built-in slash-command names and aliases are always reserved. If you previously
+used a template filename such as `new.md` to shadow a command, rename the file
+(for example to `new-feature.md`) and invoke it with `/new-feature`.
 
 ## Skill vs. prompt template — which?
 
