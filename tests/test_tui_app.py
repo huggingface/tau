@@ -5886,6 +5886,36 @@ async def test_tui_model_opens_interactive_picker() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_model_picker_uses_async_non_persistent_extension_selection() -> None:
+    class DynamicProviderSession(FakeSession):
+        def __init__(self) -> None:
+            super().__init__()
+            self.extension_selections: list[tuple[str, str]] = []
+
+        def is_extension_provider(self, provider_name: str) -> bool:
+            return provider_name == "local"
+
+        async def select_extension_provider_model(self, provider_name: str, model: str) -> None:
+            self.extension_selections.append((provider_name, model))
+            self.provider_name = provider_name
+            self.model = model
+
+        def set_model_choice(self, choice: ModelChoice) -> None:
+            raise AssertionError("dynamic providers must not use persistent selection")
+
+    session = DynamicProviderSession()
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        app._handle_model_picker_result(ModelChoice(provider_name="local", model="local-model"))
+        await pilot.pause()
+
+    assert session.extension_selections == [("local", "local-model")]
+    assert session.provider_name == "local"
+    assert session.model == "local-model"
+
+
+@pytest.mark.anyio
 async def test_tui_scoped_models_picker_toggles_scoped_models_without_switching_model() -> None:
     session = FakeSession()
     app = TauTuiApp(session)

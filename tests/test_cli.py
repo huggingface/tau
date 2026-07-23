@@ -1308,3 +1308,62 @@ def test_setup_command_warns_when_api_key_env_is_missing(
 
     assert result.exit_code == 0
     assert "Set MISSING_API_KEY before running Tau with this provider." in result.stderr
+
+
+@pytest.mark.anyio
+async def test_print_mode_loads_extension_provider_before_cli_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    extension = tmp_path / "local_provider.py"
+    extension.write_text(
+        """
+from tau_coding.extensions import (
+    DynamicProvider, OpenAICompatibleTransport, OptionalEnvApiKey, ProviderModel,
+)
+
+
+def setup(tau):
+    tau.register_provider(DynamicProvider(
+        id="local-test",
+        display_name="Local test",
+        transport=OpenAICompatibleTransport("http://127.0.0.1:8080/v1"),
+        auth=OptionalEnvApiKey("LOCAL_TEST_API_KEY"),
+        models=(ProviderModel(id="coder.gguf"),),
+    ))
+""",
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+
+    class ClosableFakeProvider(FakeProvider):
+        async def aclose(self) -> None:
+            return None
+
+    def fake_create(provider: object, **kwargs: object) -> ClosableFakeProvider:
+        captured["provider_config"] = provider
+        return ClosableFakeProvider([])
+
+    async def fake_run_print_mode(**kwargs: object) -> bool:
+        captured.update(kwargs)
+        return True
+
+    monkeypatch.setattr(cli, "create_model_provider", fake_create)
+    monkeypatch.setattr(cli, "run_print_mode", fake_run_print_mode)
+
+    ok = await cli.run_openai_print_mode(
+        "hello",
+        "coder.gguf",
+        tmp_path,
+        provider_name="local-test",
+        extension_paths=(extension,),
+        extensions_enabled=False,
+    )
+
+    assert ok is True
+    assert captured["provider_name"] == "local-test"
+    assert captured["model"] == "coder.gguf"
+    provider_config = captured["provider_config"]
+    assert isinstance(provider_config, OpenAICompatibleProviderConfig)
+    assert provider_config.auth == "optional"

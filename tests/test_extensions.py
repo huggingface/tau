@@ -18,17 +18,24 @@ from tau_ai import FakeProvider
 from tau_coding import CodingSession, CodingSessionConfig, TauResourcePaths
 from tau_coding.extensions import (
     CustomMessageView,
+    DynamicProvider,
     ExtensionAPI,
     ExtensionError,
     ExtensionRuntime,
     InputEvent,
     InputHookResult,
     MessageRenderOptions,
+    NoAuth,
+    OpenAICompatibleTransport,
+    OptionalEnvApiKey,
+    ProviderModel,
+    RequiredEnvApiKey,
     ToolCallHookResult,
     ToolResultHookResult,
     discover_extensions,
     load_extensions,
 )
+from tau_coding.provider_config import ProviderConfigError, ProviderSettings
 
 pytestmark = pytest.mark.anyio
 
@@ -109,6 +116,8 @@ class RecordingSession:
         self.followed_up: list[str] = []
         self.custom_entries: list[tuple[str, dict[str, JSONValue]]] = []
         self.queued_custom: list[tuple[str, str | None, dict[str, JSONValue] | None]] = []
+        self.extension_providers: tuple[object, ...] = ()
+        self.selected_model: tuple[str, str] | None = None
 
     def queue_steering_message(
         self,
@@ -132,6 +141,19 @@ class RecordingSession:
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         self.custom_entries.append((namespace, data))
+
+    def sync_extension_providers(
+        self,
+        providers: tuple[object, ...],
+    ) -> None:
+        self.extension_providers = providers
+
+    async def select_extension_provider_model(
+        self,
+        provider_name: str,
+        model: str,
+    ) -> None:
+        self.selected_model = (provider_name, model)
 
 
 # -- discovery and loading ----------------------------------------------------
@@ -1969,6 +1991,56 @@ async def test_reload_awaits_shutdown_before_invalidation_and_starts_new_generat
     ]
 
 
+async def test_resume_preserves_durable_provider_base_for_override_restoration(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    from tau_coding import SessionManager, TauPaths
+
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "override")
+    api.register_provider(
+        DynamicProvider(
+            id="openai",
+            display_name="Local OpenAI override",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+            auth=NoAuth(),
+            models=(ProviderModel(id="local-model"),),
+        )
+    )
+    durable = ProviderSettings()
+    builtin = durable.get_provider("openai")
+    composed = runtime.compose_provider_settings(durable)
+    manager = SessionManager(
+        TauPaths(home=tmp_path / "home-tau", agents_home=tmp_path / "home-agents")
+    )
+    cwd = tmp_path / "project"
+    first = manager.create_session(cwd=cwd, model="local-model", provider_name="openai")
+    resumed = manager.create_session(cwd=cwd, model="local-model", provider_name="openai")
+    config = dataclass_replace(
+        _session_config(tmp_path, FakeProvider([])),
+        model="local-model",
+        cwd=cwd,
+        storage=JsonlSessionStorage(first.path),
+        session_id=first.id,
+        session_manager=manager,
+        provider_name="openai",
+        provider_settings=composed,
+        durable_provider_settings=durable,
+        extension_runtime=runtime,
+    )
+    session = await CodingSession.load(config)
+
+    await session.resume(resumed.id)
+    api.unregister_provider("openai")
+
+    assert session._durable_provider_settings == durable
+    assert session._provider_settings is not None
+    assert session._provider_settings.get_provider("openai") == builtin
+    await session.aclose()
+
+
 async def test_session_rebinding_does_not_invalidate_extension_instances(
     tmp_path: Path,
 ) -> None:
@@ -2030,6 +2102,419 @@ async def test_inflight_handler_touching_stale_api_records_diagnostic(
 
 def _inline_api(runtime: ExtensionRuntime, name: str) -> ExtensionAPI:
     return cast(ExtensionAPI, _register_inline_extension(runtime, name))
+
+
+async def test_extension_provider_registration_refresh_selection_and_unregister(
+    tmp_path: Path,
+) -> None:
+    async def discover(context) -> tuple[ProviderModel, ...]:  # noqa: ANN001
+        assert context.network_allowed is True
+        assert context.endpoint == "http://127.0.0.1:8080/v1"
+        return (ProviderModel(id="coder-b", display_name="Coder B"),)
+
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "local-provider")
+    session = RecordingSession(tmp_path)
+    runtime.bind(session)
+    api.register_provider(
+        DynamicProvider(
+            id="local",
+            display_name="Local server",
+            transport=OpenAICompatibleTransport("http://127.0.0.1:8080/v1/"),
+            auth=OptionalEnvApiKey("LOCAL_API_KEY"),
+            models=(ProviderModel(id="coder-a"),),
+            refresh_models=discover,
+        )
+    )
+
+    settings = runtime.compose_provider_settings(ProviderSettings())
+    provider = settings.get_provider("local")
+    assert provider.base_url == "http://127.0.0.1:8080/v1"
+    assert provider.models == ("coder-a",)
+    assert provider.auth == "optional"  # type: ignore[union-attr]
+
+    refreshed = await api.refresh_provider_models("local")
+    assert refreshed[0].display_name == "Coder B"
+    assert session.extension_providers[0].models == ("coder-b",)  # type: ignore[union-attr]
+    await api.select_model("local", "coder-b")
+    assert session.selected_model == ("local", "coder-b")
+
+    api.unregister_provider("local")
+    assert session.extension_providers == ()
+
+
+def test_extension_provider_allows_dormant_and_layered_restoration(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    first = _inline_api(runtime, "first")
+    second = _inline_api(runtime, "second")
+    dormant = DynamicProvider(
+        id="shared",
+        display_name="First",
+        transport=OpenAICompatibleTransport("http://localhost:9000/v1"),
+        auth=NoAuth(),
+    )
+    first.register_provider(dormant)
+    assert runtime.dynamic_providers[0].models == ()
+
+    second.register_provider(
+        DynamicProvider(
+            id="shared",
+            display_name="Second",
+            transport=OpenAICompatibleTransport("http://localhost:9001/v1"),
+            auth=NoAuth(),
+            models=(ProviderModel(id="second-model"),),
+        )
+    )
+    assert runtime.dynamic_providers[0].display_name == "Second"
+
+    second.unregister_provider("shared")
+    assert runtime.dynamic_providers[0].display_name == "First"
+
+
+async def test_bound_provider_override_unregister_restores_durable_definition(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "override")
+    durable = ProviderSettings()
+    builtin = durable.get_provider("openai")
+    api.register_provider(
+        DynamicProvider(
+            id="openai",
+            display_name="Local OpenAI override",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+            models=(ProviderModel(id="local-model"),),
+        )
+    )
+    session = await CodingSession.load(
+        dataclass_replace(
+            _session_config(tmp_path, FakeProvider([])),
+            extension_runtime=runtime,
+            provider_settings=runtime.compose_provider_settings(durable),
+            durable_provider_settings=durable,
+        )
+    )
+    assert session._provider_settings is not None
+    assert session._provider_settings.get_provider("openai").models == ("local-model",)
+
+    api.unregister_provider("openai")
+
+    assert session._provider_settings.get_provider("openai") == builtin
+    await session.aclose()
+
+
+def test_extension_provider_override_restores_builtin_definition() -> None:
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "override")
+    durable = ProviderSettings()
+    builtin = durable.get_provider("openai")
+    api.register_provider(
+        DynamicProvider(
+            id="openai",
+            display_name="Local OpenAI override",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+            models=(ProviderModel(id="local-model"),),
+        )
+    )
+
+    assert runtime.compose_provider_settings(durable).get_provider("openai").models == (
+        "local-model",
+    )
+    api.unregister_provider("openai")
+    assert runtime.compose_provider_settings(durable).get_provider("openai") == builtin
+
+
+def test_dynamic_provider_auth_strategies(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LOCAL_KEY", raising=False)
+    assert OptionalEnvApiKey("LOCAL_KEY").resolve() is None
+    assert NoAuth().resolve() is None
+    with pytest.raises(RuntimeError, match="Set LOCAL_KEY"):
+        RequiredEnvApiKey("LOCAL_KEY").resolve()
+
+    monkeypatch.setenv("LOCAL_KEY", "secret")
+    assert OptionalEnvApiKey("LOCAL_KEY").resolve() == "secret"
+    assert RequiredEnvApiKey("LOCAL_KEY").resolve() == "secret"
+
+
+def test_invalid_provider_reregistration_preserves_working_layer() -> None:
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "owner")
+    api.register_provider(
+        DynamicProvider(
+            id="local",
+            display_name="Local",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+            models=(ProviderModel(id="working"),),
+        )
+    )
+
+    with pytest.raises(ExtensionError, match="default_model"):
+        api.register_provider(
+            DynamicProvider(
+                id="local",
+                display_name="Broken",
+                transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+                models=(ProviderModel(id="other"),),
+                default_model="missing",
+            )
+        )
+
+    assert runtime.dynamic_providers[0].models[0].id == "working"
+
+
+async def test_async_extension_selection_closes_replaced_runtime_and_is_failure_safe(
+    tmp_path: Path,
+) -> None:
+    class ClosableFakeProvider(FakeProvider):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    created: list[ClosableFakeProvider] = []
+    fail = False
+
+    async def factory(model: ProviderModel):
+        nonlocal fail
+        if fail:
+            raise RuntimeError("factory failed")
+        provider = ClosableFakeProvider()
+        created.append(provider)
+        return provider
+
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "owner")
+    api.register_provider(
+        DynamicProvider(
+            id="local",
+            display_name="Local",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+            models=(ProviderModel(id="one"), ProviderModel(id="two")),
+            runtime_factory=factory,
+        )
+    )
+    durable = ProviderSettings()
+    settings = runtime.compose_provider_settings(durable)
+    config = _session_config(tmp_path, FakeProvider([]))
+    from dataclasses import replace as dataclass_replace
+
+    session = await CodingSession.load(
+        dataclass_replace(
+            config,
+            extension_runtime=runtime,
+            provider_settings=settings,
+            durable_provider_settings=durable,
+        )
+    )
+
+    await api.select_model("local", "one")
+    first = created[-1]
+    await api.select_model("local", "two")
+    assert first.closed is True
+    assert session.model == "two"
+
+    fail = True
+    with pytest.raises(ProviderConfigError, match="factory failed"):
+        await api.select_model("local", "one")
+    assert session.model == "two"
+    assert session.provider_name == "local"
+    await session.aclose()
+
+
+async def test_refresh_replaces_active_runtime_when_model_remains_advertised(
+    tmp_path: Path,
+) -> None:
+    async def discover(context) -> tuple[ProviderModel, ...]:  # noqa: ANN001
+        return (ProviderModel(id="coder", display_name="Updated"),)
+
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "owner")
+    api.register_provider(
+        DynamicProvider(
+            id="local",
+            display_name="Local",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+            models=(ProviderModel(id="coder"),),
+            refresh_models=discover,
+        )
+    )
+    session = RecordingSession(tmp_path)
+    session.provider_name = "local"
+    session.model = "coder"
+    runtime.bind(session)
+
+    await api.refresh_provider_models("local")
+
+    assert session.selected_model == ("local", "coder")
+
+
+async def test_reregistration_cancels_stale_provider_refresh() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def stale_refresh(context) -> tuple[ProviderModel, ...]:  # noqa: ANN001
+        started.set()
+        await release.wait()
+        return (ProviderModel(id="stale"),)
+
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "owner")
+    api.register_provider(
+        DynamicProvider(
+            id="local",
+            display_name="Old",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+            models=(ProviderModel(id="cached"),),
+            refresh_models=stale_refresh,
+        )
+    )
+    task = asyncio.create_task(api.refresh_provider_models("local"))
+    await started.wait()
+
+    async def new_refresh(context) -> tuple[ProviderModel, ...]:  # noqa: ANN001
+        return (ProviderModel(id="fresh-new"),)
+
+    api.register_provider(
+        DynamicProvider(
+            id="local",
+            display_name="New",
+            transport=OpenAICompatibleTransport("http://localhost:8081/v1"),
+            models=(ProviderModel(id="new"),),
+            refresh_models=new_refresh,
+        )
+    )
+    refreshed = await api.refresh_provider_models("local")
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert refreshed[0].id == "fresh-new"
+    assert runtime.dynamic_providers[0].display_name == "New"
+    assert tuple(model.id for model in runtime.dynamic_providers[0].models) == ("fresh-new",)
+
+
+async def test_unregister_cancels_owned_provider_refresh() -> None:
+    started = asyncio.Event()
+    observed_cancel = False
+
+    async def wait_for_cancel(context) -> tuple[ProviderModel, ...]:  # noqa: ANN001
+        nonlocal observed_cancel
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            observed_cancel = context.is_cancelled
+
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "owner")
+    api.register_provider(
+        DynamicProvider(
+            id="local",
+            display_name="Local",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+            refresh_models=wait_for_cancel,
+        )
+    )
+    task = asyncio.create_task(api.refresh_provider_models("local"))
+    await started.wait()
+
+    api.unregister_provider("local")
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert observed_cancel is True
+
+
+async def test_timed_out_provider_refresh_retains_cached_snapshot() -> None:
+    async def hang(context) -> tuple[ProviderModel, ...]:  # noqa: ANN001
+        await asyncio.Event().wait()
+        return ()
+
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "owner")
+    api.register_provider(
+        DynamicProvider(
+            id="local",
+            display_name="Local",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+            models=(ProviderModel(id="cached"),),
+            refresh_models=hang,
+            refresh_timeout_seconds=0.01,
+        )
+    )
+
+    models = await api.refresh_provider_models("local")
+
+    assert models[0].id == "cached"
+    assert any("TimeoutError" in item.message for item in runtime.diagnostics)
+
+
+async def test_refresh_reports_active_model_disappearance_without_switching(
+    tmp_path: Path,
+) -> None:
+    async def discover(context) -> tuple[ProviderModel, ...]:  # noqa: ANN001
+        return (ProviderModel(id="other"),)
+
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "owner")
+    api.register_provider(
+        DynamicProvider(
+            id="fake",
+            display_name="Fake",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+            models=(ProviderModel(id="fake"),),
+            refresh_models=discover,
+        )
+    )
+    session = RecordingSession(tmp_path)
+    runtime.bind(session)
+
+    await api.refresh_provider_models("fake")
+
+    assert session.selected_model is None
+    assert any("no longer advertised" in item.message for item in runtime.diagnostics)
+
+
+async def test_failed_provider_refresh_retains_cached_snapshot() -> None:
+    async def fail(context) -> tuple[ProviderModel, ...]:  # noqa: ANN001
+        raise RuntimeError("offline")
+
+    runtime = ExtensionRuntime()
+    api = _inline_api(runtime, "owner")
+    api.register_provider(
+        DynamicProvider(
+            id="local",
+            display_name="Local",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+            models=(ProviderModel(id="cached"),),
+            refresh_models=fail,
+        )
+    )
+
+    models = await api.refresh_provider_models("local")
+
+    assert models[0].id == "cached"
+    assert any("provider_refresh:local" in item.message for item in runtime.diagnostics)
+
+
+def test_extension_settings_are_user_scoped_and_survive_reload(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    runtime = ExtensionRuntime()
+    runtime.load(paths, include_resource_dirs=False)
+    api = _inline_api(runtime, "local-provider")
+
+    path = api.save_settings({"endpoint": "http://127.0.0.1:8080/v1", "models": ["coder.gguf"]})
+    assert path == paths.root / "extensions" / "settings" / "local-provider.json"
+    runtime.reset_for_reload()
+    reloaded_api = _inline_api(runtime, "local-provider")
+    assert reloaded_api.load_settings()["models"] == ["coder.gguf"]
+
+    reloaded_api.clear_settings()
+    assert reloaded_api.load_settings() == {}
 
 
 def test_render_custom_message_uses_registered_renderer(tmp_path: Path) -> None:

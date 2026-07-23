@@ -94,6 +94,7 @@ def setup(tau):
     # registration
     tau.register_tool(agent_tool)            # tau_agent.tools.AgentTool
     tau.register_command("name", handler, description="...")
+    tau.register_provider(dynamic_provider)   # DynamicProvider
     tau.add_prompt_guideline("Never commit directly to main")
     tau.on("event_name", handler)            # or @tau.on("event_name")
 
@@ -162,6 +163,83 @@ build time; `/reload` rebuilds the prompt when guidelines change).
 slash command. Handlers are sync, receive `(args: str, context)`, and may
 return a `str` shown to the user. Built-in commands cannot be overridden.
 Extension commands appear in the TUI autocomplete automatically.
+
+### Providers and models
+
+Extensions register provider objects, not durable host catalog entries. A
+provider may start dormant with no models, restore cached models synchronously
+from extension settings, and own asynchronous discovery:
+
+```python
+from tau_coding.extensions import (
+    DynamicProvider,
+    OpenAICompatibleTransport,
+    OptionalEnvApiKey,
+    ProviderModel,
+)
+
+
+async def discover(context):
+    # Query context.endpoint only when context.network_allowed. Check
+    # context.is_cancelled during long work. Return validated metadata without
+    # inventing unknown limits or capabilities.
+    return (ProviderModel(id="coder.gguf", display_name="Coder"),)
+
+
+def setup(tau):
+    settings = tau.load_settings()
+    cached = tuple(
+        ProviderModel(id=model_id) for model_id in settings.get("models", [])
+    )
+    tau.register_provider(
+        DynamicProvider(
+            id="my-local-server",
+            display_name="My local server",
+            transport=OpenAICompatibleTransport(
+                base_url=str(settings.get("endpoint", "http://127.0.0.1:8080/v1")),
+            ),
+            auth=OptionalEnvApiKey("MY_LOCAL_API_KEY"),
+            models=cached,
+            default_model=settings.get("selected_model"),
+            refresh_models=discover,
+        )
+    )
+```
+
+Authentication strategies are `RequiredEnvApiKey("KEY")`,
+`OptionalEnvApiKey("KEY")`, and `NoAuth()`. Optional/no auth truly omit the
+`Authorization` header; Tau does not synthesize a local token.
+
+- `register_provider(provider)` atomically adds or replaces this extension's
+  layer. Multiple extensions may layer the same stable provider ID; removing
+  the effective layer restores the previous extension or built-in definition.
+- `await refresh_provider_models(id)` invokes the provider callback and publishes
+  a successful model snapshot atomically. Failure retains cached models and is
+  reported in extension diagnostics.
+- `unregister_provider(id)` removes only the caller's layer. Reload also removes
+  the outgoing generation's layers and cancels its refresh work.
+- `await select_model(provider, model)` creates the replacement runtime before
+  switching. Failure preserves the working session; success closes the replaced
+  Tau-owned runtime. It updates the current session, not Tau's durable default.
+- `context.provider_name` and `context.model` report the active IDs.
+
+`ProviderModel` supports optional `display_name`, `context_window`,
+`max_tokens`, `input`, `reasoning`, and `compat`. Leave unknown values unset.
+The OpenAI-compatible helper reuses Tau's transport. A runtime factory seam is
+also present for future non-OpenAI transports.
+
+Registrations are process-local. Persist only non-secret discovery state with
+the extension-scoped user settings API and register it again from `setup`:
+
+```python
+current = tau.load_settings()          # ~/.tau/extensions/settings/<name>.json
+tau.save_settings({"endpoint": url, "models": list(model_ids)})
+tau.clear_settings()
+```
+
+This storage remains user-level even for an explicitly loaded project
+extension. Never save API keys or other secrets there. Project extensions stay
+disabled unless the user explicitly enables them.
 
 ### UI dialogs
 
@@ -504,11 +582,12 @@ tau -e ./tau-subagents
 ## Not yet supported
 
 Compared to Pi's extension system, v1 does not yet include: package
-management (`pi install`-style), custom providers, extension-authored TUI
-widgets (custom *message* rendering via `register_message_renderer` *is*
-supported; the host-provided `context.ui` dialogs *are* supported), custom
-entry renderers (non-context cards), keyboard shortcuts, CLI flag
-registration, system-prompt replacement, context rewriting, or a project trust
-store. The
-architecture document
-(`dev-notes/architecture/phase-21-extensions.md`) tracks these.
+management (`pi install`-style), arbitrary custom provider transports
+(OpenAI-compatible extension providers are supported), custom entry renderers
+(non-context cards), keyboard shortcuts, CLI flag registration,
+system-prompt replacement, context rewriting, or a project trust store. Custom
+*message* rendering via `register_message_renderer`, host-provided dialogs,
+and extension-authored component widgets are supported.
+
+The architecture document
+(`dev-notes/architecture/phase-21-extensions.md`) tracks these remaining gaps.

@@ -1,6 +1,6 @@
 # Tau extensions
 
-Tau extensions are Python modules that can register custom tools and slash commands, observe lifecycle events, intercept tool calls and results, show UI dialogs, and customize message rendering.
+Tau extensions are Python modules that can register custom tools, slash commands, and OpenAI-compatible providers; observe lifecycle events; intercept tool calls and results; show UI dialogs; and customize message rendering.
 
 ## Start here
 
@@ -10,6 +10,25 @@ For complete API documentation, read the repository's published guide when worki
 - `dev-notes/architecture/phase-21-extensions.md`
 
 Installed examples are under `examples/extensions/` next to these docs. Read the relevant example completely before implementing an extension.
+
+## Provider registration
+
+Register `DynamicProvider` with `ProviderModel` snapshots, an
+`OpenAICompatibleTransport`, and `RequiredEnvApiKey`, `OptionalEnvApiKey`, or
+`NoAuth`. Providers may start with zero models. Optional/no auth omits the
+Authorization header rather than inventing a token.
+
+Provider-owned async discovery runs through `await
+refresh_provider_models(id)`. Successful snapshots publish atomically; failures
+retain cached models and become extension diagnostics. `await
+select_model(provider, model)` safely switches only the current session.
+`unregister_provider(id)` removes the caller's overlay and restores the prior
+extension or built-in definition.
+
+Registrations are process-local and load before startup `--provider`/`--model`
+resolution. Persist only non-secret discovery data with `load_settings()`,
+`save_settings(...)`, and `clear_settings()` under
+`~/.tau/extensions/settings/`. Never store API keys there.
 
 ## Locations
 

@@ -114,6 +114,7 @@ from tau_coding.provider_config import (
     upsert_saved_provider,
 )
 from tau_coding.provider_runtime import create_model_provider
+from tau_coding.provider_startup import prepare_provider_startup
 from tau_coding.resources import TauResourcePaths
 from tau_coding.session import (
     TREE_RUNNING_MESSAGE,
@@ -1891,9 +1892,21 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
     def compose(self) -> ComposeResult:
         """Compose the model picker."""
         with Vertical(id="model-picker"):
-            title = (
-                f"Model: {self.provider_name}" if self.picker_kind == "model" else "Scoped models"
+            current_choice = next(
+                (
+                    choice
+                    for choice in self.choices
+                    if choice.provider_name == self.provider_name
+                    and choice.model == self.current_model
+                ),
+                None,
             )
+            provider_label = (
+                current_choice.provider_display_name
+                if current_choice is not None and current_choice.provider_display_name
+                else self.provider_name
+            )
+            title = f"Model: {provider_label}" if self.picker_kind == "model" else "Scoped models"
             yield Static(title, id="model-picker-title")
             yield Static("", id="model-picker-tabs")
             yield ModelPickerSearchInput(placeholder="Search models", id="model-picker-search")
@@ -4872,6 +4885,10 @@ class TauTuiApp(App[None]):
     def _handle_model_picker_result(self, choice: ModelChoice | None) -> None:
         if choice is None:
             return
+        is_extension_provider = getattr(self.session, "is_extension_provider", None)
+        if is_extension_provider is not None and is_extension_provider(choice.provider_name):
+            self.run_worker(self._select_extension_model(choice), exclusive=False)
+            return
         try:
             set_model_choice = getattr(self.session, "set_model_choice", None)
             if set_model_choice is None:
@@ -4880,6 +4897,15 @@ class TauTuiApp(App[None]):
                 self.session.set_model(choice.model)
             else:
                 set_model_choice(choice)
+        except Exception as exc:  # noqa: BLE001 - surface model switch failures in the TUI
+            self._notify(f"Could not switch model: {exc}", severity="error")
+            return
+        self._refresh_chrome()
+
+    async def _select_extension_model(self, choice: ModelChoice) -> None:
+        """Switch a process-local provider without persisting it as a host default."""
+        try:
+            await self.session.select_extension_provider_model(choice.provider_name, choice.model)
         except Exception as exc:  # noqa: BLE001 - surface model switch failures in the TUI
             self._notify(f"Could not switch model: {exc}", severity="error")
             return
@@ -5587,7 +5613,14 @@ def _model_picker_label(
         else "  "
     )
     suffix = " [scoped]" if scoped else ""
-    return f"{marker}{choice.provider_name}:{choice.model}{suffix}"
+    provider = choice.provider_display_name or choice.provider_name
+    model = choice.model_display_name or choice.model
+    ids = (
+        f" ({choice.provider_name}:{choice.model})"
+        if provider != choice.provider_name or model != choice.model
+        else ""
+    )
+    return f"{marker}{provider}:{model}{ids}{suffix}"
 
 
 def _filter_login_providers(
@@ -5611,7 +5644,10 @@ def _filter_model_choices(choices: Sequence[ModelChoice], query: str) -> tuple[M
     return tuple(
         choice
         for choice in choices
-        if normalized in choice.provider_name.lower() or normalized in choice.model.lower()
+        if normalized in choice.provider_name.lower()
+        or normalized in choice.model.lower()
+        or normalized in (choice.provider_display_name or "").lower()
+        or normalized in (choice.model_display_name or "").lower()
     )
 
 
@@ -6042,13 +6078,27 @@ async def run_tui_app(
     if new_session and session_id is not None:
         raise RuntimeError("--session and --new-session cannot be used together")
 
-    provider_settings = load_provider_settings()
     shell_settings = load_shell_settings()
     manager = session_manager or SessionManager()
     record = _explicit_resume_record(
         manager,
         session_id=session_id,
     )
+    startup_cwd = record.cwd if record is not None else cwd
+    requested_startup_provider = provider_name or (
+        record.provider_name if record is not None else None
+    )
+    startup = await prepare_provider_startup(
+        cwd=startup_cwd,
+        requested_provider=requested_startup_provider,
+        extension_paths=extension_paths,
+        extensions_enabled=extensions_enabled,
+        project_extensions_enabled=project_extensions_enabled,
+        settings_loader=load_provider_settings,
+    )
+    resource_paths = startup.resource_paths
+    extension_runtime = startup.extension_runtime
+    provider_settings = startup.settings
     selection = _resolve_tui_startup_selection(
         provider_settings,
         record=record,
@@ -6103,10 +6153,13 @@ async def run_tui_app(
                 session_manager=manager,
                 provider_name=selection.provider.name,
                 provider_settings=provider_settings,
+                durable_provider_settings=startup.durable_settings,
                 runtime_provider_config=runtime_provider_config,
                 auto_compact_token_threshold=auto_compact_token_threshold,
                 index_on_first_persist=index_on_first_persist,
                 shell_command_prefix=shell_settings.shell_command_prefix,
+                resource_paths=resource_paths,
+                extension_runtime=extension_runtime,
                 extension_paths=extension_paths,
                 extensions_enabled=extensions_enabled,
                 project_extensions_enabled=project_extensions_enabled,

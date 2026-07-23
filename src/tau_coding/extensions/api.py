@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 from tau_agent.messages import AgentMessage, ToolResultMessage
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
+from tau_coding.extensions.providers import DynamicProvider, ProviderModel
 
 if TYPE_CHECKING:
     from textual import events
@@ -868,6 +869,50 @@ class ExtensionAPI:
         """Register an agent tool (first registration per name wins)."""
         self._generation.assert_active()
         self._runtime.register_tool(self._extension_name, tool)
+
+    def register_provider(self, provider: DynamicProvider) -> None:
+        """Register or atomically replace this extension's provider layer."""
+        self._generation.assert_active()
+        self._runtime.register_provider(self._extension_name, provider)
+
+    async def refresh_provider_models(
+        self,
+        provider_id: str,
+        *,
+        network_allowed: bool = True,
+    ) -> tuple[ProviderModel, ...]:
+        """Run provider-owned asynchronous discovery and publish it atomically."""
+        self._generation.assert_active()
+        return await self._runtime.refresh_provider_models(
+            self._extension_name,
+            provider_id,
+            network_allowed=network_allowed,
+        )
+
+    def unregister_provider(self, name: str) -> None:
+        """Remove a provider owned by this extension from host model surfaces."""
+        self._generation.assert_active()
+        self._runtime.unregister_provider(self._extension_name, name)
+
+    async def select_model(self, provider: str, model: str) -> None:
+        """Safely switch the current session without persisting a host default."""
+        self._generation.assert_active()
+        await self._runtime.select_model(provider, model)
+
+    def load_settings(self) -> dict[str, JSONValue]:
+        """Read this extension's user-level, non-secret JSON settings."""
+        self._generation.assert_active()
+        return self._runtime.load_extension_settings(self._extension_name)
+
+    def save_settings(self, settings: Mapping[str, JSONValue]) -> Path:
+        """Atomically save this extension's user-level, non-secret settings."""
+        self._generation.assert_active()
+        return self._runtime.save_extension_settings(self._extension_name, settings)
+
+    def clear_settings(self) -> None:
+        """Delete this extension's user-level settings file, if present."""
+        self._generation.assert_active()
+        self._runtime.clear_extension_settings(self._extension_name)
 
     def register_command(
         self,
