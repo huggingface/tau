@@ -1208,6 +1208,21 @@ class SkillPickerSearchInput(Input):
     def _picker(self) -> SkillPickerScreen:
         return cast(SkillPickerScreen, self.screen)
 
+    def on_key(self, event: Key) -> None:
+        """Route picker control keys before the input edits its text."""
+        if event.key == "up":
+            event.stop()
+            event.prevent_default()
+            self.action_cursor_up()
+        elif event.key == "down":
+            event.stop()
+            event.prevent_default()
+            self.action_cursor_down()
+        elif event.key == "escape":
+            event.stop()
+            event.prevent_default()
+            self.action_cancel()
+
     def action_cursor_up(self) -> None:
         self._picker().action_cursor_up()
 
@@ -1222,10 +1237,10 @@ class SkillPickerScreen(ModalScreen[str | None]):
     """Searchable modal containing every loaded skill."""
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
-        Binding("escape", "cancel", "Cancel"),
-        Binding("up", "cursor_up", "Up", show=False),
-        Binding("down", "cursor_down", "Down", show=False),
-        Binding("enter", "select_cursor", "Select", show=False),
+        Binding("escape", "cancel", "Cancel", priority=True),
+        Binding("up", "cursor_up", "Up", show=False, priority=True),
+        Binding("down", "cursor_down", "Down", show=False, priority=True),
+        Binding("enter", "select_cursor", "Select", show=False, priority=True),
     ]
 
     def __init__(self, skills: Sequence[Skill], *, theme: TuiTheme) -> None:
@@ -1260,10 +1275,14 @@ class SkillPickerScreen(ModalScreen[str | None]):
         self._select_visible_skill()
 
     def action_cursor_up(self) -> None:
-        self.query_one("#skill-picker-list", ListView).action_cursor_up()
+        skill_list = self.query_one("#skill-picker-list", ListView)
+        if skill_list.index is not None:
+            skill_list.index = max(0, skill_list.index - 1)
 
     def action_cursor_down(self) -> None:
-        self.query_one("#skill-picker-list", ListView).action_cursor_down()
+        skill_list = self.query_one("#skill-picker-list", ListView)
+        if skill_list.index is not None:
+            skill_list.index = min(len(self.visible_skills) - 1, skill_list.index + 1)
 
     def action_select_cursor(self) -> None:
         self._select_visible_skill()
@@ -1288,7 +1307,17 @@ class SkillPickerScreen(ModalScreen[str | None]):
         skill_list = self.query_one("#skill-picker-list", ListView)
         skill_list.clear()
         skill_list.extend(
-            ListItem(Label(_skill_picker_label(skill), markup=False))
+            ListItem(
+                Horizontal(
+                    Label(skill.name, classes="skill-picker-name", markup=False),
+                    Label(
+                        skill.description or "No description",
+                        classes="skill-picker-description",
+                        markup=False,
+                    ),
+                    classes="skill-picker-row",
+                )
+            )
             for skill in self.visible_skills
         )
         skill_list.index = 0 if self.visible_skills else None
@@ -2802,6 +2831,24 @@ class TauTuiApp(App[None]):
 
     ListView > ListItem.-highlight Label {
         background: $tau-highlight-background;
+        color: $tau-highlight-text;
+    }
+
+    #skill-picker-list .skill-picker-row {
+        height: 1;
+    }
+
+    #skill-picker-list .skill-picker-name {
+        width: 35%;
+        text-style: bold;
+    }
+
+    #skill-picker-list .skill-picker-description {
+        width: 65%;
+        color: $tau-muted-text;
+    }
+
+    #skill-picker-list ListItem.-highlight .skill-picker-description {
         color: $tau-highlight-text;
     }
 
@@ -4451,6 +4498,7 @@ class TauTuiApp(App[None]):
             self.screen,
             SessionPickerScreen
             | PromptTemplatePickerScreen
+            | SkillPickerScreen
             | TreePickerScreen
             | LoginMethodPickerScreen
             | LoginProviderPickerScreen
@@ -4478,6 +4526,7 @@ class TauTuiApp(App[None]):
             self.screen,
             SessionPickerScreen
             | PromptTemplatePickerScreen
+            | SkillPickerScreen
             | TreePickerScreen
             | LoginMethodPickerScreen
             | LoginProviderPickerScreen
@@ -4503,6 +4552,7 @@ class TauTuiApp(App[None]):
             self.screen,
             SessionPickerScreen
             | PromptTemplatePickerScreen
+            | SkillPickerScreen
             | TreePickerScreen
             | LoginMethodPickerScreen
             | LoginProviderPickerScreen
@@ -5705,11 +5755,6 @@ def _session_picker_label(record: SessionCompletionRecord) -> str:
     if title is not None:
         parts.append(title)
     return " - ".join(parts)
-
-
-def _skill_picker_label(skill: Skill) -> str:
-    description = skill.description or "No description"
-    return f"{skill.name}\n  {description}"
 
 
 def _filter_session_records(

@@ -3008,11 +3008,22 @@ async def test_tui_app_skills_picker_filters_and_inserts_without_submitting() ->
 
         picker = app.screen
         assert isinstance(picker, SkillPickerScreen)
-        assert [item.query_one(Label).render().plain for item in picker.query(ListItem)] == [
-            "alpha\n  Review Python code",
-            "zebra\n  Work with stripes",
+        assert [
+            [label.render().plain for label in item.query(Label)] for item in picker.query(ListItem)
+        ] == [
+            ["alpha", "Review Python code"],
+            ["zebra", "Work with stripes"],
         ]
         assert picker.query_one("#skill-picker-search", Input).has_focus
+
+        skill_list = picker.query_one("#skill-picker-list", ListView)
+        assert skill_list.index == 0
+        await pilot.press("down")
+        await pilot.pause()
+        assert skill_list.index == 1
+        await pilot.press("up")
+        await pilot.pause()
+        assert skill_list.index == 0
 
         search = picker.query_one("#skill-picker-search", Input)
         search.value = "missing"
@@ -3026,8 +3037,9 @@ async def test_tui_app_skills_picker_filters_and_inserts_without_submitting() ->
 
         search.value = "python"
         await pilot.pause()
-        assert [item.query_one(Label).render().plain for item in picker.query(ListItem)] == [
-            "alpha\n  Review Python code"
+        assert [label.render().plain for label in picker.query(Label)] == [
+            "alpha",
+            "Review Python code",
         ]
         await pilot.press("enter")
         await pilot.pause()
