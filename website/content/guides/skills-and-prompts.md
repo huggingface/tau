@@ -89,8 +89,9 @@ prompt and runs it as a normal turn.
 A prompt template is a saved prompt you trigger by its filename. For example,
 `~/.agents/prompts/wt.md` is invoked with `/wt`. Run `/prompts` in the TUI to
 search every loaded template and insert its invocation for editing; selection
-does not submit the prompt. Templates can include
-variables with `{{ name }}`:
+does not submit the prompt. The filename `prompts.md` is reserved for this
+built-in command; Tau ignores a template with that name and reports a resource
+diagnostic. Templates can include variables with `{{ name }}`:
 
 ```md
 ---

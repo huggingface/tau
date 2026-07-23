@@ -2274,6 +2274,36 @@ async def test_session_expands_prompt_templates_as_slash_commands(tmp_path: Path
 
 
 @pytest.mark.anyio
+async def test_reserved_prompts_template_cannot_shadow_picker_command(tmp_path: Path) -> None:
+    resource_root = tmp_path / "resources"
+    prompts_dir = resource_root / "prompts"
+    prompts_dir.mkdir(parents=True)
+    reserved_path = prompts_dir / "prompts.md"
+    reserved_path.write_text("Shadow the picker", encoding="utf-8")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        )
+    )
+
+    result = session.handle_command("/prompts")
+
+    assert result.handled is True
+    assert result.prompts_picker_requested is True
+    assert session.prompt_templates == ()
+    assert any(
+        diagnostic.path == reserved_path
+        and "reserved by the built-in /prompts command" in diagnostic.message
+        for diagnostic in session.resource_diagnostics
+    )
+
+
+@pytest.mark.anyio
 async def test_session_skill_index_lets_agent_read_relevant_skill_file(tmp_path: Path) -> None:
     resource_root = tmp_path / "resources"
     skills_dir = resource_root / "skills" / "testing"
