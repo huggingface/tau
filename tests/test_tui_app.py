@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from rich.console import Console
@@ -119,6 +120,7 @@ from tau_coding.tui.widgets import (
     TranscriptMessageWidget,
     TranscriptView,
     TranscriptWindowBoundary,
+    _comma_list,
     _compact_token_count,
     _sidebar_brand,
     _split_rich_style_colors,
@@ -495,6 +497,119 @@ def test_session_sidebar_renders_session_metadata() -> None:
     assert "read, write, edit, bash" in output
     assert "• review" in output
     assert "permission-gate, subagents" in output
+
+
+@pytest.mark.parametrize(("skill_count", "hidden_label"), [(5, None), (7, "...(2 more)")])
+def test_session_sidebar_limits_skills_to_five(
+    skill_count: int,
+    hidden_label: str | None,
+) -> None:
+    session = FakeSession()
+    session.skills = tuple(
+        Skill(name=f"skill-{index}", path=session.cwd / f"skill-{index}.md", content="Skill")
+        for index in range(1, skill_count + 1)
+    )
+    console = Console(record=True, width=80)
+
+    console.print(render_session_sidebar(session))
+
+    output = console.export_text()
+    for index in range(1, 6):
+        assert f"• skill-{index}" in output
+    assert "skill-6" not in output
+    assert "skill-7" not in output
+    if hidden_label is None:
+        assert "more)" not in output
+    else:
+        assert hidden_label in output
+
+
+def test_session_sidebar_limits_context_files_to_five() -> None:
+    session = FakeSession()
+    session.context_files = tuple(
+        ProjectContextFile(path=str(session.cwd / f"context-{index}.md"), content="Rules")
+        for index in range(1, 8)
+    )
+    console = Console(record=True, width=80)
+
+    console.print(render_session_sidebar(session))
+
+    output = console.export_text()
+    for index in range(1, 6):
+        assert f"• context-{index}.md" in output
+    assert "context-6.md" not in output
+    assert "context-7.md" not in output
+    assert "...(2 more)" in output
+
+
+def test_comma_list_limits_by_rendered_lines_instead_of_item_count() -> None:
+    items = [f"i{index}" for index in range(1, 16)]
+
+    narrow_console = Console(record=True, width=12)
+    narrow_console.print(_comma_list(items, empty="Empty", theme=TAU_DARK_THEME))
+    narrow_output = narrow_console.export_text()
+    assert "i9" in narrow_output
+    assert "i10" not in narrow_output
+    assert "...(6 more)" in narrow_output
+    assert len(narrow_output.splitlines()) == 4
+
+    wide_console = Console(record=True, width=30)
+    wide_console.print(_comma_list(items, empty="Empty", theme=TAU_DARK_THEME))
+    wide_output = wide_console.export_text()
+    assert "i15" in wide_output
+    assert "more)" not in wide_output
+    assert len(wide_output.splitlines()) == 3
+
+
+@pytest.mark.parametrize(("item_count", "hidden_label"), [(1, None), (2, "...(1 more)")])
+def test_comma_list_represents_an_oversized_first_item(
+    item_count: int,
+    hidden_label: str | None,
+) -> None:
+    oversized_name = "x" * 40
+    console = Console(record=True, width=12)
+
+    console.print(
+        _comma_list(
+            [oversized_name, "second-item"][:item_count],
+            empty="Empty",
+            theme=TAU_DARK_THEME,
+        )
+    )
+
+    output = console.export_text()
+    assert output.startswith("x" * 12)
+    assert "…" in output
+    if hidden_label is None:
+        assert len(output.splitlines()) == 3
+        assert "more)" not in output
+    else:
+        assert len(output.splitlines()) == 4
+        assert hidden_label in output
+
+
+@pytest.mark.parametrize(
+    ("attribute", "prefix"),
+    [("tools", "tool"), ("prompt_templates", "prompt"), ("extension_names", "extension")],
+)
+def test_session_sidebar_limits_comma_separated_sections_to_three_lines(
+    attribute: str,
+    prefix: str,
+) -> None:
+    session = FakeSession()
+    names = tuple(f"{prefix}-item-{index}" for index in range(1, 20))
+    values: tuple[object, ...] = names
+    if attribute != "extension_names":
+        values = tuple(SimpleNamespace(name=name) for name in names)
+    setattr(session, attribute, values)
+    console = Console(record=True, width=40)
+
+    console.print(render_session_sidebar(session))
+
+    output = console.export_text()
+    assert names[0] in output
+    assert names[-1] not in output
+    assert "...(" in output
 
 
 def test_session_sidebar_uses_na_when_cost_is_unavailable() -> None:
