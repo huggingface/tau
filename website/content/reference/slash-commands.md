@@ -23,6 +23,7 @@ command palette with **Ctrl+K**.
 | `/login [provider]` | Connect a built-in provider with OAuth or an API key; Anthropic uses `anthropic-subscription` or `anthropic-api` |
 | `/logout [provider]` | Remove saved credentials for a provider |
 | `/reload` | Reload local skills, prompts, extensions, and project context |
+| `/prompts` | Search loaded prompt templates and insert an invocation for editing |
 | `/hotkeys` | Show the keyboard shortcuts |
 | `/skill:<name> [request]` | Expand a loaded skill into your prompt |
 
@@ -40,4 +41,4 @@ Related:
 
 - **Thinking mode** is keyboard-driven, not a slash command — see
   [Keyboard shortcuts]({{< relref "./keybindings.md" >}}) and [Managing context]({{< relref "../guides/context.md#thinking-modes" >}}).
-- **Prompt templates** are invoked by filename (e.g. `wt …`), not with a slash.
+- **Prompt templates** use slash invocations (for example, `/wt …`). Use `/prompts` to search loaded templates and insert an invocation without submitting it.

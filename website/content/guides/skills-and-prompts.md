@@ -86,8 +86,10 @@ prompt and runs it as a normal turn.
 
 ## Prompt templates
 
-A prompt template is a saved prompt you trigger by its filename. For example
-`~/.agents/prompts/wt.md` becomes the prompt `wt`. Templates can include
+A prompt template is a saved prompt you trigger by its filename. For example,
+`~/.agents/prompts/wt.md` is invoked with `/wt`. Run `/prompts` in the TUI to
+search every loaded template and insert its invocation for editing; selection
+does not submit the prompt. Templates can include
 variables with `{{ name }}`:
 
 ```md
@@ -100,7 +102,8 @@ Implement this feature safely in a new worktree:
 ```
 
 If a template has no placeholders, your arguments are appended after a blank
-line. Variables are filled from the arguments you pass when invoking it.
+line. Variables are filled from the arguments you pass after the invocation,
+for example `/wt add caching`.
 
 ## Skill vs. prompt template — which?
 

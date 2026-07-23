@@ -105,6 +105,7 @@ class CommandResult:
     export_format: str | None = None
     resume_session_id: str | None = None
     resume_picker_requested: bool = False
+    prompts_picker_requested: bool = False
     tree_picker_requested: bool = False
     login_picker_requested: bool = False
     custom_provider_login_requested: bool = False
@@ -272,6 +273,15 @@ def create_default_command_registry() -> CommandRegistry:
             description="Show common keyboard shortcuts.",
             handler=_hotkeys_command,
             search_terms=("keys", "shortcuts", "bindings"),
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="prompts",
+            usage="/prompts",
+            description="Choose a loaded prompt template.",
+            handler=_prompts_command,
+            search_terms=("templates", "picker"),
         )
     )
     registry.register(
@@ -512,6 +522,12 @@ def _skill_command(context: CommandContext) -> CommandResult:
         handled=True,
         message="Use /skill:<name> [request] to expand a loaded skill into your prompt.",
     )
+
+
+def _prompts_command(context: CommandContext) -> CommandResult:
+    if context.args:
+        return CommandResult(handled=True, message="Usage: /prompts")
+    return CommandResult(handled=True, prompts_picker_requested=True)
 
 
 def _resume_command(context: CommandContext) -> CommandResult:

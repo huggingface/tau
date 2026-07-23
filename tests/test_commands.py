@@ -126,6 +126,7 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
         "model",
         "name",
         "new",
+        "prompts",
         "quit",
         "reload",
         "resume",
@@ -136,6 +137,14 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
         "theme",
         "tree",
     ]
+
+
+def test_prompts_command_requests_picker(tmp_path: Path) -> None:
+    registry = create_default_command_registry()
+    session = FakeSession(tmp_path)
+
+    assert registry.execute(session, "/prompts").prompts_picker_requested is True
+    assert registry.execute(session, "/prompts extra").message == "Usage: /prompts"
 
 
 def test_system_command_returns_active_prompt(tmp_path: Path) -> None:

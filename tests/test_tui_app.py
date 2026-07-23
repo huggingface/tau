@@ -81,6 +81,7 @@ from tau_coding.tui.app import (
     ModelPickerScreen,
     OAuthLoginScreen,
     PromptInput,
+    PromptTemplatePickerScreen,
     SessionPickerScreen,
     TauTuiApp,
     ThemePickerScreen,
@@ -253,6 +254,8 @@ class FakeSession:
             return CommandResult(handled=True, resume_session_id=text.removeprefix("/resume "))
         if text == "/resume":
             return CommandResult(handled=True, resume_picker_requested=True)
+        if text == "/prompts":
+            return CommandResult(handled=True, prompts_picker_requested=True)
         if text == "/tree":
             return CommandResult(handled=True, tree_picker_requested=True)
         if text == "/login":
@@ -3999,6 +4002,74 @@ async def test_structured_assistant_ignores_empty_final_content_blocks() -> None
 
         transcript = app.query_one("#transcript", TranscriptView)
         assert [line.text for line in transcript.lines] == ["earlier", "done"]
+
+
+@pytest.mark.anyio
+async def test_tui_app_prompts_picker_filters_and_inserts_without_submitting() -> None:
+    session = FakeSession()
+    session.prompt_templates = (
+        PromptTemplate(
+            name="review",
+            path=Path("review.md"),
+            content="Review this.",
+            description="Inspect changes",
+        ),
+        PromptTemplate(
+            name="test",
+            path=Path("test.md"),
+            content="Test this.",
+            description="Run checks",
+        ),
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/prompts"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, PromptTemplatePickerScreen)
+        search = app.screen.query_one("#prompt-template-picker-search", Input)
+        assert search.has_focus
+        await pilot.press("z")
+        assert app.screen.visible_templates == ()
+        assert "No matching prompt templates" in str(
+            app.screen.query_one("#prompt-template-picker-help", Static).content
+        )
+        search.value = "tes"
+        await pilot.pause()
+        assert [template.name for template in app.screen.visible_templates] == ["test"]
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert prompt.value == "/test"
+        assert prompt.has_focus
+        assert app.state.items == []
+
+
+@pytest.mark.anyio
+async def test_tui_app_prompts_picker_cancel_and_empty_state() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/prompts"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        picker = app.screen
+        assert isinstance(picker, PromptTemplatePickerScreen)
+        assert "No prompt templates loaded" in str(
+            picker.query_one("#prompt-template-picker-help", Static).content
+        )
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert prompt.value == ""
+        assert prompt.has_focus
+        assert app.state.items == []
 
 
 @pytest.mark.anyio

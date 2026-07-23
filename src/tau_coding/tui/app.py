@@ -95,6 +95,7 @@ from tau_coding.oauth_types import (
     OAuthPrompt,
     OAuthSelectPrompt,
 )
+from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_catalog import (
     BUILTIN_PROVIDER_CATALOG,
     ProviderCatalogEntry,
@@ -986,6 +987,91 @@ class SessionPickerSearchInput(Input):
     def action_cancel(self) -> None:
         """Close the session picker."""
         self._picker().action_cancel()
+
+
+class PromptTemplatePickerScreen(ModalScreen[str | None]):
+    """Searchable picker for loaded prompt templates."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("up", "cursor_up", "Up", show=False),
+        Binding("down", "cursor_down", "Down", show=False),
+        Binding("enter", "select_cursor", "Select", show=False),
+    ]
+
+    def __init__(self, templates: Sequence[PromptTemplate]) -> None:
+        super().__init__()
+        self.templates = tuple(sorted(templates, key=lambda item: item.name.lower()))
+        self.visible_templates = self.templates
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="prompt-template-picker"):
+            yield Static("Prompt templates", id="prompt-template-picker-title")
+            yield SessionPickerSearchInput(
+                placeholder="Search prompt templates", id="prompt-template-picker-search"
+            )
+            yield ListView(id="prompt-template-picker-list")
+            yield Static("", id="prompt-template-picker-help")
+
+    def on_mount(self) -> None:
+        self.query_one("#prompt-template-picker-search", Input).focus()
+        self._refresh_list()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "prompt-template-picker-search":
+            return
+        event.stop()
+        query = event.value.casefold()
+        self.visible_templates = tuple(
+            template
+            for template in self.templates
+            if query in template.name.casefold() or query in (template.description or "").casefold()
+        )
+        self._refresh_list()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "prompt-template-picker-search":
+            event.stop()
+            self.action_select_cursor()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        event.stop()
+        self.action_select_cursor()
+
+    def action_cursor_up(self) -> None:
+        self.query_one("#prompt-template-picker-list", ListView).action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        self.query_one("#prompt-template-picker-list", ListView).action_cursor_down()
+
+    def action_select_cursor(self) -> None:
+        picker_list = self.query_one("#prompt-template-picker-list", ListView)
+        if self.visible_templates and picker_list.index is not None:
+            self.dismiss(self.visible_templates[picker_list.index].name)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def _refresh_list(self) -> None:
+        picker_list = self.query_one("#prompt-template-picker-list", ListView)
+        picker_list.clear()
+        picker_list.extend(
+            ListItem(
+                Label(
+                    f"/{template.name} — {template.description or 'No description'}",
+                    markup=False,
+                )
+            )
+            for template in self.visible_templates
+        )
+        picker_list.index = 0 if self.visible_templates else None
+        if self.visible_templates:
+            help_text = "Enter selects - Escape closes"
+        elif self.templates:
+            help_text = "No matching prompt templates - Escape closes"
+        else:
+            help_text = "No prompt templates loaded - Escape closes"
+        self.query_one("#prompt-template-picker-help", Static).update(help_text)
 
 
 class SessionPickerScreen(ModalScreen[str | None]):
@@ -2553,12 +2639,14 @@ class TauTuiApp(App[None]):
     }
 
     SessionPickerScreen,
+    PromptTemplatePickerScreen,
     TreePickerScreen,
     CommandOutputScreen {
         align: center middle;
     }
 
     #session-picker,
+    #prompt-template-picker,
     #tree-picker {
         width: 76;
         max-width: 90%;
@@ -2570,6 +2658,7 @@ class TauTuiApp(App[None]):
     }
 
     #session-picker-title,
+    #prompt-template-picker-title,
     #tree-picker-title {
         height: 1;
         color: $tau-chrome-text;
@@ -2577,7 +2666,8 @@ class TauTuiApp(App[None]):
         margin-bottom: 1;
     }
 
-    #session-picker-search {
+    #session-picker-search,
+    #prompt-template-picker-search {
         height: 3;
         margin-bottom: 1;
         background: $tau-prompt-background;
@@ -2586,6 +2676,7 @@ class TauTuiApp(App[None]):
     }
 
     #session-picker-list,
+    #prompt-template-picker-list,
     #tree-picker-list {
         height: auto;
         max-height: 16;
@@ -2604,6 +2695,7 @@ class TauTuiApp(App[None]):
     }
 
     #session-picker-help,
+    #prompt-template-picker-help,
     #tree-picker-help {
         height: 1;
         margin-top: 1;
@@ -3238,6 +3330,8 @@ class TauTuiApp(App[None]):
                 await self._resume_session(command.resume_session_id)
             if command.resume_picker_requested:
                 self.action_open_session_picker()
+            if command.prompts_picker_requested:
+                self._open_prompt_template_picker()
             if command.tree_picker_requested:
                 if self._is_agent_or_queue_active():
                     prompt.text = raw_text
@@ -4386,6 +4480,23 @@ class TauTuiApp(App[None]):
             SessionPickerScreen(records, theme=self.tui_settings.resolved_theme),
             callback=self._handle_session_picker_result,
         )
+
+    def _open_prompt_template_picker(self) -> None:
+        self.push_screen(
+            PromptTemplatePickerScreen(self.session.prompt_templates),
+            callback=self._handle_prompt_template_picker_result,
+        )
+
+    def _handle_prompt_template_picker_result(self, name: str | None) -> None:
+        prompt = self.query_one("#prompt", PromptInput)
+        prompt.focus()
+        if name is None:
+            return
+        invocation = f"/{name}"
+        prompt.text = invocation
+        prompt.move_cursor(_text_end_location(invocation))
+        self._completion_state = self._build_completion_state(invocation)
+        self._refresh_completions()
 
     def action_cycle_thinking(self) -> None:
         """Cycle the active thinking mode."""

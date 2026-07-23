@@ -58,6 +58,7 @@ to search and run them. Common ones:
 - `/model` — pick the active model
 - `/compact` — summarize and shrink the context
 - `/resume`, `/tree` — open previous sessions or branch from history
+- `/prompts` — search prompt templates and insert one for editing
 - `/hotkeys` — show the keyboard shortcuts
 
 The full list is in the [Slash commands reference]({{< relref "../reference/slash-commands.md" >}}).
