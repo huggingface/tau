@@ -471,6 +471,11 @@ class CodingSession:
         return tuple(self._harness.config.tools)
 
     @property
+    def extension_tool_sources(self) -> dict[str, str]:
+        """Map active extension-provided tools to their owning extension."""
+        return self._extension_runtime.extension_tool_sources
+
+    @property
     def messages(self) -> tuple[AgentMessage, ...]:
         """Return the restored/current transcript."""
         return self._harness.messages

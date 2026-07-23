@@ -169,6 +169,7 @@ class FakeSession:
         self.scoped_model_choices: tuple[ModelChoice, ...] = ()
         self.available_providers = ("openai",)
         self.tools = tuple(create_coding_tools(cwd=self.cwd))
+        self.extension_tool_sources: dict[str, str] = {}
         self.skills = (Skill(name="review", path=self.cwd / "review.md", content="Review code"),)
         self.prompt_templates = ()
         self.context_files = (
@@ -5057,7 +5058,15 @@ async def test_tui_app_tools_reference_opens_filters_and_cancels() -> None:
         await pilot.pause()
         assert [tool.name for tool in app.screen.visible_tools] == ["bash"]
         [label] = app.screen.query("#tools-reference-list Label")
-        assert app.screen.visible_tools[0].description in str(label.render())
+        rendered = str(label.render())
+        assert "bash  [Built in]" in rendered
+        assert app.screen.visible_tools[0].description in rendered
+
+        app.screen.extension_sources["bash"] = "shell-tools"
+        app.screen._refresh_tools("bash")
+        await pilot.pause()
+        [label] = app.screen.query("#tools-reference-list Label")
+        assert "bash  [Extension: shell-tools]" in str(label.render())
 
         await pilot.press("escape")
         await pilot.pause()

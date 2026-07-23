@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import traceback
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -986,10 +986,17 @@ class ToolsReferenceScreen(ModalScreen[None]):
         Binding("down", "cursor_down", "Down", show=False),
     ]
 
-    def __init__(self, tools: Sequence[AgentTool], *, theme: TuiTheme) -> None:
+    def __init__(
+        self,
+        tools: Sequence[AgentTool],
+        *,
+        extension_sources: Mapping[str, str],
+        theme: TuiTheme,
+    ) -> None:
         super().__init__()
         self.tools = tuple(sorted(tools, key=lambda tool: tool.name.casefold()))
         self.visible_tools = self.tools
+        self.extension_sources = dict(extension_sources)
         self.theme = theme
 
     def compose(self) -> ComposeResult:
@@ -1043,7 +1050,8 @@ class ToolsReferenceScreen(ModalScreen[None]):
             [
                 ListItem(
                     Label(
-                        f"{tool.name} — {tool.label}\n{tool.description or 'No description'}",
+                        f"{tool.name}  [{self._source_label(tool)}]\n"
+                        f"{tool.description or 'No description'}",
                         markup=False,
                     )
                 )
@@ -1051,6 +1059,10 @@ class ToolsReferenceScreen(ModalScreen[None]):
             ]
         )
         tool_list.index = 0
+
+    def _source_label(self, tool: AgentTool) -> str:
+        extension = self.extension_sources.get(tool.name)
+        return f"Extension: {extension}" if extension is not None else "Built in"
 
 
 class SessionPickerSearchInput(Input):
@@ -5047,6 +5059,7 @@ class TauTuiApp(App[None]):
         self.push_screen(
             ToolsReferenceScreen(
                 self.session.tools,
+                extension_sources=self.session.extension_tool_sources,
                 theme=self.tui_settings.resolved_theme,
             )
         )

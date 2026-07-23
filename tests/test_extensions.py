@@ -516,6 +516,7 @@ def test_extension_tool_registration_and_composition(tmp_path: Path) -> None:
     composed = runtime.compose_tools([])
 
     assert [tool.name for tool in composed] == ["hello"]
+    assert runtime.extension_tool_sources == {"hello": "hello_ext"}
 
 
 async def test_extension_tool_overrides_builtin_by_name(tmp_path: Path) -> None:
