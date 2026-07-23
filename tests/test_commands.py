@@ -135,6 +135,7 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
         "skill",
         "system",
         "theme",
+        "tools",
         "tree",
     ]
 
@@ -360,6 +361,14 @@ def test_non_pi_commands_are_not_registered(tmp_path: Path) -> None:
         result = registry.execute(session, command)
         assert result.handled is False
         assert result.message is None
+
+
+def test_tools_command_requests_read_only_picker(tmp_path: Path) -> None:
+    result = create_default_command_registry().execute(FakeSession(tmp_path), "/tools")
+
+    assert result.handled is True
+    assert result.tools_picker_requested is True
+    assert result.message is None
 
 
 def test_login_command_requests_provider_picker(tmp_path: Path) -> None:

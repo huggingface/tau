@@ -114,6 +114,7 @@ class CommandResult:
     logout_picker_requested: bool = False
     logout_provider: str | None = None
     model_picker_requested: bool = False
+    tools_picker_requested: bool = False
     scoped_models_picker_requested: bool = False
     theme_picker_requested: bool = False
     thinking_level: str | None = None
@@ -325,6 +326,15 @@ def create_default_command_registry() -> CommandRegistry:
             usage="/model",
             description="Choose the active model.",
             handler=_model_command,
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="tools",
+            usage="/tools",
+            description="Browse tools available to the active session.",
+            handler=_tools_command,
+            search_terms=("capabilities", "reference"),
         )
     )
     registry.register(
@@ -599,6 +609,10 @@ def _format_sessions(context: CommandContext) -> str:
     for record in records:
         lines.append(_format_session_record(record))
     return "\n".join(lines)
+
+
+def _tools_command(context: CommandContext) -> CommandResult:
+    return CommandResult(handled=True, tools_picker_requested=True)
 
 
 def _model_command(context: CommandContext) -> CommandResult:

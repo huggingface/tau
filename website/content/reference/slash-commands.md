@@ -18,6 +18,7 @@ command palette with **Ctrl+K**.
 | `/tree` | Branch from an earlier point in the session tree |
 | `/name <new name>` | Rename the current session and, in supported terminals, the terminal tab title |
 | `/model` | Open the model picker |
+| `/tools` | Browse and search the active session's tools in a read-only reference |
 | `/scoped-models` | Choose favorite models for the Ctrl+P quick-cycle |
 | `/theme [name]` | Show or set the TUI theme |
 | `/login [provider]` | Connect a built-in provider with OAuth or an API key; Anthropic uses `anthropic-subscription` or `anthropic-api` |
