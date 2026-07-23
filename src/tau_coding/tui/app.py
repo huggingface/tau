@@ -3754,7 +3754,7 @@ class TauTuiApp(App[None]):
             if command.scoped_models_picker_requested:
                 self._open_scoped_models_picker()
             if command.skills_picker_requested:
-                self._open_skills_picker(raw_text)
+                self._open_skills_picker()
             if command.theme_picker_requested:
                 self._open_theme_picker()
             if command.thinking_level is not None:
@@ -4911,19 +4911,17 @@ class TauTuiApp(App[None]):
         self._completion_state = self._build_completion_state(invocation)
         self._refresh_completions()
 
-    def _open_skills_picker(self, original_text: str) -> None:
-        """Open loaded-skill discovery and preserve the submitted command on cancel."""
+    def _open_skills_picker(self) -> None:
+        """Open loaded-skill discovery."""
         self.push_screen(
             SkillPickerScreen(self.session.skills, theme=self.tui_settings.resolved_theme),
-            callback=lambda name: self._handle_skill_picker_result(name, original_text),
+            callback=self._handle_skill_picker_result,
         )
 
-    def _handle_skill_picker_result(
-        self, result: SkillPickerResult | None, original_text: str
-    ) -> None:
+    def _handle_skill_picker_result(self, result: SkillPickerResult | None) -> None:
         prompt = self.query_one("#prompt", PromptInput)
         if result is None:
-            prompt.text = original_text
+            prompt.text = ""
         elif result.action == "insert":
             prompt.text = f"/skill:{result.skill.name}"
         else:

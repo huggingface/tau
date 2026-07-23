@@ -3103,7 +3103,7 @@ async def test_tui_app_skills_picker_previews_description_and_shows_content_in_t
 
 
 @pytest.mark.anyio
-async def test_tui_app_skills_picker_cancel_preserves_prompt_and_shows_empty_states() -> None:
+async def test_tui_app_skills_picker_cancel_clears_prompt_and_shows_empty_states() -> None:
     session = FakeSession()
     session.skills = ()
     app = TauTuiApp(session)
@@ -3124,7 +3124,7 @@ async def test_tui_app_skills_picker_cancel_preserves_prompt_and_shows_empty_sta
         await pilot.press("escape")
         await pilot.pause()
 
-        assert prompt.text == "/skills"
+        assert prompt.text == ""
         assert prompt.has_focus
         assert session.prompt_texts == []
 
