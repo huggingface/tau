@@ -83,6 +83,7 @@ from tau_coding.tui.app import (
     PromptInput,
     PromptTemplatePickerScreen,
     SessionPickerScreen,
+    SkillPickerScreen,
     TauTuiApp,
     ThemePickerScreen,
     TreePickerScreen,
@@ -235,6 +236,8 @@ class FakeSession:
             )
         if text == "/system":
             return CommandResult(handled=True, message=self.system_prompt)
+        if text == "/skills":
+            return CommandResult(handled=True, skills_picker_requested=True)
         if text == "/new":
             return CommandResult(handled=True, new_session_requested=True)
         if text == "/compact":
@@ -2986,6 +2989,79 @@ async def test_textual_theme_change_persists_tau_theme(
 
     assert app.tui_settings.theme == "tau-light"
     assert tui_settings_path().read_text(encoding="utf-8").find('"theme": "tau-light"') != -1
+
+
+@pytest.mark.anyio
+async def test_tui_app_skills_picker_filters_and_inserts_without_submitting() -> None:
+    session = FakeSession()
+    session.skills = (
+        Skill("zebra", Path("/skills/zebra/SKILL.md"), "", "Work with stripes"),
+        Skill("alpha", Path("/skills/alpha/SKILL.md"), "", "Review Python code"),
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.text = "/skills"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        picker = app.screen
+        assert isinstance(picker, SkillPickerScreen)
+        assert [item.query_one(Label).render().plain for item in picker.query(ListItem)] == [
+            "alpha\n  Review Python code",
+            "zebra\n  Work with stripes",
+        ]
+        assert picker.query_one("#skill-picker-search", Input).has_focus
+
+        search = picker.query_one("#skill-picker-search", Input)
+        search.value = "missing"
+        await pilot.pause()
+        assert not picker.query(ListItem)
+        assert (
+            picker.query_one("#skill-picker-help", Static)
+            .render()
+            .plain.startswith("No matching skills")
+        )
+
+        search.value = "python"
+        await pilot.pause()
+        assert [item.query_one(Label).render().plain for item in picker.query(ListItem)] == [
+            "alpha\n  Review Python code"
+        ]
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert prompt.text == "/skill:alpha"
+        assert prompt.has_focus
+        assert session.prompt_texts == []
+
+
+@pytest.mark.anyio
+async def test_tui_app_skills_picker_cancel_preserves_prompt_and_shows_empty_states() -> None:
+    session = FakeSession()
+    session.skills = ()
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.text = "/skills"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        picker = app.screen
+        assert isinstance(picker, SkillPickerScreen)
+        assert (
+            picker.query_one("#skill-picker-help", Static)
+            .render()
+            .plain.startswith("No skills loaded")
+        )
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert prompt.text == "/skills"
+        assert prompt.has_focus
+        assert session.prompt_texts == []
 
 
 @pytest.mark.anyio

@@ -129,6 +129,7 @@ from tau_coding.session import (
 )
 from tau_coding.session_manager import CodingSessionRecord, SessionManager
 from tau_coding.shell_config import load_shell_settings
+from tau_coding.skills import Skill
 from tau_coding.tui.adapter import TuiEventAdapter
 from tau_coding.tui.autocomplete import (
     CompletionItem,
@@ -1193,6 +1194,111 @@ class SessionPickerScreen(ModalScreen[str | None]):
             else "No matching sessions - Escape closes"
         )
         self.query_one("#session-picker-help", Static).update(help_text)
+
+
+class SkillPickerSearchInput(Input):
+    """Search input that keeps skill-picker navigation local."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Cancel", show=False, priority=True),
+        Binding("up", "cursor_up", "Up", show=False, priority=True),
+        Binding("down", "cursor_down", "Down", show=False, priority=True),
+    ]
+
+    def _picker(self) -> SkillPickerScreen:
+        return cast(SkillPickerScreen, self.screen)
+
+    def action_cursor_up(self) -> None:
+        self._picker().action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        self._picker().action_cursor_down()
+
+    def action_cancel(self) -> None:
+        self._picker().action_cancel()
+
+
+class SkillPickerScreen(ModalScreen[str | None]):
+    """Searchable modal containing every loaded skill."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("up", "cursor_up", "Up", show=False),
+        Binding("down", "cursor_down", "Down", show=False),
+        Binding("enter", "select_cursor", "Select", show=False),
+    ]
+
+    def __init__(self, skills: Sequence[Skill], *, theme: TuiTheme) -> None:
+        super().__init__()
+        self.skills = tuple(sorted(skills, key=lambda skill: skill.name.casefold()))
+        self.visible_skills = self.skills
+        self.theme = theme
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="skill-picker"):
+            yield Static("Skills", id="skill-picker-title")
+            yield SkillPickerSearchInput(placeholder="Search skills", id="skill-picker-search")
+            yield ListView(id="skill-picker-list")
+            yield Static("", id="skill-picker-help")
+
+    def on_mount(self) -> None:
+        self.query_one("#skill-picker-search", Input).focus()
+        self._refresh_skill_list("")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "skill-picker-search":
+            event.stop()
+            self._refresh_skill_list(event.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "skill-picker-search":
+            event.stop()
+            self._select_visible_skill()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        event.stop()
+        self._select_visible_skill()
+
+    def action_cursor_up(self) -> None:
+        self.query_one("#skill-picker-list", ListView).action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        self.query_one("#skill-picker-list", ListView).action_cursor_down()
+
+    def action_select_cursor(self) -> None:
+        self._select_visible_skill()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def _select_visible_skill(self) -> None:
+        index = self.query_one("#skill-picker-list", ListView).index
+        if index is not None and self.visible_skills:
+            self.dismiss(self.visible_skills[index].name)
+
+    def _refresh_skill_list(self, search: str) -> None:
+        query = search.casefold().strip()
+        self.visible_skills = tuple(
+            skill
+            for skill in self.skills
+            if not query
+            or query in skill.name.casefold()
+            or query in (skill.description or "").casefold()
+        )
+        skill_list = self.query_one("#skill-picker-list", ListView)
+        skill_list.clear()
+        skill_list.extend(
+            ListItem(Label(_skill_picker_label(skill), markup=False))
+            for skill in self.visible_skills
+        )
+        skill_list.index = 0 if self.visible_skills else None
+        if not self.skills:
+            help_text = "No skills loaded - Escape closes"
+        elif not self.visible_skills:
+            help_text = "No matching skills - Escape closes"
+        else:
+            help_text = "Enter inserts - Escape closes"
+        self.query_one("#skill-picker-help", Static).update(help_text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2640,6 +2746,7 @@ class TauTuiApp(App[None]):
 
     SessionPickerScreen,
     PromptTemplatePickerScreen,
+    SkillPickerScreen,
     TreePickerScreen,
     CommandOutputScreen {
         align: center middle;
@@ -2647,6 +2754,7 @@ class TauTuiApp(App[None]):
 
     #session-picker,
     #prompt-template-picker,
+    #skill-picker,
     #tree-picker {
         width: 76;
         max-width: 90%;
@@ -2659,6 +2767,7 @@ class TauTuiApp(App[None]):
 
     #session-picker-title,
     #prompt-template-picker-title,
+    #skill-picker-title,
     #tree-picker-title {
         height: 1;
         color: $tau-chrome-text;
@@ -2667,7 +2776,8 @@ class TauTuiApp(App[None]):
     }
 
     #session-picker-search,
-    #prompt-template-picker-search {
+    #prompt-template-picker-search,
+    #skill-picker-search {
         height: 3;
         margin-bottom: 1;
         background: $tau-prompt-background;
@@ -2677,6 +2787,7 @@ class TauTuiApp(App[None]):
 
     #session-picker-list,
     #prompt-template-picker-list,
+    #skill-picker-list,
     #tree-picker-list {
         height: auto;
         max-height: 16;
@@ -2696,6 +2807,7 @@ class TauTuiApp(App[None]):
 
     #session-picker-help,
     #prompt-template-picker-help,
+    #skill-picker-help,
     #tree-picker-help {
         height: 1;
         margin-top: 1;
@@ -3353,6 +3465,8 @@ class TauTuiApp(App[None]):
                 self._open_model_picker()
             if command.scoped_models_picker_requested:
                 self._open_scoped_models_picker()
+            if command.skills_picker_requested:
+                self._open_skills_picker(raw_text)
             if command.theme_picker_requested:
                 self._open_theme_picker()
             if command.thinking_level is not None:
@@ -4501,6 +4615,19 @@ class TauTuiApp(App[None]):
         self._completion_state = self._build_completion_state(invocation)
         self._refresh_completions()
 
+    def _open_skills_picker(self, original_text: str) -> None:
+        """Open loaded-skill discovery and preserve the submitted command on cancel."""
+        self.push_screen(
+            SkillPickerScreen(self.session.skills, theme=self.tui_settings.resolved_theme),
+            callback=lambda name: self._handle_skill_picker_result(name, original_text),
+        )
+
+    def _handle_skill_picker_result(self, name: str | None, original_text: str) -> None:
+        prompt = self.query_one("#prompt", PromptInput)
+        prompt.text = f"/skill:{name}" if name is not None else original_text
+        prompt.move_cursor(_text_end_location(prompt.text))
+        prompt.focus()
+
     def action_cycle_thinking(self) -> None:
         """Cycle the active thinking mode."""
         self.run_worker(self._cycle_thinking_level(), exclusive=False)
@@ -5578,6 +5705,11 @@ def _session_picker_label(record: SessionCompletionRecord) -> str:
     if title is not None:
         parts.append(title)
     return " - ".join(parts)
+
+
+def _skill_picker_label(skill: Skill) -> str:
+    description = skill.description or "No description"
+    return f"{skill.name}\n  {description}"
 
 
 def _filter_session_records(

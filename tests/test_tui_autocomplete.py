@@ -83,7 +83,7 @@ def test_command_completion_suggests_registered_commands() -> None:
         prompt_templates=(),
     )
 
-    assert [item.display for item in state.items] == ["/session"]
+    assert [item.display for item in state.items] == ["/session", "/skills"]
     assert state.selected is not None
     assert state.selected.apply("/se") == "/session"
 
@@ -131,7 +131,7 @@ def test_skill_command_is_available_for_command_completion() -> None:
         prompt_templates=(),
     )
 
-    assert [item.display for item in state.items] == ["/skill:"]
+    assert [item.display for item in state.items] == ["/skill:", "/skills"]
     assert state.selected is not None
     assert state.selected.apply("/ski") == "/skill:"
 

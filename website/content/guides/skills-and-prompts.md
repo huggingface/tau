@@ -74,8 +74,9 @@ your skill list, competing with your skill names, or being disabled by
 `--no-skills`.
 
 Tau lists loaded user and project skills in the system prompt so the model knows they exist and
-can read the full file (via the `read` tool) when relevant. Invoke one
-explicitly:
+can read the full file (via the `read` tool) when relevant. Run **`/skills`** to search names and
+descriptions, then select one to insert its invocation into the prompt for further instructions.
+Or invoke one explicitly:
 
 ```text
 /skill:security-review check the changes on this branch
