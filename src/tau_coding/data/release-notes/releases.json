@@ -1,5 +1,23 @@
 [
   {
+    "version": "0.3.1",
+    "date": "2026-07-23",
+    "sections": {
+      "New": [
+        "Add one-line installers for macOS, Linux, and Windows that install Tau through uv and verify the resulting command.",
+        "Add configurable desktop or bell notifications when an agent run finishes while Tau is unfocused.",
+        "Add searchable TUI pickers for prompt templates and skills, plus a searchable tools reference with full descriptions."
+      ],
+      "Changed": [
+        "Keep dense TUI sidebar sections compact by limiting rendered skills, context files, tools, prompts, and extensions while showing hidden-item counts.",
+        "Make user settings forward-compatible by ignoring unknown fields while continuing to validate recognized settings."
+      ],
+      "Fixed": [
+        "Clear the prompt after cancelling the `/skills` picker instead of restoring the handled command."
+      ]
+    }
+  },
+  {
     "version": "0.3.0",
     "date": "2026-07-22",
     "sections": {
