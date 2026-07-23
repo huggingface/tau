@@ -145,9 +145,7 @@ templates, extensions, and context files such as `AGENTS.md`. Tool, prompt, and 
 names use compact comma-separated lists limited to three rendered lines. Skills
 and context files use bullet lists, with one item or path per line, limited to
 five entries. Truncated sections end with `...(X more)` showing how many entries
-are hidden. Truncated tools, skills, and prompts sections also point to `/tools`,
-`/skills`, or `/prompts` for the full searchable list. Project context paths are
-relative to the working directory; context
+are hidden. Project context paths are relative to the working directory; context
 loaded from the home directory starts with `~/`, while other context loaded from
 outside the project uses its full path.
 
