@@ -3035,8 +3035,10 @@ async def test_tui_app_skills_picker_filters_and_inserts_without_submitting() ->
             .plain.startswith("No matching skills")
         )
 
-        search.value = "python"
+        search.value = ""
+        await pilot.press("p", "y", "t", "h", "o", "n", "space", "c", "o", "d", "e")
         await pilot.pause()
+        assert search.value == "python code"
         assert [label.render().plain for label in picker.query(Label)] == [
             "alpha",
             "Review Python code",
@@ -3070,7 +3072,7 @@ async def test_tui_app_skills_picker_previews_description_and_shows_content_in_t
 
         picker = app.screen
         assert isinstance(picker, SkillPickerScreen)
-        await pilot.press("space")
+        await pilot.press("f1")
         await pilot.pause()
 
         description = app.screen

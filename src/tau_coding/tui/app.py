@@ -1222,7 +1222,7 @@ class SkillPickerSearchInput(Input):
             event.stop()
             event.prevent_default()
             self.action_cancel()
-        elif event.key == "space":
+        elif event.key == "f1":
             event.stop()
             event.prevent_default()
             self.action_show_description()
@@ -1263,7 +1263,7 @@ class SkillPickerScreen(ModalScreen[SkillPickerResult | None]):
         Binding("up", "cursor_up", "Up", show=False, priority=True),
         Binding("down", "cursor_down", "Down", show=False, priority=True),
         Binding("enter", "select_cursor", "Insert", show=False, priority=True),
-        Binding("space", "show_description", "Description", show=False, priority=True),
+        Binding("f1", "show_description", "Description", show=False, priority=True),
         Binding("ctrl+enter", "show_in_transcript", "Transcript", show=False, priority=True),
     ]
 
@@ -1372,7 +1372,7 @@ class SkillPickerScreen(ModalScreen[SkillPickerResult | None]):
         elif not self.visible_skills:
             help_text = "No matching skills - Escape closes"
         else:
-            help_text = "Enter inserts - Space describes - Ctrl+Enter shows full skill"
+            help_text = "Enter inserts - F1 describes - Ctrl+Enter shows full skill"
         self.query_one("#skill-picker-help", Static).update(help_text)
 
 

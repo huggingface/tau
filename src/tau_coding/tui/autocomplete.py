@@ -353,7 +353,7 @@ def _command_completions(
             category="Custom prompts",
         )
         for template in prompt_templates
-        if template.name.lower().startswith(prefix) and registry.get(template.name) is None
+        if template.name.lower().startswith(prefix)
     ]
     return (
         *sorted(command_suggestions, key=lambda item: _command_completion_sort_key(item, prefix)),

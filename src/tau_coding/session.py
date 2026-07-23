@@ -1428,12 +1428,9 @@ class CodingSession:
         Prompt-template slash commands are expansion directives, so they remain
         unhandled here and flow through `prompt()` for on-the-fly replacement.
         """
-        command_result = self._command_registry.execute(self, text)
-        if command_result.handled:
-            return command_result
         if expand_prompt_template_command(text, self._prompt_templates) is not None:
             return CommandResult(handled=False)
-        return command_result
+        return self._command_registry.execute(self, text)
 
     def ensure_session_indexed(self) -> None:
         """Persist pending session metadata and add this session to the resume index."""

@@ -136,26 +136,6 @@ def test_skill_command_is_available_for_command_completion() -> None:
     assert state.selected.apply("/ski") == "/skill:"
 
 
-def test_builtin_skills_command_hides_conflicting_custom_prompt_completion() -> None:
-    state = build_completion_state(
-        "/skills",
-        command_registry=create_default_command_registry(),
-        skills=(),
-        prompt_templates=(
-            PromptTemplate(
-                name="skills",
-                path=Path("skills.md"),
-                content="Custom prompt",
-                description="Conflicting custom prompt",
-            ),
-        ),
-    )
-
-    skills_items = [item for item in state.items if item.display == "/skills"]
-    assert len(skills_items) == 1
-    assert skills_items[0].category == "Commands"
-
-
 def test_skill_name_completion_preserves_request_text_for_incomplete_name() -> None:
     state = build_completion_state(
         "/skill:r fix tests",
