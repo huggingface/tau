@@ -6,4 +6,4 @@ The modal renders a compact table: tool name, origin, and description character 
 
 This stays within Tau's frontend boundary: portable `AgentTool` data remains in `tau_agent`, the command request is represented by `CommandResult`, and Textual rendering remains in `tau_coding.tui`.
 
-Validate manually by starting `tau`, entering `/tools`, searching for a known tool such as `bash`, navigating with arrow keys, and closing with Escape. Built-in and extension slash commands are resolved before same-named prompt templates, so a user `tools.md` cannot shadow `/tools`. Automated coverage is in `tests/test_commands.py`, `tests/test_coding_session.py`, and `tests/test_tui_app.py`.
+Validate manually by starting `tau`, entering `/tools`, searching for a known tool such as `bash`, navigating with arrow keys, and closing with Escape. `tools` is a reserved prompt-template name, matching the existing `/prompts` collision behavior, so a user `tools.md` is ignored with a diagnostic and cannot shadow `/tools`. Automated coverage is in `tests/test_commands.py`, `tests/test_coding_session.py`, and `tests/test_tui_app.py`.

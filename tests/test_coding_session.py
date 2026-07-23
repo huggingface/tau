@@ -2246,10 +2246,6 @@ async def test_session_expands_prompt_templates_as_slash_commands(tmp_path: Path
         "Custom prompt for {{ arguments }}.",
         encoding="utf-8",
     )
-    (prompts_dir / "tools.md").write_text(
-        "This prompt must not shadow the built-in command.",
-        encoding="utf-8",
-    )
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(
         [
@@ -2269,11 +2265,8 @@ async def test_session_expands_prompt_templates_as_slash_commands(tmp_path: Path
     )
     session = await CodingSession.load(config)
 
-    assert [template.name for template in session.prompt_templates] == ["example", "tools"]
+    assert [template.name for template in session.prompt_templates] == ["example"]
     assert session.handle_command("/example src/app.py").handled is False
-    tools_result = session.handle_command("/tools")
-    assert tools_result.handled is True
-    assert tools_result.tools_picker_requested is True
 
     _events = await _collect_session_events(session.prompt("/example src/app.py"))
 
@@ -2306,6 +2299,36 @@ async def test_reserved_prompts_template_cannot_shadow_picker_command(tmp_path: 
     assert any(
         diagnostic.path == reserved_path
         and "reserved by the built-in /prompts command" in diagnostic.message
+        for diagnostic in session.resource_diagnostics
+    )
+
+
+@pytest.mark.anyio
+async def test_reserved_tools_template_cannot_shadow_picker_command(tmp_path: Path) -> None:
+    resource_root = tmp_path / "resources"
+    prompts_dir = resource_root / "prompts"
+    prompts_dir.mkdir(parents=True)
+    reserved_path = prompts_dir / "tools.md"
+    reserved_path.write_text("Shadow the picker", encoding="utf-8")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        )
+    )
+
+    result = session.handle_command("/tools")
+
+    assert result.handled is True
+    assert result.tools_picker_requested is True
+    assert session.prompt_templates == ()
+    assert any(
+        diagnostic.path == reserved_path
+        and "reserved by the built-in /tools command" in diagnostic.message
         for diagnostic in session.resource_diagnostics
     )
 
