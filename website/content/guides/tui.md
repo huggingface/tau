@@ -143,15 +143,16 @@ turn and tool-call totals, provider-reported token usage under **cumulative usag
 estimated cost, automatic-compaction threshold, and loaded tools, skills, prompt
 templates, extensions, and context files such as `AGENTS.md`. Tool, prompt, and extension
 names use compact comma-separated lists. Skills and context files use bullet
-lists, with one item or path per line. Project context paths are relative to the
-working directory; context loaded from the home directory starts with `~/`, while
-other context loaded from outside the project uses its full path.
+lists, with one item or path per line. The skills section shows at most five
+skills, followed by `...(X more)` when additional skills are loaded. Project
+context paths are relative to the working directory; context loaded from the
+home directory starts with `~/`, while other context loaded from outside the
+project uses its full path.
 
 The wider, borderless sidebar uses the prompt field's background color, bright
 section headings, quieter gray values, and keeps Tau's versioned `τ = 2π` mark
-pinned to its bottom edge. When the content is taller than the available space,
-the sidebar scrolls vertically while keeping its scrollbar hidden. Tau does not
-render separate top-header or shortcut-footer rows. Named sessions remain visible in the sidebar
+pinned to its bottom edge. Tau does not render separate
+top-header or shortcut-footer rows. Named sessions remain visible in the sidebar
 and terminal tab title; `/hotkeys` lists shortcuts when needed. The sidebar hides
 automatically when the terminal is small, while the tab title continues to
 identify the session.

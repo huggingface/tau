@@ -497,6 +497,31 @@ def test_session_sidebar_renders_session_metadata() -> None:
     assert "permission-gate, subagents" in output
 
 
+@pytest.mark.parametrize(("skill_count", "hidden_label"), [(5, None), (7, "...(2 more)")])
+def test_session_sidebar_limits_skills_to_five(
+    skill_count: int,
+    hidden_label: str | None,
+) -> None:
+    session = FakeSession()
+    session.skills = tuple(
+        Skill(name=f"skill-{index}", path=session.cwd / f"skill-{index}.md", content="Skill")
+        for index in range(1, skill_count + 1)
+    )
+    console = Console(record=True, width=80)
+
+    console.print(render_session_sidebar(session))
+
+    output = console.export_text()
+    for index in range(1, 6):
+        assert f"• skill-{index}" in output
+    assert "skill-6" not in output
+    assert "skill-7" not in output
+    if hidden_label is None:
+        assert "more)" not in output
+    else:
+        assert hidden_label in output
+
+
 def test_session_sidebar_uses_na_when_cost_is_unavailable() -> None:
     session = FakeSession()
     session.session_stats = SessionStats(input_tokens=1200, output_tokens=300)
@@ -2434,27 +2459,6 @@ async def test_tui_sidebar_fills_workspace_height() -> None:
 
         assert sidebar.region.height == workspace.region.height
         assert sidebar.outer_size.height == workspace.size.height
-
-
-@pytest.mark.anyio
-async def test_tui_sidebar_scrolls_overflow_without_showing_a_scrollbar() -> None:
-    session = FakeSession()
-    session.context_files = tuple(
-        ProjectContextFile(path=str(session.cwd / f"rules/{index}/AGENTS.md"), content="Rules.")
-        for index in range(30)
-    )
-    app = TauTuiApp(session)
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        sidebar = app.query_one("#sidebar", VerticalScroll)
-
-        assert sidebar.max_scroll_y > 0
-        assert sidebar.styles.overflow_y == "auto"
-        assert sidebar.styles.scrollbar_size_vertical == 0
-
-        sidebar.scroll_down(animate=False)
-        await pilot.pause()
-        assert sidebar.scroll_y > 0
 
 
 @pytest.mark.anyio

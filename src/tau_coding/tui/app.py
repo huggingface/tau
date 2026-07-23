@@ -2871,16 +2871,13 @@ class TauTuiApp(App[None]):
         padding: 1 1 1 2;
         background: $tau-prompt-background;
         border: none;
-        overflow-y: auto;
-        scrollbar-size-vertical: 0;
     }
 
     #sidebar-content {
-        height: auto;
+        height: 1fr;
     }
 
     #sidebar-brand {
-        dock: bottom;
         height: auto;
         color: $tau-prompt-text;
     }

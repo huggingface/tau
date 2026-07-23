@@ -20,7 +20,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Style as TextualStyle  # type: ignore[attr-defined]
 from textual.css.query import NoMatches
 from textual.geometry import Offset
@@ -41,6 +41,7 @@ from tau_coding.tui.state import ChatItem, TuiState
 from tau_coding.version import current_version
 
 TAU_SIDEBAR_LOGO = "τ = 2π"
+SIDEBAR_SKILLS_LIMIT = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,8 +97,8 @@ class SessionSummarySource(Protocol):
     def session_stats(self) -> SessionStats: ...
 
 
-class SessionSidebar(VerticalScroll):
-    """Scrollable sidebar with session metadata and bottom-aligned branding."""
+class SessionSidebar(Vertical):
+    """Compact sidebar with session metadata and bottom-aligned branding."""
 
     def compose(self) -> Any:
         yield Static("", id="sidebar-content")
@@ -1504,9 +1505,8 @@ def render_session_sidebar(
         style=theme.completion_description,
     )
     tools = _comma_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
-    skills = _bullet_list(
+    skills = _limited_skill_list(
         [skill.name for skill in session.skills],
-        empty="No skills loaded",
         theme=theme,
     )
     prompts = _comma_list(
@@ -2155,6 +2155,18 @@ def _format_cost(value: float) -> str:
 
 def _plural(count: int, singular: str) -> str:
     return singular if count == 1 else f"{singular}s"
+
+
+def _limited_skill_list(items: Sequence[str], *, theme: TuiTheme) -> Text:
+    text = _bullet_list(
+        items[:SIDEBAR_SKILLS_LIMIT],
+        empty="No skills loaded",
+        theme=theme,
+    )
+    hidden_count = len(items) - SIDEBAR_SKILLS_LIMIT
+    if hidden_count > 0:
+        text.append(f"\n...({hidden_count} more)", style=theme.completion_description)
+    return text
 
 
 def _bullet_list(
