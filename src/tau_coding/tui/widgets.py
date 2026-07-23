@@ -2147,13 +2147,30 @@ class _LineLimitedCommaList:
                 break
             visible_count = count
 
-        text = self._text(self.items[:visible_count])
+        if visible_count:
+            text = self._text(self.items[:visible_count])
+        else:
+            visible_count = 1
+            text = self._truncate_to_line_budget(
+                self._text(self.items[:visible_count]),
+                console=console,
+                width=options.max_width,
+            )
+
         hidden_count = len(self.items) - visible_count
         if hidden_count:
-            if visible_count:
-                text.append("\n")
+            text.append("\n")
             text.append(f"...({hidden_count} more)", style=self.style)
         yield text
+
+    def _truncate_to_line_budget(self, text: Text, *, console: Console, width: int) -> Text:
+        wrapped_lines = list(text.wrap(console, width))
+        visible_lines = [line.copy() for line in wrapped_lines[:SIDEBAR_COMMA_LIST_MAX_LINES]]
+        if len(wrapped_lines) > SIDEBAR_COMMA_LIST_MAX_LINES:
+            last_line = visible_lines[-1]
+            last_line.truncate(max(0, width - 1), overflow="crop")
+            last_line.append("…", style=self.style)
+        return Text("\n").join(visible_lines)
 
     def _text(self, items: Sequence[str]) -> Text:
         return Text(

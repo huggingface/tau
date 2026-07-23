@@ -561,6 +561,33 @@ def test_comma_list_limits_by_rendered_lines_instead_of_item_count() -> None:
     assert len(wide_output.splitlines()) == 3
 
 
+@pytest.mark.parametrize(("item_count", "hidden_label"), [(1, None), (2, "...(1 more)")])
+def test_comma_list_represents_an_oversized_first_item(
+    item_count: int,
+    hidden_label: str | None,
+) -> None:
+    oversized_name = "x" * 40
+    console = Console(record=True, width=12)
+
+    console.print(
+        _comma_list(
+            [oversized_name, "second-item"][:item_count],
+            empty="Empty",
+            theme=TAU_DARK_THEME,
+        )
+    )
+
+    output = console.export_text()
+    assert output.startswith("x" * 12)
+    assert "…" in output
+    if hidden_label is None:
+        assert len(output.splitlines()) == 3
+        assert "more)" not in output
+    else:
+        assert len(output.splitlines()) == 4
+        assert hidden_label in output
+
+
 @pytest.mark.parametrize(
     ("attribute", "prefix"),
     [("tools", "tool"), ("prompt_templates", "prompt"), ("extension_names", "extension")],
