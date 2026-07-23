@@ -1222,6 +1222,14 @@ class SkillPickerSearchInput(Input):
             event.stop()
             event.prevent_default()
             self.action_cancel()
+        elif event.key == "space":
+            event.stop()
+            event.prevent_default()
+            self.action_show_description()
+        elif event.key == "ctrl+enter":
+            event.stop()
+            event.prevent_default()
+            self.action_show_in_transcript()
 
     def action_cursor_up(self) -> None:
         self._picker().action_cursor_up()
@@ -1232,15 +1240,31 @@ class SkillPickerSearchInput(Input):
     def action_cancel(self) -> None:
         self._picker().action_cancel()
 
+    def action_show_description(self) -> None:
+        self._picker().action_show_description()
 
-class SkillPickerScreen(ModalScreen[str | None]):
+    def action_show_in_transcript(self) -> None:
+        self._picker().action_show_in_transcript()
+
+
+@dataclass(frozen=True, slots=True)
+class SkillPickerResult:
+    """A skill selection and the requested inspection action."""
+
+    skill: Skill
+    action: Literal["insert", "transcript"]
+
+
+class SkillPickerScreen(ModalScreen[SkillPickerResult | None]):
     """Searchable modal containing every loaded skill."""
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
         Binding("escape", "cancel", "Cancel", priority=True),
         Binding("up", "cursor_up", "Up", show=False, priority=True),
         Binding("down", "cursor_down", "Down", show=False, priority=True),
-        Binding("enter", "select_cursor", "Select", show=False, priority=True),
+        Binding("enter", "select_cursor", "Insert", show=False, priority=True),
+        Binding("space", "show_description", "Description", show=False, priority=True),
+        Binding("ctrl+enter", "show_in_transcript", "Transcript", show=False, priority=True),
     ]
 
     def __init__(self, skills: Sequence[Skill], *, theme: TuiTheme) -> None:
@@ -1285,15 +1309,37 @@ class SkillPickerScreen(ModalScreen[str | None]):
             skill_list.index = min(len(self.visible_skills) - 1, skill_list.index + 1)
 
     def action_select_cursor(self) -> None:
-        self._select_visible_skill()
+        skill = self._selected_skill()
+        if skill is not None:
+            self.dismiss(SkillPickerResult(skill, "insert"))
+
+    def action_show_description(self) -> None:
+        skill = self._selected_skill()
+        if skill is not None:
+            self.app.push_screen(
+                CommandOutputScreen(
+                    f"Skill description: {skill.name}",
+                    skill.description or "No description",
+                    theme=self.theme,
+                )
+            )
+
+    def action_show_in_transcript(self) -> None:
+        skill = self._selected_skill()
+        if skill is not None:
+            self.dismiss(SkillPickerResult(skill, "transcript"))
 
     def action_cancel(self) -> None:
         self.dismiss(None)
 
-    def _select_visible_skill(self) -> None:
+    def _selected_skill(self) -> Skill | None:
         index = self.query_one("#skill-picker-list", ListView).index
-        if index is not None and self.visible_skills:
-            self.dismiss(self.visible_skills[index].name)
+        if index is None or not self.visible_skills:
+            return None
+        return self.visible_skills[index]
+
+    def _select_visible_skill(self) -> None:
+        self.action_select_cursor()
 
     def _refresh_skill_list(self, search: str) -> None:
         query = search.casefold().strip()
@@ -1326,7 +1372,7 @@ class SkillPickerScreen(ModalScreen[str | None]):
         elif not self.visible_skills:
             help_text = "No matching skills - Escape closes"
         else:
-            help_text = "Enter inserts - Escape closes"
+            help_text = "Enter inserts - Space describes - Ctrl+Enter shows full skill"
         self.query_one("#skill-picker-help", Static).update(help_text)
 
 
@@ -4672,9 +4718,21 @@ class TauTuiApp(App[None]):
             callback=lambda name: self._handle_skill_picker_result(name, original_text),
         )
 
-    def _handle_skill_picker_result(self, name: str | None, original_text: str) -> None:
+    def _handle_skill_picker_result(
+        self, result: SkillPickerResult | None, original_text: str
+    ) -> None:
         prompt = self.query_one("#prompt", PromptInput)
-        prompt.text = f"/skill:{name}" if name is not None else original_text
+        if result is None:
+            prompt.text = original_text
+        elif result.action == "insert":
+            prompt.text = f"/skill:{result.skill.name}"
+        else:
+            prompt.text = original_text
+            self.state.add_item(
+                "status",
+                f"Skill: {result.skill.name}\n{result.skill.content}",
+            )
+            self._refresh()
         prompt.move_cursor(_text_end_location(prompt.text))
         prompt.focus()
 

@@ -3050,6 +3050,52 @@ async def test_tui_app_skills_picker_filters_and_inserts_without_submitting() ->
 
 
 @pytest.mark.anyio
+async def test_tui_app_skills_picker_previews_description_and_shows_content_in_transcript() -> None:
+    session = FakeSession()
+    session.skills = (
+        Skill(
+            "review",
+            Path("/skills/review/SKILL.md"),
+            "# Review\n\nInspect every changed file.",
+            "Review changes carefully across the whole repository.",
+        ),
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.text = "/skills"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        picker = app.screen
+        assert isinstance(picker, SkillPickerScreen)
+        await pilot.press("space")
+        await pilot.pause()
+
+        description = app.screen
+        assert isinstance(description, CommandOutputScreen)
+        assert description.query_one("#command-output-body", Static).render().plain == (
+            "Review changes carefully across the whole repository."
+        )
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen is picker
+
+        await pilot.press("ctrl+enter")
+        await pilot.pause()
+
+        assert app.screen is not picker
+        assert app.state.items[-1].role == "status"
+        assert app.state.items[-1].text == (
+            "Skill: review\n# Review\n\nInspect every changed file."
+        )
+        assert prompt.text == "/skills"
+        assert session.prompt_texts == []
+        assert session.messages == ()
+
+
+@pytest.mark.anyio
 async def test_tui_app_skills_picker_cancel_preserves_prompt_and_shows_empty_states() -> None:
     session = FakeSession()
     session.skills = ()

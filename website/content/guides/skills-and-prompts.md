@@ -76,7 +76,9 @@ your skill list, competing with your skill names, or being disabled by
 Tau lists loaded user and project skills in the system prompt so the model knows they exist and
 can read the full file (via the `read` tool) when relevant. Run **`/skills`** to search names and
 descriptions, then select one to insert its invocation into the prompt for further instructions.
-Or invoke one explicitly:
+In the picker, **Space** opens the complete header description and **Ctrl+Enter** displays the
+full `SKILL.md` in the transcript for inspection without adding it to model context. Or invoke one
+explicitly:
 
 ```text
 /skill:security-review check the changes on this branch
