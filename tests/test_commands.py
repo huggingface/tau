@@ -120,6 +120,7 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
     assert [command.name for command in commands] == [
         "compact",
         "export",
+        "extensions",
         "hotkeys",
         "login",
         "logout",
@@ -415,6 +416,19 @@ def test_logout_command_rejects_unknown_provider(tmp_path: Path) -> None:
     assert result.handled is True
     assert result.message is not None
     assert "Unknown logout provider: local" in result.message
+
+
+def test_extensions_command_requests_inventory_modal(tmp_path: Path) -> None:
+    result = create_default_command_registry().execute(FakeSession(tmp_path), "/extensions")
+
+    assert result.handled is True
+    assert result.extensions_picker_requested is True
+    assert (
+        create_default_command_registry()
+        .execute(FakeSession(tmp_path), "/extensions extra")
+        .message
+        == "Usage: /extensions"
+    )
 
 
 def test_reload_command_requests_async_session_reload(tmp_path: Path) -> None:

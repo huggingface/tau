@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from rich.console import Console
@@ -75,6 +76,7 @@ from tau_coding.tui.app import (
     ExtensionConfirmScreen,
     ExtensionInputScreen,
     ExtensionSelectScreen,
+    ExtensionsScreen,
     LoginMethodPickerScreen,
     LoginProviderPickerScreen,
     LoginScreen,
@@ -3045,6 +3047,64 @@ async def test_theme_picker_highlight_uses_theme_selection_palette(theme: TuiThe
         highlighted_label = highlighted_item.query_one(Label)
         assert highlighted_label.styles.background == Color.parse(theme.highlight_background)
         assert highlighted_label.styles.color == Color.parse(theme.highlight_text)
+
+
+@pytest.mark.anyio
+async def test_extensions_screen_inventory_filter_empty_and_cancel(tmp_path: Path) -> None:
+    runtime = SimpleNamespace(
+        extension_info=(
+            SimpleNamespace(
+                name="Alpha Tools",
+                scope="user",
+                status="loaded",
+                path=tmp_path / "alpha.py",
+            ),
+            SimpleNamespace(
+                name="Beta",
+                scope="explicit",
+                status="loaded",
+                path=tmp_path / "beta.py",
+            ),
+        ),
+        diagnostics=(),
+    )
+    app = TauTuiApp(FakeSession())  # type: ignore[arg-type]
+
+    async with app.run_test() as pilot:
+        screen = ExtensionsScreen(runtime, theme=TAU_DARK_THEME)
+        app.push_screen(screen)
+        await pilot.pause()
+        assert len(screen.query("#extensions-list ListItem")) == 2
+
+        search = screen.query_one("#extensions-search", Input)
+        search.value = "ALPHA"
+        await pilot.pause()
+        assert len(screen.visible_rows) == 1
+        assert screen.visible_rows[0].name == "Alpha Tools"
+
+        search.value = "missing"
+        await pilot.pause()
+        assert screen.visible_rows == ()
+        help_text = screen.query_one("#extensions-help", Static).render()
+        assert "No matching extensions" in str(help_text)
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, ExtensionsScreen)
+
+
+@pytest.mark.anyio
+async def test_extensions_screen_empty_state() -> None:
+    app = TauTuiApp(FakeSession())  # type: ignore[arg-type]
+
+    async with app.run_test() as pilot:
+        screen = ExtensionsScreen(
+            SimpleNamespace(extension_info=(), diagnostics=()), theme=TAU_DARK_THEME
+        )
+        app.push_screen(screen)
+        await pilot.pause()
+
+        assert "No extensions loaded" in str(screen.query_one("#extensions-help", Static).render())
 
 
 @pytest.mark.anyio

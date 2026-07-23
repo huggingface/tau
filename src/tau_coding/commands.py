@@ -115,6 +115,7 @@ class CommandResult:
     model_picker_requested: bool = False
     scoped_models_picker_requested: bool = False
     theme_picker_requested: bool = False
+    extensions_picker_requested: bool = False
     thinking_level: str | None = None
     theme: str | None = None
     message: str | None = None
@@ -272,6 +273,15 @@ def create_default_command_registry() -> CommandRegistry:
             description="Show common keyboard shortcuts.",
             handler=_hotkeys_command,
             search_terms=("keys", "shortcuts", "bindings"),
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="extensions",
+            usage="/extensions",
+            description="Browse loaded extensions and diagnostics.",
+            handler=_extensions_command,
+            search_terms=("plugins", "addons"),
         )
     )
     registry.register(
@@ -482,6 +492,12 @@ def _resources_command(context: CommandContext) -> CommandResult:
     else:
         lines.append("Resource diagnostics: none")
     return CommandResult(handled=True, message="\n".join(lines))
+
+
+def _extensions_command(context: CommandContext) -> CommandResult:
+    if context.args:
+        return CommandResult(handled=True, message="Usage: /extensions")
+    return CommandResult(handled=True, extensions_picker_requested=True)
 
 
 def _reload_command(context: CommandContext) -> CommandResult:

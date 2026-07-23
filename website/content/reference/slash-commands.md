@@ -22,6 +22,7 @@ command palette with **Ctrl+K**.
 | `/theme [name]` | Show or set the TUI theme |
 | `/login [provider]` | Connect a built-in provider with OAuth or an API key; Anthropic uses `anthropic-subscription` or `anthropic-api` |
 | `/logout [provider]` | Remove saved credentials for a provider |
+| `/extensions` | Open a searchable inventory of loaded extensions and extension diagnostics |
 | `/reload` | Reload local skills, prompts, extensions, and project context |
 | `/hotkeys` | Show the keyboard shortcuts |
 | `/skill:<name> [request]` | Expand a loaded skill into your prompt |
