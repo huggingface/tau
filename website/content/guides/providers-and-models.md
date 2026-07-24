@@ -78,7 +78,9 @@ configured fallback.
 Live limits can vary by account or rollout and may change independently of Tau.
 A discovery failure is non-fatal: Tau reports it in `/session` and continues with
 the fallback. Direct OpenAI API sessions retain the context limits documented on
-the API model page.
+the API model page. The `gpt-5.6` alias, which routes to GPT-5.6 Sol, is only
+available through the direct OpenAI API; Codex subscription users should select
+the explicit `gpt-5.6-sol` model instead.
 
 ### OpenCode Go and Zen
 
