@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.3.2",
+    "date": "2026-07-24",
+    "sections": {
+      "Fixed": [
+        "Hide the unsupported `gpt-5.6` API alias from the OpenAI Codex subscription catalog while retaining it for direct OpenAI API users."
+      ]
+    }
+  },
+  {
     "version": "0.3.1",
     "date": "2026-07-23",
     "sections": {
@@ -13,8 +22,7 @@
         "Make user settings forward-compatible by ignoring unknown fields while continuing to validate recognized settings."
       ],
       "Fixed": [
-        "Clear the prompt after cancelling the `/skills` picker instead of restoring the handled command.",
-        "Hide the unsupported `gpt-5.6` API alias from the OpenAI Codex subscription catalog while retaining it for direct OpenAI API users."
+        "Clear the prompt after cancelling the `/skills` picker instead of restoring the handled command."
       ]
     }
   },
