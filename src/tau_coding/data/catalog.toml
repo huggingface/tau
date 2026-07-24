@@ -518,7 +518,7 @@ base_url = "https://api.anthropic.com"
 api_key_env = "ANTHROPIC_API_KEY"
 credential_name = "anthropic"
 auth_methods = ["api_key", "oauth"]
-models = ["claude-fable-5", "claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-opus-4-1", "claude-opus-4-1-20250805", "claude-opus-4-5", "claude-opus-4-5-20251101", "claude-opus-4-6", "claude-opus-4-7", "claude-sonnet-4-5", "claude-sonnet-4-5-20250929", "claude-sonnet-4-6", "claude-sonnet-5"]
+models = ["claude-fable-5", "claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-opus-4-1", "claude-opus-4-1-20250805", "claude-opus-4-5", "claude-opus-4-5-20251101", "claude-opus-4-6", "claude-opus-4-7", "claude-opus-5", "claude-sonnet-4-5", "claude-sonnet-4-5-20250929", "claude-sonnet-4-6", "claude-sonnet-5"]
 default_model = "claude-sonnet-4-6"
 docs_url = "https://docs.anthropic.com"
 api = "anthropic-messages"
@@ -536,6 +536,7 @@ claude-opus-4-5 = 200000
 claude-opus-4-5-20251101 = 200000
 claude-opus-4-6 = 1000000
 claude-opus-4-7 = 1000000
+claude-opus-5 = 1000000
 claude-sonnet-4-5 = 200000
 claude-sonnet-4-5-20250929 = 200000
 claude-sonnet-4-6 = 1000000
@@ -619,6 +620,17 @@ max_tokens = 128000
 compat = { forceAdaptiveThinking = true }
 cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25 }
 thinking_level_map = { xhigh = "xhigh" }
+unsupported_thinking_levels = ["minimal"]
+
+[providers.model_metadata.claude-opus-5]
+name = "Claude Opus 5"
+reasoning = true
+input = ["text", "image"]
+context_window = 1000000
+max_tokens = 128000
+compat = { forceAdaptiveThinking = true }
+cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25 }
+thinking_level_map = { xhigh = "max" }
 unsupported_thinking_levels = ["minimal"]
 
 [providers.model_metadata.claude-sonnet-4-5]

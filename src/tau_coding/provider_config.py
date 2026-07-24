@@ -1528,7 +1528,9 @@ def anthropic_config_from_provider(
             model=selected_model,
             thinking_level=thinking_level,
         ),
-        thinking_mode=_anthropic_thinking_mode(provider, selected_model),
+        thinking_mode=_anthropic_thinking_mode(
+            provider, selected_model, thinking_level=thinking_level
+        ),
     )
 
 
@@ -1688,9 +1690,16 @@ def _reasoning_effort_from_anthropic_provider(
     return mapped or normalized
 
 
-def _anthropic_thinking_mode(provider: AnthropicProviderConfig, model: str) -> str:
+def _anthropic_thinking_mode(
+    provider: AnthropicProviderConfig,
+    model: str,
+    *,
+    thinking_level: ThinkingLevel | None = None,
+) -> str:
     compat = _model_compat(provider, model)
     if compat.get("forceAdaptiveThinking") is True:
+        if thinking_level is not None and normalize_thinking_level(thinking_level) == "off":
+            return "disabled"
         return "adaptive"
     return "budget"
 
