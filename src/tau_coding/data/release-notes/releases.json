@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.3.3",
+    "date": "2026-07-25",
+    "sections": {
+      "New": [
+        "Add direct Anthropic support for Claude Opus 5, including its 1M-token context window and adaptive-thinking effort mappings."
+      ],
+      "Changed": [
+        "Highlight terminal-command prompt input, border, and prefix with the active theme's running-tool color."
+      ]
+    }
+  },
+  {
     "version": "0.3.2",
     "date": "2026-07-24",
     "sections": {
