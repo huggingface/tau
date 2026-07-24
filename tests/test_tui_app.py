@@ -2434,14 +2434,23 @@ async def test_tui_app_highlights_prompt_shell_mode() -> None:
             )
             == app.tui_settings.resolved_theme.accent
         )
+        tool_running_color = app.tui_settings.resolved_theme.role_styles["tool"].border
         assert prompt.get_line(0).spans[-1].start == 0
-        assert prompt.get_line(0).spans[-1].end == 2
-        assert str(prompt.get_line(0).spans[-1].style) == app.tui_settings.resolved_theme.accent
+        assert prompt.get_line(0).spans[-1].end == len("!! pwd")
+        assert str(prompt.get_line(0).spans[-1].style) == tool_running_color
+
+        prompt.value = "! pwd\nls -la"
+        await pilot.pause()
+
+        assert prompt.get_line(1).spans[-1].start == 0
+        assert prompt.get_line(1).spans[-1].end == len("ls -la")
+        assert str(prompt.get_line(1).spans[-1].style) == tool_running_color
 
         prompt.value = "ask tau"
         await pilot.pause()
 
         assert not prompt.has_class("-shell-mode")
+        assert prompt.get_line(0).spans == []
 
 
 @pytest.mark.anyio
