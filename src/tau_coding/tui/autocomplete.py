@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tau_coding.commands import CommandRegistry, SlashCommand
+from tau_coding.gitignore import gitignore_rules_for
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.skills import Skill
 
@@ -209,9 +210,19 @@ def _is_ignored_file_completion_path(path: Path, *, cwd: Path) -> bool:
         relative_parts = path.relative_to(cwd).parts
     except ValueError:
         return True
-    return any(
+    if any(
         part.startswith(".") or part in IGNORED_FILE_COMPLETION_DIRS for part in relative_parts
-    )
+    ):
+        return True
+    relative = path.relative_to(cwd).as_posix()
+    rules = gitignore_rules_for(str(cwd.resolve()))
+    segments = relative.split("/")
+    for index, _segment in enumerate(segments):
+        segment_path = "/".join(segments[: index + 1])
+        is_dir = index < len(segments) - 1 or path.is_dir()
+        if rules.matches(segment_path, is_dir=is_dir):
+            return True
+    return False
 
 
 def _shell_path_completions(*, text: str, cwd: Path) -> tuple[CompletionItem, ...] | None:
