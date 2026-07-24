@@ -590,15 +590,15 @@ class PromptInput(TextArea):
             self._clear_pending_paste()
 
     def get_line(self, line_index: int) -> Text:
-        """Retrieve one prompt line with shell prefixes highlighted."""
+        """Retrieve one prompt line, coloring terminal commands like a running tool."""
         line = super().get_line(line_index)
-        if line_index != 0 or not self.shell_mode_style:
+        if not self.shell_mode_style:
             return line
         span = _terminal_command_prefix_span(self.text)
         if span is None:
             return line
-        start, end = span
-        line.stylize(self.shell_mode_style, start, end)
+        start, _ = span
+        line.stylize(self.shell_mode_style, start if line_index == 0 else 0)
         return line
 
     async def action_submit_follow_up(self) -> None:
@@ -3516,7 +3516,7 @@ class TauTuiApp(App[None]):
     async def on_mount(self) -> None:
         """Focus the prompt when the app starts."""
         prompt = self.query_one(PromptInput)
-        prompt.shell_mode_style = self.tui_settings.resolved_theme.accent
+        prompt.shell_mode_style = self.tui_settings.resolved_theme.role_styles["tool"].border
         self._sync_prompt_shell_mode(prompt.text)
         prompt.focus()
         self._update_responsive_layout(self.size.width, self.size.height)
@@ -5750,7 +5750,7 @@ class TauTuiApp(App[None]):
 
     def _sync_prompt_shell_mode(self, text: str) -> None:
         prompt = self.query_one("#prompt", PromptInput)
-        prompt.shell_mode_style = self.tui_settings.resolved_theme.accent
+        prompt.shell_mode_style = self.tui_settings.resolved_theme.role_styles["tool"].border
         prompt.set_class(_is_terminal_command_prompt(text), "-shell-mode")
         prompt.refresh()
         self._apply_activity_indicator()
