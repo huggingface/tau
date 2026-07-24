@@ -2978,7 +2978,7 @@ class TauTuiApp(App[None]):
     }
 
     #prompt.-shell-mode {
-        border-left: tall $tau-accent;
+        border-left: tall $tau-tool-running;
     }
 
     #compact-session-info {
@@ -5766,7 +5766,7 @@ def _activity_prompt_border_color(
     """Return the prompt border color for the current activity animation frame."""
     del frame, running
     if shell_mode:
-        return theme.accent
+        return theme.role_styles["tool"].border
     return theme.prompt_border
 
 
@@ -6231,6 +6231,7 @@ def _theme_css_variables(theme: TuiTheme) -> dict[str, str]:
         "tau-prompt-border": theme.prompt_border,
         "tau-autocomplete-background": theme.autocomplete_background,
         "tau-accent": theme.accent,
+        "tau-tool-running": theme.role_styles["tool"].border,
         "tau-highlight-background": theme.highlight_background,
         "tau-highlight-text": theme.highlight_text,
         "tau-markdown-highlight": theme.markdown_heading,
