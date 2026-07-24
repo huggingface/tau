@@ -5642,6 +5642,7 @@ class TauTuiApp(App[None]):
                 theme,
                 frame=self._activity_frame,
                 running=self.state.running,
+                shell_mode=shell_mode,
             ),
             layout=False,
         )
@@ -5770,8 +5771,16 @@ def _activity_prompt_border_color(
     return theme.prompt_border
 
 
-def _render_activity_indicator(theme: TuiTheme, *, frame: int, running: bool) -> Text:
-    """Render the prompt prefix, turning Tau into a moving square while running."""
+def _render_activity_indicator(
+    theme: TuiTheme,
+    *,
+    frame: int,
+    running: bool,
+    shell_mode: bool = False,
+) -> Text:
+    """Render the prompt prefix: a moving square while running, ``$`` in shell mode."""
+    if shell_mode and not running:
+        return Text("$", style=f"bold {theme.role_styles['tool'].border}")
     if not running:
         return Text("τ", style=f"bold {theme.accent}")
 
