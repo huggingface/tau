@@ -177,3 +177,80 @@ def test_session_manager_sorts_newest_updated_first(tmp_path: Path) -> None:
 
     assert [session.id for session in sessions] == ["older", "newer"]
     assert newer in sessions
+
+
+def test_concurrent_upserts_dont_lose_sessions(tmp_path: Path) -> None:
+    """Two interleaved _upsert calls must not lose either record.
+
+    The old read-modify-write _upsert truncated index.jsonl and rewrote it.
+    Two threads that read before either writes lose one record. Uses a
+    barrier inside a monkey-patched _read_index to force both threads into
+    the read before either writes.
+    """
+    import threading
+
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+
+    manager.create_session(cwd=cwd, model="existing", session_id="existing")
+
+    read_barrier = threading.Barrier(2, timeout=5)
+    original_read = manager._read_index
+
+    def patched_read(path: Path) -> list:
+        read_barrier.wait()
+        return original_read(path)
+
+    manager._read_index = patched_read
+
+    errors: list[Exception] = []
+
+    def upsert(session_id: str, model: str) -> None:
+        try:
+            manager.create_session(cwd=cwd, model=model, session_id=session_id)
+        except Exception as e:
+            errors.append(e)
+
+    t1 = threading.Thread(target=upsert, args=("session-a", "a"))
+    t2 = threading.Thread(target=upsert, args=("session-b", "b"))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    manager._read_index = original_read
+
+    assert not errors
+    assert {s.id for s in manager.list_sessions(cwd)} == {
+        "existing",
+        "session-a",
+        "session-b",
+    }
+
+
+def test_index_deduplicates_on_read(tmp_path: Path) -> None:
+    """Append-only _upsert writes duplicate lines for updated sessions;
+    the read path deduplicates them via _deduplicate_records.
+    """
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+
+    manager.create_session(cwd=cwd, model="a", session_id="session-a")
+
+    updated = manager.touch_session("session-a", title="Updated")
+    assert updated is not None
+    assert updated.title == "Updated"
+
+    index_path = manager.project_index_path(cwd)
+    raw_lines = [
+        line for line in index_path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+    session_a_lines = [line for line in raw_lines if '"session-a"' in line]
+    assert len(session_a_lines) == 2  # original + update
+
+    fetched = manager.get_session("session-a")
+    assert fetched is not None
+    assert fetched.title == "Updated"
+    assert [s.id for s in manager.list_sessions(cwd)] == ["session-a"]

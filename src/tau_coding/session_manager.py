@@ -236,18 +236,20 @@ class SessionManager:
             records.extend(self._read_index(index_path))
         return _deduplicate_records(records)
 
-    def _write_index(self, path: Path, records: list[CodingSessionRecord]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        content = "\n".join(record.to_model().model_dump_json() for record in records)
-        if content:
-            content += "\n"
-        path.write_text(content, encoding="utf-8")
-
     def _upsert(self, record: CodingSessionRecord) -> None:
+        """Append a session record to the project index.
+
+        Append-only — never truncates, never rewrites — so a crash during
+        write cannot lose previously indexed sessions, and concurrent writers
+        cannot overwrite each other. Duplicate entries for the same session
+        ID are resolved at read time by ``_deduplicate_records`` (last writer
+        wins).
+        """
         path = self.project_index_path(record.cwd)
-        records = [item for item in self._read_index(path) if item.id != record.id]
-        records.append(record)
-        self._write_index(path, records)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        line = record.to_model().model_dump_json() + "\n"
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line)
 
 
 def _deduplicate_records(records: list[CodingSessionRecord]) -> list[CodingSessionRecord]:
