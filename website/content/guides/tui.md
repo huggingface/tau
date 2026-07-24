@@ -73,8 +73,9 @@ You can run a shell command yourself without asking the model:
 - `!!<command>` runs it and shows the output **without** adding it to context.
 
 As soon as the input starts with `!`, the whole input and its left border turn
-the same amber/orange color as a tool while it is running, so you can tell at a
-glance that submitting will execute a shell command instead of messaging the model.
+the same amber/orange color as a tool while it is running, and the `τ` prompt
+prefix becomes a matching `$`, so you can tell at a glance that submitting will
+execute a shell command instead of messaging the model.
 
 While typing a path after `!`/`!!`, press **Tab** to complete filenames from the
 working directory.
