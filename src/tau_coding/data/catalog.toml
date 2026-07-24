@@ -3331,16 +3331,16 @@ cost = { input = 0.75, output = 4.5, cacheRead = 0.075, cacheWrite = 0 }
 
 [[providers]]
 name = "zai"
-display_name = "ZAI"
+display_name = "Z.AI"
 kind = "openai-compatible"
-base_url = "https://api.z.ai/api/coding/paas/v4"
+base_url = "https://api.z.ai/api/paas/v4"
 api_key_env = "ZAI_API_KEY"
 credential_name = "zai"
-models = ["glm-4.5-air", "glm-4.7", "glm-5-turbo", "glm-5.1", "glm-5v-turbo"]
-default_model = "glm-5.1"
+models = ["glm-4.5-air", "glm-4.7", "glm-5-turbo", "glm-5.1", "glm-5v-turbo", "glm-5.2"]
+default_model = "glm-5.2"
 docs_url = "https://docs.z.ai"
 api = "openai-completions"
-thinking_levels = ["off", "minimal", "low", "medium", "high"]
+thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
 thinking_default = "medium"
 thinking_parameter = "reasoning_effort"
 
@@ -3350,6 +3350,7 @@ thinking_parameter = "reasoning_effort"
 glm-5-turbo = 200000
 "glm-5.1" = 200000
 glm-5v-turbo = 200000
+"glm-5.2" = 1000000
 
 [providers.model_metadata."glm-4.5-air"]
 name = "GLM-4.5-Air"
@@ -3358,7 +3359,7 @@ input = ["text"]
 context_window = 131072
 max_tokens = 98304
 compat = { supportsDeveloperRole = false, thinkingFormat = "zai" }
-cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+cost = { input = 0.2, output = 1.1, cacheRead = 0.03, cacheWrite = 0 }
 
 [providers.model_metadata."glm-4.7"]
 name = "GLM-4.7"
@@ -3367,7 +3368,7 @@ input = ["text"]
 context_window = 204800
 max_tokens = 131072
 compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
-cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+cost = { input = 0.6, output = 2.2, cacheRead = 0.11, cacheWrite = 0 }
 
 [providers.model_metadata.glm-5-turbo]
 name = "GLM-5-Turbo"
@@ -3376,7 +3377,7 @@ input = ["text"]
 context_window = 200000
 max_tokens = 131072
 compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
-cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+cost = { input = 1.2, output = 4, cacheRead = 0.24, cacheWrite = 0 }
 
 [providers.model_metadata."glm-5.1"]
 name = "GLM-5.1"
@@ -3385,7 +3386,7 @@ input = ["text"]
 context_window = 200000
 max_tokens = 131072
 compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
-cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+cost = { input = 1.4, output = 4.4, cacheRead = 0.26, cacheWrite = 0 }
 
 [providers.model_metadata.glm-5v-turbo]
 name = "GLM-5V-Turbo"
@@ -3394,7 +3395,251 @@ input = ["text", "image"]
 context_window = 200000
 max_tokens = 131072
 compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
-cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+cost = { input = 1.2, output = 4, cacheRead = 0.24, cacheWrite = 0 }
+
+[providers.model_metadata."glm-5.2"]
+name = "GLM-5.2"
+reasoning = true
+input = ["text"]
+context_window = 1000000
+max_tokens = 131072
+compat = { supportsReasoningEffort = true, supportsDeveloperRole = false, thinkingFormat = "deepseek", zaiToolStream = true }
+cost = { input = 1.4, output = 4.4, cacheRead = 0.26, cacheWrite = 0 }
+thinking_level_map = { xhigh = "xhigh" }
+
+[[providers]]
+name = "zai-coding-plan"
+display_name = "Z.AI Coding Plan"
+kind = "openai-compatible"
+base_url = "https://api.z.ai/api/coding/paas/v4"
+api_key_env = "ZAI_CODING_PLAN_API_KEY"
+credential_name = "zai-coding-plan"
+models = ["glm-4.5-air", "glm-4.7", "glm-5-turbo", "glm-5.1", "glm-5v-turbo", "glm-5.2"]
+default_model = "glm-5.2"
+docs_url = "https://docs.z.ai/devpack/overview"
+api = "openai-completions"
+thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
+thinking_default = "medium"
+thinking_parameter = "reasoning_effort"
+
+[providers.context_windows]
+"glm-4.5-air" = 131072
+"glm-4.7" = 204800
+glm-5-turbo = 200000
+"glm-5.1" = 200000
+glm-5v-turbo = 200000
+"glm-5.2" = 1000000
+
+[providers.model_metadata."glm-4.5-air"]
+name = "GLM-4.5-Air"
+reasoning = true
+input = ["text"]
+context_window = 131072
+max_tokens = 98304
+compat = { supportsDeveloperRole = false, thinkingFormat = "zai" }
+cost = { input = 0.2, output = 1.1, cacheRead = 0.03, cacheWrite = 0 }
+
+[providers.model_metadata."glm-4.7"]
+name = "GLM-4.7"
+reasoning = true
+input = ["text"]
+context_window = 204800
+max_tokens = 131072
+compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
+cost = { input = 0.6, output = 2.2, cacheRead = 0.11, cacheWrite = 0 }
+
+[providers.model_metadata.glm-5-turbo]
+name = "GLM-5-Turbo"
+reasoning = true
+input = ["text"]
+context_window = 200000
+max_tokens = 131072
+compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
+cost = { input = 1.2, output = 4, cacheRead = 0.24, cacheWrite = 0 }
+
+[providers.model_metadata."glm-5.1"]
+name = "GLM-5.1"
+reasoning = true
+input = ["text"]
+context_window = 200000
+max_tokens = 131072
+compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
+cost = { input = 1.4, output = 4.4, cacheRead = 0.26, cacheWrite = 0 }
+
+[providers.model_metadata.glm-5v-turbo]
+name = "GLM-5V-Turbo"
+reasoning = true
+input = ["text", "image"]
+context_window = 200000
+max_tokens = 131072
+compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
+cost = { input = 1.2, output = 4, cacheRead = 0.24, cacheWrite = 0 }
+
+[providers.model_metadata."glm-5.2"]
+name = "GLM-5.2"
+reasoning = true
+input = ["text"]
+context_window = 1000000
+max_tokens = 131072
+compat = { supportsReasoningEffort = true, supportsDeveloperRole = false, thinkingFormat = "deepseek", zaiToolStream = true }
+cost = { input = 1.4, output = 4.4, cacheRead = 0.26, cacheWrite = 0 }
+thinking_level_map = { xhigh = "xhigh" }
+
+[[providers]]
+name = "zhipu"
+display_name = "Zhipu AI"
+kind = "openai-compatible"
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_key_env = "ZHIPU_API_KEY"
+credential_name = "zhipu"
+models = ["glm-4.5-air", "glm-4.7", "glm-5-turbo", "glm-5.1", "glm-5v-turbo", "glm-5.2"]
+default_model = "glm-5.2"
+docs_url = "https://docs.bigmodel.cn"
+api = "openai-completions"
+thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
+thinking_default = "medium"
+thinking_parameter = "reasoning_effort"
+
+[providers.context_windows]
+"glm-4.5-air" = 131072
+"glm-4.7" = 204800
+glm-5-turbo = 200000
+"glm-5.1" = 200000
+glm-5v-turbo = 200000
+"glm-5.2" = 1000000
+
+[providers.model_metadata."glm-4.5-air"]
+name = "GLM-4.5-Air"
+reasoning = true
+input = ["text"]
+context_window = 131072
+max_tokens = 98304
+compat = { supportsDeveloperRole = false, thinkingFormat = "zai" }
+cost = { input = 0.2, output = 1.1, cacheRead = 0.03, cacheWrite = 0 }
+
+[providers.model_metadata."glm-4.7"]
+name = "GLM-4.7"
+reasoning = true
+input = ["text"]
+context_window = 204800
+max_tokens = 131072
+compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
+cost = { input = 0.6, output = 2.2, cacheRead = 0.11, cacheWrite = 0 }
+
+[providers.model_metadata.glm-5-turbo]
+name = "GLM-5-Turbo"
+reasoning = true
+input = ["text"]
+context_window = 200000
+max_tokens = 131072
+compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
+cost = { input = 1.2, output = 4, cacheRead = 0.24, cacheWrite = 0 }
+
+[providers.model_metadata."glm-5.1"]
+name = "GLM-5.1"
+reasoning = true
+input = ["text"]
+context_window = 200000
+max_tokens = 131072
+compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
+cost = { input = 1.4, output = 4.4, cacheRead = 0.26, cacheWrite = 0 }
+
+[providers.model_metadata.glm-5v-turbo]
+name = "GLM-5V-Turbo"
+reasoning = true
+input = ["text", "image"]
+context_window = 200000
+max_tokens = 131072
+compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
+cost = { input = 1.2, output = 4, cacheRead = 0.24, cacheWrite = 0 }
+
+[providers.model_metadata."glm-5.2"]
+name = "GLM-5.2"
+reasoning = true
+input = ["text"]
+context_window = 1000000
+max_tokens = 131072
+compat = { supportsDeveloperRole = false, thinkingFormat = "deepseek", zaiToolStream = true }
+cost = { input = 1.4, output = 4.4, cacheRead = 0.26, cacheWrite = 0 }
+thinking_level_map = { xhigh = "xhigh" }
+
+[[providers]]
+name = "zhipu-coding-plan"
+display_name = "Zhipu AI Coding Plan"
+kind = "openai-compatible"
+base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+api_key_env = "ZHIPU_CODING_PLAN_API_KEY"
+credential_name = "zhipu-coding-plan"
+models = ["glm-4.5-air", "glm-4.7", "glm-5-turbo", "glm-5.1", "glm-5v-turbo", "glm-5.2"]
+default_model = "glm-5.2"
+docs_url = "https://docs.bigmodel.cn/cn/coding-plan/overview"
+api = "openai-completions"
+thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
+thinking_default = "medium"
+thinking_parameter = "reasoning_effort"
+
+[providers.context_windows]
+"glm-4.5-air" = 131072
+"glm-4.7" = 204800
+glm-5-turbo = 200000
+"glm-5.1" = 200000
+glm-5v-turbo = 200000
+"glm-5.2" = 1000000
+
+[providers.model_metadata."glm-4.5-air"]
+name = "GLM-4.5-Air"
+reasoning = true
+input = ["text"]
+context_window = 131072
+max_tokens = 98304
+compat = { supportsDeveloperRole = false, thinkingFormat = "zai" }
+cost = { input = 0.2, output = 1.1, cacheRead = 0.03, cacheWrite = 0 }
+
+[providers.model_metadata."glm-4.7"]
+name = "GLM-4.7"
+reasoning = true
+input = ["text"]
+context_window = 204800
+max_tokens = 131072
+compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
+cost = { input = 0.6, output = 2.2, cacheRead = 0.11, cacheWrite = 0 }
+
+[providers.model_metadata.glm-5-turbo]
+name = "GLM-5-Turbo"
+reasoning = true
+input = ["text"]
+context_window = 200000
+max_tokens = 131072
+compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
+cost = { input = 1.2, output = 4, cacheRead = 0.24, cacheWrite = 0 }
+
+[providers.model_metadata."glm-5.1"]
+name = "GLM-5.1"
+reasoning = true
+input = ["text"]
+context_window = 200000
+max_tokens = 131072
+compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
+cost = { input = 1.4, output = 4.4, cacheRead = 0.26, cacheWrite = 0 }
+
+[providers.model_metadata.glm-5v-turbo]
+name = "GLM-5V-Turbo"
+reasoning = true
+input = ["text", "image"]
+context_window = 200000
+max_tokens = 131072
+compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
+cost = { input = 1.2, output = 4, cacheRead = 0.24, cacheWrite = 0 }
+
+[providers.model_metadata."glm-5.2"]
+name = "GLM-5.2"
+reasoning = true
+input = ["text"]
+context_window = 1000000
+max_tokens = 131072
+compat = { supportsDeveloperRole = false, thinkingFormat = "deepseek", zaiToolStream = true }
+cost = { input = 1.4, output = 4.4, cacheRead = 0.26, cacheWrite = 0 }
+thinking_level_map = { xhigh = "xhigh" }
 
 [[providers]]
 name = "mistral"
