@@ -91,6 +91,7 @@ from tau_coding.tui.app import (
     TreePickerScreen,
     _activity_prompt_border_color,
     _completion_selected_render_line,
+    _render_activity_indicator,
     _terminal_command_prefix_span,
     _textual_theme_for_tau_theme,
     _theme_css_variables,
@@ -2406,6 +2407,23 @@ def test_terminal_command_prefix_span_detects_shell_mode_prefix() -> None:
     assert _terminal_command_prefix_span("hello ! pwd") is None
 
 
+def test_activity_indicator_shows_dollar_sign_in_shell_mode() -> None:
+    theme = TAU_LIGHT_THEME
+
+    rendered = _render_activity_indicator(theme, frame=0, running=False, shell_mode=True)
+
+    assert rendered.plain == "$"
+    assert rendered.style == f"bold {theme.role_styles['tool'].border}"
+
+
+def test_activity_indicator_keeps_running_animation_in_shell_mode() -> None:
+    theme = TAU_LIGHT_THEME
+
+    rendered = _render_activity_indicator(theme, frame=0, running=True, shell_mode=True)
+
+    assert rendered.plain != "$"
+
+
 def test_activity_prompt_border_uses_tool_running_color_in_shell_mode() -> None:
     theme = TAU_LIGHT_THEME
 
@@ -2421,10 +2439,12 @@ async def test_tui_app_highlights_prompt_shell_mode() -> None:
 
     async with app.run_test(size=(120, 30)) as pilot:
         prompt = app.query_one("#prompt", PromptInput)
+        indicator = app.query_one("#prompt-prefix", Static)
         prompt.value = "!! pwd"
         await pilot.pause()
 
         assert prompt.has_class("-shell-mode")
+        assert indicator.render().plain == "$"
         tool_running_color = app.tui_settings.resolved_theme.role_styles["tool"].border
         assert (
             _activity_prompt_border_color(
@@ -2451,6 +2471,7 @@ async def test_tui_app_highlights_prompt_shell_mode() -> None:
 
         assert not prompt.has_class("-shell-mode")
         assert prompt.get_line(0).spans == []
+        assert indicator.render().plain == "τ"
 
 
 @pytest.mark.anyio
