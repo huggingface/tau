@@ -1,0 +1,33 @@
+name: Upstream Sync
+
+on:
+  schedule:
+    # GitHub cron uses UTC; this runs daily at 08:00 Beijing time.
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out fork
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge upstream
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/huggingface/tau.git
+          git fetch upstream main
+          git merge upstream/main --no-edit
+          git push origin main
