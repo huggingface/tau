@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.3.2",
+    "date": "2026-07-24",
+    "sections": {
+      "Fixed": [
+        "Hide the unsupported `gpt-5.6` API alias from the OpenAI Codex subscription catalog while retaining it for direct OpenAI API users."
+      ]
+    }
+  },
+  {
     "version": "0.3.1",
     "date": "2026-07-23",
     "sections": {

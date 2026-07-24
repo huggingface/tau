@@ -459,18 +459,17 @@ base_url = "https://chatgpt.com/backend-api"
 api_key_env = "OPENAI_CODEX_ACCESS_TOKEN"
 credential_name = "openai-codex"
 auth_methods = ["oauth"]
-models = ["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"]
+models = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"]
 default_model = "gpt-5.5"
 docs_url = "https://chatgpt.com/codex"
 thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
-thinking_models = ["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"]
+thinking_models = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"]
 thinking_default = "medium"
 thinking_parameter = "reasoning.effort"
 
 [providers.context_windows]
 # Conservative Codex-subscription fallbacks. The authenticated live catalog
 # overrides these values because Codex limits can vary by rollout/account.
-"gpt-5.6" = 272000
 "gpt-5.6-sol" = 272000
 "gpt-5.6-terra" = 272000
 "gpt-5.6-luna" = 272000
@@ -480,16 +479,6 @@ thinking_parameter = "reasoning.effort"
 "gpt-5.3-codex" = 400000
 "gpt-5.3-codex-spark" = 400000
 "gpt-5.2" = 400000
-
-[providers.model_metadata."gpt-5.6"]
-name = "GPT-5.6"
-reasoning = true
-input = ["text", "image"]
-context_window = 272000
-max_tokens = 128000
-cost = { input = 5, output = 30, cacheRead = 0.5, cacheWrite = 6.25 }
-thinking_level_map = { off = "none", xhigh = "xhigh" }
-unsupported_thinking_levels = ["minimal"]
 
 [providers.model_metadata."gpt-5.6-sol"]
 name = "GPT-5.6 Sol"
