@@ -482,6 +482,12 @@ class _ResponsesStreamParser:
                 self._thinking_parts.append(delta)
                 return [ProviderThinkingDeltaEvent(delta=delta)], False
 
+        elif chunk_type == "response.reasoning_summary_part.done":
+            if self._thinking_parts:
+                separator = "\n\n"
+                self._thinking_parts.append(separator)
+                return [ProviderThinkingDeltaEvent(delta=separator)], False
+
         elif chunk_type == "response.output_item.added":
             item = chunk.get("item")
             _register_reasoning_item(self._reasoning_items, item)

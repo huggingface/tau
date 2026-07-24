@@ -543,6 +543,12 @@ async def _codex_provider_events(
                 thinking_parts.append(delta)
                 yield ProviderThinkingDeltaEvent(delta=delta)
 
+        elif event_type == "response.reasoning_summary_part.done":
+            if thinking_parts:
+                separator = "\n\n"
+                thinking_parts.append(separator)
+                yield ProviderThinkingDeltaEvent(delta=separator)
+
         elif event_type in {
             "response.output_item.done",
             "response.output_item.completed",
