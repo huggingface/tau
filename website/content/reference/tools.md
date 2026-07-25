@@ -33,7 +33,11 @@ Reads a file from disk.
 For text files, `read` returns UTF-8 content, applies `offset`/`limit`, and
 truncates to at most 2,000 lines or 50 KB (whichever comes first), appending a
 hint like `[42 more lines in file. Use offset=101 to continue.]`. Supported
-images (JPEG, PNG, GIF, WebP) are returned as base64 with metadata.
+images (JPEG, PNG, GIF, WebP) are detected from their file content and sent to
+vision-capable models as image attachments. Attachments are limited to 5 MB.
+When the active model does not accept images, Tau sends an explicit
+omission notice instead of silently dropping the image or submitting an invalid
+request.
 
 Fails when `path` is missing/invalid, the file doesn't exist, the path is a
 directory, `offset` is past the end, or the file is neither UTF-8 text nor a

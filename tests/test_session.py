@@ -6,6 +6,7 @@ import pytest
 from tau_agent import (
     AssistantMessage,
     CustomMessage,
+    ImageContent,
     TextContent,
     ThinkingContent,
     ToolResultMessage,
@@ -86,6 +87,29 @@ def test_assistant_and_tool_result_round_trip_canonical_blocks() -> None:
     assert result_payload["toolName"] == "edit"
     assert entry_from_json_line(entry_to_json_line(assistant)) == assistant
     assert entry_from_json_line(entry_to_json_line(result)) == result
+
+
+def test_tool_result_image_round_trips_jsonl() -> None:
+    entry = MessageEntry(
+        id="image",
+        message=ToolResultMessage(
+            tool_call_id="call-1",
+            tool_name="read",
+            content=[
+                TextContent(text="Read image file [image/png]"),
+                ImageContent(data="aW1hZ2U=", mime_type="image/png"),
+            ],
+        ),
+    )
+
+    line = entry_to_json_line(entry)
+
+    assert entry_from_json_line(line) == entry
+    assert json.loads(line)["message"]["content"][1] == {
+        "type": "image",
+        "data": "aW1hZ2U=",
+        "mimeType": "image/png",
+    }
 
 
 def test_structured_thinking_message_round_trips_jsonl() -> None:

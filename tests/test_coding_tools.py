@@ -5,6 +5,7 @@ from time import monotonic
 
 import pytest
 
+from tau_agent import ImageContent
 from tau_coding import (
     create_bash_tool,
     create_coding_tools,
@@ -66,6 +67,51 @@ async def test_read_tool_reads_file_with_offset_and_limit(tmp_path: Path) -> Non
     assert result.details is not None
     assert result.details["path"] == str(path)
     assert isinstance(result.details["truncation"], dict)
+
+
+@pytest.mark.anyio
+async def test_read_tool_returns_images_as_model_content(tmp_path: Path) -> None:
+    image_data = b"\x89PNG\r\n\x1a\nnot-real"
+    path = tmp_path / "diagram.png"
+    path.write_bytes(image_data)
+    tool = create_read_tool(cwd=tmp_path)
+
+    result = await tool.execute("test-call", {"path": "diagram.png"})
+
+    assert result.text == "Read image file [image/png]"
+    image = next(block for block in result.content if isinstance(block, ImageContent))
+    assert image.mime_type == "image/png"
+    assert image.data == "iVBORw0KGgpub3QtcmVhbA=="
+    assert result.details == {
+        "path": str(path),
+        "mime_type": "image/png",
+        "bytes": len(image_data),
+    }
+
+
+@pytest.mark.anyio
+async def test_read_tool_detects_images_by_content_not_extension(tmp_path: Path) -> None:
+    path = tmp_path / "diagram.txt"
+    path.write_bytes(b"\x89PNG\r\n\x1a\nnot-real")
+    tool = create_read_tool(cwd=tmp_path)
+
+    result = await tool.execute("test-call", {"path": "diagram.txt"})
+
+    assert any(isinstance(block, ImageContent) for block in result.content)
+
+
+@pytest.mark.anyio
+async def test_read_tool_omits_oversized_images(tmp_path: Path) -> None:
+    path = tmp_path / "large.png"
+    with path.open("wb") as file:
+        file.write(b"\x89PNG\r\n\x1a\n")
+        file.truncate(5 * 1024 * 1024 + 1)
+    tool = create_read_tool(cwd=tmp_path)
+
+    result = await tool.execute("test-call", {"path": "large.png"})
+
+    assert "exceeds the 5.0MB attachment limit" in result.text
+    assert not any(isinstance(block, ImageContent) for block in result.content)
 
 
 @pytest.mark.anyio

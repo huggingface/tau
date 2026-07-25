@@ -683,6 +683,25 @@ def test_set_default_provider_model_rejects_model_not_declared_for_provider() ->
         set_default_provider_model(settings, provider_name="local", model="llama")
 
 
+def test_runtime_config_uses_selected_model_image_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUSTOM_API_KEY", "secret")
+    provider = OpenAICompatibleProviderConfig(
+        name="custom",
+        api_key_env="CUSTOM_API_KEY",
+        models=("text", "vision"),
+        default_model="text",
+        model_metadata={
+            "text": ProviderModelMetadata(input=("text",)),
+            "vision": ProviderModelMetadata(input=("text", "image")),
+        },
+    )
+
+    assert not openai_compatible_config_from_provider(provider, model="text").supports_images
+    assert openai_compatible_config_from_provider(provider, model="vision").supports_images
+
+
 def test_openai_compatible_config_from_provider_uses_configured_env_var(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

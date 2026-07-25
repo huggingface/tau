@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import difflib
 import json
-import mimetypes
 import os
 import signal
 import tempfile
@@ -22,7 +21,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
-from tau_agent.messages import TextContent
+from tau_agent.messages import ImageContent, TextContent
 from tau_agent.tools import (
     AgentTool,
     AgentToolResult,
@@ -33,7 +32,8 @@ from tau_agent.types import JSONValue
 
 DEFAULT_MAX_OUTPUT_BYTES = 50 * 1024
 DEFAULT_MAX_OUTPUT_LINES = 2_000
-SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+DEFAULT_MAX_IMAGE_BYTES = 5 * 1024 * 1024
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 UTF8_BOM = "\ufeff"
 
 
@@ -174,15 +174,32 @@ def create_read_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
 
         mime_type = _detect_supported_image_mime_type(path)
         if mime_type is not None:
+            image_bytes = path.stat().st_size
+            image_details: dict[str, JSONValue] = {
+                "path": str(path),
+                "mime_type": mime_type,
+                "bytes": image_bytes,
+            }
+            if image_bytes > DEFAULT_MAX_IMAGE_BYTES:
+                return AgentToolResult(
+                    content=[
+                        TextContent(
+                            text=(
+                                f"Read image file [{mime_type}]\n"
+                                f"[Image omitted: {format_size(image_bytes)} exceeds the "
+                                f"{format_size(DEFAULT_MAX_IMAGE_BYTES)} attachment limit.]"
+                            )
+                        )
+                    ],
+                    details=image_details,
+                )
             data = path.read_bytes()
             return AgentToolResult(
-                content=[TextContent(text=f"Read image file [{mime_type}]")],
-                details={
-                    "path": str(path),
-                    "mime_type": mime_type,
-                    "bytes": len(data),
-                    "image_base64": _base64_text(data),
-                },
+                content=[
+                    TextContent(text=f"Read image file [{mime_type}]"),
+                    ImageContent(data=_base64_text(data), mime_type=mime_type),
+                ],
+                details=image_details,
             )
 
         text = path.read_text(encoding="utf-8")
@@ -246,7 +263,8 @@ def create_read_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
         name="read",
         description=(
             "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). "
-            "Images are returned as base64 metadata. For text files, output is truncated to "
+            "Images are sent to vision-capable models as attachments. For text files, output is "
+            "truncated to "
             f"{DEFAULT_MAX_OUTPUT_LINES} lines or {DEFAULT_MAX_OUTPUT_BYTES // 1024}KB "
             "(whichever is hit first). Use offset/limit for large files. When you need the "
             "full file, continue with offset until complete."
@@ -1006,8 +1024,34 @@ def _no_change_error(path: str, total_edits: int) -> str:
 
 
 def _detect_supported_image_mime_type(path: Path) -> str | None:
-    mime_type, _encoding = mimetypes.guess_type(path)
-    return mime_type if mime_type in SUPPORTED_IMAGE_MIME_TYPES else None
+    with path.open("rb") as file:
+        header = file.read(64 * 1024)
+    if header.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if header.startswith(PNG_SIGNATURE):
+        return None if _is_animated_png(header) else "image/png"
+    if header.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+        return "image/webp"
+
+    return None
+
+
+def _is_animated_png(data: bytes) -> bool:
+    offset = len(PNG_SIGNATURE)
+    while offset + 8 <= len(data):
+        chunk_length = int.from_bytes(data[offset : offset + 4], "big")
+        chunk_type = data[offset + 4 : offset + 8]
+        if chunk_type == b"acTL":
+            return True
+        if chunk_type == b"IDAT":
+            return False
+        next_offset = offset + 12 + chunk_length
+        if next_offset <= offset or next_offset > len(data):
+            return False
+        offset = next_offset
+    return False
 
 
 def _base64_text(data: bytes) -> str:
