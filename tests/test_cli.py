@@ -451,6 +451,46 @@ async def test_run_print_mode_system_command_prints_prompt_without_provider_call
 
 
 @pytest.mark.anyio
+async def test_run_print_mode_diagnostics_command_prints_resource_details(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    resource_root = tmp_path / "resources"
+    prompts_dir = resource_root / "prompts"
+    prompts_dir.mkdir(parents=True)
+    diagnostic_path = prompts_dir / "diagnostics.md"
+    diagnostic_path.write_text("Shadow the built-in command.", encoding="utf-8")
+    provider = FakeProvider([])
+
+    ok = await run_print_mode(
+        prompt="/diagnostics",
+        model="fake",
+        cwd=tmp_path,
+        provider=provider,
+        resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+    )
+
+    captured = capsys.readouterr()
+    assert ok is True
+    assert captured.out == "\n".join(
+        [
+            "Resource diagnostics (1):",
+            "",
+            "1. WARNING",
+            "Kind: prompt",
+            "Name: diagnostics",
+            f"Path: {diagnostic_path}",
+            (
+                "Message: prompt template name is reserved by the built-in "
+                "/diagnostics command; template ignored"
+            ),
+            "",
+        ]
+    )
+    assert captured.err == ""
+    assert provider.calls == []
+
+
+@pytest.mark.anyio
 async def test_run_print_mode_fails_on_non_recoverable_error(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:

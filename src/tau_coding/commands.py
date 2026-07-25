@@ -252,6 +252,15 @@ def create_default_command_registry() -> CommandRegistry:
     )
     registry.register(
         SlashCommand(
+            name="diagnostics",
+            usage="/diagnostics",
+            description="Show resource loading diagnostics.",
+            handler=_diagnostics_command,
+            search_terms=("errors", "warnings", "loading"),
+        )
+    )
+    registry.register(
+        SlashCommand(
             name="system",
             usage="/system",
             description="Show the active system prompt without saving it.",
@@ -486,19 +495,13 @@ def _skills_command(context: CommandContext) -> CommandResult:
     return CommandResult(handled=True, skills_picker_requested=True)
 
 
-def _resources_command(context: CommandContext) -> CommandResult:
-    session = context.session
-    lines = [
-        f"Skills: {len(session.skills)}",
-        f"Prompt templates: {len(session.prompt_templates)}",
-        f"Context files: {len(session.context_files)}",
-    ]
-    if session.resource_diagnostics:
-        lines.append("")
-        lines.extend(_format_diagnostics(session.resource_diagnostics))
-    else:
-        lines.append("Resource diagnostics: none")
-    return CommandResult(handled=True, message="\n".join(lines))
+def _diagnostics_command(context: CommandContext) -> CommandResult:
+    if context.args:
+        return CommandResult(handled=True, message="Usage: /diagnostics")
+    return CommandResult(
+        handled=True,
+        message=format_resource_diagnostics(context.session.resource_diagnostics),
+    )
 
 
 def _reload_command(context: CommandContext) -> CommandResult:
@@ -778,6 +781,28 @@ def _format_diagnostics(
     lines = ["Resource diagnostics:"]
     lines.extend(f"- {diagnostic.format()}" for diagnostic in filtered)
     return lines
+
+
+def format_resource_diagnostics(diagnostics: Sequence[ResourceDiagnostic]) -> str:
+    """Render complete resource diagnostics for command output."""
+    if not diagnostics:
+        return "No resource diagnostics."
+
+    lines = [f"Resource diagnostics ({len(diagnostics)}):"]
+    for index, diagnostic in enumerate(diagnostics, start=1):
+        lines.extend(
+            [
+                "",
+                f"{index}. {diagnostic.severity.upper()}",
+                f"Kind: {diagnostic.kind}",
+            ]
+        )
+        if diagnostic.name is not None:
+            lines.append(f"Name: {diagnostic.name}")
+        if diagnostic.path is not None:
+            lines.append(f"Path: {diagnostic.path}")
+        lines.append(f"Message: {diagnostic.message}")
+    return "\n".join(lines)
 
 
 def _refresh_provider_settings(session: CommandSession) -> CommandResult | None:

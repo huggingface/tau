@@ -3,6 +3,7 @@ from pathlib import Path
 from tau_coding.commands import CommandRegistry, SlashCommand, create_default_command_registry
 from tau_coding.paths import TauPaths
 from tau_coding.reload import CodingReloadSummary, ReloadCategorySummary
+from tau_coding.resources import ResourceDiagnostic
 from tau_coding.session import ModelChoice
 from tau_coding.session_manager import SessionManager
 from tau_coding.skills import Skill
@@ -114,11 +115,12 @@ def test_registry_ignores_unregistered_slash_prompts(tmp_path: Path) -> None:
         assert result.message is None
 
 
-def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
+def test_registered_commands_are_expected(tmp_path: Path) -> None:
     commands = create_default_command_registry().list_commands()
 
     assert [command.name for command in commands] == [
         "compact",
+        "diagnostics",
         "export",
         "hotkeys",
         "login",
@@ -268,6 +270,56 @@ def test_session_command_explains_unavailable_thinking_controls(tmp_path: Path) 
     assert "Thinking mode: unavailable" in result.message
     assert "Thinking unavailable: Provider local does not declare thinking_levels" in result.message
     assert "Thinking mode: medium" not in result.message
+
+
+def test_diagnostics_command_shows_empty_state(tmp_path: Path) -> None:
+    result = create_default_command_registry().execute(FakeSession(tmp_path), "/diagnostics")
+
+    assert result.handled is True
+    assert result.message == "No resource diagnostics."
+    assert (
+        create_default_command_registry()
+        .execute(FakeSession(tmp_path), "/diagnostics extra")
+        .message
+        == "Usage: /diagnostics"
+    )
+
+
+def test_diagnostics_command_shows_complete_literal_details(tmp_path: Path) -> None:
+    session = FakeSession(tmp_path)
+    prompt_path = tmp_path / "[project]" / "prompts" / "review.md"
+    session.resource_diagnostics = (
+        ResourceDiagnostic(
+            kind="prompt",
+            name="review",
+            path=prompt_path,
+            severity="warning",
+            message="template [ignored] because it is invalid",
+        ),
+        ResourceDiagnostic(
+            kind="extension",
+            severity="error",
+            message="setup failed",
+        ),
+    )
+
+    result = create_default_command_registry().execute(session, "/diagnostics")
+
+    assert result.message == "\n".join(
+        [
+            "Resource diagnostics (2):",
+            "",
+            "1. WARNING",
+            "Kind: prompt",
+            "Name: review",
+            f"Path: {prompt_path}",
+            "Message: template [ignored] because it is invalid",
+            "",
+            "2. ERROR",
+            "Kind: extension",
+            "Message: setup failed",
+        ]
+    )
 
 
 def test_hotkeys_command_lists_common_tui_shortcuts(tmp_path: Path) -> None:
