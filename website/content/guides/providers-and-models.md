@@ -181,6 +181,20 @@ list before creating or refreshing a runtime provider. This prevents accidental
 provider/model mismatches, such as trying to send an API-only OpenAI model to the
 separate `openai-codex` subscription provider.
 
+### Claude Opus 5
+
+Tau supports Anthropic's `claude-opus-5` through the direct `anthropic`
+provider. The model has a 1M-token context window, accepts text and images,
+generates up to 128k tokens, and costs $5 / $25 per million input/output tokens.
+Anthropic enables adaptive thinking by default. Tau maps its `low` through
+`high` modes directly, maps `xhigh` to Anthropic's maximum effort, and sends an
+explicit disabled-thinking request for `off`.
+
+Use `/login anthropic-api` or `/login anthropic-subscription`, then select
+**Claude Opus 5** in `/model`. See Anthropic's
+[Claude Opus 5 guide](https://platform.claude.com/docs/en/about-claude/models/whats-new-opus-5)
+for current behavior and availability.
+
 ## Adding a custom / local provider
 
 Any OpenAI-compatible endpoint works — including local servers like llama.cpp or

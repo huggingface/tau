@@ -1600,6 +1600,42 @@ async def test_anthropic_provider_includes_configured_thinking_budget() -> None:
 
 
 @pytest.mark.anyio
+async def test_anthropic_provider_explicitly_disables_default_adaptive_thinking() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"type":"message_stop"}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+                thinking_mode="disabled",
+            ),
+            client=client,
+        )
+
+        await _collect(
+            provider.stream_response(
+                model="claude-opus-5",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hello")],
+                tools=[],
+            )
+        )
+
+    payload = loads(requests[0].content)
+    assert payload["thinking"] == {"type": "disabled"}
+    assert "output_config" not in payload
+
+
+@pytest.mark.anyio
 async def test_anthropic_provider_streams_thinking_deltas() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(

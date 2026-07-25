@@ -102,6 +102,7 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
         "claude-opus-4-5-20251101",
         "claude-opus-4-6",
         "claude-opus-4-7",
+        "claude-opus-5",
         "claude-sonnet-4-5",
         "claude-sonnet-4-5-20250929",
         "claude-sonnet-4-6",
@@ -119,11 +120,21 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
         "claude-opus-4-5-20251101": 200_000,
         "claude-opus-4-6": 1_000_000,
         "claude-opus-4-7": 1_000_000,
+        "claude-opus-5": 1_000_000,
         "claude-sonnet-4-5": 200_000,
         "claude-sonnet-4-5-20250929": 200_000,
         "claude-sonnet-4-6": 1_000_000,
         "claude-sonnet-5": 1_000_000,
     }
+    opus_5 = entry.model_metadata["claude-opus-5"]
+    assert opus_5.context_window == 1_000_000
+    assert opus_5.max_tokens == 128_000
+    assert opus_5.input == ("text", "image")
+    assert opus_5.cost is not None
+    assert opus_5.cost["input"] == 5
+    assert opus_5.cost["output"] == 25
+    assert opus_5.compat == {"forceAdaptiveThinking": True}
+    assert opus_5.thinking_level_map == {"minimal": None, "xhigh": "max"}
     assert entry.thinking_levels == ("off", "minimal", "low", "medium", "high", "xhigh")
     assert entry.thinking_models == ()
     assert entry.thinking_default == "medium"
