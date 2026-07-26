@@ -3877,7 +3877,7 @@ kimi-for-coding = 262144
 [providers.model_metadata.k3]
 name = "Kimi K3"
 reasoning = true
-input = ["text"]
+input = ["text", "image"]
 context_window = 1048576
 compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = true, maxTokensField = "max_tokens", supportsStrictMode = false }
 cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }

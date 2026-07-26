@@ -119,8 +119,9 @@ different endpoints, and charge against different billing plans:
 | `moonshotai` | Pay-as-you-go key from the [Kimi Open Platform](https://platform.kimi.ai/console/api-keys) | `kimi-k2.7-code` | `https://api.moonshot.ai/v1` | `MOONSHOT_API_KEY` |
 | `kimi-code` | Subscription key from the [Kimi Code console](https://www.kimi.com/code/console) | `k3` or rolling `kimi-for-coding` alias | `https://api.kimi.com/coding/v1` | `KIMI_CODE_API_KEY` |
 
-Kimi K3 uses the `k3` model ID and supports up to a 1,048,576-token context
-window on eligible plans. Its reasoning effort is currently fixed at `max`,
+Kimi K3 uses the `k3` model ID, accepts text and image input, and supports up to
+a 1,048,576-token context window on eligible plans. Its reasoning effort is
+currently fixed at `max`,
 which Tau exposes as the `xhigh` thinking level. Start a new session when
 switching to K3 so the previous model's context cache is not re-prefilled. See
 [Kimi's model documentation](https://www.kimi.com/code/docs/en/kimi-code/models)

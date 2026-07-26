@@ -317,7 +317,7 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
     k3 = coding.model_metadata["k3"]
     assert k3.name == "Kimi K3"
     assert k3.reasoning is True
-    assert k3.input == ("text",)
+    assert k3.input == ("text", "image")
     assert k3.context_window == 1_048_576
     assert k3.thinking_level_map == {
         "off": None,
