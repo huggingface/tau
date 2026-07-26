@@ -102,6 +102,7 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
         "claude-opus-4-5-20251101",
         "claude-opus-4-6",
         "claude-opus-4-7",
+        "claude-opus-5",
         "claude-sonnet-4-5",
         "claude-sonnet-4-5-20250929",
         "claude-sonnet-4-6",
@@ -119,16 +120,45 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
         "claude-opus-4-5-20251101": 200_000,
         "claude-opus-4-6": 1_000_000,
         "claude-opus-4-7": 1_000_000,
+        "claude-opus-5": 1_000_000,
         "claude-sonnet-4-5": 200_000,
         "claude-sonnet-4-5-20250929": 200_000,
         "claude-sonnet-4-6": 1_000_000,
         "claude-sonnet-5": 1_000_000,
     }
+    opus_5 = entry.model_metadata["claude-opus-5"]
+    assert opus_5.context_window == 1_000_000
+    assert opus_5.max_tokens == 128_000
+    assert opus_5.input == ("text", "image")
+    assert opus_5.cost is not None
+    assert opus_5.cost["input"] == 5
+    assert opus_5.cost["output"] == 25
+    assert opus_5.compat == {"forceAdaptiveThinking": True}
+    assert opus_5.thinking_level_map == {"minimal": None, "xhigh": "max"}
     assert entry.thinking_levels == ("off", "minimal", "low", "medium", "high", "xhigh")
     assert entry.thinking_models == ()
     assert entry.thinking_default == "medium"
     assert entry.thinking_parameter == "anthropic.thinking"
     assert entry.auth_methods == ("api_key", "oauth")
+
+
+def test_builtin_catalog_separates_openai_api_and_codex_context_limits() -> None:
+    openai = builtin_provider_entry("openai")
+    codex = builtin_provider_entry("openai-codex")
+
+    assert openai is not None
+    assert codex is not None
+    assert openai.context_windows is not None
+    assert codex.context_windows is not None
+    assert "gpt-5.6" in openai.models
+    assert "gpt-5.6" not in codex.models
+    assert "gpt-5.6" not in codex.context_windows
+    assert "gpt-5.6" not in codex.model_metadata
+    assert openai.context_windows["gpt-5.6-sol"] == 1_050_000
+    assert codex.context_windows["gpt-5.6-sol"] == 272_000
+    assert codex.context_windows["gpt-5.6-terra"] == 272_000
+    assert codex.context_windows["gpt-5.6-luna"] == 272_000
+    assert codex.model_metadata["gpt-5.6-sol"].context_window == 272_000
 
 
 def test_builtin_catalog_oauth_and_opencode_auth_methods() -> None:
@@ -195,6 +225,56 @@ def test_builtin_catalog_golden_nvidia_entry() -> None:
     assert gpt_oss_metadata.max_tokens == 65_536
 
 
+def test_builtin_catalog_huggingface_model_expansion() -> None:
+    entry = builtin_provider_entry("huggingface")
+    assert entry is not None
+    added_models = {
+        "MiniMaxAI/MiniMax-M2",
+        "MiniMaxAI/MiniMax-M3",
+        "Qwen/Qwen3-235B-A22B",
+        "Qwen/Qwen3-32B",
+        "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+        "Qwen/Qwen3.5-122B-A10B",
+        "Qwen/Qwen3.5-27B",
+        "Qwen/Qwen3.5-35B-A3B",
+        "Qwen/Qwen3.5-9B",
+        "Qwen/Qwen3.6-27B",
+        "Qwen/Qwen3.6-35B-A3B",
+        "XiaomiMiMo/MiMo-V2.5-Pro",
+        "deepseek-ai/DeepSeek-R1",
+        "deepseek-ai/DeepSeek-V4-Flash",
+        "deepseek-ai/DeepSeek-V4-Pro",
+        "google/gemma-4-26B-A4B-it",
+        "google/gemma-4-31B-it",
+        "meta-llama/Llama-3.3-70B-Instruct",
+        "moonshotai/Kimi-K2.7-Code",
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "stepfun-ai/Step-3.5-Flash",
+        "stepfun-ai/Step-3.7-Flash",
+        "zai-org/GLM-4.5",
+        "zai-org/GLM-4.5-Air",
+        "zai-org/GLM-4.5V",
+        "zai-org/GLM-4.6",
+        "zai-org/GLM-5.2",
+    }
+
+    assert len(entry.models) == 46
+    assert added_models <= set(entry.models)
+    assert set(entry.context_windows or {}) == set(entry.models)
+    assert set(entry.model_metadata) == set(entry.models)
+    assert entry.default_model == "moonshotai/Kimi-K2.6"
+
+    minimax_m3 = entry.model_metadata["MiniMaxAI/MiniMax-M3"]
+    assert minimax_m3.input == ("text", "image")
+    assert minimax_m3.context_window == 524_288
+    assert minimax_m3.max_tokens == 128_000
+
+    llama = entry.model_metadata["meta-llama/Llama-3.3-70B-Instruct"]
+    assert llama.reasoning is False
+    assert llama.context_window == 131_072
+
+
 def test_builtin_catalog_golden_kimi_entries() -> None:
     moonshot = builtin_provider_entry("moonshotai")
     assert moonshot is not None
@@ -230,9 +310,23 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
     assert coding.base_url == "https://api.kimi.com/coding/v1"
     assert coding.api_key_env == "KIMI_CODE_API_KEY"
     assert coding.credential_name == "kimi-code"
-    assert coding.models == ("kimi-for-coding",)
+    assert coding.models == ("k3", "kimi-for-coding")
     assert coding.default_model == "kimi-for-coding"
-    assert coding.context_windows == {"kimi-for-coding": 262_144}
+    assert coding.context_windows == {"k3": 1_048_576, "kimi-for-coding": 262_144}
+
+    k3 = coding.model_metadata["k3"]
+    assert k3.name == "Kimi K3"
+    assert k3.reasoning is True
+    assert k3.input == ("text",)
+    assert k3.context_window == 1_048_576
+    assert k3.thinking_level_map == {
+        "off": None,
+        "minimal": None,
+        "low": None,
+        "medium": None,
+        "high": None,
+        "xhigh": "max",
+    }
 
     latest = coding.model_metadata["kimi-for-coding"]
     assert latest.name == "Kimi for Coding (latest)"

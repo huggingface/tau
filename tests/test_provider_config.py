@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+import tau_coding.provider_config as provider_config
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.paths import TauPaths
 from tau_coding.provider_catalog import ModelCostTier
@@ -24,6 +25,7 @@ from tau_coding.provider_config import (
     provider_thinking_levels,
     provider_thinking_unavailable_reason,
     resolve_provider_selection,
+    resolve_startup_thinking_level,
     save_provider_settings,
     set_default_provider_model,
     set_provider_thinking_level,
@@ -148,6 +150,13 @@ def test_builtin_openai_declares_model_scoped_thinking_capabilities() -> None:
         "medium",
         "high",
     )
+    assert provider_thinking_levels(anthropic, model="claude-opus-5") == (
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    )
 
 
 def test_load_provider_settings_accepts_provider_preferences_with_user_catalog(
@@ -200,6 +209,25 @@ docs_url = "http://localhost:11434/v1"
     assert provider.headers == {"X-Test": "yes"}
     assert provider.timeout_seconds == 12.0
     assert settings.scoped_models == (ScopedModelConfig(provider="local", model="qwen"),)
+
+
+def test_provider_settings_ignore_unknown_fields(tmp_path: Path) -> None:
+    settings = provider_settings_from_json(
+        {
+            "default_provider": "openai",
+            "future_top_level_option": True,
+            "provider_preferences": {
+                "openai": {
+                    "default_model": "gpt-5-mini",
+                    "future_provider_option": {"enabled": True},
+                }
+            },
+        },
+        paths=TauPaths(home=tmp_path / ".tau"),
+    )
+
+    assert settings.default_provider == "openai"
+    assert settings.get_provider("openai").default_model == "gpt-5-mini"
 
 
 def test_load_provider_settings_ignores_preference_without_catalog_entry(
@@ -261,7 +289,15 @@ def test_save_provider_settings_writes_backup_when_replacing(tmp_path: Path) -> 
     )
 
 
-def test_save_and_load_provider_settings_round_trip(tmp_path: Path) -> None:
+def test_save_and_load_provider_settings_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Isolate provider_config from the host environment so built-in provider
+    # discovery (credential filtering) is deterministic and the loaded settings
+    # contain only the user-saved providers.
+    monkeypatch.setattr(provider_config, "environ", {})
+
     paths = TauPaths(home=tmp_path / ".tau")
     settings = ProviderSettings(
         default_provider="local",
@@ -538,6 +574,73 @@ def test_resolve_provider_selection_rejects_unknown_provider() -> None:
         resolve_provider_selection(ProviderSettings(), provider_name="missing")
 
 
+def _kimi_code_like_provider() -> OpenAICompatibleProviderConfig:
+    # Mirrors the catalog kimi-code entry: k3 only supports xhigh (mapped to
+    # "max"); every other level is marked unsupported (None) in the map.
+    return OpenAICompatibleProviderConfig(
+        name="kimi-code",
+        models=("k3", "kimi-for-coding"),
+        default_model="k3",
+        thinking_levels=("medium", "xhigh"),
+        thinking_default="medium",
+        thinking_parameter="reasoning_effort",
+        model_metadata={
+            "k3": ProviderModelMetadata(
+                reasoning=True,
+                thinking_level_map={
+                    "off": None,
+                    "minimal": None,
+                    "low": None,
+                    "medium": None,
+                    "high": None,
+                    "xhigh": "max",
+                },
+            ),
+        },
+    )
+
+
+def test_resolve_startup_thinking_level_falls_back_when_default_unsupported() -> None:
+    provider = _kimi_code_like_provider()
+
+    # k3 only supports xhigh, so the global "medium" default must be coerced
+    # instead of crashing startup.
+    assert resolve_startup_thinking_level(provider, "k3") == "xhigh"
+
+
+def test_resolve_startup_thinking_level_prefers_remembered_model_default() -> None:
+    provider = _kimi_code_like_provider()
+    remembered = OpenAICompatibleProviderConfig(
+        name=provider.name,
+        models=provider.models,
+        default_model=provider.default_model,
+        thinking_levels=provider.thinking_levels,
+        thinking_default=provider.thinking_default,
+        thinking_parameter=provider.thinking_parameter,
+        thinking_defaults={"k3": "xhigh"},
+        model_metadata=provider.model_metadata,
+    )
+
+    assert resolve_startup_thinking_level(remembered, "k3") == "xhigh"
+
+
+def test_resolve_startup_thinking_level_keeps_supported_default() -> None:
+    provider = _kimi_code_like_provider()
+
+    # kimi-for-coding supports the provider default (medium).
+    assert resolve_startup_thinking_level(provider, "kimi-for-coding") == "medium"
+
+
+def test_resolve_startup_thinking_level_returns_none_without_levels() -> None:
+    provider = OpenAICompatibleProviderConfig(
+        name="local",
+        models=("qwen",),
+        default_model="qwen",
+    )
+
+    assert resolve_startup_thinking_level(provider, "qwen") is None
+
+
 def test_resolve_provider_selection_rejects_model_not_declared_for_provider() -> None:
     settings = ProviderSettings(
         default_provider="local",
@@ -692,6 +795,21 @@ def test_openai_compatible_config_from_provider_sets_reasoning_effort(
     assert plain.reasoning_effort is None
 
 
+def test_kimi_k3_maps_xhigh_thinking_to_max(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KIMI_CODE_API_KEY", "test-key")
+    settings = load_provider_settings(TauPaths(home=Path("/missing")))
+    provider = settings.get_provider("kimi-code")
+
+    config = openai_compatible_config_from_provider(
+        provider,
+        model="k3",
+        thinking_level="xhigh",
+    )
+
+    assert provider_thinking_levels(provider, model="k3") == ("xhigh",)
+    assert config.reasoning_effort == "max"
+
+
 def test_openai_compatible_config_from_provider_rejects_unsupported_thinking_level(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -818,6 +936,31 @@ def test_anthropic_config_from_provider_sets_thinking_budget(
 
     assert off_config.thinking_budget_tokens is None
     assert high_config.thinking_budget_tokens == 8192
+
+
+def test_anthropic_config_from_provider_maps_opus_5_adaptive_thinking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    provider = ProviderSettings().get_provider("anthropic")
+    assert isinstance(provider, AnthropicProviderConfig)
+
+    off_config = anthropic_config_from_provider(
+        provider, model="claude-opus-5", thinking_level="off"
+    )
+    medium_config = anthropic_config_from_provider(
+        provider, model="claude-opus-5", thinking_level="medium"
+    )
+    xhigh_config = anthropic_config_from_provider(
+        provider, model="claude-opus-5", thinking_level="xhigh"
+    )
+
+    assert off_config.thinking_mode == "disabled"
+    assert off_config.thinking_effort is None
+    assert medium_config.thinking_mode == "adaptive"
+    assert medium_config.thinking_effort == "medium"
+    assert xhigh_config.thinking_mode == "adaptive"
+    assert xhigh_config.thinking_effort == "max"
 
 
 @pytest.mark.parametrize(
@@ -1021,7 +1164,6 @@ def test_load_provider_settings_does_not_restore_stale_codex_builtin_models(
     provider = settings.get_provider("openai-codex")
 
     assert provider.models == (
-        "gpt-5.6",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
@@ -1074,14 +1216,9 @@ def test_load_provider_settings_restores_builtin_providers_with_stored_credentia
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    for env_name in (
-        "OPENAI_API_KEY",
-        "OPENAI_CODEX_ACCESS_TOKEN",
-        "ANTHROPIC_API_KEY",
-        "OPENROUTER_API_KEY",
-        "HF_TOKEN",
-    ):
-        monkeypatch.delenv(env_name, raising=False)
+    # Isolate from the host environment so built-in provider discovery depends
+    # only on the credential store, not on stray env vars (e.g. GEMINI_API_KEY).
+    monkeypatch.setattr(provider_config, "environ", {})
     tau_home = tmp_path / ".tau"
     tau_home.mkdir()
     (tau_home / "providers.json").write_text(
@@ -1117,11 +1254,14 @@ def test_load_provider_settings_restores_builtin_providers_with_stored_credentia
 
     settings = load_provider_settings(TauPaths(home=tau_home))
 
-    assert [provider.name for provider in settings.providers] == [
+    # Provider order is an implementation detail of BUILTIN_PROVIDER_CATALOG and
+    # shifts when built-ins are added; use set equality (not position) so the
+    # test still verifies that only credentialed built-ins are restored.
+    assert {provider.name for provider in settings.providers} == {
         "local",
         "openai-codex",
         "openrouter",
-    ]
+    }
     assert settings.default_provider == "local"
     assert settings.get_provider("openrouter").credential_name == "openrouter"
     assert settings.get_provider("openai-codex").credential_name == "openai-codex"

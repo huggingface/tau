@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from tau_agent.events import ErrorEvent
+from tau_agent.messages import AssistantMessage
 from tau_coding.paths import TauPaths
 
 
@@ -53,21 +53,23 @@ class AgentCallDiagnosticLogger:
         self._append(entry)
         return self.path
 
-    def log_error_event(
+    def log_assistant_error(
         self,
         *,
         context: AgentCallDiagnosticContext,
         phase: str,
-        event: ErrorEvent,
+        message: AssistantMessage,
     ) -> Path:
-        """Log an agent error event with safe provider diagnostic details."""
-        entry = _base_entry(context, phase=phase, kind="error_event")
-        entry["error"] = {
-            "message": event.message,
-            "recoverable": event.recoverable,
+        """Log a terminal assistant error message with safe diagnostic details."""
+        entry = _base_entry(context, phase=phase, kind="assistant_error")
+        error: dict[str, Any] = {
+            "message": message.error_message or "Error",
+            "stop_reason": message.stop_reason,
         }
-        if event.data is not None:
-            entry["error"]["data"] = event.data
+        provider = _provider_error_details(message)
+        if provider:
+            error["provider"] = provider
+        entry["error"] = error
         self._append(entry)
         return self.path
 
@@ -80,6 +82,67 @@ class AgentCallDiagnosticLogger:
 def new_agent_call_run_id() -> str:
     """Return a stable id for one coding-session agent call."""
     return uuid4().hex
+
+
+_SAFE_ERROR_OBJECT_KEYS = ("type", "code", "message", "param")
+
+
+def _provider_error_details(message: AssistantMessage) -> dict[str, Any]:
+    """Extract non-secret provider failure details from message diagnostics.
+
+    Provider adapters attach the raw stream event to assistant diagnostics, but
+    that payload can be large. Only scalar classification fields (status codes,
+    attempt counts, and error type/code/message) are copied into the log so the
+    entry stays small and free of request or credential material.
+    """
+    for diagnostic in message.diagnostics or []:
+        if diagnostic.type != "provider_error" or not diagnostic.details:
+            continue
+        details: dict[str, Any] = {}
+        status_code = diagnostic.details.get("status_code")
+        if isinstance(status_code, int) and not isinstance(status_code, bool):
+            details["status_code"] = status_code
+        attempts = diagnostic.details.get("attempts")
+        if isinstance(attempts, int) and not isinstance(attempts, bool):
+            details["attempts"] = attempts
+        event = diagnostic.details.get("event")
+        if isinstance(event, dict):
+            event_details = _safe_stream_event_details(event)
+            if event_details:
+                details["event"] = event_details
+        return details
+    return {}
+
+
+def _safe_stream_event_details(event: dict[str, Any]) -> dict[str, Any]:
+    """Keep only non-secret scalar fields from a provider stream error event."""
+    details: dict[str, Any] = {}
+    event_type = event.get("type")
+    if isinstance(event_type, str) and event_type:
+        details["type"] = event_type
+    sequence_number = event.get("sequence_number")
+    if isinstance(sequence_number, int) and not isinstance(sequence_number, bool):
+        details["sequence_number"] = sequence_number
+    nested = _safe_error_object(event.get("error"))
+    if nested:
+        details["error"] = nested
+    response = event.get("response")
+    if isinstance(response, dict):
+        response_error = _safe_error_object(response.get("error"))
+        if response_error:
+            details["response_error"] = response_error
+    return details
+
+
+def _safe_error_object(value: object) -> dict[str, str]:
+    """Copy scalar classification fields from a provider error object."""
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: field
+        for key in _SAFE_ERROR_OBJECT_KEYS
+        if isinstance((field := value.get(key)), str) and field
+    }
 
 
 def _base_entry(

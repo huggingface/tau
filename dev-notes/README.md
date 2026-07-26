@@ -22,5 +22,7 @@ User-facing documentation lives in `website/content/` and is published at
   later phases use it.
 - `adr/` — architecture decision records.
 - `catalog-model-safety.md` — checklist for adding providers and models to the built-in catalog safely.
+- `startup-thinking-level-fallback.md` — why startup resolves a valid thinking
+  level per model instead of assuming the global `medium` default.
 
 The roadmap is tracked in [GitHub issue #1](https://github.com/huggingface/tau/issues/1).

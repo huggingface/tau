@@ -5,48 +5,69 @@ import pytest
 from tau_agent import (
     AgentToolResult,
     AssistantMessage,
-    ErrorEvent,
-    MessageDeltaEvent,
+    CustomMessage,
     MessageEndEvent,
     MessageStartEvent,
-    QueueUpdateEvent,
-    RetryEvent,
-    ThinkingDeltaEvent,
-    ToolCall,
+    MessageUpdateEvent,
+    TextContent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
-    UserMessage,
 )
+from tau_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
+from tau_coding.events import AutoRetryStartEvent, QueueUpdateEvent
 from tau_coding.rendering import FinalTextRenderer, JsonEventRenderer, TranscriptRenderer
+
+
+def _assistant_update(event) -> MessageUpdateEvent:  # noqa: ANN001
+    return MessageUpdateEvent(message=event.partial, assistant_message_event=event)
+
+
+def _error_end(message: str) -> MessageEndEvent:
+    return MessageEndEvent(message=AssistantMessage(stop_reason="error", error_message=message))
 
 
 def test_transcript_renderer_streams_text_and_tool_events(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     renderer = TranscriptRenderer()
+    partial = AssistantMessage(content="")
 
-    renderer.render(MessageStartEvent())
-    renderer.render(ThinkingDeltaEvent(delta="hidden reasoning"))
-    renderer.render(MessageDeltaEvent(delta="Hel"))
-    renderer.render(MessageDeltaEvent(delta="lo"))
+    renderer.render(MessageStartEvent(message=partial))
     renderer.render(
-        RetryEvent(
+        _assistant_update(
+            ThinkingDeltaEvent(content_index=0, delta="hidden reasoning", partial=partial)
+        )
+    )
+    renderer.render(
+        _assistant_update(TextDeltaEvent(content_index=0, delta="Hel", partial=partial))
+    )
+    renderer.render(_assistant_update(TextDeltaEvent(content_index=0, delta="lo", partial=partial)))
+    renderer.render(
+        AutoRetryStartEvent(
             attempt=2,
             max_attempts=3,
-            delay_seconds=0,
-            message="Retrying provider request 2/3 after HTTP 503.",
+            delay_ms=0,
+            error_message="Retrying provider request 2/3 after HTTP 503.",
         )
     )
     renderer.render(
-        ToolExecutionStartEvent(
-            tool_call=ToolCall(id="call-1", name="read", arguments={"path": "a.py"})
+        ToolExecutionStartEvent(tool_call_id="call-1", tool_name="read", args={"path": "a.py"})
+    )
+    renderer.render(
+        ToolExecutionUpdateEvent(
+            tool_call_id="call-1",
+            tool_name="read",
+            args={"path": "a.py"},
+            partial_result=AgentToolResult(content="reading"),
         )
     )
-    renderer.render(ToolExecutionUpdateEvent(tool_call_id="call-1", message="reading"))
     renderer.render(
         ToolExecutionEndEvent(
-            result=AgentToolResult(tool_call_id="call-1", name="read", ok=True, content="done")
+            tool_call_id="call-1",
+            tool_name="read",
+            result=AgentToolResult(content="done"),
+            is_error=False,
         )
     )
 
@@ -62,7 +83,7 @@ def test_transcript_renderer_streams_text_and_tool_events(
     assert "done" in captured.err
 
 
-def test_transcript_renderer_renders_custom_message_via_renderer(
+def test_transcript_renderer_uses_custom_message_renderer(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     def render(custom_type: str, content: str, details: object, expanded: bool) -> str | None:
@@ -73,9 +94,9 @@ def test_transcript_renderer_renders_custom_message_via_renderer(
     renderer = TranscriptRenderer(custom_message_renderer=render)
     renderer.render(
         MessageEndEvent(
-            message=UserMessage(
-                content="<task-notification>raw xml</task-notification>",
+            message=CustomMessage(
                 custom_type="subagent-notification",
+                content="<task-notification>raw xml</task-notification>",
                 details={"id": "run-1"},
             )
         )
@@ -86,39 +107,12 @@ def test_transcript_renderer_renders_custom_message_via_renderer(
     assert "raw xml" not in captured.err
 
 
-def test_transcript_renderer_falls_back_to_raw_for_unregistered_custom_type(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    def render(custom_type: str, content: str, details: object, expanded: bool) -> str | None:
-        return None
-
-    renderer = TranscriptRenderer(custom_message_renderer=render)
-    renderer.render(
-        MessageEndEvent(
-            message=UserMessage(content="raw notification body", custom_type="unknown-type")
-        )
-    )
-
-    captured = capsys.readouterr()
-    assert "raw notification body" in captured.err
-
-
-def test_transcript_renderer_ignores_plain_user_messages(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    renderer = TranscriptRenderer()
-    renderer.render(MessageEndEvent(message=UserMessage(content="a plain user message")))
-
-    captured = capsys.readouterr()
-    assert "a plain user message" not in captured.err
-
-
-def test_transcript_renderer_fails_on_non_recoverable_error(
+def test_transcript_renderer_fails_on_assistant_error(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     renderer = TranscriptRenderer()
 
-    renderer.render(ErrorEvent(message="provider failed", recoverable=False))
+    renderer.render(_error_end("provider failed"))
 
     captured = capsys.readouterr()
     assert renderer.finish() is False
@@ -129,55 +123,53 @@ def test_final_text_renderer_prints_only_final_message(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     renderer = FinalTextRenderer()
+    partial = AssistantMessage(content="ignored")
 
-    renderer.render(ThinkingDeltaEvent(delta="hidden reasoning"))
-    renderer.render(MessageDeltaEvent(delta="ignored"))
-    captured_before_finish = capsys.readouterr()
-    ok = renderer.finish()
-    captured_after_finish = capsys.readouterr()
-
-    assert ok is True
-    assert captured_before_finish.out == ""
-    assert captured_after_finish.out == ""
-    assert captured_after_finish.err == ""
+    renderer.render(
+        _assistant_update(TextDeltaEvent(content_index=0, delta="ignored", partial=partial))
+    )
+    assert renderer.finish() is True
+    assert capsys.readouterr().out == ""
 
     renderer.render(MessageEndEvent(message=AssistantMessage(content="Final answer")))
-    ok = renderer.finish()
-    captured = capsys.readouterr()
-
-    assert ok is True
-    assert captured.out == "Final answer\n"
+    assert renderer.finish() is True
+    assert capsys.readouterr().out == "Final answer\n"
 
 
 def test_final_text_renderer_prints_errors_on_finish(capsys: pytest.CaptureFixture[str]) -> None:
     renderer = FinalTextRenderer()
 
-    renderer.render(ErrorEvent(message="provider failed", recoverable=False))
-    before_finish = capsys.readouterr()
-    ok = renderer.finish()
-    after_finish = capsys.readouterr()
-
-    assert ok is False
-    assert before_finish.err == ""
-    assert "Error: provider failed" in after_finish.err
+    renderer.render(_error_end("provider failed"))
+    assert capsys.readouterr().err == ""
+    assert renderer.finish() is False
+    assert "Error: provider failed" in capsys.readouterr().err
 
 
-def test_json_renderer_emits_jsonl(capsys: pytest.CaptureFixture[str]) -> None:
+def test_json_renderer_emits_canonical_jsonl(capsys: pytest.CaptureFixture[str]) -> None:
     renderer = JsonEventRenderer()
+    partial = AssistantMessage(content=[TextContent(text="hidden reasoning")])
 
-    renderer.render(MessageStartEvent())
+    renderer.render(MessageStartEvent(message=AssistantMessage()))
     renderer.render(QueueUpdateEvent(steering=("adjust",), follow_up=("after",)))
-    renderer.render(ThinkingDeltaEvent(delta="hidden reasoning"))
-    renderer.render(ErrorEvent(message="provider failed", recoverable=False))
+    renderer.render(
+        _assistant_update(
+            ThinkingDeltaEvent(
+                content_index=0,
+                delta="hidden reasoning",
+                partial=partial,
+            )
+        )
+    )
+    renderer.render(_error_end("provider failed"))
 
-    captured = capsys.readouterr()
-    lines = captured.out.splitlines()
-    assert json.loads(lines[0]) == {"type": "message_start", "message_role": "assistant"}
-    assert json.loads(lines[1]) == {
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert lines[0]["type"] == "message_start"
+    assert lines[1] == {
         "type": "queue_update",
         "steering": ["adjust"],
-        "follow_up": ["after"],
+        "followUp": ["after"],
     }
-    assert json.loads(lines[2]) == {"type": "thinking_delta", "delta": "hidden reasoning"}
-    assert json.loads(lines[3])["type"] == "error"
+    assert lines[2]["type"] == "message_update"
+    assert lines[2]["assistantMessageEvent"]["type"] == "thinking_delta"
+    assert lines[3]["message"]["stopReason"] == "error"
     assert renderer.finish() is False

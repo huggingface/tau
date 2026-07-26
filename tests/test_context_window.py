@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from tau_agent import AssistantMessage, ToolCall, ToolResultMessage, UserMessage
+from tau_agent import AssistantMessage, TextContent, ToolCall, ToolResultMessage, UserMessage
+from tau_agent.messages import assistant_content
 from tau_coding.context_window import (
     ContextUsageEstimate,
     auto_compaction_threshold_for_context_window,
@@ -27,10 +28,12 @@ def test_message_token_estimate_counts_roles_and_tool_calls() -> None:
 
     user_tokens = estimate_message_tokens(UserMessage(content="hello"))
     assistant_tokens = estimate_message_tokens(
-        AssistantMessage(content="using tool", tool_calls=[tool_call])
+        AssistantMessage(content=assistant_content("using tool", [tool_call]))
     )
     tool_tokens = estimate_message_tokens(
-        ToolResultMessage(tool_call_id="call-1", name="read", content="contents")
+        ToolResultMessage(
+            tool_call_id="call-1", tool_name="read", content=[TextContent(text="contents")]
+        )
     )
 
     assert user_tokens > estimate_text_tokens("hello")
@@ -79,8 +82,12 @@ def test_summarize_messages_for_compaction_is_deterministic() -> None:
     summary = summarize_messages_for_compaction(
         (
             UserMessage(content="Read README.md"),
-            AssistantMessage(content="I'll inspect it.", tool_calls=[tool_call]),
-            ToolResultMessage(tool_call_id="call-1", name="read", content="README contents"),
+            AssistantMessage(content=assistant_content("I'll inspect it.", [tool_call])),
+            ToolResultMessage(
+                tool_call_id="call-1",
+                tool_name="read",
+                content=[TextContent(text="README contents")],
+            ),
         )
     )
 

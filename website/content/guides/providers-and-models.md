@@ -60,6 +60,28 @@ OAuth tokens refresh automatically. `/logout` removes Tau's local credential,
 but does not revoke the grant remotely; use the provider's account settings for
 remote revocation.
 
+#### Codex subscription context limits
+
+OpenAI's public API and the ChatGPT/Codex subscription are separate serving
+surfaces. A model with the same ID can have a smaller, rollout-specific context
+window through Codex OAuth than through an API key. For example, the public
+GPT-5.6 Sol API advertises a 1.05M-token window, while Codex has advertised
+substantially smaller limits through its authenticated model catalog.
+
+Tau queries that catalog when a Codex session starts and uses the returned
+context window and automatic-compaction threshold for the session. If discovery
+is unavailable, Tau falls back to conservative Codex-specific values from its
+built-in catalog; it does not reuse the public API limit. `/session` reports both
+the active value and whether it came from the live provider catalog or Tau's
+configured fallback.
+
+Live limits can vary by account or rollout and may change independently of Tau.
+A discovery failure is non-fatal: Tau reports it in `/session` and continues with
+the fallback. Direct OpenAI API sessions retain the context limits documented on
+the API model page. The `gpt-5.6` alias, which routes to GPT-5.6 Sol, is only
+available through the direct OpenAI API; Codex subscription users should select
+the explicit `gpt-5.6-sol` model instead.
+
 ### OpenCode Go and Zen
 
 OpenCode Go and OpenCode Zen are **API-key providers**, not OAuth providers.
@@ -77,6 +99,15 @@ needed. Available models and plan limits change over time; consult the
 [OpenCode Go](https://opencode.ai/docs/go) and
 [OpenCode Zen](https://opencode.ai/docs/zen) pages for the current list.
 
+### Hugging Face Inference Providers
+
+Log in with `/login huggingface` or set `HF_TOKEN`. Tau's built-in Hugging Face
+catalog includes 46 coding-capable models routed through
+`https://router.huggingface.co/v1`, including DeepSeek, Gemma, GLM, GPT OSS,
+Kimi, Llama, MiniMax, MiMo, Qwen, and Step families. Use `/model` to search the
+full list; model availability and the inference provider selected by Hugging
+Face can vary over time and by account.
+
 ### Moonshot AI API vs. Kimi Code
 
 Both Kimi providers authenticate requests with Bearer API keys; neither uses
@@ -86,7 +117,14 @@ different endpoints, and charge against different billing plans:
 | Tau provider | Access and billing | Model | Endpoint | Environment variable |
 | --- | --- | --- | --- | --- |
 | `moonshotai` | Pay-as-you-go key from the [Kimi Open Platform](https://platform.kimi.ai/console/api-keys) | `kimi-k2.7-code` | `https://api.moonshot.ai/v1` | `MOONSHOT_API_KEY` |
-| `kimi-code` | Subscription key from the [Kimi Code console](https://www.kimi.ai/code/console) | Rolling `kimi-for-coding` alias | `https://api.kimi.com/coding/v1` | `KIMI_CODE_API_KEY` |
+| `kimi-code` | Subscription key from the [Kimi Code console](https://www.kimi.com/code/console) | `k3` or rolling `kimi-for-coding` alias | `https://api.kimi.com/coding/v1` | `KIMI_CODE_API_KEY` |
+
+Kimi K3 uses the `k3` model ID and supports up to a 1,048,576-token context
+window on eligible plans. Its reasoning effort is currently fixed at `max`,
+which Tau exposes as the `xhigh` thinking level. Start a new session when
+switching to K3 so the previous model's context cache is not re-prefilled. See
+[Kimi's model documentation](https://www.kimi.com/code/docs/en/kimi-code/models)
+for current plan availability and context limits.
 
 A key for one service should not be treated as interchangeable with a key for
 the other. Tau stores them independently under the `moonshotai` and `kimi-code`
@@ -142,6 +180,20 @@ Tau validates the selected model against the active provider's configured model
 list before creating or refreshing a runtime provider. This prevents accidental
 provider/model mismatches, such as trying to send an API-only OpenAI model to the
 separate `openai-codex` subscription provider.
+
+### Claude Opus 5
+
+Tau supports Anthropic's `claude-opus-5` through the direct `anthropic`
+provider. The model has a 1M-token context window, accepts text and images,
+generates up to 128k tokens, and costs $5 / $25 per million input/output tokens.
+Anthropic enables adaptive thinking by default. Tau maps its `low` through
+`high` modes directly, maps `xhigh` to Anthropic's maximum effort, and sends an
+explicit disabled-thinking request for `off`.
+
+Use `/login anthropic-api` or `/login anthropic-subscription`, then select
+**Claude Opus 5** in `/model`. See Anthropic's
+[Claude Opus 5 guide](https://platform.claude.com/docs/en/about-claude/models/whats-new-opus-5)
+for current behavior and availability.
 
 ## Adding a custom / local provider
 

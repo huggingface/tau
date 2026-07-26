@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import traceback
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -28,8 +28,6 @@ from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import (
     Button,
-    Footer,
-    Header,
     Input,
     Label,
     ListItem,
@@ -39,26 +37,33 @@ from textual.widgets import (
 )
 from textual.worker import Worker
 
-from tau_agent import (
+from tau_agent.events import (
     AgentEndEvent,
-    AgentEvent,
     AgentStartEvent,
-    ErrorEvent,
-    MessageDeltaEvent,
     MessageEndEvent,
     MessageStartEvent,
-    QueueUpdateEvent,
-    RetryEvent,
-    ThinkingDeltaEvent,
+    MessageUpdateEvent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
 )
-from tau_agent.messages import AgentMessage, UserMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    CustomMessage,
+    TextContent,
+    ThinkingContent,
+    UserMessage,
+)
+from tau_agent.provider import CancellationToken
+from tau_agent.provider_events import (
+    AssistantErrorEvent,
+    AssistantMessageEvent,
+    TextDeltaEvent,
+    ThinkingDeltaEvent,
+)
 from tau_agent.tools import AgentTool
 from tau_agent.types import JSONValue
-from tau_ai import ProviderErrorEvent, ProviderEvent
-from tau_ai.provider import CancellationToken
 from tau_coding.catalog_loader import save_user_catalog_entries
 from tau_coding.commands import (
     LOGIN_PROVIDER_ALIASES,
@@ -67,6 +72,12 @@ from tau_coding.commands import (
     format_reload_summary,
 )
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
+from tau_coding.events import (
+    AgentSettledEvent,
+    AutoRetryStartEvent,
+    CodingSessionEvent,
+    QueueUpdateEvent,
+)
 from tau_coding.extensions.api import (
     KeyInterceptor,
     MainViewFactory,
@@ -84,6 +95,7 @@ from tau_coding.oauth_types import (
     OAuthPrompt,
     OAuthSelectPrompt,
 )
+from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_catalog import (
     BUILTIN_PROVIDER_CATALOG,
     ProviderCatalogEntry,
@@ -97,11 +109,13 @@ from tau_coding.provider_config import (
     provider_config_from_catalog_entry,
     provider_has_usable_credentials,
     resolve_provider_selection,
+    resolve_startup_thinking_level,
     save_provider_settings,
     upsert_openai_compatible_provider,
     upsert_saved_provider,
 )
 from tau_coding.provider_runtime import create_model_provider
+from tau_coding.resources import TauResourcePaths
 from tau_coding.session import (
     TREE_RUNNING_MESSAGE,
     CodingSession,
@@ -109,12 +123,13 @@ from tau_coding.session import (
     ModelChoice,
     SessionTreeBranchResult,
     SessionTreeChoice,
+    is_context_overflow_error,
     jsonl_session_storage,
     parse_terminal_command,
 )
 from tau_coding.session_manager import CodingSessionRecord, SessionManager
 from tau_coding.shell_config import load_shell_settings
-from tau_coding.thinking import DEFAULT_THINKING_LEVEL
+from tau_coding.skills import Skill
 from tau_coding.tui.adapter import TuiEventAdapter
 from tau_coding.tui.autocomplete import (
     CompletionItem,
@@ -123,7 +138,6 @@ from tau_coding.tui.autocomplete import (
     build_completion_state,
 )
 from tau_coding.tui.config import (
-    BUILTIN_TUI_THEME_NAMES,
     TAU_DARK_THEME,
     TuiKeybindings,
     TuiSettings,
@@ -132,12 +146,16 @@ from tau_coding.tui.config import (
     load_tui_settings,
     save_tui_settings,
 )
-from tau_coding.tui.state import (
-    TOOL_SPINNER_FRAMES,
-    TuiState,
-    format_terminal_command_result_block,
-)
+from tau_coding.tui.file_drop import normalize_dropped_paths
+from tau_coding.tui.state import TuiState, format_terminal_command_result_block
+from tau_coding.tui.terminal_notification import TerminalNotificationController
 from tau_coding.tui.terminal_title import TerminalTitleController
+from tau_coding.tui.themes import (
+    available_tui_theme_names,
+    get_tui_theme,
+    load_custom_tui_themes,
+    set_custom_tui_themes,
+)
 from tau_coding.tui.widgets import (
     CompactSessionInfo,
     SessionSidebar,
@@ -148,7 +166,7 @@ from tau_coding.tui.widgets import (
 
 type BindingEntry = Binding | tuple[str, str] | tuple[str, str, str]
 SIDEBAR_MIN_WIDTH = 96
-SIDEBAR_MIN_HEIGHT = 24
+SIDEBAR_MIN_HEIGHT = 38
 ACTIVITY_TICK_SECONDS = 0.15
 ACTIVITY_COLOR_FADE_STEPS = 24
 ACTIVITY_INDICATOR_HEIGHT = 3
@@ -180,12 +198,17 @@ class LoginRequiredProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
-    ) -> AsyncIterator[ProviderEvent]:
+    ) -> AsyncIterator[AssistantMessageEvent]:
         """Surface a login-needed provider error."""
-        del model, system, messages, tools, signal
+        del system, messages, tools, signal
 
-        async def iterator() -> AsyncIterator[ProviderEvent]:
-            yield ProviderErrorEvent(message=self.message)
+        async def iterator() -> AsyncIterator[AssistantMessageEvent]:
+            error = AssistantMessage(
+                model=model,
+                stop_reason="error",
+                error_message=self.message,
+            )
+            yield AssistantErrorEvent(reason="error", error=error)
 
         return iterator()
 
@@ -567,15 +590,15 @@ class PromptInput(TextArea):
             self._clear_pending_paste()
 
     def get_line(self, line_index: int) -> Text:
-        """Retrieve one prompt line with shell prefixes highlighted."""
+        """Retrieve one prompt line, coloring terminal commands like a running tool."""
         line = super().get_line(line_index)
-        if line_index != 0 or not self.shell_mode_style:
+        if not self.shell_mode_style:
             return line
         span = _terminal_command_prefix_span(self.text)
         if span is None:
             return line
-        start, end = span
-        line.stylize(self.shell_mode_style, start, end)
+        start, _ = span
+        line.stylize(self.shell_mode_style, start if line_index == 0 else 0)
         return line
 
     async def action_submit_follow_up(self) -> None:
@@ -603,12 +626,34 @@ class PromptInput(TextArea):
         self.action_completion_previous()
 
     def on_paste(self, event: events.Paste) -> None:
-        """Show a compact placeholder instead of rendering very large pasted text."""
+        """Handle file drops and collapse very large pastes to a placeholder.
+
+        Terminals deliver OS drag-and-drop as typed text, which Textual reports
+        as a paste; when the pasted text is only existing file paths, insert the
+        normalized paths instead of the raw (possibly escaped) drop text.
+        """
+        dropped_paths = normalize_dropped_paths(event.text)
+        if dropped_paths is not None:
+            event.stop()
+            event.prevent_default()
+            self._insert_dropped_paths(dropped_paths)
+            return
         if len(event.text) <= PASTE_DISPLAY_THRESHOLD:
             return
         event.stop()
         event.prevent_default()
         self._show_large_paste_placeholder(event.text)
+
+    def _insert_dropped_paths(self, insertion: str) -> None:
+        """Insert dropped paths at the cursor, separated from surrounding text."""
+        position = self.cursor_position
+        before = self.text[:position]
+        after = self.text[position:]
+        if before and not before[-1].isspace():
+            insertion = f" {insertion}"
+        if not after or not after[0].isspace():
+            insertion = f"{insertion} "
+        self.insert(insertion)
 
     def _show_large_paste_placeholder(self, content: str) -> None:
         """Store large pasted text and render a compact placeholder."""
@@ -905,8 +950,314 @@ class ExtensionInputScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class ToolsReferenceSearchInput(Input):
+    """Search input that keeps tool-reference navigation local."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Cancel", show=False, priority=True),
+        Binding("up", "cursor_up", "Up", show=False, priority=True),
+        Binding("down", "cursor_down", "Down", show=False, priority=True),
+        Binding("enter", "open_selected", "Open", show=False, priority=True),
+    ]
+
+    def _reference(self) -> ToolsReferenceScreen:
+        return cast(ToolsReferenceScreen, self.screen)
+
+    def on_key(self, event: Key) -> None:
+        """Route navigation without changing the search text."""
+        if event.key == "up":
+            event.stop()
+            event.prevent_default()
+            self._reference().action_cursor_up()
+        elif event.key == "down":
+            event.stop()
+            event.prevent_default()
+            self._reference().action_cursor_down()
+        elif event.key == "escape":
+            event.stop()
+            event.prevent_default()
+            self._reference().action_cancel()
+        elif event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            self._reference().action_open_selected()
+
+    def action_open_selected(self) -> None:
+        self._reference().action_open_selected()
+
+
+class ToolsReferenceScreen(ModalScreen[None]):
+    """Searchable tool table with navigable description details."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Close"),
+        Binding("up", "cursor_up", "Up", show=False),
+        Binding("down", "cursor_down", "Down", show=False),
+        Binding("enter", "open_selected", "Open", show=False),
+    ]
+
+    def __init__(
+        self,
+        tools: Sequence[AgentTool],
+        *,
+        extension_sources: Mapping[str, str],
+        theme: TuiTheme,
+    ) -> None:
+        super().__init__()
+        self.extension_sources = dict(extension_sources)
+        self.tools = self._order_tools(tools)
+        self.visible_tools = self.tools
+        self.theme = theme
+
+    def compose(self) -> ComposeResult:
+        """Compose the tool reference."""
+        with Vertical(id="tools-reference"):
+            yield Static("Available tools", id="tools-reference-title")
+            yield ToolsReferenceSearchInput(placeholder="Search tools", id="tools-reference-search")
+            yield Static(
+                self._table_row("Tool", "Origin", "Description"),
+                id="tools-reference-header",
+            )
+            yield ListView(id="tools-reference-list")
+            yield Static("Enter opens description - Escape closes", id="tools-reference-help")
+
+    def on_mount(self) -> None:
+        """Populate the list and focus search on open."""
+        self._refresh_tools("")
+        self.query_one("#tools-reference-search", Input).focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "tools-reference-search":
+            event.stop()
+            self._refresh_tools(event.value)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Open the selected tool's full description."""
+        event.stop()
+        self._open_tool(event.index)
+
+    def action_cursor_up(self) -> None:
+        self.query_one("#tools-reference-list", ListView).action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        self.query_one("#tools-reference-list", ListView).action_cursor_down()
+
+    def action_open_selected(self) -> None:
+        tool_list = self.query_one("#tools-reference-list", ListView)
+        if tool_list.index is not None:
+            self._open_tool(tool_list.index)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def _open_tool(self, index: int) -> None:
+        if index >= len(self.visible_tools):
+            return
+        tool = self.visible_tools[index]
+        self.app.push_screen(
+            CommandOutputScreen(
+                f"{tool.name} — {self._source_label(tool)}",
+                tool.description or "No description",
+                theme=self.theme,
+            )
+        )
+
+    def _refresh_tools(self, query: str) -> None:
+        needle = query.casefold().strip()
+        self.visible_tools = tuple(
+            tool
+            for tool in self.tools
+            if not needle
+            or needle in tool.name.casefold()
+            or needle in tool.label.casefold()
+            or needle in tool.description.casefold()
+            or needle in self._source_label(tool).casefold()
+        )
+        tool_list = self.query_one("#tools-reference-list", ListView)
+        tool_list.clear()
+        if not self.visible_tools:
+            message = "No tools available." if not self.tools else "No tools match your search."
+            tool_list.append(ListItem(Label(message, markup=False), disabled=True))
+            return
+        tool_list.extend(
+            [
+                ListItem(
+                    Label(
+                        self._table_row(
+                            tool.name,
+                            self._source_label(tool),
+                            f"{len(tool.description)} chars",
+                        ),
+                        markup=False,
+                    )
+                )
+                for tool in self.visible_tools
+            ]
+        )
+        tool_list.index = 0
+
+    def _order_tools(self, tools: Sequence[AgentTool]) -> tuple[AgentTool, ...]:
+        tools_by_name = {tool.name: tool for tool in tools}
+        builtins = sorted(
+            (tool for tool in tools if tool.name not in self.extension_sources),
+            key=lambda tool: tool.name.casefold(),
+        )
+        extension_tools: list[AgentTool] = []
+        seen_extensions: set[str] = set()
+        for extension in self.extension_sources.values():
+            if extension in seen_extensions:
+                continue
+            seen_extensions.add(extension)
+            extension_tools.extend(
+                tools_by_name[tool_name]
+                for tool_name, source in self.extension_sources.items()
+                if source == extension and tool_name in tools_by_name
+            )
+        return tuple([*builtins, *extension_tools])
+
+    def _table_row(self, name: str, source: str, description: str) -> str:
+        name_width = max((len(tool.name) for tool in self.tools), default=len("Tool"))
+        source_width = max(
+            (len(self._source_label(tool)) for tool in self.tools),
+            default=len("Origin"),
+        )
+        return (
+            f"{name:<{max(name_width, len('Tool'))}}  "
+            f"{source:<{max(source_width, len('Origin'))}}  {description}"
+        )
+
+    def _source_label(self, tool: AgentTool) -> str:
+        extension = self.extension_sources.get(tool.name)
+        return extension if extension is not None else "Built in"
+
+
+class SessionPickerSearchInput(Input):
+    """Search input that keeps session-picker navigation local to the picker."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Cancel", show=False, priority=True),
+        Binding("up", "cursor_up", "Up", show=False, priority=True),
+        Binding("down", "cursor_down", "Down", show=False, priority=True),
+    ]
+
+    def _picker(self) -> SessionPickerScreen:
+        return cast(SessionPickerScreen, self.screen)
+
+    def on_key(self, event: Key) -> None:
+        """Route picker control keys before the input edits its text."""
+        if event.key == "up":
+            event.stop()
+            event.prevent_default()
+            self.action_cursor_up()
+        elif event.key == "down":
+            event.stop()
+            event.prevent_default()
+            self.action_cursor_down()
+        elif event.key == "escape":
+            event.stop()
+            event.prevent_default()
+            self.action_cancel()
+
+    def action_cursor_up(self) -> None:
+        """Move the session picker selection up."""
+        self._picker().action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        """Move the session picker selection down."""
+        self._picker().action_cursor_down()
+
+    def action_cancel(self) -> None:
+        """Close the session picker."""
+        self._picker().action_cancel()
+
+
+class PromptTemplatePickerScreen(ModalScreen[str | None]):
+    """Searchable picker for loaded prompt templates."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("up", "cursor_up", "Up", show=False),
+        Binding("down", "cursor_down", "Down", show=False),
+        Binding("enter", "select_cursor", "Select", show=False),
+    ]
+
+    def __init__(self, templates: Sequence[PromptTemplate]) -> None:
+        super().__init__()
+        self.templates = tuple(sorted(templates, key=lambda item: item.name.lower()))
+        self.visible_templates = self.templates
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="prompt-template-picker"):
+            yield Static("Prompt templates", id="prompt-template-picker-title")
+            yield SessionPickerSearchInput(
+                placeholder="Search prompt templates", id="prompt-template-picker-search"
+            )
+            yield ListView(id="prompt-template-picker-list")
+            yield Static("", id="prompt-template-picker-help")
+
+    def on_mount(self) -> None:
+        self.query_one("#prompt-template-picker-search", Input).focus()
+        self._refresh_list()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "prompt-template-picker-search":
+            return
+        event.stop()
+        query = event.value.casefold()
+        self.visible_templates = tuple(
+            template
+            for template in self.templates
+            if query in template.name.casefold() or query in (template.description or "").casefold()
+        )
+        self._refresh_list()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "prompt-template-picker-search":
+            event.stop()
+            self.action_select_cursor()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        event.stop()
+        self.action_select_cursor()
+
+    def action_cursor_up(self) -> None:
+        self.query_one("#prompt-template-picker-list", ListView).action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        self.query_one("#prompt-template-picker-list", ListView).action_cursor_down()
+
+    def action_select_cursor(self) -> None:
+        picker_list = self.query_one("#prompt-template-picker-list", ListView)
+        if self.visible_templates and picker_list.index is not None:
+            self.dismiss(self.visible_templates[picker_list.index].name)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def _refresh_list(self) -> None:
+        picker_list = self.query_one("#prompt-template-picker-list", ListView)
+        picker_list.clear()
+        picker_list.extend(
+            ListItem(
+                Label(
+                    f"/{template.name} — {template.description or 'No description'}",
+                    markup=False,
+                )
+            )
+            for template in self.visible_templates
+        )
+        picker_list.index = 0 if self.visible_templates else None
+        if self.visible_templates:
+            help_text = "Enter selects - Escape closes"
+        elif self.templates:
+            help_text = "No matching prompt templates - Escape closes"
+        else:
+            help_text = "No prompt templates loaded - Escape closes"
+        self.query_one("#prompt-template-picker-help", Static).update(help_text)
+
+
 class SessionPickerScreen(ModalScreen[str | None]):
-    """Minimal modal picker for indexed sessions."""
+    """Minimal modal picker for indexed sessions, with a search field."""
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
         Binding("escape", "cancel", "Cancel"),
@@ -923,12 +1274,18 @@ class SessionPickerScreen(ModalScreen[str | None]):
     ) -> None:
         super().__init__()
         self.records = tuple(records)
+        self.visible_records = self.records
         self.theme = theme
+        self.search_value = ""
 
     def compose(self) -> ComposeResult:
         """Compose the session picker."""
         with Vertical(id="session-picker"):
             yield Static("Sessions", id="session-picker-title")
+            yield SessionPickerSearchInput(
+                placeholder="Search sessions",
+                id="session-picker-search",
+            )
             yield ListView(
                 *[
                     ListItem(Label(_session_picker_label(record), markup=False))
@@ -939,10 +1296,25 @@ class SessionPickerScreen(ModalScreen[str | None]):
             yield Static("Enter selects - Escape closes", id="session-picker-help")
 
     def on_mount(self) -> None:
-        """Focus the session list for keyboard navigation."""
-        session_list = self.query_one("#session-picker-list", ListView)
-        session_list.index = 0
-        session_list.focus()
+        """Focus the search field for keyboard navigation."""
+        search = self.query_one("#session-picker-search", Input)
+        search.focus()
+        self._refresh_session_list()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Filter session choices as the search value changes."""
+        if event.input.id != "session-picker-search":
+            return
+        event.stop()
+        self.search_value = event.value
+        self._refresh_session_list()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Select the highlighted session from the search field."""
+        if event.input.id != "session-picker-search":
+            return
+        event.stop()
+        self._select_visible_record()
 
     def on_key(self, event: Key) -> None:
         """Route session picker keys to the list."""
@@ -958,7 +1330,8 @@ class SessionPickerScreen(ModalScreen[str | None]):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Dismiss with the selected session id."""
-        self.dismiss(self.records[event.index].id)
+        event.stop()
+        self._select_visible_record()
 
     def action_cursor_up(self) -> None:
         """Move to the previous session."""
@@ -970,11 +1343,218 @@ class SessionPickerScreen(ModalScreen[str | None]):
 
     def action_select_cursor(self) -> None:
         """Select the highlighted session."""
-        self.query_one("#session-picker-list", ListView).action_select_cursor()
+        self._select_visible_record()
 
     def action_cancel(self) -> None:
         """Close the picker without selecting a session."""
         self.dismiss(None)
+
+    def _select_visible_record(self) -> None:
+        if not self.visible_records:
+            return
+        session_list = self.query_one("#session-picker-list", ListView)
+        index = session_list.index
+        if index is None:
+            return
+        self.dismiss(self.visible_records[index].id)
+
+    def _refresh_session_list(self) -> None:
+        self.visible_records = _filter_session_records(self.records, self.search_value)
+        session_list = self.query_one("#session-picker-list", ListView)
+        session_list.clear()
+        session_list.extend(
+            [
+                ListItem(Label(_session_picker_label(record), markup=False))
+                for record in self.visible_records
+            ]
+        )
+        session_list.index = 0 if self.visible_records else None
+        help_text = (
+            "Enter selects - Escape closes"
+            if self.visible_records
+            else "No matching sessions - Escape closes"
+        )
+        self.query_one("#session-picker-help", Static).update(help_text)
+
+
+class SkillPickerSearchInput(Input):
+    """Search input that keeps skill-picker navigation local."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Cancel", show=False, priority=True),
+        Binding("up", "cursor_up", "Up", show=False, priority=True),
+        Binding("down", "cursor_down", "Down", show=False, priority=True),
+    ]
+
+    def _picker(self) -> SkillPickerScreen:
+        return cast(SkillPickerScreen, self.screen)
+
+    def on_key(self, event: Key) -> None:
+        """Route picker control keys before the input edits its text."""
+        if event.key == "up":
+            event.stop()
+            event.prevent_default()
+            self.action_cursor_up()
+        elif event.key == "down":
+            event.stop()
+            event.prevent_default()
+            self.action_cursor_down()
+        elif event.key == "escape":
+            event.stop()
+            event.prevent_default()
+            self.action_cancel()
+        elif event.key == "f1":
+            event.stop()
+            event.prevent_default()
+            self.action_show_description()
+        elif event.key == "ctrl+enter":
+            event.stop()
+            event.prevent_default()
+            self.action_show_in_transcript()
+
+    def action_cursor_up(self) -> None:
+        self._picker().action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        self._picker().action_cursor_down()
+
+    def action_cancel(self) -> None:
+        self._picker().action_cancel()
+
+    def action_show_description(self) -> None:
+        self._picker().action_show_description()
+
+    def action_show_in_transcript(self) -> None:
+        self._picker().action_show_in_transcript()
+
+
+@dataclass(frozen=True, slots=True)
+class SkillPickerResult:
+    """A skill selection and the requested inspection action."""
+
+    skill: Skill
+    action: Literal["insert", "transcript"]
+
+
+class SkillPickerScreen(ModalScreen[SkillPickerResult | None]):
+    """Searchable modal containing every loaded skill."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Cancel", priority=True),
+        Binding("up", "cursor_up", "Up", show=False, priority=True),
+        Binding("down", "cursor_down", "Down", show=False, priority=True),
+        Binding("enter", "select_cursor", "Insert", show=False, priority=True),
+        Binding("f1", "show_description", "Description", show=False, priority=True),
+        Binding("ctrl+enter", "show_in_transcript", "Transcript", show=False, priority=True),
+    ]
+
+    def __init__(self, skills: Sequence[Skill], *, theme: TuiTheme) -> None:
+        super().__init__()
+        self.skills = tuple(sorted(skills, key=lambda skill: skill.name.casefold()))
+        self.visible_skills = self.skills
+        self.theme = theme
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="skill-picker"):
+            yield Static("Skills", id="skill-picker-title")
+            yield SkillPickerSearchInput(placeholder="Search skills", id="skill-picker-search")
+            yield ListView(id="skill-picker-list")
+            yield Static("", id="skill-picker-help")
+
+    def on_mount(self) -> None:
+        self.query_one("#skill-picker-search", Input).focus()
+        self._refresh_skill_list("")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "skill-picker-search":
+            event.stop()
+            self._refresh_skill_list(event.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "skill-picker-search":
+            event.stop()
+            self._select_visible_skill()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        event.stop()
+        self._select_visible_skill()
+
+    def action_cursor_up(self) -> None:
+        skill_list = self.query_one("#skill-picker-list", ListView)
+        if skill_list.index is not None:
+            skill_list.index = max(0, skill_list.index - 1)
+
+    def action_cursor_down(self) -> None:
+        skill_list = self.query_one("#skill-picker-list", ListView)
+        if skill_list.index is not None:
+            skill_list.index = min(len(self.visible_skills) - 1, skill_list.index + 1)
+
+    def action_select_cursor(self) -> None:
+        skill = self._selected_skill()
+        if skill is not None:
+            self.dismiss(SkillPickerResult(skill, "insert"))
+
+    def action_show_description(self) -> None:
+        skill = self._selected_skill()
+        if skill is not None:
+            self.app.push_screen(
+                CommandOutputScreen(
+                    f"Skill description: {skill.name}",
+                    skill.description or "No description",
+                    theme=self.theme,
+                )
+            )
+
+    def action_show_in_transcript(self) -> None:
+        skill = self._selected_skill()
+        if skill is not None:
+            self.dismiss(SkillPickerResult(skill, "transcript"))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def _selected_skill(self) -> Skill | None:
+        index = self.query_one("#skill-picker-list", ListView).index
+        if index is None or not self.visible_skills:
+            return None
+        return self.visible_skills[index]
+
+    def _select_visible_skill(self) -> None:
+        self.action_select_cursor()
+
+    def _refresh_skill_list(self, search: str) -> None:
+        query = search.casefold().strip()
+        self.visible_skills = tuple(
+            skill
+            for skill in self.skills
+            if not query
+            or query in skill.name.casefold()
+            or query in (skill.description or "").casefold()
+        )
+        skill_list = self.query_one("#skill-picker-list", ListView)
+        skill_list.clear()
+        skill_list.extend(
+            ListItem(
+                Horizontal(
+                    Label(skill.name, classes="skill-picker-name", markup=False),
+                    Label(
+                        skill.description or "No description",
+                        classes="skill-picker-description",
+                        markup=False,
+                    ),
+                    classes="skill-picker-row",
+                )
+            )
+            for skill in self.visible_skills
+        )
+        skill_list.index = 0 if self.visible_skills else None
+        if not self.skills:
+            help_text = "No skills loaded - Escape closes"
+        elif not self.visible_skills:
+            help_text = "No matching skills - Escape closes"
+        else:
+            help_text = "Enter inserts - F1 describes - Ctrl+Enter shows full skill"
+        self.query_one("#skill-picker-help", Static).update(help_text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -984,6 +1564,22 @@ class TreePickerResult:
     entry_id: str
     summarize: bool = False
     custom_instructions: str | None = None
+
+
+class _TreePickerListItem(ListItem):
+    """Tree entry that keeps inline label colors readable when highlighted."""
+
+    def __init__(self, choice: SessionTreeChoice, *, theme: TuiTheme) -> None:
+        self.choice = choice
+        self.theme = theme
+        super().__init__(Label(_tree_picker_label(choice, theme=theme), markup=False))
+
+    def watch_highlighted(self, value: bool) -> None:
+        """Recolor inline label spans when the list highlight changes."""
+        super().watch_highlighted(value)
+        self.query_one(Label).update(
+            _tree_picker_label(self.choice, theme=self.theme, highlighted=value)
+        )
 
 
 class TreePickerScreen(ModalScreen[TreePickerResult | None]):
@@ -1129,10 +1725,7 @@ class TreePickerScreen(ModalScreen[TreePickerResult | None]):
         return tuple(choice for choice in self.choices if not choice.is_tool_call)
 
     def _list_items(self) -> list[ListItem]:
-        return [
-            ListItem(Label(_tree_picker_label(choice, theme=self.theme), markup=False))
-            for choice in self._visible_choices()
-        ]
+        return [_TreePickerListItem(choice, theme=self.theme) for choice in self._visible_choices()]
 
     def _help_text(self) -> str:
         tool_call_state = "shown" if self.show_tool_calls else "hidden"
@@ -1577,7 +2170,7 @@ class LoginMethodListView(ListView):
 
 
 class ThemePickerScreen(ModalScreen[TuiThemeName | None]):
-    """Theme picker for the built-in TUI themes."""
+    """Theme picker for the available TUI themes."""
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
         Binding("escape", "cancel", "Cancel", priority=True),
@@ -1586,10 +2179,17 @@ class ThemePickerScreen(ModalScreen[TuiThemeName | None]):
         Binding("enter", "select_cursor", "Select", show=False, priority=True),
     ]
 
-    def __init__(self, *, current_theme: TuiThemeName, theme: TuiTheme) -> None:
+    def __init__(
+        self,
+        *,
+        current_theme: TuiThemeName,
+        theme: TuiTheme,
+        theme_names: tuple[TuiThemeName, ...],
+    ) -> None:
         super().__init__()
         self.current_theme = current_theme
         self.theme = theme
+        self.theme_names = theme_names
 
     def compose(self) -> ComposeResult:
         """Compose the theme picker."""
@@ -1603,7 +2203,7 @@ class ThemePickerScreen(ModalScreen[TuiThemeName | None]):
                             markup=False,
                         )
                     )
-                    for theme_name in BUILTIN_TUI_THEME_NAMES
+                    for theme_name in self.theme_names
                 ],
                 id="theme-picker-list",
             )
@@ -1613,7 +2213,7 @@ class ThemePickerScreen(ModalScreen[TuiThemeName | None]):
         """Select the current theme."""
         theme_list = self.query_one("#theme-picker-list", ListView)
         try:
-            theme_list.index = BUILTIN_TUI_THEME_NAMES.index(self.current_theme)
+            theme_list.index = self.theme_names.index(self.current_theme)
         except ValueError:
             theme_list.index = 0
         theme_list.focus()
@@ -1632,7 +2232,7 @@ class ThemePickerScreen(ModalScreen[TuiThemeName | None]):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Dismiss with the selected theme name."""
-        self.dismiss(BUILTIN_TUI_THEME_NAMES[event.index])
+        self.dismiss(self.theme_names[event.index])
 
     def action_cursor_up(self) -> None:
         """Move to the previous theme."""
@@ -2251,33 +2851,6 @@ class TauTuiApp(App[None]):
         color: $tau-screen-text;
     }
 
-    Header {
-        background: $tau-chrome-background;
-        color: $tau-muted-text;
-        dock: top;
-    }
-
-    Footer {
-        background: $tau-chrome-background;
-        color: $tau-chrome-text;
-    }
-
-    Footer FooterKey {
-        background: $tau-chrome-background;
-        color: $tau-chrome-text;
-    }
-
-    Footer FooterKey .footer-key--key {
-        background: $tau-chrome-background;
-        color: $tau-accent;
-    }
-
-    Footer FooterKey .footer-key--description,
-    Footer FooterLabel {
-        background: $tau-chrome-background;
-        color: $tau-chrome-text;
-    }
-
     Toast {
         background: $tau-chrome-background;
         color: $tau-chrome-text;
@@ -2292,12 +2865,21 @@ class TauTuiApp(App[None]):
     }
 
     #sidebar {
-        width: 32;
-        min-width: 28;
+        width: 40;
+        min-width: 36;
         height: 1fr;
-        padding: 1 1 0 0;
-        background: $tau-sidebar-background;
-        border-right: tall $tau-border;
+        padding: 1 1 1 2;
+        background: $tau-prompt-background;
+        border: none;
+    }
+
+    #sidebar-content {
+        height: 1fr;
+    }
+
+    #sidebar-brand {
+        height: auto;
+        color: $tau-prompt-text;
     }
 
     TauTuiApp.-hide-sidebar #sidebar {
@@ -2310,8 +2892,6 @@ class TauTuiApp(App[None]):
 
     TauTuiApp.-sidebar-right #sidebar {
         dock: right;
-        border-right: none;
-        border-left: tall $tau-border;
     }
 
     #main-pane {
@@ -2386,18 +2966,19 @@ class TauTuiApp(App[None]):
         height: auto;
         background: $tau-prompt-background;
         color: $tau-prompt-text;
-        border: tall transparent;
+        border: none;
+        border-left: tall transparent;
         margin: 0;
-        padding: 0 1;
+        padding: 1 1;
         max-height: 8;
     }
 
     #prompt:focus {
-        border: tall $tau-prompt-border;
+        border-left: tall $tau-prompt-border;
     }
 
     #prompt.-shell-mode {
-        border: tall $tau-accent;
+        border-left: tall $tau-tool-running;
     }
 
     #compact-session-info {
@@ -2420,13 +3001,19 @@ class TauTuiApp(App[None]):
     }
 
     SessionPickerScreen,
+    PromptTemplatePickerScreen,
+    SkillPickerScreen,
     TreePickerScreen,
+    ToolsReferenceScreen,
     CommandOutputScreen {
         align: center middle;
     }
 
     #session-picker,
-    #tree-picker {
+    #prompt-template-picker,
+    #skill-picker,
+    #tree-picker,
+    #tools-reference {
         width: 76;
         max-width: 90%;
         height: auto;
@@ -2437,33 +3024,77 @@ class TauTuiApp(App[None]):
     }
 
     #session-picker-title,
-    #tree-picker-title {
+    #prompt-template-picker-title,
+    #skill-picker-title,
+    #tree-picker-title,
+    #tools-reference-title {
         height: 1;
         color: $tau-chrome-text;
         text-style: bold;
         margin-bottom: 1;
     }
 
+    #session-picker-search,
+    #prompt-template-picker-search,
+    #skill-picker-search,
+    #tools-reference-search {
+        height: 3;
+        margin-bottom: 1;
+        background: $tau-prompt-background;
+        color: $tau-prompt-text;
+        border: tall $tau-prompt-border;
+    }
+
+    #tools-reference-header {
+        height: 1;
+        color: $tau-muted-text;
+        text-style: bold;
+    }
+
     #session-picker-list,
-    #tree-picker-list {
+    #prompt-template-picker-list,
+    #skill-picker-list,
+    #tree-picker-list,
+    #tools-reference-list {
         height: auto;
         max-height: 16;
         background: $tau-transcript-background;
         border: tall $tau-border;
     }
 
-    ListView > ListItem.--highlight {
+    ListView > ListItem.-highlight {
         background: $tau-highlight-background;
         color: $tau-highlight-text;
     }
 
-    ListView > ListItem.--highlight Label {
+    ListView > ListItem.-highlight Label {
         background: $tau-highlight-background;
+        color: $tau-highlight-text;
+    }
+
+    #skill-picker-list .skill-picker-row {
+        height: 1;
+    }
+
+    #skill-picker-list .skill-picker-name {
+        width: 35%;
+        text-style: bold;
+    }
+
+    #skill-picker-list .skill-picker-description {
+        width: 65%;
+        color: $tau-muted-text;
+    }
+
+    #skill-picker-list ListItem.-highlight .skill-picker-description {
         color: $tau-highlight-text;
     }
 
     #session-picker-help,
-    #tree-picker-help {
+    #prompt-template-picker-help,
+    #skill-picker-help,
+    #tree-picker-help,
+    #tools-reference-help {
         height: 1;
         margin-top: 1;
         color: $tau-muted-text;
@@ -2614,6 +3245,14 @@ class TauTuiApp(App[None]):
         color: $tau-screen-text;
     }
 
+    #login-method-list ListItem.-highlight Label,
+    #login-provider-list ListItem.-highlight Label,
+    #theme-picker-list ListItem.-highlight Label,
+    #model-picker-list ListItem.-highlight Label {
+        background: $tau-highlight-background;
+        color: $tau-highlight-text;
+    }
+
     #login-method-intro {
         height: 1;
         color: $tau-muted-text;
@@ -2708,6 +3347,7 @@ class TauTuiApp(App[None]):
         tui_settings: TuiSettings | None = None,
         startup_message: str | None = None,
         startup_notice: str | None = None,
+        startup_update_notice: str | None = None,
         startup_notices: Sequence[str] = (),
         initial_prompt: str | None = None,
     ) -> None:
@@ -2718,12 +3358,26 @@ class TauTuiApp(App[None]):
         self.initial_prompt = initial_prompt
         super().__init__()
         self._register_tau_textual_themes()
-        self.theme = self.tui_settings.theme
+        # Assign the resolved theme's name: it is always registered, while the
+        # raw settings value may name a custom theme that failed to load. The
+        # guard keeps the watcher from persisting the fallback over the user's
+        # configured theme.
+        self._applying_settings_theme = True
+        self.theme = self.tui_settings.resolved_theme.name
+        self._applying_settings_theme = False
         self._bindings = BindingsMap(_app_bindings(self.tui_settings.keybindings))
         self.session = session
         self.state = TuiState(skills=session.skills)
+        if startup_update_notice is not None:
+            self.state.add_item("status", startup_update_notice, highlight="update")
         for notice in self.startup_notices:
             self.state.add_item("status", notice)
+        if self.tui_settings.theme != self.tui_settings.resolved_theme.name:
+            self.state.add_item(
+                "status",
+                f"Theme '{self.tui_settings.theme}' was not found; "
+                f"using {self.tui_settings.resolved_theme.name}.",
+            )
         self._prompt_history: tuple[str, ...] = ()
         self._load_session_messages_from_session()
         self.adapter = TuiEventAdapter(self.state)
@@ -2755,15 +3409,20 @@ class TauTuiApp(App[None]):
         self._completion_visible_line_budget: int | None = None
         self._activity_frame = 0
         self._activity_timer: Timer | None = None
+        self._last_tool_timer_refresh_at = 0.0
+        self._last_activity_indicator_key: tuple[object, ...] | None = None
+        self._last_queue_render_key: tuple[object, ...] | None = None
         self._terminal_title = TerminalTitleController()
+        self._terminal_notification = TerminalNotificationController(
+            self.tui_settings.turn_notification
+        )
+        self._app_has_focus = True
         self._active_notification_keys: set[tuple[str, str]] = set()
         self._supports_pyperclip: bool | None = None
-        self._sync_header_title()
+        self._sync_session_title()
 
-    def _sync_header_title(self) -> None:
-        """Reflect the active session name in Textual's header state."""
-        self.title = "Tau"
-        self.sub_title = _session_header_sub_title(self.session)
+    def _sync_session_title(self) -> None:
+        """Reflect the active session name in the terminal tab title."""
         self._sync_terminal_title()
 
     def _sync_terminal_title(self) -> None:
@@ -2805,13 +3464,15 @@ class TauTuiApp(App[None]):
         `/theme` instead of changing only Textual's chrome.
         """
         self._registered_themes.clear()
-        for theme_name in BUILTIN_TUI_THEME_NAMES:
+        for theme_name in available_tui_theme_names():
             self.register_theme(_textual_theme_for_tau_theme(theme_name))
 
     def _watch_theme(self, theme_name: str) -> None:
         """Keep Textual theme changes synchronized with Tau's durable TUI theme."""
         super()._watch_theme(theme_name)
-        if theme_name not in BUILTIN_TUI_THEME_NAMES:
+        if theme_name not in available_tui_theme_names():
+            return
+        if getattr(self, "_applying_settings_theme", False):
             return
         tau_theme: TuiThemeName = theme_name
         if self.tui_settings.theme == tau_theme:
@@ -2826,7 +3487,6 @@ class TauTuiApp(App[None]):
 
     def compose(self) -> ComposeResult:
         """Compose the TUI widgets."""
-        yield Header()
         with Horizontal(id="workspace"):
             yield SessionSidebar(id="sidebar")
             with Vertical(id="main-pane"):
@@ -2852,12 +3512,11 @@ class TauTuiApp(App[None]):
                 yield CompactSessionInfo(id="compact-session-info")
                 yield Static("", id="autocomplete")
                 yield Container(id="below-prompt-slot")
-        yield Footer()
 
     async def on_mount(self) -> None:
         """Focus the prompt when the app starts."""
         prompt = self.query_one(PromptInput)
-        prompt.shell_mode_style = self.tui_settings.resolved_theme.accent
+        prompt.shell_mode_style = self.tui_settings.resolved_theme.role_styles["tool"].border
         self._sync_prompt_shell_mode(prompt.text)
         prompt.focus()
         self._update_responsive_layout(self.size.width, self.size.height)
@@ -2914,6 +3573,14 @@ class TauTuiApp(App[None]):
             self._activity_timer = None
         self._terminal_title.restore()
         self._clear_extension_components()
+
+    def on_app_blur(self) -> None:
+        """Remember that terminal attention should be requested when the run settles."""
+        self._app_has_focus = False
+
+    def on_app_focus(self) -> None:
+        """Suppress turn notifications while the Tau terminal surface is active."""
+        self._app_has_focus = True
 
     def on_resize(self, event: Resize) -> None:
         """Update responsive chrome when the terminal changes size."""
@@ -3061,6 +3728,8 @@ class TauTuiApp(App[None]):
                 await self._resume_session(command.resume_session_id)
             if command.resume_picker_requested:
                 self.action_open_session_picker()
+            if command.prompts_picker_requested:
+                self._open_prompt_template_picker()
             if command.tree_picker_requested:
                 if self._is_agent_or_queue_active():
                     prompt.text = raw_text
@@ -3080,14 +3749,18 @@ class TauTuiApp(App[None]):
                 self._logout(command.logout_provider)
             if command.model_picker_requested:
                 self._open_model_picker()
+            if command.tools_picker_requested:
+                self._open_tools_reference()
             if command.scoped_models_picker_requested:
                 self._open_scoped_models_picker()
+            if command.skills_picker_requested:
+                self._open_skills_picker()
             if command.theme_picker_requested:
                 self._open_theme_picker()
             if command.thinking_level is not None:
                 await self._set_thinking_level(command.thinking_level)
             if command.theme is not None:
-                self._set_tui_theme(cast(TuiThemeName, command.theme))
+                self._set_tui_theme(command.theme)
             self.state.set_skills(self.session.skills)
             if command.message:
                 if _command_message_uses_notification(text, command.message):
@@ -3119,9 +3792,9 @@ class TauTuiApp(App[None]):
         """Load visible session messages and reseed prompt history from them."""
         self.state.load_messages(self.session.messages)
         self._prompt_history = tuple(
-            message.content
+            message.text
             for message in self.session.messages
-            if isinstance(message, UserMessage) and message.content.strip()
+            if isinstance(message, UserMessage) and message.text.strip()
         )
 
     def _is_compaction_active(self) -> bool:
@@ -3218,7 +3891,7 @@ class TauTuiApp(App[None]):
             )
         self._refresh_chrome(theme=theme)
 
-    def _consume_optimistic_user_event(self, event: AgentEvent, *, run_id: int) -> bool:
+    def _consume_optimistic_user_event(self, event: CodingSessionEvent, *, run_id: int) -> bool:
         """Return whether a user event confirms an already-rendered optimistic message."""
         if not isinstance(event, MessageEndEvent) or not isinstance(event.message, UserMessage):
             return False
@@ -3229,7 +3902,7 @@ class TauTuiApp(App[None]):
         return False
 
     def _replace_transformed_optimistic_user_message(
-        self, event: AgentEvent, *, run_id: int
+        self, event: CodingSessionEvent, *, run_id: int
     ) -> bool:
         """Reconcile a transformed prompt with its optimistic render.
 
@@ -3251,10 +3924,10 @@ class TauTuiApp(App[None]):
             del self._optimistic_user_messages[index]
             for item in reversed(self.state.items):
                 if item.role == "user" and item.text == pending_text:
-                    item.text = event.message.content
+                    item.text = event.message.text
                     break
             self._refresh()
-            self._sync_header_title()
+            self._sync_session_title()
             return True
         return False
 
@@ -3265,15 +3938,18 @@ class TauTuiApp(App[None]):
         ]
 
     async def _append_confirmed_user_message(self, message: AgentMessage) -> None:
-        """Render a non-optimistic user event incrementally when possible."""
-        if not isinstance(message, UserMessage):
-            self._refresh()
+        """Render a non-optimistic user/custom event incrementally when possible."""
+        if isinstance(message, UserMessage):
+            await self._append_optimistic_user_message(message.text)
             return
-        await self._append_optimistic_user_message(
-            message.content,
-            custom_type=message.custom_type,
-            details=message.details,
-        )
+        if isinstance(message, CustomMessage):
+            await self._append_optimistic_user_message(
+                message.text,
+                custom_type=message.custom_type,
+                details=message.details if isinstance(message.details, dict) else None,
+            )
+            return
+        self._refresh()
 
     def _connect_extension_runtime(self, session: CodingSession) -> None:
         """Give the extension runtime a UI bridge and an idle-run entry point."""
@@ -3750,8 +4426,16 @@ class TauTuiApp(App[None]):
             f"$ {command.strip()}",
             always_show_tool_result=True,
         )
+        item = self.state.items[item_index]
         self._follow_transcript_output()
-        self._refresh()
+        transcript = self.query_one("#transcript", TranscriptView)
+        await transcript.append_item(
+            item,
+            theme=self.tui_settings.resolved_theme,
+            show_tool_results=True,
+            scroll_end=True,
+        )
+        self._refresh_chrome()
 
         try:
             result = await run_terminal_command(command, add_to_context=add_to_context)
@@ -3764,7 +4448,12 @@ class TauTuiApp(App[None]):
                     output=str(exc),
                 )
             self._notify(f"Could not run command: {exc}", severity="error")
-            self._refresh()
+            await transcript.update_item(
+                item,
+                theme=self.tui_settings.resolved_theme,
+                show_tool_results=True,
+            )
+            self._refresh_chrome()
             return
 
         if item_index >= len(self.state.items):
@@ -3777,7 +4466,12 @@ class TauTuiApp(App[None]):
             output=result.output,
         )
         self._follow_transcript_output()
-        self._refresh()
+        await transcript.update_item(
+            item,
+            theme=self.tui_settings.resolved_theme,
+            show_tool_results=True,
+        )
+        self._refresh_chrome()
 
     def _replace_tui_settings(self, *, theme: TuiThemeName) -> None:
         """Replace the current immutable TUI settings with a new theme."""
@@ -3786,9 +4480,13 @@ class TauTuiApp(App[None]):
             theme=theme,
             auto_copy_selection=self.tui_settings.auto_copy_selection,
             sidebar_position=self.tui_settings.sidebar_position,
+            turn_notification=self.tui_settings.turn_notification,
         )
 
     def _set_tui_theme(self, theme: TuiThemeName) -> None:
+        if theme not in available_tui_theme_names():
+            self._notify(f"Unknown theme: {theme}", severity="error")
+            return
         self._replace_tui_settings(theme=theme)
         save_tui_settings(self.tui_settings)
         self.theme = theme
@@ -3807,7 +4505,7 @@ class TauTuiApp(App[None]):
         except Exception as exc:  # noqa: BLE001 - surface queueing failures in the TUI
             self._notify(f"Could not queue message: {exc}", severity="error")
             return
-        self._refresh()
+        self._refresh_chrome()
 
     async def _run_prompt(
         self,
@@ -3836,9 +4534,16 @@ class TauTuiApp(App[None]):
                 if not (_is_user_message_end_event(event) and self.screen_stack):
                     self.adapter.apply(event)
                 self._sync_text_selection_state()
-                if isinstance(event, ErrorEvent) and not event.recoverable:
+                if (
+                    isinstance(event, MessageEndEvent)
+                    and isinstance(event.message, AssistantMessage)
+                    and event.message.stop_reason == "error"
+                ):
                     _attach_diagnostic_log_path_to_error(self.state, self.session)
+                    _attach_retry_hint_to_error(self.state, event.message)
                 await self._apply_streaming_transcript_event(event)
+                if isinstance(event, AgentSettledEvent) and not self._app_has_focus:
+                    self._terminal_notification.notify_turn_finished()
         except Exception as exc:  # noqa: BLE001 - surface unexpected worker errors in the TUI
             if active_run_id != self._prompt_run_id:
                 return
@@ -3853,7 +4558,7 @@ class TauTuiApp(App[None]):
             if active_run_id == self._prompt_run_id:
                 self._prompt_worker = None
 
-    async def _apply_streaming_transcript_event(self, event: AgentEvent) -> None:
+    async def _apply_streaming_transcript_event(self, event: CodingSessionEvent) -> None:
         """Apply an agent event to mounted transcript widgets without full redraws."""
         if not self.screen_stack:
             self._refresh()
@@ -3873,25 +4578,57 @@ class TauTuiApp(App[None]):
             return
         if isinstance(event, MessageStartEvent):
             return
-        if isinstance(event, MessageDeltaEvent):
-            await transcript.append_assistant_delta(event.delta, theme=theme)
-            self._sync_activity_indicator()
-            return
-        if isinstance(event, ThinkingDeltaEvent):
-            await transcript.append_thinking_delta(
-                event.delta,
-                theme=theme,
-                show_thinking=self.state.show_thinking,
-            )
-            self._sync_activity_indicator()
+        if isinstance(event, MessageUpdateEvent):
+            nested = event.assistant_message_event
+            if isinstance(nested, TextDeltaEvent):
+                await transcript.append_assistant_delta(nested.delta, theme=theme)
+            elif isinstance(nested, ThinkingDeltaEvent):
+                await transcript.append_thinking_delta(
+                    nested.delta,
+                    theme=theme,
+                    show_thinking=self.state.show_thinking,
+                )
             return
         if isinstance(event, MessageEndEvent):
-            if event.message.role == "user":
+            if isinstance(event.message, (UserMessage, CustomMessage)):
                 await self._append_confirmed_user_message(event.message)
-                self._sync_header_title()
+                self._sync_session_title()
                 return
-            if event.message.role == "assistant":
-                await transcript.finish_assistant_message(event.message.content)
+            if isinstance(event.message, AssistantMessage):
+                if event.message.stop_reason in {"error", "aborted"}:
+                    # The adapter projected any partial response plus the error
+                    # into canonical display state. Rebuild once at this terminal
+                    # boundary so the mounted transcript cannot drop the error.
+                    self._refresh()
+                    return
+                visible_blocks = [
+                    block
+                    for block in event.message.content
+                    if (
+                        isinstance(block, TextContent)
+                        and bool(block.text)
+                        or isinstance(block, ThinkingContent)
+                        and bool(block.thinking)
+                    )
+                ]
+                canonical_items = self.state.items[-len(visible_blocks) :] if visible_blocks else []
+                if (
+                    any(isinstance(block, ThinkingContent) for block in visible_blocks)
+                    or len(visible_blocks) > 1
+                ):
+                    # Replace only this message's provisional streaming widgets;
+                    # unrelated history remains mounted and selectable.
+                    await transcript.finish_structured_assistant_message(
+                        canonical_items,
+                        theme=theme,
+                        show_thinking=self.state.show_thinking,
+                    )
+                else:
+                    canonical_item = canonical_items[-1] if canonical_items else None
+                    await transcript.finish_assistant_message(
+                        event.message.text,
+                        item=canonical_item,
+                    )
                 self._refresh_chrome()
                 return
             return
@@ -3920,7 +4657,7 @@ class TauTuiApp(App[None]):
                 )
             self._refresh_chrome()
             return
-        if isinstance(event, RetryEvent | ErrorEvent):
+        if isinstance(event, AutoRetryStartEvent):
             await transcript.finish_assistant_message()
             if self.state.items:
                 await transcript.append_item(
@@ -3931,7 +4668,17 @@ class TauTuiApp(App[None]):
             self._refresh_chrome()
             return
         if isinstance(event, ToolExecutionEndEvent):
-            self._refresh()
+            updated_item = self.state.find_tool_item(event.tool_call_id)
+            if updated_item is not None:
+                expanded = self.state.show_tool_results or updated_item.always_show_tool_result
+                await transcript.update_item(
+                    updated_item,
+                    theme=theme,
+                    show_tool_results=expanded,
+                    invocation=self.state.resolve_tool_invocation(updated_item),
+                    result_markup=self.state.resolve_tool_result(updated_item, expanded=expanded),
+                )
+            self._refresh_chrome()
             return
         if isinstance(event, QueueUpdateEvent):
             self._refresh_chrome()
@@ -3988,9 +4735,14 @@ class TauTuiApp(App[None]):
         if isinstance(self.screen, ModelPickerScreen):
             self.screen.action_toggle_mode()
             return
+        if isinstance(self.screen, ToolsReferenceScreen):
+            self.screen.action_open_selected()
+            return
         if isinstance(
             self.screen,
             SessionPickerScreen
+            | PromptTemplatePickerScreen
+            | SkillPickerScreen
             | TreePickerScreen
             | LoginMethodPickerScreen
             | LoginProviderPickerScreen
@@ -4017,11 +4769,14 @@ class TauTuiApp(App[None]):
         if isinstance(
             self.screen,
             SessionPickerScreen
+            | PromptTemplatePickerScreen
+            | SkillPickerScreen
             | TreePickerScreen
             | LoginMethodPickerScreen
             | LoginProviderPickerScreen
             | ThemePickerScreen
             | ModelPickerScreen
+            | ToolsReferenceScreen
             | ExtensionSelectScreen
             | ExtensionConfirmScreen,
         ):
@@ -4041,11 +4796,14 @@ class TauTuiApp(App[None]):
         if isinstance(
             self.screen,
             SessionPickerScreen
+            | PromptTemplatePickerScreen
+            | SkillPickerScreen
             | TreePickerScreen
             | LoginMethodPickerScreen
             | LoginProviderPickerScreen
             | ThemePickerScreen
             | ModelPickerScreen
+            | ToolsReferenceScreen
             | ExtensionSelectScreen
             | ExtensionConfirmScreen,
         ):
@@ -4136,6 +4894,46 @@ class TauTuiApp(App[None]):
             callback=self._handle_session_picker_result,
         )
 
+    def _open_prompt_template_picker(self) -> None:
+        self.push_screen(
+            PromptTemplatePickerScreen(self.session.prompt_templates),
+            callback=self._handle_prompt_template_picker_result,
+        )
+
+    def _handle_prompt_template_picker_result(self, name: str | None) -> None:
+        prompt = self.query_one("#prompt", PromptInput)
+        prompt.focus()
+        if name is None:
+            return
+        invocation = f"/{name}"
+        prompt.text = invocation
+        prompt.move_cursor(_text_end_location(invocation))
+        self._completion_state = self._build_completion_state(invocation)
+        self._refresh_completions()
+
+    def _open_skills_picker(self) -> None:
+        """Open loaded-skill discovery."""
+        self.push_screen(
+            SkillPickerScreen(self.session.skills, theme=self.tui_settings.resolved_theme),
+            callback=self._handle_skill_picker_result,
+        )
+
+    def _handle_skill_picker_result(self, result: SkillPickerResult | None) -> None:
+        prompt = self.query_one("#prompt", PromptInput)
+        if result is None:
+            prompt.text = ""
+        elif result.action == "insert":
+            prompt.text = f"/skill:{result.skill.name}"
+        else:
+            prompt.text = ""
+            self.state.add_item(
+                "status",
+                f"Skill: {result.skill.name} (not added to context)\n{result.skill.content}",
+            )
+            self._refresh()
+        prompt.move_cursor(_text_end_location(prompt.text))
+        prompt.focus()
+
     def action_cycle_thinking(self) -> None:
         """Cycle the active thinking mode."""
         self.run_worker(self._cycle_thinking_level(), exclusive=False)
@@ -4148,10 +4946,17 @@ class TauTuiApp(App[None]):
         self.run_worker(self._cycle_scoped_model(), exclusive=False)
 
     def action_toggle_tool_results(self) -> None:
-        """Toggle inline tool result details in the transcript."""
+        """Toggle inline tool result details without rebuilding unrelated history."""
         expanded = self.state.toggle_tool_results()
-        self._refresh()
+        self.run_worker(self._update_tool_results_visibility(), exclusive=False)
         self._notify("Tool results expanded." if expanded else "Tool results collapsed.")
+
+    async def _update_tool_results_visibility(self) -> None:
+        transcript = self.query_one("#transcript", TranscriptView)
+        await transcript.update_tool_results_visibility(
+            self.state,
+            theme=self.tui_settings.resolved_theme,
+        )
 
     def action_toggle_thinking(self) -> None:
         """Toggle thinking-token display in the transcript."""
@@ -4554,6 +5359,16 @@ class TauTuiApp(App[None]):
             )
         )
 
+    def _open_tools_reference(self) -> None:
+        """Open a read-only view of tools from the active session."""
+        self.push_screen(
+            ToolsReferenceScreen(
+                self.session.tools,
+                extension_sources=self.session.extension_tool_sources,
+                theme=self.tui_settings.resolved_theme,
+            )
+        )
+
     def _open_model_picker(self) -> None:
         choices = self._available_model_choices()
         if not choices:
@@ -4632,6 +5447,7 @@ class TauTuiApp(App[None]):
             ThemePickerScreen(
                 current_theme=self.tui_settings.theme,
                 theme=self.tui_settings.resolved_theme,
+                theme_names=available_tui_theme_names(),
             ),
             callback=self._handle_theme_picker_result,
         )
@@ -4709,7 +5525,7 @@ class TauTuiApp(App[None]):
     def _refresh_chrome(self, *, theme: TuiTheme | None = None) -> None:
         """Refresh non-transcript chrome without remounting transcript blocks."""
         theme = theme or self.tui_settings.resolved_theme
-        self._sync_header_title()
+        self._sync_session_title()
         self._sync_text_selection_state()
         self._sync_queue_state()
         sidebar = self.query_one("#sidebar", SessionSidebar)
@@ -4717,8 +5533,16 @@ class TauTuiApp(App[None]):
         compact_info = self.query_one("#compact-session-info", CompactSessionInfo)
         compact_info.update_from_session(self.session, theme=theme)
         queued_messages = self.query_one("#queued-messages", Static)
-        queued_messages.display = self.state.queued_message_count > 0
-        queued_messages.update(_render_queued_messages(self.state, theme=theme))
+        queue_render_key = (
+            self.state.queued_steering,
+            self.state.queued_follow_up,
+            theme.name,
+            theme.muted_text,
+        )
+        if queue_render_key != self._last_queue_render_key:
+            self._last_queue_render_key = queue_render_key
+            queued_messages.display = self.state.queued_message_count > 0
+            queued_messages.update(_render_queued_messages(self.state, theme=theme))
         self._sync_activity_indicator()
         self._refresh_footer_bindings()
 
@@ -4742,7 +5566,6 @@ class TauTuiApp(App[None]):
             self._apply_activity_indicator()
             return
         self._activity_frame = 0
-        self.state.tool_spinner = None
         if self._activity_timer is not None:
             self._activity_timer.pause()
         self._apply_activity_indicator()
@@ -4753,13 +5576,13 @@ class TauTuiApp(App[None]):
         self._activity_frame += 1
         self._apply_activity_indicator()
         self._sync_terminal_title()
-        self.state.tool_spinner = TOOL_SPINNER_FRAMES[
-            self._activity_frame % len(TOOL_SPINNER_FRAMES)
-        ]
-        self.call_later(self._respin_pending_tool)
+        now = asyncio.get_running_loop().time()
+        if now - self._last_tool_timer_refresh_at >= 1.0:
+            self._last_tool_timer_refresh_at = now
+            self.call_later(self._refresh_pending_tool_timer)
 
-    async def _respin_pending_tool(self) -> None:
-        """Advance the spinner on the tool row that is currently executing."""
+    async def _refresh_pending_tool_timer(self) -> None:
+        """Refresh elapsed time on the tool row that is currently executing."""
         if not self.state.running:
             return
         item = next(
@@ -4792,13 +5615,26 @@ class TauTuiApp(App[None]):
             prompt_prefix = self.query_one("#prompt-prefix", Static)
         except NoMatches:
             return
-        prompt.styles.border = (
+        shell_mode = _is_terminal_command_prompt(prompt.text)
+        render_key = (
+            theme.name,
+            theme.accent,
+            theme.screen_background,
+            theme.prompt_border,
+            self._activity_frame,
+            self.state.running,
+            shell_mode,
+        )
+        if render_key == self._last_activity_indicator_key:
+            return
+        self._last_activity_indicator_key = render_key
+        prompt.styles.border_left = (
             "tall",
             _activity_prompt_border_color(
                 theme,
                 frame=self._activity_frame,
                 running=self.state.running,
-                shell_mode=_is_terminal_command_prompt(prompt.text),
+                shell_mode=shell_mode,
             ),
         )
         prompt_prefix.update(
@@ -4806,7 +5642,9 @@ class TauTuiApp(App[None]):
                 theme,
                 frame=self._activity_frame,
                 running=self.state.running,
-            )
+                shell_mode=shell_mode,
+            ),
+            layout=False,
         )
 
     def _refresh_completions(self) -> None:
@@ -4863,7 +5701,6 @@ class TauTuiApp(App[None]):
             return COMPLETION_MAX_VISIBLE_LINES
 
         reserved_rows = COMPLETION_MIN_TRANSCRIPT_LINES + COMPLETION_WIDGET_CHROME_LINES
-        reserved_rows += 2  # Header and footer.
         for selector in ("#prompt-row", "#compact-session-info", "#queued-messages"):
             with suppress(NoMatches):
                 widget = self.query_one(selector)
@@ -4903,7 +5740,7 @@ class TauTuiApp(App[None]):
                 *LOGIN_PROVIDER_ALIASES,
             ),
             thinking_levels=getattr(self.session, "available_thinking_levels", ()),
-            theme_names=BUILTIN_TUI_THEME_NAMES,
+            theme_names=available_tui_theme_names(),
             session_options=_session_options(self.session),
             cwd=self.session.cwd,
         )
@@ -4914,7 +5751,7 @@ class TauTuiApp(App[None]):
 
     def _sync_prompt_shell_mode(self, text: str) -> None:
         prompt = self.query_one("#prompt", PromptInput)
-        prompt.shell_mode_style = self.tui_settings.resolved_theme.accent
+        prompt.shell_mode_style = self.tui_settings.resolved_theme.role_styles["tool"].border
         prompt.set_class(_is_terminal_command_prompt(text), "-shell-mode")
         prompt.refresh()
         self._apply_activity_indicator()
@@ -4930,12 +5767,20 @@ def _activity_prompt_border_color(
     """Return the prompt border color for the current activity animation frame."""
     del frame, running
     if shell_mode:
-        return theme.accent
+        return theme.role_styles["tool"].border
     return theme.prompt_border
 
 
-def _render_activity_indicator(theme: TuiTheme, *, frame: int, running: bool) -> Text:
-    """Render the prompt prefix, turning Tau into a moving square while running."""
+def _render_activity_indicator(
+    theme: TuiTheme,
+    *,
+    frame: int,
+    running: bool,
+    shell_mode: bool = False,
+) -> Text:
+    """Render the prompt prefix: a moving square while running, ``$`` in shell mode."""
+    if shell_mode and not running:
+        return Text("$", style=f"bold {theme.role_styles['tool'].border}")
     if not running:
         return Text("τ", style=f"bold {theme.accent}")
 
@@ -4984,9 +5829,11 @@ def _should_optimistically_render_prompt(text: str) -> bool:
     return bool(stripped) and not stripped.startswith("/")
 
 
-def _is_user_message_end_event(event: AgentEvent) -> bool:
-    """Return whether an agent event closes a user message."""
-    return isinstance(event, MessageEndEvent) and isinstance(event.message, UserMessage)
+def _is_user_message_end_event(event: CodingSessionEvent) -> bool:
+    """Return whether an agent event closes a user-context message."""
+    return isinstance(event, MessageEndEvent) and isinstance(
+        event.message, (UserMessage, CustomMessage)
+    )
 
 
 def _terminal_command_prefix_span(text: str) -> tuple[int, int] | None:
@@ -5185,7 +6032,26 @@ def _session_picker_label(record: SessionCompletionRecord) -> str:
     return " - ".join(parts)
 
 
-def _tree_picker_label(choice: SessionTreeChoice, *, theme: TuiTheme) -> Text:
+def _filter_session_records(
+    records: Sequence[SessionCompletionRecord],
+    query: str,
+) -> tuple[SessionCompletionRecord, ...]:
+    normalized = query.strip().casefold()
+    if not normalized:
+        return tuple(records)
+    return tuple(
+        record
+        for record in records
+        if normalized in (record.title or "").casefold() or normalized in record.model.casefold()
+    )
+
+
+def _tree_picker_label(
+    choice: SessionTreeChoice,
+    *,
+    theme: TuiTheme,
+    highlighted: bool = False,
+) -> Text:
     marker = "* " if choice.active else "  "
     label = choice.label
     indent_width = len(label) - len(label.lstrip(" "))
@@ -5194,7 +6060,8 @@ def _tree_picker_label(choice: SessionTreeChoice, *, theme: TuiTheme) -> Text:
     author, separator, rest = body.partition(":")
     text = Text(f"{marker}{indent}")
     if separator:
-        text.append(author, style=theme.accent)
+        author_color = theme.highlight_text if highlighted else theme.accent
+        text.append(author, style=author_color)
         text.append(f"{separator}{rest}")
     else:
         text.append(body)
@@ -5227,12 +6094,6 @@ def _named_session_title(title: str | None) -> str | None:
     if not stripped or stripped.lower() == "untitled session":
         return None
     return stripped
-
-
-def _session_header_sub_title(session: CodingSession) -> str:
-    """Return the session label shown beside Tau in the TUI header."""
-    title = _named_session_title(getattr(session, "session_title", None))
-    return title or "Untitled session"
 
 
 def _login_provider_label(provider: ProviderCatalogEntry) -> str:
@@ -5345,20 +6206,20 @@ def _is_thinking_cycle_key(key: str, configured_key: str) -> bool:
 
 def _textual_theme_for_tau_theme(theme_name: TuiThemeName) -> Theme:
     """Map a Tau theme to Textual's native theme type."""
-    theme = TuiSettings(theme=theme_name).resolved_theme
+    theme = get_tui_theme(theme_name)
     return Theme(
         name=theme.name,
         primary=theme.accent,
         secondary=theme.prompt_border,
         warning=theme.markdown_bullet,
-        error=theme.role_styles["error"].border,
-        success=theme.role_styles["assistant"].border,
+        error=theme.error,
+        success=theme.success,
         accent=theme.accent,
         foreground=theme.screen_text,
         background=theme.screen_background,
         surface=theme.chrome_background,
         panel=theme.sidebar_background,
-        dark=theme.name != "tau-light",
+        dark=theme.dark,
         variables=_theme_css_variables(theme),
     )
 
@@ -5379,6 +6240,7 @@ def _theme_css_variables(theme: TuiTheme) -> dict[str, str]:
         "tau-prompt-border": theme.prompt_border,
         "tau-autocomplete-background": theme.autocomplete_background,
         "tau-accent": theme.accent,
+        "tau-tool-running": theme.role_styles["tool"].border,
         "tau-highlight-background": theme.highlight_background,
         "tau-highlight-text": theme.highlight_text,
         "tau-markdown-highlight": theme.markdown_heading,
@@ -5577,6 +6439,26 @@ def _format_prompt_error(exc: BaseException, session: CodingSession) -> str:
     return message
 
 
+_TERMINAL_ERROR_RETRY_HINT = "Run ended before completion. Send a message to retry."
+
+
+def _attach_retry_hint_to_error(state: TuiState, message: AssistantMessage) -> None:
+    """Clarify that a terminal provider error ended the run and can be retried.
+
+    Context-overflow errors are auto-compacted and retried by the session, so
+    they are skipped to avoid asking the user to retry while Tau already is.
+    """
+    if is_context_overflow_error(message):
+        return
+    if state.error is not None and _TERMINAL_ERROR_RETRY_HINT not in state.error:
+        state.error = f"{state.error}\n{_TERMINAL_ERROR_RETRY_HINT}"
+    for item in reversed(state.items):
+        if item.role == "error":
+            if _TERMINAL_ERROR_RETRY_HINT not in item.text:
+                item.text = f"{item.text}\n{_TERMINAL_ERROR_RETRY_HINT}"
+            return
+
+
 def _attach_diagnostic_log_path_to_error(state: TuiState, session: CodingSession) -> None:
     log_path = getattr(session, "last_diagnostic_log_path", None)
     if not isinstance(log_path, Path) or state.error is None:
@@ -5717,14 +6599,15 @@ async def run_tui_app(
     initial_prompt: str | None = None,
     session_manager: SessionManager | None = None,
     startup_notice: str | None = None,
+    startup_update_notice: str | None = None,
     startup_notices: Sequence[str] = (),
     extension_paths: tuple[Path, ...] = (),
     extensions_enabled: bool = True,
     project_extensions_enabled: bool = False,
-) -> None:
-    """Create the default provider/session and run the Textual app."""
+) -> str | None:
+    """Run the Textual app and return the active id when its session is persisted."""
     if new_session and session_id is not None:
-        raise RuntimeError("--resume and --new-session cannot be used together")
+        raise RuntimeError("--session and --new-session cannot be used together")
 
     provider_settings = load_provider_settings()
     shell_settings = load_shell_settings()
@@ -5741,19 +6624,29 @@ async def run_tui_app(
         explicit_resume=session_id is not None,
     )
     startup_message: str | None = None
+    startup_error_notice: str | None = None
     runtime_provider_config: ProviderConfig | None = selection.provider
     try:
         provider = create_model_provider(
             selection.provider,
             model=selection.model,
-            thinking_level=DEFAULT_THINKING_LEVEL,
+            thinking_level=resolve_startup_thinking_level(
+                selection.provider,
+                selection.model,
+            ),
         )
-    except RuntimeError:
+    except RuntimeError as exc:
+        # Most startup RuntimeErrors are missing credentials, but surface the real
+        # cause so a non-auth failure is not silently misreported as "Login required".
         login_required_message = (
             "Login required. Run /login to choose a provider, "
             f"or /login {selection.provider.name} to continue with the current provider."
         )
-        startup_message = login_required_message
+        startup_message = f"{login_required_message}\n\nStartup error: {exc}"
+        startup_error_notice = (
+            f"Startup provider creation failed for "
+            f"{selection.provider.name}:{selection.model}: {exc}"
+        )
         provider = LoginRequiredProvider(startup_message)
         runtime_provider_config = None
     session: CodingSession | None = None
@@ -5786,12 +6679,21 @@ async def run_tui_app(
                 project_extensions_enabled=project_extensions_enabled,
             )
         )
+        custom_themes, theme_diagnostics = load_custom_tui_themes(
+            TauResourcePaths(cwd=record.cwd).themes_dirs
+        )
+        set_custom_tui_themes(custom_themes)
         legacy_notices = (startup_notice,) if startup_notice else ()
-        all_startup_notices = tuple((*startup_notices, *legacy_notices))
+        error_notices = (startup_error_notice,) if startup_error_notice else ()
+        theme_notices = tuple(diagnostic.format() for diagnostic in theme_diagnostics)
+        all_startup_notices = tuple(
+            (*error_notices, *startup_notices, *legacy_notices, *theme_notices)
+        )
         app = TauTuiApp(
             session,
             tui_settings=load_tui_settings(),
             startup_message=startup_message,
+            startup_update_notice=startup_update_notice,
             startup_notices=all_startup_notices,
             initial_prompt=initial_prompt,
         )
@@ -5802,3 +6704,8 @@ async def run_tui_app(
             if close_session is not None:
                 await close_session()
         await provider.aclose()
+
+    active_session_id: str | None = getattr(session, "session_id", None)
+    if active_session_id is None or manager.get_session(active_session_id) is None:
+        return None
+    return active_session_id

@@ -32,6 +32,8 @@ from tau_coding.extensions.api import (
     ToolCallHookResult,
     ToolResultHookEvent,
     ToolResultHookResult,
+    TurnEndEvent,
+    TurnStartEvent,
     UiBridge,
 )
 from tau_coding.extensions.loader import (
@@ -86,6 +88,8 @@ __all__ = [
     "ToolCallHookResult",
     "ToolResultHookEvent",
     "ToolResultHookResult",
+    "TurnEndEvent",
+    "TurnStartEvent",
     "UiBridge",
     "discover_extensions",
     "extension_dirs",

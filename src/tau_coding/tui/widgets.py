@@ -11,7 +11,7 @@ from typing import Any, ClassVar, Literal, Protocol
 from pygments.lexers import get_lexer_by_name
 from pygments.util import ClassNotFound
 from rich.align import Align
-from rich.console import Console, Group, RenderableType
+from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.markdown import CodeBlock, Heading, Markdown
 from rich.padding import Padding
 from rich.rule import Rule
@@ -20,10 +20,9 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Style as TextualStyle  # type: ignore[attr-defined]
 from textual.css.query import NoMatches
-from textual.events import Resize
 from textual.geometry import Offset
 from textual.selection import Selection
 from textual.widget import Widget
@@ -33,13 +32,17 @@ from textual.widgets.markdown import MarkdownBlock, MarkdownStream
 
 from tau_agent.tools import AgentTool
 from tau_coding.prompt_templates import PromptTemplate
+from tau_coding.session_stats import SessionStats
 from tau_coding.skills import Skill
 from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.tui.autocomplete import CompletionState
 from tau_coding.tui.config import TAU_DARK_THEME, TuiRoleStyle, TuiTheme
 from tau_coding.tui.state import ChatItem, TuiState
+from tau_coding.version import current_version
 
 TAU_SIDEBAR_LOGO = "τ = 2π"
+SIDEBAR_BULLET_LIST_LIMIT = 5
+SIDEBAR_COMMA_LIST_MAX_LINES = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,9 +88,24 @@ class SessionSummarySource(Protocol):
     @property
     def thinking_level(self) -> str: ...
 
+    @property
+    def session_title(self) -> str | None: ...
 
-class SessionSidebar(Static):
-    """Compact sidebar with current session metadata."""
+    @property
+    def extension_names(self) -> Sequence[str]: ...
+
+    @property
+    def session_stats(self) -> SessionStats: ...
+
+
+class SessionSidebar(Vertical):
+    """Compact sidebar with session metadata and bottom-aligned branding."""
+
+    def compose(self) -> Any:
+        yield Static("", id="sidebar-content")
+        yield Static("", id="sidebar-brand")
+
+    _summary_fingerprint: tuple[object, ...] | None = None
 
     def update_from_session(
         self,
@@ -95,25 +113,74 @@ class SessionSidebar(Static):
         *,
         theme: TuiTheme = TAU_DARK_THEME,
     ) -> None:
-        """Redraw the sidebar from current session metadata."""
-        self.update(render_session_sidebar(session, theme=theme))
+        """Redraw the sidebar only when displayed session metadata changed."""
+        fingerprint = _session_summary_fingerprint(session, theme=theme)
+        if fingerprint == self._summary_fingerprint:
+            return
+        self._summary_fingerprint = fingerprint
+        self.query_one("#sidebar-content", Static).update(
+            render_session_sidebar(session, theme=theme),
+            layout=False,
+        )
+        self.query_one("#sidebar-brand", Static).update(
+            _sidebar_brand(theme=theme),
+            layout=False,
+        )
 
 
 class CompactSessionInfo(Static):
     """Single-line session metadata for narrow TUI layouts."""
 
+    _summary_fingerprint: tuple[object, ...] | None = None
+
     def update_from_session(
         self,
         session: SessionSummarySource,
         *,
         theme: TuiTheme = TAU_DARK_THEME,
     ) -> None:
-        """Redraw compact session metadata."""
+        """Redraw compact session metadata only when its inputs changed."""
+        fingerprint = _session_summary_fingerprint(session, theme=theme)
+        if fingerprint == self._summary_fingerprint:
+            return
+        self._summary_fingerprint = fingerprint
         self.update(render_compact_session_info(session, theme=theme))
+
+
+def _session_summary_fingerprint(
+    session: SessionSummarySource,
+    *,
+    theme: TuiTheme,
+) -> tuple[object, ...]:
+    return (
+        theme.name,
+        session.cwd,
+        session.provider_name,
+        session.model,
+        session.thinking_level,
+        session.context_token_estimate,
+        session.auto_compact_token_threshold,
+        session.context_window_tokens,
+        session.session_title,
+        session.session_stats,
+        tuple(session.extension_names),
+        tuple(tool.name for tool in session.tools),
+        tuple(skill.name for skill in session.skills),
+        tuple(template.name for template in session.prompt_templates),
+        tuple(context.path for context in session.context_files),
+    )
 
 
 class TauMarkdownBlock(MarkdownBlock):
     """Markdown block that applies Tau's themed inline link color."""
+
+    DEFAULT_CSS = """
+    TauMarkdownBlock {
+        link-style: none;
+        link-style-hover: underline;
+        link-background-hover: transparent;
+    }
+    """
 
     @property
     def allow_select(self) -> bool:
@@ -173,6 +240,13 @@ class ThemedMarkdownWidget(TextualMarkdown):
         scrollbar-size-horizontal: 1;
     }
 
+    /* Textual's built-in `MarkdownFence:light` rule (type + pseudo-class)
+       outranks the plain descendant selector above, so restate the themed
+       background for light themes. */
+    ThemedMarkdownWidget MarkdownFence:light {
+        background: $tau-markdown-code-block-background;
+    }
+
     ThemedMarkdownWidget MarkdownTableContent {
         keyline: thin $tau-markdown-table-border;
     }
@@ -198,6 +272,37 @@ class ThemedMarkdownWidget(TextualMarkdown):
 # matching how they appear while streaming.
 _BORDERLESS_TRANSCRIPT_ROLES = frozenset({"assistant", "thinking"})
 _HIDDEN_THINKING_PLACEHOLDER = "Thinking… Press Ctrl+T to show thinking tokens."
+TRANSCRIPT_WINDOW_ITEMS = 200
+TRANSCRIPT_WINDOW_PAGE_ITEMS = 80
+TRANSCRIPT_WINDOW_OVERSCAN_ITEMS = 40
+
+
+class TranscriptWindowBoundary(Static):
+    """Small paging sentinel shown when transcript items are outside the DOM window."""
+
+    ALLOW_SELECT = False
+    DEFAULT_CSS = """
+    TranscriptWindowBoundary {
+        width: 1fr;
+        height: 1;
+        margin: 0 1;
+        color: $tau-muted-text;
+        content-align: center middle;
+    }
+    """
+
+    def __init__(self, direction: Literal["earlier", "later"], count: int) -> None:
+        self.direction = direction
+        super().__init__(self._label(count), classes=f"transcript-window-{direction}")
+
+    def update_count(self, count: int) -> None:
+        """Update the hidden-item count without scheduling a layout pass."""
+        self.update(self._label(count), layout=False)
+
+    def _label(self, count: int) -> str:
+        noun = "message" if count == 1 else "messages"
+        arrow = "↑" if self.direction == "earlier" else "↓"
+        return f"{arrow} Scroll for {count} {self.direction} {noun}"
 
 
 class TranscriptMessageWidget(Horizontal):
@@ -250,7 +355,15 @@ class TranscriptMessageWidget(Horizontal):
         )
         self._theme = theme
         self._role_style = _chat_item_role_style(item, theme)
+        self._plain_render_key = (
+            self.selection_text,
+            self._role_style,
+            self._invocation,
+            self._result_markup,
+        )
         super().__init__(classes="transcript-message")
+        if item.role == "user":
+            self.styles.padding = (1, 0)
         foreground, background = _split_rich_style_colors(self._role_style.body)
         self._body_foreground = foreground
         if item.role in _BORDERLESS_TRANSCRIPT_ROLES:
@@ -328,12 +441,30 @@ class TranscriptMessageWidget(Horizontal):
             return False
         self._invocation = invocation if self.item.role == "tool" else None
         self._result_markup = result_markup if self.item.role == "tool" else None
-        self.selection_text = transcript_item_selection_text(
+        next_role_style = _chat_item_role_style(self.item, self._theme)
+        next_selection_text = transcript_item_selection_text(
             self.item,
             show_tool_results=show_tool_results,
             invocation=self._invocation,
             result_markup=self._result_markup,
         )
+        next_render_key = (
+            next_selection_text,
+            next_role_style,
+            self._invocation,
+            self._result_markup,
+        )
+        if next_render_key == self._plain_render_key:
+            return True
+        self._plain_render_key = next_render_key
+        self.selection_text = next_selection_text
+        self._role_style = next_role_style
+        foreground, background = _split_rich_style_colors(self._role_style.body)
+        self._body_foreground = foreground
+        self._body_background = background
+        self.styles.border_left = ("tall", self._role_style.border)
+        if background:
+            self.styles.background = background
         self._markdown_text = _transcript_item_markdown(
             self.item,
             show_tool_results=show_tool_results,
@@ -353,6 +484,10 @@ class TranscriptMessageWidget(Horizontal):
                 result_markup=self._result_markup,
             )
         )
+        if foreground:
+            body.styles.color = foreground
+        if background:
+            body.styles.background = background
         return True
 
 
@@ -465,12 +600,20 @@ class TranscriptView(VerticalScroll):
             self.styles.min_width = min_width
         self._render_state: TuiState | None = None
         self._render_theme: TuiTheme = TAU_DARK_THEME
-        self._last_render_width = 0
         self._active_assistant_widget: StreamingTranscriptMessageWidget | None = None
         self._active_thinking_widget: StreamingTranscriptMessageWidget | None = None
+        self._active_message_widgets: list[Widget] = []
         self._hidden_thinking_placeholder_visible = False
         self._follow_output = True
         self._follow_scroll_pending = False
+        self._window_start = 0
+        self._window_end = 0
+        self._window_shift_pending = False
+        self._item_widgets: dict[
+            int, TranscriptMessageWidget | StreamingTranscriptMessageWidget
+        ] = {}
+        self._top_boundary: TranscriptWindowBoundary | None = None
+        self._bottom_boundary: TranscriptWindowBoundary | None = None
 
     def on_mount(self) -> None:
         """Follow new transcript content until the user scrolls away."""
@@ -501,12 +644,77 @@ class TranscriptView(VerticalScroll):
         return self._follow_output or self.is_vertical_scroll_end
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
-        """Track whether user scrollback has opted out of transcript following."""
+        """Track follow mode and page the bounded transcript window near its edges."""
         super().watch_scroll_y(old_value, new_value)
         if new_value < old_value:
             self._follow_output = False
-        elif new_value >= self.max_scroll_y:
+        elif new_value >= self.max_scroll_y and self._window_is_latest:
             self._follow_output = True
+
+        if new_value <= 1 and self._window_start > 0:
+            self._schedule_window_shift("earlier")
+        elif (
+            new_value >= max(0, self.max_scroll_y - 1)
+            and self._render_state is not None
+            and self._window_end < len(self._render_state.items)
+        ):
+            self._schedule_window_shift("later")
+
+    @property
+    def _window_is_latest(self) -> bool:
+        state = self._render_state
+        return state is None or self._window_end >= len(state.items)
+
+    def _schedule_window_shift(self, direction: Literal["earlier", "later"]) -> None:
+        if self._window_shift_pending:
+            return
+        self._window_shift_pending = True
+        self.call_later(self._shift_window, direction)
+
+    async def _shift_window(self, direction: Literal["earlier", "later"]) -> None:
+        """Move the mounted window while keeping one existing message as the anchor."""
+        state = self._render_state
+        if state is None or not state.items:
+            self._window_shift_pending = False
+            return
+        old_start = self._window_start
+        old_end = self._window_end
+        if direction == "earlier":
+            if old_start <= 0:
+                self._window_shift_pending = False
+                return
+            anchor_item = state.items[old_start] if old_start < len(state.items) else None
+            new_start = max(0, old_start - TRANSCRIPT_WINDOW_PAGE_ITEMS)
+            new_end = min(len(state.items), new_start + TRANSCRIPT_WINDOW_ITEMS)
+        else:
+            if old_end >= len(state.items):
+                self._window_shift_pending = False
+                return
+            anchor_item = state.items[old_end - 1] if old_end > old_start else None
+            new_end = min(len(state.items), old_end + TRANSCRIPT_WINDOW_PAGE_ITEMS)
+            new_start = max(0, new_end - TRANSCRIPT_WINDOW_ITEMS)
+
+        self._window_start = new_start
+        self._window_end = new_end
+        self._redraw(scroll_end=False, preserve_window=True)
+
+        def restore_anchor() -> None:
+            try:
+                if anchor_item is None:
+                    return
+                anchor = self._item_widgets.get(id(anchor_item))
+                if anchor is not None:
+                    self.scroll_to_widget(
+                        anchor,
+                        top=direction == "earlier",
+                        animate=False,
+                        immediate=True,
+                        force=True,
+                    )
+            finally:
+                self._window_shift_pending = False
+
+        self.call_after_refresh(restore_anchor)
 
     async def _finalize_active_thinking_message(self) -> None:
         """Stop streaming for a completed thinking block before another block starts."""
@@ -530,10 +738,21 @@ class TranscriptView(VerticalScroll):
         *,
         theme: TuiTheme = TAU_DARK_THEME,
     ) -> None:
-        """Redraw the transcript from display state."""
+        """Render display state while keeping the mounted transcript DOM bounded."""
+        same_state = self._render_state is state
+        retained_projection = same_state and any(
+            id(item) in self._item_widgets for item in state.items
+        )
+        should_follow = self._should_follow_output
+        if not retained_projection:
+            self._follow_output = True
+            should_follow = True
         self._render_state = state
         self._render_theme = theme
-        self._redraw(scroll_end=self._should_follow_output)
+        self._redraw(
+            scroll_end=should_follow,
+            preserve_window=retained_projection and not should_follow,
+        )
 
     def update_thinking_visibility(
         self,
@@ -541,58 +760,67 @@ class TranscriptView(VerticalScroll):
         *,
         theme: TuiTheme = TAU_DARK_THEME,
     ) -> None:
-        """Update only thinking-token widgets after visibility changes."""
+        """Update thinking rows in the mounted window without touching unrelated widgets."""
         self._render_state = state
         self._render_theme = theme
         should_follow = self._should_follow_output
         previous_scroll_y = self.scroll_y
-
+        window_items = state.items[self._window_start : self._window_end]
         message_children = [
             child
             for child in self.children
             if isinstance(child, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
         ]
         thinking_children = [child for child in message_children if child.item.role == "thinking"]
-        if thinking_children:
-            self.remove_children(thinking_children)
-
         non_thinking_children = [
             child for child in message_children if child.item.role != "thinking"
         ]
+        if thinking_children:
+            self.remove_children(thinking_children)
+        for item_id, widget in tuple(self._item_widgets.items()):
+            if widget in thinking_children:
+                del self._item_widgets[item_id]
+
         non_thinking_index = 0
-        pending_thinking: list[TranscriptMessageWidget] = []
-        hidden_thinking_placeholder = False
+        pending: list[tuple[ChatItem, TranscriptMessageWidget]] = []
+        hidden_run = False
 
-        def flush_pending(
-            *, before: TranscriptMessageWidget | StreamingTranscriptMessageWidget | None
-        ) -> None:
-            nonlocal pending_thinking
-            for widget in pending_thinking:
-                self.mount(widget, before=before)
-            pending_thinking = []
+        def flush(before: Widget | None) -> None:
+            nonlocal pending
+            if not pending:
+                return
+            widgets = [widget for _, widget in pending]
+            self.mount(*widgets, before=before)
+            for item, widget in pending:
+                self._item_widgets[id(item)] = widget
+            pending = []
 
-        for item in state.items:
+        for item in window_items:
             if item.role == "thinking":
                 if state.show_thinking:
-                    pending_thinking.append(
-                        TranscriptMessageWidget(
+                    pending.append(
+                        (
                             item,
-                            theme=theme,
-                            show_tool_results=state.show_tool_results,
+                            TranscriptMessageWidget(
+                                item,
+                                theme=theme,
+                                show_tool_results=state.show_tool_results,
+                            ),
                         )
                     )
-                elif not hidden_thinking_placeholder:
-                    pending_thinking.append(
-                        TranscriptMessageWidget(
-                            ChatItem(role="thinking", text=_HIDDEN_THINKING_PLACEHOLDER),
-                            theme=theme,
-                            show_tool_results=state.show_tool_results,
-                        )
+                elif not hidden_run:
+                    placeholder = TranscriptMessageWidget(
+                        ChatItem(role="thinking", text=_HIDDEN_THINKING_PLACEHOLDER),
+                        theme=theme,
+                        show_tool_results=state.show_tool_results,
                     )
-                    hidden_thinking_placeholder = True
+                    pending.append((item, placeholder))
+                    hidden_run = True
+                else:
+                    self._item_widgets[id(item)] = pending[-1][1]
                 continue
 
-            hidden_thinking_placeholder = False
+            hidden_run = False
             target = None
             while non_thinking_index < len(non_thinking_children):
                 candidate = non_thinking_children[non_thinking_index]
@@ -601,19 +829,13 @@ class TranscriptView(VerticalScroll):
                     target = candidate
                     break
             if target is not None:
-                flush_pending(before=target)
+                flush(target)
 
-        tail_child = (
-            non_thinking_children[non_thinking_index]
-            if non_thinking_index < len(non_thinking_children)
-            else None
-        )
-        flush_pending(before=tail_child)
+        flush(self._bottom_boundary)
         self._active_thinking_widget = None
-        self._hidden_thinking_placeholder_visible = (
-            _last_transcript_child_is_hidden_thinking_placeholder(self.children)
-        )
-        self._last_render_width = self.scrollable_content_region.width
+        self._hidden_thinking_placeholder_visible = any(
+            widget.selection_text == _HIDDEN_THINKING_PLACEHOLDER for _, widget in pending
+        ) or _last_transcript_child_is_hidden_thinking_placeholder(self.children)
         self.refresh(layout=True)
         if should_follow:
             self._request_follow_scroll()
@@ -622,77 +844,91 @@ class TranscriptView(VerticalScroll):
                 lambda: self.scroll_to(y=previous_scroll_y, animate=False, immediate=True)
             )
 
-    def on_resize(self, event: Resize) -> None:
-        """Re-render transcript entries when the terminal width changes."""
-        del event
-        if self._render_state is None:
-            return
-        width = self.scrollable_content_region.width
-        if width <= 0 or width == self._last_render_width:
-            return
-        was_at_end = self.is_vertical_scroll_end
-        self._redraw(scroll_end=was_at_end)
-        self.scroll_to(x=0, animate=False, immediate=True)
-
-    def _redraw(self, *, scroll_end: bool) -> None:
+    def _redraw(self, *, scroll_end: bool, preserve_window: bool = False) -> None:
         state = self._render_state
         if state is None:
             return
         theme = self._render_theme
-        self._last_render_width = self.scrollable_content_region.width
-        self.remove_children(
-            [
-                child
-                for child in self.children
-                if isinstance(child, TranscriptMessageWidget | StreamingTranscriptMessageWidget)
-            ]
-        )
+        total = len(state.items)
+        if not preserve_window or self._window_end <= self._window_start:
+            self._window_end = total
+            self._window_start = max(0, total - TRANSCRIPT_WINDOW_ITEMS)
+        else:
+            self._window_start = min(self._window_start, total)
+            self._window_end = min(max(self._window_end, self._window_start), total)
+            if self._window_end - self._window_start > TRANSCRIPT_WINDOW_ITEMS:
+                self._window_start = self._window_end - TRANSCRIPT_WINDOW_ITEMS
+
+        removable = [
+            child
+            for child in self.children
+            if isinstance(
+                child,
+                TranscriptMessageWidget
+                | StreamingTranscriptMessageWidget
+                | TranscriptWindowBoundary,
+            )
+        ]
+        if removable:
+            self.remove_children(removable)
         self._active_assistant_widget = None
         self._active_thinking_widget = None
+        self._active_message_widgets = []
         self._hidden_thinking_placeholder_visible = False
-        hidden_thinking_placeholder = False
-        for item in state.items:
+        self._item_widgets.clear()
+        self._top_boundary = None
+        self._bottom_boundary = None
+
+        widgets: list[Widget] = []
+        if self._window_start > 0:
+            self._top_boundary = TranscriptWindowBoundary("earlier", self._window_start)
+            widgets.append(self._top_boundary)
+
+        hidden_thinking_widget: TranscriptMessageWidget | None = None
+        for item in state.items[self._window_start : self._window_end]:
             if item.role == "thinking" and not state.show_thinking:
-                if not hidden_thinking_placeholder:
-                    self.mount(
-                        TranscriptMessageWidget(
-                            ChatItem(
-                                role="thinking",
-                                text=_HIDDEN_THINKING_PLACEHOLDER,
-                            ),
-                            theme=theme,
-                            show_tool_results=state.show_tool_results,
-                        )
+                if hidden_thinking_widget is None:
+                    hidden_thinking_widget = TranscriptMessageWidget(
+                        ChatItem(role="thinking", text=_HIDDEN_THINKING_PLACEHOLDER),
+                        theme=theme,
+                        show_tool_results=state.show_tool_results,
                     )
-                    hidden_thinking_placeholder = True
+                    widgets.append(hidden_thinking_widget)
+                self._item_widgets[id(item)] = hidden_thinking_widget
                 continue
-            hidden_thinking_placeholder = False
-            custom_markup = (
-                state.resolve_custom_markup(item, expanded=state.show_tool_results)
-                if item.role == "custom"
-                else None
+            hidden_thinking_widget = None
+            expanded = state.show_tool_results or item.always_show_tool_result
+            widget = TranscriptMessageWidget(
+                item,
+                theme=theme,
+                show_tool_results=expanded,
+                custom_markup=(
+                    state.resolve_custom_markup(item, expanded=state.show_tool_results)
+                    if item.role == "custom"
+                    else None
+                ),
+                invocation=state.resolve_tool_invocation(item),
+                result_markup=state.resolve_tool_result(item, expanded=expanded),
             )
-            self.mount(
-                TranscriptMessageWidget(
-                    item,
-                    theme=theme,
-                    show_tool_results=state.show_tool_results or item.always_show_tool_result,
-                    custom_markup=custom_markup,
-                    invocation=state.resolve_tool_invocation(item),
-                    result_markup=state.resolve_tool_result(
-                        item,
-                        expanded=state.show_tool_results or item.always_show_tool_result,
-                    ),
-                )
+            self._item_widgets[id(item)] = widget
+            widgets.append(widget)
+
+        if self._window_end < total:
+            self._bottom_boundary = TranscriptWindowBoundary("later", total - self._window_end)
+            widgets.append(self._bottom_boundary)
+        elif state.assistant_buffer:
+            self._active_assistant_widget = StreamingTranscriptMessageWidget(
+                ChatItem(role="assistant", text=state.assistant_buffer),
+                theme=theme,
             )
-        if state.assistant_buffer:
-            self.mount(
-                TranscriptMessageWidget(
-                    ChatItem(role="assistant", text=state.assistant_buffer),
-                    theme=theme,
-                    show_tool_results=state.show_tool_results,
-                )
-            )
+            self._active_message_widgets.append(self._active_assistant_widget)
+            widgets.append(self._active_assistant_widget)
+
+        if widgets:
+            self.mount(*widgets)
+        self._hidden_thinking_placeholder_visible = (
+            hidden_thinking_widget is not None and self._window_end == total
+        )
         self.refresh(layout=True)
         if scroll_end:
             self._request_follow_scroll()
@@ -708,11 +944,24 @@ class TranscriptView(VerticalScroll):
         invocation: str | None = None,
         result_markup: str | None = None,
     ) -> TranscriptMessageWidget | StreamingTranscriptMessageWidget:
-        """Append one transcript item without rebuilding previous blocks."""
+        """Append one item, paging to the latest window only for followed output."""
         should_follow = self._should_follow_output if not scroll_end else True
         await self._finalize_active_assistant_message()
         await self._finalize_active_thinking_message()
         self._render_theme = theme
+        state = self._render_state
+        item_index = _identity_index(state.items, item) if state is not None else None
+
+        if state is not None and item_index is not None and self._window_end < item_index:
+            if should_follow:
+                self._window_end = 0
+                self._redraw(scroll_end=True)
+                mounted = self._item_widgets.get(id(item))
+                if mounted is not None:
+                    return mounted
+            elif self._bottom_boundary is not None:
+                self._bottom_boundary.update_count(len(state.items) - self._window_end)
+
         widget = _transcript_widget(
             item,
             theme=theme,
@@ -721,15 +970,61 @@ class TranscriptView(VerticalScroll):
             invocation=invocation,
             result_markup=result_markup,
         )
-        await self.mount(widget)
+        if (
+            state is not None
+            and item_index is not None
+            and (
+                item_index < self._window_start
+                or (item_index > self._window_end and not should_follow)
+            )
+        ):
+            return widget
+        if state is not None and item_index is not None:
+            self._window_end = max(self._window_end, item_index + 1)
+        await self.mount(widget, before=self._bottom_boundary)
+        self._item_widgets[id(item)] = widget
         self._active_assistant_widget = None
         self._active_thinking_widget = None
+        self._active_message_widgets = []
         self._hidden_thinking_placeholder_visible = False
-        self._last_render_width = self.scrollable_content_region.width
+
+        if (
+            state is not None
+            and self._window_end - self._window_start
+            > TRANSCRIPT_WINDOW_ITEMS + TRANSCRIPT_WINDOW_OVERSCAN_ITEMS
+        ):
+            self._window_end = len(state.items)
+            self._window_start = max(0, self._window_end - TRANSCRIPT_WINDOW_ITEMS)
+            self._redraw(scroll_end=should_follow, preserve_window=True)
+            widget = self._item_widgets.get(id(item), widget)
+        elif self._top_boundary is not None:
+            self._top_boundary.update_count(self._window_start)
+
         self.refresh(layout=True)
         if should_follow:
             self._request_follow_scroll(force=scroll_end)
         return widget
+
+    async def update_tool_results_visibility(
+        self,
+        state: TuiState,
+        *,
+        theme: TuiTheme = TAU_DARK_THEME,
+    ) -> None:
+        """Update only mounted rows whose rendering depends on result visibility."""
+        self._render_state = state
+        self._render_theme = theme
+        for item in state.items[self._window_start : self._window_end]:
+            if item.role not in {"tool", "skill", "branch_summary", "compaction_summary"}:
+                continue
+            expanded = state.show_tool_results or item.always_show_tool_result
+            await self.update_item(
+                item,
+                theme=theme,
+                show_tool_results=expanded,
+                invocation=state.resolve_tool_invocation(item),
+                result_markup=state.resolve_tool_result(item, expanded=expanded),
+            )
 
     async def update_item(
         self,
@@ -740,32 +1035,32 @@ class TranscriptView(VerticalScroll):
         invocation: str | None = None,
         result_markup: str | None = None,
     ) -> bool:
-        """Re-render one already-mounted transcript item in place."""
-        for child in self.children:
-            if isinstance(child, TranscriptMessageWidget) and child.item is item:
-                # Prefer updating the mounted widget's content: remounting
-                # forces a layout pass and follow-scroll on every call, which
-                # reads as transcript flicker at spinner-tick frequency.
-                if child.refresh_invocation(
-                    show_tool_results=show_tool_results,
-                    invocation=invocation,
-                    result_markup=result_markup,
-                ):
-                    return True
-                replacement = _transcript_widget(
-                    item,
-                    theme=theme,
-                    show_tool_results=show_tool_results,
-                    invocation=invocation,
-                    result_markup=result_markup,
-                )
-                await self.mount(replacement, after=child)
-                await child.remove()
-                self.refresh(layout=True)
-                if self._should_follow_output:
-                    self._request_follow_scroll()
-                return True
-        return False
+        """Update a mounted item in O(1); off-screen state is rendered when paged in."""
+        child = self._item_widgets.get(id(item))
+        if not isinstance(child, TranscriptMessageWidget) or child.item is not item:
+            return False
+        # Prefer updating the mounted widget's content: remounting forces a
+        # layout pass and visible flicker for live progress and elapsed timers.
+        if child.refresh_invocation(
+            show_tool_results=show_tool_results,
+            invocation=invocation,
+            result_markup=result_markup,
+        ):
+            return True
+        replacement = _transcript_widget(
+            item,
+            theme=theme,
+            show_tool_results=show_tool_results,
+            invocation=invocation,
+            result_markup=result_markup,
+        )
+        await self.mount(replacement, after=child)
+        await child.remove()
+        self._item_widgets[id(item)] = replacement
+        self.refresh(layout=True)
+        if self._should_follow_output:
+            self._request_follow_scroll()
+        return True
 
     async def start_assistant_message(
         self,
@@ -783,9 +1078,9 @@ class TranscriptView(VerticalScroll):
             theme=theme,
         )
         self._render_theme = theme
-        await self.mount(widget)
+        await self.mount(widget, before=self._bottom_boundary)
         self._active_assistant_widget = widget
-        self._last_render_width = self.scrollable_content_region.width
+        self._active_message_widgets.append(widget)
         if should_follow:
             self._request_follow_scroll(force=scroll_end)
         return widget
@@ -797,7 +1092,9 @@ class TranscriptView(VerticalScroll):
         theme: TuiTheme = TAU_DARK_THEME,
         scroll_end: bool = False,
     ) -> None:
-        """Append streamed assistant text to the active message widget."""
+        """Append streamed assistant text when the latest window is mounted."""
+        if not self._window_is_latest:
+            return
         should_follow = self._should_follow_output if not scroll_end else True
         widget = await self.start_assistant_message(theme=theme, scroll_end=scroll_end)
         await widget.append_fragment(delta)
@@ -813,6 +1110,16 @@ class TranscriptView(VerticalScroll):
         scroll_end: bool = False,
     ) -> None:
         """Append streamed thinking text or one hidden-thinking placeholder."""
+        state = self._render_state
+        if state is not None:
+            # The adapter adds provisional thinking items before this method runs.
+            was_latest = self._window_end >= max(0, len(state.items) - 1)
+            if was_latest:
+                self._window_end = len(state.items)
+            else:
+                if self._bottom_boundary is not None:
+                    self._bottom_boundary.update_count(len(state.items) - self._window_end)
+                return
         should_follow = self._should_follow_output if not scroll_end else True
         if not show_thinking:
             if self._hidden_thinking_placeholder_visible:
@@ -825,10 +1132,10 @@ class TranscriptView(VerticalScroll):
                 theme=theme,
                 show_tool_results=False,
             )
-            await self.mount(widget, before=self._active_assistant_widget)
+            await self.mount(widget, before=self._active_assistant_widget or self._bottom_boundary)
+            self._active_message_widgets.append(widget)
             self._active_thinking_widget = None
             self._hidden_thinking_placeholder_visible = True
-            self._last_render_width = self.scrollable_content_region.width
             self.refresh(layout=True)
             if should_follow:
                 self._request_follow_scroll(force=scroll_end)
@@ -841,25 +1148,97 @@ class TranscriptView(VerticalScroll):
             )
             await self.mount(
                 self._active_thinking_widget,
-                before=self._active_assistant_widget,
+                before=self._active_assistant_widget or self._bottom_boundary,
             )
+            self._active_message_widgets.append(self._active_thinking_widget)
         await self._active_thinking_widget.append_fragment(delta)
         if should_follow:
             self._request_follow_scroll(force=scroll_end)
 
-    async def finish_assistant_message(self, text: str | None = None) -> None:
+    async def finish_assistant_message(
+        self,
+        text: str | None = None,
+        *,
+        item: ChatItem | None = None,
+    ) -> None:
         """Finalize the active assistant widget after the provider sends the full message."""
         widget = self._active_assistant_widget
         if widget is None:
-            if text:
+            if item is not None:
+                await self.append_item(item, theme=self._render_theme)
+            elif text:
                 await self.append_item(
                     ChatItem(role="assistant", text=text),
                     theme=self._render_theme,
                 )
             return
         await widget.finalize(text)
+        if item is not None:
+            widget.item = item
+            self._item_widgets[id(item)] = widget
         self._active_assistant_widget = None
+        self._active_message_widgets = [
+            candidate for candidate in self._active_message_widgets if candidate is not widget
+        ]
         self._hidden_thinking_placeholder_visible = False
+
+    async def finish_structured_assistant_message(
+        self,
+        items: Sequence[ChatItem],
+        *,
+        theme: TuiTheme = TAU_DARK_THEME,
+        show_thinking: bool,
+    ) -> None:
+        """Replace only the provisional assistant tail with canonical ordered blocks."""
+        should_follow = self._should_follow_output
+        for widget in tuple(self._active_message_widgets):
+            if widget.parent is self:
+                await widget.remove()
+        self._active_message_widgets.clear()
+        self._active_assistant_widget = None
+        self._active_thinking_widget = None
+        self._hidden_thinking_placeholder_visible = False
+        for item_id, widget in tuple(self._item_widgets.items()):
+            if widget.parent is None:
+                del self._item_widgets[item_id]
+
+        state = self._render_state
+        if state is not None:
+            self._window_end = len(state.items)
+        hidden_widget: TranscriptMessageWidget | None = None
+        mounted: list[Widget] = []
+        for item in items:
+            if item.role == "thinking" and not show_thinking:
+                if hidden_widget is None:
+                    hidden_widget = TranscriptMessageWidget(
+                        ChatItem(role="thinking", text=_HIDDEN_THINKING_PLACEHOLDER),
+                        theme=theme,
+                        show_tool_results=False,
+                    )
+                    mounted.append(hidden_widget)
+                self._item_widgets[id(item)] = hidden_widget
+                continue
+            hidden_widget = None
+            widget = TranscriptMessageWidget(
+                item,
+                theme=theme,
+                show_tool_results=False,
+            )
+            self._item_widgets[id(item)] = widget
+            mounted.append(widget)
+        if mounted:
+            await self.mount(*mounted, before=self._bottom_boundary)
+        self._hidden_thinking_placeholder_visible = hidden_widget is not None
+
+        if (
+            state is not None
+            and self._window_end - self._window_start
+            > TRANSCRIPT_WINDOW_ITEMS + TRANSCRIPT_WINDOW_OVERSCAN_ITEMS
+        ):
+            self._window_start = max(0, self._window_end - TRANSCRIPT_WINDOW_ITEMS)
+            self._redraw(scroll_end=should_follow, preserve_window=True)
+        elif should_follow:
+            self._request_follow_scroll()
 
     @property
     def lines(self) -> tuple[TranscriptLine, ...]:
@@ -874,6 +1253,16 @@ class TranscriptView(VerticalScroll):
             for message in messages
             for line in message.selection_text.splitlines()
         )
+
+
+def _identity_index(items: Sequence[ChatItem], target: ChatItem) -> int | None:
+    """Return an item's identity-based index with an O(1) append-path fast path."""
+    if items and items[-1] is target:
+        return len(items) - 1
+    for index in range(len(items) - 2, -1, -1):
+        if items[index] is target:
+            return index
+    return None
 
 
 def _last_transcript_child_is_hidden_thinking_placeholder(children: Sequence[Widget]) -> bool:
@@ -966,7 +1355,7 @@ def _split_rich_style_colors(style: str) -> tuple[str | None, str | None]:
 
 def _use_plain_transcript_body(item: ChatItem) -> bool:
     """Return whether a transcript item can use fast selectable plain text."""
-    return item.role in {"user", "tool", "skill", "error"}
+    return item.highlight == "update" or item.role in {"user", "tool", "skill", "error"}
 
 
 def _transcript_plain_body_text(
@@ -1095,45 +1484,66 @@ def render_session_sidebar(
     theme: TuiTheme = TAU_DARK_THEME,
 ) -> RenderableType:
     """Render a dark, minimalist summary of the active coding session."""
-    metadata = Table.grid(padding=(0, 1))
-    metadata.add_column(style=theme.completion_description, no_wrap=True)
-    metadata.add_column(style=theme.prompt_text)
-    metadata.add_row("provider", session.provider_name)
-    metadata.add_row("model", session.model)
-    metadata.add_row("thinking", _thinking_level(session))
-    metadata.add_row("tools", str(len(session.tools)))
-    metadata.add_row("skills", str(len(session.skills)))
+    title = Text(session.session_title or "Untitled session", style=f"bold {theme.accent}")
+    stats = session.session_stats
+    activity = Text(
+        f"{stats.turn_count} {_plural(stats.turn_count, 'turn')}, "
+        f"{stats.tool_call_count} tool {_plural(stats.tool_call_count, 'call')}",
+        style=theme.completion_description,
+    )
+    usage = Text(style=theme.completion_description)
+    usage.append(f"{_compact_usage_count(stats.input_tokens)} in, ")
+    usage.append(f"{_compact_usage_count(stats.output_tokens)} out")
+    usage.append(" · ", style=theme.completion_description)
+    if stats.estimated_cost is None:
+        usage.append("$N/A", style=theme.completion_description)
+    else:
+        usage.append(f"~{_format_cost(stats.estimated_cost)}")
 
-    tools = _bullet_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
-    skills = _bullet_list(
+    threshold = session.auto_compact_token_threshold
+    compaction = Text(
+        "off" if threshold is None else f"auto at {_compact_token_count(threshold)}",
+        style=theme.completion_description,
+    )
+    tools = _comma_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
+    skills = _limited_bullet_list(
         [skill.name for skill in session.skills],
-        empty="No skills loaded yet",
+        empty="No skills loaded",
         theme=theme,
     )
-    prompts = _bullet_list(
+    prompts = _comma_list(
         [template.name for template in session.prompt_templates],
         empty="No prompt templates",
         theme=theme,
     )
-    context = _bullet_list(
+    extensions = _comma_list(
+        list(session.extension_names),
+        empty="No extensions",
+        theme=theme,
+    )
+    context = _limited_bullet_list(
         _context_file_labels(session.context_files, cwd=session.cwd),
         empty="No context files",
         theme=theme,
     )
-    equation = Text(TAU_SIDEBAR_LOGO, style=f"bold {theme.prompt_text}")
-
-    return Group(
-        Padding(Align.center(equation), (0, 0, 1, 0)),
-        _sidebar_section("session", metadata, theme=theme),
-        _sidebar_separator(theme=theme),
+    sections = (
+        Padding(title, (0, 0, 0, 1)),
+        _sidebar_section("activity", activity, theme=theme),
+        _sidebar_section("cumulative usage", usage, theme=theme),
+        _sidebar_section("compaction", compaction, theme=theme),
         _sidebar_section("context", context, theme=theme),
-        _sidebar_separator(theme=theme),
         _sidebar_section("tools", tools, theme=theme),
-        _sidebar_separator(theme=theme),
         _sidebar_section("skills", skills, theme=theme),
-        _sidebar_separator(theme=theme),
         _sidebar_section("prompts", prompts, theme=theme),
+        _sidebar_section("extensions", extensions, theme=theme),
     )
+    separated_sections: list[RenderableType] = []
+    for index, section in enumerate(sections):
+        if index:
+            separated_sections.append(_sidebar_separator(theme=theme))
+        separated_sections.append(section)
+
+    return Group(*separated_sections)
 
 
 def _sidebar_section(
@@ -1143,13 +1553,20 @@ def _sidebar_section(
     theme: TuiTheme,
 ) -> RenderableType:
     """Render one sidebar section without a surrounding border."""
-    header = Text(title, style=f"bold {theme.accent}")
-    return Group(Padding(header, (0, 0, 0, 1)), Padding(body, (0, 0, 1, 1)))
+    header = Text(title, style=f"bold {theme.prompt_text}")
+    return Group(Padding(header, (0, 0, 0, 1)), Padding(body, (0, 0, 0, 1)))
 
 
 def _sidebar_separator(*, theme: TuiTheme) -> RenderableType:
-    """Render a subtle divider between sidebar sections."""
+    """Render a spaced divider between adjacent sidebar sections."""
     return Padding(Rule(style=theme.border), (0, 0, 1, 0))
+
+
+def _sidebar_brand(*, theme: TuiTheme) -> RenderableType:
+    brand = Text(style=f"bold {theme.prompt_text}")
+    brand.append(TAU_SIDEBAR_LOGO)
+    brand.append(f"  {current_version()}", style=theme.completion_description)
+    return Align.center(brand)
 
 
 def render_compact_session_info(
@@ -1158,18 +1575,14 @@ def render_compact_session_info(
     theme: TuiTheme = TAU_DARK_THEME,
 ) -> RenderableType:
     """Render the session facts below the prompt."""
-    left = Text(
-        f"{_short_path(session.cwd)} ({_git_branch(session.cwd)})",
-        style=theme.prompt_text,
-        overflow="fold",
-        no_wrap=False,
-    )
+    left = _styled_cwd(session.cwd, theme=theme)
     right = Text(style=theme.muted_text, overflow="fold", no_wrap=False, justify="right")
-    right.append(_context_usage(session), style=theme.completion_description)
-    right.append("  ")
-    right.append(f"{session.provider_name}:{session.model}", style=theme.prompt_text)
+    right.append(session.provider_name, style=theme.completion_description)
+    right.append(f":{session.model}", style=theme.prompt_text)
     right.append(" ")
     right.append(f"({_thinking_level(session)})", style=theme.completion_description)
+    right.append("\n")
+    right.append(_context_usage(session), style=theme.completion_description)
 
     table = Table.grid(expand=True)
     table.add_column(ratio=1)
@@ -1223,44 +1636,28 @@ def render_chat_item(
 
 
 def _chat_item_role_style(item: ChatItem, theme: TuiTheme) -> TuiRoleStyle:
+    if item.highlight == "update":
+        return TuiRoleStyle(border="#ffff00", body="bold #ffff00")
     if item.role == "tool" and item.tool_result_text:
         if item.tool_result_text.startswith("✓"):
-            return TuiRoleStyle(
-                border=_tool_success_color(theme),
-                body=theme.role_styles["tool"].body,
-            )
+            return TuiRoleStyle(border=theme.success, body=theme.role_styles["tool"].body)
         if item.tool_result_text.startswith("✗"):
-            return TuiRoleStyle(border="#ff4f4f", body=theme.role_styles["tool"].body)
+            return TuiRoleStyle(border=theme.error, body=theme.role_styles["tool"].body)
     return theme.role_styles[item.role]
 
 
 def _tool_accent_style(item: ChatItem, *, theme: TuiTheme) -> str | None:
-    if item.role != "tool" or not item.tool_result_text:
+    # Bare colors: the accent span inherits its background from the tool body
+    # style, so it blends with any theme's transcript background.
+    if item.role != "tool":
         return None
+    if item.tool_result_text is None:
+        return theme.role_styles["tool"].border
     if item.tool_result_text.startswith("✓"):
-        return _tool_success_style(theme)
+        return theme.tool_success_text
     if item.tool_result_text.startswith("✗"):
-        return _tool_error_style(theme)
+        return theme.tool_error_text
     return None
-
-
-def _tool_success_color(theme: TuiTheme) -> str:
-    if theme.name == "tau-light":
-        return "#166534"
-    return "#9cffb1"
-
-
-def _tool_success_style(theme: TuiTheme) -> str:
-    color = _tool_success_color(theme)
-    if theme.name == "tau-light":
-        return color
-    return f"{color} on #000000"
-
-
-def _tool_error_style(theme: TuiTheme) -> str:
-    if theme.name == "tau-light":
-        return theme.role_styles["error"].border
-    return "#ff4f4f on #000000"
 
 
 def _render_tool_chat_body(
@@ -1596,15 +1993,22 @@ def _plain_text(text: str, *, body_style: str) -> Text:
 
 def _context_usage(session: SessionSummarySource) -> str:
     threshold = session.auto_compact_token_threshold
-    if threshold is None or threshold <= 0:
-        return (
-            f"{_compact_token_count(session.context_token_estimate)}"
-            f"/{_compact_token_count(session.context_window_tokens)} context"
-        )
-    return (
-        f"{_compact_token_count(session.context_token_estimate)}"
-        f"/{_compact_token_count(threshold)} context"
-    )
+    limit = session.context_window_tokens if threshold is None or threshold <= 0 else threshold
+    return f"{_compact_token_count(session.context_token_estimate)}/{_compact_token_count(limit)}"
+
+
+def _styled_cwd(cwd: Path, *, theme: TuiTheme) -> Text:
+    """Style the parent path as metadata while emphasizing the working directory."""
+    short_path = _short_path(cwd)
+    parent, separator, name = short_path.rpartition("/")
+    text = Text(overflow="fold", no_wrap=False)
+    if separator and name:
+        text.append(f"{parent}{separator}", style=theme.completion_description)
+        text.append(name, style=theme.prompt_text)
+    else:
+        text.append(short_path, style=theme.prompt_text)
+    text.append(f" ({_git_branch(cwd)})", style=theme.completion_description)
+    return text
 
 
 def _compact_token_count(value: int) -> str:
@@ -1630,7 +2034,11 @@ def _context_file_label(path: Path, *, cwd: Path) -> str:
     try:
         return str(expanded_path.resolve().relative_to(cwd.expanduser().resolve()))
     except (OSError, ValueError):
-        return _short_path(expanded_path)
+        try:
+            absolute_path = expanded_path.resolve()
+        except OSError:
+            absolute_path = expanded_path.absolute()
+        return _short_path(absolute_path)
 
 
 def _thinking_level(session: SessionSummarySource) -> str:
@@ -1717,6 +2125,110 @@ def render_completion_suggestions(
     return table
 
 
+@dataclass(frozen=True, slots=True)
+class _LineLimitedCommaList:
+    items: tuple[str, ...]
+    empty: str
+    style: str
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        if not self.items:
+            yield Text(self.empty, style=self.style)
+            return
+
+        visible_count = 0
+        for count in range(1, len(self.items) + 1):
+            candidate = self._text(self.items[:count])
+            if len(candidate.wrap(console, options.max_width)) > SIDEBAR_COMMA_LIST_MAX_LINES:
+                break
+            visible_count = count
+
+        if visible_count:
+            text = self._text(self.items[:visible_count])
+        else:
+            visible_count = 1
+            text = self._truncate_to_line_budget(
+                self._text(self.items[:visible_count]),
+                console=console,
+                width=options.max_width,
+            )
+
+        hidden_count = len(self.items) - visible_count
+        if hidden_count:
+            text.append("\n")
+            text.append(f"...({hidden_count} more)", style=self.style)
+        yield text
+
+    def _truncate_to_line_budget(self, text: Text, *, console: Console, width: int) -> Text:
+        wrapped_lines = list(text.wrap(console, width))
+        visible_lines = [line.copy() for line in wrapped_lines[:SIDEBAR_COMMA_LIST_MAX_LINES]]
+        if len(wrapped_lines) > SIDEBAR_COMMA_LIST_MAX_LINES:
+            last_line = visible_lines[-1]
+            last_line.truncate(max(0, width - 1), overflow="crop")
+            last_line.append("…", style=self.style)
+        return Text("\n").join(visible_lines)
+
+    def _text(self, items: Sequence[str]) -> Text:
+        return Text(
+            ", ".join(items),
+            style=self.style,
+            overflow="fold",
+            no_wrap=False,
+        )
+
+
+def _comma_list(
+    items: Sequence[str],
+    *,
+    empty: str,
+    theme: TuiTheme,
+) -> RenderableType:
+    return _LineLimitedCommaList(
+        items=tuple(items),
+        empty=empty,
+        style=theme.completion_description,
+    )
+
+
+def _compact_usage_count(value: int) -> str:
+    if value < 1_000:
+        return str(value)
+    if value < 1_000_000:
+        return f"{value / 1_000:.1f}".rstrip("0").rstrip(".") + "k"
+    return f"{value / 1_000_000:.1f}".rstrip("0").rstrip(".") + "m"
+
+
+def _format_cost(value: float) -> str:
+    if 0 < value < 0.01:
+        return f"${value:.3f}"
+    return f"${value:.2f}"
+
+
+def _plural(count: int, singular: str) -> str:
+    return singular if count == 1 else f"{singular}s"
+
+
+def _limited_bullet_list(
+    items: Sequence[str],
+    *,
+    empty: str,
+    theme: TuiTheme,
+) -> Text:
+    text = _bullet_list(
+        items[:SIDEBAR_BULLET_LIST_LIMIT],
+        empty=empty,
+        theme=theme,
+    )
+    hidden_count = len(items) - SIDEBAR_BULLET_LIST_LIMIT
+    if hidden_count > 0:
+        text.append(f"\n...({hidden_count} more)", style=theme.completion_description)
+    return text
+
+
 def _bullet_list(
     items: Sequence[str],
     *,
@@ -1732,7 +2244,7 @@ def _bullet_list(
         if index:
             text.append("\n")
         text.append("• ", style=theme.completion_description)
-        text.append(item, style=theme.prompt_text)
+        text.append(item, style=theme.completion_description)
     return text
 
 

@@ -6,10 +6,13 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from inspect import isawaitable
 from pathlib import Path
+from time import time_ns
 from typing import Literal, Protocol
 
-from tau_agent.events import AgentEvent
-from tau_agent.messages import AgentMessage
+from tau_agent.events import AgentEvent, AgentStartEvent
+from tau_agent.events import TurnEndEvent as AgentTurnEndEvent
+from tau_agent.events import TurnStartEvent as AgentTurnStartEvent
+from tau_agent.messages import AgentMessage, TextContent
 from tau_agent.tools import (
     AgentTool,
     AgentToolResult,
@@ -32,6 +35,7 @@ from tau_coding.extensions.api import (
     ExtensionAPI,
     ExtensionCommandContext,
     ExtensionCommandHandler,
+    ExtensionContext,
     ExtensionError,
     ExtensionGeneration,
     ExtensionHandler,
@@ -48,6 +52,8 @@ from tau_coding.extensions.api import (
     ToolCallHookResult,
     ToolResultHookEvent,
     ToolResultHookResult,
+    TurnEndEvent,
+    TurnStartEvent,
     UiBridge,
 )
 from tau_coding.extensions.loader import (
@@ -159,6 +165,7 @@ class ExtensionRuntime:
         self._ui: UiBridge = ui or NullUiBridge()
         self._turn_requested: TurnRequestedCallback | None = None
         self._harness_unsubscribe: Callable[[], None] | None = None
+        self._extension_turn_index = 0
         self._generation = ExtensionGeneration()
 
     # -- loading -----------------------------------------------------------
@@ -405,10 +412,11 @@ class ExtensionRuntime:
 
     def render_tool_result(
         self,
+        tool_name: str,
         result: AgentToolResult,
         expanded: bool,
     ) -> str | None:
-        """Render a tool result via its tool's `render_result`, or ``None``.
+        """Render a named tool's result via `render_result`, or ``None``.
 
         Installed into frontends as the tool-result display resolver, the
         counterpart of `render_tool_call` for the other end of the row's
@@ -417,25 +425,23 @@ class ExtensionRuntime:
         its generic result formatting. Failures are diagnosed once per tool
         name (render paths re-run on every redraw).
         """
-        registered = self._tools.get(result.name)
+        registered = self._tools.get(tool_name)
         if registered is None or registered.tool.render_result is None:
             return None
-        failure_key = f"render_result:{result.name}"
+        failure_key = f"render_result:{tool_name}"
         try:
             markup = registered.tool.render_result(result, expanded=expanded)
         except Exception as exc:  # noqa: BLE001 - a renderer must never crash the frontend
             if failure_key not in self._renderer_failures_reported:
                 self._renderer_failures_reported.add(failure_key)
                 self._record_runtime_failure(
-                    registered.extension, f"render_result:{result.name}", exc
+                    registered.extension, f"render_result:{tool_name}", exc
                 )
             return None
         if markup is not None and not isinstance(markup, str):
             if failure_key not in self._renderer_failures_reported:
                 self._renderer_failures_reported.add(failure_key)
-                self._record_bad_result(
-                    registered.extension, f"render_result:{result.name}", markup
-                )
+                self._record_bad_result(registered.extension, f"render_result:{tool_name}", markup)
             return None
         return markup
 
@@ -544,6 +550,11 @@ class ExtensionRuntime:
         return tuple(registration.tool for registration in self._tools.values())
 
     @property
+    def extension_tool_sources(self) -> dict[str, str]:
+        """Map extension-registered tool names to their owning extension."""
+        return {name: registration.extension for name, registration in self._tools.items()}
+
+    @property
     def prompt_guidelines(self) -> tuple[str, ...]:
         """Return standalone guideline lines in registration order."""
         return tuple(guideline for _, guideline in self._prompt_guidelines)
@@ -617,37 +628,38 @@ class ExtensionRuntime:
 
     def _wrap_tool(self, tool: AgentTool) -> AgentTool:
         async def executor(
+            tool_call_id: str,
             arguments: Mapping[str, JSONValue],
             signal: ToolCancellationToken | None = None,
-            *,
             on_update: ToolUpdateCallback | None = None,
         ) -> AgentToolResult:
             call_outcome = await self._run_tool_call_hooks(tool.name, arguments)
             if call_outcome.block:
                 reason = call_outcome.reason or "blocked by an extension"
-                message = f"Tool call blocked: {reason}"
-                return AgentToolResult(
-                    tool_call_id="",
-                    name=tool.name,
-                    ok=False,
-                    content=message,
-                    error=message,
-                )
+                return AgentToolResult(content=[TextContent(text=f"Tool call blocked: {reason}")])
             effective_arguments = (
                 call_outcome.arguments if call_outcome.arguments is not None else arguments
             )
-            # The wrapper always declares `on_update`; the inner tool's own
-            # inspect-gate drops it for executors that do not accept it.
-            result = await tool.execute(effective_arguments, signal=signal, on_update=on_update)
+            result = await tool.execute(
+                tool_call_id,
+                effective_arguments,
+                signal=signal,
+                on_update=on_update,
+            )
             return await self._run_tool_result_hooks(tool.name, effective_arguments, result)
 
         return AgentTool(
             name=tool.name,
+            label=tool.label,
             description=tool.description,
-            input_schema=tool.input_schema,
-            executor=executor,
+            parameters=tool.parameters,
+            execute_fn=executor,
             prompt_snippet=tool.prompt_snippet,
             prompt_guidelines=tool.prompt_guidelines,
+            prepare_arguments=tool.prepare_arguments,
+            execution_mode=tool.execution_mode,
+            render_call=tool.render_call,
+            render_result=tool.render_result,
         )
 
     async def _run_tool_call_hooks(
@@ -659,7 +671,7 @@ class ExtensionRuntime:
         for extension, handler in self._handlers_for("tool_call"):
             event = ToolCallHookEvent(tool_name=tool_name, arguments=effective)
             try:
-                result = await _resolve(handler(event))
+                result = await _resolve(handler(event, self._fresh_context(extension)))
             except Exception as exc:  # noqa: BLE001 - fail-safe: an error blocks the tool
                 self._record_runtime_failure(extension, "tool_call", exc)
                 return ToolCallHookResult(
@@ -689,7 +701,7 @@ class ExtensionRuntime:
         for extension, handler in self._handlers_for("tool_result"):
             event = ToolResultHookEvent(tool_name=tool_name, arguments=arguments, result=current)
             try:
-                outcome = await _resolve(handler(event))
+                outcome = await _resolve(handler(event, self._fresh_context(extension)))
             except Exception as exc:  # noqa: BLE001 - result hooks are observational-ish
                 self._record_runtime_failure(extension, "tool_result", exc)
                 continue
@@ -700,9 +712,7 @@ class ExtensionRuntime:
                 continue
             updates: dict[str, object] = {}
             if outcome.content is not None:
-                updates["content"] = outcome.content
-            if outcome.ok is not None:
-                updates["ok"] = outcome.ok
+                updates["content"] = [TextContent(text=outcome.content)]
             if outcome.details is not None:
                 updates["details"] = outcome.details
             if updates:
@@ -787,7 +797,8 @@ class ExtensionRuntime:
                             text=current,
                             source=source,
                             streaming_behavior=streaming_behavior,
-                        )
+                        ),
+                        self._fresh_context(extension),
                     )
                 )
             except Exception as exc:  # noqa: BLE001 - extensions are an isolation boundary
@@ -804,19 +815,43 @@ class ExtensionRuntime:
                 current = result.text
         return InputHookOutcome(handled=False, text=current)
 
-    async def _on_agent_event(self, event: AgentEvent) -> None:
-        handlers = list(self._handlers_for(event.type))
+    async def emit_event(self, event: object) -> None:
+        """Dispatch one canonical agent or coding-session event to extensions."""
+        event_type = getattr(event, "type", None)
+        if not isinstance(event_type, str):
+            raise TypeError("Extension events must expose a string type")
+        handlers = list(self._handlers_for(event_type))
         handlers.extend(self._handlers_for(AGENT_EVENT_WILDCARD))
         for extension, handler in handlers:
             try:
-                await _resolve(handler(event))
+                await _resolve(handler(event, self._fresh_context(extension)))
             except Exception as exc:  # noqa: BLE001 - extensions are an isolation boundary
-                self._record_runtime_failure(extension, event.type, exc)
+                self._record_runtime_failure(extension, event_type, exc)
+
+    async def _on_agent_event(self, event: AgentEvent) -> None:
+        """Adapt core turn events to Pi's extension-facing session metadata."""
+        extension_event: object = event
+        if isinstance(event, AgentStartEvent):
+            self._extension_turn_index = 0
+        elif isinstance(event, AgentTurnStartEvent):
+            extension_event = TurnStartEvent(
+                turn_index=self._extension_turn_index,
+                timestamp=time_ns() // 1_000_000,
+            )
+        elif isinstance(event, AgentTurnEndEvent):
+            extension_event = TurnEndEvent(
+                turn_index=self._extension_turn_index,
+                message=event.message,
+                tool_results=list(event.tool_results),
+            )
+        await self.emit_event(extension_event)
+        if isinstance(event, AgentTurnEndEvent):
+            self._extension_turn_index += 1
 
     async def _emit_lifecycle(self, event_name: str, payload: object) -> None:
         for extension, handler in self._handlers_for(event_name):
             try:
-                await _resolve(handler(payload))
+                await _resolve(handler(payload, self._fresh_context(extension)))
             except Exception as exc:  # noqa: BLE001 - extensions are an isolation boundary
                 self._record_runtime_failure(extension, event_name, exc)
 
@@ -832,6 +867,11 @@ class ExtensionRuntime:
             if extension.name == name:
                 return extension
         return None
+
+    def _fresh_context(self, extension_name: str) -> ExtensionContext:
+        """Return a fresh context for one handler invocation."""
+        api = self._api_for(extension_name)
+        return ExtensionContext(self, api._generation)
 
     def _api_for(self, extension_name: str) -> ExtensionAPI:
         extension = self._extension_by_name(extension_name)

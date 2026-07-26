@@ -8,33 +8,30 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from tau_agent.messages import AgentMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    BranchSummaryMessage,
+    CompactionSummaryMessage,
+    CustomMessage,
+    TextContent,
+    ThinkingContent,
+    ToolResultMessage,
+    UserMessage,
+)
 from tau_agent.tools import AgentToolResult, ToolCall
 from tau_agent.types import JSONValue
 from tau_coding.extensions.api import CustomMessageMarkup, ToolCallMarkup, ToolResultMarkup
 from tau_coding.skills import Skill, parse_skill_invocation
+from tau_coding.tui.themes import TranscriptRole
 
-ChatItemRole = Literal[
-    "user",
-    "assistant",
-    "tool",
-    "error",
-    "status",
-    "thinking",
-    "skill",
-    "branch_summary",
-    "compaction_summary",
-    "custom",
-]
+ChatItemRole = TranscriptRole
 TOOL_RESULT_PREVIEW_LINES = 8
 TOOL_PATCH_PREVIEW_LINES = 32
 TOOL_RESULT_PREVIEW_CHARS = 2_000
 TERMINAL_COMMAND_OUTPUT_PREVIEW_LINES = 120
-TOOL_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
-# Static invocation markers the spinner stands in for while a tool runs.
-_INVOCATION_MARKERS = ("→ ", "▸ ")
-# Show the live elapsed time on an executing tool row once it stops being
-# instant; quick reads/edits never flash a "(0s)".
+# Show live elapsed time on an executing tool row once it stops being instant;
+# quick reads/edits never flash a "(0s)".
 TOOL_TIMER_MIN_SECONDS = 1.0
 
 
@@ -56,6 +53,7 @@ class ChatItem:
     always_show_tool_result: bool = False
     custom_type: str | None = None
     details: dict[str, JSONValue] | None = None
+    highlight: Literal["update"] | None = None
 
 
 @dataclass(slots=True)
@@ -74,7 +72,12 @@ class TuiState:
     custom_renderer: CustomMessageMarkup | None = None
     tool_call_renderer: ToolCallMarkup | None = None
     tool_result_renderer: ToolResultMarkup | None = None
-    tool_spinner: str | None = None
+    _tool_items_by_call_id: dict[str, ChatItem] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def add_item(
         self,
@@ -86,19 +89,22 @@ class TuiState:
         always_show_tool_result: bool = False,
         custom_type: str | None = None,
         details: dict[str, JSONValue] | None = None,
+        highlight: Literal["update"] | None = None,
     ) -> None:
         """Append a transcript item."""
-        self.items.append(
-            ChatItem(
-                role=role,
-                text=text,
-                tool_call_id=tool_call_id,
-                tool_result_text=tool_result_text,
-                always_show_tool_result=always_show_tool_result,
-                custom_type=custom_type,
-                details=details,
-            )
+        item = ChatItem(
+            role=role,
+            text=text,
+            tool_call_id=tool_call_id,
+            tool_result_text=tool_result_text,
+            always_show_tool_result=always_show_tool_result,
+            custom_type=custom_type,
+            details=details,
+            highlight=highlight,
         )
+        self.items.append(item)
+        if tool_call_id is not None and role in {"tool", "skill"}:
+            self._tool_items_by_call_id[tool_call_id] = item
 
     def resolve_custom_markup(self, item: ChatItem, *, expanded: bool) -> str | None:
         """Render a custom item's markup via the installed resolver, or ``None``.
@@ -117,22 +123,17 @@ class TuiState:
         Resolved lazily at render time (like custom markup) so tool calls
         restored before the extension runtime connects still pick up their
         tool's `render_call` on the next redraw. ``None`` means "no renderer"
-        and the caller falls back to the generic ``item.text``. While a tool
-        is still executing and ``tool_spinner`` is set, the current spinner
-        frame stands in for the invocation's static marker.
+        and the caller falls back to the generic ``item.text``.
         """
         if item.role != "tool":
             return None
         line: str | None = None
         if item.tool_name is not None and self.tool_call_renderer is not None:
             line = self.tool_call_renderer(item.tool_name, item.tool_arguments or {})
-        if self.tool_spinner and item.tool_result_text is None:
-            line = apply_tool_spinner(line if line is not None else item.text, self.tool_spinner)
-            if item.started_at is not None:
-                elapsed = time.monotonic() - item.started_at
-                if elapsed >= TOOL_TIMER_MIN_SECONDS:
-                    line = f"{line} ({format_elapsed(elapsed)})"
-            return line
+        if item.tool_result_text is None and item.started_at is not None:
+            elapsed = time.monotonic() - item.started_at
+            if elapsed >= TOOL_TIMER_MIN_SECONDS:
+                return f"{line if line is not None else item.text} ({format_elapsed(elapsed)})"
         return line
 
     def resolve_tool_result(self, item: ChatItem, *, expanded: bool) -> str | None:
@@ -145,7 +146,9 @@ class TuiState:
         """
         if item.role != "tool" or item.tool_result is None or self.tool_result_renderer is None:
             return None
-        return self.tool_result_renderer(item.tool_result, expanded)
+        if item.tool_name is None:
+            return None
+        return self.tool_result_renderer(item.tool_name, item.tool_result, expanded)
 
     def add_tool_call(self, tool_call: ToolCall) -> None:
         """Append a collapsed tool-call item."""
@@ -157,16 +160,16 @@ class TuiState:
                 tool_call_id=tool_call.id,
             )
             return
-        self.items.append(
-            ChatItem(
-                role="tool",
-                text=format_tool_call_block(tool_call),
-                tool_call_id=tool_call.id,
-                tool_name=tool_call.name,
-                tool_arguments=tool_call.arguments,
-                started_at=time.monotonic(),
-            )
+        item = ChatItem(
+            role="tool",
+            text=format_tool_call_block(tool_call),
+            tool_call_id=tool_call.id,
+            tool_name=tool_call.name,
+            tool_arguments=tool_call.arguments,
+            started_at=time.monotonic(),
         )
+        self.items.append(item)
+        self._tool_items_by_call_id[tool_call.id] = item
 
     def add_user_message(
         self,
@@ -219,11 +222,8 @@ class TuiState:
         self.add_item("thinking", delta)
 
     def find_tool_item(self, tool_call_id: str) -> ChatItem | None:
-        """Return the transcript item for a tool call id, or ``None``."""
-        for item in reversed(self.items):
-            if item.role in {"tool", "skill"} and item.tool_call_id == tool_call_id:
-                return item
-        return None
+        """Return the transcript item for a tool call id in O(1)."""
+        return self._tool_items_by_call_id.get(tool_call_id)
 
     def record_tool_update(self, tool_call_id: str, message: str) -> ChatItem | None:
         """Attach live progress to its pending tool call; drop orphan updates."""
@@ -233,29 +233,35 @@ class TuiState:
         item.update_text = message
         return item
 
-    def record_tool_result(self, result: AgentToolResult) -> None:
-        """Attach a tool result to its matching call, or append an orphan result."""
+    def record_tool_result(
+        self,
+        tool_call_id: str,
+        tool_name: str,
+        result: AgentToolResult,
+        is_error: bool,
+    ) -> None:
+        """Attach a Pi-compatible tool result to its matching call."""
         result_text = format_tool_result_block(
-            name=result.name,
-            ok=result.ok,
-            content=result.content,
-            data=result.data,
+            name=tool_name,
+            ok=not is_error,
+            content=result.text,
+            data=result.details if isinstance(result.details, dict) else None,
         )
-        for item in reversed(self.items):
-            if item.role in {"tool", "skill"} and item.tool_call_id == result.tool_call_id:
-                item.tool_result_text = result_text
-                item.tool_result = result
-                item.update_text = None
-                return
-        self.items.append(
-            ChatItem(
-                role="tool",
-                text=format_tool_result_summary(name=result.name, ok=result.ok),
-                tool_call_id=result.tool_call_id,
-                tool_result_text=result_text,
-                tool_result=result,
-            )
+        item = self.find_tool_item(tool_call_id)
+        if item is not None:
+            item.tool_result_text = result_text
+            item.tool_result = result
+            item.update_text = None
+            return
+        item = ChatItem(
+            role="tool",
+            text=format_tool_result_summary(name=tool_name, ok=not is_error),
+            tool_call_id=tool_call_id,
+            tool_result_text=result_text,
+            tool_result=result,
         )
+        self.items.append(item)
+        self._tool_items_by_call_id[tool_call_id] = item
 
     def toggle_tool_results(self) -> bool:
         """Toggle expanded display for tool results and return the new state."""
@@ -280,6 +286,7 @@ class TuiState:
     def clear(self) -> None:
         """Clear visible transcript state without modifying durable session history."""
         self.items.clear()
+        self._tool_items_by_call_id.clear()
         self.assistant_buffer = ""
         self.error = None
 
@@ -288,31 +295,64 @@ class TuiState:
         self.skills = tuple(skills)
 
     def load_messages(self, messages: Iterable[AgentMessage]) -> None:
-        """Populate the transcript from restored session messages."""
+        """Populate the transcript from restored canonical session messages."""
         for message in messages:
-            if message.role == "user":
+            if isinstance(message, UserMessage):
+                self.add_user_message(message.text)
+            elif isinstance(message, CustomMessage):
                 self.add_user_message(
-                    message.content,
+                    message.text,
                     custom_type=message.custom_type,
-                    details=message.details,
+                    details=message.details if isinstance(message.details, dict) else None,
                 )
-            elif message.role == "assistant":
-                if message.content:
-                    self.add_item("assistant", message.content)
-                for tool_call in message.tool_calls:
-                    self.add_tool_call(tool_call)
-            elif message.role == "tool":
+            elif isinstance(message, AssistantMessage):
+                if message.stop_reason in {"error", "aborted"}:
+                    self.add_assistant_error(message)
+                else:
+                    self.add_assistant_message(message)
+            elif isinstance(message, ToolResultMessage):
                 self.record_tool_result(
-                    AgentToolResult(
-                        tool_call_id=message.tool_call_id,
-                        name=message.name,
-                        ok=message.ok,
-                        content=message.content,
-                        data=message.data,
-                        details=message.details,
-                        error=message.error,
-                    )
+                    message.tool_call_id,
+                    message.tool_name,
+                    AgentToolResult(content=message.content, details=message.details),
+                    message.is_error,
                 )
+            elif isinstance(message, BranchSummaryMessage):
+                self.add_item(
+                    "branch_summary",
+                    "Branch summary (Ctrl+O to expand)",
+                    tool_result_text=message.summary,
+                )
+            elif isinstance(message, CompactionSummaryMessage):
+                self.add_item(
+                    "compaction_summary",
+                    "Compaction summary (Ctrl+O to expand)",
+                    tool_result_text=message.summary,
+                )
+
+    def add_assistant_message(
+        self,
+        message: AssistantMessage,
+        *,
+        include_tool_calls: bool = True,
+    ) -> None:
+        """Project canonical assistant blocks into display state in order."""
+        for block in message.content:
+            if isinstance(block, ThinkingContent):
+                if block.thinking:
+                    self.add_item("thinking", block.thinking)
+            elif isinstance(block, TextContent):
+                if block.text:
+                    self.add_item("assistant", block.text)
+            elif include_tool_calls:
+                self.add_tool_call(block)
+
+    def add_assistant_error(self, message: AssistantMessage) -> None:
+        """Project any partial response followed by its terminal error."""
+        self.add_assistant_message(message, include_tool_calls=False)
+        text = message.error_message or "Error"
+        self.error = text
+        self.add_item("error", f"Error: {text}")
 
     def _read_skill_name(self, tool_call: ToolCall) -> str | None:
         if tool_call.name != "read":
@@ -354,14 +394,6 @@ def format_elapsed(seconds: float) -> str:
         return f"{minutes}m {secs}s"
     hours, minutes = divmod(minutes, 60)
     return f"{hours}h {minutes}m"
-
-
-def apply_tool_spinner(text: str, frame: str) -> str:
-    """Show the spinner frame in place of a static invocation marker."""
-    for marker in _INVOCATION_MARKERS:
-        if text.startswith(marker):
-            return f"{frame} {text[len(marker) :]}"
-    return f"{frame} {text}"
 
 
 def format_tool_call_block(tool_call: ToolCall) -> str:

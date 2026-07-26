@@ -12,13 +12,16 @@ tau [OPTIONS] [PROMPT] [COMMAND] [ARGS]
 
 - With no arguments, `tau` opens the interactive [TUI]({{< relref "../guides/tui.md" >}}).
 - A positional `PROMPT` opens the TUI and submits it as the first turn.
-- `-p/--prompt` runs a single prompt in [print mode]({{< relref "../guides/print-mode.md" >}}).
+- `-p/--print` (or `--mode`) runs that same positional prompt in [print mode]({{< relref "../guides/print-mode.md" >}}) instead of the TUI.
+- Put flags before the prompt — Tau treats everything after the last recognized flag as prompt text, including tokens that look like flags.
 
 On TUI and text print-mode startup, Tau may show a non-blocking notice when a
-newer `tau-ai` release is available on PyPI. Disable it with
-`TAU_NO_UPDATE_CHECK=1`; utility commands such as `tau --version`, `tau sessions`,
-and `tau export` do not run the check. After an upgrade, the TUI also adds a
-one-time release-notes message to the transcript with the new features and fixes.
+newer `tau-ai` release is available on PyPI. In the TUI, this notice is the first
+transcript item and appears in bright yellow. Run `tau update` to upgrade. Disable
+the check with `TAU_NO_UPDATE_CHECK=1`; utility commands such as `tau --version`,
+`tau update`, `tau sessions`, and `tau export` do not run it. After an upgrade,
+the TUI also adds a one-time release-notes message to the transcript with the new
+features and fixes.
 
 ## Commands
 
@@ -26,8 +29,10 @@ one-time release-notes message to the transcript with the new features and fixes
 | --- | --- |
 | `tau` | Open the interactive TUI |
 | `tau "<prompt>"` | Open the TUI with an initial prompt |
+| `tau update` | Upgrade Tau with the installer that owns its environment |
 | `tau sessions` | List indexed sessions (id, title, model, cwd) |
 | `tau export <ref> [dest] [--format html\|jsonl]` | Export a session id or JSONL path (HTML default) |
+| `tau --export <ref> [dest]` | Same as `tau export`, as a top-level flag |
 | `tau providers` | List configured providers and how each authenticates |
 | `tau [setup options] setup` | Create/update an OpenAI-compatible provider |
 
@@ -35,18 +40,22 @@ one-time release-notes message to the transcript with the new features and fixes
 
 | Flag | Description |
 | --- | --- |
-| `-p, --prompt TEXT` | Run this prompt in non-interactive print mode |
+| `-p, --print` | Run the positional prompt in non-interactive print mode |
 | `-m, --model TEXT` | Model to request from the provider |
 | `--provider TEXT` | Configured provider name to use |
 | `--cwd PATH` | Working directory for the built-in tools |
-| `-o, --output [text\|json\|transcript]` | Output mode for print mode (default `text`) |
-| `--resume TEXT` | Resume a session id in the TUI |
+| `--mode [text\|json\|transcript]` | Output mode for print mode (default `text`); also triggers print mode on its own |
+| `--session TEXT` | Resume a session id in the TUI |
 | `--new-session` | Start a new session instead of resuming the default |
 | `--auto-compact-threshold INT` | Auto-compact above this rough token estimate |
-| `-x, --extension PATH` | Load an [extension]({{< relref "../guides/extensions.md" >}}) file or directory (repeatable) |
-| `--no-extensions` | Disable extension directory discovery (explicit `-x` paths still load) |
+| `-e, --extension PATH` | Load an [extension]({{< relref "../guides/extensions.md" >}}) file or directory (repeatable) |
+| `--no-extensions` | Disable extension directory discovery (explicit `-e` paths still load) |
 | `--project-extensions` | Also load `<project>/.tau/extensions` (runs project-supplied code at startup) |
-| `--version` | Print the version and exit |
+| `-v, --version` | Print the version and exit |
+
+`--resume`, `--prompt`, `-o/--output`, and `-x` are removed; each now exits
+with an error naming its replacement (`--session`, `--print`, `--mode`, and
+`-e/--extension`, respectively).
 
 ### Provider setup options
 

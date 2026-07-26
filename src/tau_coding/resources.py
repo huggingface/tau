@@ -80,6 +80,19 @@ class TauResourcePaths:
         return tuple(_dedupe_paths(dirs))
 
     @property
+    def themes_dirs(self) -> tuple[Path, ...]:
+        """Return TUI theme directories in increasing precedence order.
+
+        Themes are Tau-specific, so unlike skills and prompts no ``.agents``
+        directories are scanned.
+        """
+        paths = self._paths()
+        dirs = [self.root / "themes"]
+        if self.cwd is not None:
+            dirs.append(paths.project_themes_dir(self.cwd))
+        return tuple(_dedupe_paths(dirs))
+
+    @property
     def prompts_dirs(self) -> tuple[Path, ...]:
         """Return prompt template directories in increasing precedence order."""
         paths = self._paths()

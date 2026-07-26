@@ -1,8 +1,16 @@
+import json
 from pathlib import Path
 
 import pytest
 
-from tau_agent import AssistantMessage, ToolResultMessage, UserMessage
+from tau_agent import (
+    AssistantMessage,
+    CustomMessage,
+    TextContent,
+    ThinkingContent,
+    ToolResultMessage,
+    UserMessage,
+)
 from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
@@ -21,32 +29,27 @@ from tau_agent.session import (
 )
 
 
-def test_session_entry_round_trips_jsonl() -> None:
-    entry = MessageEntry(id="entry-1", message=UserMessage(content="Hello"))
-
-    line = entry_to_json_line(entry)
-    parsed = entry_from_json_line(line)
-
-    assert parsed == entry
-
-
-def test_plain_user_message_jsonl_line_omits_custom_metadata_keys() -> None:
-    # Forward compat: a session that never uses custom messages must stay
-    # byte-identical to the pre-metadata wire format, so old binaries
-    # (extra="forbid") can still read new session files.
-    entry = MessageEntry(id="entry-1", message=UserMessage(content="Hello"))
-
-    line = entry_to_json_line(entry)
-
-    assert '"custom_type"' not in line
-    assert '"details"' not in line
-    assert entry_from_json_line(line) == entry
-
-
-def test_custom_user_message_jsonl_line_keeps_custom_metadata_keys() -> None:
+def test_session_entry_round_trips_canonical_jsonl() -> None:
     entry = MessageEntry(
         id="entry-1",
-        message=UserMessage(
+        timestamp=1,
+        message=UserMessage(content="Hello", timestamp=2),
+    )
+
+    line = entry_to_json_line(entry)
+
+    assert entry_from_json_line(line) == entry
+    assert json.loads(line)["message"] == {
+        "role": "user",
+        "content": "Hello",
+        "timestamp": 2,
+    }
+
+
+def test_custom_message_round_trips_with_pi_role_and_metadata() -> None:
+    entry = MessageEntry(
+        id="entry-1",
+        message=CustomMessage(
             content="<task-notification/>",
             custom_type="subagent-notification",
             details={"id": "run-1"},
@@ -56,124 +59,166 @@ def test_custom_user_message_jsonl_line_keeps_custom_metadata_keys() -> None:
     line = entry_to_json_line(entry)
     parsed = entry_from_json_line(line)
 
-    assert '"custom_type":"subagent-notification"' in line
-    assert '"details":{"id":"run-1"}' in line
+    payload = json.loads(line)["message"]
+    assert payload["role"] == "custom"
+    assert payload["customType"] == "subagent-notification"
     assert parsed == entry
 
 
-def test_plain_assistant_message_jsonl_line_omits_usage_key() -> None:
-    # Forward compat, same contract as the UserMessage custom-metadata test
-    # above: virtually every session contains an assistant message, so a
-    # "usage": null key in each one would defeat that guarantee for every
-    # session, not just those using extensions.
-    entry = MessageEntry(id="entry-1", message=AssistantMessage(content="Hi"))
-
-    line = entry_to_json_line(entry)
-
-    assert '"usage"' not in line
-    assert entry_from_json_line(line) == entry
-
-
-def test_assistant_message_with_usage_round_trips_jsonl() -> None:
-    from tau_agent import Usage
-
-    entry = MessageEntry(
-        id="entry-1",
-        message=AssistantMessage(
-            content="Hi",
-            usage=Usage(input=10, output=5, total_tokens=15),
-        ),
-    )
-
-    line = entry_to_json_line(entry)
-    parsed = entry_from_json_line(line)
-
-    assert '"usage"' in line
-    assert parsed == entry
-    assert isinstance(parsed, MessageEntry)
-    assert isinstance(parsed.message, AssistantMessage)
-    assert parsed.message.usage is not None
-    assert parsed.message.usage.total_tokens == 15
-
-
-def test_old_binary_assistant_message_model_accepts_new_plain_session_line() -> None:
-    # Simulate an old tau binary's AssistantMessage: extra="forbid", no usage
-    # field. It must accept a message serialized by the new code.
-    import json
-    from typing import Literal
-
-    from pydantic import BaseModel, ConfigDict, Field
-
-    from tau_agent import ToolCall
-
-    class LegacyAssistantMessage(BaseModel):
-        model_config = ConfigDict(extra="forbid")
-
-        role: Literal["assistant"] = "assistant"
-        content: str = ""
-        tool_calls: list[ToolCall] = Field(default_factory=list)
-
-    entry = MessageEntry(id="entry-1", message=AssistantMessage(content="Hi"))
-    payload = json.loads(entry_to_json_line(entry))
-
-    legacy = LegacyAssistantMessage.model_validate(payload["message"])
-
-    assert legacy.content == "Hi"
-
-
-def test_old_binary_user_message_model_accepts_new_plain_session_line() -> None:
-    # Simulate an old tau binary's UserMessage: extra="forbid", no
-    # custom_type/details fields. It must accept a message serialized by the
-    # new code as long as no custom metadata was used.
-    import json
-    from typing import Literal
-
-    from pydantic import BaseModel, ConfigDict
-
-    class LegacyUserMessage(BaseModel):
-        model_config = ConfigDict(extra="forbid")
-
-        role: Literal["user"] = "user"
-        content: str
-
-    entry = MessageEntry(id="entry-1", message=UserMessage(content="Hello"))
-    payload = json.loads(entry_to_json_line(entry))
-
-    legacy = LegacyUserMessage.model_validate(payload["message"])
-
-    assert legacy.content == "Hello"
-
-
-def test_tool_result_message_metadata_round_trips_jsonl() -> None:
-    entry = MessageEntry(
-        id="entry-1",
+def test_assistant_and_tool_result_round_trip_canonical_blocks() -> None:
+    assistant = MessageEntry(id="a", message=AssistantMessage(content="Hi"))
+    result = MessageEntry(
+        id="r",
         message=ToolResultMessage(
             tool_call_id="call-1",
-            name="edit",
+            tool_name="edit",
             content="Successfully replaced 1 block.",
-            ok=True,
-            data={"patch": "--- a.py\n+++ a.py\n@@\n-old\n+new"},
-            details={"first_changed_line": 12},
+            details={"patch": "--- a.py\n+++ a.py"},
         ),
     )
 
-    line = entry_to_json_line(entry)
-    parsed = entry_from_json_line(line)
+    assistant_payload = json.loads(entry_to_json_line(assistant))["message"]
+    result_payload = json.loads(entry_to_json_line(result))["message"]
 
-    assert parsed == entry
+    assert assistant_payload["content"][0]["text"] == "Hi"
+    assert assistant_payload["usage"]["totalTokens"] == 0
+    assert result_payload["role"] == "toolResult"
+    assert result_payload["toolName"] == "edit"
+    assert entry_from_json_line(entry_to_json_line(assistant)) == assistant
+    assert entry_from_json_line(entry_to_json_line(result)) == result
 
 
-def test_compaction_entry_round_trips_jsonl() -> None:
-    entry = CompactionEntry(
-        id="compact",
-        summary="The user asked about session replay.",
-        replaces_entry_ids=["user", "assistant"],
+def test_structured_thinking_message_round_trips_jsonl() -> None:
+    entry = MessageEntry(
+        id="a",
+        message=AssistantMessage(
+            content=[
+                ThinkingContent(thinking="plan", thinking_signature="reasoning"),
+                TextContent(text="done"),
+            ]
+        ),
     )
 
-    line = entry_to_json_line(entry)
-    parsed = entry_from_json_line(line)
+    parsed = entry_from_json_line(entry_to_json_line(entry))
 
     assert parsed == entry
+    payload = json.loads(entry_to_json_line(entry))["message"]
+    assert [block["type"] for block in payload["content"]] == ["thinking", "text"]
+    assert payload["content"][0]["thinkingSignature"] == "reasoning"
+
+
+def test_legacy_assistant_message_migrates_to_ordered_blocks() -> None:
+    legacy = json.dumps(
+        {
+            "type": "message",
+            "id": "a",
+            "timestamp": 1,
+            "message": {
+                "role": "assistant",
+                "content": "Reading.",
+                "tool_calls": [
+                    {"id": "call-1", "name": "read", "arguments": {"path": "README.md"}}
+                ],
+            },
+        }
+    )
+
+    entry = entry_from_json_line(legacy)
+
+    assert isinstance(entry, MessageEntry)
+    assert isinstance(entry.message, AssistantMessage)
+    assert entry.message.text == "Reading."
+    assert entry.message.tool_calls[0].name == "read"
+    rewritten = json.loads(entry_to_json_line(entry))["message"]
+    assert "tool_calls" not in rewritten
+    assert [block["type"] for block in rewritten["content"]] == ["text", "toolCall"]
+
+
+def test_assistant_message_with_legacy_null_usage_cost_migrates() -> None:
+    legacy = json.dumps(
+        {
+            "type": "message",
+            "id": "a",
+            "timestamp": 1,
+            "message": {
+                "role": "assistant",
+                "content": "Done.",
+                "usage": {
+                    "input": 10,
+                    "output": 2,
+                    "cache_read": 0,
+                    "cache_write": 0,
+                    "total_tokens": 12,
+                    "cost": None,
+                },
+            },
+        }
+    )
+
+    entry = entry_from_json_line(legacy)
+
+    assert isinstance(entry, MessageEntry)
+    assert isinstance(entry.message, AssistantMessage)
+    assert entry.message.usage.total_tokens == 12
+    assert entry.message.usage.cost.total == 0.0
+    rewritten = json.loads(entry_to_json_line(entry))["message"]
+    assert rewritten["usage"]["cost"]["total"] == 0.0
+
+
+def test_legacy_tool_message_migrates_and_preserves_data() -> None:
+    legacy = json.dumps(
+        {
+            "type": "message",
+            "id": "tool",
+            "timestamp": 1,
+            "message": {
+                "role": "tool",
+                "tool_call_id": "call-1",
+                "name": "edit",
+                "content": "changed",
+                "ok": False,
+                "error": "failed",
+                "data": {"patch": "diff"},
+                "details": {"line": 12},
+            },
+        }
+    )
+
+    entry = entry_from_json_line(legacy)
+
+    assert isinstance(entry, MessageEntry)
+    assert isinstance(entry.message, ToolResultMessage)
+    assert entry.message.role == "toolResult"
+    assert entry.message.tool_name == "edit"
+    assert entry.message.is_error is True
+    assert entry.message.text == "changed"
+    assert entry.message.details == {"patch": "diff", "line": 12}
+    rewritten = json.loads(entry_to_json_line(entry))["message"]
+    assert rewritten["role"] == "toolResult"
+    assert not {"name", "ok", "error", "data", "tool_call_id"} & rewritten.keys()
+
+
+def test_legacy_custom_user_message_migrates_to_custom_message() -> None:
+    legacy = json.dumps(
+        {
+            "type": "message",
+            "id": "custom",
+            "timestamp": 1,
+            "message": {
+                "role": "user",
+                "content": "<task-notification/>",
+                "custom_type": "subagent-notification",
+                "details": {"id": "run-1"},
+            },
+        }
+    )
+
+    entry = entry_from_json_line(legacy)
+
+    assert isinstance(entry, MessageEntry)
+    assert isinstance(entry.message, CustomMessage)
+    assert entry.message.custom_type == "subagent-notification"
+    assert json.loads(entry_to_json_line(entry))["message"]["role"] == "custom"
 
 
 def test_invalid_jsonl_line_raises_useful_error() -> None:
@@ -194,17 +239,37 @@ async def test_jsonl_storage_appends_and_reads_entries(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_jsonl_storage_missing_file_is_empty(tmp_path: Path) -> None:
-    storage = JsonlSessionStorage(tmp_path / "missing.jsonl")
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\u0085"])
+async def test_jsonl_storage_round_trips_unicode_line_separators(
+    tmp_path: Path, separator: str
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    entry = MessageEntry(id="one", message=UserMessage(content=f"before{separator}after"))
 
-    assert await storage.read_all() == []
+    await storage.append(entry)
+
+    assert await storage.read_all() == [entry]
+
+
+@pytest.mark.anyio
+async def test_jsonl_storage_reads_existing_file_with_unicode_line_separator(
+    tmp_path: Path,
+) -> None:
+    entry = MessageEntry(id="one", message=UserMessage(content="a\u2028b"))
+    path = tmp_path / "session.jsonl"
+    path.write_text(entry_to_json_line(entry), encoding="utf-8")
+    storage = JsonlSessionStorage(path)
+
+    assert await storage.read_all() == [entry]
 
 
 def test_session_state_replays_linear_entries() -> None:
+    user = UserMessage(content="Hi", timestamp=1)
+    assistant = AssistantMessage(content="Hello", timestamp=2)
     entries = [
-        MessageEntry(id="user", message=UserMessage(content="Hi")),
+        MessageEntry(id="user", message=user),
         ModelChangeEntry(id="model", model="fake-model"),
-        MessageEntry(id="assistant", message=AssistantMessage(content="Hello")),
+        MessageEntry(id="assistant", message=assistant),
         LabelEntry(id="label", label="Greeting"),
         CustomEntry(id="custom", namespace="test", data={"ok": True}),
         LeafEntry(id="leaf", entry_id="assistant"),
@@ -212,160 +277,47 @@ def test_session_state_replays_linear_entries() -> None:
 
     state = SessionState.from_entries(entries)
 
-    assert state.messages == (UserMessage(content="Hi"), AssistantMessage(content="Hello"))
+    assert state.messages == (user, assistant)
     assert state.model == "fake-model"
     assert state.label == "Greeting"
     assert state.active_leaf_id == "assistant"
-    assert state.custom_entries == (entries[4],)
-    assert state.context_entry_ids == ("user", "assistant")
 
 
-def test_session_state_can_replay_explicit_empty_leaf() -> None:
-    root = MessageEntry(id="root", message=UserMessage(content="Hi"))
-
-    state = SessionState.from_entries([root], leaf_id=None)
-
-    assert state.messages == ()
-    assert state.active_leaf_id is None
-    assert state.context_entry_ids == ()
-
-
-def test_session_state_replays_compaction_as_context_summary() -> None:
-    user = MessageEntry(id="user", message=UserMessage(content="Explain sessions."))
-    assistant = MessageEntry(
-        id="assistant",
-        parent_id="user",
-        message=AssistantMessage(content="Sessions are append-only."),
-    )
-    compaction = CompactionEntry(
-        id="compact",
-        parent_id="assistant",
-        summary="The user asked about sessions. The assistant explained append-only replay.",
-        replaces_entry_ids=["user", "assistant"],
-    )
-    followup = MessageEntry(
-        id="followup",
-        parent_id="compact",
-        message=UserMessage(content="Continue."),
-    )
-
-    state = SessionState.from_entries([user, assistant, compaction, followup])
-
-    assert state.messages == (
-        UserMessage(
-            content=(
-                "Previous conversation summary:\n"
-                "The user asked about sessions. The assistant explained append-only replay."
-            )
+def test_session_state_applies_compaction_and_branch_summary() -> None:
+    entries = [
+        MessageEntry(id="user", message=UserMessage(content="Explain sessions.")),
+        MessageEntry(id="assistant", message=AssistantMessage(content="They are trees.")),
+        CompactionEntry(
+            id="compact",
+            summary="The user asked about sessions.",
+            replaces_entry_ids=["user", "assistant"],
         ),
-        UserMessage(content="Continue."),
-    )
-    assert state.compaction_entries == (compaction,)
-    assert state.context_entry_ids == ("compact", "followup")
+        BranchSummaryEntry(id="branch", summary="A side branch explored storage."),
+    ]
+
+    state = SessionState.from_entries(entries)
+
+    assert [message.role for message in state.messages] == ["user", "user"]
+    assert "The user asked about sessions." in state.messages[0].text
+    assert "A side branch explored storage." in state.messages[1].text
 
 
-def test_session_state_inserts_partial_compaction_before_retained_messages() -> None:
-    old_user = MessageEntry(id="old-user", message=UserMessage(content="Old request"))
-    old_assistant = MessageEntry(
-        id="old-assistant",
-        parent_id="old-user",
-        message=AssistantMessage(content="Old answer"),
-    )
-    recent_user = MessageEntry(
-        id="recent-user",
-        parent_id="old-assistant",
-        message=UserMessage(content="Recent request"),
-    )
-    recent_assistant = MessageEntry(
-        id="recent-assistant",
-        parent_id="recent-user",
-        message=AssistantMessage(content="Recent answer"),
-    )
-    compaction = CompactionEntry(
-        id="compact",
-        parent_id="recent-assistant",
-        summary="Older work was summarized.",
-        replaces_entry_ids=["old-user", "old-assistant"],
-    )
-
-    state = SessionState.from_entries(
-        [old_user, old_assistant, recent_user, recent_assistant, compaction]
-    )
-
-    assert state.messages == (
-        UserMessage(content="Previous conversation summary:\nOlder work was summarized."),
-        UserMessage(content="Recent request"),
-        AssistantMessage(content="Recent answer"),
-    )
-    assert state.context_entry_ids == ("compact", "recent-user", "recent-assistant")
-
-
-def test_session_state_replays_branch_summary_as_context_summary() -> None:
-    root = MessageEntry(id="root", message=UserMessage(content="Root"))
-    summary = BranchSummaryEntry(
-        id="branch-summary",
-        parent_id="root",
-        branch_root_id="root",
-        summary="The abandoned branch explored an alternate implementation.",
-    )
-
-    state = SessionState.from_entries([root, summary], leaf_id="branch-summary")
-
-    assert state.messages == (
-        UserMessage(content="Root"),
-        UserMessage(
-            content=(
-                "The following is a summary of a branch that this conversation came back from:\n"
-                "<summary>\n"
-                "The abandoned branch explored an alternate implementation.\n"
-                "</summary>"
-            )
-        ),
-    )
-    assert state.context_entry_ids == ("root", "branch-summary")
-
-
-def test_path_to_entry_returns_root_to_leaf_branch() -> None:
+def test_path_to_entry_follows_parent_chain() -> None:
     root = MessageEntry(id="root", message=UserMessage(content="Hi"))
-    left = MessageEntry(id="left", parent_id="root", message=AssistantMessage(content="Left"))
-    right = MessageEntry(id="right", parent_id="root", message=AssistantMessage(content="Right"))
+    child = MessageEntry(id="child", parent_id="root", message=AssistantMessage(content="Hello"))
+    leaf = LeafEntry(id="leaf", parent_id="child", entry_id="child")
 
-    assert path_to_entry([root, left, right], "right") == [root, right]
-
-
-def test_session_state_can_replay_one_branch() -> None:
-    root = MessageEntry(id="root", message=UserMessage(content="Hi"))
-    left = MessageEntry(id="left", parent_id="root", message=AssistantMessage(content="Left"))
-    right = MessageEntry(id="right", parent_id="root", message=AssistantMessage(content="Right"))
-
-    state = SessionState.from_entries([root, left, right], leaf_id="right")
-
-    assert state.messages == (UserMessage(content="Hi"), AssistantMessage(content="Right"))
-    assert state.active_leaf_id == "right"
-    assert state.entries == (root, right)
+    assert [entry.id for entry in path_to_entry([root, child, leaf], "child")] == [
+        "root",
+        "child",
+    ]
 
 
-def test_session_state_replays_compaction_on_active_branch() -> None:
-    root = MessageEntry(id="root", message=UserMessage(content="Root"))
-    left = MessageEntry(id="left", parent_id="root", message=AssistantMessage(content="Left"))
-    compact = CompactionEntry(
-        id="compact",
-        parent_id="left",
-        summary="Root and left branch summary.",
-        replaces_entry_ids=["root", "left"],
-    )
-    right = MessageEntry(id="right", parent_id="root", message=AssistantMessage(content="Right"))
+def test_path_to_entry_rejects_missing_or_cyclic_parent() -> None:
+    with pytest.raises(SessionTreeError):
+        path_to_entry([], "missing")
 
-    state = SessionState.from_entries([root, left, compact, right], leaf_id="compact")
-
-    assert state.messages == (
-        UserMessage(content="Previous conversation summary:\nRoot and left branch summary."),
-    )
-    assert state.entries == (root, left, compact)
-
-
-def test_path_to_entry_rejects_missing_parent() -> None:
-    entry = MessageEntry(id="child", parent_id="missing", message=UserMessage(content="Hi"))
-
-    with pytest.raises(SessionTreeError, match="Missing session entry"):
-        path_to_entry([entry], "child")
+    first = CustomEntry(id="first", parent_id="second", namespace="x")
+    second = CustomEntry(id="second", parent_id="first", namespace="x")
+    with pytest.raises(SessionTreeError):
+        path_to_entry([first, second], "first")

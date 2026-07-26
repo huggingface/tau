@@ -17,6 +17,7 @@ from tau_coding.resources import (
 
 _TEMPLATE_VARIABLE_RE = re.compile(r"{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}")
 _ARGUMENT_TEMPLATE_VARIABLES = {"arguments", "args"}
+_RESERVED_TEMPLATE_NAMES = frozenset({"prompts", "skills", "tools"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +166,19 @@ def _load_prompt_templates_from_dir_with_diagnostics(
     seen: set[str] = set()
     for path in sorted(prompts_dir.glob("*.md"), key=lambda item: item.name):
         name = path.stem
+        if name.casefold() in _RESERVED_TEMPLATE_NAMES:
+            diagnostics.append(
+                ResourceDiagnostic(
+                    kind="prompt",
+                    name=name,
+                    path=path,
+                    message=(
+                        f"prompt template name is reserved by the built-in /{name.casefold()} "
+                        "command; template ignored"
+                    ),
+                )
+            )
+            continue
         if name in seen:
             diagnostics.append(
                 ResourceDiagnostic(

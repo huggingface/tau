@@ -15,10 +15,11 @@ those locations and file formats.
 ├── providers.json      # provider/model preferences
 ├── credentials.json    # saved API keys / OAuth tokens (0600, atomic writes)
 ├── settings.json       # general settings (e.g. shell command prefix)
-├── tui.json            # TUI theme + keybindings
+├── tui.json            # TUI theme, keybindings, and layout
 ├── sessions/           # saved sessions, per project
 ├── skills/             # user-level skills
 ├── prompts/            # user-level prompt templates
+├── themes/             # user-level TUI themes
 ├── AGENTS.md           # global project instructions
 └── logs/               # diagnostics
 ```
@@ -160,6 +161,10 @@ Provider preferences live in `~/.tau/providers.json`:
   preferred thinking level per model for new sessions; resumed sessions still use
   their session history. `timeout_seconds` defaults to `60` (> 0); `max_retries`
   defaults to `2`; `max_retry_delay_seconds` defaults to `1` (both ≥ 0).
+  Retries cover transient HTTP statuses (`408`, `409`, `425`, `429`, `5xx`),
+  transport errors, and — for the OpenAI Codex provider — transient in-stream
+  SSE error events such as `server_is_overloaded` that arrive on an otherwise
+  successful HTTP 200 response.
 - API keys and OAuth credentials are **not** stored here — they live in
   `~/.tau/credentials.json` (private but not encrypted). OAuth objects may contain
   provider metadata such as a GitHub Enterprise domain and are refreshed
@@ -170,9 +175,11 @@ Provider preferences live in `~/.tau/providers.json`:
   CLI/TUI selections, or scoped models.
 - `scoped_models` are favorites for the **Ctrl+P** quick-cycle.
 - Older `providers.json` files that contain full `providers` entries are still
-  accepted for compatibility. When Tau saves settings again, provider definitions
-  are moved to `~/.tau/catalog.toml` and `providers.json` is rewritten as runtime
-  preferences.
+  accepted for compatibility. Tau ignores unrecognized top-level settings and
+  provider-preference fields so files written by newer Tau versions do not block
+  older versions from starting. Recognized fields remain strictly validated.
+  When Tau saves settings again, provider definitions are moved to
+  `~/.tau/catalog.toml` and `providers.json` is rewritten as runtime preferences.
 - Custom models declare thinking support in `catalog.toml` with
   `thinking_levels`, `thinking_default`, `thinking_models`, and
   `thinking_parameter` (`"reasoning_effort"`, `"reasoning.effort"`, or
@@ -214,6 +221,8 @@ Then start a new session and try `! gst`. Notes:
 - Changing `settings.json` affects **new** sessions; an already-running session
   keeps the prefix it started with.
 - The snake_case key `shell_command_prefix` is also accepted.
+- Unrecognized fields are ignored for compatibility with newer Tau versions;
+  recognized fields remain strictly validated.
 
 ## TUI settings
 
@@ -222,6 +231,8 @@ The built-in frontend reads optional settings from `~/.tau/tui.json`:
 ```json
 {
   "theme": "high-contrast",
+  "sidebar_position": "right",
+  "turn_notification": "desktop",
   "keybindings": {
     "cancel": "escape",
     "command_palette": "ctrl+k",
@@ -240,15 +251,28 @@ The built-in frontend reads optional settings from `~/.tau/tui.json`:
 }
 ```
 
-Built-in themes: `tau-dark` (default), `tau-light`, `high-contrast`. Set one with
-`/theme`. Textual's native theme picker is mapped to the same Tau themes and
-persists the same `theme` setting. Keys use Textual syntax; omitted keys keep
-their defaults. Tau rejects unknown themes/keybinding names, empty keys, and
-duplicate assignments.
+Built-in themes: `tau-dark` (default), `tau-light`, `high-contrast`. Custom
+themes are JSON files in `~/.tau/themes/` or a project's `.tau/themes/` — see
+[Themes]({{< relref "../guides/themes.md" >}}). Set one with `/theme`.
+Textual's native theme picker is mapped to the same Tau themes and persists
+the same `theme` setting. A configured theme that cannot be found falls back
+to `tau-dark` with a startup notice, without overwriting the setting. Keys use
+Textual syntax; omitted keys keep their defaults. Tau ignores unrecognized
+settings and keybinding names so a `tui.json` written by a newer Tau version does
+not prevent an older version from starting. Recognized settings remain strict:
+Tau rejects invalid values, empty keys, and duplicate assignments.
 
-- `sidebar_position`: `"left"` (default), `"right"`, or `"off"`. Controls
+- `sidebar_position`: `"right"` (default), `"left"`, or `"off"`. Controls
   placement of the session metadata sidebar. `"off"` hides the sidebar entirely;
   the compact session info row below the prompt still works.
+- `turn_notification`: `"desktop"` (default), `"bell"`, or `"off"`. When Tau's
+  terminal surface is unfocused and the agent becomes fully idle, `"desktop"`
+  selects OSC 9 for Ghostty, iTerm2, and MinTTY, or Kitty's OSC 99 protocol for
+  Kitty. Unknown terminals receive no sequence rather than an incompatible one.
+  `"bell"` explicitly emits the standard terminal bell so the terminal can mark
+  the tab or request attention instead; depending on terminal settings, BEL may
+  play a sound. Desktop notifications can also use the operating system's
+  configured notification sound. No notification is emitted while Tau has focus.
 
 Full list in [Keyboard shortcuts]({{< relref "./keybindings.md" >}}).
 

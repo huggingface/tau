@@ -26,6 +26,8 @@
       path: /guides/print-mode/
     - label: Extensions
       path: /guides/extensions/
+    - label: Themes
+      path: /guides/themes/
 - label: Reference
   items:
     - label: CLI

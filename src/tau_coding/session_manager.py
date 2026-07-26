@@ -212,7 +212,9 @@ class SessionManager:
             return []
 
         records: list[CodingSessionRecord] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
+        # Split on newlines only: str.splitlines() would also split on characters
+        # like U+2028 that appear unescaped inside JSON string values.
+        for line in path.read_text(encoding="utf-8").split("\n"):
             stripped = line.strip()
             if not stripped:
                 continue

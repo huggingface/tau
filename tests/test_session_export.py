@@ -5,10 +5,12 @@ from tau_agent import (
     CompactionEntry,
     LeafEntry,
     MessageEntry,
+    TextContent,
     ToolCall,
     ToolResultMessage,
     UserMessage,
 )
+from tau_agent.messages import assistant_content
 from tau_coding.session_export import export_session_html, render_session_html
 
 
@@ -24,8 +26,10 @@ def test_render_session_html_preserves_branch_tree() -> None:
             id="right",
             parent_id="root",
             message=AssistantMessage(
-                content="Right branch",
-                tool_calls=[ToolCall(id="call-1", name="read", arguments={"path": "README.md"})],
+                content=assistant_content(
+                    "Right branch",
+                    [ToolCall(id="call-1", name="read", arguments={"path": "README.md"})],
+                )
             ),
         ),
         MessageEntry(
@@ -33,10 +37,9 @@ def test_render_session_html_preserves_branch_tree() -> None:
             parent_id="right",
             message=ToolResultMessage(
                 tool_call_id="call-1",
-                name="read",
-                content="File contents",
-                ok=True,
-                data={"bytes": 13},
+                tool_name="read",
+                content=[TextContent(text="File contents")],
+                details={"bytes": 13},
             ),
         ),
         CompactionEntry(
@@ -86,8 +89,10 @@ def test_render_session_html_syntax_highlights_tool_call_arguments() -> None:
         MessageEntry(
             id="root",
             message=AssistantMessage(
-                content="Reading a file",
-                tool_calls=[ToolCall(id="call-1", name="read", arguments={"path": "README.md"})],
+                content=assistant_content(
+                    "Reading a file",
+                    [ToolCall(id="call-1", name="read", arguments={"path": "README.md"})],
+                )
             ),
         ),
     ]

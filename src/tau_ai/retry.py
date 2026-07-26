@@ -5,7 +5,7 @@ from __future__ import annotations
 from asyncio import sleep
 
 from tau_agent.types import JSONValue
-from tau_ai.events import ProviderRetryEvent
+from tau_ai._provider_events import ProviderRetryEvent
 from tau_ai.provider import CancellationToken
 
 RETRY_POLL_SECONDS = 0.05

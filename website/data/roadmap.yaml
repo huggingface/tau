@@ -2,15 +2,23 @@ groups:
   - label: What's next
     note: "the frontier"
     phases:
-      - id: "26"
+      - id: "29"
+        title: "Python SDK"
+        summary: "A typed Python client for embedding Tau's harness and sessions directly in other Python programs, without going through the CLI."
+        status: planned
+      - id: "28"
         title: "RPC support"
         summary: "Drive Tau as a subprocess over a structured RPC protocol, so other apps and editors can embed the agent without shelling out to the TUI."
         status: planned
       - id: "27"
-        title: "Python SDK"
-        summary: "A typed Python client for embedding Tau's harness and sessions directly in other Python programs, without going through the CLI."
+        title: "Native local model integration"
+        summary: "First-class llama.cpp integration for discovering, configuring, and running local models directly from Tau."
         status: planned
-      - id: "21"
+      - id: "26.1"
+        title: "Extensions marketplace"
+        summary: "Discover, install, update, and share community-built Tau extensions."
+        status: planned
+      - id: "26"
         title: "Extensions"
         summary: "Local extension loading; extension-contributed tools, commands, prompt snippets/guidelines; event subscriptions."
         status: in_progress

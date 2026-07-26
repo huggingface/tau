@@ -1,40 +1,44 @@
-"""Pure provider/tool agent loop."""
+"""Pure Pi-compatible provider/tool agent loop."""
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 
 from tau_agent.events import (
     AgentEndEvent,
     AgentEvent,
     AgentStartEvent,
-    ErrorEvent,
-    MessageDeltaEvent,
     MessageEndEvent,
     MessageStartEvent,
-    QueueUpdateEvent,
-    RetryEvent,
-    ThinkingDeltaEvent,
+    MessageUpdateEvent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
     TurnEndEvent,
     TurnStartEvent,
 )
-from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage
-from tau_agent.tools import AgentTool, AgentToolResult, ToolCall, ToolUpdateCallback
-from tau_agent.types import JSONValue
-from tau_ai.events import (
-    ProviderErrorEvent,
-    ProviderResponseEndEvent,
-    ProviderResponseStartEvent,
-    ProviderRetryEvent,
-    ProviderTextDeltaEvent,
-    ProviderThinkingDeltaEvent,
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    TextContent,
+    ToolCall,
+    ToolResultMessage,
 )
-from tau_ai.provider import CancellationToken, ModelProvider
+from tau_agent.provider import CancellationToken, ModelProvider
+from tau_agent.provider_events import (
+    AssistantDoneEvent,
+    AssistantErrorEvent,
+    AssistantMessageEvent,
+    AssistantStartEvent,
+)
+from tau_agent.tools import AgentTool, AgentToolResult
+
+BeforeToolCall = Callable[[ToolCall], Awaitable[tuple[bool, str | None]]]
+AfterToolCall = Callable[
+    [ToolCall, AgentToolResult, bool],
+    Awaitable[tuple[AgentToolResult, bool]],
+]
 
 
 async def run_agent_loop(
@@ -44,297 +48,271 @@ async def run_agent_loop(
     system: str,
     messages: list[AgentMessage],
     tools: list[AgentTool],
+    prompts: Sequence[AgentMessage] = (),
     max_turns: int | None = None,
     signal: CancellationToken | None = None,
     get_steering_messages: Callable[[], Sequence[AgentMessage]] | None = None,
     get_follow_up_messages: Callable[[], Sequence[AgentMessage]] | None = None,
-    get_queue_update: Callable[[], QueueUpdateEvent] | None = None,
+    before_tool_call: BeforeToolCall | None = None,
+    after_tool_call: AfterToolCall | None = None,
 ) -> AsyncIterator[AgentEvent]:
-    """Run the pure agent loop and stream provider-neutral agent events.
+    """Run the provider/tool loop and emit Pi-compatible agent events."""
+    new_messages = list(prompts)
+    if prompts:
+        messages.extend(prompts)
 
-    The passed `messages` list is the transcript owned by the caller. The loop
-    appends assistant messages and tool result messages to it as the run
-    progresses. This keeps the loop stateless while allowing a future harness to
-    own transcript state.
-    """
     yield AgentStartEvent()
+    yield TurnStartEvent()
+    for prompt in prompts:
+        yield MessageStartEvent(message=prompt)
+        yield MessageEndEvent(message=prompt)
 
     if max_turns is not None and max_turns < 1:
-        yield ErrorEvent(message="max_turns must be at least 1", recoverable=False)
-        yield AgentEndEvent()
+        error = _error_message(model, "max_turns must be at least 1")
+        messages.append(error)
+        new_messages.append(error)
+        yield MessageStartEvent(message=error)
+        yield MessageEndEvent(message=error)
+        yield TurnEndEvent(message=error)
+        yield AgentEndEvent(messages=new_messages)
         return
 
     tool_by_name = {tool.name: tool for tool in tools}
     turn = 1
+    first_turn = True
+    pending = tuple(get_steering_messages() if get_steering_messages else ())
 
-    while max_turns is None or turn <= max_turns:
-        if signal is not None and signal.is_cancelled():
-            yield ErrorEvent(message="Agent run cancelled", recoverable=True)
-            break
+    while True:
+        has_more_tools = True
+        while has_more_tools or pending:
+            if not first_turn:
+                yield TurnStartEvent()
+            first_turn = False
 
-        yield TurnStartEvent(turn=turn)
-        assistant_message: AssistantMessage | None = None
-        saw_provider_error = False
+            for message in pending:
+                messages.append(message)
+                new_messages.append(message)
+                yield MessageStartEvent(message=message)
+                yield MessageEndEvent(message=message)
+            pending = ()
 
-        async for provider_event in provider.stream_response(
-            model=model,
-            system=system,
-            messages=messages,
-            tools=tools,
-            signal=signal,
-        ):
-            if isinstance(provider_event, ProviderResponseStartEvent):
-                yield MessageStartEvent()
-            elif isinstance(provider_event, ProviderTextDeltaEvent):
-                yield MessageDeltaEvent(delta=provider_event.delta)
-            elif isinstance(provider_event, ProviderThinkingDeltaEvent):
-                yield ThinkingDeltaEvent(delta=provider_event.delta)
-            elif isinstance(provider_event, ProviderRetryEvent):
-                yield RetryEvent(
-                    attempt=provider_event.attempt,
-                    max_attempts=provider_event.max_attempts,
-                    delay_seconds=provider_event.delay_seconds,
-                    message=provider_event.message,
-                    data=provider_event.data,
-                )
-            elif isinstance(provider_event, ProviderResponseEndEvent):
-                assistant_message = provider_event.message
-                messages.append(assistant_message)
-                yield MessageEndEvent(message=assistant_message)
-            elif isinstance(provider_event, ProviderErrorEvent):
-                saw_provider_error = True
-                yield ErrorEvent(
-                    message=provider_event.message,
-                    recoverable=False,
-                    data=provider_event.data,
-                )
+            if max_turns is not None and turn > max_turns:
+                error = _error_message(model, f"Agent stopped after max_turns={max_turns}")
+                messages.append(error)
+                new_messages.append(error)
+                yield MessageStartEvent(message=error)
+                yield MessageEndEvent(message=error)
+                yield TurnEndEvent(message=error)
+                yield AgentEndEvent(messages=new_messages)
+                return
 
-        if assistant_message is None:
-            if signal is not None and signal.is_cancelled():
-                yield ErrorEvent(message="Agent run cancelled", recoverable=True)
-                yield TurnEndEvent(turn=turn)
-                break
-            yield TurnEndEvent(turn=turn)
-            if saw_provider_error:
-                break
-            yield ErrorEvent(message="Provider stream ended without an assistant message")
-            break
+            # Python async generators cannot pass a yielding callback through a
+            # normal await cleanly, so consume the assistant sub-generator and
+            # retain its final message through the terminal event.
+            assistant = None
+            async for event in _assistant_events(
+                provider=provider,
+                model=model,
+                system=system,
+                messages=_provider_context(messages),
+                tools=tools,
+                signal=signal,
+            ):
+                yield event
+                if isinstance(event, MessageEndEvent) and isinstance(
+                    event.message, AssistantMessage
+                ):
+                    assistant = event.message
 
-        if not assistant_message.tool_calls:
-            yield TurnEndEvent(turn=turn)
-            queue_events = _drain_queued_messages(
-                messages,
-                get_steering_messages,
-                get_queue_update,
-            )
-            if queue_events:
-                for queue_event in queue_events:
-                    yield queue_event
-                turn += 1
-                continue
-            queue_events = _drain_queued_messages(
-                messages,
-                get_follow_up_messages,
-                get_queue_update,
-            )
-            if queue_events:
-                for queue_event in queue_events:
-                    yield queue_event
-                turn += 1
-                continue
-            break
+            if assistant is None:  # defensive: _assistant_events always terminates
+                assistant = _error_message(model, "Provider produced no assistant message")
+                yield MessageStartEvent(message=assistant)
+                yield MessageEndEvent(message=assistant)
 
-        async for tool_event in _execute_tool_calls(
-            assistant_message.tool_calls,
-            tool_by_name,
-            messages,
-            signal,
-        ):
-            yield tool_event
+            messages.append(assistant)
+            new_messages.append(assistant)
+            if assistant.stop_reason in {"error", "aborted"}:
+                yield TurnEndEvent(message=assistant)
+                yield AgentEndEvent(messages=new_messages)
+                return
 
-        yield TurnEndEvent(turn=turn)
-        for queue_event in _drain_queued_messages(
-            messages,
-            get_steering_messages,
-            get_queue_update,
-        ):
-            yield queue_event
-        turn += 1
-    else:
-        yield ErrorEvent(
-            message=f"Agent loop stopped after reaching max_turns={max_turns}",
-            recoverable=True,
+            tool_results: list[ToolResultMessage] = []
+            calls = list(assistant.tool_calls)
+            has_more_tools = bool(calls)
+            for call in calls:
+                async for event in _execute_tool_call(
+                    call,
+                    tool_by_name,
+                    signal,
+                    before_tool_call,
+                    after_tool_call,
+                ):
+                    yield event
+                    if isinstance(event, MessageEndEvent) and isinstance(
+                        event.message, ToolResultMessage
+                    ):
+                        tool_results.append(event.message)
+                        messages.append(event.message)
+                        new_messages.append(event.message)
+
+            yield TurnEndEvent(message=assistant, tool_results=tool_results)
+            turn += 1
+            pending = tuple(get_steering_messages() if get_steering_messages else ())
+
+        follow_ups = tuple(get_follow_up_messages() if get_follow_up_messages else ())
+        if follow_ups:
+            pending = follow_ups
+            continue
+        break
+
+    yield AgentEndEvent(messages=new_messages)
+
+
+def _provider_context(messages: list[AgentMessage]) -> list[AgentMessage]:
+    """Return replayable messages while retaining failures in durable history.
+
+    Providers cannot consistently accept an assistant turn with no content. Tau
+    persists terminal failures for diagnostics, but an empty failed or aborted
+    turn is not model context and must not poison the next request.
+    """
+    return [
+        message
+        for message in messages
+        if not (
+            isinstance(message, AssistantMessage)
+            and message.stop_reason in {"error", "aborted"}
+            and not message.content
         )
+    ]
 
-    yield AgentEndEvent()
 
-
-def _drain_queued_messages(
+async def _assistant_events(
+    *,
+    provider: ModelProvider,
+    model: str,
+    system: str,
     messages: list[AgentMessage],
-    get_messages: Callable[[], Sequence[AgentMessage]] | None,
-    get_queue_update: Callable[[], QueueUpdateEvent] | None,
-) -> tuple[AgentEvent, ...]:
-    if get_messages is None:
-        return ()
-    queued_messages = tuple(get_messages())
-    if not queued_messages:
-        return ()
-
-    messages.extend(queued_messages)
-    events: list[AgentEvent] = []
-    for message in queued_messages:
-        events.append(MessageStartEvent(message_role=message.role))
-        events.append(MessageEndEvent(message=message))
-    if get_queue_update is not None:
-        events.append(get_queue_update())
-    return tuple(events)
-
-
-async def _execute_tool_calls(
-    tool_calls: list[ToolCall],
-    tool_by_name: Mapping[str, AgentTool],
-    messages: list[AgentMessage],
+    tools: list[AgentTool],
     signal: CancellationToken | None,
 ) -> AsyncIterator[AgentEvent]:
-    for index, tool_call in enumerate(tool_calls):
-        if signal is not None and signal.is_cancelled():
-            for cancelled_tool_call in tool_calls[index:]:
-                result = _cancelled_tool_result(cancelled_tool_call)
-                messages.append(_tool_result_message(result))
-                yield ToolExecutionEndEvent(result=result)
-            yield ErrorEvent(message="Agent run cancelled", recoverable=True)
-            return
-
-        yield ToolExecutionStartEvent(tool_call=tool_call)
-
-        tool = tool_by_name.get(tool_call.name)
-        if tool is None:
-            result = _unknown_tool_result(tool_call)
+    source: AsyncIterator[AssistantMessageEvent] = provider.stream_response(
+        model=model,
+        system=system,
+        messages=messages,
+        tools=tools,
+        signal=signal,
+    )
+    started = False
+    async for event in source:
+        if isinstance(event, AssistantStartEvent):
+            started = True
+            yield MessageStartEvent(message=event.partial)
+        elif isinstance(event, AssistantDoneEvent):
+            if not started:
+                yield MessageStartEvent(message=event.message)
+            yield MessageEndEvent(message=event.message)
+        elif isinstance(event, AssistantErrorEvent):
+            if not started:
+                yield MessageStartEvent(message=event.error)
+            yield MessageEndEvent(message=event.error)
         else:
-            produced: AgentToolResult | None = None
-            async for item in _execute_tool(tool, tool_call, signal):
-                if isinstance(item, ToolExecutionUpdateEvent):
-                    yield item
-                else:
-                    produced = item
-            if produced is None:  # pragma: no cover - _execute_tool always ends with a result
-                produced = _cancelled_tool_result(tool_call)
-            result = produced
-
-        messages.append(_tool_result_message(result))
-        yield ToolExecutionEndEvent(result=result)
-
-
-async def _execute_tool(
-    tool: AgentTool,
-    tool_call: ToolCall,
-    signal: CancellationToken | None,
-) -> AsyncIterator[ToolExecutionUpdateEvent | AgentToolResult]:
-    """Run a tool, yielding live progress updates then its final result.
-
-    Progress arrives through a synchronous ``on_update`` callback the tool may
-    call while it runs. Those calls are bridged onto this async stream via an
-    unbounded queue and a task/queue race, so updates are yielded in order
-    *while* the tool is still executing. The stream always ends with exactly one
-    `AgentToolResult` (never dropped, even on tool error or cancellation).
-    """
-    queue: asyncio.Queue[ToolExecutionUpdateEvent] = asyncio.Queue()
-
-    def on_update(message: str, data: dict[str, JSONValue] | None = None) -> None:
-        queue.put_nowait(
-            ToolExecutionUpdateEvent(
-                tool_call_id=tool_call.id,
-                message=message,
-                data=data,
+            yield MessageUpdateEvent(
+                message=event.partial,
+                assistant_message_event=event,
             )
-        )
 
-    task = asyncio.ensure_future(_run_tool(tool, tool_call, signal, on_update))
-    try:
-        while not task.done():
-            getter = asyncio.ensure_future(queue.get())
-            done, _pending = await asyncio.wait({task, getter}, return_when=asyncio.FIRST_COMPLETED)
-            if getter in done:
-                # An update was queued; the getter safely holds it.
-                yield getter.result()
-            else:
-                # The tool finished first; the getter never dequeued anything,
-                # so cancelling it cannot drop an update.
-                getter.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await getter
-        # Drain trailing updates enqueued after the tool finished but before the
-        # final poll, then emit the result last.
-        while not queue.empty():
-            yield queue.get_nowait()
-        yield task.result()
-    finally:
-        # Never orphan the tool task: this also runs when the consuming
-        # generator is closed mid-flight (GeneratorExit) or cancelled.
-        if not task.done():
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+
+async def _execute_tool_call(
+    call: ToolCall,
+    tools: Mapping[str, AgentTool],
+    signal: CancellationToken | None,
+    before_tool_call: BeforeToolCall | None,
+    after_tool_call: AfterToolCall | None,
+) -> AsyncIterator[AgentEvent]:
+    yield ToolExecutionStartEvent(
+        tool_call_id=call.id,
+        tool_name=call.name,
+        args=call.arguments,
+    )
+
+    blocked = False
+    block_reason: str | None = None
+    if before_tool_call is not None:
+        blocked, block_reason = await before_tool_call(call)
+
+    if blocked:
+        result = _error_result(block_reason or "Tool execution was blocked")
+        is_error = True
+    elif signal is not None and signal.is_cancelled():
+        result = _error_result("Operation aborted")
+        is_error = True
+    else:
+        tool = tools.get(call.name)
+        if tool is None:
+            result = _error_result(f"Tool {call.name} not found")
+            is_error = True
+        else:
+            result, is_error, updates = await _run_tool(tool, call, signal)
+            for update in updates:
+                yield ToolExecutionUpdateEvent(
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                    args=call.arguments,
+                    partial_result=update,
+                )
+
+    if after_tool_call is not None:
+        result, is_error = await after_tool_call(call, result, is_error)
+
+    yield ToolExecutionEndEvent(
+        tool_call_id=call.id,
+        tool_name=call.name,
+        result=result,
+        is_error=is_error,
+    )
+    message = ToolResultMessage(
+        tool_call_id=call.id,
+        tool_name=call.name,
+        content=result.content,
+        details=result.details,
+        added_tool_names=result.added_tool_names,
+        is_error=is_error,
+    )
+    yield MessageStartEvent(message=message)
+    yield MessageEndEvent(message=message)
 
 
 async def _run_tool(
     tool: AgentTool,
-    tool_call: ToolCall,
+    call: ToolCall,
     signal: CancellationToken | None,
-    on_update: ToolUpdateCallback,
-) -> AgentToolResult:
+) -> tuple[AgentToolResult, bool, list[AgentToolResult]]:
+    updates: list[AgentToolResult] = []
+    accepting = True
+
+    def on_update(partial: AgentToolResult) -> None:
+        if accepting:
+            updates.append(partial.model_copy(deep=True))
+
     try:
-        result = await tool.execute(tool_call.arguments, signal=signal, on_update=on_update)
+        result = await tool.execute(call.id, call.arguments, signal, on_update)
+        return result, False, updates
+    except asyncio.CancelledError:
+        raise
     except Exception as exc:  # noqa: BLE001 - tools are an isolation boundary
-        return AgentToolResult(
-            tool_call_id=tool_call.id,
-            name=tool_call.name,
-            ok=False,
-            content=str(exc),
-            error=str(exc),
-        )
-
-    if result.tool_call_id != tool_call.id:
-        return result.model_copy(update={"tool_call_id": tool_call.id})
-    return result
+        return _error_result(str(exc)), True, updates
+    finally:
+        accepting = False
 
 
-def _unknown_tool_result(tool_call: ToolCall) -> AgentToolResult:
-    message = f"Unknown tool: {tool_call.name}"
-    return AgentToolResult(
-        tool_call_id=tool_call.id,
-        name=tool_call.name,
-        ok=False,
-        content=message,
-        error=message,
-    )
+def _error_result(message: str) -> AgentToolResult:
+    return AgentToolResult(content=[TextContent(text=message)], details={})
 
 
-def _cancelled_tool_result(tool_call: ToolCall) -> AgentToolResult:
-    message = "Tool call cancelled"
-    return AgentToolResult(
-        tool_call_id=tool_call.id,
-        name=tool_call.name,
-        ok=False,
-        content=message,
-        error=message,
-    )
-
-
-def _tool_result_message(result: AgentToolResult) -> ToolResultMessage:
-    data: dict[str, JSONValue] | None = result.data
-    content = result.content
-    if not result.ok and result.error and result.error not in content:
-        content = f"{content}\n\nError: {result.error}"
-    if data is not None and not content:
-        content = str(data)
-
-    return ToolResultMessage(
-        tool_call_id=result.tool_call_id,
-        name=result.name,
-        content=content,
-        ok=result.ok,
-        data=result.data,
-        details=result.details,
-        error=result.error,
+def _error_message(model: str, message: str) -> AssistantMessage:
+    return AssistantMessage(
+        model=model,
+        content=[],
+        stop_reason="error",
+        error_message=message,
     )

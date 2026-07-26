@@ -11,14 +11,17 @@ import httpx
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    TextContent,
+    ThinkingContent,
     ToolResultMessage,
     Usage,
     UserMessage,
+    assistant_content,
+    message_to_user,
 )
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
-from tau_ai.env import AnthropicConfig
-from tau_ai.events import (
+from tau_ai._provider_events import (
     ProviderErrorEvent,
     ProviderEvent,
     ProviderResponseEndEvent,
@@ -27,10 +30,13 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.env import AnthropicConfig
+from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
+from tau_ai.stream import canonicalize_provider_stream
 
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_MAX_TOKENS = 4096
@@ -56,6 +62,23 @@ class AnthropicProvider:
             self._client = None
 
     def stream_response(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[AgentMessage],
+        tools: list[AgentTool],
+        signal: CancellationToken | None = None,
+    ) -> AsyncIterator[AssistantMessageEvent]:
+        """Stream one response as Pi-compatible assistant message events."""
+        raw = self._stream_provider_events(
+            model=model, system=system, messages=messages, tools=tools, signal=signal
+        )
+        return canonicalize_provider_stream(
+            raw, api="anthropic-messages", provider="anthropic", model=model
+        )
+
+    def _stream_provider_events(
         self,
         *,
         model: str,
@@ -148,6 +171,8 @@ class AnthropicProvider:
 
                         yield ProviderResponseStartEvent(model=model)
                         content_parts: list[str] = []
+                        thinking_parts: list[str] = []
+                        thinking_signature: str | None = None
                         tool_builders: dict[int, _AnthropicToolBuilder] = {}
                         finish_reason: str | None = None
                         usage: Usage | None = None
@@ -196,7 +221,14 @@ class AnthropicProvider:
                                     thinking = _string_or_empty(delta.get("thinking"))
                                     if thinking:
                                         emitted_content = True
+                                        thinking_parts.append(thinking)
                                         yield ProviderThinkingDeltaEvent(delta=thinking)
+                                elif delta_type == "signature_delta":
+                                    signature = _string_or_empty(delta.get("signature"))
+                                    if signature:
+                                        thinking_signature = (
+                                            f"{thinking_signature or ''}{signature}"
+                                        )
                                 elif delta_type == "input_json_delta":
                                     index = int(chunk.get("index", 0))
                                     builder = tool_builders.setdefault(
@@ -227,11 +259,19 @@ class AnthropicProvider:
                         for tool_call in tool_calls:
                             yield ProviderToolCallEvent(tool_call=tool_call)
 
+                        content = assistant_content("".join(content_parts), tool_calls)
+                        if thinking_parts:
+                            content.insert(
+                                0,
+                                ThinkingContent(
+                                    thinking="".join(thinking_parts),
+                                    thinking_signature=thinking_signature,
+                                ),
+                            )
                         yield ProviderResponseEndEvent(
                             message=AssistantMessage(
-                                content="".join(content_parts),
-                                tool_calls=tool_calls,
-                                usage=usage,
+                                content=content,
+                                usage=usage or Usage(),
                             ),
                             finish_reason=finish_reason,
                         )
@@ -322,7 +362,9 @@ def _build_messages_payload(
         ),
         "messages": [_anthropic_message(message) for message in messages],
     }
-    if thinking_mode == "adaptive" and thinking_effort is not None:
+    if thinking_mode == "disabled":
+        payload["thinking"] = {"type": "disabled"}
+    elif thinking_mode == "adaptive" and thinking_effort is not None:
         payload["thinking"] = {"type": "adaptive", "display": "summarized"}
         payload["output_config"] = {"effort": thinking_effort}
     elif thinking_budget_tokens is not None:
@@ -337,20 +379,29 @@ def _build_messages_payload(
 
 def _anthropic_message(message: AgentMessage) -> dict[str, JSONValue]:
     if isinstance(message, UserMessage):
-        return {"role": "user", "content": message.content}
+        return {"role": "user", "content": message.text}
     if isinstance(message, AssistantMessage):
         content: list[JSONValue] = []
-        if message.content:
-            content.append({"type": "text", "text": message.content})
-        for tool_call in message.tool_calls:
-            content.append(
-                {
-                    "type": "tool_use",
-                    "id": tool_call.id,
-                    "name": tool_call.name,
-                    "input": tool_call.arguments,
+        for block in message.content:
+            if isinstance(block, TextContent):
+                content.append({"type": "text", "text": block.text})
+            elif isinstance(block, ThinkingContent):
+                thinking: dict[str, JSONValue] = {
+                    "type": "thinking",
+                    "thinking": block.thinking,
                 }
-            )
+                if block.thinking_signature is not None:
+                    thinking["signature"] = block.thinking_signature
+                content.append(thinking)
+            elif isinstance(block, ToolCall):
+                content.append(
+                    {
+                        "type": "tool_use",
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.arguments,
+                    }
+                )
         return {"role": "assistant", "content": content}
     if isinstance(message, ToolResultMessage):
         return {
@@ -359,12 +410,12 @@ def _anthropic_message(message: AgentMessage) -> dict[str, JSONValue]:
                 {
                     "type": "tool_result",
                     "tool_use_id": message.tool_call_id,
-                    "content": message.content,
-                    "is_error": not message.ok,
+                    "content": message.text,
+                    "is_error": bool(message.is_error),
                 }
             ],
         }
-    raise TypeError(f"Unsupported message type: {type(message).__name__}")
+    return _anthropic_message(message_to_user(message))
 
 
 def _anthropic_tool(tool: AgentTool) -> dict[str, JSONValue]:

@@ -13,15 +13,13 @@ system, adapted to Python.
 Create `~/.tau/extensions/greet.py`:
 
 ```python
+from tau_agent.messages import TextContent
 from tau_agent.tools import AgentTool, AgentToolResult
 
 
-async def run_greet(arguments, signal=None):
+async def run_greet(tool_call_id, arguments, signal=None, on_update=None):
     return AgentToolResult(
-        tool_call_id="",
-        name="greet",
-        ok=True,
-        content=f"Hello, {arguments.get('who', 'world')}!",
+        content=[TextContent(text=f"Hello, {arguments.get('who', 'world')}!")],
     )
 
 
@@ -29,12 +27,13 @@ def setup(tau):
     tau.register_tool(
         AgentTool(
             name="greet",
+            label="Greet",
             description="Greet someone.",
-            input_schema={
+            parameters={
                 "type": "object",
                 "properties": {"who": {"type": "string"}},
             },
-            executor=run_greet,
+            execute_fn=run_greet,
             prompt_snippet="Greet someone by name.",
         )
     )
@@ -49,7 +48,7 @@ defining `setup(tau)`, which runs once at startup with the extension API.
 |---|---|
 | `~/.tau/extensions/` | by default |
 | `<project>/.tau/extensions/` | only with `--project-extensions` |
-| any file or directory | with `tau -x PATH` (repeatable) |
+| any file or directory | with `tau -e PATH` (repeatable) |
 
 Within a directory, `*.py` files are extensions, and a subdirectory
 containing `extension.py` is a package-style extension — its sibling
@@ -71,14 +70,14 @@ directory, so sibling modules stay importable with relative imports. The
 extension is named after the entry's parent directory (or after the file
 itself when it isn't named `extension.py`).
 
-One caveat: `tau -x` on an entry **file** loads it standalone — no
+One caveat: `tau -e` on an entry **file** loads it standalone — no
 package, so relative imports fail. Once an extension has sibling
 modules, always pass a directory: the package directory itself, or the
 repo root when a manifest declares the entry.
 
 Extensions load project-first; on name conflicts (extension names, tool
 names, command names) the first registration wins. `--no-extensions`
-disables directory discovery entirely (explicit `-x` paths still load).
+disables directory discovery entirely (explicit `-e` paths still load).
 `/reload` awaits `session_shutdown(reason="reload")` on the outgoing
 extension generation, clears its UI, re-imports every extension and re-runs
 `setup`, then awaits `session_start(reason="reload")` on the new generation.
@@ -121,22 +120,22 @@ def setup(tau):
 ```
 
 `setup` must be a plain `def` (not `async def`). Event handlers may be sync
-or async. Action methods raise `ExtensionError` if called before the session
+or async and always receive `(event, context)`; the context is freshly created
+for each dispatch. Action methods raise `ExtensionError` if called before the session
 is bound — register handlers in `setup` and act on events instead.
 
 ### Tools
 
-`register_tool` takes a plain `tau_agent.tools.AgentTool`: a name, a
-description, a hand-written JSON-schema `input_schema`, and an async
-executor `(arguments, signal=None) -> AgentToolResult`. Give the tool a
+`register_tool` takes a plain `tau_agent.tools.AgentTool`: a name, label,
+description, a hand-written JSON-schema `parameters` mapping, and an async
+`execute_fn(tool_call_id, arguments, signal=None, on_update=None)`. Give the tool a
 `prompt_snippet` to list it in the system prompt's "Available tools"
 section, and `prompt_guidelines` for usage guidance tied to the tool.
 Registering a tool with a built-in's name (`read`, `write`, `edit`,
 `bash`) replaces the built-in.
 
 A long-running tool can stream progress: an executor that additionally
-declares an `on_update` parameter receives a callback
-`(message: str, data: dict | None = None)`; each call becomes a
+uses `on_update` receives a callback accepting an `AgentToolResult`; each call becomes a
 `tool_execution_update` event and drives the TUI's live progress line.
 Executors without the parameter are unaffected.
 
@@ -292,14 +291,61 @@ your own on `session_shutdown`.
 
 ### Events
 
-Observation events mirror the agent event stream — subscribe by the event's
-`type` literal: `agent_start`, `agent_end`, `turn_start`, `turn_end`,
-`message_start`, `message_delta`, `thinking_delta`, `message_end`,
-`tool_execution_start`, `tool_execution_update`, `tool_execution_end`,
-`retry`, `queue_update`, `error` — or `agent_event` for everything (fires
-per streamed token; prefer specific events). Handlers must be fast; they run
-on the session's event loop. `message_end` carries provider token usage at
-`event.message.usage` (`None` when the provider reported none).
+Observation events mirror the canonical agent/session stream. Handlers receive
+`(event, context)`, run on the session event loop, and may subscribe to one
+`type` or use `agent_event` for the complete stream.
+
+| Event | Important payload |
+|---|---|
+| `agent_start` | — |
+| `agent_end` | `messages`, `will_retry` on the session form |
+| `agent_settled` | —; no retry, compaction, or queued continuation remains |
+| `turn_start` | `turn_index`, Unix-millisecond `timestamp` |
+| `turn_end` | matching `turn_index`, `message`, `tool_results` |
+| `message_start` / `message_end` | `message`; assistant usage is at `message.usage` |
+| `message_update` | `message`, nested `assistant_message_event` |
+| `tool_execution_start` | `tool_call_id`, `tool_name`, `args` |
+| `tool_execution_update` | the call fields plus `partial_result` |
+| `tool_execution_end` | the call fields plus `result`, `is_error` |
+| `queue_update` | `steering`, `follow_up` |
+| `compaction_start` | `reason` (`manual`, `threshold`, or `overflow`) |
+| `compaction_end` | `reason`, `result`, `aborted`, `will_retry`, `error_message` |
+| `entry_appended` | persisted session `entry` |
+| `session_info_changed` | session `name` |
+| `thinking_level_changed` | `level` |
+| `auto_retry_start` | `attempt`, `max_attempts`, `delay_ms`, `error_message` |
+| `auto_retry_end` | `success`, `attempt`, `final_error` |
+
+`message_update.assistant_message_event` is the provider-neutral incremental
+stream. Its nested `type` is one of `text_start`, `text_delta`, `text_end`,
+`thinking_start`, `thinking_delta`, `thinking_end`, `toolcall_start`,
+`toolcall_delta`, or `toolcall_end`. Terminal provider events become
+`message_end`, rather than another `message_update`.
+
+Extension turn events are session-enriched like Pi's. `turn_start` and its
+matching `turn_end` carry the same zero-based `turn_index`; `turn_start` also
+carries a Unix-millisecond `timestamp`. The runtime increments the index after
+`turn_end` and resets it on the next `agent_start`:
+
+```python
+from tau_coding.extensions import TurnEndEvent, TurnStartEvent
+
+
+def setup(tau):
+    @tau.on("turn_start")
+    def on_turn_start(event: TurnStartEvent, context):
+        context.api.notify(
+            f"turn {event.turn_index} started at {event.timestamp}", "info"
+        )
+
+    @tau.on("turn_end")
+    def on_turn_end(event: TurnEndEvent, context):
+        assert event.turn_index >= 0
+```
+
+These enriched payloads are defined in `tau_coding.extensions`. The portable
+`tau_agent.events.TurnStartEvent` and `TurnEndEvent` intentionally omit session
+metadata, so reusable agent code stays independent of session policy.
 
 Lifecycle and intercepting hooks:
 
@@ -309,7 +355,7 @@ Lifecycle and intercepting hooks:
 | `session_shutdown` | `SessionShutdownEvent(reason)` | — |
 | `input` | `InputEvent(text)` | `InputHookResult(action, text, message)` |
 | `tool_call` | `ToolCallHookEvent(tool_name, arguments)` | `ToolCallHookResult(block, reason, arguments)` |
-| `tool_result` | `ToolResultHookEvent(tool_name, arguments, result)` | `ToolResultHookResult(content, ok, details)` |
+| `tool_result` | `ToolResultHookEvent(tool_name, arguments, result)` | `ToolResultHookResult(content, details)` |
 
 - `session_start` fires once the host frontend is attached (Pi's ordering:
   the UI starts before extensions initialize), so handlers can call
@@ -320,7 +366,8 @@ Lifecycle and intercepting hooks:
 - `tool_call` runs before a tool executes. `block=True` prevents execution
   and reports `reason` to the model; returning `arguments` rewrites the
   call. A crashing `tool_call` handler blocks the tool (fail-safe).
-- `tool_result` can rewrite a result's `content`, `ok`, or `details`.
+- `tool_result` can rewrite a result's text `content` or `details`; execution
+  error state belongs to the host's tool lifecycle rather than the result payload.
 
 All other handler failures are contained: they are recorded as diagnostics
 (visible in `/session`) and never crash the session.
@@ -450,7 +497,7 @@ package that feature-detects newer API seams).
 
 ```bash
 git clone git@github.com:rian-dolphin/tau-subagents.git
-tau -x ./tau-subagents
+tau -e ./tau-subagents
 # then: "Use a subagent to summarize this repository's architecture."
 ```
 

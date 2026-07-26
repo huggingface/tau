@@ -6,18 +6,17 @@ from dataclasses import replace
 from os import environ
 from typing import Protocol
 
-from tau_ai import (
-    AnthropicConfig,
-    AnthropicProvider,
-    GoogleGenerativeAIProvider,
-    MistralConversationsProvider,
-    ModelProvider,
+from tau_agent.provider import ModelProvider
+from tau_ai.anthropic import AnthropicProvider
+from tau_ai.env import AnthropicConfig, RuntimeProviderAuth
+from tau_ai.google import GoogleGenerativeAIProvider
+from tau_ai.mistral import MistralConversationsProvider
+from tau_ai.openai_codex import (
     OpenAICodexConfig,
     OpenAICodexCredentials,
     OpenAICodexProvider,
-    OpenAICompatibleProvider,
-    RuntimeProviderAuth,
 )
+from tau_ai.openai_compatible import OpenAICompatibleProvider
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.oauth import (
     account_id_from_access_token,

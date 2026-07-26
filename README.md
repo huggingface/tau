@@ -55,25 +55,52 @@ or rendering. Frontends consume events.
 ## Install
 
 Tau is published on PyPI as `tau-ai` and installs a `tau` command.
-It requires Python 3.12 or newer.
+It requires Python 3.12 or newer. The recommended installers use
+[`uv`](https://docs.astral.sh/uv/) and install it first when necessary.
+
+macOS and Linux:
+
+```bash
+curl -LsSf https://twotimespi.dev/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://twotimespi.dev/install.ps1 | iex
+```
+
+The installers do not use `sudo`. They announce before installing `uv`, install
+Tau in an isolated tool environment, verify `tau --version`, and report if a
+shell restart is needed. You can [inspect the shell installer](https://twotimespi.dev/install.sh)
+or [PowerShell installer](https://twotimespi.dev/install.ps1) before running it.
+
+Already have a package manager? Install Tau directly:
 
 ```bash
 uv tool install tau-ai
-tau --version
-```
-
-Don't have `uv`? Install with `pipx` or `pip` instead:
-
-```bash
+# or
 pipx install tau-ai
 # or
 python -m pip install tau-ai
 ```
 
-If you prefer `uv`, install it with:
+Then check it worked:
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+tau --version
+```
+
+Tau is also available on [conda-forge](https://conda-forge.org), and can be installed using [pixi](https://pixi.prefix.dev/latest/#installation):
+
+```bash
+pixi global install tau-ai
+```
+
+Upgrade a normal installation with:
+
+```bash
+tau update
 ```
 
 For local development:
@@ -148,7 +175,7 @@ no code changes required.
 - Slash commands for login, model selection, sessions, compaction, export, theme,
   and more.
 - Project instructions from `AGENTS.md`, `.tau/`, and `.agents/` resources.
-- User skills and prompt templates.
+- User skills, prompt templates, and custom TUI themes.
 - Context accounting, manual compaction, and optional automatic compaction.
 - Provider-neutral event rendering for Rich, plain text, JSON, transcripts, and
   custom frontends.

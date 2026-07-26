@@ -11,16 +11,16 @@ from shutil import copy2
 from tempfile import NamedTemporaryFile
 from typing import Any, Protocol, cast
 
-from tau_ai import (
+from tau_ai.env import (
     DEFAULT_ANTHROPIC_BASE_URL,
-    DEFAULT_OPENAI_CODEX_BASE_URL,
+    DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
     DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES,
     DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS,
     DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS,
     AnthropicConfig,
     OpenAICompatibleConfig,
 )
-from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_BASE_URL
+from tau_ai.openai_codex import DEFAULT_OPENAI_CODEX_BASE_URL
 from tau_coding.catalog_loader import effective_catalog, save_user_catalog_entries
 from tau_coding.credentials import FileCredentialStore, credentials_path
 from tau_coding.oauth_registry import get_oauth_provider
@@ -1132,19 +1132,9 @@ def _apply_provider_preference(
 ) -> ProviderConfig:
     if not isinstance(value, dict):
         raise ProviderConfigError("Provider preference entries must be objects")
-    allowed = {
-        "default_model",
-        "headers",
-        "timeout_seconds",
-        "max_retries",
-        "max_retry_delay_seconds",
-        "thinking_defaults",
-    }
-    unknown = sorted(set(value) - allowed)
-    if unknown:
-        raise ProviderConfigError(
-            f"Unknown provider preference fields for {provider.name}: {', '.join(unknown)}"
-        )
+    # Provider preferences are user-level state shared across Tau versions.
+    # Ignore options introduced by newer versions while continuing to validate
+    # every recognized option below.
     default_model = (
         _string(value.get("default_model"), f"provider_preferences.{provider.name}.default_model")
         if "default_model" in value
@@ -1442,6 +1432,33 @@ def provider_default_thinking_level(
     return levels[0]
 
 
+def resolve_startup_thinking_level(
+    provider: ProviderConfig,
+    model: str,
+    *,
+    preferred: ThinkingLevel = DEFAULT_THINKING_LEVEL,
+) -> ThinkingLevel | None:
+    """Pick a valid startup thinking level for a provider/model pair.
+
+    Startup (TUI and print mode) must never crash just because the remembered
+    default model does not support the global default level. The level is
+    resolved with the same precedence used when switching models mid-session:
+    the remembered per-model preference wins, then the global ``preferred``
+    level, then the provider/catalog default, then the first available level.
+
+    Returns ``None`` when the model has no configurable thinking levels.
+    """
+    levels = provider_thinking_levels(provider, model=model)
+    if not levels:
+        return None
+    remembered = provider.thinking_defaults.get(model)
+    if remembered in levels:
+        return remembered
+    if preferred in levels:
+        return preferred
+    return provider_default_thinking_level(provider, model=model) or levels[0]
+
+
 def openai_compatible_config_from_provider(
     provider: OpenAICompatibleProviderConfig,
     *,
@@ -1511,7 +1528,9 @@ def anthropic_config_from_provider(
             model=selected_model,
             thinking_level=thinking_level,
         ),
-        thinking_mode=_anthropic_thinking_mode(provider, selected_model),
+        thinking_mode=_anthropic_thinking_mode(
+            provider, selected_model, thinking_level=thinking_level
+        ),
     )
 
 
@@ -1671,9 +1690,16 @@ def _reasoning_effort_from_anthropic_provider(
     return mapped or normalized
 
 
-def _anthropic_thinking_mode(provider: AnthropicProviderConfig, model: str) -> str:
+def _anthropic_thinking_mode(
+    provider: AnthropicProviderConfig,
+    model: str,
+    *,
+    thinking_level: ThinkingLevel | None = None,
+) -> str:
     compat = _model_compat(provider, model)
     if compat.get("forceAdaptiveThinking") is True:
+        if thinking_level is not None and normalize_thinking_level(thinking_level) == "off":
+            return "disabled"
         return "adaptive"
     return "budget"
 

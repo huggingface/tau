@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
-from tau_agent.messages import AgentMessage
+from tau_agent.messages import AgentMessage, ToolResultMessage
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
 
@@ -23,18 +23,23 @@ AGENT_EVENT_TYPES: frozenset[str] = frozenset(
     {
         "agent_start",
         "agent_end",
+        "agent_settled",
         "turn_start",
         "turn_end",
-        "retry",
         "queue_update",
         "message_start",
-        "message_delta",
-        "thinking_delta",
+        "message_update",
         "message_end",
         "tool_execution_start",
         "tool_execution_update",
         "tool_execution_end",
-        "error",
+        "compaction_start",
+        "compaction_end",
+        "entry_appended",
+        "session_info_changed",
+        "thinking_level_changed",
+        "auto_retry_start",
+        "auto_retry_end",
     }
 )
 AGENT_EVENT_WILDCARD = "agent_event"
@@ -92,11 +97,11 @@ CustomMessageMarkup = Callable[[str, str, "Mapping[str, JSONValue] | None", bool
 # resolver, never raised into the frontend.
 ToolCallMarkup = Callable[[str, "Mapping[str, JSONValue]"], "str | None"]
 
-# Host-side resolver installed into render paths: given a tool's result and
-# whether the row is expanded, return the display markup from the tool's
+# Host-side resolver installed into render paths: given the tool name, its
+# result, and whether the row is expanded, return the display markup from the tool's
 # `render_result` or ``None`` to fall back to the generic result block. Errors
 # are swallowed by the resolver, never raised into the frontend.
-ToolResultMarkup = Callable[[AgentToolResult, bool], "str | None"]
+ToolResultMarkup = Callable[[str, AgentToolResult, bool], "str | None"]
 
 # --- component seam ---------------------------------------------------------
 # Widget-hosting capability that lets an extension mount its own Textual widgets
@@ -308,6 +313,30 @@ class ExtensionGeneration:
 
 
 @dataclass(frozen=True, slots=True)
+class TurnStartEvent:
+    """Pi-shaped extension event fired at the start of a turn.
+
+    The portable agent event intentionally has no session metadata. The coding
+    session adapter adds the zero-based turn index and millisecond timestamp
+    before dispatching the event to extensions.
+    """
+
+    turn_index: int
+    timestamp: int
+    type: Literal["turn_start"] = field(default="turn_start", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class TurnEndEvent:
+    """Pi-shaped extension event fired after one assistant/tool turn."""
+
+    turn_index: int
+    message: AgentMessage
+    tool_results: list[ToolResultMessage]
+    type: Literal["turn_end"] = field(default="turn_end", init=False)
+
+
+@dataclass(frozen=True, slots=True)
 class SessionStartEvent:
     """Payload for the `session_start` lifecycle event."""
 
@@ -397,11 +426,10 @@ class ToolResultHookResult:
     """Result of a `tool_result` hook handler; set fields to override."""
 
     content: str | None = None
-    ok: bool | None = None
     details: dict[str, JSONValue] | None = None
 
 
-ExtensionHandler = Callable[[object], object | Awaitable[object]]
+ExtensionHandler = Callable[[object, "ExtensionContext"], object | Awaitable[object]]
 # Command handlers are sync-only: the slash-command path (CommandRegistry ->
 # CodingSession.handle_command -> TUI submit) is synchronous end to end.
 ExtensionCommandHandler = Callable[["str", "ExtensionCommandContext"], "str | None"]

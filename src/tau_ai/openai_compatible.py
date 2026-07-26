@@ -19,14 +19,16 @@ import httpx
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    ThinkingContent,
     ToolResultMessage,
     Usage,
     UserMessage,
+    assistant_content,
+    message_to_user,
 )
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
-from tau_ai.env import OpenAICompatibleConfig
-from tau_ai.events import (
+from tau_ai._provider_events import (
     ProviderErrorEvent,
     ProviderEvent,
     ProviderResponseEndEvent,
@@ -35,10 +37,13 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.env import OpenAICompatibleConfig
+from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
+from tau_ai.stream import canonicalize_provider_stream
 
 # Models that reject function tools + reasoning_effort on /chat/completions and
 # must use the /v1/responses endpoint instead.
@@ -76,6 +81,26 @@ class OpenAICompatibleProvider:
             self._client = None
 
     def stream_response(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[AgentMessage],
+        tools: list[AgentTool],
+        signal: CancellationToken | None = None,
+    ) -> AsyncIterator[AssistantMessageEvent]:
+        """Stream one response as Pi-compatible assistant message events."""
+        raw = self._stream_provider_events(
+            model=model, system=system, messages=messages, tools=tools, signal=signal
+        )
+        return canonicalize_provider_stream(
+            raw,
+            api=self._config.api,
+            provider=getattr(self._config, "provider_name", "openai-compatible"),
+            model=model,
+        )
+
+    def _stream_provider_events(
         self,
         *,
         model: str,
@@ -325,6 +350,8 @@ class _ChatStreamParser:
         self.emitted_content = False
         self.fatal = False
         self._content_parts: list[str] = []
+        self._thinking_parts: list[str] = []
+        self._thinking_signature: str | None = None
         self._tool_call_builders: dict[int, _ToolCallBuilder] = {}
         self._finish_reason: str | None = None
         self._usage: Usage | None = None
@@ -367,10 +394,13 @@ class _ChatStreamParser:
             self._content_parts.append(content)
             events.append(ProviderTextDeltaEvent(delta=content))
 
-        thinking = _thinking_delta_text(delta)
-        if thinking:
+        thinking = _thinking_delta(delta)
+        if thinking is not None:
+            field_name, text = thinking
             self.emitted_content = True
-            events.append(ProviderThinkingDeltaEvent(delta=thinking))
+            self._thinking_parts.append(text)
+            self._thinking_signature = self._thinking_signature or field_name
+            events.append(ProviderThinkingDeltaEvent(delta=text))
 
         for tool_call_delta in _tool_call_deltas(delta):
             self.emitted_content = True
@@ -387,12 +417,20 @@ class _ChatStreamParser:
         events: list[ProviderEvent] = [
             ProviderToolCallEvent(tool_call=tool_call) for tool_call in tool_calls
         ]
+        content = assistant_content("".join(self._content_parts), tool_calls)
+        if self._thinking_parts:
+            content.insert(
+                0,
+                ThinkingContent(
+                    thinking="".join(self._thinking_parts),
+                    thinking_signature=self._thinking_signature,
+                ),
+            )
         events.append(
             ProviderResponseEndEvent(
                 message=AssistantMessage(
-                    content="".join(self._content_parts),
-                    tool_calls=tool_calls,
-                    usage=self._usage,
+                    content=content,
+                    usage=self._usage or Usage(),
                 ),
                 finish_reason=self._finish_reason,
             )
@@ -407,6 +445,8 @@ class _ResponsesStreamParser:
         self.emitted_content = False
         self.fatal = False
         self._content_parts: list[str] = []
+        self._thinking_parts: list[str] = []
+        self._reasoning_items: dict[str, dict[str, JSONValue]] = {}
         self._tool_call_builders: dict[str, _ResponsesToolCallBuilder] = {}
         self._status: str | None = None
         self._usage: Usage | None = None
@@ -439,12 +479,15 @@ class _ResponsesStreamParser:
             delta = chunk.get("delta")
             if isinstance(delta, str) and delta:
                 self.emitted_content = True
+                self._thinking_parts.append(delta)
                 return [ProviderThinkingDeltaEvent(delta=delta)], False
 
         elif chunk_type == "response.output_item.added":
+            item = chunk.get("item")
+            _register_reasoning_item(self._reasoning_items, item)
             _register_responses_item(
                 self._tool_call_builders,
-                chunk.get("item"),
+                item,
                 output_index=chunk.get("output_index"),
             )
 
@@ -462,9 +505,11 @@ class _ResponsesStreamParser:
                 builder.set_final(arguments=chunk.get("arguments"))
 
         elif chunk_type == "response.output_item.done":
+            item = chunk.get("item")
+            _register_reasoning_item(self._reasoning_items, item)
             _finalize_responses_item(
                 self._tool_call_builders,
-                chunk.get("item"),
+                item,
                 output_index=chunk.get("output_index"),
             )
 
@@ -494,12 +539,24 @@ class _ResponsesStreamParser:
             ProviderToolCallEvent(tool_call=tool_call) for tool_call in tool_calls
         ]
         finish_reason = _normalize_finish_reason(self._status, has_tool_calls=bool(tool_calls))
+        content = assistant_content("".join(self._content_parts), tool_calls)
+        if self._thinking_parts:
+            content.insert(
+                0,
+                ThinkingContent(
+                    thinking="".join(self._thinking_parts),
+                    thinking_signature=(
+                        dumps(next(iter(self._reasoning_items.values())))
+                        if self._reasoning_items
+                        else None
+                    ),
+                ),
+            )
         events.append(
             ProviderResponseEndEvent(
                 message=AssistantMessage(
-                    content="".join(self._content_parts),
-                    tool_calls=tool_calls,
-                    usage=self._usage,
+                    content=content,
+                    usage=self._usage or Usage(),
                 ),
                 finish_reason=finish_reason,
             )
@@ -740,10 +797,18 @@ def _messages_to_responses_input(
     items: list[JSONValue] = []
     for message in messages:
         if isinstance(message, UserMessage):
-            items.append({"role": "user", "content": message.content})
+            items.append({"role": "user", "content": message.text})
         elif isinstance(message, AssistantMessage):
-            if message.content:
-                items.append({"role": "assistant", "content": message.content})
+            for block in message.content:
+                if isinstance(block, ThinkingContent) and block.thinking_signature:
+                    try:
+                        reasoning_item = loads(block.thinking_signature)
+                    except (TypeError, ValueError):
+                        reasoning_item = None
+                    if isinstance(reasoning_item, dict):
+                        items.append(reasoning_item)
+            if message.text:
+                items.append({"role": "assistant", "content": message.text})
             for tool_call in message.tool_calls:
                 items.append(
                     {
@@ -758,7 +823,7 @@ def _messages_to_responses_input(
                 {
                     "type": "function_call_output",
                     "call_id": message.tool_call_id,
-                    "output": message.content,
+                    "output": message.text,
                 }
             )
     return items
@@ -771,6 +836,17 @@ def _tool_to_responses(tool: AgentTool) -> dict[str, JSONValue]:
         "description": tool.description,
         "parameters": dict(tool.input_schema),
     }
+
+
+def _register_reasoning_item(
+    items: dict[str, dict[str, JSONValue]],
+    item: object,
+) -> None:
+    if not isinstance(item, Mapping) or item.get("type") != "reasoning":
+        return
+    item_id = item.get("id")
+    if isinstance(item_id, str):
+        items[item_id] = dict(item)
 
 
 def _register_responses_item(
@@ -874,10 +950,15 @@ def _system_message(system: str) -> dict[str, JSONValue]:
 
 def _message_to_openai(message: AgentMessage) -> dict[str, JSONValue]:
     if isinstance(message, UserMessage):
-        return {"role": "user", "content": message.content}
+        return {"role": "user", "content": message.text}
 
     if isinstance(message, AssistantMessage):
-        item: dict[str, JSONValue] = {"role": "assistant", "content": message.content}
+        item: dict[str, JSONValue] = {"role": "assistant", "content": message.text}
+        thinking = [block for block in message.content if isinstance(block, ThinkingContent)]
+        if thinking:
+            signature = thinking[0].thinking_signature or "reasoning_content"
+            if signature in {"reasoning_content", "reasoning", "thinking"}:
+                item[signature] = "".join(block.thinking for block in thinking)
         if message.tool_calls:
             item["tool_calls"] = [
                 _tool_call_to_openai(tool_call) for tool_call in message.tool_calls
@@ -888,9 +969,10 @@ def _message_to_openai(message: AgentMessage) -> dict[str, JSONValue]:
         return {
             "role": "tool",
             "tool_call_id": message.tool_call_id,
-            "name": message.name,
-            "content": message.content,
+            "name": message.tool_name,
+            "content": message.text,
         }
+    return _message_to_openai(message_to_user(message))
 
 
 def _tool_to_openai(tool: AgentTool) -> dict[str, JSONValue]:
@@ -1032,12 +1114,12 @@ def _tool_call_deltas(delta: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return [tool_call for tool_call in tool_calls if isinstance(tool_call, Mapping)]
 
 
-def _thinking_delta_text(delta: Mapping[str, Any]) -> str:
+def _thinking_delta(delta: Mapping[str, Any]) -> tuple[str, str] | None:
     for field_name in ("reasoning_content", "reasoning", "thinking"):
         value = delta.get(field_name)
         if isinstance(value, str) and value:
-            return value
-    return ""
+            return field_name, value
+    return None
 
 
 def _is_transient_status(status_code: int) -> bool:

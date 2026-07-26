@@ -15,10 +15,8 @@ overrides earlier on name clashes):
 ```text
 ~/.tau/skills/
 ~/.agents/skills/
-~/.agents/
 <cwd>/.tau/skills/
 <cwd>/.agents/skills/
-<cwd>/.agents/
 ```
 
 Prompt templates load from:
@@ -70,8 +68,16 @@ This matches the Agent Skills spec and applies uniformly across `.tau/` and
 `.agents/` locations.
 {{% /tip %}}
 
-Tau lists loaded skills in the system prompt so the model knows they exist and
-can read the full file (via the `read` tool) when relevant. Invoke one
+Tau's own extension and provider workflows are packaged documentation rather
+than built-in skills. They remain available to the agent without appearing in
+your skill list, competing with your skill names, or being disabled by
+`--no-skills`.
+
+Tau lists loaded user and project skills in the system prompt so the model knows they exist and
+can read the full file (via the `read` tool) when relevant. Run **`/skills`** to search names and
+descriptions, then select one to insert its invocation into the prompt for further instructions.
+In the picker, **F1** opens the complete header description and **Ctrl+Enter** displays the
+full `SKILL.md` in the transcript for inspection without adding it to model context. Or invoke one
 explicitly:
 
 ```text
@@ -83,9 +89,12 @@ prompt and runs it as a normal turn.
 
 ## Prompt templates
 
-A prompt template is a saved prompt you trigger by its filename. For example
-`~/.agents/prompts/wt.md` becomes the prompt `wt`. Templates can include
-variables with `{{ name }}`:
+A prompt template is a saved prompt you trigger by its filename. For example,
+`~/.agents/prompts/wt.md` is invoked with `/wt`. Run `/prompts` in the TUI to
+search every loaded template and insert its invocation for editing; selection
+does not submit the prompt. The filenames `prompts.md` and `tools.md` are
+reserved for built-in commands; Tau ignores templates with those names and
+reports a resource diagnostic. Templates can include variables with `{{ name }}`:
 
 ```md
 ---
@@ -97,7 +106,12 @@ Implement this feature safely in a new worktree:
 ```
 
 If a template has no placeholders, your arguments are appended after a blank
-line. Variables are filled from the arguments you pass when invoking it.
+line. Variables are filled from the arguments you pass after the invocation,
+for example `/wt add caching`.
+
+The filenames `prompts.md` and `skills.md` are reserved for the built-in `/prompts`
+and `/skills` pickers. Tau ignores either template and reports a resource diagnostic;
+rename the file to load it as a custom prompt.
 
 ## Skill vs. prompt template — which?
 

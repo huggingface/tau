@@ -44,6 +44,7 @@ For the practical frontend contract, see [Building a Custom TUI](../custom-tui.m
 - [Phase 17.5: TUI Transcript Wrapping](./phase-17-5-transcript-wrapping.md)
 - [Phase 18: Provider Configuration Foundation](./phase-18-provider-config-foundation.md)
 - [Config-driven Provider Catalog](./config-driven-provider-catalog.md)
+- [Codex Runtime Model Limits](./codex-runtime-model-limits.md)
 - [Provider Retry Events](./provider-retries.md)
 - [Provider/model safety and HTTP error details](./provider-model-safety.md)
 - [Phase 19: Project Context Discovery and Reload](./phase-19-context-discovery.md)
@@ -57,6 +58,7 @@ For the practical frontend contract, see [Building a Custom TUI](../custom-tui.m
 - [Phase 21: Extensions](./phase-21-extensions.md)
 - [Phase 22: Compaction Replay Foundation](./phase-22-compaction-foundation.md)
 - [Phase 23: Advanced TUI and Product Polish](./phase-23-tui-polish.md)
+- [Bounded TUI Transcript Rendering](./tui-long-transcript-performance.md)
 - [Phase 24: Session Tree Branching](./phase-24-session-tree-branching.md)
 
 Phase 21 extensions are implemented; see the phase note and the user guide at

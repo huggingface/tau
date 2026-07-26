@@ -13,18 +13,16 @@ import httpx
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    TextContent,
+    ThinkingContent,
     ToolResultMessage,
     Usage,
     UserMessage,
+    assistant_content,
 )
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
-from tau_ai.env import (
-    DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES,
-    DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS,
-    DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS,
-)
-from tau_ai.events import (
+from tau_ai._provider_events import (
     ProviderErrorEvent,
     ProviderEvent,
     ProviderResponseEndEvent,
@@ -33,10 +31,18 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.env import (
+    DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES,
+    DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS,
+    DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS,
+)
+from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
+from tau_ai.model_limits import RuntimeModelLimits
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
+from tau_ai.stream import canonicalize_provider_stream
 
 DEFAULT_OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api"
 
@@ -66,6 +72,10 @@ class OpenAICodexConfig:
     reasoning_effort: str | None = None
     reasoning_summary: str = "auto"
     provider_name: str = "OpenAI Codex"
+    # The Codex catalog filters models by the official client's compatibility
+    # version. This is the oldest known version that advertises GPT-5.6.
+    client_version: str = "0.144.3"
+    model_catalog_timeout_seconds: float = 5.0
 
 
 class OpenAICodexProvider:
@@ -80,6 +90,7 @@ class OpenAICodexProvider:
         self._config = config
         self._client = client
         self._owns_client = client is None
+        self._discovered_model_limits: dict[str, RuntimeModelLimits] | None = None
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client if this provider created it."""
@@ -87,7 +98,50 @@ class OpenAICodexProvider:
             await self._client.aclose()
             self._client = None
 
+    async def discover_model_limits(self, model: str) -> RuntimeModelLimits | None:
+        """Discover model limits from the authenticated Codex model catalog."""
+        if self._discovered_model_limits is None:
+            self._discovered_model_limits = await self._fetch_model_limits()
+        return self._discovered_model_limits.get(model)
+
+    async def _fetch_model_limits(self) -> dict[str, RuntimeModelLimits]:
+        client = self._get_client()
+        credentials = await self._config.credential_resolver()
+        headers = _build_codex_headers(
+            self._config.headers,
+            access_token=credentials.access_token,
+            account_id=credentials.account_id,
+            originator=self._config.originator,
+        )
+        headers["accept"] = "application/json"
+        headers.pop("content-type", None)
+        response = await client.get(
+            _resolve_codex_models_url(self._config.base_url),
+            params={"client_version": self._config.client_version},
+            headers=headers,
+            timeout=self._config.model_catalog_timeout_seconds,
+        )
+        response.raise_for_status()
+        return _parse_codex_model_limits(response.json())
+
     def stream_response(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[AgentMessage],
+        tools: list[AgentTool],
+        signal: CancellationToken | None = None,
+    ) -> AsyncIterator[AssistantMessageEvent]:
+        """Stream one response as Pi-compatible assistant message events."""
+        raw = self._stream_provider_events(
+            model=model, system=system, messages=messages, tools=tools, signal=signal
+        )
+        return canonicalize_provider_stream(
+            raw, api="openai-codex-responses", provider="openai-codex", model=model
+        )
+
+    def _stream_provider_events(
         self,
         *,
         model: str,
@@ -113,6 +167,7 @@ class OpenAICodexProvider:
             attempt = 0
             while True:
                 emitted_content = False
+                emitted_thinking = False
                 try:
                     credentials = await self._config.credential_resolver()
                     headers = _build_codex_headers(
@@ -169,14 +224,43 @@ class OpenAICodexProvider:
                             return
 
                         yield ProviderResponseStartEvent(model=model)
+                        stream_error: dict[str, JSONValue] | None = None
                         async for event in _codex_provider_events(response, signal=signal):
                             if isinstance(
                                 event,
                                 ProviderTextDeltaEvent | ProviderToolCallEvent,
                             ):
                                 emitted_content = True
+                            elif isinstance(event, ProviderThinkingDeltaEvent):
+                                emitted_thinking = True
+                            if (
+                                isinstance(event, ProviderErrorEvent)
+                                and not emitted_content
+                                and not emitted_thinking
+                                and self._should_retry(attempt)
+                                and _retryable_stream_error_event(event)
+                            ):
+                                stream_error = _stream_error_event_data(event)
+                                break
                             yield event
-                        return
+                        if stream_error is None:
+                            return
+                        code, _message = _stream_error_details(stream_error)
+                        delay = retry_delay_seconds(
+                            attempt,
+                            max_delay_seconds=self._config.max_retry_delay_seconds,
+                        )
+                        yield provider_retry_event(
+                            attempt=attempt,
+                            max_retries=self._config.max_retries,
+                            delay_seconds=delay,
+                            reason=f"stream error ({code or 'unknown'})",
+                            data={"event": stream_error},
+                        )
+                        attempt += 1
+                        if not await wait_for_retry(delay, signal=signal):
+                            return
+                        continue
                 except httpx.HTTPError as exc:
                     if not emitted_content and self._should_retry(attempt):
                         delay = retry_delay_seconds(
@@ -304,27 +388,35 @@ def _messages_to_responses_input(messages: list[AgentMessage]) -> list[JSONValue
             items.append(
                 {
                     "role": "user",
-                    "content": [{"type": "input_text", "text": message.content}],
+                    "content": [{"type": "input_text", "text": message.text}],
                 }
             )
         elif isinstance(message, AssistantMessage):
-            if message.content:
-                items.append(
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "output_text",
-                                "text": message.content,
-                                "annotations": [],
-                            }
-                        ],
-                        "status": "completed",
-                        "id": f"msg_{assistant_index}",
-                    }
-                )
-                assistant_index += 1
+            for block in message.content:
+                if isinstance(block, ThinkingContent) and block.thinking_signature:
+                    try:
+                        reasoning_item = loads(block.thinking_signature)
+                    except (TypeError, ValueError):
+                        reasoning_item = None
+                    if isinstance(reasoning_item, dict):
+                        items.append(reasoning_item)
+                elif isinstance(block, TextContent):
+                    items.append(
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": block.text,
+                                    "annotations": [],
+                                }
+                            ],
+                            "status": "completed",
+                            "id": block.text_signature or f"msg_{assistant_index}",
+                        }
+                    )
+                    assistant_index += 1
             for tool_call in message.tool_calls:
                 call_id, item_id = _split_tool_call_id(tool_call.id)
                 item: dict[str, JSONValue] = {
@@ -342,7 +434,7 @@ def _messages_to_responses_input(messages: list[AgentMessage]) -> list[JSONValue
                 {
                     "type": "function_call_output",
                     "call_id": call_id,
-                    "output": message.content,
+                    "output": message.text,
                 }
             )
     return items
@@ -364,6 +456,8 @@ async def _codex_provider_events(
     signal: CancellationToken | None,
 ) -> AsyncIterator[ProviderEvent]:
     content_parts: list[str] = []
+    thinking_parts: list[str] = []
+    reasoning_items: dict[str, dict[str, JSONValue]] = {}
     tool_calls: list[ToolCall] = []
     active_tools: list[_ToolCallBuilder] = []
     tools_by_item_id: dict[str, _ToolCallBuilder] = {}
@@ -395,7 +489,11 @@ async def _codex_provider_events(
 
         if event_type == "response.output_item.added":
             item = event.get("item")
-            if isinstance(item, Mapping) and item.get("type") == "function_call":
+            if isinstance(item, Mapping) and item.get("type") == "reasoning":
+                item_id = item.get("id")
+                if isinstance(item_id, str):
+                    reasoning_items[item_id] = dict(item)
+            elif isinstance(item, Mapping) and item.get("type") == "function_call":
                 _track_tool_builder(
                     _tool_builder_from_item(item),
                     event,
@@ -442,6 +540,7 @@ async def _codex_provider_events(
         }:
             delta = event.get("delta")
             if isinstance(delta, str) and delta:
+                thinking_parts.append(delta)
                 yield ProviderThinkingDeltaEvent(delta=delta)
 
         elif event_type in {
@@ -449,7 +548,11 @@ async def _codex_provider_events(
             "response.output_item.completed",
         }:
             item = event.get("item")
-            if isinstance(item, Mapping) and item.get("type") == "function_call":
+            if isinstance(item, Mapping) and item.get("type") == "reasoning":
+                item_id = item.get("id")
+                if isinstance(item_id, str):
+                    reasoning_items[item_id] = dict(item)
+            elif isinstance(item, Mapping) and item.get("type") == "function_call":
                 tool_builder = _tool_builder_for_event(
                     event,
                     active_tools=active_tools,
@@ -497,11 +600,21 @@ async def _codex_provider_events(
             usage = _usage_from_response(event) or usage
             break
 
+    content = assistant_content("".join(content_parts), tool_calls)
+    if thinking_parts:
+        content.insert(
+            0,
+            ThinkingContent(
+                thinking="".join(thinking_parts),
+                thinking_signature=(
+                    dumps(next(iter(reasoning_items.values()))) if reasoning_items else None
+                ),
+            ),
+        )
     yield ProviderResponseEndEvent(
         message=AssistantMessage(
-            content="".join(content_parts),
-            tool_calls=tool_calls,
-            usage=usage,
+            content=content,
+            usage=usage or Usage(),
         ),
         finish_reason=finish_reason,
     )
@@ -707,27 +820,90 @@ def _usage_from_response(event: Mapping[str, Any]) -> Usage | None:
 
 
 def _response_error_message(event: Mapping[str, Any]) -> str:
-    response = event.get("response")
-    if isinstance(response, Mapping):
-        error = response.get("error")
-        if isinstance(error, Mapping):
-            message = error.get("message")
-            code = error.get("code")
-            if isinstance(message, str) and message:
-                return message
-            if isinstance(code, str) and code:
-                return f"OpenAI Codex response failed: {code}"
+    code, message = _stream_error_details(event)
+    if message:
+        return message
+    if code:
+        return f"OpenAI Codex response failed: {code}"
     return "OpenAI Codex response failed"
 
 
 def _error_message(event: Mapping[str, Any], *, fallback: str) -> str:
-    message = event.get("message")
-    if isinstance(message, str) and message:
+    code, message = _stream_error_details(event)
+    if message:
         return message
-    code = event.get("code")
-    if isinstance(code, str) and code:
+    if code:
         return code
     return fallback
+
+
+def _stream_error_details(event: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    """Extract the machine code and human message from a Codex stream error.
+
+    Codex reports failures either as a top-level ``error`` SSE event with a
+    nested ``error`` object (``{"type":"error","error":{"code":...}}``) or
+    as ``response.failed`` with the failure under ``response.error``. Looking
+    only at top-level fields hides details such as ``server_is_overloaded``
+    behind a generic fallback message.
+    """
+    sources: list[Mapping[str, Any]] = [event]
+    nested = event.get("error")
+    if isinstance(nested, Mapping):
+        sources.append(nested)
+    response = event.get("response")
+    if isinstance(response, Mapping):
+        response_error = response.get("error")
+        if isinstance(response_error, Mapping):
+            sources.append(response_error)
+
+    message: str | None = None
+    code: str | None = None
+    for source in sources:
+        if message is None:
+            raw_message = source.get("message")
+            if isinstance(raw_message, str) and raw_message:
+                message = raw_message
+        if code is None:
+            raw_code = source.get("code")
+            if isinstance(raw_code, str) and raw_code:
+                code = raw_code
+    if code is None and isinstance(nested, Mapping):
+        nested_type = nested.get("type")
+        if isinstance(nested_type, str) and nested_type:
+            code = nested_type
+    return code, message
+
+
+_TRANSIENT_STREAM_ERROR_MARKERS = (
+    "overloaded",
+    "service_unavailable",
+    "temporarily_unavailable",
+    "rate_limit",
+    "internal_error",
+    "server_error",
+    "timeout",
+)
+
+
+def _stream_error_event_data(event: ProviderErrorEvent) -> dict[str, JSONValue] | None:
+    """Return the raw SSE event attached to a provider stream error."""
+    data = event.data
+    if not isinstance(data, dict):
+        return None
+    raw = data.get("event")
+    return raw if isinstance(raw, dict) else None
+
+
+def _retryable_stream_error_event(event: ProviderErrorEvent) -> bool:
+    """Return True when an in-stream Codex error looks transient and retryable."""
+    raw = _stream_error_event_data(event)
+    if raw is None:
+        return False
+    code, message = _stream_error_details(raw)
+    haystack = " ".join(part for part in (code, message) if part).lower()
+    if not haystack or _is_terminal_rate_limit(haystack):
+        return False
+    return any(marker in haystack for marker in _TRANSIENT_STREAM_ERROR_MARKERS)
 
 
 def _build_codex_headers(
@@ -757,6 +933,50 @@ def _resolve_codex_url(base_url: str) -> str:
     if normalized.endswith("/codex"):
         return f"{normalized}/responses"
     return f"{normalized}/codex/responses"
+
+
+def _resolve_codex_models_url(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/codex/responses"):
+        return f"{normalized.removesuffix('/responses')}/models"
+    if normalized.endswith("/codex"):
+        return f"{normalized}/models"
+    return f"{normalized}/codex/models"
+
+
+def _parse_codex_model_limits(payload: object) -> dict[str, RuntimeModelLimits]:
+    if not isinstance(payload, Mapping):
+        return {}
+    models = payload.get("models")
+    if not isinstance(models, list):
+        return {}
+
+    parsed: dict[str, RuntimeModelLimits] = {}
+    for item in models:
+        if not isinstance(item, Mapping):
+            continue
+        model = item.get("slug")
+        context_window = _positive_int(item.get("context_window")) or _positive_int(
+            item.get("max_context_window")
+        )
+        if not isinstance(model, str) or not model or context_window is None:
+            continue
+        effective_percent = _positive_int(item.get("effective_context_window_percent")) or 100
+        if effective_percent > 100:
+            continue
+        parsed[model] = RuntimeModelLimits(
+            context_window=context_window,
+            max_output_tokens=_positive_int(item.get("max_output_tokens")),
+            effective_context_window_percent=effective_percent,
+            auto_compact_token_limit=_positive_int(item.get("auto_compact_token_limit")),
+        )
+    return parsed
+
+
+def _positive_int(value: object) -> int | None:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        return None
+    return value
 
 
 def _split_tool_call_id(value: str) -> tuple[str, str | None]:

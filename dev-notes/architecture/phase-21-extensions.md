@@ -65,7 +65,7 @@ skills/prompts, which use last-wins precedence):
 1. `<cwd>/.tau/extensions/` — project extensions (**off by default**, see
    Security)
 2. `~/.tau/extensions/` — user extensions
-3. Paths passed explicitly (`tau --extension/-x PATH`, repeatable; a file or
+3. Paths passed explicitly (`tau --extension/-e PATH`, repeatable; a file or
    a directory)
 
 Within a directory, one level deep, matching Pi:
@@ -73,7 +73,7 @@ Within a directory, one level deep, matching Pi:
 - `*.py` files are extension modules
 - a subdirectory containing `extension.py` is an extension (the analog of
   Pi's `index.ts` convention)
-- a directory (subdirectory or explicit `-x` path) whose `pyproject.toml`
+- a directory (subdirectory or explicit `-e` path) whose `pyproject.toml`
   declares `[tool.tau] extensions = ["src/pkg/extension.py", ...]` loads the
   declared entries instead — the analog of Pi's `package.json`
   `pi.extensions` manifest ("complex packages must use package.json
@@ -211,6 +211,18 @@ The one deliberate exception, matching Pi: a raising `tool_call` hook blocks
 the tool (fail-safe).
 
 ### Events
+
+> **Superseded protocol note (Pi 0.80.6 cutover):** the original event/tool/message
+> descriptions below document the first Tau extension implementation. The current
+> contract is the canonical protocol in `tau_agent.events`, `tau_agent.tools`, and
+> `tau_coding.events`: handlers receive `(event, context)`, streamed provider events
+> are nested under `message_update.assistant_message_event`, tool executors receive
+> `(tool_call_id, arguments, signal, on_update)`, and custom messages use the
+> dedicated `CustomMessage` role. The session-to-extension adapter additionally
+> enriches `turn_start` with Pi's zero-based `turn_index` and millisecond
+> `timestamp`, and `turn_end` with the matching `turn_index`; portable
+> `tau_agent` events remain session-agnostic. See the published extension guide
+> and `dev-notes/design/pi-event-migration-audit.md` for the final shape.
 
 Observation events reuse the `AgentEvent` `type` literals directly:
 `agent_start`, `agent_end`, `turn_start`, `turn_end`, `message_start`,
@@ -659,7 +671,7 @@ gates this behind a project-trust prompt; Tau does not have a trust store
 yet. **Ruling:** project-directory extensions are **disabled by default**
 in v1. `<cwd>/.tau/extensions/` loads only with the explicit
 `--project-extensions` CLI flag. User extensions (`~/.tau/extensions/`) and
-explicit `-x` paths load by default; `--no-extensions` turns directory
+explicit `-e` paths load by default; `--no-extensions` turns directory
 discovery off entirely. A per-project trust prompt is the immediate
 follow-up that can flip the project default.
 

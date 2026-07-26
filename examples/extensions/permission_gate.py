@@ -5,7 +5,7 @@ never executes; the model sees the block reason instead.
 
 Install by copying into `~/.tau/extensions/`, or run:
 
-    tau -x examples/extensions/permission_gate.py
+    tau -e examples/extensions/permission_gate.py
 """
 
 import re
@@ -23,7 +23,8 @@ DANGEROUS_PATTERNS = (
 )
 
 
-def _gate_tool_call(event: ToolCallHookEvent) -> ToolCallHookResult | None:
+def _gate_tool_call(event: ToolCallHookEvent, context) -> ToolCallHookResult | None:  # noqa: ANN001
+    del context
     if event.tool_name != "bash":
         return None
     command = str(event.arguments.get("command", ""))
