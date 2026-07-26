@@ -34,6 +34,7 @@ from tau_ai._provider_events import (
 from tau_ai.content import (
     NON_VISION_TOOL_IMAGE_PLACEHOLDER,
     NON_VISION_USER_IMAGE_PLACEHOLDER,
+    messages_have_images,
     text_and_images,
 )
 from tau_ai.env import AnthropicConfig
@@ -126,6 +127,12 @@ class AnthropicProvider:
                 **(dict(self._config.headers or {})),
                 **auth_headers,
             }
+            if (
+                self._config.provider_name == "github-copilot"
+                and self._config.supports_images
+                and messages_have_images(messages)
+            ):
+                headers["Copilot-Vision-Request"] = "true"
             if self._config.bearer_auth:
                 headers.setdefault("Authorization", f"Bearer {api_key}")
             else:

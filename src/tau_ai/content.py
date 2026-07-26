@@ -4,10 +4,20 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from tau_agent.messages import ImageContent, TextContent
+from tau_agent.messages import ImageContent, TextContent, ToolResultMessage, UserMessage
 
 NON_VISION_USER_IMAGE_PLACEHOLDER = "(image omitted: model does not support images)"
 NON_VISION_TOOL_IMAGE_PLACEHOLDER = "(tool image omitted: model does not support images)"
+
+
+def messages_have_images(messages: Sequence[object]) -> bool:
+    """Return whether user or tool-result context contains image blocks."""
+    return any(
+        isinstance(message, (UserMessage, ToolResultMessage))
+        and not isinstance(message.content, str)
+        and any(isinstance(block, ImageContent) for block in message.content)
+        for message in messages
+    )
 
 
 def text_and_images(

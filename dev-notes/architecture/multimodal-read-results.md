@@ -17,9 +17,14 @@ Each provider adapter maps image blocks to its wire format:
   a separate user image message.
 
 Runtime provider configuration derives image support from the selected model's
-catalog `input` metadata. Text-only models receive an explicit omission marker,
-which avoids invalid provider requests and makes the missing visual context
-visible to the model.
+catalog `input` metadata. Every provider config, including the distinct
+`OpenAICodexProviderConfig`, preserves this metadata through runtime creation.
+The sparse OpenAI Codex, OpenCode Go, OpenCode Zen, and GitHub Copilot catalog
+entries now declare input modalities for every model, matching Pi's generated
+provider catalog. Text-only models receive an explicit omission marker, which
+avoids invalid provider requests and makes the missing visual context visible to
+the model. GitHub Copilot image requests also include its required
+`Copilot-Vision-Request: true` header.
 
 The image base64 payload moved from tool-result `details` into `content`. This
 prevents duplicate session storage and lets all frontends continue rendering the
