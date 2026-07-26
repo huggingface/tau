@@ -92,11 +92,13 @@ class TuiSettings:
     auto_copy_selection: bool = False
     sidebar_position: Literal["left", "right", "off"] = "right"
     turn_notification: TurnNotificationMode = "desktop"
+    auto_name_session: bool = True
 
     def to_json(self) -> dict[str, Any]:
         """Serialize these settings to JSON-compatible data."""
         return {
             "auto_copy_selection": self.auto_copy_selection,
+            "auto_name_session": self.auto_name_session,
             "keybindings": self.keybindings.to_json(),
             "sidebar_position": self.sidebar_position,
             "theme": self.theme,
@@ -160,6 +162,10 @@ def tui_settings_from_json(data: dict[str, Any]) -> TuiSettings:
         auto_copy_selection=_bool_setting(
             data.get("auto_copy_selection", False),
             "auto_copy_selection",
+        ),
+        auto_name_session=_bool_setting(
+            data.get("auto_name_session", True),
+            "auto_name_session",
         ),
         sidebar_position=cast(Literal["left", "right", "off"], raw_sidebar),
         turn_notification=cast(TurnNotificationMode, raw_notification),

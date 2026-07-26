@@ -235,6 +235,7 @@ class CodingSessionConfig:
     extensions_enabled: bool = True
     project_extensions_enabled: bool = False
     extension_runtime: ExtensionRuntime | None = None
+    auto_name_session: bool = True
 
 
 class CodingSession:
@@ -278,6 +279,7 @@ class CodingSession:
         self._resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
         self._auto_compact_token_threshold = config.auto_compact_token_threshold
         self._auto_compact_enabled = config.auto_compact_enabled
+        self._auto_name_session = config.auto_name_session
         self._thinking_level = _state_thinking_level(
             state,
             default=_default_thinking_level_for_active_model(self),
@@ -1300,6 +1302,7 @@ class CodingSession:
                 runtime_provider_config=runtime_provider_config,
                 auto_compact_token_threshold=self._auto_compact_token_threshold,
                 auto_compact_enabled=self._auto_compact_enabled,
+                auto_name_session=self._auto_name_session,
                 thinking_level=self._thinking_level,
                 shell_command_prefix=self._config.shell_command_prefix,
                 skills_enabled=self._config.skills_enabled,
@@ -1882,6 +1885,10 @@ class CodingSession:
         context: AgentCallDiagnosticContext,
     ) -> None:
         if not self._should_auto_name_session():
+            # When auto-naming is disabled, use first 4 words of the user message
+            title = _fallback_session_name(first_message)
+            if title:
+                self._set_auto_session_title(title)
             return
         try:
             title = await self._generate_session_name(first_message)
@@ -1899,6 +1906,8 @@ class CodingSession:
         self._set_auto_session_title(title)
 
     def _should_auto_name_session(self) -> bool:
+        if not self._auto_name_session:
+            return False
         if self._config.session_id is None or self._config.session_manager is None:
             return False
         record = self._config.session_manager.get_session(self._config.session_id)
