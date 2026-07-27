@@ -84,8 +84,17 @@ explicitly:
 /skill:security-review check the changes on this branch
 ```
 
-`/skill:<name>` is a *prompt-expansion* path — Tau expands the skill into your
-prompt and runs it as a normal turn.
+For longer instructions, put the request on following lines:
+
+```text
+/skill:security-review
+
+Check the changes on this branch.
+Pay special attention to authentication boundaries.
+```
+
+`/skill:<name>` is a *prompt-expansion* path — Tau expands the skill and any
+inline or multiline request into your prompt, then runs it as a normal turn.
 
 ## Prompt templates
 
