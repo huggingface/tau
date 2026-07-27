@@ -174,7 +174,6 @@ COMPLETION_MAX_VISIBLE_LINES = 16
 COMPLETION_INITIAL_TERMINAL_FRACTION = 3
 COMPLETION_MIN_TRANSCRIPT_LINES = 4
 COMPLETION_WIDGET_CHROME_LINES = 3
-PROMPT_PLACEHOLDER = "Ask Tau…  Enter submits, Shift+Enter inserts a newline"
 NO_STORED_CREDENTIALS_MESSAGE = (
     "No stored credentials to remove. /logout only removes credentials saved by /login; "
     "environment variables and providers.json config are unchanged."
@@ -710,7 +709,7 @@ class PromptInput(TextArea):
             event.stop()
             event.prevent_default()
             await self._completion_target().action_submit_prompt()
-        elif event.key == "shift+enter":
+        elif event.key == keybindings.insert_newline:
             event.stop()
             event.prevent_default()
             self.insert("\n")
@@ -3505,7 +3504,11 @@ class TauTuiApp(App[None]):
                 with Horizontal(id="prompt-row"):
                     yield Static("τ", id="prompt-prefix")
                     yield PromptInput(
-                        placeholder=PROMPT_PLACEHOLDER,
+                        placeholder=(
+                            "Ask Tau…  Enter submits, "
+                            f"{_key_hint(self.tui_settings.keybindings.insert_newline)} "
+                            "inserts a newline"
+                        ),
                         id="prompt",
                         tui_keybindings=self.tui_settings.keybindings,
                     )
@@ -6381,7 +6384,12 @@ def _prompt_bindings(
         return bindings + _hidden_prompt_bindings(keybindings, visible_bindings=bindings)
     bindings = [
         Binding("enter", "submit_prompt", "Submit", priority=True),
-        Binding("shift+enter", "insert_newline", "Newline", priority=True),
+        Binding(
+            keybindings.insert_newline,
+            "insert_newline",
+            "Newline",
+            priority=True,
+        ),
         Binding(keybindings.command_palette, "open_command_palette", "Commands", priority=True),
         Binding(keybindings.session_picker, "open_session_picker", "Sessions", priority=True),
         Binding(keybindings.thinking_cycle, "cycle_thinking", "Thinking", priority=True),
@@ -6407,6 +6415,7 @@ def _hidden_prompt_bindings(
         (keybindings.command_palette, "open_command_palette"),
         (keybindings.session_picker, "open_session_picker"),
         (keybindings.queue_follow_up, "submit_follow_up"),
+        (keybindings.insert_newline, "insert_newline"),
         (keybindings.thinking_cycle, "cycle_thinking"),
         (keybindings.model_cycle, "cycle_model"),
         (keybindings.toggle_tool_results, "toggle_tool_results"),
