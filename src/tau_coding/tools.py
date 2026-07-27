@@ -48,6 +48,13 @@ class ToolInputError(ValueError):
     """Raised when a tool receives invalid structured arguments."""
 
 
+@dataclass(slots=True)
+class ImageSupportState:
+    """Mutable active-model image capability shared with built-in tools."""
+
+    supported: bool | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class ReadOperations:
     """Pluggable filesystem operations used by the read tool."""
@@ -158,6 +165,7 @@ def create_coding_tools(
     *,
     cwd: str | Path | None = None,
     shell_command_prefix: str | None = None,
+    image_support: ImageSupportState | None = None,
 ) -> list[AgentTool]:
     """Create the default coding-tool set for a local project.
 
@@ -170,7 +178,7 @@ def create_coding_tools(
     """
     root = Path.cwd() if cwd is None else Path(cwd)
     return [
-        create_read_tool(cwd=root),
+        create_read_tool(cwd=root, image_support=image_support),
         create_write_tool(cwd=root),
         create_edit_tool(cwd=root),
         create_bash_tool(cwd=root, shell_command_prefix=shell_command_prefix),
@@ -181,6 +189,7 @@ def create_read_tool_definition(
     *,
     cwd: str | Path | None = None,
     operations: ReadOperations | None = None,
+    image_support: ImageSupportState | None = None,
 ) -> ToolDefinition:
     """Create a definition for the `read` tool.
 
@@ -246,6 +255,17 @@ def create_read_tool_definition(
 
         source_mime_type = detect_supported_image_mime_type(data)
         if source_mime_type is not None:
+            if image_support is not None and image_support.supported is False:
+                return _omitted_image_result(
+                    path=path,
+                    source_mime_type=source_mime_type,
+                    source_bytes=len(data),
+                    reason=(
+                        "current model does not support image input. Image contents are "
+                        "unavailable; do not infer or describe them. Ask the user to switch "
+                        "to a vision-capable model"
+                    ),
+                )
             processed = await asyncio.to_thread(process_image, data, source_mime_type)
             image_details: dict[str, JSONValue] = {
                 "path": str(path),
@@ -388,9 +408,14 @@ def create_read_tool(
     *,
     cwd: str | Path | None = None,
     operations: ReadOperations | None = None,
+    image_support: ImageSupportState | None = None,
 ) -> AgentTool:
     """Create an `AgentTool` for reading UTF-8 text files and supported images."""
-    return create_read_tool_definition(cwd=cwd, operations=operations).to_agent_tool()
+    return create_read_tool_definition(
+        cwd=cwd,
+        operations=operations,
+        image_support=image_support,
+    ).to_agent_tool()
 
 
 def create_write_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinition:

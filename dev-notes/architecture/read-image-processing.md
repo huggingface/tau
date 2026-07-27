@@ -56,13 +56,17 @@ because tool-result image placement differs across APIs.
    instead of falling through to UTF-8 decoding.
 3. Keep one transformed payload in `ImageContent`. Original bytes and base64 are
    not copied into tool `details` or session JSONL.
-4. Return transformation notes to the model so it knows when dimensions or
+4. Share mutable image-capability state between `CodingSession` and the built-in
+   `read` tool. Text-only models receive a strong text-only notice before image
+   processing, and model changes update that state in place. Provider adapters
+   retain the same defensive downgrade for old sessions and other tools.
+5. Return transformation notes to the model so it knows when dimensions or
    encoding changed.
-5. Keep terminal image rendering out of scope. Textual has no built-in equivalent
+6. Keep terminal image rendering out of scope. Textual has no built-in equivalent
    to Pi's terminal-image protocol renderer, so the TUI continues to show the
    textual status. A custom widget or third-party integration can be evaluated
    separately without changing the tool-result contract.
-6. Keep live credential checks outside CI. `TODO.md` retains the provider/model
+7. Keep live credential checks outside CI. `TODO.md` retains the provider/model
    validation matrix follow-up.
 
 ## How to test

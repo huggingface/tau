@@ -154,6 +154,7 @@ from tau_coding.thinking import (
     reasoning_effort_for_level,
 )
 from tau_coding.tools import (
+    ImageSupportState,
     ReadOperations,
     ToolDefinition,
     create_bash_tool,
@@ -185,6 +186,7 @@ __all__ = [
     "EventRenderer",
     "FinalTextRenderer",
     "JsonEventRenderer",
+    "ImageSupportState",
     "ModelChoice",
     "SessionTreeBranchResult",
     "SessionTreeChoice",

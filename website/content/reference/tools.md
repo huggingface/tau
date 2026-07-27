@@ -42,11 +42,16 @@ upscaling or changing their aspect ratio. The processed attachment is limited to
 unsupported-format notices. If decoding, conversion, or resizing cannot produce
 a safe attachment, Tau returns a clear omission notice.
 
-When the active model does not accept images, Tau sends an explicit omission
-notice instead of silently dropping the image or submitting an invalid request.
-The Textual TUI currently shows the textual read status rather than rendering
-images inline; native terminal-image rendering remains outside the `read` tool's
-provider-neutral contract.
+When the active model does not accept images, `read` returns an explicit
+text-only notice that says the image contents are unavailable and recommends
+switching to a vision-capable model. It does not attach or process the image.
+Provider serialization applies the same defensive downgrade to image blocks from
+older sessions or other tools. This avoids invalid requests and reduces pressure
+on text-only models to invent a visual description.
+
+The Textual TUI shows this notice, but does not render images inline; native
+terminal-image rendering remains outside the `read` tool's provider-neutral
+contract.
 
 Fails when `path` is missing/invalid, the file doesn't exist, the path is a
 directory, `offset` is past the end, or the file is neither UTF-8 text nor a

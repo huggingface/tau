@@ -10,6 +10,7 @@ from PIL import Image
 
 from tau_agent import ImageContent
 from tau_coding import (
+    ImageSupportState,
     ReadOperations,
     create_bash_tool,
     create_coding_tools,
@@ -134,6 +135,26 @@ async def test_read_tool_resizes_over_dimension_images(tmp_path: Path) -> None:
     image = next(block for block in result.content if isinstance(block, ImageContent))
     with Image.open(BytesIO(base64.b64decode(image.data))) as processed:
         assert processed.size == (2_000, 80)
+
+
+@pytest.mark.anyio
+async def test_read_tool_explicitly_omits_images_for_text_only_model(tmp_path: Path) -> None:
+    path = tmp_path / "galaxy.png"
+    path.write_bytes(image_bytes())
+    image_support = ImageSupportState(supported=False)
+    tool = create_read_tool(cwd=tmp_path, image_support=image_support)
+
+    omitted = await tool.execute("test-call", {"path": "galaxy.png"})
+
+    assert "current model does not support image input" in omitted.text
+    assert "do not infer or describe" in omitted.text
+    assert "switch to a vision-capable model" in omitted.text
+    assert not any(isinstance(block, ImageContent) for block in omitted.content)
+
+    image_support.supported = True
+    attached = await tool.execute("test-call", {"path": "galaxy.png"})
+
+    assert any(isinstance(block, ImageContent) for block in attached.content)
 
 
 @pytest.mark.anyio
