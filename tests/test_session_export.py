@@ -63,7 +63,6 @@ def test_render_session_html_preserves_branch_tree() -> None:
     assert 'id="entry-compact"' in html
     assert "Start &lt;session&gt;" in html
     assert "Right branch" in html
-    assert "[read]" in html
     assert "active-path" in html
     assert "active-leaf" in html
     assert "Replaces entries" in html
@@ -78,7 +77,7 @@ def test_render_session_html_uses_static_document_layout() -> None:
     assert '<main class="session-shell">' in html
     assert '<aside class="tree-rail">' in html
     assert '<section class="entry-stream" aria-label="Session entries">' in html
-    assert 'class="entry-card active-entry"' in html
+    assert 'class="entry active-entry"' in html
     assert "Session" in html
     assert "Transcript" in html
     assert "border-right: 1px solid var(--line);" in html
@@ -106,7 +105,7 @@ def test_render_session_html_syntax_highlights_tool_call_arguments() -> None:
     assert '<span class="nt">' in html or '<span class="s2">' in html
 
 
-def test_render_session_html_includes_filter_controls_and_tool_accordions() -> None:
+def test_render_session_html_includes_filter_bar_and_accordions() -> None:
     entries = [
         SessionInfoEntry(id="info", title="Filtered export", cwd="/tmp"),
         MessageEntry(
@@ -133,18 +132,28 @@ def test_render_session_html_includes_filter_controls_and_tool_accordions() -> N
 
     html = render_session_html(entries, title="Filter Export")
 
+    # Chip-style filters with entry counts.
     assert 'id="showTools"' in html
     assert 'id="showEvents"' in html
-    assert 'id="toolDetailsToggle"' in html
-    assert 'details class="tool-details tool-content" open' in html
-    assert 'details class="tool-details" open' in html
-    assert 'id="entry-tool-result" class="entry-card active-entry" data-entry-kind="tool"' in html
-    assert 'id="entry-model" class="entry-card active-entry" data-entry-kind="event"' in html
-    assert 'data-entry-kind="tool"' in html
-    assert 'data-entry-kind="event"' in html
+    assert 'class="filter-bar"' in html
+    assert 'Tools <span class="chip-count">1</span>' in html
+    assert 'Events <span class="chip-count">2</span>' in html
+    # One button expands/compacts every accordion.
+    assert 'id="accordionToggle"' in html
+    assert "Expand all" in html
+    assert 'querySelectorAll(".entry-stream details")' in html
+    # Entries and tool calls render as closed accordions.
+    assert 'id="entry-tool-result" class="entry active-entry" data-entry-kind="tool"' in html
+    assert 'id="entry-model" class="entry active-entry" data-entry-kind="event"' in html
+    assert '<details class="block tool-call tool-content">' in html
     assert 'root.classList.toggle("hide-tools"' in html
     assert 'root.classList.toggle("messages-only"' in html
-    assert 'querySelectorAll("details.tool-details")' in html
+    # Tool result rows use a short title with the tool name.
+    assert '<span class="entry-title">03 · Tool: read</span>' in html
+    # The sidebar shows only the tool name for tool entries.
+    assert '<span class="node-type">read</span>' in html
+    # The tool icon is a claw hammer.
+    assert "m15 12-8.373" in html
 
 
 def test_render_session_html_marks_tool_only_assistant_messages_as_tools() -> None:
@@ -159,7 +168,28 @@ def test_render_session_html_marks_tool_only_assistant_messages_as_tools() -> No
 
     html = render_session_html(entries)
 
-    assert 'id="entry-tool-only" class="entry-card active-entry" data-entry-kind="tool"' in html
+    assert 'id="entry-tool-only" class="entry active-entry" data-entry-kind="tool"' in html
+    assert '<span class="entry-preview">read</span>' in html
+    assert '<span class="node-type">read</span>' in html
+
+
+def test_render_session_html_marks_error_tool_results() -> None:
+    entries = [
+        MessageEntry(
+            id="failure",
+            message=ToolResultMessage(
+                tool_call_id="call-1",
+                tool_name="bash",
+                content=[TextContent(text="command failed")],
+                is_error=True,
+            ),
+        )
+    ]
+
+    html = render_session_html(entries)
+
+    assert 'id="entry-failure" class="entry active-entry is-error"' in html
+    assert '<span class="error-flag">error</span>' in html
 
 
 def test_render_session_html_includes_theme_toggle_script() -> None:
