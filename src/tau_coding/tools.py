@@ -29,16 +29,27 @@ from tau_agent.tools import (
     ToolUpdateCallback,
 )
 from tau_agent.types import JSONValue
+from tau_coding.image_processing import (
+    ImageProcessingFailure,
+    detect_supported_image_mime_type,
+    process_image,
+)
 
 DEFAULT_MAX_OUTPUT_BYTES = 50 * 1024
 DEFAULT_MAX_OUTPUT_LINES = 2_000
-DEFAULT_MAX_IMAGE_BYTES = 5 * 1024 * 1024
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 UTF8_BOM = "\ufeff"
 
 
 class ToolInputError(ValueError):
     """Raised when a tool receives invalid structured arguments."""
+
+
+@dataclass(frozen=True, slots=True)
+class ReadOperations:
+    """Pluggable filesystem operations used by the read tool."""
+
+    validate_path: Callable[[Path], None]
+    read_bytes: Callable[[Path], bytes]
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +124,19 @@ class ToolDefinition:
 _file_locks: dict[Path, asyncio.Lock] = {}
 
 
+def _validate_local_read_path(path: Path) -> None:
+    if not path.exists():
+        raise ToolInputError(f"File not found: {path}")
+    if path.is_dir():
+        raise ToolInputError(f"Path is a directory: {path}")
+
+
+DEFAULT_READ_OPERATIONS = ReadOperations(
+    validate_path=_validate_local_read_path,
+    read_bytes=Path.read_bytes,
+)
+
+
 def create_coding_tools(
     *,
     cwd: str | Path | None = None,
@@ -136,7 +160,11 @@ def create_coding_tools(
     ]
 
 
-def create_read_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinition:
+def create_read_tool_definition(
+    *,
+    cwd: str | Path | None = None,
+    operations: ReadOperations | None = None,
+) -> ToolDefinition:
     """Create a definition for the `read` tool.
 
     The tool reads a file resolved relative to `cwd` unless an absolute path is
@@ -144,14 +172,16 @@ def create_read_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
     1-indexed `offset` and positive integer `limit` arguments. Returned text is
     truncated to `DEFAULT_MAX_OUTPUT_LINES` lines or `DEFAULT_MAX_OUTPUT_BYTES`
     bytes, whichever comes first, and continuation hints are appended when more
-    lines remain. Supported image paths (`jpg`, `png`, `gif`, and `webp`) are
-    detected by MIME type and returned as base64 metadata instead of text.
+    lines remain. Supported images (`jpg`, `png`, `gif`, `webp`, and `bmp`) are
+    detected from file content and returned as provider-neutral image blocks.
+    Images are validated and resized or converted when needed to fit inline limits.
 
     The executor raises `ToolInputError` for invalid arguments, missing files,
     directories, and offsets beyond the end of the file. Successful results
     include the resolved path and truncation metadata in `data`.
     """
     root = Path.cwd() if cwd is None else Path(cwd)
+    read_operations = operations or DEFAULT_READ_OPERATIONS
 
     async def execute(
         arguments: Mapping[str, JSONValue],
@@ -167,42 +197,48 @@ def create_read_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
             raise ToolInputError("offset must be at least 0")
         if limit is not None and limit < 1:
             raise ToolInputError("limit must be at least 1")
-        if not path.exists():
-            raise ToolInputError(f"File not found: {path}")
-        if path.is_dir():
-            raise ToolInputError(f"Path is a directory: {path}")
+        read_operations.validate_path(path)
+        data = read_operations.read_bytes(path)
 
-        mime_type = _detect_supported_image_mime_type(path)
-        if mime_type is not None:
-            image_bytes = path.stat().st_size
+        source_mime_type = detect_supported_image_mime_type(data)
+        if source_mime_type is not None:
+            processed = await asyncio.to_thread(process_image, data, source_mime_type)
             image_details: dict[str, JSONValue] = {
                 "path": str(path),
-                "mime_type": mime_type,
-                "bytes": image_bytes,
+                "source_mime_type": source_mime_type,
+                "bytes": len(data),
             }
-            if image_bytes > DEFAULT_MAX_IMAGE_BYTES:
+            if isinstance(processed, ImageProcessingFailure):
                 return AgentToolResult(
                     content=[
                         TextContent(
                             text=(
-                                f"Read image file [{mime_type}]\n"
-                                f"[Image omitted: {format_size(image_bytes)} exceeds the "
-                                f"{format_size(DEFAULT_MAX_IMAGE_BYTES)} attachment limit.]"
+                                f"Read image file [{source_mime_type}]\n"
+                                f"[Image omitted: {processed.message}.]"
                             )
                         )
                     ],
                     details=image_details,
                 )
-            data = path.read_bytes()
+
+            image_details.update(
+                {
+                    "mime_type": processed.mime_type,
+                    "processed_bytes": len(processed.data),
+                    "width": processed.width,
+                    "height": processed.height,
+                }
+            )
+            note_lines = "".join(f"\n[{note}]" for note in processed.notes)
             return AgentToolResult(
                 content=[
-                    TextContent(text=f"Read image file [{mime_type}]"),
-                    ImageContent(data=_base64_text(data), mime_type=mime_type),
+                    TextContent(text=f"Read image file [{processed.mime_type}]{note_lines}"),
+                    ImageContent(data=_base64_text(processed.data), mime_type=processed.mime_type),
                 ],
                 details=image_details,
             )
 
-        text = path.read_text(encoding="utf-8")
+        text = data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
         all_lines = text.split("\n")
         start_line = 0 if offset is None or offset == 0 else offset - 1
         if start_line >= len(all_lines):
@@ -262,7 +298,8 @@ def create_read_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
     return ToolDefinition(
         name="read",
         description=(
-            "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). "
+            "Read the contents of a file. Supports text files and images "
+            "(jpg, png, gif, webp, bmp). "
             "Images are sent to vision-capable models as attachments. For text files, output is "
             "truncated to "
             f"{DEFAULT_MAX_OUTPUT_LINES} lines or {DEFAULT_MAX_OUTPUT_BYTES // 1024}KB "
@@ -284,9 +321,13 @@ def create_read_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinit
     )
 
 
-def create_read_tool(*, cwd: str | Path | None = None) -> AgentTool:
+def create_read_tool(
+    *,
+    cwd: str | Path | None = None,
+    operations: ReadOperations | None = None,
+) -> AgentTool:
     """Create an `AgentTool` for reading UTF-8 text files and supported images."""
-    return create_read_tool_definition(cwd=cwd).to_agent_tool()
+    return create_read_tool_definition(cwd=cwd, operations=operations).to_agent_tool()
 
 
 def create_write_tool_definition(*, cwd: str | Path | None = None) -> ToolDefinition:
@@ -1021,37 +1062,6 @@ def _no_change_error(path: str, total_edits: int) -> str:
             "as expected."
         )
     return f"No changes made to {path}. The replacements produced identical content."
-
-
-def _detect_supported_image_mime_type(path: Path) -> str | None:
-    with path.open("rb") as file:
-        header = file.read(64 * 1024)
-    if header.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if header.startswith(PNG_SIGNATURE):
-        return None if _is_animated_png(header) else "image/png"
-    if header.startswith((b"GIF87a", b"GIF89a")):
-        return "image/gif"
-    if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
-        return "image/webp"
-
-    return None
-
-
-def _is_animated_png(data: bytes) -> bool:
-    offset = len(PNG_SIGNATURE)
-    while offset + 8 <= len(data):
-        chunk_length = int.from_bytes(data[offset : offset + 4], "big")
-        chunk_type = data[offset + 4 : offset + 8]
-        if chunk_type == b"acTL":
-            return True
-        if chunk_type == b"IDAT":
-            return False
-        next_offset = offset + 12 + chunk_length
-        if next_offset <= offset or next_offset > len(data):
-            return False
-        offset = next_offset
-    return False
 
 
 def _base64_text(data: bytes) -> str:

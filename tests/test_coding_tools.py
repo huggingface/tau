@@ -1,12 +1,16 @@
 import asyncio
+import base64
 import shlex
+from io import BytesIO
 from pathlib import Path
 from time import monotonic
 
 import pytest
+from PIL import Image
 
 from tau_agent import ImageContent
 from tau_coding import (
+    ReadOperations,
     create_bash_tool,
     create_coding_tools,
     create_edit_tool,
@@ -15,6 +19,12 @@ from tau_coding import (
     create_read_tool_definition,
     create_write_tool,
 )
+
+
+def image_bytes(format_name: str = "PNG", *, size: tuple[int, int] = (8, 6)) -> bytes:
+    output = BytesIO()
+    Image.new("RGB", size, "navy").save(output, format=format_name)
+    return output.getvalue()
 
 
 class FakeCancellationToken:
@@ -71,7 +81,7 @@ async def test_read_tool_reads_file_with_offset_and_limit(tmp_path: Path) -> Non
 
 @pytest.mark.anyio
 async def test_read_tool_returns_images_as_model_content(tmp_path: Path) -> None:
-    image_data = b"\x89PNG\r\n\x1a\nnot-real"
+    image_data = image_bytes()
     path = tmp_path / "diagram.png"
     path.write_bytes(image_data)
     tool = create_read_tool(cwd=tmp_path)
@@ -81,18 +91,22 @@ async def test_read_tool_returns_images_as_model_content(tmp_path: Path) -> None
     assert result.text == "Read image file [image/png]"
     image = next(block for block in result.content if isinstance(block, ImageContent))
     assert image.mime_type == "image/png"
-    assert image.data == "iVBORw0KGgpub3QtcmVhbA=="
+    assert base64.b64decode(image.data) == image_data
     assert result.details == {
         "path": str(path),
+        "source_mime_type": "image/png",
         "mime_type": "image/png",
         "bytes": len(image_data),
+        "processed_bytes": len(image_data),
+        "width": 8,
+        "height": 6,
     }
 
 
 @pytest.mark.anyio
 async def test_read_tool_detects_images_by_content_not_extension(tmp_path: Path) -> None:
     path = tmp_path / "diagram.txt"
-    path.write_bytes(b"\x89PNG\r\n\x1a\nnot-real")
+    path.write_bytes(image_bytes())
     tool = create_read_tool(cwd=tmp_path)
 
     result = await tool.execute("test-call", {"path": "diagram.txt"})
@@ -101,17 +115,64 @@ async def test_read_tool_detects_images_by_content_not_extension(tmp_path: Path)
 
 
 @pytest.mark.anyio
-async def test_read_tool_omits_oversized_images(tmp_path: Path) -> None:
+async def test_read_tool_resizes_over_dimension_images(tmp_path: Path) -> None:
     path = tmp_path / "large.png"
-    with path.open("wb") as file:
-        file.write(b"\x89PNG\r\n\x1a\n")
-        file.truncate(5 * 1024 * 1024 + 1)
+    path.write_bytes(image_bytes(size=(2_500, 100)))
     tool = create_read_tool(cwd=tmp_path)
 
     result = await tool.execute("test-call", {"path": "large.png"})
 
-    assert "exceeds the 5.0MB attachment limit" in result.text
+    assert "Image resized from 2500x100 to 2000x80" in result.text
+    image = next(block for block in result.content if isinstance(block, ImageContent))
+    with Image.open(BytesIO(base64.b64decode(image.data))) as processed:
+        assert processed.size == (2_000, 80)
+
+
+@pytest.mark.anyio
+async def test_read_tool_converts_bmp_to_png(tmp_path: Path) -> None:
+    path = tmp_path / "legacy.bmp"
+    path.write_bytes(image_bytes("BMP"))
+    tool = create_read_tool(cwd=tmp_path)
+
+    result = await tool.execute("test-call", {"path": "legacy.bmp"})
+
+    assert "Read image file [image/png]" in result.text
+    assert "Image converted from image/bmp to image/png" in result.text
+    image = next(block for block in result.content if isinstance(block, ImageContent))
+    assert image.mime_type == "image/png"
+    assert base64.b64decode(image.data).startswith(b"\x89PNG\r\n\x1a\n")
+    assert result.details is not None
+    assert result.details["source_mime_type"] == "image/bmp"
+
+
+@pytest.mark.anyio
+async def test_read_tool_reports_decode_failure_without_attachment(tmp_path: Path) -> None:
+    malformed = (
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\x0dIHDR" + b"\x00" * 17 + b"\x00\x00\x00\x00IDAT" + b"\x00" * 4
+    )
+    (tmp_path / "broken.png").write_bytes(malformed)
+    tool = create_read_tool(cwd=tmp_path)
+
+    result = await tool.execute("test-call", {"path": "broken.png"})
+
+    assert "Image omitted: could not decode a valid image" in result.text
     assert not any(isinstance(block, ImageContent) for block in result.content)
+
+
+@pytest.mark.anyio
+async def test_read_tool_uses_pluggable_read_operations(tmp_path: Path) -> None:
+    reads: list[Path] = []
+    operations = ReadOperations(
+        validate_path=lambda path: None,
+        read_bytes=lambda path: reads.append(path) or b"remote text",
+    )
+    tool = create_read_tool(cwd=tmp_path, operations=operations)
+
+    result = await tool.execute("test-call", {"path": "not-local.txt"})
+
+    assert result.text == "remote text"
+    assert reads == [tmp_path / "not-local.txt"]
 
 
 @pytest.mark.anyio
