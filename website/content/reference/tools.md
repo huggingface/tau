@@ -38,8 +38,9 @@ content and sent to vision-capable models as image attachments. BMP files are
 converted to PNG. Tau validates images and, when necessary, resizes them without
 upscaling or changing their aspect ratio. The processed attachment is limited to
 2,000 pixels on either side and 5 MB. Processing also rejects source files above
-50 MB or 40 million pixels. If conversion or resizing cannot produce a safe
-attachment, Tau returns a clear omission notice.
+50 MB or 40 million pixels. Animated PNG and JPEG XL inputs receive explicit
+unsupported-format notices. If decoding, conversion, or resizing cannot produce
+a safe attachment, Tau returns a clear omission notice.
 
 When the active model does not accept images, Tau sends an explicit omission
 notice instead of silently dropping the image or submitting an invalid request.

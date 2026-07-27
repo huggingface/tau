@@ -30,13 +30,17 @@ from tau_agent.tools import (
 )
 from tau_agent.types import JSONValue
 from tau_coding.image_processing import (
+    DEFAULT_MAX_SOURCE_IMAGE_BYTES,
     ImageProcessingFailure,
+    detect_image_family_mime_type,
     detect_supported_image_mime_type,
     process_image,
+    unsupported_image_reason,
 )
 
 DEFAULT_MAX_OUTPUT_BYTES = 50 * 1024
 DEFAULT_MAX_OUTPUT_LINES = 2_000
+IMAGE_SNIFF_BYTES = 64 * 1024
 UTF8_BOM = "\ufeff"
 
 
@@ -50,6 +54,8 @@ class ReadOperations:
 
     validate_path: Callable[[Path], None]
     read_bytes: Callable[[Path], bytes]
+    size_bytes: Callable[[Path], int] | None = None
+    read_prefix: Callable[[Path, int], bytes] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,9 +137,20 @@ def _validate_local_read_path(path: Path) -> None:
         raise ToolInputError(f"Path is a directory: {path}")
 
 
+def _local_file_size(path: Path) -> int:
+    return path.stat().st_size
+
+
+def _local_read_prefix(path: Path, limit: int) -> bytes:
+    with path.open("rb") as file:
+        return file.read(limit)
+
+
 DEFAULT_READ_OPERATIONS = ReadOperations(
     validate_path=_validate_local_read_path,
     read_bytes=Path.read_bytes,
+    size_bytes=_local_file_size,
+    read_prefix=_local_read_prefix,
 )
 
 
@@ -198,7 +215,34 @@ def create_read_tool_definition(
         if limit is not None and limit < 1:
             raise ToolInputError("limit must be at least 1")
         read_operations.validate_path(path)
+        if read_operations.size_bytes is not None and read_operations.read_prefix is not None:
+            source_size = read_operations.size_bytes(path)
+            if source_size > DEFAULT_MAX_SOURCE_IMAGE_BYTES:
+                prefix = read_operations.read_prefix(path, IMAGE_SNIFF_BYTES)
+                image_family = detect_image_family_mime_type(prefix)
+                if image_family is not None:
+                    reason = unsupported_image_reason(prefix) or (
+                        f"source is {format_size(source_size)}, exceeding the "
+                        f"{format_size(DEFAULT_MAX_SOURCE_IMAGE_BYTES)} processing limit"
+                    )
+                    return _omitted_image_result(
+                        path=path,
+                        source_mime_type=image_family,
+                        source_bytes=source_size,
+                        reason=reason,
+                    )
+
         data = read_operations.read_bytes(path)
+        unsupported_reason = unsupported_image_reason(data)
+        if unsupported_reason is not None:
+            image_family = detect_image_family_mime_type(data)
+            assert image_family is not None
+            return _omitted_image_result(
+                path=path,
+                source_mime_type=image_family,
+                source_bytes=len(data),
+                reason=unsupported_reason,
+            )
 
         source_mime_type = detect_supported_image_mime_type(data)
         if source_mime_type is not None:
@@ -318,6 +362,25 @@ def create_read_tool_definition(
             "required": ["path"],
         },
         executor=execute,
+    )
+
+
+def _omitted_image_result(
+    *,
+    path: Path,
+    source_mime_type: str,
+    source_bytes: int,
+    reason: str,
+) -> AgentToolResult:
+    return AgentToolResult(
+        content=[
+            TextContent(text=f"Read image file [{source_mime_type}]\n[Image omitted: {reason}.]")
+        ],
+        details={
+            "path": str(path),
+            "source_mime_type": source_mime_type,
+            "bytes": source_bytes,
+        },
     )
 
 

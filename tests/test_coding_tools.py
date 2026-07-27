@@ -19,12 +19,20 @@ from tau_coding import (
     create_read_tool_definition,
     create_write_tool,
 )
+from tau_coding.image_processing import DEFAULT_MAX_SOURCE_IMAGE_BYTES
 
 
 def image_bytes(format_name: str = "PNG", *, size: tuple[int, int] = (8, 6)) -> bytes:
     output = BytesIO()
     Image.new("RGB", size, "navy").save(output, format=format_name)
     return output.getvalue()
+
+
+def animated_png_bytes() -> bytes:
+    png = image_bytes()
+    idat_offset = png.index(b"IDAT") - 4
+    animated_chunk = b"\x00\x00\x00\x08acTL\x00\x00\x00\x02\x00\x00\x00\x00" + b"\x00" * 4
+    return png[:idat_offset] + animated_chunk + png[idat_offset:]
 
 
 class FakeCancellationToken:
@@ -158,6 +166,65 @@ async def test_read_tool_reports_decode_failure_without_attachment(tmp_path: Pat
 
     assert "Image omitted: could not decode a valid image" in result.text
     assert not any(isinstance(block, ImageContent) for block in result.content)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("filename", "data", "reason"),
+    [
+        ("animated.png", animated_png_bytes(), "animated PNG images are not supported"),
+        ("image.jxl", b"\xff\xd8\xff\xf7not-jpeg", "JPEG XL images are not supported"),
+    ],
+)
+async def test_read_tool_reports_known_unsupported_image_variants(
+    tmp_path: Path, filename: str, data: bytes, reason: str
+) -> None:
+    (tmp_path / filename).write_bytes(data)
+    tool = create_read_tool(cwd=tmp_path)
+
+    result = await tool.execute("test-call", {"path": filename})
+
+    assert reason in result.text
+    assert not any(isinstance(block, ImageContent) for block in result.content)
+
+
+@pytest.mark.anyio
+async def test_read_tool_rejects_oversized_image_from_prefix_before_full_read(
+    tmp_path: Path,
+) -> None:
+    def unexpected_full_read(path: Path) -> bytes:
+        raise AssertionError(f"unexpected full read: {path}")
+
+    source_size = DEFAULT_MAX_SOURCE_IMAGE_BYTES + 1
+    operations = ReadOperations(
+        validate_path=lambda path: None,
+        read_bytes=unexpected_full_read,
+        size_bytes=lambda path: source_size,
+        read_prefix=lambda path, limit: image_bytes()[:limit],
+    )
+    tool = create_read_tool(cwd=tmp_path, operations=operations)
+
+    result = await tool.execute("test-call", {"path": "huge.png"})
+
+    assert "exceeding the 50.0MB processing limit" in result.text
+    assert not any(isinstance(block, ImageContent) for block in result.content)
+    assert result.details is not None
+    assert result.details["bytes"] == source_size
+
+
+@pytest.mark.anyio
+async def test_read_tool_still_reads_large_text_files(tmp_path: Path) -> None:
+    operations = ReadOperations(
+        validate_path=lambda path: None,
+        read_bytes=lambda path: b"large text",
+        size_bytes=lambda path: DEFAULT_MAX_SOURCE_IMAGE_BYTES + 1,
+        read_prefix=lambda path, limit: b"large text"[:limit],
+    )
+    tool = create_read_tool(cwd=tmp_path, operations=operations)
+
+    result = await tool.execute("test-call", {"path": "large.txt"})
+
+    assert result.text == "large text"
 
 
 @pytest.mark.anyio

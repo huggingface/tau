@@ -14,19 +14,23 @@ Processing has explicit ceilings:
 - source dimensions: 40 million pixels
 - output dimensions: 2,000 by 2,000 maximum
 - output encoding: 5 MB
+- image header sniff: 64 KB before loading oversized local files
 - resize/encode attempts: 12
 
 Pillow was selected because it has maintained cross-platform wheels, supports
 the required formats, and exposes decoding validation and decompression-bomb
-warnings. Tau converts those warnings and decode failures into text-only tool
-results. Limits are checked before loading pixel data where Pillow's metadata
-API allows it. These limits bound normal operation, but reading the source file
-still allocates its encoded byte length before image classification.
+warnings. Tau converts those warnings and decode/encode failures into text-only
+tool results. Limits are checked before loading pixel data where Pillow's
+metadata API allows it. For the default local operations, files over 50 MB are
+classified from a 64 KB prefix and known image families are rejected before the
+full file is read. Large text files retain the existing read behavior.
 
 `ReadOperations` separates path validation and byte reading from the tool's
-classification and processing. The default remains the local filesystem. Tests
-can supply fake operations, and a future remote-filesystem integration can do so
-without moving local I/O into `tau_agent`.
+classification and processing. Optional size and prefix callbacks enable the
+early image rejection; implementations that omit them retain the full-read
+fallback. The default remains the local filesystem. Tests can supply fake
+operations, and a future remote-filesystem integration can do so without moving
+local I/O into `tau_agent`.
 
 ## Why it exists
 
@@ -48,6 +52,8 @@ because tool-result image placement differs across APIs.
    quality loss and preserves supported GIF/WebP animation.
 2. Convert BMP to PNG, and resize static oversized images. An animated image
    that exceeds limits is omitted rather than silently flattened to one frame.
+   Animated PNG and JPEG XL input receive explicit unsupported-format notes
+   instead of falling through to UTF-8 decoding.
 3. Keep one transformed payload in `ImageContent`. Original bytes and base64 are
    not copied into tool `details` or session JSONL.
 4. Return transformation notes to the model so it knows when dimensions or

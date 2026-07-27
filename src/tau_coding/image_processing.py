@@ -5,6 +5,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from io import BytesIO
+from typing import Literal
 
 from PIL import Image, UnidentifiedImageError
 
@@ -14,6 +15,7 @@ DEFAULT_MAX_IMAGE_DIMENSION = 2_000
 DEFAULT_MAX_SOURCE_PIXELS = 40_000_000
 MAX_RESIZE_ATTEMPTS = 12
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+type PngKind = Literal["static", "animated", "invalid"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,13 +36,38 @@ class ImageProcessingFailure:
     message: str
 
 
+def detect_image_family_mime_type(data: bytes) -> str | None:
+    """Identify a known image family from the minimum available magic bytes."""
+    if data.startswith(b"\xff\xd8\xff\xf7"):
+        return "image/jxl"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(PNG_SIGNATURE):
+        return "image/png"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if data.startswith(b"RIFF") and len(data) >= 12 and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data.startswith(b"BM"):
+        return "image/bmp"
+    return None
+
+
+def unsupported_image_reason(data: bytes) -> str | None:
+    """Explain recognized image variants that Tau intentionally cannot attach."""
+    if data.startswith(b"\xff\xd8\xff\xf7"):
+        return "JPEG XL images are not supported"
+    if data.startswith(PNG_SIGNATURE) and _classify_png(data) == "animated":
+        return "animated PNG images are not supported"
+    return None
+
+
 def detect_supported_image_mime_type(data: bytes) -> str | None:
     """Detect a supported image from its bytes while rejecting unsafe variants."""
     if data.startswith(b"\xff\xd8\xff"):
-        # FF D8 FF F7 is the JPEG XL codestream marker, not an ordinary JPEG.
-        return None if len(data) > 3 and data[3] == 0xF7 else "image/jpeg"
+        return None if data.startswith(b"\xff\xd8\xff\xf7") else "image/jpeg"
     if data.startswith(PNG_SIGNATURE):
-        return "image/png" if _is_valid_static_png(data) else None
+        return "image/png" if _classify_png(data) == "static" else None
     if data.startswith((b"GIF87a", b"GIF89a")):
         return "image/gif"
     if (
@@ -122,7 +149,10 @@ def process_image(
         image.thumbnail((target_width, target_height), Image.Resampling.LANCZOS)
 
     for attempt in range(MAX_RESIZE_ATTEMPTS):
-        encoded = _encode_image(image, output_mime, attempt)
+        try:
+            encoded = _encode_image(image, output_mime, attempt)
+        except Exception as error:
+            return ImageProcessingFailure(f"could not encode processed image ({error})")
         if len(encoded) <= max_bytes:
             final_width, final_height = image.size
             if (final_width, final_height) != (width, height):
@@ -180,22 +210,22 @@ def _bounded_dimensions(width: int, height: int, maximum: int) -> tuple[int, int
     return max(1, int(width * scale)), max(1, int(height * scale))
 
 
-def _is_valid_static_png(data: bytes) -> bool:
+def _classify_png(data: bytes) -> PngKind:
     if len(data) < 33 or int.from_bytes(data[8:12], "big") != 13 or data[12:16] != b"IHDR":
-        return False
+        return "invalid"
     offset = len(PNG_SIGNATURE)
     while offset + 12 <= len(data):
         chunk_length = int.from_bytes(data[offset : offset + 4], "big")
         chunk_type = data[offset + 4 : offset + 8]
         if chunk_type == b"acTL":
-            return False
+            return "animated"
         if chunk_type == b"IDAT":
-            return True
+            return "static"
         next_offset = offset + 12 + chunk_length
         if next_offset <= offset or next_offset > len(data):
-            return False
+            return "invalid"
         offset = next_offset
-    return False
+    return "invalid"
 
 
 def _is_valid_bmp_header(data: bytes) -> bool:

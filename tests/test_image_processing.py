@@ -3,11 +3,13 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
+import tau_coding.image_processing as image_processing
 from tau_coding.image_processing import (
     ImageProcessingFailure,
     ProcessedImage,
     detect_supported_image_mime_type,
     process_image,
+    unsupported_image_reason,
 )
 
 
@@ -44,6 +46,14 @@ def test_rejects_animated_png_before_image_data() -> None:
     animated = png[:idat_offset] + animated_chunk + png[idat_offset:]
 
     assert detect_supported_image_mime_type(animated) is None
+    assert unsupported_image_reason(animated) == "animated PNG images are not supported"
+
+
+def test_jpeg_xl_has_explicit_unsupported_reason() -> None:
+    data = b"\xff\xd8\xff\xf7not-jpeg"
+
+    assert detect_supported_image_mime_type(data) is None
+    assert unsupported_image_reason(data) == "JPEG XL images are not supported"
 
 
 def test_bmp_is_converted_to_png() -> None:
@@ -108,6 +118,19 @@ def test_source_pixel_limit_omits_image_before_loading_pixels() -> None:
     assert isinstance(result, ImageProcessingFailure)
     assert "16 pixels" in result.message
     assert "15-pixel processing limit" in result.message
+
+
+def test_encode_failure_returns_safe_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_encode(image: Image.Image, mime_type: str, attempt: int) -> bytes:
+        del image, mime_type, attempt
+        raise OSError("encoder unavailable")
+
+    monkeypatch.setattr(image_processing, "_encode_image", fail_encode)
+
+    result = process_image(image_bytes("BMP"), "image/bmp")
+
+    assert isinstance(result, ImageProcessingFailure)
+    assert result.message == "could not encode processed image (encoder unavailable)"
 
 
 def test_decode_failure_returns_safe_failure() -> None:
