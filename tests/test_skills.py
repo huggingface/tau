@@ -214,6 +214,23 @@ def test_expand_skill_command_includes_skill_and_user_request(tmp_path: Path) ->
     assert expanded.endswith("</skill>\n\nadd parser tests")
 
 
+def test_expand_skill_command_includes_multiline_user_request(tmp_path: Path) -> None:
+    skill = Skill(
+        name="testing",
+        path=tmp_path / "skills" / "testing" / "SKILL.md",
+        content="# Testing\nRun pytest.",
+        description="Test code",
+    )
+
+    expanded = expand_skill_command(
+        "/skill:testing\n\nhere are some instructions\n\n- keep this structure",
+        [skill],
+    )
+
+    assert expanded is not None
+    assert expanded.endswith("</skill>\n\nhere are some instructions\n\n- keep this structure")
+
+
 def test_format_skill_invocation_without_extra_instructions(tmp_path: Path) -> None:
     skill = Skill(
         name="testing",

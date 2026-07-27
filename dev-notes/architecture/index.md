@@ -29,6 +29,8 @@ For the practical frontend contract, see [Building a Custom TUI](../custom-tui.m
 - [Phase 3: Pure Agent Loop](./phase-3-agent-loop.md)
 - [Phase 4: AgentHarness](./phase-4-agent-harness.md)
 - [Phase 5: Built-in Coding Tools](./phase-5-coding-tools.md)
+- [Multimodal read-tool results](./multimodal-read-results.md)
+- [Bounded read-image processing](./read-image-processing.md)
 - [Phase 6: Non-interactive Print-mode CLI](./phase-6-print-mode-cli.md)
 - [Phase 7: Session Tree and JSONL Persistence](./phase-7-session-tree.md)
 - [Phase 8: Coding Session Wrapper](./phase-8-coding-session.md)

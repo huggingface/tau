@@ -2,9 +2,11 @@ import asyncio
 import json
 import sys
 from collections.abc import AsyncIterator
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from conftest import isolate_home
 from pi_event_helpers import assistant_done, assistant_error, assistant_start
@@ -12,6 +14,7 @@ from tau_agent import (
     AgentMessage,
     AgentTool,
     AssistantMessage,
+    ImageContent,
     MessageEndEvent,
     TextContent,
     ThinkingContent,
@@ -53,6 +56,7 @@ from tau_coding import (
 from tau_coding import session as coding_session_module
 from tau_coding.events import QueueUpdateEvent
 from tau_coding.prompt_templates import PromptTemplate
+from tau_coding.provider_config import ProviderModelMetadata
 from tau_coding.session import _ordered_tree_entries, parse_terminal_command
 
 
@@ -955,6 +959,47 @@ async def test_session_cycles_thinking_level(tmp_path: Path) -> None:
 
     assert message == "Thinking mode: high"
     assert session.thinking_level == "high"
+
+
+@pytest.mark.anyio
+async def test_session_updates_read_image_behavior_when_model_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    provider_config = OpenAICompatibleProviderConfig(
+        name="openai",
+        models=("text-only", "vision"),
+        default_model="text-only",
+        model_metadata={
+            "text-only": ProviderModelMetadata(input=("text",)),
+            "vision": ProviderModelMetadata(input=("text", "image")),
+        },
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="text-only",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+        )
+    )
+    output = BytesIO()
+    Image.new("RGB", (8, 6), "navy").save(output, format="PNG")
+    (tmp_path / "image.png").write_bytes(output.getvalue())
+    read_tool = next(tool for tool in session.tools if tool.name == "read")
+
+    omitted = await read_tool.execute("call-1", {"path": "image.png"})
+
+    assert "do not infer or describe" in omitted.text
+    assert not any(isinstance(block, ImageContent) for block in omitted.content)
+
+    session.set_model("vision")
+    attached = await read_tool.execute("call-2", {"path": "image.png"})
+
+    assert any(isinstance(block, ImageContent) for block in attached.content)
 
 
 @pytest.mark.anyio
@@ -2130,7 +2175,7 @@ async def test_session_loads_and_expands_skills(tmp_path: Path) -> None:
     )
     session = await CodingSession.load(config)
 
-    _events = await _collect_session_events(session.prompt("/skill:testing add tests"))
+    _events = await _collect_session_events(session.prompt("/skill:testing\n\nadd tests"))
 
     assert {skill.name for skill in session.skills} == {"testing"}
     assert '<skill name="testing" location="' in provider.calls[0][2][0].content

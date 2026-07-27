@@ -510,6 +510,30 @@ cost = { input = 1, output = 6, cacheRead = 0.1, cacheWrite = 1.25 }
 thinking_level_map = { off = "none", xhigh = "xhigh" }
 unsupported_thinking_levels = ["minimal"]
 
+[providers.model_metadata."gpt-5.5"]
+input = ["text", "image"]
+thinking_level_map = { xhigh = "xhigh" }
+
+[providers.model_metadata."gpt-5.4"]
+input = ["text", "image"]
+thinking_level_map = { xhigh = "xhigh" }
+
+[providers.model_metadata."gpt-5.4-mini"]
+input = ["text", "image"]
+thinking_level_map = { xhigh = "xhigh" }
+
+[providers.model_metadata."gpt-5.3-codex"]
+input = ["text", "image"]
+thinking_level_map = { xhigh = "xhigh" }
+
+[providers.model_metadata."gpt-5.3-codex-spark"]
+input = ["text"]
+thinking_level_map = { xhigh = "xhigh" }
+
+[providers.model_metadata."gpt-5.2"]
+input = ["text", "image"]
+thinking_level_map = { xhigh = "xhigh" }
+
 [[providers]]
 name = "anthropic"
 display_name = "Anthropic"
@@ -3877,7 +3901,7 @@ kimi-for-coding = 262144
 [providers.model_metadata.k3]
 name = "Kimi K3"
 reasoning = true
-input = ["text"]
+input = ["text", "image"]
 context_window = 1048576
 compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = true, maxTokensField = "max_tokens", supportsStrictMode = false }
 cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
@@ -6572,6 +6596,45 @@ thinking_parameter = "reasoning_effort"
 "qwen3.7-max" = 1000000
 "qwen3.7-plus" = 1000000
 
+[providers.model_metadata."deepseek-v4-flash"]
+input = ["text"]
+
+[providers.model_metadata."deepseek-v4-pro"]
+input = ["text"]
+
+[providers.model_metadata."glm-5.1"]
+input = ["text"]
+
+[providers.model_metadata."glm-5.2"]
+input = ["text"]
+
+[providers.model_metadata."kimi-k2.6"]
+input = ["text", "image"]
+
+[providers.model_metadata."kimi-k2.7-code"]
+input = ["text", "image"]
+
+[providers.model_metadata."mimo-v2.5"]
+input = ["text", "image"]
+
+[providers.model_metadata."mimo-v2.5-pro"]
+input = ["text"]
+
+[providers.model_metadata."minimax-m2.7"]
+input = ["text"]
+
+[providers.model_metadata."minimax-m3"]
+input = ["text", "image"]
+
+[providers.model_metadata."qwen3.6-plus"]
+input = ["text", "image"]
+
+[providers.model_metadata."qwen3.7-max"]
+input = ["text"]
+
+[providers.model_metadata."qwen3.7-plus"]
+input = ["text", "image"]
+
 [[providers]]
 name = "opencode"
 display_name = "OpenCode Zen"
@@ -6587,26 +6650,93 @@ thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
 thinking_default = "medium"
 thinking_parameter = "reasoning_effort"
 
+[providers.model_metadata."big-pickle"]
+input = ["text"]
+
+[providers.model_metadata."deepseek-v4-flash"]
+input = ["text"]
+
+[providers.model_metadata."deepseek-v4-flash-free"]
+input = ["text"]
+
+[providers.model_metadata."deepseek-v4-pro"]
+input = ["text"]
+
+[providers.model_metadata."glm-5"]
+input = ["text"]
+
+[providers.model_metadata."glm-5.1"]
+input = ["text"]
+
+[providers.model_metadata."glm-5.2"]
+input = ["text"]
+
 [providers.model_metadata."gpt-5.4"]
 api = "openai-responses"
+input = ["text", "image"]
 
 [providers.model_metadata."gpt-5.4-mini"]
 api = "openai-responses"
+input = ["text", "image"]
 
 [providers.model_metadata."gpt-5.5"]
 api = "openai-responses"
+input = ["text", "image"]
 
 [providers.model_metadata."gpt-5.5-pro"]
 api = "openai-responses"
+input = ["text", "image"]
 
 [providers.model_metadata."gpt-5.6-luna"]
 api = "openai-responses"
+input = ["text", "image"]
 
 [providers.model_metadata."gpt-5.6-sol"]
 api = "openai-responses"
+input = ["text", "image"]
 
 [providers.model_metadata."gpt-5.6-terra"]
 api = "openai-responses"
+input = ["text", "image"]
+
+[providers.model_metadata."grok-4.5"]
+input = ["text", "image"]
+
+[providers.model_metadata."grok-build-0.1"]
+input = ["text", "image"]
+
+[providers.model_metadata."kimi-k2.5"]
+input = ["text", "image"]
+
+[providers.model_metadata."kimi-k2.6"]
+input = ["text", "image"]
+
+[providers.model_metadata."kimi-k2.7-code"]
+input = ["text", "image"]
+
+[providers.model_metadata."mimo-v2.5-free"]
+input = ["text", "image"]
+
+[providers.model_metadata."minimax-m2.5"]
+input = ["text"]
+
+[providers.model_metadata."minimax-m2.7"]
+input = ["text"]
+
+[providers.model_metadata."minimax-m3"]
+input = ["text", "image"]
+
+[providers.model_metadata."nemotron-3-ultra-free"]
+input = ["text"]
+
+[providers.model_metadata."north-mini-code-free"]
+input = ["text"]
+
+[providers.model_metadata."qwen3.5-plus"]
+input = ["text", "image"]
+
+[providers.model_metadata."qwen3.6-plus"]
+input = ["text", "image"]
 
 [[providers]]
 name = "github-copilot"
@@ -6627,48 +6757,100 @@ headers = { User-Agent = "GitHubCopilotChat/0.35.0", Editor-Version = "vscode/1.
 
 [providers.model_metadata."claude-fable-5"]
 api = "openai-completions"
+input = ["text", "image"]
 
 [providers.model_metadata."claude-haiku-4.5"]
 api = "anthropic-messages"
+input = ["text", "image"]
 
 [providers.model_metadata."claude-opus-4.5"]
 api = "anthropic-messages"
+input = ["text", "image"]
 
 [providers.model_metadata."claude-opus-4.6"]
 api = "anthropic-messages"
+input = ["text", "image"]
 
 [providers.model_metadata."claude-opus-4.7"]
 api = "anthropic-messages"
+input = ["text", "image"]
 
 [providers.model_metadata."claude-opus-4.8"]
 api = "anthropic-messages"
+input = ["text", "image"]
 
 [providers.model_metadata."claude-sonnet-4"]
 api = "anthropic-messages"
+input = ["text", "image"]
 
 [providers.model_metadata."claude-sonnet-4.5"]
 api = "anthropic-messages"
+input = ["text", "image"]
 
 [providers.model_metadata."claude-sonnet-4.6"]
 api = "anthropic-messages"
+input = ["text", "image"]
 
 [providers.model_metadata."claude-sonnet-5"]
 api = "anthropic-messages"
+input = ["text", "image"]
 
 [providers.model_metadata."gemini-2.5-pro"]
 api = "openai-completions"
+input = ["text", "image"]
 
 [providers.model_metadata."gemini-3-flash-preview"]
 api = "openai-completions"
+input = ["text", "image"]
 
 [providers.model_metadata."gemini-3.1-pro-preview"]
 api = "openai-completions"
+input = ["text", "image"]
 
 [providers.model_metadata."gemini-3.5-flash"]
 api = "openai-completions"
+input = ["text", "image"]
 
 [providers.model_metadata."gpt-4.1"]
 api = "openai-completions"
+input = ["text", "image"]
+
+[providers.model_metadata."gpt-5-mini"]
+input = ["text", "image"]
+
+[providers.model_metadata."gpt-5.2"]
+input = ["text", "image"]
+
+[providers.model_metadata."gpt-5.2-codex"]
+input = ["text", "image"]
+
+[providers.model_metadata."gpt-5.3-codex"]
+input = ["text", "image"]
+
+[providers.model_metadata."gpt-5.4"]
+input = ["text", "image"]
+
+[providers.model_metadata."gpt-5.4-mini"]
+input = ["text", "image"]
+
+[providers.model_metadata."gpt-5.4-nano"]
+input = ["text", "image"]
+
+[providers.model_metadata."gpt-5.5"]
+input = ["text", "image"]
+
+[providers.model_metadata."gpt-5.6-luna"]
+input = ["text", "image"]
+
+[providers.model_metadata."gpt-5.6-sol"]
+input = ["text", "image"]
+
+[providers.model_metadata."gpt-5.6-terra"]
+input = ["text", "image"]
 
 [providers.model_metadata."kimi-k2.7-code"]
 api = "openai-completions"
+input = ["text", "image"]
+
+[providers.model_metadata."mai-code-1-flash-picker"]
+input = ["text"]

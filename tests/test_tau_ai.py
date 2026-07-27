@@ -8,6 +8,7 @@ from tau_agent import (
     AgentTool,
     AgentToolResult,
     AssistantMessage,
+    ImageContent,
     SimpleCancellationToken,
     TextContent,
     ThinkingContent,
@@ -2715,3 +2716,82 @@ async def test_openai_codex_provider_leaves_reasoning_none_when_unreported() -> 
     assert usage.reasoning is None
     assert usage.cache_read == 0
     assert usage.total_tokens == 12
+
+
+@pytest.mark.anyio
+async def test_github_copilot_sends_vision_header_for_tool_result_images() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"type":"response.completed","response":{"status":"completed"}}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    message = ToolResultMessage(
+        tool_call_id="call-1",
+        tool_name="read",
+        content=[ImageContent(data="aW1hZ2U=", mime_type="image/png")],
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://copilot.test",
+                api="openai-responses",
+                provider_name="github-copilot",
+                supports_images=True,
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="gpt-5.4",
+                system="You are Tau.",
+                messages=[message],
+                tools=[],
+            )
+        )
+
+    assert requests[0].headers["Copilot-Vision-Request"] == "true"
+
+
+@pytest.mark.anyio
+async def test_github_copilot_anthropic_sends_vision_header() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"type":"message_stop"}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    message = ToolResultMessage(
+        tool_call_id="call-1",
+        tool_name="read",
+        content=[ImageContent(data="aW1hZ2U=", mime_type="image/png")],
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://copilot.test",
+                provider_name="github-copilot",
+                supports_images=True,
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="claude-sonnet-4.6",
+                system="You are Tau.",
+                messages=[message],
+                tools=[],
+            )
+        )
+
+    assert requests[0].headers["Copilot-Vision-Request"] == "true"

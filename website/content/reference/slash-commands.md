@@ -31,7 +31,8 @@ command palette with **Ctrl+K**.
 
 {{% note title="`/skill:` is special" %}}
 `/skill:<name>` is a *prompt-expansion* path, not a normal command — Tau expands
-the named skill into your prompt and runs it as a turn. See
+the named skill into your prompt and runs it as a turn. Its optional request may
+start on the same line or on following lines. See
 [Skills & prompt templates]({{< relref "../guides/skills-and-prompts.md" >}}).
 {{% /note %}}
 
