@@ -2175,7 +2175,7 @@ async def test_session_loads_and_expands_skills(tmp_path: Path) -> None:
     )
     session = await CodingSession.load(config)
 
-    _events = await _collect_session_events(session.prompt("/skill:testing add tests"))
+    _events = await _collect_session_events(session.prompt("/skill:testing\n\nadd tests"))
 
     assert {skill.name for skill in session.skills} == {"testing"}
     assert '<skill name="testing" location="' in provider.calls[0][2][0].content
