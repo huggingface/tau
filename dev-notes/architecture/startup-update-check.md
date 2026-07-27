@@ -33,7 +33,11 @@ This lives in `tau_coding`, not `tau_agent`, because update notification is CLI 
   original Tau PID to exit before invoking uv, preventing Windows from partially
   replacing the still-running tool environment. Tau reports that the update was
   scheduled—not completed—and gives the path to a log containing the eventual
-  command output and exit code.
+  command output and exit code. The helper treats process inspection or waiting
+  errors as fatal: uv never starts unless the original Tau process is confirmed
+  absent or its observed process object exits. The update command is staged as
+  base64-encoded JSON so spaces and PowerShell metacharacters remain literal
+  arguments.
 - `pipx_metadata.json` means pipx owns it, so Tau runs `pipx upgrade tau-ai`.
 - The distribution's standard `INSTALLER` metadata identifies ordinary uv and pip installs. Tau runs either `uv pip install --python <current-python> --upgrade tau-ai` or `<current-python> -m pip install --upgrade tau-ai`, targeting the environment that is running Tau.
 
@@ -46,3 +50,11 @@ Run:
 ```bash
 uv run pytest tests/test_updater.py tests/test_update_check.py tests/test_cli.py tests/test_tui_app.py
 ```
+
+`tests/test_updater.py` also contains Windows-and-PowerShell-only integration
+coverage. On Windows it launches the generated helper against a live fake parent
+and fake updater, checking blocking, exact argument delivery, exit-code logging,
+and fail-closed wait errors without installing uv or replacing Tau. These tests
+are skipped on development and CI hosts that do not provide Windows PowerShell;
+cross-platform tests still cover script generation, detached launch options,
+staging failures, and cleanup.

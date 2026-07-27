@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -9,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
@@ -158,20 +160,51 @@ def _update_command(
 _WINDOWS_UPDATE_SCRIPT = """param(
     [Parameter(Mandatory=$true)][int]$ParentProcessId,
     [Parameter(Mandatory=$true)][string]$LogPath,
-    [Parameter(Mandatory=$true)][string]$UpdateExecutable,
-    [Parameter(ValueFromRemainingArguments=$true)][string[]]$UpdateArguments
+    [Parameter(Mandatory=$true)][string]$UpdateCommandBase64
 )
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 $UpdateExitCode = 1
+function Write-Log([string]$Message) {
+    $Message | Add-Content -LiteralPath $LogPath -Encoding UTF8
+}
 try {
-    "Waiting for Tau process $ParentProcessId to exit..." | Set-Content -LiteralPath $LogPath
-    Wait-Process -Id $ParentProcessId -ErrorAction SilentlyContinue
+    $ErrorActionPreference = "Stop"
+    $WaitMessage = "Waiting for Tau process $ParentProcessId to exit..."
+    $WaitMessage | Set-Content -LiteralPath $LogPath -Encoding UTF8
+    $ParentProcess = $null
+    try {
+        $ParentProcess = Get-Process -Id $ParentProcessId -ErrorAction Stop
+    } catch {
+        if ($_.FullyQualifiedErrorId -like "NoProcessFoundForGivenId*") {
+            Write-Log "Tau process $ParentProcessId has already exited."
+        } else {
+            $Detail = $_.Exception.Message
+            throw "Could not inspect Tau process $ParentProcessId. Update aborted: $Detail"
+        }
+    }
+    if ($null -ne $ParentProcess) {
+        try {
+            Wait-Process -InputObject $ParentProcess -ErrorAction Stop
+        } catch {
+            $Detail = $_.Exception.Message
+            throw "Could not wait for Tau process $ParentProcessId to exit. Update aborted: $Detail"
+        }
+    }
+    $CommandJson = [Text.Encoding]::UTF8.GetString(
+        [Convert]::FromBase64String($UpdateCommandBase64)
+    )
+    $UpdateCommand = @(ConvertFrom-Json -InputObject $CommandJson)
+    if ($UpdateCommand.Count -lt 1) {
+        throw "The staged update command is empty. Update aborted."
+    }
+    $UpdateExecutable = [string]$UpdateCommand[0]
+    [string[]]$UpdateArguments = @($UpdateCommand | Select-Object -Skip 1)
     & $UpdateExecutable @UpdateArguments *>> $LogPath
     $UpdateExitCode = $LASTEXITCODE
-    "Update command exited with code $UpdateExitCode." | Add-Content -LiteralPath $LogPath
+    Write-Log "Update command exited with code $UpdateExitCode."
 } catch {
-    $_ | Out-String | Add-Content -LiteralPath $LogPath
+    Write-Log ($_ | Out-String)
 } finally {
     Remove-Item -LiteralPath $ScriptPath -Force -ErrorAction SilentlyContinue
 }
@@ -191,14 +224,24 @@ def _handoff_windows_update(
     if powershell is None:
         return _failure("Could not find PowerShell to safely finish the Windows update.")
 
-    if handoff_directory is None:
-        update_dir = Path(tempfile.mkdtemp(prefix="tau-update-"))
-    else:
-        update_dir = handoff_directory
-        update_dir.mkdir(parents=True, exist_ok=True)
-    script_path = update_dir / "update.ps1"
-    log_path = update_dir / "update.log"
-    script_path.write_text(_WINDOWS_UPDATE_SCRIPT, encoding="utf-8")
+    owns_update_dir = handoff_directory is None
+    update_dir: Path | None = None
+    script_path: Path | None = None
+    try:
+        if owns_update_dir:
+            update_dir = Path(tempfile.mkdtemp(prefix="tau-update-"))
+        else:
+            update_dir = handoff_directory
+            assert update_dir is not None
+            update_dir.mkdir(parents=True, exist_ok=True)
+        script_path = update_dir / "update.ps1"
+        log_path = update_dir / "update.log"
+        script_path.write_text(_WINDOWS_UPDATE_SCRIPT, encoding="utf-8")
+    except OSError as exc:
+        _cleanup_windows_handoff(update_dir, script_path, remove_directory=owns_update_dir)
+        return _failure(f"Could not stage the detached Windows updater: {exc}")
+
+    encoded_command = base64.b64encode(json.dumps(command).encode()).decode("ascii")
     powershell_command = (
         powershell,
         "-NoLogo",
@@ -208,9 +251,12 @@ def _handoff_windows_update(
         "Bypass",
         "-File",
         str(script_path),
+        "-ParentProcessId",
         str(parent_pid),
+        "-LogPath",
         str(log_path),
-        *command,
+        "-UpdateCommandBase64",
+        encoded_command,
     )
     creationflags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(
         subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
@@ -225,7 +271,7 @@ def _handoff_windows_update(
             creationflags=creationflags,
         )
     except OSError as exc:
-        script_path.unlink(missing_ok=True)
+        _cleanup_windows_handoff(update_dir, script_path, remove_directory=owns_update_dir)
         return _failure(f"Could not start the detached Windows updater: {exc}")
     return UpdateResult(
         command=command,
@@ -235,6 +281,20 @@ def _handoff_windows_update(
         ),
         deferred=True,
     )
+
+
+def _cleanup_windows_handoff(
+    update_dir: Path | None,
+    script_path: Path | None,
+    *,
+    remove_directory: bool,
+) -> None:
+    if script_path is not None:
+        with suppress(OSError):
+            script_path.unlink(missing_ok=True)
+    if remove_directory and update_dir is not None:
+        with suppress(OSError):
+            update_dir.rmdir()
 
 
 def _installed_direct_url() -> str | None:

@@ -1,6 +1,16 @@
+import base64
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
 from pathlib import Path
 from subprocess import CompletedProcess
 
+import pytest
+
+from tau_coding import updater
 from tau_coding.updater import detect_install_method, update_tau
 
 
@@ -77,20 +87,203 @@ def test_update_tau_hands_windows_uv_tool_update_to_waiting_process(tmp_path: Pa
     assert str(handoff_dir / "update.log") in result.stdout
     assert len(launches) == 1
     detached_command, options = launches[0]
-    assert detached_command[-7:] == (
+    assert detached_command[-7:-1] == (
         str(handoff_dir / "update.ps1"),
+        "-ParentProcessId",
         "4242",
+        "-LogPath",
         str(handoff_dir / "update.log"),
-        "uv",
-        "tool",
-        "install",
-        "tau-ai@0.2.4",
+        "-UpdateCommandBase64",
     )
+    assert tuple(json.loads(base64.b64decode(detached_command[-1]))) == result.command
     assert options["creationflags"] == 0x00000208
     script = (handoff_dir / "update.ps1").read_text(encoding="utf-8")
-    assert script.index("Wait-Process -Id $ParentProcessId") < script.index(
+    assert "Wait-Process -InputObject $ParentProcess -ErrorAction Stop" in script
+    assert "NoProcessFoundForGivenId" in script
+    assert script.index("Wait-Process -InputObject $ParentProcess") < script.index(
         "& $UpdateExecutable @UpdateArguments"
     )
+
+
+def test_windows_handoff_reports_staging_write_failure_and_removes_owned_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    update_dir = tmp_path / "owned-handoff"
+
+    def make_update_dir(*args: object, **kwargs: object) -> str:
+        del args, kwargs
+        update_dir.mkdir()
+        return str(update_dir)
+
+    original_write_text = Path.write_text
+
+    def fail_script_write(path: Path, *args: object, **kwargs: object) -> int:
+        if path == update_dir / "update.ps1":
+            raise OSError("disk is full")
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(updater.tempfile, "mkdtemp", make_update_dir)
+    monkeypatch.setattr(Path, "write_text", fail_script_write)
+
+    result = updater._handoff_windows_update(
+        ("uv", "tool", "install", "tau-ai@1.0"),
+        launcher=lambda *args, **kwargs: object(),
+        executable_finder=lambda name: "powershell.exe",
+        parent_pid=4242,
+        handoff_directory=None,
+    )
+
+    assert result.succeeded is False
+    assert result.failures == ("Could not stage the detached Windows updater: disk is full",)
+    assert not update_dir.exists()
+
+
+def test_windows_handoff_reports_launch_failure_and_preserves_caller_directory(
+    tmp_path: Path,
+) -> None:
+    update_dir = tmp_path / "caller-handoff"
+
+    def fail_launch(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise OSError("process creation denied")
+
+    result = updater._handoff_windows_update(
+        ("uv", "tool", "install", "tau-ai@1.0"),
+        launcher=fail_launch,
+        executable_finder=lambda name: "powershell.exe",
+        parent_pid=4242,
+        handoff_directory=update_dir,
+    )
+
+    assert result.succeeded is False
+    assert result.failures == (
+        "Could not start the detached Windows updater: process creation denied",
+    )
+    assert update_dir.is_dir()
+    assert list(update_dir.iterdir()) == []
+
+
+def _wait_for_file(path: Path, timeout: float = 10) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists():
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"timed out waiting for {path}")
+
+
+def _wait_for_text(path: Path, expected: str, timeout: float = 10) -> str:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists():
+            text = path.read_text(encoding="utf-8-sig")
+            if expected in text:
+                return text
+        time.sleep(0.05)
+    raise AssertionError(f"timed out waiting for {expected!r} in {path}")
+
+
+def _powershell() -> str | None:
+    return shutil.which("powershell.exe") or shutil.which("pwsh.exe")
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32" or _powershell() is None,
+    reason="requires Windows and PowerShell",
+)
+def test_windows_handoff_blocks_for_live_parent_and_preserves_arguments(tmp_path: Path) -> None:
+    powershell = _powershell()
+    assert powershell is not None
+    parent = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    marker = tmp_path / "exact argv.json"
+    fake_update = tmp_path / "fake updater.py"
+    fake_update.write_text(
+        "import json, pathlib, sys\n"
+        "pathlib.Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]), encoding='utf-8')\n"
+        "raise SystemExit(23)\n",
+        encoding="utf-8",
+    )
+    arguments = ("space value", "semi;&$()", 'quote"value', "-named-looking")
+    update_dir = tmp_path / "handoff with spaces"
+    try:
+        result = updater._handoff_windows_update(
+            (sys.executable, str(fake_update), str(marker), *arguments),
+            launcher=subprocess.Popen,
+            executable_finder=lambda name: powershell,
+            parent_pid=parent.pid,
+            handoff_directory=update_dir,
+        )
+        assert result.succeeded is True
+        time.sleep(0.5)
+        assert not marker.exists(), "updater ran while the parent was alive"
+        parent.terminate()
+        parent.wait(timeout=10)
+        _wait_for_file(marker)
+        assert json.loads(marker.read_text(encoding="utf-8")) == list(arguments)
+        _wait_for_text(update_dir / "update.log", "Update command exited with code 23.")
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=10)
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32" or _powershell() is None,
+    reason="requires Windows and PowerShell",
+)
+def test_windows_helper_wait_failure_is_fail_closed(tmp_path: Path) -> None:
+    powershell = _powershell()
+    assert powershell is not None
+    update_dir = tmp_path / "wait-failure"
+    update_dir.mkdir()
+    script_path = update_dir / "update.ps1"
+    log_path = update_dir / "update.log"
+    marker = update_dir / "updater-ran"
+    fake_update = update_dir / "fake updater.py"
+    script_path.write_text(updater._WINDOWS_UPDATE_SCRIPT, encoding="utf-8")
+    fake_update.write_text(
+        "import pathlib, sys\npathlib.Path(sys.argv[1]).touch()\n",
+        encoding="utf-8",
+    )
+    wrapper = update_dir / "force-wait-failure.ps1"
+    wrapper.write_text(
+        "function Wait-Process { throw 'forced wait failure' }\n"
+        "$Target = $args[0]\n"
+        "$TargetArgs = $args[1..($args.Count - 1)]\n"
+        "& $Target @TargetArgs\n"
+        "exit $LASTEXITCODE\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            powershell,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(wrapper),
+            str(script_path),
+            "-ParentProcessId",
+            str(os.getpid()),
+            "-LogPath",
+            str(log_path),
+            "-UpdateCommandBase64",
+            base64.b64encode(
+                json.dumps((sys.executable, str(fake_update), str(marker))).encode()
+            ).decode("ascii"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert completed.returncode != 0
+    assert not marker.exists()
+    assert "Could not wait for Tau process" in log_path.read_text(encoding="utf-8-sig")
 
 
 def test_update_tau_reports_uv_latest_version_lookup_failure(tmp_path: Path) -> None:
