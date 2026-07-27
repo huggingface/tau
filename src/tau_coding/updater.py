@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, distribution
@@ -14,6 +18,8 @@ from typing import Literal
 from tau_coding.update_check import PYPI_PACKAGE_NAME, fetch_latest_pypi_version
 
 CommandRunner = Callable[..., CompletedProcess[str]]
+DetachedLauncher = Callable[..., object]
+ExecutableFinder = Callable[[str], str | None]
 LatestVersionFetcher = Callable[[], str | None]
 InstallMethod = Literal["uv-tool", "uv-pip", "pipx", "pip"]
 
@@ -26,6 +32,7 @@ class UpdateResult:
     stdout: str = ""
     stderr: str = ""
     failures: tuple[str, ...] = ()
+    deferred: bool = False
 
     @property
     def succeeded(self) -> bool:
@@ -41,6 +48,11 @@ def update_tau(
     installer: str | None = None,
     inspect_distribution: bool = True,
     latest_version_fetcher: LatestVersionFetcher = fetch_latest_pypi_version,
+    platform_name: str | None = None,
+    detached_launcher: DetachedLauncher = subprocess.Popen,
+    executable_finder: ExecutableFinder = shutil.which,
+    parent_pid: int | None = None,
+    handoff_directory: Path | None = None,
 ) -> UpdateResult:
     """Upgrade Tau with the installer that owns the active environment.
 
@@ -83,6 +95,15 @@ def update_tau(
 
     executable = python_executable or sys.executable
     command = _update_command(method, executable, latest_version=latest_version)
+    if (platform_name or sys.platform) == "win32" and method == "uv-tool":
+        return _handoff_windows_update(
+            command,
+            launcher=detached_launcher,
+            executable_finder=executable_finder,
+            parent_pid=parent_pid or os.getpid(),
+            handoff_directory=handoff_directory,
+        )
+
     completed = _run(runner, command)
     if isinstance(completed, str):
         return _failure(f"{' '.join(command)}: {completed}")
@@ -132,6 +153,88 @@ def _update_command(
     if method == "pipx":
         return ("pipx", "upgrade", PYPI_PACKAGE_NAME)
     return (python_executable, "-m", "pip", "install", "--upgrade", PYPI_PACKAGE_NAME)
+
+
+_WINDOWS_UPDATE_SCRIPT = """param(
+    [Parameter(Mandatory=$true)][int]$ParentProcessId,
+    [Parameter(Mandatory=$true)][string]$LogPath,
+    [Parameter(Mandatory=$true)][string]$UpdateExecutable,
+    [Parameter(ValueFromRemainingArguments=$true)][string[]]$UpdateArguments
+)
+
+$ScriptPath = $MyInvocation.MyCommand.Path
+$UpdateExitCode = 1
+try {
+    "Waiting for Tau process $ParentProcessId to exit..." | Set-Content -LiteralPath $LogPath
+    Wait-Process -Id $ParentProcessId -ErrorAction SilentlyContinue
+    & $UpdateExecutable @UpdateArguments *>> $LogPath
+    $UpdateExitCode = $LASTEXITCODE
+    "Update command exited with code $UpdateExitCode." | Add-Content -LiteralPath $LogPath
+} catch {
+    $_ | Out-String | Add-Content -LiteralPath $LogPath
+} finally {
+    Remove-Item -LiteralPath $ScriptPath -Force -ErrorAction SilentlyContinue
+}
+exit $UpdateExitCode
+"""
+
+
+def _handoff_windows_update(
+    command: tuple[str, ...],
+    *,
+    launcher: DetachedLauncher,
+    executable_finder: ExecutableFinder,
+    parent_pid: int,
+    handoff_directory: Path | None,
+) -> UpdateResult:
+    powershell = executable_finder("powershell.exe") or executable_finder("pwsh.exe")
+    if powershell is None:
+        return _failure("Could not find PowerShell to safely finish the Windows update.")
+
+    if handoff_directory is None:
+        update_dir = Path(tempfile.mkdtemp(prefix="tau-update-"))
+    else:
+        update_dir = handoff_directory
+        update_dir.mkdir(parents=True, exist_ok=True)
+    script_path = update_dir / "update.ps1"
+    log_path = update_dir / "update.log"
+    script_path.write_text(_WINDOWS_UPDATE_SCRIPT, encoding="utf-8")
+    powershell_command = (
+        powershell,
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(script_path),
+        str(parent_pid),
+        str(log_path),
+        *command,
+    )
+    creationflags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(
+        subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
+    )
+    try:
+        launcher(
+            powershell_command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            creationflags=creationflags,
+        )
+    except OSError as exc:
+        script_path.unlink(missing_ok=True)
+        return _failure(f"Could not start the detached Windows updater: {exc}")
+    return UpdateResult(
+        command=command,
+        stdout=(
+            "Tau update is scheduled and will start after this process exits. "
+            f"Progress will be written to {log_path}."
+        ),
+        deferred=True,
+    )
 
 
 def _installed_direct_url() -> str | None:

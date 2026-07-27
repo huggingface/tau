@@ -35,11 +35,62 @@ def test_update_tau_uses_uv_tool_for_uv_owned_tool_environment(tmp_path: Path) -
         environment_prefix=tmp_path,
         inspect_distribution=False,
         latest_version_fetcher=lambda: "0.2.4",
+        platform_name="linux",
     )
 
     assert result.succeeded is True
     assert result.command == ("uv", "tool", "install", "tau-ai@0.2.4")
     assert calls == [("uv", "tool", "install", "tau-ai@0.2.4")]
+
+
+def test_update_tau_hands_windows_uv_tool_update_to_waiting_process(tmp_path: Path) -> None:
+    (tmp_path / "uv-receipt.toml").touch()
+    handoff_dir = tmp_path / "handoff"
+    launches: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+    def launcher(command: tuple[str, ...], **kwargs: object) -> object:
+        launches.append((command, kwargs))
+        return object()
+
+    def runner(*args: object, **kwargs: object) -> CompletedProcess[str]:
+        del args, kwargs
+        raise AssertionError("uv must not run in the live Tau process")
+
+    result = update_tau(
+        runner=runner,
+        environment_prefix=tmp_path,
+        inspect_distribution=False,
+        latest_version_fetcher=lambda: "0.2.4",
+        platform_name="win32",
+        detached_launcher=launcher,
+        executable_finder=lambda name: (
+            "C:/Windows/powershell.exe" if name == "powershell.exe" else None
+        ),
+        parent_pid=4242,
+        handoff_directory=handoff_dir,
+    )
+
+    assert result.succeeded is True
+    assert result.deferred is True
+    assert result.command == ("uv", "tool", "install", "tau-ai@0.2.4")
+    assert "scheduled" in result.stdout
+    assert str(handoff_dir / "update.log") in result.stdout
+    assert len(launches) == 1
+    detached_command, options = launches[0]
+    assert detached_command[-7:] == (
+        str(handoff_dir / "update.ps1"),
+        "4242",
+        str(handoff_dir / "update.log"),
+        "uv",
+        "tool",
+        "install",
+        "tau-ai@0.2.4",
+    )
+    assert options["creationflags"] == 0x00000208
+    script = (handoff_dir / "update.ps1").read_text(encoding="utf-8")
+    assert script.index("Wait-Process -Id $ParentProcessId") < script.index(
+        "& $UpdateExecutable @UpdateArguments"
+    )
 
 
 def test_update_tau_reports_uv_latest_version_lookup_failure(tmp_path: Path) -> None:
