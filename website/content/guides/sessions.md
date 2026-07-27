@@ -109,6 +109,8 @@ nested accordions. The export header includes controls to:
 - expand or collapse every accordion in the transcript with one button
 - hide session events—such as session info, model and thinking changes,
   compactions, labels, and custom entries—to focus on user and assistant messages
+- download the session as a JSONL file—the complete entry data is embedded in
+  the page, so the download works offline and includes every entry
 
 Tool rows are titled `Tool: <name>` (for example, `Tool: read`), and the
 session tree labels tool entries with just the tool name for readability.

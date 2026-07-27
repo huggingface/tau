@@ -40,8 +40,11 @@ accordions. Tool rows are titled `Tool: <name>`, and the session tree labels
 tool entries with just the tool name for readability. Chip-style header
 filters—with entry counts—can hide tool calls/results in both views or drop
 non-message session events for a user/assistant-focused transcript, and a
-single button expands or collapses every accordion at once. The filters change
-only the exported view; the complete session remains embedded in the document.
+single button expands or collapses every accordion at once. A download button
+reproduces the JSONL export from the entry data embedded (base64-encoded) in
+the page, so the HTML file alone round-trips the full session. The filters
+change only the exported view; the complete session remains embedded in the
+document.
 
 ## Why it exists
 

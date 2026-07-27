@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import html
 import json
+import re
 from collections import defaultdict
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -63,9 +65,14 @@ def default_session_export_artifact_path(
 def export_session_jsonl(entries: Sequence[SessionEntry], output_path: Path) -> Path:
     """Write session entries to a JSONL export and return its path."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [entry.model_dump_json() for entry in entries]
-    output_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    output_path.write_text(_session_jsonl_text(entries), encoding="utf-8")
     return output_path
+
+
+def _session_jsonl_text(entries: Sequence[SessionEntry]) -> str:
+    """Serialize session entries to JSONL text (one JSON object per line)."""
+    lines = [entry.model_dump_json() for entry in entries]
+    return "\n".join(lines) + ("\n" if lines else "")
 
 
 def export_session_html(
@@ -113,6 +120,16 @@ def _export_suffix(format: str) -> str:
     return ".jsonl" if normalize_export_format(format) == "jsonl" else ".html"
 
 
+def _jsonl_filename(title: str, source: str | None) -> str:
+    """Return the filename used by the in-page JSONL download button."""
+    if source:
+        stem = Path(source).stem
+        if stem:
+            return f"{stem}.jsonl"
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return f"{slug or 'tau-session'}.jsonl"
+
+
 def render_session_html(
     entries: Sequence[SessionEntry],
     *,
@@ -128,6 +145,8 @@ def render_session_html(
     details_html = _render_entry_details(visible_entries, active_path_ids, active_leaf_id)
     source_html = f'<p class="source">Source: <code>{_escape(source)}</code></p>' if source else ""
     generated_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+    jsonl_b64 = base64.b64encode(_session_jsonl_text(entry_list).encode("utf-8")).decode("ascii")
+    jsonl_filename = _jsonl_filename(title, source)
     tool_count = sum(1 for entry in visible_entries if _entry_filter_kind(entry) == "tool")
     event_count = sum(1 for entry in visible_entries if _entry_filter_kind(entry) == "event")
     return f"""<!doctype html>
@@ -355,6 +374,23 @@ def render_session_html(
     }}
     .chip input:checked + .chip-label .chip-count {{ background: var(--surface); }}
     .filter-spacer {{ flex: 1 1 auto; }}
+    .jsonl-download {{
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      color: var(--muted);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      font-family: var(--sans);
+      font-size: 0.76rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: color .15s, border-color .15s;
+    }}
+    .jsonl-download:hover {{ color: var(--accent); border-color: var(--accent); }}
+    .jsonl-download .icon {{ width: 12px; height: 12px; }}
     .expand-toggle {{
       display: inline-flex;
       align-items: center;
@@ -657,6 +693,15 @@ def render_session_html(
       >
         Expand all
       </button>
+      <button
+        type="button"
+        class="jsonl-download"
+        id="downloadJsonl"
+        title="Download the session as a JSONL file"
+        aria-label="Download the session as a JSONL file"
+      >
+        <span class="icon">{_ICON_DOWNLOAD}</span>JSONL
+      </button>
     </div>
   </header>
   <main class="session-shell">
@@ -669,6 +714,7 @@ def render_session_html(
       {details_html}
     </section>
   </main>
+  <script id="sessionJsonlData" type="application/octet-stream">{jsonl_b64}</script>
   <script>
     (function () {{
       var root = document.documentElement;
@@ -706,6 +752,27 @@ def render_session_html(
       }}
       showTools.addEventListener("change", applyFilters);
       showEvents.addEventListener("change", applyFilters);
+
+      var downloadJsonl = document.getElementById("downloadJsonl");
+      if (downloadJsonl) {{
+        downloadJsonl.addEventListener("click", function () {{
+          var encoded = document.getElementById("sessionJsonlData").textContent.trim();
+          var binary = window.atob(encoded);
+          var bytes = new Uint8Array(binary.length);
+          for (var i = 0; i < binary.length; i++) {{
+            bytes[i] = binary.charCodeAt(i);
+          }}
+          var blob = new Blob([bytes], {{ type: "application/jsonl" }});
+          var url = URL.createObjectURL(blob);
+          var link = document.createElement("a");
+          link.href = url;
+          link.download = "{_attr(jsonl_filename)}";
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(url);
+        }});
+      }}
 
       function transcriptDetails() {{
         return document.querySelectorAll(".entry-stream details");
@@ -1179,6 +1246,14 @@ _ICON_MOON = (
     '<svg viewBox="0 0 16 16" aria-hidden="true">'
     '<path d="M13.2 9.8A5.6 5.6 0 0 1 6.2 2.8a5.6 5.6 0 1 0 7 7Z" fill="none"'
     ' stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>'
+    "</svg>"
+)
+_ICON_DOWNLOAD = (
+    '<svg viewBox="0 0 16 16" aria-hidden="true">'
+    '<path d="M8 2.5v7M5.3 6.8 8 9.5l2.7-2.7" fill="none" stroke="currentColor"'
+    ' stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>'
+    '<path d="M2.8 11v1.7c0 .8.7 1.5 1.5 1.5h7.4c.8 0 1.5-.7 1.5-1.5V11" fill="none"'
+    ' stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>'
     "</svg>"
 )
 

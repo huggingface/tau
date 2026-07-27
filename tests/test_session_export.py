@@ -1,3 +1,5 @@
+import base64
+import re
 from pathlib import Path
 
 from tau_agent import (
@@ -190,6 +192,40 @@ def test_render_session_html_marks_error_tool_results() -> None:
 
     assert 'id="entry-failure" class="entry active-entry is-error"' in html
     assert '<span class="error-flag">error</span>' in html
+
+
+def test_render_session_html_includes_jsonl_download() -> None:
+    entries = [
+        MessageEntry(id="root", message=UserMessage(content="Hello")),
+        MessageEntry(id="reply", parent_id="root", message=AssistantMessage(content="Hi")),
+        LeafEntry(id="leaf", parent_id="reply", entry_id="reply"),
+    ]
+
+    html = render_session_html(
+        entries, title="Download Export", source="/home/user/.tau/sessions/abc123.jsonl"
+    )
+
+    assert 'id="downloadJsonl"' in html
+    assert 'id="sessionJsonlData"' in html
+    assert 'link.download = "abc123.jsonl";' in html
+    match = re.search(
+        r'<script id="sessionJsonlData" type="application/octet-stream">([^<]*)</script>',
+        html,
+    )
+    assert match is not None
+    decoded = base64.b64decode(match.group(1)).decode("utf-8")
+    lines = decoded.splitlines()
+    # The download embeds every entry, including leaf pointers filtered from the view.
+    assert len(lines) == 3
+    assert '"id":"leaf"' in lines[2]
+
+
+def test_render_session_html_jsonl_filename_falls_back_to_title_slug() -> None:
+    entries = [MessageEntry(id="root", message=UserMessage(content="Hello"))]
+
+    html = render_session_html(entries, title="Fix Login Redirect Bug!")
+
+    assert 'link.download = "fix-login-redirect-bug.jsonl";' in html
 
 
 def test_render_session_html_includes_theme_toggle_script() -> None:
