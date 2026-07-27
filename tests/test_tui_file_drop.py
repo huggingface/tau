@@ -140,10 +140,10 @@ class TestPromptInputFileDrop:
 
         assert prompt.text == f"compare {file} these"
 
-    def test_non_path_paste_keeps_default_behavior(self) -> None:
+    def test_non_path_paste_inserts_text(self) -> None:
         prompt = PromptInput()
         event = events.Paste("just some regular text")
 
         prompt.on_paste(event)
 
-        assert prompt.text == ""
+        assert prompt.text == "just some regular text"
