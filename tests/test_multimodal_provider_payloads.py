@@ -120,5 +120,6 @@ def test_non_vision_models_receive_placeholder_instead_of_image() -> None:
     )
 
     result = payload["input"][0]
-    assert result["output"].endswith("(tool image omitted: model does not support images)")
+    assert "image contents are unavailable—do not infer or describe them" in result["output"]
+    assert "switch to a vision-capable model" in result["output"]
     assert "aW1hZ2U=" not in str(payload)

@@ -84,6 +84,7 @@ from tau_coding.provider_config import (
     load_provider_settings,
     provider_default_thinking_level,
     provider_has_usable_credentials,
+    provider_model_supports_images,
     provider_thinking_levels,
     provider_thinking_unavailable_reason,
     resolve_provider_selection,
@@ -120,7 +121,7 @@ from tau_coding.thinking import (
     next_thinking_level,
     normalize_thinking_level,
 )
-from tau_coding.tools import create_bash_tool, create_coding_tools
+from tau_coding.tools import ImageSupportState, create_bash_tool, create_coding_tools
 
 StreamingBehavior = Literal["steer", "follow_up"]
 SESSION_NAME_SYSTEM_PROMPT = (
@@ -259,11 +260,13 @@ class CodingSession:
         command_registry: CommandRegistry | None = None,
         pending_initial_entries: tuple[SessionEntry, ...] = (),
         extension_runtime: ExtensionRuntime | None = None,
+        image_support: ImageSupportState | None = None,
     ) -> None:
         self._config = config
         self._state = state
         self._harness = harness
         self._extension_runtime = extension_runtime or ExtensionRuntime()
+        self._image_support = image_support or ImageSupportState()
         self._session_start_pending = False
         self._last_parent_id = last_parent_id
         self._pending_initial_entries = pending_initial_entries
@@ -340,12 +343,17 @@ class CodingSession:
                     include_project_dir=config.project_extensions_enabled,
                 )
 
+        active_model = _runtime_model_for_state(config, state)
+        image_support = ImageSupportState(
+            supported=_configured_model_supports_images(config, active_model)
+        )
         base_tools = (
             config.tools
             if config.tools is not None
             else create_coding_tools(
                 cwd=config.cwd,
                 shell_command_prefix=config.shell_command_prefix,
+                image_support=image_support,
             )
         )
         tools = extension_runtime.compose_tools(base_tools)
@@ -367,7 +375,7 @@ class CodingSession:
         harness = AgentHarness(
             AgentHarnessConfig(
                 provider=config.provider,
-                model=_runtime_model_for_state(config, state),
+                model=active_model,
                 system=system,
                 tools=tools,
             ),
@@ -385,6 +393,7 @@ class CodingSession:
             command_registry=config.command_registry or extension_runtime.build_command_registry(),
             pending_initial_entries=pending_initial_entries,
             extension_runtime=extension_runtime,
+            image_support=image_support,
         )
         await session._persist_loaded_interrupted_tool_repairs()
         session._sync_thinking_level_to_active_model()
@@ -882,6 +891,7 @@ class CodingSession:
         self._harness.config.model = model
         self._sync_thinking_level_to_active_model()
         self._refresh_runtime_provider()
+        self._sync_image_support()
         self._persist_default_model_choice()
         if self._config.session_id is not None and self._config.session_manager is not None:
             self._config.session_manager.touch_session(
@@ -981,6 +991,7 @@ class CodingSession:
         self._invalidate_runtime_model_limits()
         self._harness.config.model = model
         self._thinking_level = thinking_level
+        self._sync_image_support()
         if persist_default:
             self._persist_default_model_choice()
         if self._config.session_id is not None and self._config.session_manager is not None:
@@ -1052,6 +1063,12 @@ class CodingSession:
             model=self.model,
             current=self._thinking_level,
             preferred=provider.thinking_defaults.get(self.model),
+        )
+
+    def _sync_image_support(self) -> None:
+        provider = self._active_provider_config() or self._runtime_provider_config
+        self._image_support.supported = (
+            provider_model_supports_images(provider, self.model) if provider is not None else None
         )
 
     def _persist_default_model_choice(self) -> None:
@@ -1229,6 +1246,7 @@ class CodingSession:
             else create_coding_tools(
                 cwd=self._config.cwd,
                 shell_command_prefix=self._config.shell_command_prefix,
+                image_support=self._image_support,
             )
         )
         self._harness.config.tools = self._extension_runtime.compose_tools(base_tools)
@@ -1246,6 +1264,7 @@ class CodingSession:
         try:
             self._sync_thinking_level_to_active_model()
             self._refresh_runtime_provider()
+            self._sync_image_support()
         except ProviderConfigError:
             self._provider_settings = previous_settings
             self._thinking_level = previous_thinking_level
@@ -1317,6 +1336,7 @@ class CodingSession:
             replacement._harness.config.model = self.model
             replacement._sync_thinking_level_to_active_model()
             replacement._refresh_runtime_provider()
+            replacement._sync_image_support()
         await self._adopt_replacement(replacement, reason="resume")
         return f"Resumed session: {record.id}"
 
@@ -1403,6 +1423,7 @@ class CodingSession:
         self._thinking_level = replacement._thinking_level
         self._pending_initial_entries = replacement._pending_initial_entries
         self._extension_runtime = replacement._extension_runtime
+        self._image_support = replacement._image_support
         self._extension_runtime.bind(self)
         self._extension_runtime.attach_harness_listener(self._harness.subscribe)
         await self._extension_runtime.emit_session_start(reason)
@@ -2352,6 +2373,16 @@ def _session_export_title(session: CodingSession) -> str:
         if record is not None and record.title:
             return record.title
     return f"Tau session {session_id}" if session_id is not None else "Tau Session Export"
+
+
+def _configured_model_supports_images(config: CodingSessionConfig, model: str) -> bool | None:
+    provider = config.runtime_provider_config
+    if provider is None and config.provider_settings is not None:
+        try:
+            provider = config.provider_settings.get_provider(config.provider_name)
+        except ProviderConfigError:
+            return None
+    return provider_model_supports_images(provider, model) if provider is not None else None
 
 
 def _initial_model_for_config(config: CodingSessionConfig) -> str:
