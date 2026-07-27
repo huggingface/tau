@@ -639,6 +639,12 @@ class PromptInput(TextArea):
             self._insert_dropped_paths(dropped_paths)
             return
         if len(event.text) <= PASTE_DISPLAY_THRESHOLD:
+            event.stop()
+            event.prevent_default()
+            if self.read_only:
+                return
+            if result := self._replace_via_keyboard(event.text, *self.selection):
+                self.move_cursor(result.end_location)
             return
         event.stop()
         event.prevent_default()
@@ -3553,6 +3559,11 @@ class TauTuiApp(App[None]):
         :data:`RESERVED_EXTENSION_INTERCEPTOR_KEYS` are skipped entirely, so
         they always reach normal dispatch even behind a misbehaving interceptor.
         """
+        if isinstance(event, events.Paste) and not event.is_forwarded:
+            prompt = self.query_one(PromptInput)
+            event.stop()
+            prompt.on_paste(event)
+            return
         if (
             isinstance(event, events.Key)
             and not event.is_forwarded

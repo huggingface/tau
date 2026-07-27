@@ -2223,14 +2223,15 @@ def test_prompt_input_shows_placeholder_for_large_paste() -> None:
     assert prompt.text_for_submission() == pasted
 
 
-def test_prompt_input_keeps_small_paste_default_behavior() -> None:
+def test_prompt_input_inserts_small_paste() -> None:
     prompt = PromptInput()
-    event = events.Paste("x" * PASTE_DISPLAY_THRESHOLD)
+    text = "x" * PASTE_DISPLAY_THRESHOLD
+    event = events.Paste(text)
 
     prompt.on_paste(event)
 
-    assert prompt.text == ""
-    assert prompt.text_for_submission() == ""
+    assert prompt.text == text
+    assert prompt.text_for_submission() == text
 
 
 def test_prompt_input_preserves_edits_around_large_paste() -> None:
