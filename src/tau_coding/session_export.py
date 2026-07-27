@@ -284,6 +284,33 @@ def render_session_html(
       margin-top: 20px;
       padding-top: 14px;
     }}
+    .export-filters {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 18px;
+      margin-top: 16px;
+      font-family: var(--sans);
+      font-size: 0.78rem;
+      color: var(--muted);
+    }}
+    .filter-control {{
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      cursor: pointer;
+    }}
+    .filter-control input {{ accent-color: var(--accent); }}
+    .tool-details-toggle {{
+      color: var(--muted);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 4px;
+      padding: 5px 9px;
+      font: inherit;
+      cursor: pointer;
+    }}
+    .tool-details-toggle:hover {{ color: var(--accent); border-color: var(--accent); }}
     main {{
       display: grid;
       grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
@@ -411,6 +438,27 @@ def render_session_html(
       color: var(--muted);
       font-style: italic;
     }}
+    .tool-details {{
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--surface-muted);
+    }}
+    .tool-details summary {{
+      padding: 9px 12px;
+      color: var(--muted);
+      font-family: var(--sans);
+      font-size: 0.76rem;
+      font-weight: 500;
+      cursor: pointer;
+    }}
+    .tool-details-body {{ padding: 0 12px 12px; }}
+    .tool-details-body > :first-child {{ margin-top: 0; }}
+    .hide-tools article[data-entry-kind="tool"] {{ display: none; }}
+    .hide-tools .tree-node[data-entry-kind="tool"] > .node-link {{ display: none; }}
+    .hide-tools .tool-content, .hide-tools .tree-tool-summary {{ display: none; }}
+    .messages-only article[data-entry-kind="event"] {{ display: none; }}
+    .messages-only .tree-node[data-entry-kind="event"] > .node-link {{ display: none; }}
     pre.highlight {{ padding: 12px 14px; }}
     .highlight .p {{ color: var(--muted); }}
     .highlight .nt {{ color: var(--accent); }}
@@ -463,6 +511,24 @@ def render_session_html(
         Generated: <time datetime="{_attr(generated_at)}">{_escape(generated_at)}</time>
       </p>
     </div>
+    <div class="export-filters" aria-label="Transcript filters">
+      <label class="filter-control">
+        <input type="checkbox" id="showTools" checked>
+        Show tool calls
+      </label>
+      <label class="filter-control">
+        <input type="checkbox" id="showEvents" checked>
+        Show session events
+      </label>
+      <button
+        type="button"
+        class="tool-details-toggle"
+        id="toolDetailsToggle"
+        aria-pressed="false"
+      >
+        Compact tool calls
+      </button>
+    </div>
   </header>
   <main class="session-shell">
     <aside class="tree-rail">
@@ -502,6 +568,28 @@ def render_session_html(
           /* localStorage unavailable; theme choice just won't persist. */
         }}
       }});
+
+      var showTools = document.getElementById("showTools");
+      var showEvents = document.getElementById("showEvents");
+      var toolDetailsToggle = document.getElementById("toolDetailsToggle");
+      function applyFilters() {{
+        root.classList.toggle("hide-tools", !showTools.checked);
+        root.classList.toggle("messages-only", !showEvents.checked);
+      }}
+      showTools.addEventListener("change", applyFilters);
+      showEvents.addEventListener("change", applyFilters);
+      toolDetailsToggle.addEventListener("click", function () {{
+        var details = document.querySelectorAll("details.tool-details");
+        var shouldOpen = Array.prototype.some.call(details, function (item) {{
+          return !item.open;
+        }});
+        Array.prototype.forEach.call(details, function (item) {{
+          item.open = shouldOpen;
+        }});
+        toolDetailsToggle.textContent = shouldOpen ? "Compact tool calls" : "Expand tool calls";
+        toolDetailsToggle.setAttribute("aria-pressed", shouldOpen ? "false" : "true");
+      }});
+      applyFilters();
     }})();
   </script>
 </body>
@@ -662,11 +750,16 @@ def _render_tree_node(
         classes.append("active-leaf")
     summary = _entry_summary(entry)
     label = f"{_entry_title(entry)}: {summary}" if summary else _entry_title(entry)
+    tool_summary = _entry_tool_summary(entry)
+    full_label = f"{label}{tool_summary}"
     return (
-        f'<li class="{" ".join(c for c in classes if c)}">'
-        f'<a class="node-link" href="#entry-{_attr(entry.id)}">'
+        f'<li class="{" ".join(c for c in classes if c)}" '
+        f'data-entry-kind="{_entry_filter_kind(entry)}">'
+        f'<a class="node-link" href="#entry-{_attr(entry.id)}" '
+        f'aria-label="{_attr(full_label)}">'
         f'<span class="icon">{_entry_icon(entry)}</span>'
-        f'<span class="node-type">{_escape(label)}</span>'
+        f'<span class="node-type">{_escape(label)}'
+        f'<span class="tree-tool-summary">{_escape(tool_summary)}</span></span>'
         "</a>"
         f"{nested_html}"
         "</li>"
@@ -713,7 +806,8 @@ def _render_entry_detail(
     )
     body = _render_entry_body(entry)
     return (
-        f'<article id="entry-{_attr(entry.id)}" class="{" ".join(c for c in classes if c)}">'
+        f'<article id="entry-{_attr(entry.id)}" class="{" ".join(c for c in classes if c)}" '
+        f'data-entry-kind="{_entry_filter_kind(entry)}">'
         f'<p class="entry-index"><span class="icon">{_entry_icon(entry)}</span>'
         f"{index:02d} · {_escape(_entry_title(entry))}{status_html}</p>"
         '<dl class="entry-meta">'
@@ -784,11 +878,12 @@ def _render_message_entry(entry: MessageEntry) -> str:
                 blocks.append(f"<pre>{_escape(block.text)}</pre>")
             elif isinstance(block, ToolCall):
                 blocks.append(
-                    "<h4>Tool call</h4><ul><li>"
-                    f"<code>{_escape(block.name)}</code> "
-                    f"<code>{_escape(block.id)}</code>"
+                    '<details class="tool-details tool-content" open>'
+                    f"<summary>Tool call · <code>{_escape(block.name)}</code></summary>"
+                    '<div class="tool-details-body">'
+                    f"<p>Call id: <code>{_escape(block.id)}</code></p>"
                     f"{_render_json_block(block.arguments)}"
-                    "</li></ul>"
+                    "</div></details>"
                 )
         content = "".join(blocks) or "<pre>(no assistant text)</pre>"
         return (
@@ -801,14 +896,16 @@ def _render_message_entry(entry: MessageEntry) -> str:
             ("tool_call_id", message.tool_call_id),
             ("is_error", str(message.is_error)),
         ]
-        body = (
-            f'<p class="message-role"><span class="icon">{_ICON_TOOL}</span>tool result</p>'
-            f"{_render_metadata(metadata)}"
-            f"<pre>{_escape(message.text)}</pre>"
-        )
+        result_body = f"{_render_metadata(metadata)}<pre>{_escape(message.text)}</pre>"
         if isinstance(message.details, dict):
-            body += f"<h4>Details</h4>{_render_json_block(message.details)}"
-        return body
+            result_body += f"<h4>Details</h4>{_render_json_block(message.details)}"
+        return (
+            f'<p class="message-role"><span class="icon">{_ICON_TOOL}</span>tool result</p>'
+            '<details class="tool-details" open>'
+            f"<summary>Tool result · <code>{_escape(message.tool_name)}</code></summary>"
+            f'<div class="tool-details-body">{result_body}</div>'
+            "</details>"
+        )
     return f"<pre>{_escape(entry.model_dump_json(indent=2))}</pre>"
 
 
@@ -966,9 +1063,7 @@ def _entry_summary(entry: SessionEntry) -> str:
         if isinstance(message, ToolResultMessage):
             return f"{message.tool_name}: {_summarize_text(message.text)}"
         if isinstance(message, AssistantMessage) and message.tool_calls:
-            tool_names = ", ".join(call.name for call in message.tool_calls)
-            text = _summarize_text(message.text) or "tool call"
-            return f"{text} [{tool_names}]"
+            return _summarize_text(message.text) or "tool call"
         return _summarize_text(message_text(message))
     if isinstance(entry, ModelChangeEntry):
         return entry.model
@@ -987,6 +1082,32 @@ def _entry_summary(entry: SessionEntry) -> str:
     if isinstance(entry, CustomEntry):
         return f"{len(entry.data)} field(s)"
     return entry.id
+
+
+def _entry_tool_summary(entry: SessionEntry) -> str:
+    if not isinstance(entry, MessageEntry) or not isinstance(entry.message, AssistantMessage):
+        return ""
+    tool_names = ", ".join(call.name for call in entry.message.tool_calls)
+    return f" [{tool_names}]" if tool_names else ""
+
+
+def _entry_filter_kind(entry: SessionEntry) -> str:
+    if isinstance(entry, MessageEntry):
+        message = entry.message
+        if isinstance(message, ToolResultMessage):
+            return "tool"
+        if (
+            isinstance(message, AssistantMessage)
+            and message.tool_calls
+            and not any(
+                (isinstance(block, TextContent) and block.text.strip())
+                or (isinstance(block, ThinkingContent) and block.thinking.strip())
+                for block in message.content
+            )
+        ):
+            return "tool"
+        return "message"
+    return "event"
 
 
 def _summarize_text(text: str, *, limit: int = 92) -> str:

@@ -5,6 +5,8 @@ from tau_agent import (
     CompactionEntry,
     LeafEntry,
     MessageEntry,
+    ModelChangeEntry,
+    SessionInfoEntry,
     TextContent,
     ToolCall,
     ToolResultMessage,
@@ -60,7 +62,8 @@ def test_render_session_html_preserves_branch_tree() -> None:
     assert 'id="entry-right"' in html
     assert 'id="entry-compact"' in html
     assert "Start &lt;session&gt;" in html
-    assert "Right branch [read]" in html
+    assert "Right branch" in html
+    assert "[read]" in html
     assert "active-path" in html
     assert "active-leaf" in html
     assert "Replaces entries" in html
@@ -101,6 +104,62 @@ def test_render_session_html_syntax_highlights_tool_call_arguments() -> None:
 
     assert 'class="highlight"' in html
     assert '<span class="nt">' in html or '<span class="s2">' in html
+
+
+def test_render_session_html_includes_filter_controls_and_tool_accordions() -> None:
+    entries = [
+        SessionInfoEntry(id="info", title="Filtered export", cwd="/tmp"),
+        MessageEntry(
+            id="tool-call",
+            parent_id="info",
+            message=AssistantMessage(
+                content=assistant_content(
+                    "Reading a file",
+                    [ToolCall(id="call-1", name="read", arguments={"path": "README.md"})],
+                )
+            ),
+        ),
+        MessageEntry(
+            id="tool-result",
+            parent_id="tool-call",
+            message=ToolResultMessage(
+                tool_call_id="call-1",
+                tool_name="read",
+                content=[TextContent(text="File contents")],
+            ),
+        ),
+        ModelChangeEntry(id="model", parent_id="tool-result", model="example/model"),
+    ]
+
+    html = render_session_html(entries, title="Filter Export")
+
+    assert 'id="showTools"' in html
+    assert 'id="showEvents"' in html
+    assert 'id="toolDetailsToggle"' in html
+    assert 'details class="tool-details tool-content" open' in html
+    assert 'details class="tool-details" open' in html
+    assert 'id="entry-tool-result" class="entry-card active-entry" data-entry-kind="tool"' in html
+    assert 'id="entry-model" class="entry-card active-entry" data-entry-kind="event"' in html
+    assert 'data-entry-kind="tool"' in html
+    assert 'data-entry-kind="event"' in html
+    assert 'root.classList.toggle("hide-tools"' in html
+    assert 'root.classList.toggle("messages-only"' in html
+    assert 'querySelectorAll("details.tool-details")' in html
+
+
+def test_render_session_html_marks_tool_only_assistant_messages_as_tools() -> None:
+    entries = [
+        MessageEntry(
+            id="tool-only",
+            message=AssistantMessage(
+                content=[ToolCall(id="call-1", name="read", arguments={"path": "README.md"})]
+            ),
+        )
+    ]
+
+    html = render_session_html(entries)
+
+    assert 'id="entry-tool-only" class="entry-card active-entry" data-entry-kind="tool"' in html
 
 
 def test_render_session_html_includes_theme_toggle_script() -> None:

@@ -32,8 +32,12 @@ The export contains two coordinated views:
   results, compactions, labels, model changes, thinking changes, and custom
   entries
 
-The generated file is self-contained HTML and CSS, so it can be opened without
-running Tau or the Textual app.
+The generated file is self-contained HTML, CSS, and JavaScript, so it can be
+opened without running Tau or the Textual app. Its header controls can hide tool
+calls/results in both views, compact or expand every tool accordion at once, and
+hide non-message session events for a user/assistant-focused transcript. The
+filters change only the exported view; the complete session remains embedded in
+the document.
 
 ## Why it exists
 

@@ -99,7 +99,12 @@ tau export <session-id> --format jsonl
 
 The source can be an indexed session id **or** a path to a JSONL session file.
 HTML exports are self-contained and include the preserved session tree plus the
-transcript in storage order.
+transcript in storage order. The export header includes controls to:
+
+- show or hide tool calls and tool results in both the transcript and session tree
+- compact or expand every tool call/result accordion with one button
+- hide session events—such as session info, model and thinking changes,
+  compactions, labels, and custom entries—to focus on user and assistant messages
 
 ## Where sessions live
 
