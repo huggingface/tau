@@ -93,15 +93,43 @@ def test_update_tau_hands_windows_uv_tool_update_to_waiting_process(tmp_path: Pa
         "4242",
         "-LogPath",
         str(handoff_dir / "update.log"),
-        "-UpdateCommandBase64",
+        "-UpdatePayloadBase64",
     )
-    assert tuple(json.loads(base64.b64decode(detached_command[-1]))) == result.command
+    assert json.loads(base64.b64decode(detached_command[-1])) == {
+        "executable": "uv",
+        "arguments": '"tool" "install" "tau-ai@0.2.4"',
+    }
     assert options["creationflags"] == 0x00000208
     script = (handoff_dir / "update.ps1").read_text(encoding="utf-8")
     assert "Wait-Process -InputObject $ParentProcess -ErrorAction Stop" in script
     assert "NoProcessFoundForGivenId" in script
     assert script.index("Wait-Process -InputObject $ParentProcess") < script.index(
-        "& $UpdateExecutable @UpdateArguments"
+        "$UpdateProcess.Start()"
+    )
+    assert "System.Diagnostics.ProcessStartInfo" in script
+    assert "$StartInfo.UseShellExecute = $false" in script
+
+
+@pytest.mark.parametrize(
+    ("argument", "expected"),
+    [
+        ("", '""'),
+        ("plain", '"plain"'),
+        ("space value", '"space value"'),
+        ('quote"value', '"quote\\"value"'),
+        ("trailing\\", '"trailing\\\\"'),
+        ('slashes\\\\"quote', '"slashes\\\\\\\\\\"quote"'),
+        ("semi;&$()", '"semi;&$()"'),
+        ("snowman ☃", '"snowman ☃"'),
+    ],
+)
+def test_quote_windows_argument_uses_microsoft_runtime_rules(argument: str, expected: str) -> None:
+    assert updater._quote_windows_argument(argument) == expected
+
+
+def test_windows_command_line_preserves_argument_boundaries() -> None:
+    assert updater._windows_command_line(("", "a b", 'c"', "tail\\")) == (
+        '"" "a b" "c\\"" "tail\\\\"'
     )
 
 
@@ -183,17 +211,24 @@ def _wait_for_text(path: Path, expected: str, timeout: float = 10) -> str:
     raise AssertionError(f"timed out waiting for {expected!r} in {path}")
 
 
-def _powershell() -> str | None:
-    return shutil.which("powershell.exe") or shutil.which("pwsh.exe")
+def _powershell_engines() -> list[str | None]:
+    if sys.platform != "win32":
+        return [None]
+    engines = [shutil.which(name) for name in ("powershell.exe", "pwsh.exe")]
+    available = list(dict.fromkeys(engine for engine in engines if engine is not None))
+    return available or [None]
 
 
-@pytest.mark.skipif(
-    sys.platform != "win32" or _powershell() is None,
-    reason="requires Windows and PowerShell",
-)
-def test_windows_handoff_blocks_for_live_parent_and_preserves_arguments(tmp_path: Path) -> None:
-    powershell = _powershell()
-    assert powershell is not None
+def _engine_id(engine: str | None) -> str:
+    return Path(engine).name if engine else "unavailable"
+
+
+@pytest.mark.parametrize("powershell", _powershell_engines(), ids=_engine_id)
+def test_windows_handoff_blocks_for_live_parent_and_preserves_arguments(
+    tmp_path: Path, powershell: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if powershell is None:
+        pytest.skip("requires Windows and PowerShell")
     parent = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     marker = tmp_path / "exact argv.json"
     fake_update = tmp_path / "fake updater.py"
@@ -203,11 +238,27 @@ def test_windows_handoff_blocks_for_live_parent_and_preserves_arguments(tmp_path
         "raise SystemExit(23)\n",
         encoding="utf-8",
     )
-    arguments = ("space value", "semi;&$()", 'quote"value', "-named-looking")
+    arguments = (
+        "space value",
+        "semi;&$()",
+        'quote"value',
+        "",
+        "trailing\\",
+        "-named-looking",
+    )
     update_dir = tmp_path / "handoff with spaces"
+    executable_dir = tmp_path / "executable path with spaces"
+    executable_dir.mkdir()
+    fake_python = executable_dir / Path(sys.executable).name
+    shutil.copy2(sys.executable, fake_python)
+    for runtime_dll in Path(sys.base_prefix).glob("python*.dll"):
+        shutil.copy2(runtime_dll, executable_dir / runtime_dll.name)
+
+    monkeypatch.setenv("PYTHONHOME", sys.base_prefix)
+
     try:
         result = updater._handoff_windows_update(
-            (sys.executable, str(fake_update), str(marker), *arguments),
+            (str(fake_python), str(fake_update), str(marker), *arguments),
             launcher=subprocess.Popen,
             executable_finder=lambda name: powershell,
             parent_pid=parent.pid,
@@ -227,13 +278,10 @@ def test_windows_handoff_blocks_for_live_parent_and_preserves_arguments(tmp_path
             parent.wait(timeout=10)
 
 
-@pytest.mark.skipif(
-    sys.platform != "win32" or _powershell() is None,
-    reason="requires Windows and PowerShell",
-)
-def test_windows_helper_wait_failure_is_fail_closed(tmp_path: Path) -> None:
-    powershell = _powershell()
-    assert powershell is not None
+@pytest.mark.parametrize("powershell", _powershell_engines(), ids=_engine_id)
+def test_windows_helper_wait_failure_is_fail_closed(tmp_path: Path, powershell: str | None) -> None:
+    if powershell is None:
+        pytest.skip("requires Windows and PowerShell")
     update_dir = tmp_path / "wait-failure"
     update_dir.mkdir()
     script_path = update_dir / "update.ps1"
@@ -270,9 +318,14 @@ def test_windows_helper_wait_failure_is_fail_closed(tmp_path: Path) -> None:
             str(os.getpid()),
             "-LogPath",
             str(log_path),
-            "-UpdateCommandBase64",
+            "-UpdatePayloadBase64",
             base64.b64encode(
-                json.dumps((sys.executable, str(fake_update), str(marker))).encode()
+                json.dumps(
+                    {
+                        "executable": sys.executable,
+                        "arguments": updater._windows_command_line((str(fake_update), str(marker))),
+                    }
+                ).encode()
             ).decode("ascii"),
         ],
         capture_output=True,

@@ -160,7 +160,7 @@ def _update_command(
 _WINDOWS_UPDATE_SCRIPT = """param(
     [Parameter(Mandatory=$true)][int]$ParentProcessId,
     [Parameter(Mandatory=$true)][string]$LogPath,
-    [Parameter(Mandatory=$true)][string]$UpdateCommandBase64
+    [Parameter(Mandatory=$true)][string]$UpdatePayloadBase64
 )
 
 $ScriptPath = $MyInvocation.MyCommand.Path
@@ -191,17 +191,35 @@ try {
             throw "Could not wait for Tau process $ParentProcessId to exit. Update aborted: $Detail"
         }
     }
-    $CommandJson = [Text.Encoding]::UTF8.GetString(
-        [Convert]::FromBase64String($UpdateCommandBase64)
+    $PayloadJson = [Text.Encoding]::UTF8.GetString(
+        [Convert]::FromBase64String($UpdatePayloadBase64)
     )
-    $UpdateCommand = @(ConvertFrom-Json -InputObject $CommandJson)
-    if ($UpdateCommand.Count -lt 1) {
-        throw "The staged update command is empty. Update aborted."
+    $UpdatePayload = ConvertFrom-Json -InputObject $PayloadJson
+    $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $StartInfo.FileName = [string]$UpdatePayload.executable
+    $StartInfo.Arguments = [string]$UpdatePayload.arguments
+    $StartInfo.UseShellExecute = $false
+    $StartInfo.CreateNoWindow = $true
+    $StartInfo.RedirectStandardOutput = $true
+    $StartInfo.RedirectStandardError = $true
+    $UpdateProcess = New-Object System.Diagnostics.Process
+    $UpdateProcess.StartInfo = $StartInfo
+    if (-not $UpdateProcess.Start()) {
+        throw "Could not start the update command. Update aborted."
     }
-    $UpdateExecutable = [string]$UpdateCommand[0]
-    [string[]]$UpdateArguments = @($UpdateCommand | Select-Object -Skip 1)
-    & $UpdateExecutable @UpdateArguments *>> $LogPath
-    $UpdateExitCode = $LASTEXITCODE
+    $StandardOutputTask = $UpdateProcess.StandardOutput.ReadToEndAsync()
+    $StandardErrorTask = $UpdateProcess.StandardError.ReadToEndAsync()
+    $UpdateProcess.WaitForExit()
+    $StandardOutput = $StandardOutputTask.GetAwaiter().GetResult()
+    $StandardError = $StandardErrorTask.GetAwaiter().GetResult()
+    if ($StandardOutput) {
+        Write-Log $StandardOutput.TrimEnd("`r", "`n")
+    }
+    if ($StandardError) {
+        Write-Log $StandardError.TrimEnd("`r", "`n")
+    }
+    $UpdateExitCode = $UpdateProcess.ExitCode
+    $UpdateProcess.Dispose()
     Write-Log "Update command exited with code $UpdateExitCode."
 } catch {
     Write-Log ($_ | Out-String)
@@ -241,7 +259,13 @@ def _handoff_windows_update(
         _cleanup_windows_handoff(update_dir, script_path, remove_directory=owns_update_dir)
         return _failure(f"Could not stage the detached Windows updater: {exc}")
 
-    encoded_command = base64.b64encode(json.dumps(command).encode()).decode("ascii")
+    update_payload = {
+        "executable": command[0],
+        "arguments": _windows_command_line(command[1:]),
+    }
+    encoded_payload = base64.b64encode(
+        json.dumps(update_payload, ensure_ascii=False).encode("utf-8")
+    ).decode("ascii")
     powershell_command = (
         powershell,
         "-NoLogo",
@@ -255,8 +279,8 @@ def _handoff_windows_update(
         str(parent_pid),
         "-LogPath",
         str(log_path),
-        "-UpdateCommandBase64",
-        encoded_command,
+        "-UpdatePayloadBase64",
+        encoded_payload,
     )
     creationflags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(
         subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
@@ -281,6 +305,31 @@ def _handoff_windows_update(
         ),
         deferred=True,
     )
+
+
+def _quote_windows_argument(argument: str) -> str:
+    """Quote one argv element using the documented Microsoft C runtime rules."""
+    quoted = ['"']
+    backslashes = 0
+    for character in argument:
+        if character == "\\":
+            backslashes += 1
+            continue
+        if character == '"':
+            quoted.append("\\" * (backslashes * 2 + 1))
+            quoted.append('"')
+        else:
+            quoted.append("\\" * backslashes)
+            quoted.append(character)
+        backslashes = 0
+    quoted.append("\\" * (backslashes * 2))
+    quoted.append('"')
+    return "".join(quoted)
+
+
+def _windows_command_line(arguments: tuple[str, ...]) -> str:
+    """Build the argv tail passed directly to CreateProcess by ProcessStartInfo."""
+    return " ".join(_quote_windows_argument(argument) for argument in arguments)
 
 
 def _cleanup_windows_handoff(
