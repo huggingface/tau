@@ -131,6 +131,21 @@ def test_long_retention_requests_one_hour_ttl_everywhere() -> None:
     assert payload["messages"][0]["content"][0]["cache_control"] == long_ttl
 
 
+def test_tools_breakpoint_can_be_suppressed_on_its_own() -> None:
+    """A gateway may accept cache_control everywhere except inside tool objects."""
+    payload = _build_messages_payload(
+        model="claude-test",
+        system="You are Tau.",
+        messages=[UserMessage(content="Say hello")],
+        tools=[_tool("read")],
+        cache_control_on_tools=False,
+    )
+
+    assert "cache_control" not in payload["tools"][0]
+    assert "cache_control" in payload["system"][0]
+    assert _count_breakpoints(payload) == 2
+
+
 def test_string_user_content_is_promoted_to_a_marked_block() -> None:
     payload = _payload([UserMessage(content="Say hello")])
 

@@ -97,10 +97,35 @@ Catalog entries support `kind` values of `openai-compatible`, `anthropic`, and
 
 User catalog overlays can be partial when they use the same `name` as a built-in
 provider. Scalar fields replace built-in values, `models` are merged with user
-models first, and `context_windows` are merged. Model metadata is merged by model;
+models first, and `context_windows` are merged. Provider-level `compat` is merged
+key by key. Model metadata is merged by model;
 its `headers`, `compat`, and `thinking_level_map` mappings are merged, while other
 metadata fields—including the complete `cost_tiers` array—replace the built-in
-value. The thinking fields (`thinking_levels`, `thinking_models`,
+value. A model's `compat` wins over the provider's, so a built-in per-model value
+overrides a provider-level overlay — override at the model level to change it.
+
+### Anthropic prompt-cache compat keys
+
+Providers using the `anthropic-messages` API accept three `compat` booleans
+controlling prompt caching. All default to enabled, except that `cache_control` is
+detected as unsupported for any base URL that is not `api.anthropic.com`, since
+several providers speak the Anthropic protocol through a gateway.
+
+| Key | Effect when `false` |
+| --- | --- |
+| `supportsCacheControl` | No cache breakpoints at all; the request is byte-identical to an uncached one |
+| `supportsLongCacheRetention` | Clamps the 1 hour TTL to the 5 minute default |
+| `supportsCacheControlOnTools` | Drops only the tool-schema breakpoint |
+
+Set them per provider or per model. For example, to stop requesting the one-hour
+cache on a Claude subscription:
+
+```toml
+schema_version = 1
+[[providers]]
+name = "anthropic"
+compat = { supportsLongCacheRetention = false }
+``` The thinking fields (`thinking_levels`, `thinking_models`,
 `thinking_default`, `thinking_parameter`) replace as a group when
 `thinking_levels` is present.
 

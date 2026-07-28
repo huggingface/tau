@@ -13,6 +13,7 @@ from typing import Any, Protocol, cast
 from urllib.parse import urlsplit
 
 from tau_ai.env import (
+    CACHE_RETENTION_LONG,
     CACHE_RETENTION_NONE,
     CACHE_RETENTION_SHORT,
     DEFAULT_ANTHROPIC_BASE_URL,
@@ -1406,6 +1407,7 @@ def _detected_compat(provider: ProviderConfig, model: str) -> dict[str, Any]:
     is_openrouter = provider.name == "openrouter" or "openrouter.ai" in base_url
     is_nonstandard = is_cerebras or is_grok or is_together or is_deepseek or is_zai or is_moonshot
     use_max_tokens = is_moonshot or is_together
+    is_anthropic_api = urlsplit(base_url).hostname == urlsplit(DEFAULT_ANTHROPIC_BASE_URL).hostname
     return {
         "supportsStore": not is_nonstandard,
         "supportsReasoningEffort": not (is_grok or is_zai or is_moonshot or is_together),
@@ -1424,6 +1426,12 @@ def _detected_compat(provider: ProviderConfig, model: str) -> dict[str, Any]:
         ),
         "supportsStrictMode": not (is_moonshot or is_together),
         "supportsLongCacheRetention": not is_together,
+        # Only first-party Anthropic is known to accept cache_control. Several
+        # catalog providers speak the Anthropic protocol through a gateway, and one
+        # proxies to non-Anthropic models, so they default to no breakpoints. This
+        # is a detected default, overridable per provider or per model.
+        "supportsCacheControl": is_anthropic_api,
+        "supportsCacheControlOnTools": True,
     }
 
 
@@ -1539,11 +1547,13 @@ def anthropic_config_from_provider(
         thinking_level=thinking_level,
     )
     base_url = _normalize_anthropic_base_url(_model_base_url(provider, selected_model))
+    cache_retention, cache_control_on_tools = anthropic_cache_settings(provider, selected_model)
     return AnthropicConfig(
         api_key=api_key,
         provider_name=provider.name,
         base_url=base_url,
-        cache_retention=_cache_retention_for_base_url(base_url),
+        cache_retention=cache_retention,
+        cache_control_on_tools=cache_control_on_tools,
         headers=_model_headers(provider, selected_model),
         timeout_seconds=provider.timeout_seconds,
         max_retries=provider.max_retries,
@@ -1738,16 +1748,27 @@ def _normalize_anthropic_base_url(base_url: str) -> str:
     return f"{normalized}/v1"
 
 
-def _cache_retention_for_base_url(base_url: str) -> CacheRetention:
-    """Enable cache breakpoints only for first-party Anthropic.
+def anthropic_cache_settings(
+    provider: ProviderConfig,
+    model: str | None = None,
+    *,
+    oauth: bool = False,
+) -> tuple[CacheRetention, bool]:
+    """Resolve prompt-cache settings for one Anthropic-protocol request.
 
-    Several catalog providers speak the Anthropic protocol through a gateway, and
-    some of those proxy to non-Anthropic models entirely. They may reject
-    cache_control blocks or the block-list system field, so they stay opted out.
+    Capability comes from compat, which layers a detected default under the
+    provider's own compat and then per-model compat. Intent comes from the auth
+    mode: subscription OAuth is not billed per token, so it asks for the 1 hour
+    TTL, while an API key keeps the shorter default. Capability only ever narrows
+    intent, so the two compose without any precedence rule.
     """
-    if urlsplit(base_url).hostname == urlsplit(DEFAULT_ANTHROPIC_BASE_URL).hostname:
-        return CACHE_RETENTION_SHORT
-    return CACHE_RETENTION_NONE
+    compat = _model_compat(provider, model)
+    if compat.get("supportsCacheControl") is False:
+        return CACHE_RETENTION_NONE, False
+    retention = CACHE_RETENTION_LONG if oauth else CACHE_RETENTION_SHORT
+    if retention == CACHE_RETENTION_LONG and compat.get("supportsLongCacheRetention") is False:
+        retention = CACHE_RETENTION_SHORT
+    return retention, compat.get("supportsCacheControlOnTools") is not False
 
 
 def _provider_from_json(data: object) -> ProviderConfig:

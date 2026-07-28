@@ -141,6 +141,7 @@ class AnthropicProvider:
                 thinking_mode=self._config.thinking_mode,
                 supports_images=self._config.supports_images,
                 cache_retention=self._config.cache_retention,
+                cache_control_on_tools=self._config.cache_control_on_tools,
             )
             headers = {
                 "anthropic-version": ANTHROPIC_VERSION,
@@ -381,6 +382,7 @@ def _build_messages_payload(
     thinking_mode: str = "budget",
     supports_images: bool = False,
     cache_retention: CacheRetention = CACHE_RETENTION_SHORT,
+    cache_control_on_tools: bool = True,
 ) -> dict[str, JSONValue]:
     resolved_max_tokens = max_tokens or DEFAULT_MAX_TOKENS
     if thinking_budget_tokens is not None:
@@ -408,9 +410,14 @@ def _build_messages_payload(
             "budget_tokens": thinking_budget_tokens,
         }
     if tools:
+        # Some Anthropic-protocol gateways accept cache_control everywhere except
+        # inside tool objects, so the tools breakpoint is separately suppressible.
+        tools_cache_control = cache_control if cache_control_on_tools else None
         last_index = len(tools) - 1
         payload["tools"] = [
-            _anthropic_tool(tool, cache_control=cache_control if index == last_index else None)
+            _anthropic_tool(
+                tool, cache_control=tools_cache_control if index == last_index else None
+            )
             for index, tool in enumerate(tools)
         ]
     return payload

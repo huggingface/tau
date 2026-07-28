@@ -82,9 +82,29 @@ through a gateway rather than being Anthropic. `minimax`, `minimax-cn`,
 `fireworks`, and `vercel-ai-gateway` are all `kind = "anthropic"` and so route
 through `anthropic_config_from_provider`, and `vercel-ai-gateway` proxies to
 non-Anthropic models entirely. Those backends may reject `cache_control` blocks or
-the block-list `system` field, so `_cache_retention_for_base_url` opts out anything
-whose host is not `api.anthropic.com`. The OAuth `long` override refuses to
-re-enable a backend already set to `none`.
+the block-list `system` field.
+
+Capability and intent are resolved separately, in `anthropic_cache_settings`.
+Intent comes from the auth mode: OAuth wants `long`, an API key wants `short`.
+Capability comes from three `compat` booleans, layered detected default → provider
+compat → per-model compat, exactly like `forceAdaptiveThinking`:
+
+| Key | Effect when `false` |
+| --- | --- |
+| `supportsCacheControl` | Resolves to `none`. Detected `false` for any host that is not `api.anthropic.com` |
+| `supportsLongCacheRetention` | Clamps `long` to `short` |
+| `supportsCacheControlOnTools` | Drops only the tools breakpoint |
+
+Capability only ever narrows intent, so the two compose with no precedence rule.
+That also makes the failure mode recoverable without a source edit: if Anthropic
+ever stops honoring `ttl: "1h"` on subscriptions the request 400s and tau does not
+retry 400s, but a three-line catalog overlay setting
+`supportsLongCacheRetention = false` clamps it back to five minutes.
+
+Two of these keys already existed in the catalog before anything read them —
+`_detected_compat` emitted `supportsLongCacheRetention` and the Fireworks model
+entries carry both it and `supportsCacheControlOnTools`, mirrored in from Pi. This
+wiring makes that data live rather than inventing a parallel vocabulary.
 
 ## Observability
 

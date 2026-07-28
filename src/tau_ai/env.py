@@ -79,6 +79,7 @@ class AnthropicConfig:
     provider_name: str = "Anthropic"
     oauth_system_prompt: str | None = None
     cache_retention: CacheRetention = CACHE_RETENTION_SHORT
+    cache_control_on_tools: bool = True
     credential_resolver: RuntimeProviderAuthResolver | None = None
 
 
