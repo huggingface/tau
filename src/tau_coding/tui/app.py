@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, cast
 
 from rich.console import Console, Group
+from rich.style import Style
 from rich.text import Text
 from textual import events, on
 from textual.app import App, ComposeResult
@@ -2764,12 +2765,27 @@ class OAuthLoginScreen(ModalScreen[OAuthCredential | _LoginFlowAction | None]):
         self.dismiss(credential)
 
     def _show_auth(self, info: OAuthAuthInfo) -> None:
-        self.query_one("#login-oauth-url", Static).update(info.url)
+        self._show_url(info.url)
         if info.instructions:
             self.query_one("#login-help", Static).update(info.instructions)
 
+    def _show_url(self, url: str) -> None:
+        """Display an authorization URL as one clickable, copyable unit.
+
+        Authorization URLs are far wider than the dialog, so they render across
+        several wrapped lines. Selecting those lines by hand tends to corrupt
+        the URL — a query parameter split across a wrap picks up the line break
+        or trailing padding and the provider rejects the request. Emitting an
+        OSC 8 hyperlink keeps a click on any wrapped line opening the intact
+        URL, and copying it to the clipboard gives a paste path that never went
+        through the terminal's line buffer.
+        """
+        self.query_one("#login-oauth-url", Static).update(Text(url, style=Style(link=url)))
+        with suppress(Exception):
+            self.app.copy_to_clipboard(url)
+
     def _show_device_code(self, info: OAuthDeviceCodeInfo) -> None:
-        self.query_one("#login-oauth-url", Static).update(info.verification_uri)
+        self._show_url(info.verification_uri)
         self.query_one("#login-help", Static).update(
             f"Open the URL and enter code: {info.user_code}"
         )
@@ -3327,8 +3343,11 @@ class TauTuiApp(App[None]):
     }
 
     #login-oauth-url {
+        /* Authorization URLs run ~470 chars (Anthropic); clipping them means a
+           user copying the URL out of the TUI loses the trailing query
+           parameters and the provider rejects the request. Keep every line. */
         min-height: 1;
-        max-height: 4;
+        height: auto;
         color: $tau-chrome-text;
         margin-bottom: 1;
     }
