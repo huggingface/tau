@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from time import time
@@ -10,6 +11,17 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict
 
 from tau_coding.paths import TauPaths
+
+_SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+
+
+def validate_session_id(session_id: str) -> None:
+    """Reject custom session ids that are unsafe as file names."""
+    if not _SESSION_ID_PATTERN.fullmatch(session_id):
+        raise ValueError(
+            "Session id must be non-empty, contain only alphanumeric characters, '-', '_', "
+            "and '.', and start and end with an alphanumeric character"
+        )
 
 
 class SessionRecordModel(BaseModel):
@@ -137,7 +149,8 @@ class SessionManager:
         """Return metadata for a session without adding it to the resume index."""
         now = time()
         resolved_cwd = cwd.resolve()
-        record_id = session_id or uuid4().hex
+        record_id = uuid4().hex if session_id is None else session_id
+        validate_session_id(record_id)
         path = self.paths.project_session_dir(resolved_cwd) / f"{record_id}.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         return CodingSessionRecord(

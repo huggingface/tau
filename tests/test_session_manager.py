@@ -45,6 +45,14 @@ def test_session_manager_round_trips_unicode_line_separator_in_title(
     assert manager.list_sessions(cwd) == [record]
 
 
+@pytest.mark.parametrize("session_id", ["", "-bad", "bad-", "bad id", "../escape"])
+def test_session_manager_rejects_invalid_custom_session_id(tmp_path: Path, session_id: str) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+
+    with pytest.raises(ValueError, match="Session id must be non-empty"):
+        manager.prepare_session(cwd=tmp_path, model="fake", session_id=session_id)
+
+
 def test_session_manager_prepares_unindexed_session(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     cwd = tmp_path / "project"
