@@ -29,7 +29,7 @@ from tau_coding.oauth_types import (
 )
 
 ANTHROPIC_OAUTH_PROVIDER = "anthropic"
-ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944a1962f5e"
+ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 ANTHROPIC_AUTHORIZE_URL = "https://claude.ai/oauth/authorize"
 ANTHROPIC_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 ANTHROPIC_REDIRECT_URI = "http://localhost:53692/callback"
