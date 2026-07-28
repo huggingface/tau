@@ -724,12 +724,22 @@ def test_print_mode_passes_exact_session_id_without_changing_output(
     assert calls == ["worker-499"]
 
 
-@pytest.mark.parametrize("session_id", ["", "-bad", "bad id", "bad/"])
-def test_print_mode_rejects_invalid_session_id(session_id: str) -> None:
+@pytest.mark.parametrize(
+    ("session_id", "error"),
+    [
+        ("", "Session id must be non-empty"),
+        ("-bad", "Session id must be non-empty"),
+        ("bad id", "Session id must be non-empty"),
+        ("bad/", "Session id must be non-empty"),
+        ("index", "Session id is reserved: index"),
+        ("a" * 129, "Session id must be at most 128 bytes"),
+    ],
+)
+def test_print_mode_rejects_invalid_session_id(session_id: str, error: str) -> None:
     result = CliRunner().invoke(app, ["-p", "--session-id", session_id, "hello"])
 
     assert result.exit_code == 2
-    assert "Session id must be non-empty" in _strip_ansi(result.output)
+    assert error in _strip_ansi(result.output)
 
 
 def test_session_id_is_print_mode_only() -> None:

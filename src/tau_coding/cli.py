@@ -718,10 +718,8 @@ def _create_print_session(
     model: str,
     session_id: str | None,
 ) -> CodingSessionRecord:
-    """Create an isolated print-mode session, refusing custom-id collisions."""
-    if session_id is not None and manager.get_session(session_id) is not None:
-        raise RuntimeError(f"Session already exists with id '{session_id}'")
-    return manager.create_session(cwd=cwd, model=model, session_id=session_id)
+    """Create an isolated print-mode session, refusing transcript collisions."""
+    return manager.create_session_exclusive(cwd=cwd, model=model, session_id=session_id)
 
 
 async def run_print_mode(

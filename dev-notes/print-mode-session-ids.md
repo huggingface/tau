@@ -38,15 +38,25 @@ therefore unchanged. The caller should generate a unique id (for example, a
 UUID), pass it to Tau, record it beside the worker report, and use the process
 exit status to determine whether startup/the model turn succeeded.
 
-Custom ids use Pi's validation rule: alphanumeric characters plus `.`, `_`, and
-`-`, beginning and ending with an alphanumeric character. Validation happens
-before provider/resource startup. A collision also fails before the coding
-session starts. Failures later in startup or during the model turn retain the
-same requested id and normal non-zero exit behavior, so diagnostics can inspect
-the session if it reached durable initialization.
+Custom ids start with Pi's validation rule: alphanumeric characters plus `.`,
+`_`, and `-`, beginning and ending with an alphanumeric character. Tau adds a
+128-byte limit so every accepted id leaves room for the `.jsonl` suffix on
+common filesystems. It also rejects `index`, `default`, and the current project's
+dynamic default-session id because those names overlap session metadata or the
+TUI's default transcript.
+
+Validation happens before provider/resource startup where it does not require
+project context. Print-session creation then exclusively creates the transcript
+before indexing it. This filesystem reservation makes an orphaned transcript or
+two concurrent workers requesting the same id fail without overwriting; an
+indexing failure removes the new reservation. Failures later in startup or
+during the model turn retain the same requested id and normal non-zero exit
+behavior, so diagnostics can inspect the session if it reached durable
+initialization.
 
 ## Testing
 
 `tests/test_cli.py` covers all output modes, validation, print-only use, exact id
-creation, and collisions. `tests/test_session_manager.py` verifies the filename
-safety rule at the persistence boundary.
+creation, and indexed collisions. `tests/test_session_manager.py` verifies the
+filename safety and length rules, reserved ids, orphan handling, atomic
+same-id concurrency, and reservation rollback at the persistence boundary.

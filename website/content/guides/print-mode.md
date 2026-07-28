@@ -80,11 +80,13 @@ tau --print --new-session \
 printf 'Tau session: %s\n' "$worker_session_id"
 ```
 
-Ids may contain letters, numbers, `.`, `_`, and `-`, and must start and end with
-a letter or number. Use a unique id for each worker. Tau exits with an error
-rather than opening or overwriting an existing session with the requested id.
-The option applies to text, JSON, and transcript modes without adding metadata
-to their stdout output.
+Ids may contain letters, numbers, `.`, `_`, and `-`, must start and end with a
+letter or number, and may be at most 128 bytes. `default` and `index` are
+reserved. Use a unique id for each worker. Tau atomically reserves the transcript
+and exits with an error rather than opening or overwriting an existing session,
+even if an unindexed transcript already uses that id or two workers start at the
+same time. The option applies to text, JSON, and transcript modes without adding
+metadata to their stdout output.
 
 ## Exit status
 
