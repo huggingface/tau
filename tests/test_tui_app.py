@@ -626,6 +626,18 @@ def test_session_sidebar_uses_na_when_cost_is_unavailable() -> None:
     assert "cost unavailable" not in output
 
 
+def test_session_sidebar_omits_cache_rate_for_providers_without_caching() -> None:
+    session = FakeSession()
+    session.session_stats = SessionStats(input_tokens=1200, output_tokens=300)
+    console = Console(record=True, width=80)
+
+    console.print(render_session_sidebar(session))
+
+    output = console.export_text()
+    assert "cached" not in output
+    assert "1.2k in, 300 out" in output
+
+
 def test_session_sidebar_brand_includes_current_version() -> None:
     console = Console(record=True, width=80)
 

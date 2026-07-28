@@ -100,6 +100,28 @@ def test_anthropic_protocol_gateways_disable_cache_breakpoints(
     assert provider._config.cache_retention == "none"
 
 
+def test_copilot_anthropic_protocol_models_disable_cache_breakpoints(tmp_path) -> None:
+    """Copilot proxies the Anthropic protocol, so it gets no cache_control either."""
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_oauth(
+        "github-copilot",
+        OAuthCredential(
+            access="tid=1;proxy-ep=proxy.business.githubcopilot.com",
+            refresh="github-token",
+            expires=9999999999999,
+        ),
+    )
+
+    provider = create_model_provider(
+        provider_config_from_catalog_entry("github-copilot"),
+        credential_store=store,
+        model="claude-haiku-4.5",
+    )
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider._config.cache_retention == "none"
+
+
 def test_create_model_provider_uses_copilot_token_base_url(tmp_path) -> None:
     store = FileCredentialStore(tmp_path / "credentials.json")
     store.set_oauth(

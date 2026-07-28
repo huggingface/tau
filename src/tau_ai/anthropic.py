@@ -417,7 +417,10 @@ def _build_messages_payload(
 
 
 def _cache_control(cache_retention: CacheRetention) -> dict[str, JSONValue] | None:
-    """Return the cache_control marker for a retention preference, if enabled."""
+    """Return the cache_control marker for a retention preference, if enabled.
+
+    Attach sites copy the result, so no two breakpoints share one dict.
+    """
     if cache_retention == CACHE_RETENTION_NONE:
         return None
     if cache_retention == CACHE_RETENTION_LONG:
@@ -451,7 +454,7 @@ def _anthropic_system(
     if not blocks:
         # An empty text block carrying cache_control is rejected outright.
         return system
-    blocks[-1]["cache_control"] = cache_control
+    blocks[-1]["cache_control"] = dict(cache_control)
     return cast("JSONValue", blocks)
 
 
@@ -519,7 +522,9 @@ def _mark_cache_breakpoint(
     if isinstance(content, str):
         if not content:
             return
-        message["content"] = [{"type": "text", "text": content, "cache_control": cache_control}]
+        message["content"] = [
+            {"type": "text", "text": content, "cache_control": dict(cache_control)}
+        ]
         return
     if not isinstance(content, list) or not content:
         return
@@ -534,7 +539,7 @@ def _mark_cache_breakpoint(
         inner = last_block.get("content")
         if isinstance(inner, list) and not inner:
             return
-    last_block["cache_control"] = cache_control
+    last_block["cache_control"] = dict(cache_control)
 
 
 def _anthropic_message(message: AgentMessage, *, supports_images: bool) -> dict[str, JSONValue]:
@@ -620,7 +625,7 @@ def _anthropic_tool(
         "input_schema": dict(tool.input_schema),
     }
     if cache_control is not None:
-        payload["cache_control"] = cache_control
+        payload["cache_control"] = dict(cache_control)
     return payload
 
 

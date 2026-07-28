@@ -7,7 +7,31 @@ from tau_agent.messages import (
     UserMessage,
 )
 from tau_agent.session import CompactionEntry, MessageEntry
-from tau_coding.session_stats import calculate_session_stats
+from tau_coding.session_stats import SessionStats, calculate_session_stats
+
+
+def test_cache_hit_rate_is_hidden_when_no_provider_reported_cache_usage() -> None:
+    """Backends without prompt caching must not show a permanent 0%."""
+    stats = SessionStats(input_tokens=5_000, output_tokens=100)
+
+    assert stats.cache_hit_rate is None
+
+
+def test_cache_hit_rate_is_zero_when_a_write_happened_but_nothing_was_read() -> None:
+    """A cold first turn genuinely is 0% cached, and saying so is useful."""
+    stats = SessionStats(input_tokens=5_000, cache_write_tokens=4_000)
+
+    assert stats.cache_hit_rate == 0.0
+
+
+def test_cache_hit_rate_is_none_without_billed_input() -> None:
+    assert SessionStats().cache_hit_rate is None
+
+
+def test_cache_hit_rate_divides_reads_by_total_prompt_tokens() -> None:
+    stats = SessionStats(input_tokens=1_000, cached_input_tokens=950, cache_write_tokens=50)
+
+    assert stats.cache_hit_rate == 0.95
 
 
 def test_calculate_session_stats_keeps_compacted_active_branch_usage() -> None:
