@@ -60,6 +60,25 @@ OAuth tokens refresh automatically. `/logout` removes Tau's local credential,
 but does not revoke the grant remotely; use the provider's account settings for
 remote revocation.
 
+#### Anthropic prompt caching
+
+Tau marks cache breakpoints on Anthropic requests so the system prompt, tool
+schemas, and conversation history are reused between turns instead of being
+reprocessed. Which retention Tau asks for depends on how you authenticated:
+
+- **Claude Pro/Max via OAuth** requests the one-hour cache. Subscription auth is
+  not billed per token, and the five-minute default is shorter than a build, a
+  test run, or the time it takes to read a diff — any of which would otherwise
+  expire the cache mid-session.
+- **An Anthropic API key** uses the five-minute default, because one-hour cache
+  writes cost more per token and that should be a deliberate choice.
+
+Providers that speak the Anthropic protocol through a gateway rather than being
+Anthropic itself — `minimax`, `minimax-cn`, `fireworks`, and `vercel-ai-gateway` —
+send no cache breakpoints, since not every gateway accepts them. Watch the
+sidebar's cache hit rate to see caching working; see
+[The interactive session]({{< relref "./tui.md" >}}) for how to read it.
+
 #### Codex subscription context limits
 
 OpenAI's public API and the ChatGPT/Codex subscription are separate serving
