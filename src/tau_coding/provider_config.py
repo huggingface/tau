@@ -10,14 +10,18 @@ from pathlib import Path
 from shutil import copy2
 from tempfile import NamedTemporaryFile
 from typing import Any, Protocol, cast
+from urllib.parse import urlsplit
 
 from tau_ai.env import (
+    CACHE_RETENTION_NONE,
+    CACHE_RETENTION_SHORT,
     DEFAULT_ANTHROPIC_BASE_URL,
     DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
     DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES,
     DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS,
     DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS,
     AnthropicConfig,
+    CacheRetention,
     OpenAICompatibleConfig,
 )
 from tau_ai.openai_codex import DEFAULT_OPENAI_CODEX_BASE_URL
@@ -1534,10 +1538,12 @@ def anthropic_config_from_provider(
         model=selected_model,
         thinking_level=thinking_level,
     )
+    base_url = _normalize_anthropic_base_url(_model_base_url(provider, selected_model))
     return AnthropicConfig(
         api_key=api_key,
         provider_name=provider.name,
-        base_url=_normalize_anthropic_base_url(_model_base_url(provider, selected_model)),
+        base_url=base_url,
+        cache_retention=_cache_retention_for_base_url(base_url),
         headers=_model_headers(provider, selected_model),
         timeout_seconds=provider.timeout_seconds,
         max_retries=provider.max_retries,
@@ -1730,6 +1736,18 @@ def _normalize_anthropic_base_url(base_url: str) -> str:
     if normalized.endswith("/v1"):
         return normalized
     return f"{normalized}/v1"
+
+
+def _cache_retention_for_base_url(base_url: str) -> CacheRetention:
+    """Enable cache breakpoints only for first-party Anthropic.
+
+    Several catalog providers speak the Anthropic protocol through a gateway, and
+    some of those proxy to non-Anthropic models entirely. They may reject
+    cache_control blocks or the block-list system field, so they stay opted out.
+    """
+    if urlsplit(base_url).hostname == urlsplit(DEFAULT_ANTHROPIC_BASE_URL).hostname:
+        return CACHE_RETENTION_SHORT
+    return CACHE_RETENTION_NONE
 
 
 def _provider_from_json(data: object) -> ProviderConfig:

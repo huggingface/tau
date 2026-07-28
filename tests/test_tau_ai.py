@@ -1560,8 +1560,25 @@ async def test_anthropic_provider_formats_request_and_streams_text() -> None:
     payload = loads(request.content)
     assert payload["model"] == "claude-test"
     assert payload["stream"] is True
-    assert payload["system"] == "You are Tau."
-    assert payload["messages"] == [{"role": "user", "content": "Say hello"}]
+    assert payload["system"] == [
+        {
+            "type": "text",
+            "text": "You are Tau.",
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+    assert payload["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Say hello",
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+        }
+    ]
 
 
 @pytest.mark.anyio

@@ -66,6 +66,38 @@ def test_create_model_provider_uses_anthropic_oauth_runtime_auth(tmp_path) -> No
     assert provider._config.oauth_system_prompt is not None
     assert provider._config.headers is not None
     assert provider._config.headers["Authorization"] == "Bearer anthropic-oauth-access"
+    # Subscription auth is not billed per token, so ask for the 1 hour cache TTL.
+    assert provider._config.cache_retention == "long"
+
+
+def test_anthropic_api_key_auth_keeps_the_default_cache_retention(tmp_path) -> None:
+    """1h cache writes cost 2x base, so an API-key user must not get them silently."""
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key("anthropic", "sk-test")
+
+    provider = create_model_provider(AnthropicProviderConfig(), credential_store=store)
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider._config.cache_retention == "short"
+
+
+@pytest.mark.parametrize(
+    "provider_name",
+    ["minimax", "minimax-cn", "fireworks", "vercel-ai-gateway"],
+)
+def test_anthropic_protocol_gateways_disable_cache_breakpoints(
+    provider_name: str,
+    tmp_path,
+) -> None:
+    """Gateways speaking the Anthropic protocol may reject cache_control blocks."""
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key(provider_name, "gateway-key")
+    config = provider_config_from_catalog_entry(provider_name)
+
+    provider = create_model_provider(config, credential_store=store)
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider._config.cache_retention == "none"
 
 
 def test_create_model_provider_uses_copilot_token_base_url(tmp_path) -> None:

@@ -21,7 +21,22 @@ class SessionStats:
     tool_call_count: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    cached_input_tokens: int = 0
+    cache_write_tokens: int = 0
     estimated_cost: float | None = None
+
+    @property
+    def cache_hit_rate(self) -> float | None:
+        """Share of prompt tokens served from the provider's cache.
+
+        None when no provider in the branch reported any cache activity, so that
+        backends without prompt caching are not shown a permanent 0%.
+        """
+        if self.input_tokens <= 0:
+            return None
+        if self.cached_input_tokens == 0 and self.cache_write_tokens == 0:
+            return None
+        return self.cached_input_tokens / self.input_tokens
 
 
 def calculate_session_stats(
@@ -34,6 +49,8 @@ def calculate_session_stats(
     tool_call_count = 0
     input_tokens = 0
     output_tokens = 0
+    cached_input_tokens = 0
+    cache_write_tokens = 0
     estimated_cost = 0.0
     has_billable_usage = False
     has_complete_pricing = True
@@ -52,6 +69,8 @@ def calculate_session_stats(
         usage = message.usage
         prompt_tokens = usage.input + usage.cache_read + usage.cache_write
         input_tokens += prompt_tokens
+        cached_input_tokens += usage.cache_read
+        cache_write_tokens += usage.cache_write
         output_tokens += usage.output
         if prompt_tokens == 0 and usage.output == 0:
             continue
@@ -77,6 +96,8 @@ def calculate_session_stats(
         tool_call_count=tool_call_count,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        cached_input_tokens=cached_input_tokens,
+        cache_write_tokens=cache_write_tokens,
         estimated_cost=(estimated_cost if has_billable_usage and has_complete_pricing else None),
     )
 

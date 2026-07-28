@@ -8,7 +8,12 @@ from typing import Protocol
 
 from tau_agent.provider import ModelProvider
 from tau_ai.anthropic import AnthropicProvider
-from tau_ai.env import AnthropicConfig, RuntimeProviderAuth
+from tau_ai.env import (
+    CACHE_RETENTION_LONG,
+    CACHE_RETENTION_NONE,
+    AnthropicConfig,
+    RuntimeProviderAuth,
+)
 from tau_ai.google import GoogleGenerativeAIProvider
 from tau_ai.mistral import MistralConversationsProvider
 from tau_ai.openai_codex import (
@@ -75,6 +80,15 @@ def create_model_provider(
                 bearer_auth=True,
                 headers={**dict(config.headers or {}), **dict(runtime_auth.headers or {})},
                 oauth_system_prompt="You are Claude Code, Anthropic's official CLI for Claude.",
+                # Subscription auth is not billed per token, so the 1 hour cache
+                # TTL is a clear win: it outlives builds, test runs, and reviews
+                # that would expire the 5 minute default mid-session. Backends
+                # already opted out of breakpoints stay opted out.
+                cache_retention=(
+                    CACHE_RETENTION_LONG
+                    if config.cache_retention != CACHE_RETENTION_NONE
+                    else CACHE_RETENTION_NONE
+                ),
                 credential_resolver=OAuthRuntimeCredentialResolver(
                     provider,
                     credential_store=credentials,
@@ -142,6 +156,9 @@ def create_model_provider(
                 bearer_auth=True,
                 credential_resolver=compatible_config.credential_resolver,
                 supports_images=compatible_config.supports_images,
+                # Third-party gateways speaking the Anthropic protocol may reject
+                # cache_control blocks, so leave breakpoints off for them.
+                cache_retention=CACHE_RETENTION_NONE,
             )
             return AnthropicProvider(anthropic_config)
         if selected_api == "google-generative-ai":

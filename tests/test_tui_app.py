@@ -192,6 +192,7 @@ class FakeSession:
             tool_call_count=23,
             input_tokens=1_200_000,
             output_tokens=48_000,
+            cached_input_tokens=1_140_000,
             estimated_cost=1.24,
         )
         self.system_prompt = "You are Tau."
@@ -493,7 +494,7 @@ def test_session_sidebar_renders_session_metadata() -> None:
     assert "14 turns, 23 tool calls" in output
     assert "cumulative usage" in output
     assert "1.2m in, 48k out" in output
-    assert "1.2m in, 48k out · ~$1.24" in output
+    assert "1.2m in, 48k out · 95% cached · ~$1.24" in output
     assert "auto at 200k" in output
     assert "read, write, edit, bash" in output
     assert "• review" in output
