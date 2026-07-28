@@ -31,7 +31,9 @@
     "markdown_bullet": "#b45309",
     "completion_selected": "bold #1d4ed8 on #dbeafe",
     "completion_selected_description": "#1d4ed8 on #dbeafe",
-    "completion_description": "#667085"
+    "completion_description": "#667085",
+    "scrollbar": "#cbd5e1",
+    "scrollbar_hover": "#94a3b8"
   },
   "roles": {
     "user": { "border": "#2563eb", "body": "#111827 on #f8fafc" },
