@@ -13,6 +13,7 @@ import httpx
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    ImageContent,
     TextContent,
     ThinkingContent,
     ToolResultMessage,
@@ -30,6 +31,11 @@ from tau_ai._provider_events import (
     ProviderTextDeltaEvent,
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
+)
+from tau_ai.content import (
+    NON_VISION_TOOL_IMAGE_PLACEHOLDER,
+    NON_VISION_USER_IMAGE_PLACEHOLDER,
+    text_and_images,
 )
 from tau_ai.env import (
     DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES,
@@ -71,6 +77,7 @@ class OpenAICodexConfig:
     originator: str = "tau"
     reasoning_effort: str | None = None
     reasoning_summary: str = "auto"
+    supports_images: bool = False
     provider_name: str = "OpenAI Codex"
     # The Codex catalog filters models by the official client's compatibility
     # version. This is the oldest known version that advertises GPT-5.6.
@@ -161,6 +168,7 @@ class OpenAICodexProvider:
                 tools=tools,
                 reasoning_effort=self._config.reasoning_effort,
                 reasoning_summary=self._config.reasoning_summary,
+                supports_images=self._config.supports_images,
             )
             url = _resolve_codex_url(self._config.base_url)
 
@@ -358,13 +366,14 @@ def _build_codex_payload(
     tools: list[AgentTool],
     reasoning_effort: str | None = None,
     reasoning_summary: str = "auto",
+    supports_images: bool = False,
 ) -> dict[str, JSONValue]:
     payload: dict[str, JSONValue] = {
         "model": model,
         "store": False,
         "stream": True,
         "instructions": system or "You are a helpful assistant.",
-        "input": _messages_to_responses_input(messages),
+        "input": _messages_to_responses_input(messages, supports_images=supports_images),
         "text": {"verbosity": "low"},
         "include": ["reasoning.encrypted_content"],
         "tool_choice": "auto",
@@ -380,17 +389,23 @@ def _build_codex_payload(
     return payload
 
 
-def _messages_to_responses_input(messages: list[AgentMessage]) -> list[JSONValue]:
+def _messages_to_responses_input(
+    messages: list[AgentMessage], *, supports_images: bool = False
+) -> list[JSONValue]:
     items: list[JSONValue] = []
     assistant_index = 0
     for message in messages:
         if isinstance(message, UserMessage):
-            items.append(
-                {
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": message.text}],
-                }
+            text, images = text_and_images(
+                message.content,
+                supports_images=supports_images,
+                image_placeholder=NON_VISION_USER_IMAGE_PLACEHOLDER,
             )
+            content: list[JSONValue] = []
+            if text:
+                content.append({"type": "input_text", "text": text})
+            content.extend(_codex_input_image(image) for image in images)
+            items.append({"role": "user", "content": content})
         elif isinstance(message, AssistantMessage):
             for block in message.content:
                 if isinstance(block, ThinkingContent) and block.thinking_signature:
@@ -430,14 +445,36 @@ def _messages_to_responses_input(messages: list[AgentMessage]) -> list[JSONValue
                 items.append(item)
         elif isinstance(message, ToolResultMessage):
             call_id, _item_id = _split_tool_call_id(message.tool_call_id)
+            text, images = text_and_images(
+                message.content,
+                supports_images=supports_images,
+                image_placeholder=NON_VISION_TOOL_IMAGE_PLACEHOLDER,
+            )
+            output: JSONValue
+            if images:
+                output_parts: list[JSONValue] = []
+                if text:
+                    output_parts.append({"type": "input_text", "text": text})
+                output_parts.extend(_codex_input_image(image) for image in images)
+                output = output_parts
+            else:
+                output = text or "(no tool output)"
             items.append(
                 {
                     "type": "function_call_output",
                     "call_id": call_id,
-                    "output": message.text,
+                    "output": output,
                 }
             )
     return items
+
+
+def _codex_input_image(image: ImageContent) -> dict[str, JSONValue]:
+    return {
+        "type": "input_image",
+        "detail": "auto",
+        "image_url": f"data:{image.mime_type};base64,{image.data}",
+    }
 
 
 def _tool_to_codex(tool: AgentTool) -> dict[str, JSONValue]:

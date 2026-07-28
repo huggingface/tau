@@ -99,7 +99,21 @@ tau export <session-id> --format jsonl
 
 The source can be an indexed session id **or** a path to a JSONL session file.
 HTML exports are self-contained and include the preserved session tree plus the
-transcript in storage order.
+transcript in storage order. Every transcript entry is a compact accordion row
+(icon, title, one-line preview, timestamp) that expands to reveal the full
+content; thinking blocks, tool-call arguments, and tool-result details are
+nested accordions. The export header includes controls to:
+
+- show or hide tool calls and tool results in both the transcript and session
+  tree—the chip filters show how many entries of each kind the session contains
+- expand or collapse every accordion in the transcript with one button
+- hide session events—such as session info, model and thinking changes,
+  compactions, labels, and custom entries—to focus on user and assistant messages
+- download the session as a JSONL file—the complete entry data is embedded in
+  the page, so the download works offline and includes every entry
+
+Tool rows are titled `Tool: <name>` (for example, `Tool: read`), and the
+session tree labels tool entries with just the tool name for readability.
 
 ## Where sessions live
 
