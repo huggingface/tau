@@ -4047,6 +4047,88 @@ async def test_tui_app_clears_working_state_when_compaction_is_cancelled() -> No
 
 
 @pytest.mark.anyio
+async def test_tui_app_keeps_working_state_when_recompacting_during_cancel_teardown() -> None:
+    class GatedCompactSession(FakeSession):
+        def __init__(self, messages=()) -> None:
+            super().__init__(messages=messages)
+            self.started = (asyncio.Event(), asyncio.Event())
+            self.teardown_gate = asyncio.Event()
+            self.finish = asyncio.Event()
+            self.calls = 0
+
+        async def compact(self, summary: str) -> str:
+            index = self.calls
+            self.calls += 1
+            self.compact_summaries.append(summary)
+            self.started[index].set()
+            try:
+                await self.finish.wait()
+            except asyncio.CancelledError:
+                # Delay teardown so it lands after the next compaction started.
+                await self.teardown_gate.wait()
+                raise
+            return "Compacted 2 context entries."
+
+    session = GatedCompactSession(messages=[UserMessage(content="Earlier")])
+    app = TauTuiApp(session)
+    app._notify = lambda message, **kwargs: None  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/compact First summary"
+        await pilot.press("enter")
+        await asyncio.wait_for(session.started[0].wait(), timeout=1)
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        prompt.value = "/compact Second summary"
+        await pilot.press("enter")
+        await asyncio.wait_for(session.started[1].wait(), timeout=1)
+        await pilot.pause()
+        second_worker = app._compaction_worker
+
+        session.teardown_gate.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app._is_working() is True
+        assert app._is_compaction_active() is True
+        assert app._compaction_worker is second_worker
+
+        session.finish.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app._is_working() is False
+        assert app._is_compaction_active() is False
+
+
+@pytest.mark.anyio
+async def test_tui_app_clears_working_state_when_compaction_setup_fails() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="Earlier")]))
+    notifications: list[str] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        del kwargs
+        notifications.append(message)
+
+    def failing_refresh() -> None:
+        raise RuntimeError("no matches")
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test():
+        app._refresh = failing_refresh  # type: ignore[method-assign]
+        await app._run_compaction("Summary")
+
+        assert notifications == ["Error: no matches"]
+        assert app._is_working() is False
+        assert app._is_compaction_active() is False
+
+
+@pytest.mark.anyio
 async def test_tui_app_notifies_once_when_manual_compaction_finishes_unfocused() -> None:
     app = TauTuiApp(
         FakeSession(messages=[UserMessage(content="Earlier")]),

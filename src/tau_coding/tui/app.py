@@ -3404,6 +3404,7 @@ class TauTuiApp(App[None]):
         self._prompt_worker: Worker[None] | None = None
         self._compaction_worker: Worker[None] | None = None
         self._compacting = False
+        self._compaction_run_id = 0
         self._prompt_run_id = 0
         self._optimistic_user_messages: list[tuple[int, str]] = []
         self._completion_state = CompletionState()
@@ -3824,11 +3825,13 @@ class TauTuiApp(App[None]):
 
     async def _run_compaction(self, summary: str) -> None:
         """Run manual compaction without disabling prompt editing."""
+        self._compaction_run_id += 1
+        run_id = self._compaction_run_id
         self._compacting = True
-        self.state.clear()
-        self.state.add_item("status", "Compacting session…")
-        self._refresh()
         try:
+            self.state.clear()
+            self.state.add_item("status", "Compacting session…")
+            self._refresh()
             compact_message = await self.session.compact(summary)
         except asyncio.CancelledError:
             return
@@ -3836,9 +3839,12 @@ class TauTuiApp(App[None]):
             self._notify(f"Error: {exc}", severity="error")
             return
         finally:
-            self._compacting = False
-            self._compaction_worker = None
-            self._refresh_chrome_if_mounted()
+            # A cancelled run can tear down after a newer compaction started, so only
+            # clear working state this run still owns.
+            if self._compaction_run_id == run_id:
+                self._compacting = False
+                self._compaction_worker = None
+                self._refresh_chrome_if_mounted()
         self.state.clear()
         self.state.set_skills(self.session.skills)
         self._load_session_messages_from_session()
@@ -4710,6 +4716,7 @@ class TauTuiApp(App[None]):
             return False
 
         worker.cancel()
+        self._compaction_run_id += 1
         self._compaction_worker = None
         self._compacting = False
         self.state.clear()
@@ -5768,7 +5775,7 @@ class TauTuiApp(App[None]):
     def _refresh_footer_bindings(self) -> None:
         prompt = self.query_one("#prompt", PromptInput)
         prompt.set_footer_mode(
-            _prompt_footer_mode(self.state, self._completion_state, working=self._is_working())
+            _prompt_footer_mode(self._completion_state, working=self._is_working())
         )
 
     def _sync_prompt_shell_mode(self, text: str) -> None:
@@ -6303,15 +6310,13 @@ def _queued_message_preview(message: str) -> str:
 
 
 def _prompt_footer_mode(
-    state: TuiState,
     completion_state: CompletionState,
     *,
-    working: bool | None = None,
+    working: bool,
 ) -> Literal["normal", "completion", "running"]:
     if completion_state.items:
         return "completion"
-    is_working = state.running if working is None else working
-    if is_working:
+    if working:
         return "running"
     return "normal"
 
