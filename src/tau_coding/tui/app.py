@@ -632,17 +632,34 @@ class PromptInput(TextArea):
         as a paste; when the pasted text is only existing file paths, insert the
         normalized paths instead of the raw (possibly escaped) drop text.
         """
-        dropped_paths = normalize_dropped_paths(event.text)
-        if dropped_paths is not None:
+        if self.handle_pasted_text(event.text):
             event.stop()
             event.prevent_default()
+
+    def handle_pasted_text(self, text: str) -> bool:
+        """Apply Tau's paste rules to *text*.
+
+        Returns ``True`` when the text was inserted here (file drop or large
+        paste placeholder) and ``False`` when it should be inserted verbatim by
+        the caller (or by Textual's default paste handling).
+        """
+        dropped_paths = normalize_dropped_paths(text)
+        if dropped_paths is not None:
             self._insert_dropped_paths(dropped_paths)
-            return
-        if len(event.text) <= PASTE_DISPLAY_THRESHOLD:
-            return
-        event.stop()
-        event.prevent_default()
-        self._show_large_paste_placeholder(event.text)
+            return True
+        if len(text) <= PASTE_DISPLAY_THRESHOLD:
+            return False
+        self._show_large_paste_placeholder(text)
+        return True
+
+    def insert_pasted_text(self, text: str) -> None:
+        """Insert pasted text that Textual could not deliver to this widget.
+
+        Used for drops that arrive while the terminal is unfocused, where no
+        default paste handler runs, so verbatim insertion is done here.
+        """
+        if not self.handle_pasted_text(text):
+            self.insert(text)
 
     def _insert_dropped_paths(self, insertion: str) -> None:
         """Insert dropped paths at the cursor, separated from surrounding text."""
@@ -3587,6 +3604,27 @@ class TauTuiApp(App[None]):
     def on_app_focus(self) -> None:
         """Suppress turn notifications while the Tau terminal surface is active."""
         self._app_has_focus = True
+
+    def on_paste(self, event: events.Paste) -> None:
+        """Route pastes that arrive while no widget holds keyboard focus.
+
+        Textual clears widget focus whenever the terminal reports lost focus
+        (``CSI ? 1004 h``), and pastes are dropped when nothing is focused. OS
+        drag-and-drop from sources that never hand focus back to the terminal --
+        notably the macOS Dock -- delivers the dropped paths in exactly that
+        state, so the paste bubbles up here instead of reaching the prompt.
+        Clipboard pastes always require terminal focus, so this only reroutes
+        drops that would otherwise be silently discarded.
+        """
+        if self.focused is not None:
+            return
+        try:
+            prompt = self.screen.query_one("#prompt", PromptInput)
+        except NoMatches:
+            # A modal screen owns the input; leave its own handling alone.
+            return
+        event.stop()
+        prompt.insert_pasted_text(event.text)
 
     def on_resize(self, event: Resize) -> None:
         """Update responsive chrome when the terminal changes size."""
