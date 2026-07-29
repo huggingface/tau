@@ -205,6 +205,13 @@ def main(
             "(text, json, or transcript).",
         ),
     ] = None,
+    auto_name_session: Annotated[
+        bool,
+        typer.Option(
+            "--auto-name-session/--no-auto-name-session",
+            help="Enable/disable automatic session naming in print mode.",
+        ),
+    ] = False,
     output: Annotated[
         PrintOutputMode | None,
         typer.Option(
@@ -416,6 +423,7 @@ def main(
             not no_extensions,
             project_extensions,
             session_id,
+            auto_name_session,
         )
     except (RuntimeError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -452,6 +460,7 @@ async def run_openai_tui(
         extension_paths=extension_paths,
         extensions_enabled=extensions_enabled,
         project_extensions_enabled=project_extensions_enabled,
+        tui_settings=None,  # Will load defaults in run_tui_app
     )
 
 
@@ -674,7 +683,11 @@ async def run_openai_print_mode(
     extension_paths: tuple[Path, ...] = (),
     extensions_enabled: bool = True,
     project_extensions_enabled: bool = False,
+<<<<<<< HEAD
+    auto_name_session: bool = False,
+=======
     session_id: str | None = None,
+>>>>>>> upstream/main
 ) -> bool:
     """Run print mode with the OpenAI-compatible provider configured from the environment."""
     settings = load_provider_settings()
@@ -709,6 +722,7 @@ async def run_openai_print_mode(
             extension_paths=extension_paths,
             extensions_enabled=extensions_enabled,
             project_extensions_enabled=project_extensions_enabled,
+            auto_name_session=auto_name_session,
         )
     finally:
         await provider.aclose()
@@ -743,6 +757,7 @@ async def run_print_mode(
     extension_paths: tuple[Path, ...] = (),
     extensions_enabled: bool = True,
     project_extensions_enabled: bool = False,
+    auto_name_session: bool = False,
 ) -> bool:
     """Run one non-interactive prompt and print streamed events.
 
@@ -765,6 +780,7 @@ async def run_print_mode(
             extension_paths=extension_paths,
             extensions_enabled=extensions_enabled,
             project_extensions_enabled=project_extensions_enabled,
+            auto_name_session=auto_name_session,
         )
     )
     session.extension_runtime.set_ui_bridge(StderrUiBridge())

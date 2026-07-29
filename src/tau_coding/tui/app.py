@@ -4535,6 +4535,7 @@ class TauTuiApp(App[None]):
             keybindings=self.tui_settings.keybindings,
             theme=theme,
             auto_copy_selection=self.tui_settings.auto_copy_selection,
+            auto_name_session=self.tui_settings.auto_name_session,
             sidebar_position=self.tui_settings.sidebar_position,
             turn_notification=self.tui_settings.turn_notification,
         )
@@ -6672,6 +6673,7 @@ async def run_tui_app(
     extension_paths: tuple[Path, ...] = (),
     extensions_enabled: bool = True,
     project_extensions_enabled: bool = False,
+    tui_settings: TuiSettings | None = None,
 ) -> str | None:
     """Run the Textual app and return the active id when its session is persisted."""
     if new_session and session_id is not None:
@@ -6680,6 +6682,7 @@ async def run_tui_app(
     provider_settings = load_provider_settings()
     shell_settings = load_shell_settings()
     manager = session_manager or SessionManager()
+    effective_tui_settings = tui_settings or load_tui_settings()
     record = _explicit_resume_record(
         manager,
         session_id=session_id,
@@ -6745,6 +6748,7 @@ async def run_tui_app(
                 extension_paths=extension_paths,
                 extensions_enabled=extensions_enabled,
                 project_extensions_enabled=project_extensions_enabled,
+                auto_name_session=effective_tui_settings.auto_name_session,
             )
         )
         custom_themes, theme_diagnostics = load_custom_tui_themes(
