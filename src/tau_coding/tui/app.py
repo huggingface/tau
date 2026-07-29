@@ -3403,6 +3403,7 @@ class TauTuiApp(App[None]):
         self._connect_extension_runtime(session)
         self._prompt_worker: Worker[None] | None = None
         self._compaction_worker: Worker[None] | None = None
+        self._compacting = False
         self._prompt_run_id = 0
         self._optimistic_user_messages: list[tuple[int, str]] = []
         self._completion_state = CompletionState()
@@ -3425,11 +3426,15 @@ class TauTuiApp(App[None]):
         """Reflect the active session name in the terminal tab title."""
         self._sync_terminal_title()
 
+    def _is_working(self) -> bool:
+        """Return whether the app should show working affordances (agent turn or compaction)."""
+        return self.state.running or self._compacting
+
     def _sync_terminal_title(self) -> None:
         """Reflect the active session name and running state in the terminal tab title."""
         self._terminal_title.update(
             getattr(self.session, "session_title", None),
-            running=self.state.running,
+            running=self._is_working(),
             frame=self._activity_frame,
         )
 
@@ -3800,7 +3805,9 @@ class TauTuiApp(App[None]):
     def _is_compaction_active(self) -> bool:
         """Return whether a manual compaction worker is still running."""
         worker = self._compaction_worker
-        return worker is not None and not worker.is_finished and not worker.is_cancelled
+        if worker is not None and not worker.is_finished and not worker.is_cancelled:
+            return True
+        return self._compacting
 
     def _is_agent_or_queue_active(self) -> bool:
         """Return whether compaction would race an active or queued agent turn."""
@@ -3817,6 +3824,7 @@ class TauTuiApp(App[None]):
 
     async def _run_compaction(self, summary: str) -> None:
         """Run manual compaction without disabling prompt editing."""
+        self._compacting = True
         self.state.clear()
         self.state.add_item("status", "Compacting session…")
         self._refresh()
@@ -3828,12 +3836,16 @@ class TauTuiApp(App[None]):
             self._notify(f"Error: {exc}", severity="error")
             return
         finally:
+            self._compacting = False
             self._compaction_worker = None
+            self._refresh_chrome_if_mounted()
         self.state.clear()
         self.state.set_skills(self.session.skills)
         self._load_session_messages_from_session()
         self._notify(compact_message)
         self._refresh()
+        if not self._app_has_focus:
+            self._terminal_notification.notify_turn_finished()
 
     async def _submit_prompt(
         self,
@@ -4699,6 +4711,7 @@ class TauTuiApp(App[None]):
 
         worker.cancel()
         self._compaction_worker = None
+        self._compacting = False
         self.state.clear()
         self.state.set_skills(self.session.skills)
         self._load_session_messages_from_session()
@@ -5552,9 +5565,16 @@ class TauTuiApp(App[None]):
             return
         self.adapter.apply(queue_event())
 
+    def _refresh_chrome_if_mounted(self) -> None:
+        """Refresh chrome when the app is mounted, ignoring teardown races."""
+        if not self.screen_stack:
+            return
+        with suppress(NoMatches):
+            self._refresh_chrome()
+
     def _sync_activity_indicator(self) -> None:
         self._sync_terminal_title()
-        if self.state.running:
+        if self._is_working():
             if self._activity_timer is None:
                 self._activity_timer = self.set_interval(
                     ACTIVITY_TICK_SECONDS,
@@ -5571,7 +5591,7 @@ class TauTuiApp(App[None]):
         self._apply_activity_indicator()
 
     def _tick_activity(self) -> None:
-        if not self.state.running:
+        if not self._is_working():
             return
         self._activity_frame += 1
         self._apply_activity_indicator()
@@ -5622,7 +5642,7 @@ class TauTuiApp(App[None]):
             theme.screen_background,
             theme.prompt_border,
             self._activity_frame,
-            self.state.running,
+            self._is_working(),
             shell_mode,
         )
         if render_key == self._last_activity_indicator_key:
@@ -5633,7 +5653,7 @@ class TauTuiApp(App[None]):
             _activity_prompt_border_color(
                 theme,
                 frame=self._activity_frame,
-                running=self.state.running,
+                running=self._is_working(),
                 shell_mode=shell_mode,
             ),
         )
@@ -5641,7 +5661,7 @@ class TauTuiApp(App[None]):
             _render_activity_indicator(
                 theme,
                 frame=self._activity_frame,
-                running=self.state.running,
+                running=self._is_working(),
                 shell_mode=shell_mode,
             ),
             layout=False,
@@ -5747,7 +5767,9 @@ class TauTuiApp(App[None]):
 
     def _refresh_footer_bindings(self) -> None:
         prompt = self.query_one("#prompt", PromptInput)
-        prompt.set_footer_mode(_prompt_footer_mode(self.state, self._completion_state))
+        prompt.set_footer_mode(
+            _prompt_footer_mode(self.state, self._completion_state, working=self._is_working())
+        )
 
     def _sync_prompt_shell_mode(self, text: str) -> None:
         prompt = self.query_one("#prompt", PromptInput)
@@ -6283,10 +6305,13 @@ def _queued_message_preview(message: str) -> str:
 def _prompt_footer_mode(
     state: TuiState,
     completion_state: CompletionState,
+    *,
+    working: bool | None = None,
 ) -> Literal["normal", "completion", "running"]:
     if completion_state.items:
         return "completion"
-    if state.running:
+    is_working = state.running if working is None else working
+    if is_working:
         return "running"
     return "normal"
 
