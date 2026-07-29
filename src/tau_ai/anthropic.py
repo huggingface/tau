@@ -11,6 +11,7 @@ import httpx
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    ImageContent,
     TextContent,
     ThinkingContent,
     ToolResultMessage,
@@ -29,6 +30,12 @@ from tau_ai._provider_events import (
     ProviderTextDeltaEvent,
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
+)
+from tau_ai.content import (
+    NON_VISION_TOOL_IMAGE_PLACEHOLDER,
+    NON_VISION_USER_IMAGE_PLACEHOLDER,
+    messages_have_images,
+    text_and_images,
 )
 from tau_ai.env import AnthropicConfig
 from tau_ai.events import AssistantMessageEvent
@@ -112,6 +119,7 @@ class AnthropicProvider:
                 thinking_budget_tokens=self._config.thinking_budget_tokens,
                 thinking_effort=self._config.thinking_effort,
                 thinking_mode=self._config.thinking_mode,
+                supports_images=self._config.supports_images,
             )
             headers = {
                 "anthropic-version": ANTHROPIC_VERSION,
@@ -119,6 +127,12 @@ class AnthropicProvider:
                 **(dict(self._config.headers or {})),
                 **auth_headers,
             }
+            if (
+                self._config.provider_name == "github-copilot"
+                and self._config.supports_images
+                and messages_have_images(messages)
+            ):
+                headers["Copilot-Vision-Request"] = "true"
             if self._config.bearer_auth:
                 headers.setdefault("Authorization", f"Bearer {api_key}")
             else:
@@ -344,6 +358,7 @@ def _build_messages_payload(
     thinking_budget_tokens: int | None = None,
     thinking_effort: str | None = None,
     thinking_mode: str = "budget",
+    supports_images: bool = False,
 ) -> dict[str, JSONValue]:
     resolved_max_tokens = max_tokens or DEFAULT_MAX_TOKENS
     if thinking_budget_tokens is not None:
@@ -360,7 +375,9 @@ def _build_messages_payload(
             if oauth_system_prompt
             else system
         ),
-        "messages": [_anthropic_message(message) for message in messages],
+        "messages": [
+            _anthropic_message(message, supports_images=supports_images) for message in messages
+        ],
     }
     if thinking_mode == "disabled":
         payload["thinking"] = {"type": "disabled"}
@@ -377,9 +394,20 @@ def _build_messages_payload(
     return payload
 
 
-def _anthropic_message(message: AgentMessage) -> dict[str, JSONValue]:
+def _anthropic_message(message: AgentMessage, *, supports_images: bool) -> dict[str, JSONValue]:
     if isinstance(message, UserMessage):
-        return {"role": "user", "content": message.text}
+        text, images = text_and_images(
+            message.content,
+            supports_images=supports_images,
+            image_placeholder=NON_VISION_USER_IMAGE_PLACEHOLDER,
+        )
+        if not images:
+            return {"role": "user", "content": text}
+        user_content: list[JSONValue] = []
+        if text:
+            user_content.append({"type": "text", "text": text})
+        user_content.extend(_anthropic_image(image) for image in images)
+        return {"role": "user", "content": user_content}
     if isinstance(message, AssistantMessage):
         content: list[JSONValue] = []
         for block in message.content:
@@ -404,18 +432,38 @@ def _anthropic_message(message: AgentMessage) -> dict[str, JSONValue]:
                 )
         return {"role": "assistant", "content": content}
     if isinstance(message, ToolResultMessage):
+        text, images = text_and_images(
+            message.content,
+            supports_images=supports_images,
+            image_placeholder=NON_VISION_TOOL_IMAGE_PLACEHOLDER,
+        )
+        result_content: list[JSONValue] = []
+        if text:
+            result_content.append({"type": "text", "text": text})
+        result_content.extend(_anthropic_image(image) for image in images)
         return {
             "role": "user",
             "content": [
                 {
                     "type": "tool_result",
                     "tool_use_id": message.tool_call_id,
-                    "content": message.text,
+                    "content": result_content,
                     "is_error": bool(message.is_error),
                 }
             ],
         }
-    return _anthropic_message(message_to_user(message))
+    return _anthropic_message(message_to_user(message), supports_images=supports_images)
+
+
+def _anthropic_image(image: ImageContent) -> dict[str, JSONValue]:
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": image.mime_type,
+            "data": image.data,
+        },
+    }
 
 
 def _anthropic_tool(tool: AgentTool) -> dict[str, JSONValue]:

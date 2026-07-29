@@ -11,6 +11,7 @@ import httpx
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    ImageContent,
     ThinkingContent,
     ToolResultMessage,
     UserMessage,
@@ -27,6 +28,11 @@ from tau_ai._provider_events import (
     ProviderTextDeltaEvent,
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
+)
+from tau_ai.content import (
+    NON_VISION_TOOL_IMAGE_PLACEHOLDER,
+    NON_VISION_USER_IMAGE_PLACEHOLDER,
+    text_and_images,
 )
 from tau_ai.env import OpenAICompatibleConfig
 from tau_ai.events import AssistantMessageEvent
@@ -90,6 +96,7 @@ class MistralConversationsProvider:
             tools=tools,
             reasoning_effort=self._config.reasoning_effort,
             max_tokens=self._config.max_tokens,
+            supports_images=self._config.supports_images,
         )
         return self._stream(
             model=model,
@@ -305,13 +312,14 @@ def _build_mistral_payload(
     tools: list[AgentTool],
     reasoning_effort: str | None,
     max_tokens: int | None,
+    supports_images: bool = False,
 ) -> dict[str, JSONValue]:
     payload: dict[str, JSONValue] = {
         "model": model,
         "stream": True,
         "messages": [
             *_system_messages(system),
-            *[_message_to_mistral(message) for message in messages],
+            *_messages_to_mistral(messages, supports_images=supports_images),
         ],
     }
     if max_tokens is not None:
@@ -328,6 +336,70 @@ def _build_mistral_payload(
 
 def _system_messages(system: str) -> list[dict[str, JSONValue]]:
     return [{"role": "system", "content": system}] if system else []
+
+
+def _messages_to_mistral(
+    messages: list[AgentMessage], *, supports_images: bool
+) -> list[dict[str, JSONValue]]:
+    converted: list[dict[str, JSONValue]] = []
+    pending_tool_images: list[ImageContent] = []
+    for message in messages:
+        if pending_tool_images and not isinstance(message, ToolResultMessage):
+            converted.append(_mistral_tool_image_message(pending_tool_images))
+            pending_tool_images = []
+        if isinstance(message, UserMessage):
+            text, images = text_and_images(
+                message.content,
+                supports_images=supports_images,
+                image_placeholder=NON_VISION_USER_IMAGE_PLACEHOLDER,
+            )
+            if images:
+                content: list[JSONValue] = []
+                if text:
+                    content.append({"type": "text", "text": text})
+                content.extend(
+                    {
+                        "type": "image_url",
+                        "image_url": f"data:{image.mime_type};base64,{image.data}",
+                    }
+                    for image in images
+                )
+                converted.append({"role": "user", "content": content})
+            else:
+                converted.append({"role": "user", "content": text})
+            continue
+        if isinstance(message, ToolResultMessage):
+            text, images = text_and_images(
+                message.content,
+                supports_images=supports_images,
+                image_placeholder=NON_VISION_TOOL_IMAGE_PLACEHOLDER,
+            )
+            converted.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": message.tool_call_id,
+                    "name": message.tool_name,
+                    "content": text or ("(see attached image)" if images else "(no tool output)"),
+                }
+            )
+            pending_tool_images.extend(images)
+            continue
+        converted.append(_message_to_mistral(message))
+    if pending_tool_images:
+        converted.append(_mistral_tool_image_message(pending_tool_images))
+    return converted
+
+
+def _mistral_tool_image_message(images: list[ImageContent]) -> dict[str, JSONValue]:
+    content: list[JSONValue] = [{"type": "text", "text": "Attached image(s) from tool result:"}]
+    content.extend(
+        {
+            "type": "image_url",
+            "image_url": f"data:{image.mime_type};base64,{image.data}",
+        }
+        for image in images
+    )
+    return {"role": "user", "content": content}
 
 
 def _message_to_mistral(message: AgentMessage) -> dict[str, JSONValue]:

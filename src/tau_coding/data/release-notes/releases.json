@@ -1,5 +1,20 @@
 [
   {
+    "version": "0.3.4",
+    "date": "2026-07-27",
+    "sections": {
+      "New": [
+        "Send images read from disk to vision-capable models across supported providers, while giving text-only models an explicit omission notice."
+      ],
+      "Changed": [
+        "Validate and safely process image reads, including BMP-to-PNG conversion and bounded resizing for oversized static images."
+      ],
+      "Fixed": [
+        "Allow multiline instructions after `/skill:<name>`, including instructions separated from the invocation by a blank line."
+      ]
+    }
+  },
+  {
     "version": "0.3.3",
     "date": "2026-07-25",
     "sections": {

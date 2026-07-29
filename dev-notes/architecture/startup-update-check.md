@@ -26,7 +26,20 @@ This lives in `tau_coding`, not `tau_agent`, because update notification is CLI 
 
 `tau update` inspects the active environment before running anything:
 
-- `uv-receipt.toml` means uv owns the tool. Tau fetches the latest stable PyPI version and runs `uv tool install tau-ai@<latest-version>`, explicitly replacing any version pin recorded when the tool was installed.
+- `uv-receipt.toml` means uv owns the tool. Tau fetches the latest stable PyPI
+  version and runs `uv tool install tau-ai@<latest-version>`, explicitly replacing
+  any version pin recorded when the tool was installed. On Windows, Tau hands
+  this command to a detached PowerShell process. The helper waits for the
+  original Tau PID to exit before invoking uv, preventing Windows from partially
+  replacing the still-running tool environment. Tau reports that the update was
+  scheduled—not completed—and gives the path to a log containing the eventual
+  command output and exit code. The helper treats process inspection or waiting
+  errors as fatal: uv never starts unless the original Tau process is confirmed
+  absent or its observed process object exits. The update executable and a
+  Microsoft-runtime-quoted argument line are staged as base64-encoded JSON. The
+  helper launches them with non-shell `ProcessStartInfo`, preserving spaces,
+  metacharacters, embedded quotes, empty arguments, and trailing backslashes on
+  Windows PowerShell 5.1 and PowerShell 7 without interpolated shell execution.
 - `pipx_metadata.json` means pipx owns it, so Tau runs `pipx upgrade tau-ai`.
 - The distribution's standard `INSTALLER` metadata identifies ordinary uv and pip installs. Tau runs either `uv pip install --python <current-python> --upgrade tau-ai` or `<current-python> -m pip install --upgrade tau-ai`, targeting the environment that is running Tau.
 
@@ -39,3 +52,13 @@ Run:
 ```bash
 uv run pytest tests/test_updater.py tests/test_update_check.py tests/test_cli.py tests/test_tui_app.py
 ```
+
+`tests/test_updater.py` also contains Windows-and-PowerShell-only integration
+coverage. On Windows it launches the generated helper against a live fake parent
+and fake updater, checking blocking, exact executable and argument delivery,
+exit-code logging, and fail-closed wait errors without installing uv or replacing
+Tau. Every installed supported engine (`powershell.exe` and `pwsh.exe`) is tested;
+individual unavailable engines are omitted, and the runtime tests skip only when
+Windows has neither. Cross-platform tests cover the Windows quoting algorithm,
+encoded payload, script generation, detached launch options, staging failures,
+and cleanup. Current Ubuntu CI cannot execute the Windows runtime cases.

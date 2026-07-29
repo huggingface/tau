@@ -21,6 +21,7 @@ from tau_coding.provider_config import (
     openai_compatible_config_from_provider,
     provider_default_thinking_level,
     provider_has_usable_credentials,
+    provider_model_supports_images,
     provider_settings_from_json,
     provider_thinking_levels,
     provider_thinking_unavailable_reason,
@@ -71,6 +72,23 @@ def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path)
     assert settings.get_provider("anthropic").api_key_env == "ANTHROPIC_API_KEY"
     assert settings.get_provider("openrouter").api_key_env == "OPENROUTER_API_KEY"
     assert settings.get_provider("huggingface").api_key_env == "HF_TOKEN"
+
+
+def test_builtin_codex_preserves_model_input_capabilities() -> None:
+    codex = ProviderSettings().get_provider("openai-codex")
+
+    for model in (
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.5",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.3-codex",
+        "gpt-5.2",
+    ):
+        assert provider_model_supports_images(codex, model)
+    assert not provider_model_supports_images(codex, "gpt-5.3-codex-spark")
 
 
 def test_builtin_openai_declares_model_scoped_thinking_capabilities() -> None:
@@ -681,6 +699,25 @@ def test_set_default_provider_model_rejects_model_not_declared_for_provider() ->
         match="Model is not configured for provider local: llama",
     ):
         set_default_provider_model(settings, provider_name="local", model="llama")
+
+
+def test_runtime_config_uses_selected_model_image_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUSTOM_API_KEY", "secret")
+    provider = OpenAICompatibleProviderConfig(
+        name="custom",
+        api_key_env="CUSTOM_API_KEY",
+        models=("text", "vision"),
+        default_model="text",
+        model_metadata={
+            "text": ProviderModelMetadata(input=("text",)),
+            "vision": ProviderModelMetadata(input=("text", "image")),
+        },
+    )
+
+    assert not openai_compatible_config_from_provider(provider, model="text").supports_images
+    assert openai_compatible_config_from_provider(provider, model="vision").supports_images
 
 
 def test_openai_compatible_config_from_provider_uses_configured_env_var(

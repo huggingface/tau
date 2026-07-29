@@ -10,6 +10,7 @@ import httpx
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    ImageContent,
     TextContent,
     ThinkingContent,
     ToolResultMessage,
@@ -27,6 +28,11 @@ from tau_ai._provider_events import (
     ProviderTextDeltaEvent,
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
+)
+from tau_ai.content import (
+    NON_VISION_TOOL_IMAGE_PLACEHOLDER,
+    NON_VISION_USER_IMAGE_PLACEHOLDER,
+    text_and_images,
 )
 from tau_ai.env import OpenAICompatibleConfig
 from tau_ai.events import AssistantMessageEvent
@@ -93,6 +99,7 @@ class GoogleGenerativeAIProvider:
                 tools=tools,
                 reasoning_effort=self._config.reasoning_effort,
                 max_tokens=self._config.max_tokens,
+                supports_images=self._config.supports_images,
             )
             url = (
                 f"{self._config.base_url.rstrip('/')}/models/"
@@ -265,10 +272,15 @@ def _build_google_payload(
     tools: list[AgentTool],
     reasoning_effort: str | None,
     max_tokens: int | None,
+    supports_images: bool = False,
 ) -> dict[str, JSONValue]:
     config: dict[str, JSONValue] = {}
     payload: dict[str, JSONValue] = {
-        "contents": [_message_to_google(message) for message in messages],
+        "contents": [
+            item
+            for message in messages
+            for item in _messages_to_google(message, model=model, supports_images=supports_images)
+        ],
     }
     if system:
         payload["systemInstruction"] = {"parts": [{"text": system}]}
@@ -348,9 +360,20 @@ def _is_gemma4_model(model: str) -> bool:
     return "gemma-4" in model.lower() or "gemma4" in model.lower()
 
 
-def _message_to_google(message: AgentMessage) -> dict[str, JSONValue]:
+def _messages_to_google(
+    message: AgentMessage, *, model: str, supports_images: bool
+) -> list[dict[str, JSONValue]]:
     if isinstance(message, UserMessage):
-        return {"role": "user", "parts": [{"text": message.text}]}
+        text, images = text_and_images(
+            message.content,
+            supports_images=supports_images,
+            image_placeholder=NON_VISION_USER_IMAGE_PLACEHOLDER,
+        )
+        user_parts: list[JSONValue] = []
+        if text:
+            user_parts.append({"text": text})
+        user_parts.extend(_google_image(image) for image in images)
+        return [{"role": "user", "parts": user_parts}]
     if isinstance(message, AssistantMessage):
         parts: list[JSONValue] = []
         for block in message.content:
@@ -372,16 +395,44 @@ def _message_to_google(message: AgentMessage) -> dict[str, JSONValue]:
                 if block.thought_signature is not None:
                     part["thoughtSignature"] = block.thought_signature
                 parts.append(part)
-        return {"role": "model", "parts": parts or [{"text": ""}]}
+        return [{"role": "model", "parts": parts or [{"text": ""}]}]
     if isinstance(message, ToolResultMessage):
+        text, images = text_and_images(
+            message.content,
+            supports_images=supports_images,
+            image_placeholder=NON_VISION_TOOL_IMAGE_PLACEHOLDER,
+        )
         response: dict[str, JSONValue] = {
             "name": message.tool_name,
-            "response": {"output" if not message.is_error else "error": message.text},
+            "response": {"output" if not message.is_error else "error": text},
         }
         if message.tool_call_id:
             response["id"] = message.tool_call_id
-        return {"role": "user", "parts": [{"functionResponse": response}]}
-    return _message_to_google(message_to_user(message))
+        image_parts: list[JSONValue] = [_google_image(image) for image in images]
+        if image_parts and _supports_multimodal_function_response(model):
+            response["parts"] = image_parts
+        converted: list[dict[str, JSONValue]] = [
+            {"role": "user", "parts": [{"functionResponse": response}]}
+        ]
+        if image_parts and not _supports_multimodal_function_response(model):
+            separate_image_parts: list[JSONValue] = [
+                {"text": "Tool result image:"},
+                *image_parts,
+            ]
+            converted.append({"role": "user", "parts": separate_image_parts})
+        return converted
+    return _messages_to_google(
+        message_to_user(message), model=model, supports_images=supports_images
+    )
+
+
+def _google_image(image: ImageContent) -> dict[str, JSONValue]:
+    return {"inlineData": {"mimeType": image.mime_type, "data": image.data}}
+
+
+def _supports_multimodal_function_response(model: str) -> bool:
+    normalized = model.lower()
+    return not normalized.startswith("gemini-") or normalized.startswith("gemini-3")
 
 
 def _tool_to_google(tool: AgentTool) -> dict[str, JSONValue]:

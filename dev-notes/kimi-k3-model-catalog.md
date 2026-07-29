@@ -7,9 +7,10 @@ Tau's built-in `kimi-code` provider now exposes Kimi K3 through the model ID
 - environment variable: `KIMI_CODE_API_KEY`
 - saved credential name: `kimi-code`
 
-Kimi documents a context window of up to 1,048,576 tokens for eligible plans.
-The catalog records that maximum so Tau's context budgeting can use it; the API
-may reject requests beyond the user's plan entitlement.
+Kimi documents native visual understanding and a context window of up to
+1,048,576 tokens for eligible plans. The catalog therefore marks K3 as accepting
+text and image input and records that maximum so Tau's context budgeting can use
+it; the API may reject requests beyond the user's plan entitlement.
 
 K3 currently accepts only `max` reasoning effort. Tau maps its `xhigh` thinking
 level to the API value `max` and excludes all other thinking levels for this

@@ -26,6 +26,27 @@ def test_create_model_provider_returns_openai_codex_provider(tmp_path) -> None:
     assert isinstance(provider, OpenAICodexProvider)
 
 
+def test_create_model_provider_uses_codex_model_image_capability(tmp_path) -> None:
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    config = provider_config_from_catalog_entry("openai-codex")
+
+    vision_provider = create_model_provider(
+        config,
+        credential_store=store,
+        model="gpt-5.6-sol",
+    )
+    text_provider = create_model_provider(
+        config,
+        credential_store=store,
+        model="gpt-5.3-codex-spark",
+    )
+
+    assert isinstance(vision_provider, OpenAICodexProvider)
+    assert isinstance(text_provider, OpenAICodexProvider)
+    assert vision_provider._config.supports_images is True
+    assert text_provider._config.supports_images is False
+
+
 def test_create_model_provider_uses_anthropic_oauth_runtime_auth(tmp_path) -> None:
     store = FileCredentialStore(tmp_path / "credentials.json")
     store.set_oauth(

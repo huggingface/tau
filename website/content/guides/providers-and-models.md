@@ -78,7 +78,9 @@ configured fallback.
 Live limits can vary by account or rollout and may change independently of Tau.
 A discovery failure is non-fatal: Tau reports it in `/session` and continues with
 the fallback. Direct OpenAI API sessions retain the context limits documented on
-the API model page. The `gpt-5.6` alias, which routes to GPT-5.6 Sol, is only
+the API model page. Vision-capable Codex models retain their image-input
+metadata separately from these runtime context limits, allowing image files read
+by Tau to reach the model. The `gpt-5.6` alias, which routes to GPT-5.6 Sol, is only
 available through the direct OpenAI API; Codex subscription users should select
 the explicit `gpt-5.6-sol` model instead.
 
@@ -119,8 +121,9 @@ different endpoints, and charge against different billing plans:
 | `moonshotai` | Pay-as-you-go key from the [Kimi Open Platform](https://platform.kimi.ai/console/api-keys) | `kimi-k2.7-code` | `https://api.moonshot.ai/v1` | `MOONSHOT_API_KEY` |
 | `kimi-code` | Subscription key from the [Kimi Code console](https://www.kimi.com/code/console) | `k3` or rolling `kimi-for-coding` alias | `https://api.kimi.com/coding/v1` | `KIMI_CODE_API_KEY` |
 
-Kimi K3 uses the `k3` model ID and supports up to a 1,048,576-token context
-window on eligible plans. Its reasoning effort is currently fixed at `max`,
+Kimi K3 uses the `k3` model ID, accepts text and image input, and supports up to
+a 1,048,576-token context window on eligible plans. Its reasoning effort is
+currently fixed at `max`,
 which Tau exposes as the `xhigh` thinking level. Start a new session when
 switching to K3 so the previous model's context cache is not re-prefilled. See
 [Kimi's model documentation](https://www.kimi.com/code/docs/en/kimi-code/models)

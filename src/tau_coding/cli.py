@@ -52,7 +52,7 @@ from tau_coding.session_export import (
     export_session_artifact,
     normalize_export_format,
 )
-from tau_coding.session_manager import CodingSessionRecord, SessionManager
+from tau_coding.session_manager import CodingSessionRecord, SessionManager, validate_session_id
 from tau_coding.shell_config import load_shell_settings
 from tau_coding.tui import run_tui_app
 from tau_coding.update_check import (
@@ -237,6 +237,13 @@ def main(
         bool,
         typer.Option("--new-session", help="Create a new session in TUI mode (default)."),
     ] = False,
+    session_id: Annotated[
+        str | None,
+        typer.Option(
+            "--session-id",
+            help="Set the exact id for the newly created print-mode session.",
+        ),
+    ] = None,
     auto_compact_threshold: Annotated[
         int | None,
         typer.Option(
@@ -320,6 +327,14 @@ def main(
     print_requested = print_mode or mode is not None
     effective_output = mode or PrintOutputMode.text
 
+    if session_id is not None:
+        if not print_requested:
+            raise typer.BadParameter("--session-id is only supported in print mode")
+        try:
+            validate_session_id(session_id)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+
     positional_args = prompt_args or []
     command = positional_args[0] if positional_args else None
     initial_prompt = " ".join(positional_args) if positional_args else None
@@ -398,16 +413,17 @@ def main(
     try:
         ok = anyio.run(
             run_openai_print_mode,
-            prompt=prompt,
-            model=model,
-            cwd=cwd or Path.cwd(),
-            output=effective_output,
-            provider_name=provider,
-            session_manager=None,
-            extension_paths=extension_paths,
-            extensions_enabled=not no_extensions,
-            project_extensions_enabled=project_extensions,
-            auto_name_session=auto_name_session,
+            prompt,
+            model,
+            cwd or Path.cwd(),
+            effective_output,
+            provider,
+            None,
+            extension_paths,
+            not no_extensions,
+            project_extensions,
+            session_id,
+            auto_name_session,
         )
     except (RuntimeError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -464,7 +480,10 @@ def update_command() -> None:
         typer.echo(result.stdout)
     if result.stderr:
         typer.echo(result.stderr, err=True)
-    typer.echo(f"Tau update completed with: {' '.join(result.command or ())}")
+    if result.deferred:
+        typer.echo(f"Tau update handed off with: {' '.join(result.command or ())}")
+    else:
+        typer.echo(f"Tau update completed with: {' '.join(result.command or ())}")
 
 
 def render_session_list(records: list[CodingSessionRecord]) -> None:
@@ -664,7 +683,11 @@ async def run_openai_print_mode(
     extension_paths: tuple[Path, ...] = (),
     extensions_enabled: bool = True,
     project_extensions_enabled: bool = False,
+<<<<<<< HEAD
     auto_name_session: bool = False,
+=======
+    session_id: str | None = None,
+>>>>>>> upstream/main
 ) -> bool:
     """Run print mode with the OpenAI-compatible provider configured from the environment."""
     settings = load_provider_settings()
@@ -675,9 +698,14 @@ async def run_openai_print_mode(
         model=selection.model,
         thinking_level=resolve_startup_thinking_level(selection.provider, selection.model),
     )
-    manager = session_manager or SessionManager()
-    record = manager.create_session(cwd=cwd, model=selection.model)
     try:
+        manager = session_manager or SessionManager()
+        record = _create_print_session(
+            manager,
+            cwd=cwd,
+            model=selection.model,
+            session_id=session_id,
+        )
         return await run_print_mode(
             prompt=prompt,
             model=selection.model,
@@ -698,6 +726,17 @@ async def run_openai_print_mode(
         )
     finally:
         await provider.aclose()
+
+
+def _create_print_session(
+    manager: SessionManager,
+    *,
+    cwd: Path,
+    model: str,
+    session_id: str | None,
+) -> CodingSessionRecord:
+    """Create an isolated print-mode session, refusing transcript collisions."""
+    return manager.create_session_exclusive(cwd=cwd, model=model, session_id=session_id)
 
 
 async def run_print_mode(

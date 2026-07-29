@@ -33,6 +33,7 @@ from tau_coding.provider_config import (
     ProviderConfigError,
     anthropic_config_from_provider,
     openai_compatible_config_from_provider,
+    provider_model_supports_images,
     provider_thinking_levels,
     validate_provider_model,
 )
@@ -98,6 +99,7 @@ def create_model_provider(
                     model=model,
                     thinking_level=thinking_level,
                 ),
+                supports_images=provider_model_supports_images(provider, model),
             )
         )
     if isinstance(provider, OpenAICompatibleProviderConfig):
@@ -134,11 +136,12 @@ def create_model_provider(
                 base_url=compatible_config.base_url,
                 headers=compatible_config.headers,
                 timeout_seconds=compatible_config.timeout_seconds,
+                provider_name=compatible_config.provider_name,
                 max_retries=compatible_config.max_retries,
                 max_retry_delay_seconds=compatible_config.max_retry_delay_seconds,
-                provider_name=compatible_config.provider_name,
                 bearer_auth=True,
                 credential_resolver=compatible_config.credential_resolver,
+                supports_images=compatible_config.supports_images,
             )
             return AnthropicProvider(anthropic_config)
         if selected_api == "google-generative-ai":
