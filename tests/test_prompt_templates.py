@@ -9,7 +9,11 @@ from tau_coding import (
     load_prompt_templates_with_diagnostics,
     render_prompt_template,
 )
-from tau_coding.prompt_templates import PromptTemplate
+from tau_coding.commands import create_default_command_registry
+from tau_coding.prompt_templates import (
+    PromptTemplate,
+    builtin_prompt_template_reservations,
+)
 from tau_coding.resources import ResourceError
 
 
@@ -90,7 +94,7 @@ def test_load_prompt_templates_with_diagnostics_reports_overrides(tmp_path: Path
     assert "overrides lower-precedence resource" in diagnostics[0].message
 
 
-@pytest.mark.parametrize("reserved_name", ["prompts", "skills", "tools"])
+@pytest.mark.parametrize("reserved_name", ["prompts", "skills", "tools", "new", "quit", "exit"])
 def test_reserved_picker_template_is_ignored_with_diagnostic(
     tmp_path: Path, reserved_name: str
 ) -> None:
@@ -106,7 +110,18 @@ def test_reserved_picker_template_is_ignored_with_diagnostic(
     assert templates == []
     assert len(diagnostics) == 1
     assert diagnostics[0].path == reserved_path
-    assert f"reserved by the built-in /{reserved_name} command" in diagnostics[0].message
+    reserved_command = builtin_prompt_template_reservations()[reserved_name.casefold()]
+    assert f"reserved by the built-in {reserved_command} command" in diagnostics[0].message
+
+
+def test_builtin_prompt_template_reservations_cover_registry_commands_and_aliases() -> None:
+    registry = create_default_command_registry()
+    reservations = builtin_prompt_template_reservations()
+
+    for command in registry.list_commands():
+        assert reservations[command.name.casefold()] == f"/{command.name}"
+        for alias in command.aliases:
+            assert reservations[alias.casefold()] == f"/{alias}"
 
 
 def test_render_prompt_template_replaces_variables() -> None:
