@@ -6764,38 +6764,47 @@ input = ["text", "image"]
 [providers.model_metadata."claude-haiku-4.5"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 64000
 
 [providers.model_metadata."claude-opus-4.5"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 32000
 
 [providers.model_metadata."claude-opus-4.6"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 32000
 
 [providers.model_metadata."claude-opus-4.7"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 32000
 
 [providers.model_metadata."claude-opus-4.8"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 64000
 
 [providers.model_metadata."claude-sonnet-4"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 16000
 
 [providers.model_metadata."claude-sonnet-4.5"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 32000
 
 [providers.model_metadata."claude-sonnet-4.6"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 32000
 
 [providers.model_metadata."claude-sonnet-5"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 128000
 
 [providers.model_metadata."gemini-2.5-pro"]
 api = "openai-completions"
