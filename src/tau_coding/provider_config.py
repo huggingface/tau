@@ -1582,7 +1582,8 @@ def _detected_compat(provider: ProviderConfig, model: str) -> dict[str, Any]:
     }
 
 
-def _model_max_tokens(provider: ProviderConfig, model: str | None = None) -> int | None:
+def provider_model_max_tokens(provider: ProviderConfig, model: str | None = None) -> int | None:
+    """Return the catalog output token limit for a model, or None when it is unset."""
     selected_model = model or provider.default_model
     metadata = _metadata_for_model(provider, selected_model)
     return metadata.max_tokens if metadata is not None else None
@@ -1708,6 +1709,7 @@ def anthropic_config_from_provider(
         timeout_seconds=provider.timeout_seconds,
         max_retries=provider.max_retries,
         max_retry_delay_seconds=provider.max_retry_delay_seconds,
+        max_tokens=provider_model_max_tokens(provider, selected_model),
         supports_images=provider_model_supports_images(provider, selected_model),
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_effort=_reasoning_effort_from_anthropic_provider(
