@@ -252,15 +252,10 @@ def _refresh_lock(credential_name: str) -> asyncio.Lock:
     race that caused it. Holding this lock across the network call, and
     re-reading the store inside it, keeps a token spent at most once.
 
-    Locks are cached per event loop, not per process. ``asyncio.Lock`` binds to
-    the running loop on first contention, so a lock cached across loops appears
-    to work — the uncontended path never touches the loop — until two tasks
-    contend it in a later loop and it raises. Keying on the loop keeps that from
-    happening in a process that runs more than one loop, which is every test
-    run. The key is weak so an untouched loop's entry is dropped with the loop;
-    a lock that was ever contended holds a reference back to its loop, so that
-    entry survives until the process exits. One dead loop per contended loop is
-    a fine price, and tau's own runs use a single loop each.
+    Locks are cached per event loop because ``asyncio.Lock`` binds to the
+    running loop on first contention: a lock cached across loops appears to
+    work — the uncontended path never touches the loop — until two tasks
+    contend it in a later loop and it raises.
     """
     locks = _REFRESH_LOCKS.setdefault(get_running_loop(), {})
     lock = locks.get(credential_name)
