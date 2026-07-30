@@ -2766,25 +2766,29 @@ class OAuthLoginScreen(ModalScreen[OAuthCredential | _LoginFlowAction | None]):
 
     def _show_auth(self, info: OAuthAuthInfo) -> None:
         self._show_url(info.url)
+        # Copy only the browser-flow URL. It is hundreds of characters long and
+        # wraps across the dialog, so hand-selecting it is what corrupts it;
+        # taking over the clipboard is worth it there and nowhere else.
+        with suppress(Exception):
+            self.app.copy_to_clipboard(info.url)
+        self.notify("Authorization URL copied to clipboard.")
         if info.instructions:
             self.query_one("#login-help", Static).update(info.instructions)
 
     def _show_url(self, url: str) -> None:
-        """Display an authorization URL as one clickable, copyable unit.
+        """Display a URL as one clickable unit.
 
         Authorization URLs are far wider than the dialog, so they render across
         several wrapped lines. Selecting those lines by hand tends to corrupt
         the URL — a query parameter split across a wrap picks up the line break
-        or trailing padding and the provider rejects the request. Emitting an
-        OSC 8 hyperlink keeps a click on any wrapped line opening the intact
-        URL, and copying it to the clipboard gives a paste path that never went
-        through the terminal's line buffer.
+        or trailing padding and the provider rejects the request. An OSC 8
+        hyperlink keeps a click on any wrapped line opening the intact URL.
         """
         self.query_one("#login-oauth-url", Static).update(Text(url, style=Style(link=url)))
-        with suppress(Exception):
-            self.app.copy_to_clipboard(url)
 
     def _show_device_code(self, info: OAuthDeviceCodeInfo) -> None:
+        # No clipboard copy here: the verification URI is short and clickable,
+        # and the thing the user carries to the browser is the code below it.
         self._show_url(info.verification_uri)
         self.query_one("#login-help", Static).update(
             f"Open the URL and enter code: {info.user_code}"

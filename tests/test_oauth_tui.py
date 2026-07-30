@@ -5,7 +5,7 @@ from textual.app import App
 from textual.geometry import Region
 from textual.widgets import Input, Static
 
-from tau_coding.oauth_types import OAuthAuthInfo, OAuthPrompt
+from tau_coding.oauth_types import OAuthAuthInfo, OAuthDeviceCodeInfo, OAuthPrompt
 from tau_coding.provider_catalog import builtin_provider_entry
 from tau_coding.tui.app import OAuthLoginScreen, TauTuiApp
 from tau_coding.tui.config import TAU_DARK_THEME
@@ -71,6 +71,34 @@ async def test_oauth_screen_shows_full_authorization_url() -> None:
     # the user never has to reassemble it from the wrapped display by hand.
     assert links == {url}
     assert copied == [url]
+
+
+@pytest.mark.anyio
+async def test_oauth_device_code_screen_leaves_the_clipboard_alone() -> None:
+    """The device flow's URI is short and clickable; the code is what matters."""
+    provider = builtin_provider_entry("github-copilot")
+    assert provider is not None
+
+    async def fake_login(callbacks):
+        callbacks.on_device_code(
+            OAuthDeviceCodeInfo(
+                user_code="ABCD-1234",
+                verification_uri="https://github.com/login/device",
+            )
+        )
+        await asyncio.Event().wait()
+
+    screen = OAuthLoginScreen(provider, theme=TAU_DARK_THEME, login=fake_login)
+    copied: list[str] = []
+    app = _themed_app(screen)
+    app.copy_to_clipboard = copied.append  # type: ignore[method-assign]
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        help_text = str(screen.query_one("#login-help", Static).render())
+
+    assert copied == []
+    assert "ABCD-1234" in help_text
 
 
 @pytest.mark.anyio
