@@ -269,6 +269,28 @@ def test_builtin_catalog_oauth_and_opencode_auth_methods() -> None:
     assert opencode.api_key_env == "OPENCODE_API_KEY"
 
 
+def test_builtin_catalog_copilot_claude_max_tokens() -> None:
+    entry = builtin_provider_entry("github-copilot")
+    assert entry is not None
+
+    expected = {
+        "claude-haiku-4.5": 64_000,
+        "claude-opus-4.5": 32_000,
+        "claude-opus-4.6": 32_000,
+        "claude-opus-4.7": 32_000,
+        "claude-opus-4.8": 64_000,
+        "claude-sonnet-4": 16_000,
+        "claude-sonnet-4.5": 32_000,
+        "claude-sonnet-4.6": 32_000,
+        "claude-sonnet-5": 128_000,
+    }
+
+    for model, max_tokens in expected.items():
+        metadata = entry.model_metadata[model]
+        assert metadata.api == "anthropic-messages"
+        assert metadata.max_tokens == max_tokens
+
+
 def test_builtin_catalog_golden_nvidia_entry() -> None:
     entry = builtin_provider_entry("nvidia")
     assert entry is not None
