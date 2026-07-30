@@ -3308,6 +3308,12 @@ class TauTuiApp(App[None]):
         width: 72;
         max-width: 92%;
         height: auto;
+        /* A wrapped authorization URL makes this dialog taller than a short
+           terminal. Cap it at the screen and scroll instead of overflowing:
+           overflowing centers the excess, which pushes the paste field and
+           the footer off the bottom and the title off the top. */
+        max-height: 100%;
+        overflow-y: auto;
         padding: 1 2;
         background: $tau-chrome-background;
         border: tall $tau-border;

@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from textual.app import App
 from textual.geometry import Region
 from textual.widgets import Input, Static
 
@@ -9,24 +10,24 @@ from tau_coding.provider_catalog import builtin_provider_entry
 from tau_coding.tui.app import OAuthLoginScreen, TauTuiApp
 from tau_coding.tui.config import TAU_DARK_THEME
 
+LONG_URL = "https://claude.ai/oauth/authorize?" + "&".join(f"p{index}=value" for index in range(40))
 
-@pytest.mark.anyio
-async def test_oauth_screen_shows_full_authorization_url() -> None:
-    """The whole URL must be visible: users copy it out of the TUI by hand."""
-    from textual.app import App
 
-    from tau_coding.tui.app import _textual_theme_for_tau_theme
-
+def _login_screen(url: str = LONG_URL) -> OAuthLoginScreen:
+    """Build an Anthropic login screen whose flow stops after showing `url`."""
     provider = builtin_provider_entry("anthropic")
     assert provider is not None
-    url = "https://claude.ai/oauth/authorize?" + "&".join(f"p{index}=value" for index in range(40))
-    assert len(url) > 400
 
     async def fake_login(callbacks):
-        callbacks.on_auth(OAuthAuthInfo(url=url))
+        callbacks.on_auth(OAuthAuthInfo(url=url, instructions="Complete login in your browser."))
         await asyncio.Event().wait()
 
-    screen = OAuthLoginScreen(provider, theme=TAU_DARK_THEME, login=fake_login)
+    return OAuthLoginScreen(provider, theme=TAU_DARK_THEME, login=fake_login)
+
+
+def _themed_app(screen: OAuthLoginScreen) -> App[None]:
+    """An app carrying Tau's real CSS, so dialog geometry matches production."""
+    from tau_coding.tui.app import _textual_theme_for_tau_theme
 
     class TestApp(App[None]):
         CSS = TauTuiApp.CSS
@@ -39,8 +40,18 @@ async def test_oauth_screen_shows_full_authorization_url() -> None:
         def on_mount(self) -> None:
             self.push_screen(screen)
 
+    return TestApp()
+
+
+@pytest.mark.anyio
+async def test_oauth_screen_shows_full_authorization_url() -> None:
+    """The whole URL must be visible: users copy it out of the TUI by hand."""
+    url = LONG_URL
+    assert len(url) > 400
+    screen = _login_screen(url)
+
     copied: list[str] = []
-    app = TestApp()
+    app = _themed_app(screen)
     app.copy_to_clipboard = copied.append  # type: ignore[method-assign]
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.pause()
@@ -60,6 +71,30 @@ async def test_oauth_screen_shows_full_authorization_url() -> None:
     # the user never has to reassemble it from the wrapped display by hand.
     assert links == {url}
     assert copied == [url]
+
+
+@pytest.mark.anyio
+async def test_oauth_screen_fits_a_short_terminal() -> None:
+    """Growing for the URL must not push the paste field off a small screen."""
+    height = 14
+    screen = _login_screen()
+    async with _themed_app(screen).run_test(size=(100, height)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        container = screen.query_one("#login-screen")
+        dialog = container.region
+        code = screen.query_one("#login-oauth-code", Input).region
+        scrollable = container.allow_vertical_scroll
+
+    # The dialog scrolls its own overflow rather than centering it, which would
+    # hang the title off the top and the paste field off the bottom. What is
+    # below the fold stays reachable by scrolling; the focused paste field is
+    # scrolled into view for us.
+    assert dialog.y >= 0
+    assert dialog.bottom <= height
+    assert scrollable
+    assert code.y >= 0
+    assert code.bottom <= height
 
 
 @pytest.mark.anyio
