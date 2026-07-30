@@ -1160,8 +1160,10 @@ def _base64_text(data: bytes) -> str:
 
 def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
     if os.name == "posix":
+        killpg = getattr(os, "killpg")
+        sigkill = getattr(signal, "SIGKILL")
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            killpg(process.pid, sigkill)
         except ProcessLookupError:
             return
     else:
