@@ -125,7 +125,9 @@ schema_version = 1
 [[providers]]
 name = "anthropic"
 compat = { supportsLongCacheRetention = false }
-``` The thinking fields (`thinking_levels`, `thinking_models`,
+```
+
+The thinking fields (`thinking_levels`, `thinking_models`,
 `thinking_default`, `thinking_parameter`) replace as a group when
 `thinking_levels` is present.
 
