@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, cast
 
 from rich.console import Console, Group
+from rich.style import Style
 from rich.text import Text
 from textual import events, on
 from textual.app import App, ComposeResult
@@ -2781,12 +2782,31 @@ class OAuthLoginScreen(ModalScreen[OAuthCredential | _LoginFlowAction | None]):
         self.dismiss(credential)
 
     def _show_auth(self, info: OAuthAuthInfo) -> None:
-        self.query_one("#login-oauth-url", Static).update(info.url)
+        self._show_url(info.url)
+        # Copy only the browser-flow URL. It is hundreds of characters long and
+        # wraps across the dialog, so hand-selecting it is what corrupts it;
+        # taking over the clipboard is worth it there and nowhere else.
+        with suppress(Exception):
+            self.app.copy_to_clipboard(info.url)
+        self.notify("Authorization URL copied to clipboard.")
         if info.instructions:
             self.query_one("#login-help", Static).update(info.instructions)
 
+    def _show_url(self, url: str) -> None:
+        """Display a URL as one clickable unit.
+
+        Authorization URLs are far wider than the dialog, so they render across
+        several wrapped lines. Selecting those lines by hand tends to corrupt
+        the URL — a query parameter split across a wrap picks up the line break
+        or trailing padding and the provider rejects the request. An OSC 8
+        hyperlink keeps a click on any wrapped line opening the intact URL.
+        """
+        self.query_one("#login-oauth-url", Static).update(Text(url, style=Style(link=url)))
+
     def _show_device_code(self, info: OAuthDeviceCodeInfo) -> None:
-        self.query_one("#login-oauth-url", Static).update(info.verification_uri)
+        # No clipboard copy here: the verification URI is short and clickable,
+        # and the thing the user carries to the browser is the code below it.
+        self._show_url(info.verification_uri)
         self.query_one("#login-help", Static).update(
             f"Open the URL and enter code: {info.user_code}"
         )
@@ -3309,6 +3329,12 @@ class TauTuiApp(App[None]):
         width: 72;
         max-width: 92%;
         height: auto;
+        /* A wrapped authorization URL makes this dialog taller than a short
+           terminal. Cap it at the screen and scroll instead of overflowing:
+           overflowing centers the excess, which pushes the paste field and
+           the footer off the bottom and the title off the top. */
+        max-height: 100%;
+        overflow-y: auto;
         padding: 1 2;
         background: $tau-chrome-background;
         border: tall $tau-border;
@@ -3344,8 +3370,11 @@ class TauTuiApp(App[None]):
     }
 
     #login-oauth-url {
+        /* Authorization URLs run ~470 chars (Anthropic); clipping them means a
+           user copying the URL out of the TUI loses the trailing query
+           parameters and the provider rejects the request. Keep every line. */
         min-height: 1;
-        max-height: 4;
+        height: auto;
         color: $tau-chrome-text;
         margin-bottom: 1;
     }
