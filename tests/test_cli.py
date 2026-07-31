@@ -148,6 +148,27 @@ def test_update_command_upgrades_without_startup_check(monkeypatch: pytest.Monke
     assert "Tau update completed with: uv tool install tau-ai@0.2.4" in result.stdout
 
 
+def test_update_command_reports_windows_handoff_without_claiming_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "update_tau",
+        lambda: UpdateResult(
+            command=("uv", "tool", "install", "tau-ai@0.2.4"),
+            stdout="Tau update is scheduled and will start after this process exits.",
+            deferred=True,
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["update"])
+
+    assert result.exit_code == 0
+    assert "scheduled" in result.stdout
+    assert "Tau update handed off with:" in result.stdout
+    assert "Tau update completed" not in result.stdout
+
+
 def test_update_command_reports_installer_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         cli,
@@ -676,6 +697,98 @@ async def test_run_print_mode_can_emit_live_transcript(
     assert ok is True
     assert captured.out == "Hello\n"
     assert captured.err == ""
+
+
+@pytest.mark.parametrize("mode", ["text", "json", "transcript"])
+def test_print_mode_passes_exact_session_id_without_changing_output(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    calls: list[str | None] = []
+
+    async def fake_run_openai_print_mode(
+        prompt: str,
+        model: str | None,
+        cwd: Path,
+        output: PrintOutputMode,
+        provider_name: str | None,
+        session_manager: SessionManager | None,
+        extension_paths: tuple[Path, ...],
+        extensions_enabled: bool,
+        project_extensions_enabled: bool,
+        session_id: str | None,
+    ) -> bool:
+        del (
+            prompt,
+            model,
+            cwd,
+            output,
+            provider_name,
+            session_manager,
+            extension_paths,
+            extensions_enabled,
+            project_extensions_enabled,
+        )
+        calls.append(session_id)
+        return True
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(
+        app,
+        ["--mode", mode, "--new-session", "--session-id", "worker-499", "hello"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert calls == ["worker-499"]
+
+
+@pytest.mark.parametrize(
+    ("session_id", "error"),
+    [
+        ("", "Session id must be non-empty"),
+        ("-bad", "Session id must be non-empty"),
+        ("bad id", "Session id must be non-empty"),
+        ("bad/", "Session id must be non-empty"),
+        ("index", "Session id is reserved: index"),
+        ("a" * 129, "Session id must be at most 128 bytes"),
+    ],
+)
+def test_print_mode_rejects_invalid_session_id(session_id: str, error: str) -> None:
+    result = CliRunner().invoke(app, ["-p", "--session-id", session_id, "hello"])
+
+    assert result.exit_code == 2
+    assert error in _strip_ansi(result.output)
+
+
+def test_session_id_is_print_mode_only() -> None:
+    result = CliRunner().invoke(app, ["--session-id", "worker-499"])
+
+    assert result.exit_code == 2
+    assert "--session-id is only supported in print mode" in _strip_ansi(result.output)
+
+
+def test_create_print_session_uses_requested_id_and_rejects_collision(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+
+    record = cli._create_print_session(
+        manager,
+        cwd=tmp_path,
+        model="fake",
+        session_id="worker-499",
+    )
+
+    assert record.id == "worker-499"
+    assert record.path.name == "worker-499.jsonl"
+    with pytest.raises(RuntimeError, match="Session already exists with id 'worker-499'"):
+        cli._create_print_session(
+            manager,
+            cwd=tmp_path,
+            model="fake",
+            session_id="worker-499",
+        )
 
 
 def test_cli_exits_nonzero_when_print_mode_fails(monkeypatch: pytest.MonkeyPatch) -> None:

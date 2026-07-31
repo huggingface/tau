@@ -44,7 +44,13 @@ from tau_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
 from tau_coding.catalog_loader import user_catalog_path
 from tau_coding.commands import CommandResult
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
-from tau_coding.events import AgentSettledEvent, CodingSessionEvent, QueueUpdateEvent
+from tau_coding.events import (
+    AgentSettledEvent,
+    CodingSessionEvent,
+    CompactionEndEvent,
+    CompactionStartEvent,
+    QueueUpdateEvent,
+)
 from tau_coding.paths import TauPaths
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_config import (
@@ -3932,6 +3938,254 @@ async def test_tui_app_escape_cancels_active_compaction() -> None:
         assert session.new_session_count == 1
         assert session.messages == ()
         assert not any(item.role == "compaction_summary" for item in app.state.items)
+
+
+@pytest.mark.anyio
+async def test_tui_app_shows_working_state_during_manual_compaction() -> None:
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    class SlowCompactSession(FakeSession):
+        async def compact(self, summary: str) -> str:
+            self.compact_summaries.append(summary)
+            started.set()
+            await finish.wait()
+            return "Compacted 2 context entries."
+
+    session = SlowCompactSession(messages=[UserMessage(content="Earlier")])
+    session._session_title = "build notes"
+    app = TauTuiApp(session)
+    titles: list[str] = []
+    app._terminal_title = TerminalTitleController(enabled=True, writer=titles.append)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        indicator = app.query_one("#prompt-prefix", Static)
+        prompt.value = "/compact Summary of earlier work."
+        await pilot.press("enter")
+        await asyncio.wait_for(started.wait(), timeout=1)
+        await pilot.pause()
+
+        assert app._is_working() is True
+        assert app.state.running is False
+        assert app._is_agent_or_queue_active() is False
+        assert app._is_compaction_active() is True
+        assert prompt._footer_mode == "running"
+        assert indicator.render().plain != "τ"
+        assert titles[-1] == "\x1b]0;⠋ τ | build notes\x07"
+
+        app._tick_activity()
+        assert titles[-1] == "\x1b]0;⠙ τ | build notes\x07"
+
+        finish.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app._is_working() is False
+        assert app._is_compaction_active() is False
+        assert prompt._footer_mode == "normal"
+        assert indicator.render().plain == "τ"
+        assert titles[-1] == "\x1b]0;τ | build notes\x07"
+
+
+@pytest.mark.anyio
+async def test_tui_app_clears_working_state_when_manual_compaction_fails() -> None:
+    class FailingCompactSession(FakeSession):
+        async def compact(self, summary: str) -> str:
+            del summary
+            raise RuntimeError("boom")
+
+    app = TauTuiApp(FailingCompactSession(messages=[UserMessage(content="Earlier")]))
+    notifications: list[str] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        del kwargs
+        notifications.append(message)
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/compact Summary"
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert notifications == ["Error: boom"]
+        assert app._is_working() is False
+        assert app._is_compaction_active() is False
+
+
+@pytest.mark.anyio
+async def test_tui_app_clears_working_state_when_compaction_is_cancelled() -> None:
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    class SlowCompactSession(FakeSession):
+        async def compact(self, summary: str) -> str:
+            del summary
+            started.set()
+            await finish.wait()
+            return "Compacted 2 context entries."
+
+    app = TauTuiApp(SlowCompactSession(messages=[UserMessage(content="Earlier")]))
+    app._notify = lambda message, **kwargs: None  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/compact Summary"
+        await pilot.press("enter")
+        await asyncio.wait_for(started.wait(), timeout=1)
+        await pilot.pause()
+        assert app._is_working() is True
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert app._is_working() is False
+        assert app._is_compaction_active() is False
+
+
+@pytest.mark.anyio
+async def test_tui_app_keeps_working_state_when_recompacting_during_cancel_teardown() -> None:
+    class GatedCompactSession(FakeSession):
+        def __init__(self, messages=()) -> None:
+            super().__init__(messages=messages)
+            self.started = (asyncio.Event(), asyncio.Event())
+            self.teardown_gate = asyncio.Event()
+            self.finish = asyncio.Event()
+            self.calls = 0
+
+        async def compact(self, summary: str) -> str:
+            index = self.calls
+            self.calls += 1
+            self.compact_summaries.append(summary)
+            self.started[index].set()
+            try:
+                await self.finish.wait()
+            except asyncio.CancelledError:
+                # Delay teardown so it lands after the next compaction started.
+                await self.teardown_gate.wait()
+                raise
+            return "Compacted 2 context entries."
+
+    session = GatedCompactSession(messages=[UserMessage(content="Earlier")])
+    app = TauTuiApp(session)
+    app._notify = lambda message, **kwargs: None  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/compact First summary"
+        await pilot.press("enter")
+        await asyncio.wait_for(session.started[0].wait(), timeout=1)
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        prompt.value = "/compact Second summary"
+        await pilot.press("enter")
+        await asyncio.wait_for(session.started[1].wait(), timeout=1)
+        await pilot.pause()
+        second_worker = app._compaction_worker
+
+        session.teardown_gate.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app._is_working() is True
+        assert app._is_compaction_active() is True
+        assert app._compaction_worker is second_worker
+
+        session.finish.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app._is_working() is False
+        assert app._is_compaction_active() is False
+
+
+@pytest.mark.anyio
+async def test_tui_app_clears_working_state_when_compaction_setup_fails() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="Earlier")]))
+    notifications: list[str] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        del kwargs
+        notifications.append(message)
+
+    def failing_refresh() -> None:
+        raise RuntimeError("no matches")
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test():
+        app._refresh = failing_refresh  # type: ignore[method-assign]
+        await app._run_compaction("Summary")
+
+        assert notifications == ["Error: no matches"]
+        assert app._is_working() is False
+        assert app._is_compaction_active() is False
+
+
+@pytest.mark.anyio
+async def test_tui_app_notifies_once_when_manual_compaction_finishes_unfocused() -> None:
+    app = TauTuiApp(
+        FakeSession(messages=[UserMessage(content="Earlier")]),
+        tui_settings=TuiSettings(turn_notification="desktop"),
+    )
+    writes: list[str] = []
+    app._terminal_notification = TerminalNotificationController(
+        "desktop",
+        enabled=True,
+        writer=writes.append,
+        environ={"TERM_PROGRAM": "ghostty"},
+    )
+    app._notify = lambda message, **kwargs: None  # type: ignore[method-assign]
+
+    async with app.run_test():
+        await app._run_compaction("focused summary")
+        assert writes == []
+
+        app.on_app_blur()
+        await app._run_compaction("background summary")
+        assert writes == ["\x1b]9;Tau turn finished\x07"]
+
+
+@pytest.mark.anyio
+async def test_tui_app_notifies_once_for_turn_with_automatic_compaction() -> None:
+    class AutoCompactSession(FakeSession):
+        async def prompt(
+            self,
+            text: str,
+            *,
+            streaming_behavior: str | None = None,
+            source: str = "interactive",
+            custom_type: str | None = None,
+            details: dict[str, object] | None = None,
+        ) -> AsyncIterator[CodingSessionEvent]:
+            del streaming_behavior, source, custom_type, details
+            self.prompt_texts.append(text)
+            yield AgentStartEvent()
+            yield CompactionStartEvent(reason="overflow")
+            yield CompactionEndEvent(reason="overflow")
+            yield AgentEndEvent()
+            yield AgentSettledEvent()
+
+    app = TauTuiApp(AutoCompactSession(), tui_settings=TuiSettings(turn_notification="desktop"))
+    writes: list[str] = []
+    app._terminal_notification = TerminalNotificationController(
+        "desktop",
+        enabled=True,
+        writer=writes.append,
+        environ={"TERM_PROGRAM": "ghostty"},
+    )
+
+    async with app.run_test():
+        app.on_app_blur()
+        await app._run_prompt("work")
+
+        assert writes == ["\x1b]9;Tau turn finished\x07"]
 
 
 @pytest.mark.anyio

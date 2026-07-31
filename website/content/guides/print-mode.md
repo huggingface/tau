@@ -65,6 +65,29 @@ tau --provider local -p "explain this module"
 tau --cwd ./services/api -p "audit for secrets"
 ```
 
+## Recording the session id
+
+Automation can choose the exact id of a new print-mode session with
+`--session-id`. This keeps stdout dedicated to the selected output format and
+avoids scanning `~/.tau/sessions/`:
+
+```bash
+worker_session_id="$(python -c 'import uuid; print(uuid.uuid4().hex)')"
+tau --print --new-session \
+  --session-id "$worker_session_id" \
+  --cwd /path/to/project \
+  "review the current changes"
+printf 'Tau session: %s\n' "$worker_session_id"
+```
+
+Ids may contain letters, numbers, `.`, `_`, and `-`, must start and end with a
+letter or number, and may be at most 128 bytes. `default` and `index` are
+reserved. Use a unique id for each worker. Tau atomically reserves the transcript
+and exits with an error rather than opening or overwriting an existing session,
+even if an unindexed transcript already uses that id or two workers start at the
+same time. The option applies to text, JSON, and transcript modes without adding
+metadata to their stdout output.
+
 ## Exit status
 
 Print mode exits non-zero if the run fails, so you can use it in scripts:

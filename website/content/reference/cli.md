@@ -29,7 +29,7 @@ features and fixes.
 | --- | --- |
 | `tau` | Open the interactive TUI |
 | `tau "<prompt>"` | Open the TUI with an initial prompt |
-| `tau update` | Upgrade Tau with the installer that owns its environment |
+| `tau update` | Upgrade Tau with the installer that owns its environment. Windows uv-tool updates are handed off and begin after Tau exits; follow the printed log path for the final result. |
 | `tau sessions` | List indexed sessions (id, title, model, cwd) |
 | `tau export <ref> [dest] [--format html\|jsonl]` | Export a session id or JSONL path (HTML default) |
 | `tau --export <ref> [dest]` | Same as `tau export`, as a top-level flag |
@@ -47,6 +47,7 @@ features and fixes.
 | `--mode [text\|json\|transcript]` | Output mode for print mode (default `text`); also triggers print mode on its own |
 | `--session TEXT` | Resume a session id in the TUI |
 | `--new-session` | Start a new session instead of resuming the default |
+| `--session-id TEXT` | Set the exact id for a newly created print-mode session; errors if it already exists |
 | `--auto-compact-threshold INT` | Auto-compact above this rough token estimate |
 | `-e, --extension PATH` | Load an [extension]({{< relref "../guides/extensions.md" >}}) file or directory (repeatable) |
 | `--no-extensions` | Disable extension directory discovery (explicit `-e` paths still load) |
