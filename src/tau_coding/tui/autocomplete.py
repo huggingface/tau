@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from time import monotonic
 
 from tau_coding.commands import CommandRegistry, SlashCommand
 from tau_coding.prompt_templates import PromptTemplate
@@ -27,6 +28,11 @@ IGNORED_FILE_COMPLETION_DIRS = frozenset(
     }
 )
 MAX_FILE_COMPLETIONS = 50
+# Long enough that a burst of typing reuses one workspace walk, short enough
+# that newly created files show up without a restart.
+FILE_REFERENCE_CACHE_TTL_SECONDS = 2.0
+
+_file_reference_cache: tuple[Path, float, tuple[tuple[str, str], ...]] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,13 +160,11 @@ def _file_reference_completions(*, text: str, cwd: Path) -> tuple[CompletionItem
     if token is None:
         return ()
     start, end = token
-    prefix = text[start + 1 : end]
+    prefix = text[start + 1 : end].lower()
     suggestions: list[CompletionItem] = []
-    for path in _iter_file_reference_paths(cwd):
-        relative = path.relative_to(cwd).as_posix()
-        if prefix.lower() not in relative.lower():
+    for searchable, display in _file_reference_candidates(cwd):
+        if prefix not in searchable:
             continue
-        display = f"@{relative}{'/' if path.is_dir() else ''}"
         suggestions.append(
             CompletionItem(
                 display=display,
@@ -173,6 +177,35 @@ def _file_reference_completions(*, text: str, cwd: Path) -> tuple[CompletionItem
         if len(suggestions) >= MAX_FILE_COMPLETIONS:
             break
     return tuple(suggestions)
+
+
+def _file_reference_candidates(cwd: Path) -> tuple[tuple[str, str], ...]:
+    """Return `(searchable, display)` completion candidates for a workspace.
+
+    Walking the workspace dominates the cost of building these completions, so
+    without caching every keystroke re-walks the whole tree (issue #463). One
+    slot is enough because a session completes against a single workspace, and
+    the short TTL keeps newly created files appearing promptly.
+    """
+    global _file_reference_cache
+
+    now = monotonic()
+    cached = _file_reference_cache
+    if (
+        cached is not None
+        and cached[0] == cwd
+        and now - cached[1] < FILE_REFERENCE_CACHE_TTL_SECONDS
+    ):
+        return cached[2]
+
+    candidates = tuple(
+        (relative.lower(), f"@{relative}{'/' if path.is_dir() else ''}")
+        for path, relative in (
+            (path, path.relative_to(cwd).as_posix()) for path in _iter_file_reference_paths(cwd)
+        )
+    )
+    _file_reference_cache = (cwd, now, candidates)
+    return candidates
 
 
 def _active_file_reference_token(text: str) -> tuple[int, int] | None:

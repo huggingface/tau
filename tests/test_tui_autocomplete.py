@@ -5,6 +5,7 @@ from rich.console import Console
 from tau_coding.commands import create_default_command_registry
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.skills import Skill
+from tau_coding.tui import autocomplete as autocomplete_module
 from tau_coding.tui.autocomplete import CompletionOption, build_completion_state
 from tau_coding.tui.widgets import render_completion_suggestions
 
@@ -421,6 +422,59 @@ def test_resume_argument_completion_uses_session_options_with_descriptions() -> 
         "Newer - qwen - /repo",
         "Older - gpt - /repo",
     ]
+
+
+def test_file_reference_completions_reuse_one_workspace_walk(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Regression test for issue #463: the workspace was re-walked on every
+    # keystroke, so completions slowed to a crawl on large workspaces.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')", encoding="utf-8")
+    walks: list[Path] = []
+    original_walk = autocomplete_module._iter_file_reference_paths
+
+    def counting_walk(cwd: Path) -> tuple[Path, ...]:
+        walks.append(cwd)
+        return original_walk(cwd)
+
+    monkeypatch.setattr(autocomplete_module, "_file_reference_cache", None)
+    monkeypatch.setattr(autocomplete_module, "_iter_file_reference_paths", counting_walk)
+
+    for text in ("look at @a", "look at @ap", "look at @app"):
+        state = build_completion_state(
+            text,
+            command_registry=create_default_command_registry(),
+            skills=(),
+            prompt_templates=(),
+            cwd=tmp_path,
+        )
+        assert [item.display for item in state.items] == ["@src/app.py"]
+
+    assert len(walks) == 1
+
+
+def test_file_reference_completions_refresh_after_cache_expires(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # The cache must not hide files created after the first completion.
+    (tmp_path / "first.py").write_text("", encoding="utf-8")
+    monkeypatch.setattr(autocomplete_module, "_file_reference_cache", None)
+    monkeypatch.setattr(autocomplete_module, "FILE_REFERENCE_CACHE_TTL_SECONDS", 0.0)
+
+    def complete() -> list[str]:
+        state = build_completion_state(
+            "read @",
+            command_registry=create_default_command_registry(),
+            skills=(),
+            prompt_templates=(),
+            cwd=tmp_path,
+        )
+        return [item.display for item in state.items]
+
+    assert complete() == ["@first.py"]
+    (tmp_path / "second.py").write_text("", encoding="utf-8")
+    assert complete() == ["@first.py", "@second.py"]
 
 
 def test_file_reference_completion_matches_workspace_files(tmp_path: Path) -> None:
