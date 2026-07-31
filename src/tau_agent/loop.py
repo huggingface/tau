@@ -252,14 +252,15 @@ async def _execute_tool_call(
             result = _error_result(f"Tool {call.name} not found")
             is_error = True
         else:
-            result, is_error, updates = await _run_tool(tool, call, signal)
-            for update in updates:
+            outcome: list[tuple[AgentToolResult, bool]] = []
+            async for update in _run_tool(tool, call, signal, outcome):
                 yield ToolExecutionUpdateEvent(
                     tool_call_id=call.id,
                     tool_name=call.name,
                     args=call.arguments,
                     partial_result=update,
                 )
+            result, is_error = outcome[0]
 
     if after_tool_call is not None:
         result, is_error = await after_tool_call(call, result, is_error)
@@ -286,23 +287,56 @@ async def _run_tool(
     tool: AgentTool,
     call: ToolCall,
     signal: CancellationToken | None,
-) -> tuple[AgentToolResult, bool, list[AgentToolResult]]:
-    updates: list[AgentToolResult] = []
+    outcome: list[tuple[AgentToolResult, bool]],
+) -> AsyncIterator[AgentToolResult]:
+    """Run a tool, yielding progress partials as the tool reports them.
+
+    `on_update` is synchronous while only this generator can emit events, so
+    partials are handed over through a queue and raced against the tool itself.
+    Buffering them until the tool returned made progress events useless to a
+    consumer while a long-running tool was still working (issue #382).
+
+    The final `(result, is_error)` pair is appended to `outcome`, since an async
+    generator cannot return a value to its consumer.
+    """
+    queue: asyncio.Queue[AgentToolResult] = asyncio.Queue()
     accepting = True
 
     def on_update(partial: AgentToolResult) -> None:
         if accepting:
-            updates.append(partial.model_copy(deep=True))
+            queue.put_nowait(partial.model_copy(deep=True))
+
+    task = asyncio.ensure_future(tool.execute(call.id, call.arguments, signal, on_update))
+    try:
+        while not task.done():
+            pending_update = asyncio.ensure_future(queue.get())
+            try:
+                await asyncio.wait(
+                    {pending_update, task}, return_when=asyncio.FIRST_COMPLETED
+                )
+            finally:
+                if not pending_update.done():
+                    pending_update.cancel()
+            if pending_update.done() and not pending_update.cancelled():
+                yield pending_update.result()
+    finally:
+        # Stop accepting as soon as the tool is done, matching the previous
+        # behaviour, and never leave the tool running if the consumer stops
+        # early.
+        accepting = False
+        if not task.done():
+            task.cancel()
+
+    # Emit anything the tool reported just before it returned.
+    while not queue.empty():
+        yield queue.get_nowait()
 
     try:
-        result = await tool.execute(call.id, call.arguments, signal, on_update)
-        return result, False, updates
+        outcome.append((task.result(), False))
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001 - tools are an isolation boundary
-        return _error_result(str(exc)), True, updates
-    finally:
-        accepting = False
+        outcome.append((_error_result(str(exc)), True))
 
 
 def _error_result(message: str) -> AgentToolResult:
