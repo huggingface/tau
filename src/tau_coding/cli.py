@@ -471,7 +471,10 @@ def update_command() -> None:
         typer.echo(result.stdout)
     if result.stderr:
         typer.echo(result.stderr, err=True)
-    typer.echo(f"Tau update completed with: {' '.join(result.command or ())}")
+    if result.deferred:
+        typer.echo(f"Tau update handed off with: {' '.join(result.command or ())}")
+    else:
+        typer.echo(f"Tau update completed with: {' '.join(result.command or ())}")
 
 
 def render_session_list(records: list[CodingSessionRecord]) -> None:

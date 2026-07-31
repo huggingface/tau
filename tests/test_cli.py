@@ -148,6 +148,27 @@ def test_update_command_upgrades_without_startup_check(monkeypatch: pytest.Monke
     assert "Tau update completed with: uv tool install tau-ai@0.2.4" in result.stdout
 
 
+def test_update_command_reports_windows_handoff_without_claiming_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "update_tau",
+        lambda: UpdateResult(
+            command=("uv", "tool", "install", "tau-ai@0.2.4"),
+            stdout="Tau update is scheduled and will start after this process exits.",
+            deferred=True,
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["update"])
+
+    assert result.exit_code == 0
+    assert "scheduled" in result.stdout
+    assert "Tau update handed off with:" in result.stdout
+    assert "Tau update completed" not in result.stdout
+
+
 def test_update_command_reports_installer_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         cli,

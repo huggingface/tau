@@ -181,11 +181,15 @@ edits saved credentials — it never touches your environment or `providers.json
 
 {{% note title="OAuth troubleshooting" %}}
 Browser login can fall back to a pasted redirect URL/code when the callback
-port is unavailable or the browser runs on another machine. Copilot uses a
-device code instead. A denied or expired code requires a new `/login`. If a
-Copilot model reports that it is unsupported, enable it in Copilot Chat's model
-selector or ask your organization administrator; provider/model access varies
-by plan and policy.
+port is unavailable or the browser runs on another machine. In that flow the
+login screen copies the authorization URL to your clipboard and renders it as
+a link, so paste or click it rather than selecting the wrapped text — a URL
+reassembled by hand loses characters at the line breaks and the provider
+rejects it. Copilot uses a device code instead: open the short verification
+URL and enter the code shown beneath it. A denied or expired code requires a
+new `/login`. If a Copilot model reports that it is unsupported, enable it in
+Copilot Chat's model selector or ask your organization administrator;
+provider/model access varies by plan and policy.
 {{% /note %}}
 
 ## Choosing and switching models

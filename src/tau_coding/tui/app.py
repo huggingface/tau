@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, cast
 
 from rich.console import Console, Group
+from rich.style import Style
 from rich.text import Text
 from textual import events, on
 from textual.app import App, ComposeResult
@@ -632,17 +633,34 @@ class PromptInput(TextArea):
         as a paste; when the pasted text is only existing file paths, insert the
         normalized paths instead of the raw (possibly escaped) drop text.
         """
-        dropped_paths = normalize_dropped_paths(event.text)
-        if dropped_paths is not None:
+        if self.handle_pasted_text(event.text):
             event.stop()
             event.prevent_default()
+
+    def handle_pasted_text(self, text: str) -> bool:
+        """Apply Tau's paste rules to *text*.
+
+        Returns ``True`` when the text was inserted here (file drop or large
+        paste placeholder) and ``False`` when it should be inserted verbatim by
+        the caller (or by Textual's default paste handling).
+        """
+        dropped_paths = normalize_dropped_paths(text)
+        if dropped_paths is not None:
             self._insert_dropped_paths(dropped_paths)
-            return
-        if len(event.text) <= PASTE_DISPLAY_THRESHOLD:
-            return
-        event.stop()
-        event.prevent_default()
-        self._show_large_paste_placeholder(event.text)
+            return True
+        if len(text) <= PASTE_DISPLAY_THRESHOLD:
+            return False
+        self._show_large_paste_placeholder(text)
+        return True
+
+    def insert_pasted_text(self, text: str) -> None:
+        """Insert pasted text that Textual could not deliver to this widget.
+
+        Used for drops that arrive while the terminal is unfocused, where no
+        default paste handler runs, so verbatim insertion is done here.
+        """
+        if not self.handle_pasted_text(text):
+            self.insert(text)
 
     def _insert_dropped_paths(self, insertion: str) -> None:
         """Insert dropped paths at the cursor, separated from surrounding text."""
@@ -2764,12 +2782,31 @@ class OAuthLoginScreen(ModalScreen[OAuthCredential | _LoginFlowAction | None]):
         self.dismiss(credential)
 
     def _show_auth(self, info: OAuthAuthInfo) -> None:
-        self.query_one("#login-oauth-url", Static).update(info.url)
+        self._show_url(info.url)
+        # Copy only the browser-flow URL. It is hundreds of characters long and
+        # wraps across the dialog, so hand-selecting it is what corrupts it;
+        # taking over the clipboard is worth it there and nowhere else.
+        with suppress(Exception):
+            self.app.copy_to_clipboard(info.url)
+        self.notify("Authorization URL copied to clipboard.")
         if info.instructions:
             self.query_one("#login-help", Static).update(info.instructions)
 
+    def _show_url(self, url: str) -> None:
+        """Display a URL as one clickable unit.
+
+        Authorization URLs are far wider than the dialog, so they render across
+        several wrapped lines. Selecting those lines by hand tends to corrupt
+        the URL — a query parameter split across a wrap picks up the line break
+        or trailing padding and the provider rejects the request. An OSC 8
+        hyperlink keeps a click on any wrapped line opening the intact URL.
+        """
+        self.query_one("#login-oauth-url", Static).update(Text(url, style=Style(link=url)))
+
     def _show_device_code(self, info: OAuthDeviceCodeInfo) -> None:
-        self.query_one("#login-oauth-url", Static).update(info.verification_uri)
+        # No clipboard copy here: the verification URI is short and clickable,
+        # and the thing the user carries to the browser is the code below it.
+        self._show_url(info.verification_uri)
         self.query_one("#login-help", Static).update(
             f"Open the URL and enter code: {info.user_code}"
         )
@@ -3292,6 +3329,12 @@ class TauTuiApp(App[None]):
         width: 72;
         max-width: 92%;
         height: auto;
+        /* A wrapped authorization URL makes this dialog taller than a short
+           terminal. Cap it at the screen and scroll instead of overflowing:
+           overflowing centers the excess, which pushes the paste field and
+           the footer off the bottom and the title off the top. */
+        max-height: 100%;
+        overflow-y: auto;
         padding: 1 2;
         background: $tau-chrome-background;
         border: tall $tau-border;
@@ -3327,8 +3370,11 @@ class TauTuiApp(App[None]):
     }
 
     #login-oauth-url {
+        /* Authorization URLs run ~470 chars (Anthropic); clipping them means a
+           user copying the URL out of the TUI loses the trailing query
+           parameters and the provider rejects the request. Keep every line. */
         min-height: 1;
-        max-height: 4;
+        height: auto;
         color: $tau-chrome-text;
         margin-bottom: 1;
     }
@@ -3403,6 +3449,8 @@ class TauTuiApp(App[None]):
         self._connect_extension_runtime(session)
         self._prompt_worker: Worker[None] | None = None
         self._compaction_worker: Worker[None] | None = None
+        self._compacting = False
+        self._compaction_run_id = 0
         self._prompt_run_id = 0
         self._optimistic_user_messages: list[tuple[int, str]] = []
         self._completion_state = CompletionState()
@@ -3425,11 +3473,15 @@ class TauTuiApp(App[None]):
         """Reflect the active session name in the terminal tab title."""
         self._sync_terminal_title()
 
+    def _is_working(self) -> bool:
+        """Return whether the app should show working affordances (agent turn or compaction)."""
+        return self.state.running or self._compacting
+
     def _sync_terminal_title(self) -> None:
         """Reflect the active session name and running state in the terminal tab title."""
         self._terminal_title.update(
             getattr(self.session, "session_title", None),
-            running=self.state.running,
+            running=self._is_working(),
             frame=self._activity_frame,
         )
 
@@ -3581,6 +3633,27 @@ class TauTuiApp(App[None]):
     def on_app_focus(self) -> None:
         """Suppress turn notifications while the Tau terminal surface is active."""
         self._app_has_focus = True
+
+    def on_paste(self, event: events.Paste) -> None:
+        """Route pastes that arrive while no widget holds keyboard focus.
+
+        Textual clears widget focus whenever the terminal reports lost focus
+        (``CSI ? 1004 h``), and pastes are dropped when nothing is focused. OS
+        drag-and-drop from sources that never hand focus back to the terminal --
+        notably the macOS Dock -- delivers the dropped paths in exactly that
+        state, so the paste bubbles up here instead of reaching the prompt.
+        Clipboard pastes always require terminal focus, so this only reroutes
+        drops that would otherwise be silently discarded.
+        """
+        if self.focused is not None:
+            return
+        try:
+            prompt = self.screen.query_one("#prompt", PromptInput)
+        except NoMatches:
+            # A modal screen owns the input; leave its own handling alone.
+            return
+        event.stop()
+        prompt.insert_pasted_text(event.text)
 
     def on_resize(self, event: Resize) -> None:
         """Update responsive chrome when the terminal changes size."""
@@ -3800,7 +3873,9 @@ class TauTuiApp(App[None]):
     def _is_compaction_active(self) -> bool:
         """Return whether a manual compaction worker is still running."""
         worker = self._compaction_worker
-        return worker is not None and not worker.is_finished and not worker.is_cancelled
+        if worker is not None and not worker.is_finished and not worker.is_cancelled:
+            return True
+        return self._compacting
 
     def _is_agent_or_queue_active(self) -> bool:
         """Return whether compaction would race an active or queued agent turn."""
@@ -3817,10 +3892,13 @@ class TauTuiApp(App[None]):
 
     async def _run_compaction(self, summary: str) -> None:
         """Run manual compaction without disabling prompt editing."""
-        self.state.clear()
-        self.state.add_item("status", "Compacting session…")
-        self._refresh()
+        self._compaction_run_id += 1
+        run_id = self._compaction_run_id
+        self._compacting = True
         try:
+            self.state.clear()
+            self.state.add_item("status", "Compacting session…")
+            self._refresh()
             compact_message = await self.session.compact(summary)
         except asyncio.CancelledError:
             return
@@ -3828,12 +3906,19 @@ class TauTuiApp(App[None]):
             self._notify(f"Error: {exc}", severity="error")
             return
         finally:
-            self._compaction_worker = None
+            # A cancelled run can tear down after a newer compaction started, so only
+            # clear working state this run still owns.
+            if self._compaction_run_id == run_id:
+                self._compacting = False
+                self._compaction_worker = None
+                self._refresh_chrome_if_mounted()
         self.state.clear()
         self.state.set_skills(self.session.skills)
         self._load_session_messages_from_session()
         self._notify(compact_message)
         self._refresh()
+        if not self._app_has_focus:
+            self._terminal_notification.notify_turn_finished()
 
     async def _submit_prompt(
         self,
@@ -4698,7 +4783,9 @@ class TauTuiApp(App[None]):
             return False
 
         worker.cancel()
+        self._compaction_run_id += 1
         self._compaction_worker = None
+        self._compacting = False
         self.state.clear()
         self.state.set_skills(self.session.skills)
         self._load_session_messages_from_session()
@@ -5552,9 +5639,16 @@ class TauTuiApp(App[None]):
             return
         self.adapter.apply(queue_event())
 
+    def _refresh_chrome_if_mounted(self) -> None:
+        """Refresh chrome when the app is mounted, ignoring teardown races."""
+        if not self.screen_stack:
+            return
+        with suppress(NoMatches):
+            self._refresh_chrome()
+
     def _sync_activity_indicator(self) -> None:
         self._sync_terminal_title()
-        if self.state.running:
+        if self._is_working():
             if self._activity_timer is None:
                 self._activity_timer = self.set_interval(
                     ACTIVITY_TICK_SECONDS,
@@ -5571,7 +5665,7 @@ class TauTuiApp(App[None]):
         self._apply_activity_indicator()
 
     def _tick_activity(self) -> None:
-        if not self.state.running:
+        if not self._is_working():
             return
         self._activity_frame += 1
         self._apply_activity_indicator()
@@ -5622,7 +5716,7 @@ class TauTuiApp(App[None]):
             theme.screen_background,
             theme.prompt_border,
             self._activity_frame,
-            self.state.running,
+            self._is_working(),
             shell_mode,
         )
         if render_key == self._last_activity_indicator_key:
@@ -5633,7 +5727,7 @@ class TauTuiApp(App[None]):
             _activity_prompt_border_color(
                 theme,
                 frame=self._activity_frame,
-                running=self.state.running,
+                running=self._is_working(),
                 shell_mode=shell_mode,
             ),
         )
@@ -5641,7 +5735,7 @@ class TauTuiApp(App[None]):
             _render_activity_indicator(
                 theme,
                 frame=self._activity_frame,
-                running=self.state.running,
+                running=self._is_working(),
                 shell_mode=shell_mode,
             ),
             layout=False,
@@ -5747,7 +5841,9 @@ class TauTuiApp(App[None]):
 
     def _refresh_footer_bindings(self) -> None:
         prompt = self.query_one("#prompt", PromptInput)
-        prompt.set_footer_mode(_prompt_footer_mode(self.state, self._completion_state))
+        prompt.set_footer_mode(
+            _prompt_footer_mode(self._completion_state, working=self._is_working())
+        )
 
     def _sync_prompt_shell_mode(self, text: str) -> None:
         prompt = self.query_one("#prompt", PromptInput)
@@ -6281,12 +6377,13 @@ def _queued_message_preview(message: str) -> str:
 
 
 def _prompt_footer_mode(
-    state: TuiState,
     completion_state: CompletionState,
+    *,
+    working: bool,
 ) -> Literal["normal", "completion", "running"]:
     if completion_state.items:
         return "completion"
-    if state.running:
+    if working:
         return "running"
     return "normal"
 

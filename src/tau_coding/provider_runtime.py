@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+from asyncio import AbstractEventLoop, get_running_loop
+from collections.abc import MutableMapping
 from dataclasses import replace
 from os import environ
 from typing import Protocol
+from weakref import WeakKeyDictionary
 
 from tau_agent.provider import ModelProvider
 from tau_ai.anthropic import AnthropicProvider
@@ -233,10 +237,42 @@ class OpenAICodexCredentialResolver:
     ) -> OAuthCredential:
         if not oauth_credential_is_expired(credential):
             return credential
-        refreshed = await refresh_openai_codex_token(credential.refresh)
-        if refreshed != credential:
-            self._credential_store.set_oauth(credential_name, refreshed)
+        async with _refresh_lock(credential_name):
+            stored = self._credential_store.get_oauth(credential_name) or credential
+            if not oauth_credential_is_expired(stored):
+                return stored
+            refreshed = await refresh_openai_codex_token(stored.refresh)
+            if refreshed != stored:
+                self._credential_store.set_oauth(credential_name, refreshed)
         return refreshed
+
+
+_REFRESH_LOCKS: MutableMapping[AbstractEventLoop, dict[str, asyncio.Lock]] = WeakKeyDictionary()
+
+
+def _refresh_lock(credential_name: str) -> asyncio.Lock:
+    """Return this loop's refresh lock for one stored credential.
+
+    Providers rotate the refresh token on use: the old one dies the moment a
+    refresh succeeds. A session issues provider calls concurrently (the agent
+    loop and session auto-naming, for two), so without serialization several
+    tasks read the same expired credential and spend the same refresh token.
+    One of them wins, the losers 400, and whichever write lands last can leave
+    a superseded token on disk — which fails on the *next* run, long after the
+    race that caused it. Holding this lock across the network call, and
+    re-reading the store inside it, keeps a token spent at most once.
+
+    Locks are cached per event loop because ``asyncio.Lock`` binds to the
+    running loop on first contention: a lock cached across loops appears to
+    work — the uncontended path never touches the loop — until two tasks
+    contend it in a later loop and it raises.
+    """
+    locks = _REFRESH_LOCKS.setdefault(get_running_loop(), {})
+    lock = locks.get(credential_name)
+    if lock is None:
+        lock = asyncio.Lock()
+        locks[credential_name] = lock
+    return lock
 
 
 def _oauth_credential(
@@ -264,16 +300,19 @@ class OAuthRuntimeCredentialResolver:
         credential_name = self._provider.credential_name
         if credential_name is None:
             raise RuntimeError(f"Provider {self._provider.name} has no credential name")
-        credential = self._credential_store.get_oauth(credential_name)
-        if credential is None:
-            raise RuntimeError(
-                f"Missing OAuth credentials for {self._provider.name}. "
-                f"Run /login {self._provider.name}."
-            )
         oauth_provider = _required_oauth_provider(self._provider.name)
-        refreshed = await oauth_provider.refresh(credential)
-        if refreshed != credential:
-            self._credential_store.set_oauth(credential_name, refreshed)
+        async with _refresh_lock(credential_name):
+            # Read inside the lock: a task that waited here while another
+            # refreshed sees the rotated credential and skips its own refresh.
+            credential = self._credential_store.get_oauth(credential_name)
+            if credential is None:
+                raise RuntimeError(
+                    f"Missing OAuth credentials for {self._provider.name}. "
+                    f"Run /login {self._provider.name}."
+                )
+            refreshed = await oauth_provider.refresh(credential)
+            if refreshed != credential:
+                self._credential_store.set_oauth(credential_name, refreshed)
         auth = oauth_provider.runtime_auth(refreshed)
         return RuntimeProviderAuth(
             api_key=auth.api_key,

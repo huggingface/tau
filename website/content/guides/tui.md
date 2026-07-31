@@ -101,6 +101,9 @@ spaces. Paths that contain spaces are quoted automatically, and any text you
 already typed is preserved. This works anywhere over the TUI, not just above
 the input box, because the terminal delivers the drop as text input.
 
+Drops are also accepted from sources that do not give the terminal keyboard focus
+first, such as the macOS Dock's Downloads stack.
+
 ## Tool output
 
 Tool calls keep a static marker in the transcript while they run: orange means

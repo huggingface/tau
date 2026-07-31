@@ -29,7 +29,7 @@ features and fixes.
 | --- | --- |
 | `tau` | Open the interactive TUI |
 | `tau "<prompt>"` | Open the TUI with an initial prompt |
-| `tau update` | Upgrade Tau with the installer that owns its environment |
+| `tau update` | Upgrade Tau with the installer that owns its environment. Windows uv-tool updates are handed off and begin after Tau exits; follow the printed log path for the final result. |
 | `tau sessions` | List indexed sessions (id, title, model, cwd) |
 | `tau export <ref> [dest] [--format html\|jsonl]` | Export a session id or JSONL path (HTML default) |
 | `tau --export <ref> [dest]` | Same as `tau export`, as a top-level flag |
