@@ -90,9 +90,28 @@ def test_tui_settings_ignores_removed_message_selection_keybindings() -> None:
     assert settings == TuiSettings()
 
 
-def test_tui_settings_reject_unknown_fields() -> None:
-    with pytest.raises(TuiConfigError, match="Unknown TUI settings field"):
-        tui_settings_from_json({"palette": {}})
+def test_tui_settings_ignore_unknown_fields() -> None:
+    settings = tui_settings_from_json(
+        {
+            "theme": "tau-light",
+            "future_setting": {"enabled": True},
+        }
+    )
+
+    assert settings.theme == "tau-light"
+
+
+def test_tui_keybindings_ignore_unknown_actions() -> None:
+    settings = tui_settings_from_json(
+        {
+            "keybindings": {
+                "quit": "f12",
+                "future_action": "ctrl+g",
+            }
+        }
+    )
+
+    assert settings.keybindings.quit == "f12"
 
 
 def test_tui_keybindings_reject_duplicate_keys() -> None:
@@ -173,6 +192,26 @@ def test_get_tui_theme_returns_builtin_theme() -> None:
     assert get_tui_theme("high-contrast").prompt_border == "#00ff66"
     assert get_tui_theme("tau-light").prompt_border == "#2563eb"
     assert get_tui_theme("tau-dark").screen_background == "#000000"
+
+
+def test_tui_turn_notification_defaults_to_desktop() -> None:
+    assert TuiSettings().turn_notification == "desktop"
+    assert tui_settings_from_json({}).turn_notification == "desktop"
+
+
+def test_tui_turn_notification_roundtrips() -> None:
+    for value in ("off", "bell", "desktop"):
+        settings = tui_settings_from_json({"turn_notification": value})
+        assert settings.turn_notification == value
+        assert settings.to_json()["turn_notification"] == value
+
+
+def test_tui_turn_notification_rejects_invalid_value() -> None:
+    with pytest.raises(TuiConfigError, match="turn_notification"):
+        tui_settings_from_json({"turn_notification": "sound"})
+
+    with pytest.raises(TuiConfigError, match="turn_notification"):
+        tui_settings_from_json({"turn_notification": True})
 
 
 def test_tui_sidebar_position_defaults_to_right() -> None:

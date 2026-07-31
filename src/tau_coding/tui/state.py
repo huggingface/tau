@@ -6,6 +6,7 @@ import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from tau_agent.messages import (
     AgentMessage,
@@ -52,6 +53,7 @@ class ChatItem:
     always_show_tool_result: bool = False
     custom_type: str | None = None
     details: dict[str, JSONValue] | None = None
+    highlight: Literal["update"] | None = None
 
 
 @dataclass(slots=True)
@@ -87,6 +89,7 @@ class TuiState:
         always_show_tool_result: bool = False,
         custom_type: str | None = None,
         details: dict[str, JSONValue] | None = None,
+        highlight: Literal["update"] | None = None,
     ) -> None:
         """Append a transcript item."""
         item = ChatItem(
@@ -97,6 +100,7 @@ class TuiState:
             always_show_tool_result=always_show_tool_result,
             custom_type=custom_type,
             details=details,
+            highlight=highlight,
         )
         self.items.append(item)
         if tool_call_id is not None and role in {"tool", "skill"}:

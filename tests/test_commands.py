@@ -126,16 +126,27 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
         "model",
         "name",
         "new",
+        "prompts",
         "quit",
         "reload",
         "resume",
         "scoped-models",
         "session",
         "skill",
+        "skills",
         "system",
         "theme",
+        "tools",
         "tree",
     ]
+
+
+def test_prompts_command_requests_picker(tmp_path: Path) -> None:
+    registry = create_default_command_registry()
+    session = FakeSession(tmp_path)
+
+    assert registry.execute(session, "/prompts").prompts_picker_requested is True
+    assert registry.execute(session, "/prompts extra").message == "Usage: /prompts"
 
 
 def test_system_command_returns_active_prompt(tmp_path: Path) -> None:
@@ -169,6 +180,17 @@ def test_compact_command_accepts_optional_instructions(tmp_path: Path) -> None:
 
     assert default.compact_summary == ""
     assert requested.compact_summary == "Summary of prior work."
+
+
+def test_skills_command_requests_picker(tmp_path: Path) -> None:
+    registry = create_default_command_registry()
+    session = FakeSession(tmp_path)
+
+    result = registry.execute(session, "/skills")
+
+    assert result.handled is True
+    assert result.skills_picker_requested is True
+    assert registry.execute(session, "/skills extra").message == "Usage: /skills"
 
 
 def test_tree_command_requests_picker(tmp_path: Path) -> None:
@@ -347,10 +369,18 @@ def test_non_pi_commands_are_not_registered(tmp_path: Path) -> None:
     registry = create_default_command_registry()
     session = FakeSession(tmp_path)
 
-    for command in ("/provider", "/skills", "/resources", "/context", "/help"):
+    for command in ("/provider", "/resources", "/context", "/help"):
         result = registry.execute(session, command)
         assert result.handled is False
         assert result.message is None
+
+
+def test_tools_command_requests_read_only_picker(tmp_path: Path) -> None:
+    result = create_default_command_registry().execute(FakeSession(tmp_path), "/tools")
+
+    assert result.handled is True
+    assert result.tools_picker_requested is True
+    assert result.message is None
 
 
 def test_login_command_requests_provider_picker(tmp_path: Path) -> None:

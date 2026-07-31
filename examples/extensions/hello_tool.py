@@ -2,7 +2,7 @@
 
 Install by copying into `~/.tau/extensions/`, or run:
 
-    tau -x examples/extensions/hello_tool.py
+    tau -e examples/extensions/hello_tool.py
 """
 
 from tau_agent.messages import TextContent

@@ -40,7 +40,7 @@ class UpdateNotice:
         """Return concise update guidance."""
         return (
             f"Tau {self.latest_version} is available (installed: {self.current_version}). "
-            f"Update with: uv tool upgrade {self.package_name}"
+            "Run `tau update` to upgrade."
         )
 
 

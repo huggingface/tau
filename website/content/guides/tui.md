@@ -16,15 +16,25 @@ color to reflect focus, shell mode, and active runs without boxing it in.
 assistant's reply above the prompt, showing tool calls as they run. In supported
 terminal emulators, Tau also updates the tab title: named sessions show as
 `τ | <name>`, and active runs add an animated running indicator so you can see
-work continuing from another tab.
+work continuing from another tab. When a run fully settles while Tau's terminal
+surface is unfocused, Tau emits a desktop notification by default on supported
+terminals: OSC 9 for Ghostty, iTerm2, and MinTTY, and OSC 99 for Kitty. Unknown
+terminals are left untouched. Set `turn_notification` to `"bell"` to let the
+terminal mark the tab or apply its configured bell behavior instead, or `"off"`
+to disable notifications. BEL and operating-system desktop notifications may
+produce sounds according to the user's terminal and system settings; see
+[Configuration]({{< relref "../reference/configuration.md#tui-settings" >}}).
 
 Clicking anywhere in the window returns focus to the prompt, so you can scroll
 the transcript and keep typing without tabbing back.
 
 If a provider request fails after retries, Tau shows the failure as an explicit
-error block in the transcript. You can submit another prompt without starting a
-new session; empty failed provider turns are retained for diagnostics but are not
-replayed to the model as invalid conversation history.
+error block in the transcript, using the provider's own error message (for
+example `server_is_overloaded` details instead of a generic failure). The block
+includes a diagnostic log path and a reminder that the run ended. You can submit
+another prompt without starting a new session; empty failed provider turns are
+retained for diagnostics but are not replayed to the model as invalid
+conversation history.
 
 ## Cancelling and steering a run
 
@@ -46,8 +56,10 @@ to search and run them. Common ones:
 
 - `/session` — show model, tools, skills, and context usage for the session. Text selected in this modal is copied to the clipboard automatically.
 - `/model` — pick the active model
+- `/tools` — search active tools by origin and open their full descriptions
 - `/compact` — summarize and shrink the context
 - `/resume`, `/tree` — open previous sessions or branch from history
+- `/prompts` — search prompt templates and insert one for editing
 - `/hotkeys` — show the keyboard shortcuts
 
 The full list is in the [Slash commands reference]({{< relref "../reference/slash-commands.md" >}}).
@@ -59,6 +71,11 @@ You can run a shell command yourself without asking the model:
 - `!<command>` runs it in the session's working directory **and** records the
   command and output in the conversation context.
 - `!!<command>` runs it and shows the output **without** adding it to context.
+
+As soon as the input starts with `!`, the whole input and its left border turn
+the same amber/orange color as a tool while it is running, and the `τ` prompt
+prefix becomes a matching `$`, so you can tell at a glance that submitting will
+execute a shell command instead of messaging the model.
 
 While typing a path after `!`/`!!`, press **Tab** to complete filenames from the
 working directory.
@@ -83,6 +100,9 @@ inserts their filesystem paths into the prompt at the cursor, separated by
 spaces. Paths that contain spaces are quoted automatically, and any text you
 already typed is preserved. This works anywhere over the TUI, not just above
 the input box, because the terminal delivers the drop as text input.
+
+Drops are also accepted from sources that do not give the terminal keyboard focus
+first, such as the macOS Dock's Downloads stack.
 
 ## Tool output
 
@@ -130,10 +150,12 @@ redundant section label, followed by active-branch
 turn and tool-call totals, provider-reported token usage under **cumulative usage**,
 estimated cost, automatic-compaction threshold, and loaded tools, skills, prompt
 templates, extensions, and context files such as `AGENTS.md`. Tool, prompt, and extension
-names use compact comma-separated lists. Skills and context files use bullet
-lists, with one item or path per line. Project context paths are relative to the
-working directory; context loaded from the home directory starts with `~/`, while
-other context loaded from outside the project uses its full path.
+names use compact comma-separated lists limited to three rendered lines. Skills
+and context files use bullet lists, with one item or path per line, limited to
+five entries. Truncated sections end with `...(X more)` showing how many entries
+are hidden. Project context paths are relative to the working directory; context
+loaded from the home directory starts with `~/`, while other context loaded from
+outside the project uses its full path.
 
 The wider, borderless sidebar uses the prompt field's background color, bright
 section headings, quieter gray values, and keeps Tau's versioned `τ = 2π` mark

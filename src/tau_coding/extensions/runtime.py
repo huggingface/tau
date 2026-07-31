@@ -550,6 +550,11 @@ class ExtensionRuntime:
         return tuple(registration.tool for registration in self._tools.values())
 
     @property
+    def extension_tool_sources(self) -> dict[str, str]:
+        """Map extension-registered tool names to their owning extension."""
+        return {name: registration.extension for name, registration in self._tools.items()}
+
+    @property
     def prompt_guidelines(self) -> tuple[str, ...]:
         """Return standalone guideline lines in registration order."""
         return tuple(guideline for _, guideline in self._prompt_guidelines)

@@ -19,6 +19,7 @@ import httpx
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    ImageContent,
     ThinkingContent,
     ToolResultMessage,
     Usage,
@@ -36,6 +37,12 @@ from tau_ai._provider_events import (
     ProviderTextDeltaEvent,
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
+)
+from tau_ai.content import (
+    NON_VISION_TOOL_IMAGE_PLACEHOLDER,
+    NON_VISION_USER_IMAGE_PLACEHOLDER,
+    messages_have_images,
+    text_and_images,
 )
 from tau_ai.env import OpenAICompatibleConfig
 from tau_ai.events import AssistantMessageEvent
@@ -147,12 +154,14 @@ class OpenAICompatibleProvider:
             compat=self._config.compat,
             max_tokens=self._config.max_tokens,
             include_reasoning_effort_none=self._config.include_reasoning_effort_none,
+            supports_images=self._config.supports_images,
         )
         return self._stream(
             model=model,
             url=f"{self._config.base_url.rstrip('/')}/chat/completions",
             payload=payload,
             parser_factory=_ChatStreamParser,
+            has_images=(self._config.supports_images and messages_have_images(messages)),
             signal=signal,
         )
 
@@ -173,12 +182,14 @@ class OpenAICompatibleProvider:
             tools=tools,
             reasoning_effort=self._config.reasoning_effort,
             max_tokens=self._config.max_tokens,
+            supports_images=self._config.supports_images,
         )
         return self._stream(
             model=model,
             url=f"{self._config.base_url.rstrip('/')}/responses",
             payload=payload,
             parser_factory=_ResponsesStreamParser,
+            has_images=(self._config.supports_images and messages_have_images(messages)),
             signal=signal,
         )
 
@@ -189,6 +200,7 @@ class OpenAICompatibleProvider:
         url: str,
         payload: Mapping[str, JSONValue],
         parser_factory: Callable[[], _StreamParser],
+        has_images: bool = False,
         signal: CancellationToken | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Run the shared streaming POST + retry envelope for a given endpoint.
@@ -204,6 +216,8 @@ class OpenAICompatibleProvider:
             api_key = self._config.api_key
             request_url = url
             headers = dict(self._config.headers or {})
+            if self._config.provider_name == "github-copilot" and has_images:
+                headers["Copilot-Vision-Request"] = "true"
             if self._config.credential_resolver is not None:
                 auth = await self._config.credential_resolver()
                 api_key = auth.api_key
@@ -666,6 +680,7 @@ def _build_chat_payload(
     compat: Mapping[str, JSONValue] | None = None,
     max_tokens: int | None = None,
     include_reasoning_effort_none: bool = False,
+    supports_images: bool = False,
 ) -> dict[str, JSONValue]:
     resolved_compat = dict(compat or {})
     supports_store = bool(resolved_compat.get("supportsStore", True))
@@ -679,7 +694,7 @@ def _build_chat_payload(
         "stream": True,
         "messages": [
             _system_message(system),
-            *[_message_to_openai(message) for message in messages],
+            *_messages_to_openai_chat(messages, supports_images=supports_images),
         ],
     }
     if supports_usage:
@@ -757,6 +772,7 @@ def _build_responses_payload(
     tools: list[AgentTool],
     reasoning_effort: str | None = None,
     max_tokens: int | None = None,
+    supports_images: bool = False,
 ) -> dict[str, JSONValue]:
     payload: dict[str, JSONValue] = {
         "model": model,
@@ -766,7 +782,7 @@ def _build_responses_payload(
         # path usable for zero-data-retention orgs, which reject ``store: true``.
         "store": False,
         "instructions": system,
-        "input": _messages_to_responses_input(messages),
+        "input": _messages_to_responses_input(messages, supports_images=supports_images),
     }
     if max_tokens is not None:
         payload["max_output_tokens"] = max_tokens
@@ -792,12 +808,24 @@ def _normalize_responses_effort(reasoning_effort: str | None) -> str | None:
 
 
 def _messages_to_responses_input(
-    messages: list[AgentMessage],
+    messages: list[AgentMessage], *, supports_images: bool = False
 ) -> list[JSONValue]:
     items: list[JSONValue] = []
     for message in messages:
         if isinstance(message, UserMessage):
-            items.append({"role": "user", "content": message.text})
+            text, images = text_and_images(
+                message.content,
+                supports_images=supports_images,
+                image_placeholder=NON_VISION_USER_IMAGE_PLACEHOLDER,
+            )
+            if images:
+                content: list[JSONValue] = []
+                if text:
+                    content.append({"type": "input_text", "text": text})
+                content.extend(_openai_input_image(image) for image in images)
+                items.append({"role": "user", "content": content})
+            else:
+                items.append({"role": "user", "content": text})
         elif isinstance(message, AssistantMessage):
             for block in message.content:
                 if isinstance(block, ThinkingContent) and block.thinking_signature:
@@ -819,14 +847,36 @@ def _messages_to_responses_input(
                     }
                 )
         elif isinstance(message, ToolResultMessage):
+            text, images = text_and_images(
+                message.content,
+                supports_images=supports_images,
+                image_placeholder=NON_VISION_TOOL_IMAGE_PLACEHOLDER,
+            )
+            output: JSONValue
+            if images:
+                output_parts: list[JSONValue] = []
+                if text:
+                    output_parts.append({"type": "input_text", "text": text})
+                output_parts.extend(_openai_input_image(image) for image in images)
+                output = output_parts
+            else:
+                output = text or "(no tool output)"
             items.append(
                 {
                     "type": "function_call_output",
                     "call_id": message.tool_call_id,
-                    "output": message.text,
+                    "output": output,
                 }
             )
     return items
+
+
+def _openai_input_image(image: ImageContent) -> dict[str, JSONValue]:
+    return {
+        "type": "input_image",
+        "detail": "auto",
+        "image_url": f"data:{image.mime_type};base64,{image.data}",
+    }
 
 
 def _tool_to_responses(tool: AgentTool) -> dict[str, JSONValue]:
@@ -946,6 +996,70 @@ def _str_or_none(value: object) -> str | None:
 
 def _system_message(system: str) -> dict[str, JSONValue]:
     return {"role": "system", "content": system}
+
+
+def _messages_to_openai_chat(
+    messages: list[AgentMessage], *, supports_images: bool
+) -> list[dict[str, JSONValue]]:
+    converted: list[dict[str, JSONValue]] = []
+    pending_tool_images: list[ImageContent] = []
+    for message in messages:
+        if pending_tool_images and not isinstance(message, ToolResultMessage):
+            converted.append(_openai_tool_image_message(pending_tool_images))
+            pending_tool_images = []
+        if isinstance(message, UserMessage):
+            text, images = text_and_images(
+                message.content,
+                supports_images=supports_images,
+                image_placeholder=NON_VISION_USER_IMAGE_PLACEHOLDER,
+            )
+            if images:
+                content: list[JSONValue] = []
+                if text:
+                    content.append({"type": "text", "text": text})
+                content.extend(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{image.mime_type};base64,{image.data}"},
+                    }
+                    for image in images
+                )
+                converted.append({"role": "user", "content": content})
+            else:
+                converted.append({"role": "user", "content": text})
+            continue
+        if isinstance(message, ToolResultMessage):
+            text, images = text_and_images(
+                message.content,
+                supports_images=supports_images,
+                image_placeholder=NON_VISION_TOOL_IMAGE_PLACEHOLDER,
+            )
+            converted.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": message.tool_call_id,
+                    "name": message.tool_name,
+                    "content": text or ("(see attached image)" if images else "(no tool output)"),
+                }
+            )
+            pending_tool_images.extend(images)
+            continue
+        converted.append(_message_to_openai(message))
+    if pending_tool_images:
+        converted.append(_openai_tool_image_message(pending_tool_images))
+    return converted
+
+
+def _openai_tool_image_message(images: list[ImageContent]) -> dict[str, JSONValue]:
+    content: list[JSONValue] = [{"type": "text", "text": "Attached image(s) from tool result:"}]
+    content.extend(
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:{image.mime_type};base64,{image.data}"},
+        }
+        for image in images
+    )
+    return {"role": "user", "content": content}
 
 
 def _message_to_openai(message: AgentMessage) -> dict[str, JSONValue]:

@@ -33,7 +33,25 @@ Reads a file from disk.
 For text files, `read` returns UTF-8 content, applies `offset`/`limit`, and
 truncates to at most 2,000 lines or 50 KB (whichever comes first), appending a
 hint like `[42 more lines in file. Use offset=101 to continue.]`. Supported
-images (JPEG, PNG, GIF, WebP) are returned as base64 with metadata.
+images (JPEG, static PNG, GIF, WebP, and BMP) are detected from their file
+content and sent to vision-capable models as image attachments. BMP files are
+converted to PNG. Tau validates images and, when necessary, resizes them without
+upscaling or changing their aspect ratio. The processed attachment is limited to
+2,000 pixels on either side and 5 MB. Processing also rejects source files above
+50 MB or 40 million pixels. Animated PNG and JPEG XL inputs receive explicit
+unsupported-format notices. If decoding, conversion, or resizing cannot produce
+a safe attachment, Tau returns a clear omission notice.
+
+When the active model does not accept images, `read` returns an explicit
+text-only notice that says the image contents are unavailable and recommends
+switching to a vision-capable model. It does not attach or process the image.
+Provider serialization applies the same defensive downgrade to image blocks from
+older sessions or other tools. This avoids invalid requests and reduces pressure
+on text-only models to invent a visual description.
+
+The Textual TUI shows this notice, but does not render images inline; native
+terminal-image rendering remains outside the `read` tool's provider-neutral
+contract.
 
 Fails when `path` is missing/invalid, the file doesn't exist, the path is a
 directory, `offset` is past the end, or the file is neither UTF-8 text nor a

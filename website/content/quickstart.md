@@ -9,14 +9,26 @@ minutes.
 
 ## 1. Install Tau
 
-Tau is a Python tool. The easiest way to install it is with
-[`uv`](https://docs.astral.sh/uv/):
+Tau is a Python tool requiring Python 3.12 or newer. Its installer uses
+[`uv`](https://docs.astral.sh/uv/) to create an isolated environment and installs
+`uv` first when it is not already available.
+
+On macOS or Linux, run:
 
 ```bash
-uv tool install tau-ai
+curl -LsSf https://twotimespi.dev/install.sh | sh
 ```
 
-Tau requires Python 3.12 or newer.
+On Windows, run in PowerShell:
+
+```powershell
+irm https://twotimespi.dev/install.ps1 | iex
+```
+
+The installer announces before installing `uv`, never uses `sudo`, verifies the
+installed `tau` command, and tells you if you need to restart your shell for a
+`PATH` update. To review code before executing it, download and inspect
+[`install.sh`](/install.sh) or [`install.ps1`](/install.ps1) first.
 
 Check it worked:
 
@@ -24,20 +36,26 @@ Check it worked:
 tau --version
 ```
 
-{{% tip title="Don't have uv?" %}}
-You can install Tau with `pipx install tau-ai` or
-`python -m pip install tau-ai`. If you prefer `uv`, install it with
-`curl -LsSf https://astral.sh/uv/install.sh | sh` (macOS/Linux), or see the
-[uv install docs](https://docs.astral.sh/uv/getting-started/installation/).
+{{% tip title="Already have a package manager?" %}}
+Install Tau directly with `uv tool install tau-ai`, `pipx install tau-ai`, or
+`python -m pip install tau-ai`.
 {{% /tip %}}
 
 ### Upgrade Tau
 
-For a normal tool install, upgrade with:
+For a normal install, let Tau detect and reuse the installer that owns its environment:
 
 ```bash
-uv tool upgrade tau-ai
+tau update
 ```
+
+Tau reuses uv or pipx when their environment receipt is present. For uv tools,
+it installs the latest stable version explicitly so an older version pin cannot
+block the update. For ordinary Python installs, standard package metadata tells
+Tau whether to use uv or pip, and Tau targets the exact Python environment
+running it. It stops instead of
+switching installers for editable, direct-URL, Conda/Pixi, or unrecognized
+installations.
 
 If you installed a local checkout with `uv tool install --editable .`, run the
 install command again after pulling changes:
@@ -112,7 +130,7 @@ tau sessions
 Resume the most recent one for this directory, or pick from a list:
 
 ```bash
-tau --resume <session-id>
+tau --session <session-id>
 ```
 
 …or open the picker inside the TUI with `/resume`. See

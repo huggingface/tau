@@ -102,6 +102,7 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
         "claude-opus-4-5-20251101",
         "claude-opus-4-6",
         "claude-opus-4-7",
+        "claude-opus-5",
         "claude-sonnet-4-5",
         "claude-sonnet-4-5-20250929",
         "claude-sonnet-4-6",
@@ -119,11 +120,21 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
         "claude-opus-4-5-20251101": 200_000,
         "claude-opus-4-6": 1_000_000,
         "claude-opus-4-7": 1_000_000,
+        "claude-opus-5": 1_000_000,
         "claude-sonnet-4-5": 200_000,
         "claude-sonnet-4-5-20250929": 200_000,
         "claude-sonnet-4-6": 1_000_000,
         "claude-sonnet-5": 1_000_000,
     }
+    opus_5 = entry.model_metadata["claude-opus-5"]
+    assert opus_5.context_window == 1_000_000
+    assert opus_5.max_tokens == 128_000
+    assert opus_5.input == ("text", "image")
+    assert opus_5.cost is not None
+    assert opus_5.cost["input"] == 5
+    assert opus_5.cost["output"] == 25
+    assert opus_5.compat == {"forceAdaptiveThinking": True}
+    assert opus_5.thinking_level_map == {"minimal": None, "xhigh": "max"}
     assert entry.thinking_levels == ("off", "minimal", "low", "medium", "high", "xhigh")
     assert entry.thinking_models == ()
     assert entry.thinking_default == "medium"
@@ -139,11 +150,109 @@ def test_builtin_catalog_separates_openai_api_and_codex_context_limits() -> None
     assert codex is not None
     assert openai.context_windows is not None
     assert codex.context_windows is not None
+    assert "gpt-5.6" in openai.models
+    assert "gpt-5.6" not in codex.models
+    assert "gpt-5.6" not in codex.context_windows
+    assert "gpt-5.6" not in codex.model_metadata
     assert openai.context_windows["gpt-5.6-sol"] == 1_050_000
     assert codex.context_windows["gpt-5.6-sol"] == 272_000
     assert codex.context_windows["gpt-5.6-terra"] == 272_000
     assert codex.context_windows["gpt-5.6-luna"] == 272_000
     assert codex.model_metadata["gpt-5.6-sol"].context_window == 272_000
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "vision_models"),
+    [
+        (
+            "openai-codex",
+            {
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "gpt-5.6-luna",
+                "gpt-5.5",
+                "gpt-5.4",
+                "gpt-5.4-mini",
+                "gpt-5.3-codex",
+                "gpt-5.2",
+            },
+        ),
+        (
+            "opencode-go",
+            {
+                "kimi-k2.6",
+                "kimi-k2.7-code",
+                "mimo-v2.5",
+                "minimax-m3",
+                "qwen3.6-plus",
+                "qwen3.7-plus",
+            },
+        ),
+        (
+            "opencode",
+            {
+                "gpt-5.4",
+                "gpt-5.4-mini",
+                "gpt-5.5",
+                "gpt-5.5-pro",
+                "gpt-5.6-luna",
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "grok-4.5",
+                "grok-build-0.1",
+                "kimi-k2.5",
+                "kimi-k2.6",
+                "kimi-k2.7-code",
+                "mimo-v2.5-free",
+                "minimax-m3",
+                "qwen3.5-plus",
+                "qwen3.6-plus",
+            },
+        ),
+        (
+            "github-copilot",
+            {
+                "claude-fable-5",
+                "claude-haiku-4.5",
+                "claude-opus-4.5",
+                "claude-opus-4.6",
+                "claude-opus-4.7",
+                "claude-opus-4.8",
+                "claude-sonnet-4",
+                "claude-sonnet-4.5",
+                "claude-sonnet-4.6",
+                "claude-sonnet-5",
+                "gemini-2.5-pro",
+                "gemini-3-flash-preview",
+                "gemini-3.1-pro-preview",
+                "gemini-3.5-flash",
+                "gpt-4.1",
+                "gpt-5-mini",
+                "gpt-5.2",
+                "gpt-5.2-codex",
+                "gpt-5.3-codex",
+                "gpt-5.4",
+                "gpt-5.4-mini",
+                "gpt-5.4-nano",
+                "gpt-5.5",
+                "gpt-5.6-luna",
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "kimi-k2.7-code",
+            },
+        ),
+    ],
+)
+def test_sparse_provider_catalogs_declare_model_input_modalities(
+    provider_name: str, vision_models: set[str]
+) -> None:
+    provider = builtin_provider_entry(provider_name)
+
+    assert provider is not None
+    assert set(provider.model_metadata) == set(provider.models)
+    assert {
+        model for model, metadata in provider.model_metadata.items() if "image" in metadata.input
+    } == vision_models
 
 
 def test_builtin_catalog_oauth_and_opencode_auth_methods() -> None:
@@ -302,7 +411,7 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
     k3 = coding.model_metadata["k3"]
     assert k3.name == "Kimi K3"
     assert k3.reasoning is True
-    assert k3.input == ("text",)
+    assert k3.input == ("text", "image")
     assert k3.context_window == 1_048_576
     assert k3.thinking_level_map == {
         "off": None,

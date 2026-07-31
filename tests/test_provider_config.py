@@ -21,6 +21,7 @@ from tau_coding.provider_config import (
     openai_compatible_config_from_provider,
     provider_default_thinking_level,
     provider_has_usable_credentials,
+    provider_model_supports_images,
     provider_settings_from_json,
     provider_thinking_levels,
     provider_thinking_unavailable_reason,
@@ -71,6 +72,23 @@ def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path)
     assert settings.get_provider("anthropic").api_key_env == "ANTHROPIC_API_KEY"
     assert settings.get_provider("openrouter").api_key_env == "OPENROUTER_API_KEY"
     assert settings.get_provider("huggingface").api_key_env == "HF_TOKEN"
+
+
+def test_builtin_codex_preserves_model_input_capabilities() -> None:
+    codex = ProviderSettings().get_provider("openai-codex")
+
+    for model in (
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.5",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.3-codex",
+        "gpt-5.2",
+    ):
+        assert provider_model_supports_images(codex, model)
+    assert not provider_model_supports_images(codex, "gpt-5.3-codex-spark")
 
 
 def test_builtin_openai_declares_model_scoped_thinking_capabilities() -> None:
@@ -150,6 +168,13 @@ def test_builtin_openai_declares_model_scoped_thinking_capabilities() -> None:
         "medium",
         "high",
     )
+    assert provider_thinking_levels(anthropic, model="claude-opus-5") == (
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    )
 
 
 def test_load_provider_settings_accepts_provider_preferences_with_user_catalog(
@@ -202,6 +227,25 @@ docs_url = "http://localhost:11434/v1"
     assert provider.headers == {"X-Test": "yes"}
     assert provider.timeout_seconds == 12.0
     assert settings.scoped_models == (ScopedModelConfig(provider="local", model="qwen"),)
+
+
+def test_provider_settings_ignore_unknown_fields(tmp_path: Path) -> None:
+    settings = provider_settings_from_json(
+        {
+            "default_provider": "openai",
+            "future_top_level_option": True,
+            "provider_preferences": {
+                "openai": {
+                    "default_model": "gpt-5-mini",
+                    "future_provider_option": {"enabled": True},
+                }
+            },
+        },
+        paths=TauPaths(home=tmp_path / ".tau"),
+    )
+
+    assert settings.default_provider == "openai"
+    assert settings.get_provider("openai").default_model == "gpt-5-mini"
 
 
 def test_load_provider_settings_ignores_preference_without_catalog_entry(
@@ -657,6 +701,25 @@ def test_set_default_provider_model_rejects_model_not_declared_for_provider() ->
         set_default_provider_model(settings, provider_name="local", model="llama")
 
 
+def test_runtime_config_uses_selected_model_image_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUSTOM_API_KEY", "secret")
+    provider = OpenAICompatibleProviderConfig(
+        name="custom",
+        api_key_env="CUSTOM_API_KEY",
+        models=("text", "vision"),
+        default_model="text",
+        model_metadata={
+            "text": ProviderModelMetadata(input=("text",)),
+            "vision": ProviderModelMetadata(input=("text", "image")),
+        },
+    )
+
+    assert not openai_compatible_config_from_provider(provider, model="text").supports_images
+    assert openai_compatible_config_from_provider(provider, model="vision").supports_images
+
+
 def test_openai_compatible_config_from_provider_uses_configured_env_var(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -912,6 +975,31 @@ def test_anthropic_config_from_provider_sets_thinking_budget(
     assert high_config.thinking_budget_tokens == 8192
 
 
+def test_anthropic_config_from_provider_maps_opus_5_adaptive_thinking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    provider = ProviderSettings().get_provider("anthropic")
+    assert isinstance(provider, AnthropicProviderConfig)
+
+    off_config = anthropic_config_from_provider(
+        provider, model="claude-opus-5", thinking_level="off"
+    )
+    medium_config = anthropic_config_from_provider(
+        provider, model="claude-opus-5", thinking_level="medium"
+    )
+    xhigh_config = anthropic_config_from_provider(
+        provider, model="claude-opus-5", thinking_level="xhigh"
+    )
+
+    assert off_config.thinking_mode == "disabled"
+    assert off_config.thinking_effort is None
+    assert medium_config.thinking_mode == "adaptive"
+    assert medium_config.thinking_effort == "medium"
+    assert xhigh_config.thinking_mode == "adaptive"
+    assert xhigh_config.thinking_effort == "max"
+
+
 @pytest.mark.parametrize(
     ("parameter", "expected"),
     [
@@ -1113,7 +1201,6 @@ def test_load_provider_settings_does_not_restore_stale_codex_builtin_models(
     provider = settings.get_provider("openai-codex")
 
     assert provider.models == (
-        "gpt-5.6",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",

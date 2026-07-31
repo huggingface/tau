@@ -2,9 +2,11 @@ import asyncio
 import json
 import sys
 from collections.abc import AsyncIterator
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from conftest import isolate_home
 from pi_event_helpers import assistant_done, assistant_error, assistant_start
@@ -12,6 +14,7 @@ from tau_agent import (
     AgentMessage,
     AgentTool,
     AssistantMessage,
+    ImageContent,
     MessageEndEvent,
     TextContent,
     ThinkingContent,
@@ -19,7 +22,8 @@ from tau_agent import (
     ToolResultMessage,
     UserMessage,
 )
-from tau_agent.messages import assistant_content
+from tau_agent.messages import AssistantMessageDiagnostic, assistant_content
+from tau_agent.provider_events import AssistantErrorEvent
 from tau_agent.session import (
     CompactionEntry,
     JsonlSessionStorage,
@@ -51,6 +55,8 @@ from tau_coding import (
 )
 from tau_coding import session as coding_session_module
 from tau_coding.events import QueueUpdateEvent
+from tau_coding.prompt_templates import PromptTemplate
+from tau_coding.provider_config import ProviderModelMetadata
 from tau_coding.session import _ordered_tree_entries, parse_terminal_command
 
 
@@ -315,6 +321,69 @@ async def test_prompt_logs_error_event_diagnostic_data(tmp_path: Path) -> None:
     assert entry["error"] == {
         "message": "provider failed",
         "stop_reason": "error",
+    }
+    assert "Hello" not in log_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.anyio
+async def test_prompt_logs_safe_provider_stream_error_details(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    error = AssistantMessage(
+        stop_reason="error",
+        error_message="Our servers are currently overloaded. Please try again later.",
+        diagnostics=[
+            AssistantMessageDiagnostic(
+                type="provider_error",
+                details={
+                    "event": {
+                        "type": "error",
+                        "error": {
+                            "type": "service_unavailable_error",
+                            "code": "server_is_overloaded",
+                            "message": "Our servers are currently overloaded. "
+                            "Please try again later.",
+                            "param": None,
+                        },
+                        "sequence_number": 2,
+                    }
+                },
+            )
+        ],
+    )
+    provider = FakeProvider([[AssistantErrorEvent(reason="error", error=error)]])
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            provider_name="openai-codex",
+            session_id="session-1",
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    await _collect_session_events(session.prompt("Hello"))
+
+    log_path = tau_paths.agent_calls_log_path
+    entry = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])
+    assert entry["kind"] == "assistant_error"
+    assert entry["error"] == {
+        "message": "Our servers are currently overloaded. Please try again later.",
+        "stop_reason": "error",
+        "provider": {
+            "event": {
+                "type": "error",
+                "sequence_number": 2,
+                "error": {
+                    "type": "service_unavailable_error",
+                    "code": "server_is_overloaded",
+                    "message": "Our servers are currently overloaded. Please try again later.",
+                },
+            }
+        },
     }
     assert "Hello" not in log_path.read_text(encoding="utf-8")
 
@@ -890,6 +959,47 @@ async def test_session_cycles_thinking_level(tmp_path: Path) -> None:
 
     assert message == "Thinking mode: high"
     assert session.thinking_level == "high"
+
+
+@pytest.mark.anyio
+async def test_session_updates_read_image_behavior_when_model_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    provider_config = OpenAICompatibleProviderConfig(
+        name="openai",
+        models=("text-only", "vision"),
+        default_model="text-only",
+        model_metadata={
+            "text-only": ProviderModelMetadata(input=("text",)),
+            "vision": ProviderModelMetadata(input=("text", "image")),
+        },
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="text-only",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+        )
+    )
+    output = BytesIO()
+    Image.new("RGB", (8, 6), "navy").save(output, format="PNG")
+    (tmp_path / "image.png").write_bytes(output.getvalue())
+    read_tool = next(tool for tool in session.tools if tool.name == "read")
+
+    omitted = await read_tool.execute("call-1", {"path": "image.png"})
+
+    assert "do not infer or describe" in omitted.text
+    assert not any(isinstance(block, ImageContent) for block in omitted.content)
+
+    session.set_model("vision")
+    attached = await read_tool.execute("call-2", {"path": "image.png"})
+
+    assert any(isinstance(block, ImageContent) for block in attached.content)
 
 
 @pytest.mark.anyio
@@ -2065,7 +2175,7 @@ async def test_session_loads_and_expands_skills(tmp_path: Path) -> None:
     )
     session = await CodingSession.load(config)
 
-    _events = await _collect_session_events(session.prompt("/skill:testing add tests"))
+    _events = await _collect_session_events(session.prompt("/skill:testing\n\nadd tests"))
 
     assert {skill.name for skill in session.skills} == {"testing"}
     assert '<skill name="testing" location="' in provider.calls[0][2][0].content
@@ -2207,6 +2317,66 @@ async def test_session_expands_prompt_templates_as_slash_commands(tmp_path: Path
     _events = await _collect_session_events(session.prompt("/example src/app.py"))
 
     assert provider.calls[0][2][0].content == "Custom prompt for src/app.py."
+
+
+@pytest.mark.anyio
+async def test_reserved_prompts_template_cannot_shadow_picker_command(tmp_path: Path) -> None:
+    resource_root = tmp_path / "resources"
+    prompts_dir = resource_root / "prompts"
+    prompts_dir.mkdir(parents=True)
+    reserved_path = prompts_dir / "prompts.md"
+    reserved_path.write_text("Shadow the picker", encoding="utf-8")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        )
+    )
+
+    result = session.handle_command("/prompts")
+
+    assert result.handled is True
+    assert result.prompts_picker_requested is True
+    assert session.prompt_templates == ()
+    assert any(
+        diagnostic.path == reserved_path
+        and "reserved by the built-in /prompts command" in diagnostic.message
+        for diagnostic in session.resource_diagnostics
+    )
+
+
+@pytest.mark.anyio
+async def test_reserved_tools_template_cannot_shadow_picker_command(tmp_path: Path) -> None:
+    resource_root = tmp_path / "resources"
+    prompts_dir = resource_root / "prompts"
+    prompts_dir.mkdir(parents=True)
+    reserved_path = prompts_dir / "tools.md"
+    reserved_path.write_text("Shadow the picker", encoding="utf-8")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        )
+    )
+
+    result = session.handle_command("/tools")
+
+    assert result.handled is True
+    assert result.tools_picker_requested is True
+    assert session.prompt_templates == ()
+    assert any(
+        diagnostic.path == reserved_path
+        and "reserved by the built-in /tools command" in diagnostic.message
+        for diagnostic in session.resource_diagnostics
+    )
 
 
 @pytest.mark.anyio
@@ -3861,6 +4031,23 @@ async def test_session_context_usage_recalculates_after_resume(tmp_path: Path) -
     assert after_resume_usage.message_count == 2
     assert after_resume_usage.total_tokens > before_resume_usage.total_tokens
     assert session.context_token_estimate == after_resume_usage.total_tokens
+
+
+def test_custom_prompt_template_retains_precedence_over_other_commands(tmp_path: Path) -> None:
+    session = CodingSession(
+        _config(tmp_path, FakeProvider([]), JsonlSessionStorage(tmp_path / "session.jsonl")),
+        state=object(),  # type: ignore[arg-type]
+        harness=object(),  # type: ignore[arg-type]
+        last_parent_id=None,
+        prompt_templates=(
+            PromptTemplate(name="new", path=tmp_path / "new.md", content="Custom workflow"),
+        ),
+    )
+
+    result = session.handle_command("/new")
+
+    assert result.handled is False
+    assert session.expand_prompt_text("/new") == "Custom workflow"
 
 
 def test_minimal_commands_are_handled(tmp_path: Path) -> None:

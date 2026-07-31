@@ -105,6 +105,7 @@ class CommandResult:
     export_format: str | None = None
     resume_session_id: str | None = None
     resume_picker_requested: bool = False
+    prompts_picker_requested: bool = False
     tree_picker_requested: bool = False
     login_picker_requested: bool = False
     custom_provider_login_requested: bool = False
@@ -113,7 +114,9 @@ class CommandResult:
     logout_picker_requested: bool = False
     logout_provider: str | None = None
     model_picker_requested: bool = False
+    tools_picker_requested: bool = False
     scoped_models_picker_requested: bool = False
+    skills_picker_requested: bool = False
     theme_picker_requested: bool = False
     thinking_level: str | None = None
     theme: str | None = None
@@ -267,11 +270,29 @@ def create_default_command_registry() -> CommandRegistry:
     )
     registry.register(
         SlashCommand(
+            name="skills",
+            usage="/skills",
+            description="Browse and insert a loaded skill.",
+            handler=_skills_command,
+            search_terms=("skill", "picker", "search"),
+        )
+    )
+    registry.register(
+        SlashCommand(
             name="hotkeys",
             usage="/hotkeys",
             description="Show common keyboard shortcuts.",
             handler=_hotkeys_command,
             search_terms=("keys", "shortcuts", "bindings"),
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="prompts",
+            usage="/prompts",
+            description="Choose a loaded prompt template.",
+            handler=_prompts_command,
+            search_terms=("templates", "picker"),
         )
     )
     registry.register(
@@ -315,6 +336,15 @@ def create_default_command_registry() -> CommandRegistry:
             usage="/model",
             description="Choose the active model.",
             handler=_model_command,
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="tools",
+            usage="/tools",
+            description="Browse tools available to the active session.",
+            handler=_tools_command,
+            search_terms=("capabilities", "reference"),
         )
     )
     registry.register(
@@ -451,22 +481,9 @@ def _hotkeys_command(context: CommandContext) -> CommandResult:
 
 
 def _skills_command(context: CommandContext) -> CommandResult:
-    if not context.session.skills:
-        lines = ["No skills loaded."]
-        if context.session.resource_diagnostics:
-            lines.append("")
-            lines.extend(_format_diagnostics(context.session.resource_diagnostics, kind="skill"))
-        return CommandResult(handled=True, message="\n".join(lines))
-
-    lines = ["Available skills:"]
-    for skill in sorted(context.session.skills, key=lambda item: item.name):
-        description = skill.description or "No description"
-        lines.append(f"- {skill.name}: {description}")
-    lines.append("Use a skill with /skill:<name> [request].")
-    if context.session.resource_diagnostics:
-        lines.append("")
-        lines.extend(_format_diagnostics(context.session.resource_diagnostics, kind="skill"))
-    return CommandResult(handled=True, message="\n".join(lines))
+    if context.args:
+        return CommandResult(handled=True, message="Usage: /skills")
+    return CommandResult(handled=True, skills_picker_requested=True)
 
 
 def _resources_command(context: CommandContext) -> CommandResult:
@@ -512,6 +529,12 @@ def _skill_command(context: CommandContext) -> CommandResult:
         handled=True,
         message="Use /skill:<name> [request] to expand a loaded skill into your prompt.",
     )
+
+
+def _prompts_command(context: CommandContext) -> CommandResult:
+    if context.args:
+        return CommandResult(handled=True, message="Usage: /prompts")
+    return CommandResult(handled=True, prompts_picker_requested=True)
 
 
 def _resume_command(context: CommandContext) -> CommandResult:
@@ -583,6 +606,10 @@ def _format_sessions(context: CommandContext) -> str:
     for record in records:
         lines.append(_format_session_record(record))
     return "\n".join(lines)
+
+
+def _tools_command(context: CommandContext) -> CommandResult:
+    return CommandResult(handled=True, tools_picker_requested=True)
 
 
 def _model_command(context: CommandContext) -> CommandResult:

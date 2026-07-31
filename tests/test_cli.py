@@ -30,6 +30,7 @@ from tau_coding.update_check import (
     ReleaseNotesNotice,
     UpdateNotice,
 )
+from tau_coding.updater import UpdateResult
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
@@ -125,6 +126,63 @@ def test_version_command_does_not_check_for_updates(monkeypatch: pytest.MonkeyPa
     assert result.stdout.strip() == "tau 1.2.3"
 
 
+def test_update_command_upgrades_without_startup_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        cli,
+        "_startup_update_notice",
+        lambda: (_ for _ in ()).throw(AssertionError("no update check")),
+    )
+    monkeypatch.setattr(
+        cli,
+        "update_tau",
+        lambda: UpdateResult(
+            command=("uv", "tool", "install", "tau-ai@0.2.4"),
+            stdout="Updated tau-ai",
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["update"])
+
+    assert result.exit_code == 0
+    assert "Updated tau-ai" in result.stdout
+    assert "Tau update completed with: uv tool install tau-ai@0.2.4" in result.stdout
+
+
+def test_update_command_reports_windows_handoff_without_claiming_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "update_tau",
+        lambda: UpdateResult(
+            command=("uv", "tool", "install", "tau-ai@0.2.4"),
+            stdout="Tau update is scheduled and will start after this process exits.",
+            deferred=True,
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["update"])
+
+    assert result.exit_code == 0
+    assert "scheduled" in result.stdout
+    assert "Tau update handed off with:" in result.stdout
+    assert "Tau update completed" not in result.stdout
+
+
+def test_update_command_reports_installer_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        cli,
+        "update_tau",
+        lambda: UpdateResult(command=None, failures=("uv: not found", "pipx: not found")),
+    )
+
+    result = CliRunner().invoke(app, ["update"])
+
+    assert result.exit_code == 1
+    assert "Could not safely update Tau" in result.stderr
+    assert "uv: not found" in result.stderr
+
+
 def test_print_mode_writes_update_notice_to_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_run_openai_print_mode(
         prompt: str,
@@ -169,7 +227,7 @@ def test_json_print_mode_suppresses_update_notice(monkeypatch: pytest.MonkeyPatc
     )
     monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
 
-    result = CliRunner().invoke(app, ["-p", "hello", "--output", "json"])
+    result = CliRunner().invoke(app, ["-p", "--mode", "json", "hello"])
 
     assert result.exit_code == 0
     assert result.stderr == ""
@@ -228,6 +286,39 @@ def test_cli_without_prompt_invokes_tui_runner(
     assert calls == [(None, tmp_path, None, False, None, None, None)]
 
 
+def test_cli_prints_resume_hint_after_tui_exit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def fake_run_openai_tui(*args: object, **kwargs: object) -> str:
+        del args, kwargs
+        return "session-123"
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, [])
+
+    assert result.exit_code == 0
+    assert result.stdout == "To resume this session: tau --session session-123\n"
+
+
+def test_cli_suppresses_resume_hint_without_persisted_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def fake_run_openai_tui(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, [])
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+
+
 def test_cli_positional_prompt_invokes_tui_runner(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -271,10 +362,12 @@ def test_cli_positional_prompt_invokes_tui_runner(
 async def test_run_openai_tui_combines_release_notes_and_update_notice(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    calls: list[tuple[str, ...]] = []
+    calls: list[tuple[str | None, tuple[str, ...]]] = []
 
     async def fake_run_tui_app(**kwargs: object) -> None:
-        calls.append(kwargs["startup_notices"])  # type: ignore[arg-type]
+        calls.append(  # type: ignore[arg-type]
+            (kwargs["startup_update_notice"], kwargs["startup_notices"])
+        )
 
     monkeypatch.setattr(cli, "run_tui_app", fake_run_tui_app)
     monkeypatch.setattr(cli, "_current_version", lambda: "0.1.2")
@@ -302,8 +395,8 @@ async def test_run_openai_tui_combines_release_notes_and_update_notice(
 
     assert calls == [
         (
-            "Tau updated to 0.1.2\n\n**New**\n- Release note",
-            "Tau 0.1.3 is available (installed: 0.1.2). Update with: uv tool upgrade tau-ai",
+            "Tau 0.1.3 is available (installed: 0.1.2). Run `tau update` to upgrade.",
+            ("Tau updated to 0.1.2\n\n**New**\n- Release note",),
         )
     ]
 
@@ -606,6 +699,98 @@ async def test_run_print_mode_can_emit_live_transcript(
     assert captured.err == ""
 
 
+@pytest.mark.parametrize("mode", ["text", "json", "transcript"])
+def test_print_mode_passes_exact_session_id_without_changing_output(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    calls: list[str | None] = []
+
+    async def fake_run_openai_print_mode(
+        prompt: str,
+        model: str | None,
+        cwd: Path,
+        output: PrintOutputMode,
+        provider_name: str | None,
+        session_manager: SessionManager | None,
+        extension_paths: tuple[Path, ...],
+        extensions_enabled: bool,
+        project_extensions_enabled: bool,
+        session_id: str | None,
+    ) -> bool:
+        del (
+            prompt,
+            model,
+            cwd,
+            output,
+            provider_name,
+            session_manager,
+            extension_paths,
+            extensions_enabled,
+            project_extensions_enabled,
+        )
+        calls.append(session_id)
+        return True
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(
+        app,
+        ["--mode", mode, "--new-session", "--session-id", "worker-499", "hello"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert calls == ["worker-499"]
+
+
+@pytest.mark.parametrize(
+    ("session_id", "error"),
+    [
+        ("", "Session id must be non-empty"),
+        ("-bad", "Session id must be non-empty"),
+        ("bad id", "Session id must be non-empty"),
+        ("bad/", "Session id must be non-empty"),
+        ("index", "Session id is reserved: index"),
+        ("a" * 129, "Session id must be at most 128 bytes"),
+    ],
+)
+def test_print_mode_rejects_invalid_session_id(session_id: str, error: str) -> None:
+    result = CliRunner().invoke(app, ["-p", "--session-id", session_id, "hello"])
+
+    assert result.exit_code == 2
+    assert error in _strip_ansi(result.output)
+
+
+def test_session_id_is_print_mode_only() -> None:
+    result = CliRunner().invoke(app, ["--session-id", "worker-499"])
+
+    assert result.exit_code == 2
+    assert "--session-id is only supported in print mode" in _strip_ansi(result.output)
+
+
+def test_create_print_session_uses_requested_id_and_rejects_collision(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+
+    record = cli._create_print_session(
+        manager,
+        cwd=tmp_path,
+        model="fake",
+        session_id="worker-499",
+    )
+
+    assert record.id == "worker-499"
+    assert record.path.name == "worker-499.jsonl"
+    with pytest.raises(RuntimeError, match="Session already exists with id 'worker-499'"):
+        cli._create_print_session(
+            manager,
+            cwd=tmp_path,
+            model="fake",
+            session_id="worker-499",
+        )
+
+
 def test_cli_exits_nonzero_when_print_mode_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_run_openai_print_mode(
         prompt: str,
@@ -666,7 +851,7 @@ def test_default_tui_invokes_tui_runner_with_flags(
             "fake",
             "--provider",
             "local",
-            "--resume",
+            "--session",
             "session-1",
             "--auto-compact-threshold",
             "1000",
@@ -677,7 +862,23 @@ def test_default_tui_invokes_tui_runner_with_flags(
     assert calls == [("fake", tmp_path, "session-1", False, "local", 1000, None)]
 
 
-def test_default_tui_rejects_resume_with_new_session(tmp_path: Path) -> None:
+def test_default_tui_rejects_session_with_new_session(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "--cwd",
+            str(tmp_path),
+            "--session",
+            "session-1",
+            "--new-session",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--session and --new-session cannot be used together" in _strip_ansi(result.output)
+
+
+def test_legacy_resume_flag_errors_with_migration_hint(tmp_path: Path) -> None:
     result = CliRunner().invoke(
         app,
         [
@@ -685,12 +886,155 @@ def test_default_tui_rejects_resume_with_new_session(tmp_path: Path) -> None:
             str(tmp_path),
             "--resume",
             "session-1",
-            "--new-session",
         ],
     )
 
     assert result.exit_code != 0
-    assert "--resume and --new-session cannot be used together" in _strip_ansi(result.output)
+    output = _strip_ansi(result.output)
+    assert "--resume was renamed to --session" in output
+    assert "session-1" in output
+
+
+def test_legacy_prompt_flag_errors_with_migration_hint() -> None:
+    result = CliRunner().invoke(app, ["--prompt", "hello"])
+
+    assert result.exit_code != 0
+    output = _strip_ansi(result.output)
+    assert "--prompt was removed" in output
+    assert "--print" in output
+
+
+def test_legacy_output_flag_errors_with_migration_hint() -> None:
+    result = CliRunner().invoke(app, ["-p", "--output", "json", "hello"])
+
+    assert result.exit_code != 0
+    output = _strip_ansi(result.output)
+    assert "--output was renamed to --mode" in output
+
+
+def test_legacy_extension_short_flag_errors_with_migration_hint(tmp_path: Path) -> None:
+    result = CliRunner().invoke(app, ["-x", str(tmp_path)])
+
+    assert result.exit_code != 0
+    output = _strip_ansi(result.output)
+    assert "-x was renamed to -e/--extension" in output
+
+
+def test_mode_flag_alone_triggers_print_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, PrintOutputMode]] = []
+
+    async def fake_run_openai_print_mode(
+        prompt: str,
+        model: str | None,
+        cwd: Path,
+        output: PrintOutputMode,
+        provider_name: str | None,
+        *extra: object,
+    ) -> bool:
+        del model, cwd, provider_name, extra
+        calls.append((prompt, output))
+        return True
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(app, ["--mode", "json", "hello"])
+
+    assert result.exit_code == 0
+    assert calls == [("hello", PrintOutputMode.json)]
+
+
+def test_print_mode_requires_a_prompt() -> None:
+    result = CliRunner().invoke(app, ["-p"])
+
+    assert result.exit_code != 0
+    assert "Usage: tau --print" in _strip_ansi(result.output)
+
+
+def test_print_mode_merges_piped_stdin_into_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    async def fake_run_openai_print_mode(
+        prompt: str,
+        model: str | None,
+        cwd: Path,
+        output: PrintOutputMode,
+        provider_name: str | None,
+        *extra: object,
+    ) -> bool:
+        del model, cwd, output, provider_name, extra
+        calls.append(prompt)
+        return True
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(app, ["-p", "Summarize"], input="piped content\n")
+
+    assert result.exit_code == 0
+    assert calls == ["piped content\n\n\nSummarize"]
+
+
+def test_print_mode_accepts_stdin_only_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    async def fake_run_openai_print_mode(
+        prompt: str,
+        model: str | None,
+        cwd: Path,
+        output: PrintOutputMode,
+        provider_name: str | None,
+        *extra: object,
+    ) -> bool:
+        del model, cwd, output, provider_name, extra
+        calls.append(prompt)
+        return True
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(app, ["-p"], input="piped content\n")
+
+    assert result.exit_code == 0
+    assert calls == ["piped content\n"]
+
+
+def test_export_flag_invokes_exporter(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[tuple[str, Path | None, str | None]] = []
+    output_path = tmp_path / "out.html"
+
+    async def fake_export_session_command(
+        session_ref: str,
+        requested_output_path: Path | None = None,
+        requested_export_format: str | None = None,
+    ) -> Path:
+        calls.append((session_ref, requested_output_path, requested_export_format))
+        return output_path
+
+    monkeypatch.setattr(cli, "export_session_command", fake_export_session_command)
+
+    result = CliRunner().invoke(app, ["--export", "session-1", str(output_path)])
+
+    assert result.exit_code == 0
+    assert calls == [("session-1", output_path, None)]
+    assert f"Exported session to {output_path}" in result.stdout
+
+
+def test_export_flag_rejects_combination_with_print() -> None:
+    result = CliRunner().invoke(app, ["--export", "-p", "session-1"])
+
+    assert result.exit_code != 0
+    assert "--export cannot be combined with --print/--mode" in _strip_ansi(result.output)
+
+
+def test_version_short_flag_prints_version() -> None:
+    result = CliRunner().invoke(app, ["-v"])
+
+    assert result.exit_code == 0
+    assert result.stdout.startswith("tau ")
 
 
 def _constrained_provider_settings() -> ProviderSettings:

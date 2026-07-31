@@ -8,6 +8,7 @@ from tau_agent import (
     AgentTool,
     AgentToolResult,
     AssistantMessage,
+    ImageContent,
     SimpleCancellationToken,
     TextContent,
     ThinkingContent,
@@ -923,6 +924,256 @@ async def test_openai_codex_provider_includes_plain_http_error_body_in_message()
     }
 
 
+_CODEX_OVERLOAD_ERROR_SSE = (
+    'data: {"type":"error","error":{"type":"service_unavailable_error",'
+    '"code":"server_is_overloaded","message":"Our servers are currently '
+    'overloaded. Please try again later.","param":null},"sequence_number":2}\n\n'
+)
+
+_CODEX_TEXT_SSE = (
+    'data: {"type":"response.output_text.delta","delta":"ok"}\n\n'
+    'data: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+)
+
+
+@pytest.mark.anyio
+async def test_openai_codex_provider_surfaces_nested_stream_error_message() -> None:
+    async def credentials() -> OpenAICodexCredentials:
+        return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=_CODEX_OVERLOAD_ERROR_SSE,
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICodexProvider(
+            OpenAICodexConfig(
+                credential_resolver=credentials,
+                base_url="https://chatgpt.test/backend-api",
+                provider_name="openai-codex",
+                max_retries=0,
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hello")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.error_message == (
+        "Our servers are currently overloaded. Please try again later."
+    )
+    assert events[-1].error.diagnostics[0].details == {
+        "event": {
+            "type": "error",
+            "error": {
+                "type": "service_unavailable_error",
+                "code": "server_is_overloaded",
+                "message": "Our servers are currently overloaded. Please try again later.",
+                "param": None,
+            },
+            "sequence_number": 2,
+        }
+    }
+
+
+@pytest.mark.anyio
+async def test_openai_codex_provider_retries_transient_stream_error() -> None:
+    requests: list[httpx.Request] = []
+
+    async def credentials() -> OpenAICodexCredentials:
+        return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        body = _CODEX_OVERLOAD_ERROR_SSE if len(requests) == 1 else _CODEX_TEXT_SSE
+        return httpx.Response(
+            200,
+            text=body,
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICodexProvider(
+            OpenAICodexConfig(
+                credential_resolver=credentials,
+                base_url="https://chatgpt.test/backend-api",
+                provider_name="openai-codex",
+                max_retries=1,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 2
+    assert [event.type for event in events] == [
+        "start",
+        "text_start",
+        "text_delta",
+        "text_end",
+        "done",
+    ]
+
+
+@pytest.mark.anyio
+async def test_openai_codex_provider_retries_transient_response_failed() -> None:
+    requests: list[httpx.Request] = []
+
+    async def credentials() -> OpenAICodexCredentials:
+        return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        body = (
+            'data: {"type":"response.failed","response":{"status":"failed",'
+            '"error":{"code":"server_is_overloaded",'
+            '"message":"The server is overloaded."}}}\n\n'
+            if len(requests) == 1
+            else _CODEX_TEXT_SSE
+        )
+        return httpx.Response(
+            200,
+            text=body,
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICodexProvider(
+            OpenAICodexConfig(
+                credential_resolver=credentials,
+                base_url="https://chatgpt.test/backend-api",
+                provider_name="openai-codex",
+                max_retries=1,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 2
+    assert [event.type for event in events] == [
+        "start",
+        "text_start",
+        "text_delta",
+        "text_end",
+        "done",
+    ]
+
+
+@pytest.mark.anyio
+async def test_openai_codex_provider_surfaces_stream_error_after_retry_exhaustion() -> None:
+    requests: list[httpx.Request] = []
+
+    async def credentials() -> OpenAICodexCredentials:
+        return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=_CODEX_OVERLOAD_ERROR_SSE,
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICodexProvider(
+            OpenAICodexConfig(
+                credential_resolver=credentials,
+                base_url="https://chatgpt.test/backend-api",
+                provider_name="openai-codex",
+                max_retries=1,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hello")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 2
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.error_message == (
+        "Our servers are currently overloaded. Please try again later."
+    )
+
+
+@pytest.mark.anyio
+async def test_openai_codex_provider_does_not_retry_non_transient_stream_error() -> None:
+    requests: list[httpx.Request] = []
+
+    async def credentials() -> OpenAICodexCredentials:
+        return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"error","error":{"type":"invalid_request_error",'
+                '"code":"invalid_api_key","message":"Invalid API key.","param":null},'
+                '"sequence_number":1}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICodexProvider(
+            OpenAICodexConfig(
+                credential_resolver=credentials,
+                base_url="https://chatgpt.test/backend-api",
+                provider_name="openai-codex",
+                max_retries=2,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hello")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 1
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.error_message == "Invalid API key."
+
+
 @pytest.mark.anyio
 async def test_openai_codex_provider_formats_request_and_streams_text() -> None:
     requests: list[httpx.Request] = []
@@ -1347,6 +1598,42 @@ async def test_anthropic_provider_includes_configured_thinking_budget() -> None:
     payload = loads(requests[0].content)
     assert payload["max_tokens"] == 9216
     assert payload["thinking"] == {"type": "enabled", "budget_tokens": 8192}
+
+
+@pytest.mark.anyio
+async def test_anthropic_provider_explicitly_disables_default_adaptive_thinking() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"type":"message_stop"}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+                thinking_mode="disabled",
+            ),
+            client=client,
+        )
+
+        await _collect(
+            provider.stream_response(
+                model="claude-opus-5",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hello")],
+                tools=[],
+            )
+        )
+
+    payload = loads(requests[0].content)
+    assert payload["thinking"] == {"type": "disabled"}
+    assert "output_config" not in payload
 
 
 @pytest.mark.anyio
@@ -2429,3 +2716,82 @@ async def test_openai_codex_provider_leaves_reasoning_none_when_unreported() -> 
     assert usage.reasoning is None
     assert usage.cache_read == 0
     assert usage.total_tokens == 12
+
+
+@pytest.mark.anyio
+async def test_github_copilot_sends_vision_header_for_tool_result_images() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"type":"response.completed","response":{"status":"completed"}}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    message = ToolResultMessage(
+        tool_call_id="call-1",
+        tool_name="read",
+        content=[ImageContent(data="aW1hZ2U=", mime_type="image/png")],
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://copilot.test",
+                api="openai-responses",
+                provider_name="github-copilot",
+                supports_images=True,
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="gpt-5.4",
+                system="You are Tau.",
+                messages=[message],
+                tools=[],
+            )
+        )
+
+    assert requests[0].headers["Copilot-Vision-Request"] == "true"
+
+
+@pytest.mark.anyio
+async def test_github_copilot_anthropic_sends_vision_header() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"type":"message_stop"}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    message = ToolResultMessage(
+        tool_call_id="call-1",
+        tool_name="read",
+        content=[ImageContent(data="aW1hZ2U=", mime_type="image/png")],
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://copilot.test",
+                provider_name="github-copilot",
+                supports_images=True,
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="claude-sonnet-4.6",
+                system="You are Tau.",
+                messages=[message],
+                tools=[],
+            )
+        )
+
+    assert requests[0].headers["Copilot-Vision-Request"] == "true"

@@ -1,11 +1,91 @@
 [
   {
+    "version": "0.3.4",
+    "date": "2026-07-27",
+    "sections": {
+      "New": [
+        "Send images read from disk to vision-capable models across supported providers, while giving text-only models an explicit omission notice."
+      ],
+      "Changed": [
+        "Validate and safely process image reads, including BMP-to-PNG conversion and bounded resizing for oversized static images."
+      ],
+      "Fixed": [
+        "Allow multiline instructions after `/skill:<name>`, including instructions separated from the invocation by a blank line."
+      ]
+    }
+  },
+  {
+    "version": "0.3.3",
+    "date": "2026-07-25",
+    "sections": {
+      "New": [
+        "Add direct Anthropic support for Claude Opus 5, including its 1M-token context window and adaptive-thinking effort mappings."
+      ],
+      "Changed": [
+        "Highlight terminal-command prompt input, border, and prefix with the active theme's running-tool color."
+      ]
+    }
+  },
+  {
+    "version": "0.3.2",
+    "date": "2026-07-24",
+    "sections": {
+      "Fixed": [
+        "Hide the unsupported `gpt-5.6` API alias from the OpenAI Codex subscription catalog while retaining it for direct OpenAI API users."
+      ]
+    }
+  },
+  {
+    "version": "0.3.1",
+    "date": "2026-07-23",
+    "sections": {
+      "New": [
+        "Add one-line installers for macOS, Linux, and Windows that install Tau through uv and verify the resulting command.",
+        "Add configurable desktop or bell notifications when an agent run finishes while Tau is unfocused.",
+        "Add searchable TUI pickers for prompt templates and skills, plus a searchable tools reference with full descriptions."
+      ],
+      "Changed": [
+        "Keep dense TUI sidebar sections compact by limiting rendered skills, context files, tools, prompts, and extensions while showing hidden-item counts.",
+        "Make user settings forward-compatible by ignoring unknown fields while continuing to validate recognized settings."
+      ],
+      "Fixed": [
+        "Clear the prompt after cancelling the `/skills` picker instead of restoring the handled command."
+      ]
+    }
+  },
+  {
+    "version": "0.3.0",
+    "date": "2026-07-22",
+    "sections": {
+      "Changed": [
+        "Breaking: mirror Pi's non-interactive CLI flags. `--resume` is now `--session`, `-p`/`--prompt <text>` is now `-p`/`--print` with a positional prompt, `-o`/`--output` is now `--mode`, and `-x` is now `-e` for `--extension`; the old flags now error with a migration hint instead of running.",
+        "Add a top-level `--export <session-id> [out]` flag alongside the existing `tau export` subcommand, and add `-v` as a short flag for `--version`, both matching Pi's flag names.",
+        "Merge piped stdin into the print-mode prompt (e.g. `cat file | tau -p \"...\"`), matching Pi's behavior."
+      ]
+    }
+  },
+  {
+    "version": "0.2.4",
+    "date": "2026-07-21",
+    "sections": {
+      "New": [
+        "Add 28 live-routable Hugging Face Inference Providers models from Pi's built-in catalog.",
+        "Insert files dragged onto the terminal as normalized prompt paths while preserving existing text and quoting paths that contain spaces."
+      ],
+      "Changed": [
+        "Shorten TUI sidebar context paths under the home directory with ~/ and give provider metadata quieter styling.",
+        "Raise the minimum supported Pydantic version to 2.11 for explicit wire-model alias validation and serialization behavior."
+      ],
+      "Fixed": [
+        "Show expanded prompt-template text before automatic session naming starts, and avoid redundant naming attempts after provider retries are exhausted.",
+        "Fix the resume picker search to avoid matching workspace paths while retaining session-name and model matches."
+      ]
+    }
+  },
+  {
     "version": "0.2.3",
     "date": "2026-07-20",
     "sections": {
-      "New": [
-        "Add 28 live-routable Hugging Face Inference Providers models from Pi's built-in catalog."
-      ],
       "Changed": [
         "Default the TUI sidebar to the right side while preserving explicit left, right, and off preferences.",
         "Label TUI sidebar token totals as cumulative session usage and document why cumulative provider usage can exceed the active context estimate.",
@@ -13,8 +93,7 @@
       ],
       "Fixed": [
         "Fix session JSONL reads splitting records on Unicode line separators (U+2028, U+2029, U+0085), which made affected sessions and the session index fail to load; the read-side fix also repairs already-affected session files.",
-        "Fix picker highlight text contrast so focused labels use each theme's configured highlight foreground and background colors.",
-        "Fix the resume picker search to avoid matching workspace paths while retaining session-name and model matches."
+        "Fix picker highlight text contrast so focused labels use each theme's configured highlight foreground and background colors."
       ]
     }
   },

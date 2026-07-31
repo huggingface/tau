@@ -2,9 +2,10 @@
 
 from pathlib import Path
 
+import pytest
 from textual import events
 
-from tau_coding.tui.app import PromptInput
+from tau_coding.tui.app import PromptInput, TauTuiApp
 from tau_coding.tui.file_drop import normalize_dropped_paths
 
 
@@ -147,3 +148,64 @@ class TestPromptInputFileDrop:
         prompt.on_paste(event)
 
         assert prompt.text == ""
+
+    def test_insert_pasted_text_inserts_dropped_path(self, tmp_path: Path) -> None:
+        prompt = PromptInput()
+        file = tmp_path / "notes.txt"
+        file.touch()
+
+        prompt.insert_pasted_text(str(file))
+
+        assert prompt.text == f"{file} "
+
+    def test_insert_pasted_text_inserts_plain_text_verbatim(self) -> None:
+        prompt = PromptInput()
+
+        prompt.insert_pasted_text("just some regular text")
+
+        assert prompt.text == "just some regular text"
+
+
+class TestUnfocusedDropRouting:
+    """Drops delivered while the terminal reports no focus must not be lost.
+
+    Textual clears widget focus on ``AppBlur`` and discards pastes when nothing
+    is focused, which is how macOS Dock drags arrive.
+    """
+
+    @pytest.mark.anyio
+    async def test_drop_while_blurred_reaches_prompt(self, tmp_path: Path) -> None:
+        from test_tui_app import FakeSession
+
+        file = tmp_path / "notes.txt"
+        file.touch()
+        app = TauTuiApp(FakeSession())
+
+        async with app.run_test() as pilot:
+            app.post_message(events.AppBlur())
+            await pilot.pause()
+            assert app.focused is None
+
+            app.post_message(events.Paste(str(file)))
+            await pilot.pause()
+
+            prompt = app.query_one("#prompt", PromptInput)
+            assert prompt.text == f"{file} "
+
+    @pytest.mark.anyio
+    async def test_focused_drop_is_not_inserted_twice(self, tmp_path: Path) -> None:
+        from test_tui_app import FakeSession
+
+        file = tmp_path / "notes.txt"
+        file.touch()
+        app = TauTuiApp(FakeSession())
+
+        async with app.run_test() as pilot:
+            prompt = app.query_one("#prompt", PromptInput)
+            prompt.focus()
+            await pilot.pause()
+
+            app.post_message(events.Paste(str(file)))
+            await pilot.pause()
+
+            assert prompt.text == f"{file} "
