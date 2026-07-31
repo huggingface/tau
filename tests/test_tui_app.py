@@ -97,6 +97,7 @@ from tau_coding.tui.app import (
     TreePickerScreen,
     _activity_prompt_border_color,
     _completion_selected_render_line,
+    _filter_login_providers,
     _render_activity_indicator,
     _terminal_command_prefix_span,
     _textual_theme_for_tau_theme,
@@ -6470,6 +6471,48 @@ async def test_tui_login_subscription_opens_oauth_provider_picker() -> None:
         assert "gpt-5.5" not in "\n".join(labels)
 
 
+@pytest.mark.anyio
+async def test_tui_login_api_provider_picker_highlights_first_provider() -> None:
+    # Regression test for issue #494: the list was populated and its index set
+    # in the same pass, so the index was assigned while the list was still
+    # empty and validated back to None. Nothing was highlighted when the picker
+    # opened and the first down key skipped past the first provider.
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/login"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, LoginMethodPickerScreen)
+        app.screen.action_cursor_down()
+        app.screen.action_select_cursor()
+        await pilot.pause()
+
+        assert isinstance(app.screen, LoginProviderPickerScreen)
+        screen = app.screen
+        provider_list = screen.query_one("#login-provider-list", ListView)
+
+        # Refreshing must leave the first provider highlighted by the time it
+        # returns, with no further event-loop turns: a user pressing down
+        # immediately after the picker opens must not skip the first provider.
+        await screen._refresh_provider_list()
+        assert provider_list.index == 0
+        assert provider_list.highlighted_child is not None
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert provider_list.index == 1
+
+        # The same holds after filtering narrows the list.
+        screen.visible_providers = _filter_login_providers(screen.providers, "moonshot")
+        await screen._refresh_provider_list()
+        assert provider_list.index == 0
+        assert screen.visible_providers[0].name.startswith("moonshot")
+
+
+@pytest.mark.anyio
 @pytest.mark.anyio
 async def test_tui_login_api_provider_picker_filters_by_name_and_display_name() -> None:
     app = TauTuiApp(FakeSession())
