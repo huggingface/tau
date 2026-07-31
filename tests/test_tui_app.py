@@ -6574,7 +6574,8 @@ async def test_tui_login_api_provider_picker_handles_no_matches() -> None:
         assert isinstance(app.screen, LoginProviderPickerScreen)
         search = app.screen.query_one("#login-provider-search", Input)
         search.value = "no-such-provider"
-        await pilot.pause()
+        # Refreshing the list awaits its mounts, so flush them before asserting.
+        await pilot.wait_for_scheduled_animations()
 
         provider_list = app.screen.query_one("#login-provider-list", ListView)
         assert len(provider_list.children) == 0
