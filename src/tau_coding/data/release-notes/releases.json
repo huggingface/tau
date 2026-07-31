@@ -1,5 +1,24 @@
 [
   {
+    "version": "0.3.5",
+    "date": "2026-07-31",
+    "sections": {
+      "New": [
+        "Let print-mode automation choose a safe, durable session ID with `--session-id`, while preserving isolated-session guarantees."
+      ],
+      "Changed": [
+        "Cache Anthropic prompt prefixes to reduce repeated input billing, with auth-aware retention, compatibility overrides, and a sidebar cache hit rate.",
+        "Redesign self-contained HTML session exports with compact accordions, entry filters and counts, expand/collapse controls, clearer tool labels, and offline JSONL download.",
+        "Show normal working indicators and unfocused completion notifications while manual `/compact` runs."
+      ],
+      "Fixed": [
+        "Fix Anthropic subscription login and serialize OAuth token refreshes so rotating refresh tokens are not spent concurrently.",
+        "Accept file drops when the terminal is unfocused without duplicating focused paste events.",
+        "Safely hand off `tau update` on Windows after the running process exits, preserving executable paths and arguments exactly."
+      ]
+    }
+  },
+  {
     "version": "0.3.4",
     "date": "2026-07-27",
     "sections": {
