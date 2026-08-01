@@ -104,6 +104,19 @@ the input box, because the terminal delivers the drop as text input.
 Drops are also accepted from sources that do not give the terminal keyboard focus
 first, such as the macOS Dock's Downloads stack.
 
+## Pasting screenshots from the macOS clipboard
+
+Press **Ctrl+V** in the prompt after copying an image or taking a screenshot to
+the clipboard. Tau saves the image as a temporary
+`tau-clipboard-<uuid>.png` file and inserts its path at the cursor, matching the
+path-based workflow used for dropped files. If the clipboard contains no image,
+Ctrl+V pastes its text instead. The shortcut can be remapped with the
+`paste_clipboard` keybinding.
+
+This native clipboard-image shortcut currently requires macOS. The image is sent
+when the agent reads the temporary path, so the active model must support image
+input. Tau does not render the image inline in the terminal.
+
 ## Tool output
 
 Tool calls keep a static marker in the transcript while they run: orange means
