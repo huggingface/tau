@@ -512,6 +512,34 @@ default_model = "claude-next-1"
     assert entry.thinking_parameter == "anthropic.thinking"
 
 
+def test_user_catalog_cannot_restore_unsupported_codex_alias(tmp_path: Path) -> None:
+    paths = _write_user_catalog(
+        tmp_path / ".tau",
+        """
+[[providers]]
+name = "openai-codex"
+models = ["gpt-5.6"]
+default_model = "gpt-5.6"
+thinking_models = ["gpt-5.6"]
+
+[providers.context_windows]
+"gpt-5.6" = 272000
+
+[providers.model_metadata."gpt-5.6"]
+name = "GPT-5.6"
+""",
+    )
+
+    entry = next(e for e in effective_catalog(paths) if e.name == "openai-codex")
+
+    assert entry.default_model == "gpt-5.5"
+    assert "gpt-5.6" not in entry.models
+    assert "gpt-5.6" not in entry.thinking_models
+    assert entry.context_windows is not None
+    assert "gpt-5.6" not in entry.context_windows
+    assert "gpt-5.6" not in entry.model_metadata
+
+
 def test_user_catalog_thinking_fields_replace_as_group(tmp_path: Path) -> None:
     paths = _write_user_catalog(
         tmp_path / ".tau",

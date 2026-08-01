@@ -101,7 +101,8 @@ the API model page. Vision-capable Codex models retain their image-input
 metadata separately from these runtime context limits, allowing image files read
 by Tau to reach the model. The `gpt-5.6` alias, which routes to GPT-5.6 Sol, is only
 available through the direct OpenAI API; Codex subscription users should select
-the explicit `gpt-5.6-sol` model instead.
+the explicit `gpt-5.6-sol` model instead. Tau also ignores this alias in older
+user catalog overlays and saved Codex preferences.
 
 ### OpenCode Go and Zen
 

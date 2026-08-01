@@ -32,6 +32,7 @@ from tau_coding.provider_catalog import (
     ProviderApi,
     ProviderCatalogEntry,
     ProviderKind,
+    provider_model_is_unsupported,
 )
 from tau_coding.thinking import ThinkingLevel, ThinkingParameter
 
@@ -137,7 +138,9 @@ def effective_catalog(paths: TauPaths | None = None) -> tuple[ProviderCatalogEnt
         return builtin_catalog()
     overlay_raw = _parse_catalog_text(path.read_text(encoding="utf-8"), source=str(path))
     _validate_catalog_root(overlay_raw, source=str(path))
-    merged = _merge_raw_catalogs(_builtin_raw(), overlay_raw)
+    builtin_raw = _builtin_raw()
+    merged = _merge_raw_catalogs(builtin_raw, overlay_raw)
+    merged = _filter_unsupported_provider_models(merged, base=builtin_raw)
     return _entries_from_raw(merged, source=str(path))
 
 
@@ -219,6 +222,38 @@ def _merge_raw_catalogs(base: dict[str, Any], overlay: dict[str, Any]) -> dict[s
         "schema_version": overlay.get("schema_version", base.get("schema_version")),
         "providers": [by_name[name] for name in order],
     }
+
+
+def _filter_unsupported_provider_models(
+    raw: dict[str, Any], *, base: dict[str, Any]
+) -> dict[str, Any]:
+    """Keep stale user overlays from restoring models unsupported by a provider."""
+    base_by_name = {_raw_provider_name(provider): provider for provider in _raw_providers(base)}
+    providers = []
+    for provider in _raw_providers(raw):
+        name = _raw_provider_name(provider)
+        filtered = {**provider}
+        for field in ("models", "thinking_models"):
+            values = filtered.get(field)
+            if isinstance(values, list):
+                filtered[field] = [
+                    model
+                    for model in values
+                    if not (isinstance(model, str) and provider_model_is_unsupported(name, model))
+                ]
+        for field in ("context_windows", "model_metadata"):
+            values = filtered.get(field)
+            if isinstance(values, dict):
+                filtered[field] = {
+                    model: value
+                    for model, value in values.items()
+                    if not provider_model_is_unsupported(name, model)
+                }
+        default_model = filtered.get("default_model")
+        if isinstance(default_model, str) and provider_model_is_unsupported(name, default_model):
+            filtered["default_model"] = base_by_name[name]["default_model"]
+        providers.append(filtered)
+    return {**raw, "providers": providers}
 
 
 def _merge_raw_provider(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:

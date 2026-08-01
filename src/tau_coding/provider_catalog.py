@@ -27,6 +27,15 @@ ModelInput = Literal["text", "image"]
 ThinkingLevelMap = dict[ThinkingLevel, str | None]
 AuthMethod = Literal["api_key", "oauth"]
 
+UNSUPPORTED_PROVIDER_MODELS: dict[str, frozenset[str]] = {
+    "openai-codex": frozenset({"gpt-5.6"}),
+}
+
+
+def provider_model_is_unsupported(provider_name: str, model: str) -> bool:
+    """Return whether a model must be excluded from a provider's catalog."""
+    return model in UNSUPPORTED_PROVIDER_MODELS.get(provider_name, ())
+
 
 @dataclass(frozen=True, slots=True)
 class ModelCostTier:

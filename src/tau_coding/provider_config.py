@@ -37,6 +37,7 @@ from tau_coding.provider_catalog import (
     ProviderApi,
     ProviderCatalogEntry,
     ProviderKind,
+    provider_model_is_unsupported,
 )
 from tau_coding.thinking import (
     DEFAULT_THINKING_LEVEL,
@@ -1156,6 +1157,8 @@ def _apply_provider_preference(
         if "default_model" in value
         else provider.default_model
     )
+    if provider_model_is_unsupported(provider.name, default_model):
+        default_model = provider.default_model
     models = (
         provider.models if default_model in provider.models else (*provider.models, default_model)
     )
@@ -1214,7 +1217,11 @@ def _thinking_defaults_dict(
     provider: ProviderConfig,
     field_name: str,
 ) -> dict[str, ThinkingLevel]:
-    raw = _raw_thinking_defaults_dict(value, field_name)
+    raw = {
+        model: thinking_level
+        for model, thinking_level in _raw_thinking_defaults_dict(value, field_name).items()
+        if not provider_model_is_unsupported(provider.name, model)
+    }
     for model, thinking_level in raw.items():
         validate_provider_model(provider, model)
         available = provider_thinking_levels(provider, model=model)
