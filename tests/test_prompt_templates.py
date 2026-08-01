@@ -90,7 +90,7 @@ def test_load_prompt_templates_with_diagnostics_reports_overrides(tmp_path: Path
     assert "overrides lower-precedence resource" in diagnostics[0].message
 
 
-@pytest.mark.parametrize("reserved_name", ["prompts", "skills", "tools"])
+@pytest.mark.parametrize("reserved_name", ["diagnostics", "prompts", "skills", "tools"])
 def test_reserved_picker_template_is_ignored_with_diagnostic(
     tmp_path: Path, reserved_name: str
 ) -> None:

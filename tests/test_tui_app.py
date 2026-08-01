@@ -42,7 +42,7 @@ from tau_agent import (
 from tau_agent.messages import assistant_content
 from tau_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
 from tau_coding.catalog_loader import user_catalog_path
-from tau_coding.commands import CommandResult
+from tau_coding.commands import CommandResult, format_resource_diagnostics
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.events import (
     AgentSettledEvent,
@@ -60,6 +60,7 @@ from tau_coding.provider_config import (
     ScopedModelConfig,
     save_provider_settings,
 )
+from tau_coding.resources import ResourceDiagnostic
 from tau_coding.session import (
     ModelChoice,
     SessionTreeBranchResult,
@@ -248,6 +249,11 @@ class FakeSession:
             )
         if text == "/system":
             return CommandResult(handled=True, message=self.system_prompt)
+        if text == "/diagnostics":
+            return CommandResult(
+                handled=True,
+                message=format_resource_diagnostics(self.resource_diagnostics),
+            )
         if text == "/skills":
             return CommandResult(handled=True, skills_picker_requested=True)
         if text == "/new":
@@ -5493,6 +5499,7 @@ async def test_tui_app_opens_command_palette_from_keybinding() -> None:
         assert prompt.value == "/"
         assert app._completion_state.items
         assert any(item.display == "/session" for item in app._completion_state.items)
+        assert any(item.display == "/diagnostics" for item in app._completion_state.items)
         assert app.query_one("#autocomplete").display is True
 
 
@@ -5586,6 +5593,80 @@ async def test_tui_app_help_uses_modal_instead_of_transcript() -> None:
         scroll = app.screen.query_one("#command-output-scroll", VerticalScroll)
         assert scroll is not None
         assert app.screen.focused is scroll
+
+
+@pytest.mark.anyio
+async def test_tui_app_diagnostics_modal_shows_empty_state_and_dismisses() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/diagnostics"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, CommandOutputScreen)
+        assert app.screen.title_text == "/diagnostics"
+        assert app.screen.message == "No resource diagnostics."
+        assert app.state.items == []
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert not isinstance(app.screen, CommandOutputScreen)
+        assert prompt.value == ""
+
+
+@pytest.mark.anyio
+async def test_tui_app_diagnostics_modal_reflects_post_reload_details() -> None:
+    diagnostic_path = Path("/tmp/[project]/prompts/review.md")
+    diagnostic = ResourceDiagnostic(
+        kind="prompt",
+        name="review",
+        path=diagnostic_path,
+        severity="warning",
+        message="template [ignored]; rename it and reload",
+    )
+
+    class ReloadingDiagnosticSession(FakeSession):
+        def handle_command(self, text: str) -> CommandResult:
+            if text == "/reload":
+                self.resource_diagnostics = (diagnostic,)
+                return CommandResult(handled=True, message="Reloaded resources.")
+            return super().handle_command(text)
+
+    app = TauTuiApp(ReloadingDiagnosticSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/diagnostics"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, CommandOutputScreen)
+        assert app.screen.message == "No resource diagnostics."
+
+        await pilot.press("escape")
+        prompt.value = "/reload"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        prompt.value = "/diagnostics"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, CommandOutputScreen)
+        body = app.screen.query_one("#command-output-body", Static)
+        assert str(body.render()) == "\n".join(
+            [
+                "Resource diagnostics (1):",
+                "",
+                "1. WARNING",
+                "Kind: prompt",
+                "Name: review",
+                f"Path: {diagnostic_path}",
+                "Message: template [ignored]; rename it and reload",
+            ]
+        )
 
 
 @pytest.mark.anyio
