@@ -201,12 +201,18 @@ Provider preferences live in `~/.tau/providers.json`:
   custom or local model names to `models` before using them as defaults,
   CLI/TUI selections, or scoped models.
 - `scoped_models` are favorites for the **Ctrl+P** quick-cycle.
-- Older `providers.json` files that contain full `providers` entries are still
-  accepted for compatibility. Tau ignores unrecognized top-level settings and
-  provider-preference fields so files written by newer Tau versions do not block
-  older versions from starting. Recognized fields remain strictly validated.
-  When Tau saves settings again, provider definitions are moved to
-  `~/.tau/catalog.toml` and `providers.json` is rewritten as runtime preferences.
+- `providers.json` uses `schema_version: 2` and stores preferences only. Provider
+  capabilities—model lists, context windows, transports, metadata, and thinking
+  support—always come from the current effective catalog.
+- Older `providers.json` files that contain full `providers` entries are migrated
+  automatically on first load. Tau keeps the original as `providers.json.bak`,
+  moves custom provider definitions to `~/.tau/catalog.toml`, and rewrites
+  built-in providers from the current catalog while preserving safe preferences.
+  This prevents old model or thinking metadata from hiding capabilities added by
+  a Tau upgrade.
+- Tau ignores unrecognized preference fields for cross-version compatibility,
+  but rejects an unsupported `schema_version` rather than risking a destructive
+  rewrite with the wrong format.
 - Custom models declare thinking support in `catalog.toml` with
   `thinking_levels`, `thinking_default`, `thinking_models`, and
   `thinking_parameter` (`"reasoning_effort"`, `"reasoning.effort"`, or
