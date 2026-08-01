@@ -42,7 +42,8 @@ AfterToolCall = Callable[
     Awaitable[tuple[AgentToolResult, bool]],
 ]
 
-TurnConfig = tuple[str, str, list[AgentTool]]
+# Optional fields: None keeps the current value for that field.
+TurnConfig = tuple[str | None, str | None, list[AgentTool] | None]
 TurnRenderer = Callable[[], TurnConfig | Awaitable[TurnConfig] | None]
 
 
@@ -103,17 +104,6 @@ async def run_agent_loop(
                 yield MessageEndEvent(message=message)
             pending = ()
 
-            if render_turn is not None:
-                rendered = render_turn()
-                if isawaitable(rendered):
-                    rendered = await rendered
-                if rendered is not None:
-                    model, system, tools = rendered
-                    tool_by_name = {tool.name: tool for tool in tools}
-                    if model != last_model:
-                        last_model = model
-                        yield ModelChangeEvent(model=model)
-
             if max_turns is not None and turn > max_turns:
                 error = _error_message(model, f"Agent stopped after max_turns={max_turns}")
                 messages.append(error)
@@ -123,6 +113,33 @@ async def run_agent_loop(
                 yield TurnEndEvent(message=error)
                 yield AgentEndEvent(messages=new_messages)
                 return
+
+            if render_turn is not None:
+                try:
+                    rendered = render_turn()
+                    if isawaitable(rendered):
+                        rendered = await rendered
+                    if rendered is not None:
+                        new_model, new_system, new_tools = rendered
+                        if new_model is not None:
+                            if new_model != last_model:
+                                last_model = new_model
+                                yield ModelChangeEvent(model=new_model)
+                            model = new_model
+                        if new_system is not None:
+                            system = new_system
+                        if new_tools is not None:
+                            tools = new_tools
+                            tool_by_name = {tool.name: tool for tool in tools}
+                except Exception as exc:  # noqa: BLE001 - renderers are an isolation boundary
+                    error = _error_message(model, f"render_turn failed: {exc}")
+                    messages.append(error)
+                    new_messages.append(error)
+                    yield MessageStartEvent(message=error)
+                    yield MessageEndEvent(message=error)
+                    yield TurnEndEvent(message=error)
+                    yield AgentEndEvent(messages=new_messages)
+                    return
 
             # Python async generators cannot pass a yielding callback through a
             # normal await cleanly, so consume the assistant sub-generator and
