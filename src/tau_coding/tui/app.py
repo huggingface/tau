@@ -2942,7 +2942,6 @@ class TauTuiApp(App[None]):
         background: $tau-transcript-background;
         padding: 0 0 0 2;
         overflow-x: auto;
-        scrollbar-size-vertical: 0;
         scrollbar-size-horizontal: 1;
     }
 
@@ -6346,6 +6345,8 @@ def _theme_css_variables(theme: TuiTheme) -> dict[str, str]:
         "tau-markdown-code-block-background": theme.markdown_code_block_background,
         "tau-markdown-link": theme.markdown_link,
         "tau-markdown-bullet": theme.markdown_bullet,
+        "tau-scrollbar": theme.scrollbar,
+        "tau-scrollbar-hover": theme.scrollbar_hover,
         "footer-background": theme.chrome_background,
         "footer-foreground": theme.chrome_text,
         "footer-description-background": theme.chrome_background,

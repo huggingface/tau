@@ -71,6 +71,8 @@ class TuiTheme:
     completion_selected: str
     completion_selected_description: str
     completion_description: str
+    scrollbar: str
+    scrollbar_hover: str
     syntax_theme: str
     role_styles: dict[str, TuiRoleStyle]
 
@@ -81,7 +83,7 @@ THEME_COLOR_FIELDS: tuple[str, ...] = tuple(
     theme_field.name
     for theme_field in fields(TuiTheme)
     if theme_field.name not in {"name", "dark", "syntax_theme", "role_styles"}
-)
+) + ("scrollbar", "scrollbar_hover")
 
 # Single source of truth for transcript roles: the theme schema requires a
 # style for each, and tui.state aliases this as ChatItemRole.
