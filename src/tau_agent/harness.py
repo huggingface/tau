@@ -188,11 +188,8 @@ class AgentHarness:
             if signal.is_cancelled():
                 repaired_from = len(self._messages)
                 self._append_interrupted_tool_results()
-                # Push the synthetic results to subscribers even though the
-                # consumer is gone: this finally usually runs during teardown
-                # (worker cancel or aclose), and push-based persistence must
-                # still observe the repairs. Listener failures stay suppressed
-                # so they cannot mask the in-flight cancellation.
+                # The consumer is usually gone here; push the repairs to
+                # subscribers, suppressing failures during cancellation.
                 for message in self._messages[repaired_from:]:
                     with suppress(Exception):
                         await self._notify(MessageStartEvent(message=message))

@@ -1753,9 +1753,8 @@ class CodingSession:
         self._config = replacement._config
         self._state = replacement._state
         self._harness = replacement._harness
-        # The replacement subscribed its own persistence listener at
-        # construction; detach it so persistence runs against this outer
-        # session's parent pointers, not the discarded replacement's.
+        # Detach the replacement's persistence listener so writes advance
+        # this session's parent pointers, not the discarded replacement's.
         if replacement._persistence_unsubscribe is not None:
             replacement._persistence_unsubscribe()
             replacement._persistence_unsubscribe = None
@@ -1938,8 +1937,7 @@ class CodingSession:
 
         await self._refresh_runtime_model_limits()
         await self._try_auto_compact(context=context, phase="auto_compact_before_prompt")
-        # Fresh identity tracking per run: id() values can be reused after
-        # earlier message objects are garbage collected.
+        # id() values can be reused once earlier message objects are freed.
         self._ended_message_ids.clear()
         self._persisted_message_ids.clear()
         events: AsyncIterator[AgentEvent] | None = None
@@ -2061,8 +2059,7 @@ class CodingSession:
         """Continue the agent from restored state and persist new messages."""
         context = self._diagnostic_context()
         await self._refresh_runtime_model_limits()
-        # Fresh identity tracking per run: id() values can be reused after
-        # earlier message objects are garbage collected.
+        # id() values can be reused once earlier message objects are freed.
         self._ended_message_ids.clear()
         self._persisted_message_ids.clear()
         events: AsyncIterator[AgentEvent] | None = None
@@ -2151,10 +2148,8 @@ class CodingSession:
     def _attach_persistence_listener(self) -> None:
         """(Re-)attach push persistence to the current harness.
 
-        Persistence subscribes to harness events instead of running in the
-        event consumer: the TUI cancels the consuming worker on interrupt, and
-        a pull-side persist would silently drop everything emitted after the
-        last consumed event — including the synthetic interrupted tool results.
+        Persistence subscribes to harness events rather than running in the
+        event consumer, which the TUI tears down on interrupt.
         """
         if self._persistence_unsubscribe is not None:
             self._persistence_unsubscribe()
@@ -2189,14 +2184,10 @@ class CodingSession:
         self,
         events: AsyncIterator[AgentEvent] | None,
     ) -> None:
-        """Close a run and retry persists the push listener could not finish.
+        """Close a run and retry persists whose ``message_end`` fired but failed.
 
-        ``message_end`` is the durable-message boundary: only messages whose
-        lifecycle completed but whose persist failed (for example a storage
-        error suppressed during cancellation teardown) are retried here.
         Keyed on message identity, not counts: the loop emits an assistant's
-        ``message_end`` before appending it to the transcript, so counts can
-        double-write mid-flight.
+        ``message_end`` before appending it to the transcript.
         """
         if events is not None:
             aclose = getattr(events, "aclose", None)
@@ -2207,9 +2198,7 @@ class CodingSession:
             if id(message) in self._ended_message_ids and id(message) not in (
                 self._persisted_message_ids
             ):
-                # This retries persists that already failed once; it runs in a
-                # finally, so a repeat failure must not mask an in-flight
-                # cancellation.
+                # Runs in a finally: a repeat failure must not mask cancellation.
                 with suppress(Exception):
                     await self._persist_message(message)
         self._ended_message_ids.clear()

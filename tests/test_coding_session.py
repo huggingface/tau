@@ -423,11 +423,9 @@ def _hang_tool(tool_started: asyncio.Event, release: asyncio.Event) -> AgentTool
 async def test_cancelled_prompt_teardown_persists_interrupted_tool_result(
     tmp_path: Path,
 ) -> None:
-    # Regression: pressing Esc mid-tool-call makes the TUI cancel the worker
-    # consuming session.prompt(). The synthetic "interrupted" tool result was
-    # appended only to the in-memory harness; the session file was left with
-    # assistant(tool_use) and no tool result, and providers later rejected the
-    # transcript with a 400.
+    # Regression: Esc mid-tool-call cancels the consumer, and the synthetic
+    # interrupted tool result never reached the session file, leaving a
+    # dangling tool_use that providers reject with a 400 on later replays.
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     tool_started = asyncio.Event()
     release = asyncio.Event()
@@ -466,8 +464,8 @@ async def test_cancelled_prompt_teardown_persists_interrupted_tool_result(
 
     task = asyncio.create_task(consume())
     await asyncio.wait_for(tool_started.wait(), timeout=5)
-    # Mirror the TUI interrupt: session.cancel() then worker cancel, with no
-    # await in between, so the consumer never drains the remaining events.
+    # Mirror the TUI interrupt: cancel the session, then the worker, with no
+    # await in between.
     session.cancel()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -3714,10 +3712,8 @@ async def test_session_resumes_indexed_session(tmp_path: Path) -> None:
             UserMessage(content="Continue."),
         ],
     )
-    # Regression guard for push persistence: the resumed (replacement)
-    # session's own listener must be detached on adoption, or every message
-    # after resume is persisted twice — once against the replacement's stale
-    # parent pointer.
+    # The replacement session's persistence listener must be detached on
+    # adoption, or every message after resume is persisted twice.
     entries = await second_storage.read_all()
     persisted_texts = [entry.message.text for entry in entries if entry.type == "message"]
     assert persisted_texts == ["Earlier", "Restored", "Continue.", "Second answer"]
