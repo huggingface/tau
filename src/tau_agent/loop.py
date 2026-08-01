@@ -131,7 +131,7 @@ async def run_agent_loop(
                         if new_tools is not None:
                             tools = new_tools
                             tool_by_name = {tool.name: tool for tool in tools}
-                except Exception as exc:  # noqa: BLE001 - renderers are an isolation boundary
+                except Exception as exc:
                     error = _error_message(model, f"render_turn failed: {exc}")
                     messages.append(error)
                     new_messages.append(error)
