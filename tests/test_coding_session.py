@@ -1430,6 +1430,85 @@ async def test_session_branches_to_previous_entry_without_destroying_history(
 
 
 @pytest.mark.anyio
+async def test_branch_to_entry_persists_repair_for_interrupted_tool_call(
+    tmp_path: Path,
+) -> None:
+    # Regression: /tree onto a branch whose persisted history has a dangling
+    # tool call replayed the hole into the harness; the next prompt appended
+    # the synthetic result at the transcript tail instead of adjacent to its
+    # tool call, and Anthropic rejected the request with a 400.
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    root = MessageEntry(id="root", message=UserMessage(content="Read README.md"))
+    tool_call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
+    call_entry = MessageEntry(
+        id="call",
+        parent_id="root",
+        message=AssistantMessage(content=assistant_content("I'll read it.", [tool_call])),
+    )
+    note = MessageEntry(id="note", parent_id="call", message=UserMessage(content="Ran it myself."))
+    reply = MessageEntry(
+        id="reply", parent_id="note", message=AssistantMessage(content="Understood.")
+    )
+    clean = MessageEntry(id="clean", parent_id="root", message=AssistantMessage(content="Clean"))
+    for entry in (root, call_entry, note, reply, clean):
+        await storage.append(entry)
+    await storage.append(LeafEntry(entry_id="clean"))
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Recovered.")),
+            ]
+        ]
+    )
+    session = await CodingSession.load(_config(tmp_path, provider, storage))
+    assert provider.calls == []
+
+    await session.branch_to_entry("reply")
+
+    expected_repair = ToolResultMessage(
+        tool_call_id="call-1",
+        tool_name="read",
+        content=[TextContent(text="Tool call interrupted by user")],
+        is_error=True,
+    )
+    _assert_messages(
+        session.messages,
+        (
+            UserMessage(content="Read README.md"),
+            AssistantMessage(content=assistant_content("I'll read it.", [tool_call])),
+            expected_repair,
+            UserMessage(content="Ran it myself."),
+            AssistantMessage(content="Understood."),
+        ),
+    )
+    entries = await storage.read_all()
+    repair_entries = [
+        entry
+        for entry in entries
+        if entry.type == "message" and isinstance(entry.message, ToolResultMessage)
+    ]
+    assert len(repair_entries) == 1
+    assert repair_entries[0].parent_id == "call"
+
+    _ = await _collect_session_events(session.prompt("continue"))
+
+    _model, _system, sent, _tools = provider.calls[0]
+    call_index = next(
+        index
+        for index, message in enumerate(sent)
+        if isinstance(message, AssistantMessage) and message.tool_calls
+    )
+    _assert_messages([sent[call_index + 1]], [expected_repair])
+    assert sum(isinstance(message, ToolResultMessage) for message in session.messages) == 1
+
+    entry_count = len(await storage.read_all())
+    restored = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
+    assert restored.messages == session.messages
+    assert len(await storage.read_all()) == entry_count
+
+
+@pytest.mark.anyio
 async def test_persist_after_branch_keeps_state_on_active_branch(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(

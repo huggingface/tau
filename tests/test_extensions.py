@@ -1627,11 +1627,11 @@ async def test_prompt_input_hook_source_extension(tmp_path: Path) -> None:
 async def test_agent_events_reach_extension_after_interrupted_tool_repair(
     tmp_path: Path,
 ) -> None:
-    # Regression: load() attached the extension event fan-out to the local
-    # harness it built before _persist_loaded_interrupted_tool_repairs() could
-    # replace session._harness. Loading a session that died mid-tool-call then
-    # left extensions subscribed to the discarded harness — they silently
-    # received zero agent events for the whole session.
+    # Regression: load() must attach the extension event fan-out only after the
+    # interrupted-tool repair has run. An older build attached it to a harness
+    # the repair then discarded, so loading a session that died mid-tool-call
+    # left extensions subscribed to a dead object — they silently received zero
+    # agent events for the whole session.
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     user_entry = MessageEntry(message=UserMessage(content="Read README.md"))
     await storage.append(user_entry)
@@ -1659,6 +1659,50 @@ async def test_agent_events_reach_extension_after_interrupted_tool_repair(
     session = await CodingSession.load(_session_config(tmp_path, provider, extension_body=body))
     module = _loaded_extension_module("integration")
 
+    _ = [event async for event in session.prompt("continue")]
+
+    assert "agent_start" in module.EVENTS  # type: ignore[attr-defined]
+    assert "agent_end" in module.EVENTS  # type: ignore[attr-defined]
+
+
+async def test_agent_events_reach_extension_after_branch_tool_repair(
+    tmp_path: Path,
+) -> None:
+    # Mid-session /tree onto a branch with a dangling tool call triggers the
+    # interrupted-tool repair. The repair must keep the harness object the
+    # extension fan-out subscribed to at load, or extensions silently stop
+    # receiving agent events for the rest of the session.
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    root = MessageEntry(id="root", message=UserMessage(content="Read README.md"))
+    tool_call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
+    call_entry = MessageEntry(
+        id="call",
+        parent_id="root",
+        message=AssistantMessage(content=assistant_content("I'll read it.", [tool_call])),
+    )
+    note = MessageEntry(id="note", parent_id="call", message=UserMessage(content="Ran it myself."))
+    clean = MessageEntry(id="clean", parent_id="root", message=AssistantMessage(content="Clean"))
+    for entry in (root, call_entry, note, clean):
+        await storage.append(entry)
+    await storage.append(LeafEntry(entry_id="clean"))
+
+    body = (
+        "EVENTS = []\n\n\n"
+        "def setup(tau):\n"
+        "    tau.on('agent_event', lambda event, context: EVENTS.append(event.type))\n"
+    )
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Recovered.")),
+            ]
+        ]
+    )
+    session = await CodingSession.load(_session_config(tmp_path, provider, extension_body=body))
+    module = _loaded_extension_module("integration")
+
+    await session.branch_to_entry("note")
     _ = [event async for event in session.prompt("continue")]
 
     assert "agent_start" in module.EVENTS  # type: ignore[attr-defined]

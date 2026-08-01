@@ -401,10 +401,6 @@ class CodingSession:
         await session._refresh_runtime_model_limits()
         if fresh_extension_runtime:
             extension_runtime.bind(session)
-            # Attach to session._harness, not the local `harness`:
-            # _persist_loaded_interrupted_tool_repairs() above may have
-            # replaced the harness, and listeners on the discarded one would
-            # never see an agent event.
             extension_runtime.attach_harness_listener(session._harness.subscribe)
             # session_start is deferred: hosts emit it via
             # emit_pending_session_start() after installing their UI bridge,
@@ -560,6 +556,11 @@ class CodingSession:
 
         await self._refresh_persisted_state(leaf_id=target_id)
         self._harness.replace_messages(self._state.messages)
+        # The selected branch may carry a dangling tool call whose interrupted
+        # result was never persisted; repair it here so the next prompt sends a
+        # provider-safe transcript instead of appending the synthetic result at
+        # the transcript tail.
+        await self._persist_loaded_interrupted_tool_repairs()
         self._invalidate_context_usage_cache()
         self._thinking_level = _state_thinking_level(
             self._state,
@@ -1771,17 +1772,9 @@ class CodingSession:
         await self._append_session_entry(leaf)
         self._last_parent_id = parent_id
         await self._refresh_persisted_state(leaf_id=parent_id)
-        self._harness = AgentHarness(
-            AgentHarnessConfig(
-                provider=self._harness.config.provider,
-                model=self._harness.config.model,
-                system=self._harness.config.system,
-                tools=self._harness.config.tools,
-                max_turns=self._harness.config.max_turns,
-                queue_mode=self._harness.config.queue_mode,
-            ),
-            messages=self._state.messages,
-        )
+        # Keep the harness object: subscribers (extension event fan-out) stay
+        # attached when the repair runs mid-session, e.g. from branch_to_entry.
+        self._harness.replace_messages(self._state.messages)
 
     async def _persist_messages_since(self, persisted_count: int) -> int:
         """Persist completed harness messages after ``persisted_count``.
