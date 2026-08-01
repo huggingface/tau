@@ -307,3 +307,40 @@ def test_harness_repairs_interrupted_tool_calls() -> None:
     assert isinstance(repair, ToolResultMessage)
     assert repair.is_error is True
     assert repair.text == "Tool call interrupted by user"
+
+
+@pytest.mark.anyio
+async def test_entry_path_repair_is_pushed_to_listeners() -> None:
+    # A transcript can reach prompt()/continue_() with a dangling tool call
+    # (for example after a persist failure killed the previous run). The
+    # synthetic repair must flow through events so push persistence sees it.
+    call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
+    harness = AgentHarness(
+        AgentHarnessConfig(
+            provider=FakeProvider(
+                [[assistant_start(), assistant_done(AssistantMessage(content="Recovered."))]]
+            ),
+            model="fake",
+            system="You are Tau.",
+        ),
+        messages=[AssistantMessage(content=[call])],
+    )
+    seen: list[object] = []
+    harness.subscribe(seen.append)
+
+    events = [event async for event in harness.prompt("continue")]
+
+    repair = next(message for message in harness.messages if isinstance(message, ToolResultMessage))
+    assert repair.tool_call_id == "call-1"
+    listener_ends = [
+        event.message.tool_call_id
+        for event in seen
+        if isinstance(event, MessageEndEvent) and isinstance(event.message, ToolResultMessage)
+    ]
+    assert listener_ends == ["call-1"]
+    consumer_ends = [
+        event.message.tool_call_id
+        for event in events
+        if isinstance(event, MessageEndEvent) and isinstance(event.message, ToolResultMessage)
+    ]
+    assert consumer_ends == ["call-1"]

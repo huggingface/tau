@@ -145,7 +145,6 @@ class AgentHarness:
 
     def prompt_message(self, message: AgentMessage) -> AsyncIterator[AgentEvent]:
         self._ensure_not_running()
-        self._append_interrupted_tool_results()
         self._running = True
         return self._run(prompts=(message,))
 
@@ -154,7 +153,6 @@ class AgentHarness:
 
     def continue_(self) -> AsyncIterator[AgentEvent]:
         self._ensure_not_running()
-        self._append_interrupted_tool_results()
         self._running = True
         return self._run()
 
@@ -166,6 +164,18 @@ class AgentHarness:
         signal = SimpleCancellationToken()
         self._current_signal = signal
         try:
+            # Repair dangling tool calls here, not in prompt()/continue_(),
+            # so the synthetic results flow through events and reach push
+            # subscribers (persistence) as well as the consumer.
+            repaired_from = len(self._messages)
+            self._append_interrupted_tool_results()
+            for message in self._messages[repaired_from:]:
+                start = MessageStartEvent(message=message)
+                await self._notify(start)
+                yield start
+                end = MessageEndEvent(message=message)
+                await self._notify(end)
+                yield end
             async for event in run_agent_loop(
                 provider=self._config.provider,
                 model=self._config.model,
@@ -187,7 +197,8 @@ class AgentHarness:
                 repaired_from = len(self._messages)
                 self._append_interrupted_tool_results()
                 # The consumer is usually gone here; push the repairs to
-                # subscribers, suppressing failures during cancellation.
+                # subscribers. Listener errors are suppressed; cancellation
+                # itself is not.
                 for message in self._messages[repaired_from:]:
                     with suppress(Exception):
                         await self._notify(MessageStartEvent(message=message))
