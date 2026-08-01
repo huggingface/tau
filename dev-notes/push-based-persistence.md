@@ -7,9 +7,10 @@ harness events. It subscribes a persistence listener to the harness, and every
 `message_end` notification writes that message to the session tree before the
 event reaches the frontend. The count watermarks (`persisted_count = len(...)`
 slicing in `prompt()`, `continue_()`, the overflow retry, and
-`run_terminal_command`) are gone. `AgentHarness._run` now pushes
-`message_start`/`message_end` to subscribers for the synthetic "Tool call
-interrupted by user" results it appends during cancelled cleanup.
+`run_terminal_command`) are gone. All synthetic "Tool call interrupted by
+user" repairs now flow through `message_start`/`message_end` events: the
+run-start repair moved from `prompt()`/`continue_()` into `_run`, and the
+cancelled-cleanup repair pushes to subscribers directly.
 
 ## Why it exists
 
@@ -28,8 +29,9 @@ This is the shape Pi uses. In Pi, an aborted tool call's error result is
 created inside the same loop iteration as the call
 (`packages/agent/src/agent-loop.ts`), so adjacency is structural, never
 repaired after the fact (though Pi breaks the batch on abort, so later calls
-in a multi-tool message get no result — Tau's repair sweep covers that case). Persistence lives in the harness's event handler
-(`handleAgentEvent` in `packages/agent/src/harness/agent-harness.ts`), which
+in a multi-tool message get no result — Tau's repair sweep covers that case).
+Persistence lives in the harness's event handler (`handleAgentEvent` in
+`packages/agent/src/harness/agent-harness.ts`), which
 persists on every `message_end` through an ordered append queue — a
 subscriber, not a consumer, so UI teardown cannot lose writes, and no count
 watermark exists anywhere. Tau already emitted Pi-compatible events; this
