@@ -2184,10 +2184,12 @@ class CodingSession:
         self,
         events: AsyncIterator[AgentEvent] | None,
     ) -> None:
-        """Close a run and retry persists whose ``message_end`` fired but failed.
+        """Close a run and retry failed persists still present in the transcript.
 
         Keyed on message identity, not counts: the loop emits an assistant's
-        ``message_end`` before appending it to the transcript.
+        ``message_end`` before appending it to the transcript. A message whose
+        persist and append both failed cannot be retried here; the repair at
+        the next run start re-synthesizes and persists its tool result.
         """
         if events is not None:
             aclose = getattr(events, "aclose", None)
@@ -2195,8 +2197,10 @@ class CodingSession:
                 with suppress(Exception):
                     await aclose()
         for message in self._harness.messages:
-            if id(message) in self._ended_message_ids and id(message) not in (
-                self._persisted_message_ids
+            message_id = id(message)
+            if (
+                message_id in self._ended_message_ids
+                and message_id not in self._persisted_message_ids
             ):
                 # Runs in a finally: a repeat failure must not mask cancellation.
                 with suppress(Exception):

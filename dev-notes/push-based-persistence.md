@@ -24,10 +24,11 @@ live session and the `load()` repair protected restarts — until a replay that
 skipped repair (`/tree`) sent the transcript to a provider, which rejected it
 with a 400 (`tool_use` ids without `tool_result` blocks immediately after).
 
-This is the shape Pi uses, and why Pi never had this bug. In Pi, an aborted
-tool call's error result is created inside the same loop iteration as the call
+This is the shape Pi uses. In Pi, an aborted tool call's error result is
+created inside the same loop iteration as the call
 (`packages/agent/src/agent-loop.ts`), so adjacency is structural, never
-repaired after the fact. Persistence lives in the harness's event handler
+repaired after the fact (though Pi breaks the batch on abort, so later calls
+in a multi-tool message get no result — Tau's repair sweep covers that case). Persistence lives in the harness's event handler
 (`handleAgentEvent` in `packages/agent/src/harness/agent-harness.ts`), which
 persists on every `message_end` through an ordered append queue — a
 subscriber, not a consumer, so UI teardown cannot lose writes, and no count
@@ -36,9 +37,11 @@ change moves persistence to the same side of the event stream.
 
 ## Architecture
 
-- `tau_agent.harness` stays portable: it only gained event notifications for
-  the cleanup repair, wrapped in `suppress(Exception)` so a listener failure
-  cannot mask the in-flight `CancelledError`.
+- `tau_agent.harness` stays portable: dangling-call repairs now run inside
+  `_run` and flow through events — at run start as normal
+  `message_start`/`message_end`, and during cancelled cleanup as notify-only
+  pushes wrapped in `suppress(Exception)` so a listener failure cannot mask
+  the in-flight `CancelledError`.
 - `tau_coding.session` owns persistence as a harness subscriber. The listener
   is attached first — before the extension event fan-out — in every path:
   construction, load (re-attached after the load-time repair rebuilds the
