@@ -1,0 +1,72 @@
+# Push-based session persistence
+
+## What changed
+
+`CodingSession` no longer persists messages from inside the loops that consume
+harness events. It subscribes a persistence listener to the harness, and every
+`message_end` notification writes that message to the session tree before the
+event reaches the frontend. The count watermarks (`persisted_count = len(...)`
+slicing in `prompt()`, `continue_()`, the overflow retry, and
+`run_terminal_command`) are gone. `AgentHarness._run` now pushes
+`message_start`/`message_end` to subscribers for the synthetic "Tool call
+interrupted by user" results it appends during cancelled cleanup.
+
+## Why it exists
+
+Pressing Esc mid-tool-call makes the TUI cancel the worker that consumes
+`session.prompt()`. With pull-side persistence, everything after the last
+consumed event was silently dropped: the harness appended the synthetic
+interrupted tool result in its `finally` block, but no consumer remained to
+persist it, and the later count watermarks classified the orphan as already
+persisted. Session files were left with `assistant(tool_use)` followed directly
+by a user message. The fault stayed hidden — the in-memory repair protected the
+live session and the `load()` repair protected restarts — until a replay that
+skipped repair (`/tree`) sent the transcript to a provider, which rejected it
+with a 400 (`tool_use` ids without `tool_result` blocks immediately after).
+
+This is the shape Pi uses: results are emitted inside the loop iteration and
+persistence subscribes to events, so consumer teardown cannot lose writes.
+
+## Architecture
+
+- `tau_agent.harness` stays portable: it only gained event notifications for
+  the cleanup repair, wrapped in `suppress(Exception)` so a listener failure
+  cannot mask the in-flight `CancelledError`.
+- `tau_coding.session` owns persistence as a harness subscriber. The listener
+  is attached first — before the extension event fan-out — in every path:
+  construction, load (re-attached after the load-time repair rebuilds the
+  harness), and `_adopt_replacement` on resume/`/new` (the replacement's own
+  listener is detached so writes advance the outer session's parent pointers).
+- `message_end` remains the durable-message boundary. A message whose
+  `message_end` never fired is not persisted; an abandoned first prompt still
+  leaves no durable trace and does not index the session.
+- A reconcile backstop in the `finally` of `prompt()`/`continue_()` closes the
+  run generator and retries only messages whose `message_end` fired but whose
+  write failed. It is keyed on message identity, never counts: the loop emits
+  an assistant's `message_end` before appending it to the transcript, so
+  count-based sweeps can double-write.
+
+A deliberate non-goal: repairing files that older builds already damaged. A
+branch-time heal was prototyped (PR #525) and closed — re-parenting the branch
+suffix changes the request prefix, which breaks prompt caching, and silent
+healing would hide future faults of this class. Old files still 400 on `/tree`;
+branch to the entry after the dangling call, or reload so the load-time repair
+heals the active path.
+
+## How to test
+
+```bash
+uv run pytest tests/test_agent_harness.py tests/test_coding_session.py tests/test_extensions.py
+```
+
+Key regression tests:
+
+- `test_cancelled_prompt_teardown_persists_interrupted_tool_result` replays the
+  TUI interrupt exactly (`session.cancel()` then worker cancel, no await
+  between) and asserts the session file holds the synthetic result adjacent to
+  its tool call.
+- `test_cancelled_run_notifies_listeners_of_interrupted_tool_repair` and
+  `test_listener_error_during_teardown_does_not_mask_cancellation` pin the
+  harness contract.
+- `test_session_resumes_indexed_session` asserts each message persists exactly
+  once after resume (guards the listener detach in `_adopt_replacement`).
