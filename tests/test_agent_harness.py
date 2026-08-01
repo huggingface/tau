@@ -239,9 +239,8 @@ def _blocking_run_harness(tool_started: "asyncio.Event", release: "asyncio.Event
 
 @pytest.mark.anyio
 async def test_cancelled_run_notifies_listeners_of_interrupted_tool_repair() -> None:
-    # Regression: the finally-block repair for a cancelled tool call was
-    # appended to the in-memory transcript without any event, so push-based
-    # subscribers (persistence, extensions) never saw it.
+    # Regression: the cancelled-cleanup repair emitted no events, so
+    # push-based subscribers never saw it.
     tool_started = asyncio.Event()
     release = asyncio.Event()
     harness = _blocking_run_harness(tool_started, release)
