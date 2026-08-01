@@ -13,6 +13,7 @@ from pi_event_helpers import assistant_done, assistant_error, assistant_start
 from tau_agent import (
     AgentMessage,
     AgentTool,
+    AgentToolResult,
     AssistantMessage,
     ImageContent,
     MessageEndEvent,
@@ -396,6 +397,108 @@ async def test_prompt_logs_safe_provider_stream_error_details(tmp_path: Path) ->
         },
     }
     assert "Hello" not in log_path.read_text(encoding="utf-8")
+
+
+def _hang_tool(tool_started: asyncio.Event, release: asyncio.Event) -> AgentTool:
+    async def hang(
+        tool_call_id: object,
+        arguments: object,
+        signal: object = None,
+        on_update: object = None,
+    ) -> AgentToolResult:
+        tool_started.set()
+        await release.wait()
+        return AgentToolResult(content=[TextContent(text="done")])
+
+    return AgentTool(
+        name="hang",
+        label="Hang",
+        description="Block until released.",
+        parameters={"type": "object"},
+        execute_fn=hang,
+    )
+
+
+@pytest.mark.anyio
+async def test_cancelled_prompt_teardown_persists_interrupted_tool_result(
+    tmp_path: Path,
+) -> None:
+    # Regression: pressing Esc mid-tool-call makes the TUI cancel the worker
+    # consuming session.prompt(). The synthetic "interrupted" tool result was
+    # appended only to the in-memory harness; the session file was left with
+    # assistant(tool_use) and no tool result, and providers later rejected the
+    # transcript with a 400.
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    tool_started = asyncio.Event()
+    release = asyncio.Event()
+    tool_call = ToolCall(id="call-1", name="hang", arguments={})
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(
+                    message=AssistantMessage(
+                        content=assistant_content("Running.", [tool_call]),
+                        stop_reason="toolUse",
+                    )
+                ),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Recovered.")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            tools=[_hang_tool(tool_started, release)],
+        )
+    )
+
+    async def consume() -> None:
+        async for _event in session.prompt("go"):
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(tool_started.wait(), timeout=5)
+    # Mirror the TUI interrupt: session.cancel() then worker cancel, with no
+    # await in between, so the consumer never drains the remaining events.
+    session.cancel()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    expected_repair = ToolResultMessage(
+        tool_call_id="call-1",
+        tool_name="hang",
+        content=[TextContent(text="Tool call interrupted by user")],
+        is_error=True,
+    )
+    entries = await storage.read_all()
+    message_entries = [entry for entry in entries if entry.type == "message"]
+    by_id = {entry.id: entry for entry in message_entries}
+    repairs = [entry for entry in message_entries if isinstance(entry.message, ToolResultMessage)]
+    assert len(repairs) == 1
+    _assert_messages([repairs[0].message], [expected_repair])
+    parent = by_id[repairs[0].parent_id]
+    assert isinstance(parent.message, AssistantMessage)
+    assert parent.message.tool_calls
+
+    _ = await _collect_session_events(session.prompt("continue"))
+
+    _model, _system, sent, _tools = provider.calls[-1]
+    call_index = next(
+        index
+        for index, message in enumerate(sent)
+        if isinstance(message, AssistantMessage) and message.tool_calls
+    )
+    _assert_messages([sent[call_index + 1]], [expected_repair])
+    assert sum(isinstance(message, ToolResultMessage) for message in sent) == 1
 
 
 @pytest.mark.anyio
@@ -3611,6 +3714,13 @@ async def test_session_resumes_indexed_session(tmp_path: Path) -> None:
             UserMessage(content="Continue."),
         ],
     )
+    # Regression guard for push persistence: the resumed (replacement)
+    # session's own listener must be detached on adoption, or every message
+    # after resume is persisted twice — once against the replacement's stale
+    # parent pointer.
+    entries = await second_storage.read_all()
+    persisted_texts = [entry.message.text for entry in entries if entry.type == "message"]
+    assert persisted_texts == ["Earlier", "Restored", "Continue.", "Second answer"]
 
 
 @pytest.mark.anyio

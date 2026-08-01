@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Mapping
 
 import pytest
@@ -203,6 +204,102 @@ def test_queue_mutators_return_canonical_snapshots() -> None:
     cleared = harness.clear_queues()
     assert [message.text for message in cleared.steering] == ["First"]
     assert harness.pending_message_count == 0
+
+
+def _blocking_tool(tool_started: "asyncio.Event", release: "asyncio.Event") -> AgentTool:
+    async def hang(
+        tool_call_id: str,
+        arguments: Mapping[str, JSONValue],
+        signal=None,  # noqa: ANN001
+        on_update=None,  # noqa: ANN001
+    ) -> AgentToolResult:
+        del tool_call_id, arguments, signal, on_update
+        tool_started.set()
+        await release.wait()
+        return AgentToolResult(content="done")
+
+    return AgentTool(
+        name="hang",
+        label="Hang",
+        description="Block until released.",
+        parameters={"type": "object"},
+        execute_fn=hang,
+    )
+
+
+def _blocking_run_harness(tool_started: "asyncio.Event", release: "asyncio.Event") -> AgentHarness:
+    call = ToolCall(id="call-1", name="hang", arguments={})
+    assistant = AssistantMessage(content=[call])
+    provider = FakeProvider(
+        [[assistant_start(), tool_call_end(call), assistant_done(assistant, "toolUse")]]
+    )
+    return AgentHarness(
+        AgentHarnessConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            tools=[_blocking_tool(tool_started, release)],
+        )
+    )
+
+
+@pytest.mark.anyio
+async def test_cancelled_run_notifies_listeners_of_interrupted_tool_repair() -> None:
+    # Regression: the finally-block repair for a cancelled tool call was
+    # appended to the in-memory transcript without any event, so push-based
+    # subscribers (persistence, extensions) never saw it.
+    tool_started = asyncio.Event()
+    release = asyncio.Event()
+    harness = _blocking_run_harness(tool_started, release)
+    seen: list[object] = []
+    harness.subscribe(seen.append)
+
+    async def consume() -> None:
+        async for _event in harness.prompt("go"):
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(tool_started.wait(), timeout=5)
+    harness.cancel()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    repair = harness.messages[-1]
+    assert isinstance(repair, ToolResultMessage)
+    assert repair.text == "Tool call interrupted by user"
+    repair_ends = [
+        event
+        for event in seen
+        if isinstance(event, MessageEndEvent) and isinstance(event.message, ToolResultMessage)
+    ]
+    assert [event.message.tool_call_id for event in repair_ends] == ["call-1"]
+
+
+@pytest.mark.anyio
+async def test_listener_error_during_teardown_does_not_mask_cancellation() -> None:
+    tool_started = asyncio.Event()
+    release = asyncio.Event()
+    harness = _blocking_run_harness(tool_started, release)
+
+    def explode(event: object) -> None:
+        if isinstance(event, MessageEndEvent) and isinstance(event.message, ToolResultMessage):
+            raise RuntimeError("listener exploded")
+
+    harness.subscribe(explode)
+
+    async def consume() -> None:
+        async for _event in harness.prompt("go"):
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(tool_started.wait(), timeout=5)
+    harness.cancel()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert isinstance(harness.messages[-1], ToolResultMessage)
 
 
 def test_harness_repairs_interrupted_tool_calls() -> None:
