@@ -24,8 +24,15 @@ live session and the `load()` repair protected restarts — until a replay that
 skipped repair (`/tree`) sent the transcript to a provider, which rejected it
 with a 400 (`tool_use` ids without `tool_result` blocks immediately after).
 
-This is the shape Pi uses: results are emitted inside the loop iteration and
-persistence subscribes to events, so consumer teardown cannot lose writes.
+This is the shape Pi uses, and why Pi never had this bug. In Pi, an aborted
+tool call's error result is created inside the same loop iteration as the call
+(`packages/agent/src/agent-loop.ts`), so adjacency is structural, never
+repaired after the fact. Persistence lives in the harness's event handler
+(`handleAgentEvent` in `packages/agent/src/harness/agent-harness.ts`), which
+persists on every `message_end` through an ordered append queue — a
+subscriber, not a consumer, so UI teardown cannot lose writes, and no count
+watermark exists anywhere. Tau already emitted Pi-compatible events; this
+change moves persistence to the same side of the event stream.
 
 ## Architecture
 
