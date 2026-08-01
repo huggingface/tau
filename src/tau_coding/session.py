@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import string
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
-from tau_agent.events import AgentEndEvent, MessageEndEvent, ToolExecutionEndEvent
+from tau_agent.events import AgentEndEvent, AgentEvent, MessageEndEvent, ToolExecutionEndEvent
 from tau_agent.harness import AgentHarness, AgentHarnessConfig, QueuedMessages
 from tau_agent.messages import (
     AgentMessage,
@@ -295,6 +296,10 @@ class CodingSession:
         self._runtime_model_limits: RuntimeModelLimits | None = None
         self._runtime_model_limits_key: tuple[str, str] | None = None
         self._model_limits_discovery_error: str | None = None
+        self._persistence_unsubscribe: Callable[[], None] | None = None
+        self._persisted_message_ids: set[int] = set()
+        self._ended_message_ids: set[int] = set()
+        self._attach_persistence_listener()
 
     @classmethod
     async def load(cls, config: CodingSessionConfig) -> CodingSession:
@@ -1407,6 +1412,13 @@ class CodingSession:
         self._config = replacement._config
         self._state = replacement._state
         self._harness = replacement._harness
+        # The replacement subscribed its own persistence listener at
+        # construction; detach it so persistence runs against this outer
+        # session's parent pointers, not the discarded replacement's.
+        if replacement._persistence_unsubscribe is not None:
+            replacement._persistence_unsubscribe()
+            replacement._persistence_unsubscribe = None
+        self._attach_persistence_listener()
         self._invalidate_context_usage_cache()
         self._last_parent_id = replacement._last_parent_id
         self._skills = replacement._skills
@@ -1502,17 +1514,15 @@ class CodingSession:
             exit_code = raw_exit_code if isinstance(raw_exit_code, int) else None
 
         if add_to_context:
-            before_count = len(self._harness.messages)
-            self._harness.append_message(
-                UserMessage(
-                    content=_terminal_command_context_message(
-                        normalized_command,
-                        result.text,
-                    )
+            context_message = UserMessage(
+                content=_terminal_command_context_message(
+                    normalized_command,
+                    result.text,
                 )
             )
+            self._harness.append_message(context_message)
             self._invalidate_context_usage_cache()
-            await self._persist_messages_since(before_count)
+            await self._persist_message(context_message)
 
         return TerminalCommandResult(
             command=normalized_command,
@@ -1579,7 +1589,11 @@ class CodingSession:
 
         await self._refresh_runtime_model_limits()
         await self._try_auto_compact(context=context, phase="auto_compact_before_prompt")
-        persisted_count = len(self._harness.messages)
+        # Fresh identity tracking per run: id() values can be reused after
+        # earlier message objects are garbage collected.
+        self._ended_message_ids.clear()
+        self._persisted_message_ids.clear()
+        events: AsyncIterator[AgentEvent] | None = None
         auto_name_attempted = False
         overflow_message: AssistantMessage | None = None
         try:
@@ -1597,11 +1611,13 @@ class CodingSession:
             self._invalidate_context_usage_cache()
             async for event in events:
                 auto_name_message: str | None = None
-                if isinstance(event, MessageEndEvent):
-                    persisted_count = await self._persist_messages_since(persisted_count)
-                    if not auto_name_attempted and isinstance(event.message, UserMessage):
-                        auto_name_attempted = True
-                        auto_name_message = event.message.text
+                if (
+                    isinstance(event, MessageEndEvent)
+                    and not auto_name_attempted
+                    and isinstance(event.message, UserMessage)
+                ):
+                    auto_name_attempted = True
+                    auto_name_message = event.message.text
                 if isinstance(event, ToolExecutionEndEvent):
                     self._invalidate_context_usage_cache()
                 if (
@@ -1624,7 +1640,6 @@ class CodingSession:
                 # session naming performs its separate provider request.
                 if auto_name_message is not None:
                     await self._try_auto_name_session(auto_name_message, context=context)
-            persisted_count = await self._persist_messages_since(persisted_count)
             if overflow_message is not None:
                 session_event_1 = CompactionStartEvent(reason="overflow")
                 await self._extension_runtime.emit_event(session_event_1)
@@ -1648,14 +1663,9 @@ class CodingSession:
                     )
                     await self._extension_runtime.emit_event(retry_start)
                     yield retry_start
-                    retry_persisted_count = len(self._harness.messages)
-                    retry_events = self._harness.continue_()
+                    events = self._harness.continue_()
                     self._invalidate_context_usage_cache()
-                    async for retry_event in retry_events:
-                        if isinstance(retry_event, MessageEndEvent):
-                            retry_persisted_count = await self._persist_messages_since(
-                                retry_persisted_count
-                            )
+                    async for retry_event in events:
                         if isinstance(retry_event, ToolExecutionEndEvent):
                             self._invalidate_context_usage_cache()
                         if (
@@ -1677,7 +1687,6 @@ class CodingSession:
                             )
                         else:
                             yield retry_event
-                    await self._persist_messages_since(retry_persisted_count)
                     session_event_4 = AutoRetryEndEvent(success=True, attempt=1, final_error=None)
                     await self._extension_runtime.emit_event(session_event_4)
                     yield session_event_4
@@ -1696,18 +1705,22 @@ class CodingSession:
                 exc=exc,
             )
             raise
+        finally:
+            await self._reconcile_run_persistence(events)
 
     async def continue_(self) -> AsyncIterator[CodingSessionEvent]:
         """Continue the agent from restored state and persist new messages."""
         context = self._diagnostic_context()
         await self._refresh_runtime_model_limits()
-        persisted_count = len(self._harness.messages)
+        # Fresh identity tracking per run: id() values can be reused after
+        # earlier message objects are garbage collected.
+        self._ended_message_ids.clear()
+        self._persisted_message_ids.clear()
+        events: AsyncIterator[AgentEvent] | None = None
         try:
             events = self._harness.continue_()
             self._invalidate_context_usage_cache()
             async for event in events:
-                if isinstance(event, MessageEndEvent):
-                    persisted_count = await self._persist_messages_since(persisted_count)
                 if isinstance(event, ToolExecutionEndEvent):
                     self._invalidate_context_usage_cache()
                 if (
@@ -1724,7 +1737,6 @@ class CodingSession:
                     yield SessionAgentEndEvent(messages=event.messages, will_retry=False)
                 else:
                     yield event
-            await self._persist_messages_since(persisted_count)
             await self._try_auto_compact(context=context, phase="auto_compact_after_continue")
             session_event_5 = AgentSettledEvent()
             await self._extension_runtime.emit_event(session_event_5)
@@ -1736,6 +1748,8 @@ class CodingSession:
                 exc=exc,
             )
             raise
+        finally:
+            await self._reconcile_run_persistence(events)
 
     def _diagnostic_context(self) -> AgentCallDiagnosticContext:
         return AgentCallDiagnosticContext(
@@ -1782,28 +1796,74 @@ class CodingSession:
             ),
             messages=self._state.messages,
         )
+        self._attach_persistence_listener()
 
-    async def _persist_messages_since(self, persisted_count: int) -> int:
-        """Persist completed harness messages after ``persisted_count``.
+    def _attach_persistence_listener(self) -> None:
+        """(Re-)attach push persistence to the current harness.
+
+        Persistence subscribes to harness events instead of running in the
+        event consumer: the TUI cancels the consuming worker on interrupt, and
+        a pull-side persist would silently drop everything emitted after the
+        last consumed event — including the synthetic interrupted tool results.
+        """
+        if self._persistence_unsubscribe is not None:
+            self._persistence_unsubscribe()
+            self._persistence_unsubscribe = None
+        # Command-only tests construct sessions with stub harnesses.
+        subscribe = getattr(self._harness, "subscribe", None)
+        if subscribe is not None:
+            self._persistence_unsubscribe = subscribe(self._persist_on_message_end)
+
+    async def _persist_on_message_end(self, event: AgentEvent) -> None:
+        if isinstance(event, MessageEndEvent):
+            self._ended_message_ids.add(id(event.message))
+            await self._persist_message(event.message)
+
+    async def _persist_message(self, message: AgentMessage) -> None:
+        """Persist one completed message at the active branch tip.
 
         Message lifecycle events are the durable-message boundary. Each persisted
         message advances the append-only tree and records a leaf pointer so tree
         navigation can observe the current branch while a run is still active.
         """
-        new_messages = self._harness.messages[persisted_count:]
-        if not new_messages:
-            return persisted_count
-
-        for message in new_messages:
-            entry = MessageEntry(parent_id=self._last_parent_id, message=message)
-            await self._append_session_entry(entry)
-            self._last_parent_id = entry.id
-            leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
-            await self._append_session_entry(leaf)
-
+        entry = MessageEntry(parent_id=self._last_parent_id, message=message)
+        await self._append_session_entry(entry)
+        self._last_parent_id = entry.id
+        leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
+        await self._append_session_entry(leaf)
+        self._persisted_message_ids.add(id(message))
         await self._refresh_persisted_state(leaf_id=self._last_parent_id)
         self._invalidate_context_usage_cache()
-        return persisted_count + len(new_messages)
+
+    async def _reconcile_run_persistence(
+        self,
+        events: AsyncIterator[AgentEvent] | None,
+    ) -> None:
+        """Close a run and retry persists the push listener could not finish.
+
+        ``message_end`` is the durable-message boundary: only messages whose
+        lifecycle completed but whose persist failed (for example a storage
+        error suppressed during cancellation teardown) are retried here.
+        Keyed on message identity, not counts: the loop emits an assistant's
+        ``message_end`` before appending it to the transcript, so counts can
+        double-write mid-flight.
+        """
+        if events is not None:
+            aclose = getattr(events, "aclose", None)
+            if aclose is not None:
+                with suppress(Exception):
+                    await aclose()
+        for message in self._harness.messages:
+            if id(message) in self._ended_message_ids and id(message) not in (
+                self._persisted_message_ids
+            ):
+                # This retries persists that already failed once; it runs in a
+                # finally, so a repeat failure must not mask an in-flight
+                # cancellation.
+                with suppress(Exception):
+                    await self._persist_message(message)
+        self._ended_message_ids.clear()
+        self._persisted_message_ids.clear()
 
     def _invalidate_context_usage_cache(self) -> None:
         """Mark context accounting dirty after transcript/system/tool changes."""
