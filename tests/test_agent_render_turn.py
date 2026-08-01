@@ -1,5 +1,3 @@
-"""Tests for per-turn agent re-rendering (``render_turn``)."""
-
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
@@ -41,7 +39,7 @@ def _tool(name: str) -> AgentTool:
         tool_call_id: str,
         arguments: Mapping[str, JSONValue],
         signal: SimpleCancellationToken | None = None,
-        on_update=None,  # noqa: ANN001
+        on_update=None,
     ) -> AgentToolResult:
         del tool_call_id, arguments, signal, on_update
         return AgentToolResult(content=[TextContent(text=f"{name} ran")])
@@ -60,8 +58,8 @@ async def test_render_turn_swaps_model_system_and_tools_between_turns() -> None:
     beta = _tool("beta")
     renderer_calls: list[tuple[str, str, list[AgentTool]] | None] = [
         ("fake-2", "system-2", [beta]),
-        ("fake-3", "system-3", []),  # beta is withdrawn before turn 2
-        None,  # turn 3 keeps the current configuration
+        ("fake-3", "system-3", []),
+        None,
     ]
 
     def render_turn() -> tuple[str, str, list[AgentTool]] | None:
@@ -110,18 +108,15 @@ async def test_render_turn_swaps_model_system_and_tools_between_turns() -> None:
         )
     )
 
-    # Every request uses the configuration from the latest render.
     assert [call[0] for call in provider.calls] == ["fake-2", "fake-3", "fake-3"]
     assert [call[1] for call in provider.calls] == ["system-2", "system-3", "system-3"]
     assert [call[3] for call in provider.calls] == [[beta], [], []]
 
-    # Model swaps are announced; unchanged turns are not.
     assert [e.model for e in events if isinstance(e, ModelChangeEvent)] == [
         "fake-2",
         "fake-3",
     ]
 
-    # The withdrawn tool is gone from the next turn: calling it errors.
     results = [
         message
         for message in messages

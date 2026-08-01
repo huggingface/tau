@@ -42,7 +42,6 @@ AfterToolCall = Callable[
     Awaitable[tuple[AgentToolResult, bool]],
 ]
 
-# Per-turn configuration returned by ``render_turn``: (model, system, tools).
 TurnConfig = tuple[str, str, list[AgentTool]]
 TurnRenderer = Callable[[], TurnConfig | Awaitable[TurnConfig] | None]
 
@@ -63,14 +62,7 @@ async def run_agent_loop(
     after_tool_call: AfterToolCall | None = None,
     render_turn: TurnRenderer | None = None,
 ) -> AsyncIterator[AgentEvent]:
-    """Run the provider/tool loop and emit Pi-compatible agent events.
-
-    When *render_turn* is provided, it is called before every provider request
-    and may return a ``(model, system, tools)`` tuple to override the agent
-    configuration for that turn (``None`` keeps the current configuration). A
-    changed model is announced with ``ModelChangeEvent`` before the request is
-    made; changed system prompts and tool sets apply silently.
-    """
+    """Run the provider/tool loop and emit Pi-compatible agent events."""
     new_messages = list(prompts)
     if prompts:
         messages.extend(prompts)
@@ -111,8 +103,6 @@ async def run_agent_loop(
                 yield MessageEndEvent(message=message)
             pending = ()
 
-            # Re-render the agent between turns: the renderer may swap the
-            # model, system prompt, and tool set for the next request.
             if render_turn is not None:
                 rendered = render_turn()
                 if isawaitable(rendered):
