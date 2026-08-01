@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from inspect import isawaitable
 
 from tau_agent.events import (
     AgentEndEvent,
@@ -12,6 +13,7 @@ from tau_agent.events import (
     MessageEndEvent,
     MessageStartEvent,
     MessageUpdateEvent,
+    ModelChangeEvent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
@@ -40,6 +42,10 @@ AfterToolCall = Callable[
     Awaitable[tuple[AgentToolResult, bool]],
 ]
 
+# Per-turn configuration returned by ``render_turn``: (model, system, tools).
+TurnConfig = tuple[str, str, list[AgentTool]]
+TurnRenderer = Callable[[], TurnConfig | Awaitable[TurnConfig] | None]
+
 
 async def run_agent_loop(
     *,
@@ -55,8 +61,16 @@ async def run_agent_loop(
     get_follow_up_messages: Callable[[], Sequence[AgentMessage]] | None = None,
     before_tool_call: BeforeToolCall | None = None,
     after_tool_call: AfterToolCall | None = None,
+    render_turn: TurnRenderer | None = None,
 ) -> AsyncIterator[AgentEvent]:
-    """Run the provider/tool loop and emit Pi-compatible agent events."""
+    """Run the provider/tool loop and emit Pi-compatible agent events.
+
+    When *render_turn* is provided, it is called before every provider request
+    and may return a ``(model, system, tools)`` tuple to override the agent
+    configuration for that turn (``None`` keeps the current configuration). A
+    changed model is announced with ``ModelChangeEvent`` before the request is
+    made; changed system prompts and tool sets apply silently.
+    """
     new_messages = list(prompts)
     if prompts:
         messages.extend(prompts)
@@ -78,6 +92,7 @@ async def run_agent_loop(
         return
 
     tool_by_name = {tool.name: tool for tool in tools}
+    last_model = model
     turn = 1
     first_turn = True
     pending = tuple(get_steering_messages() if get_steering_messages else ())
@@ -95,6 +110,19 @@ async def run_agent_loop(
                 yield MessageStartEvent(message=message)
                 yield MessageEndEvent(message=message)
             pending = ()
+
+            # Re-render the agent between turns: the renderer may swap the
+            # model, system prompt, and tool set for the next request.
+            if render_turn is not None:
+                rendered = render_turn()
+                if isawaitable(rendered):
+                    rendered = await rendered
+                if rendered is not None:
+                    model, system, tools = rendered
+                    tool_by_name = {tool.name: tool for tool in tools}
+                    if model != last_model:
+                        last_model = model
+                        yield ModelChangeEvent(model=model)
 
             if max_turns is not None and turn > max_turns:
                 error = _error_message(model, f"Agent stopped after max_turns={max_turns}")
