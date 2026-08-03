@@ -5,7 +5,8 @@
     "sections": {
       "New": [
         "Let print-mode automation choose a safe, durable session ID with `--session-id`, while preserving isolated-session guarantees.",
-        "Customize the generated system prompt in print or TUI sessions with `--system-prompt` and repeatable `--append-system-prompt` text-or-file inputs."
+        "Customize the generated system prompt in print or TUI sessions with `--system-prompt` and repeatable `--append-system-prompt` text-or-file inputs.",
+        "Load Tau-native `SYSTEM.md` and `APPEND_SYSTEM.md` files from user or project `.tau` directories, with CLI and project precedence plus `/reload` support."
       ],
       "Changed": [
         "Cache Anthropic prompt prefixes to reduce repeated input billing, with auth-aware retention, compatibility overrides, and a sidebar cache hit rate.",

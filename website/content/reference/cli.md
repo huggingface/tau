@@ -83,6 +83,13 @@ when used with `--session`, they configure the resumed session's next provider
 request. They are startup controls and are not stored in session history, so
 pass them again on a later resume when needed.
 
+Without flags, Tau also discovers `SYSTEM.md` and `APPEND_SYSTEM.md` under the
+project or user `.tau` directory. CLI values win over project files, and project
+files win over user files. Use `/reload` after changing a file. These are
+Tau-specific configuration files, not `.agents` resources. See
+[Configuration & files]({{< relref "./configuration.md#system-prompt-files" >}})
+for paths, precedence, diagnostics, and the project-resource security warning.
+
 `--resume`, `--prompt`, `-o/--output`, and `-x` are removed; each now exits
 with an error naming its replacement (`--session`, `--print`, `--mode`, and
 `-e/--extension`, respectively).

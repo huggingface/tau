@@ -28,3 +28,21 @@ each later resume that needs them. A custom base still goes through
 `build_system_prompt`: configured append text, project context, eligible skills,
 the current date, and cwd remain included. Do not route this CLI option through
 the lower-level exact `CodingSessionConfig.system` override.
+
+## System prompt files
+
+Tau discovers replacement `SYSTEM.md` and append-only `APPEND_SYSTEM.md` files
+from `<cwd>/.tau/` and `~/.tau/`. Explicit CLI prompt input wins over a project
+file, which wins over a user file. Project and user append files are alternatives,
+not cumulative layers. `.agents/SYSTEM.md` and `.agents/APPEND_SYSTEM.md` are not
+supported because these are Tau-specific configuration resources.
+
+The selected replacement still receives append text, project context, eligible
+skills, date, and cwd. Run `/reload` after changing files; the next-turn prompt is
+rebuilt without adding prompt contents to session history. Selected, shadowed,
+and CLI-overridden sources appear in resource diagnostics. Unreadable or invalid
+UTF-8 selected files stop startup/reload with an actionable error.
+
+Project files currently load automatically. Users should inspect repository
+`.tau/SYSTEM.md` and `.tau/APPEND_SYSTEM.md` files because they can replace or
+extend the model's highest-priority instructions.

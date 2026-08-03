@@ -2464,6 +2464,144 @@ async def test_session_loads_with_resource_diagnostics_instead_of_failing(
 
 
 @pytest.mark.anyio
+async def test_session_loads_tau_native_system_prompt_files(tmp_path: Path) -> None:
+    tau_home = tmp_path / "tau-home"
+    project_tau = tmp_path / ".tau"
+    tau_home.mkdir()
+    project_tau.mkdir()
+    (tau_home / "SYSTEM.md").write_text("User base", encoding="utf-8")
+    (project_tau / "SYSTEM.md").write_text("Project base", encoding="utf-8")
+    (tau_home / "APPEND_SYSTEM.md").write_text("User append", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("Project instructions", encoding="utf-8")
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+        )
+    )
+
+    assert session.system_prompt.startswith("Project base\n\nUser append")
+    assert "User base" not in session.system_prompt
+    assert "Project instructions" in session.system_prompt
+    assert "Current date:" in session.system_prompt
+    assert f"Current working directory: {tmp_path}" in session.system_prompt
+    prompt_diagnostics = [
+        item for item in session.resource_diagnostics if item.kind == "system-prompt"
+    ]
+    assert [item.severity for item in prompt_diagnostics] == ["info", "warning", "info"]
+
+
+@pytest.mark.anyio
+async def test_explicit_system_prompt_values_override_discovered_files(tmp_path: Path) -> None:
+    tau_home = tmp_path / "tau-home"
+    tau_home.mkdir()
+    (tau_home / "SYSTEM.md").write_bytes(b"\xff")
+    (tau_home / "APPEND_SYSTEM.md").write_bytes(b"\xff")
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+            custom_system_prompt="Explicit base",
+            append_system_prompt="Explicit append",
+        )
+    )
+
+    assert session.system_prompt.startswith("Explicit base\n\nExplicit append")
+    assert all(
+        "explicit startup value" in item.message
+        for item in session.resource_diagnostics
+        if item.kind == "system-prompt"
+    )
+
+
+@pytest.mark.anyio
+async def test_session_reload_tracks_system_prompt_file_precedence(tmp_path: Path) -> None:
+    tau_home = tmp_path / "tau-home"
+    project_tau = tmp_path / ".tau"
+    tau_home.mkdir()
+    project_tau.mkdir()
+    user_prompt = tau_home / "SYSTEM.md"
+    project_prompt = project_tau / "SYSTEM.md"
+    append_prompt = tau_home / "APPEND_SYSTEM.md"
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+        )
+    )
+    assert "You are an expert coding assistant operating inside Tau" in session.system_prompt
+
+    user_prompt.write_text("User base", encoding="utf-8")
+    summary = await session.reload()
+    assert summary.system_prompt_rebuilt is True
+    assert session.system_prompt.startswith("User base")
+
+    append_prompt.write_text("Reloaded append", encoding="utf-8")
+    summary = await session.reload()
+    assert summary.system_prompt_rebuilt is True
+    assert session.system_prompt.startswith("User base\n\nReloaded append")
+
+    project_prompt.write_text("Project base", encoding="utf-8")
+    summary = await session.reload()
+    assert summary.system_prompt_rebuilt is True
+    assert session.system_prompt.startswith("Project base")
+
+    project_prompt.write_text("Changed project base", encoding="utf-8")
+    await session.reload()
+    assert session.system_prompt.startswith("Changed project base")
+
+    project_prompt.unlink()
+    await session.reload()
+    assert session.system_prompt.startswith("User base\n\nReloaded append")
+
+    user_prompt.unlink()
+    await session.reload()
+    assert session.system_prompt.startswith(
+        "You are an expert coding assistant operating inside Tau"
+    )
+    assert "Reloaded append" in session.system_prompt
+
+    append_prompt.unlink()
+    await session.reload()
+    assert "Reloaded append" not in session.system_prompt
+
+
+@pytest.mark.anyio
+async def test_failed_system_prompt_file_reload_keeps_previous_prompt(tmp_path: Path) -> None:
+    tau_home = tmp_path / "tau-home"
+    tau_home.mkdir()
+    prompt_path = tau_home / "SYSTEM.md"
+    prompt_path.write_text("Valid base", encoding="utf-8")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+        )
+    )
+    previous = session.system_prompt
+
+    prompt_path.write_bytes(b"\xff")
+    with pytest.raises(ResourceError, match="Could not read replacement system prompt file"):
+        await session.reload()
+
+    assert session.system_prompt == previous
+
+
+@pytest.mark.anyio
 async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Path) -> None:
     resource_root = tmp_path / "resources"
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
