@@ -179,8 +179,10 @@ the provider's cache. Tau hides the figure entirely for providers that do not
 report cache usage.
 
 The compact status block below the prompt puts `provider:model (thinking)` on its
-first line and the approximate active context as `used/limit` on the second.
-Unlike cumulative usage, this estimate describes the system prompt, tools,
+first line and provider-anchored active context as `used/limit` on the second. When
+no valid provider usage exists yet, such as immediately after compaction, it shows
+`?/limit` until a fresh response reports usage. Unlike cumulative usage, this
+active count describes the system prompt, tools,
 and active messages Tau expects to send on the next request. It can decrease
 after compaction while cumulative usage continues to increase. The
 working-directory name and model are emphasized while the parent path, Git

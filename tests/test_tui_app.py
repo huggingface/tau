@@ -50,6 +50,7 @@ from tau_coding.events import (
     CompactionEndEvent,
     CompactionStartEvent,
     QueueUpdateEvent,
+    SessionAgentEndEvent,
 )
 from tau_coding.paths import TauPaths
 from tau_coding.prompt_templates import PromptTemplate
@@ -120,6 +121,7 @@ from tau_coding.tui.terminal_title import TerminalTitleController
 from tau_coding.tui.widgets import (
     TRANSCRIPT_WINDOW_ITEMS,
     TRANSCRIPT_WINDOW_OVERSCAN_ITEMS,
+    CompactSessionInfo,
     LeftAlignedMarkdownHeading,
     StreamingTranscriptMessageWidget,
     TauMarkdownBlock,
@@ -186,6 +188,7 @@ class FakeSession:
             ProjectContextFile(path=str(self.cwd / "AGENTS.md"), content="Follow rules."),
         )
         self.context_token_estimate = 12034
+        self.has_provider_context_usage = True
         self.auto_compact_token_threshold = 200000
         self.context_window_tokens = 216384
         self.thinking_level = "medium"
@@ -721,6 +724,38 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
     assert "openai:fake-model" in lines[provider_line]
     assert "(medium)" in lines[provider_line]
     assert context_line == provider_line + 1
+
+
+def test_compact_session_info_shows_unknown_without_provider_usage() -> None:
+    console = Console(record=True, width=120)
+    session = FakeSession()
+    session.has_provider_context_usage = False
+
+    console.print(render_compact_session_info(session))
+
+    assert "?/200k" in console.export_text()
+
+
+def test_compact_session_info_redraws_when_provider_usage_becomes_available() -> None:
+    session = FakeSession()
+    session.has_provider_context_usage = False
+    widget = CompactSessionInfo()
+    updates: list[object] = []
+    widget.update = updates.append  # type: ignore[method-assign]
+
+    widget.update_from_session(session)
+    first_console = Console(record=True, width=120)
+    first_console.print(updates[-1])
+    assert "?/200k" in first_console.export_text()
+
+    session.has_provider_context_usage = True
+    widget.update_from_session(session)
+    assert len(updates) == 2
+    second_console = Console(record=True, width=120)
+    second_console.print(updates[-1])
+    second_output = second_console.export_text()
+    assert "12k/200k" in second_output
+    assert "?/200k" not in second_output
 
 
 def test_compact_session_info_styles_provider_as_metadata() -> None:
@@ -7506,7 +7541,7 @@ async def test_tui_prompt_worker_shows_diagnostic_log_path_for_error_event(tmp_p
 
 
 @pytest.mark.anyio
-async def test_tui_prompt_worker_skips_retry_hint_for_context_overflow() -> None:
+async def test_tui_prompt_worker_shows_recovery_status_instead_of_overflow_error() -> None:
     class OverflowSession(FakeSession):
         def __init__(self) -> None:
             super().__init__(
@@ -7518,7 +7553,13 @@ async def test_tui_prompt_worker_skips_retry_hint_for_context_overflow() -> None
                             error_message="prompt is too long: context window exceeded",
                         )
                     ),
-                    AgentEndEvent(),
+                    SessionAgentEndEvent(will_retry=False),
+                    CompactionStartEvent(reason="overflow"),
+                    CompactionEndEvent(reason="overflow", will_retry=True),
+                    AgentStartEvent(),
+                    MessageEndEvent(message=AssistantMessage(content="Recovered answer")),
+                    SessionAgentEndEvent(will_retry=False),
+                    AgentSettledEvent(),
                 ]
             )
 
@@ -7528,9 +7569,42 @@ async def test_tui_prompt_worker_skips_retry_hint_for_context_overflow() -> None
 
     await app._run_prompt("break")
 
-    assert app.state.error == "prompt is too long: context window exceeded"
+    assert app.state.error is None
+    assert not any(item.role == "error" for item in app.state.items)
+    assert any(
+        item.role == "status" and "compacting and retrying" in item.text for item in app.state.items
+    )
+    assert app.state.items[-1].text == "Recovered answer"
+    assert app.state.running is False
+
+
+@pytest.mark.anyio
+async def test_tui_prompt_worker_surfaces_overflow_when_compaction_fails() -> None:
+    message = AssistantMessage(
+        stop_reason="error",
+        error_message="prompt is too long: context window exceeded",
+    )
+    session = FakeSession(
+        events=[
+            AgentStartEvent(),
+            MessageEndEvent(message=message),
+            SessionAgentEndEvent(will_retry=False),
+            CompactionStartEvent(reason="overflow"),
+            CompactionEndEvent(
+                reason="overflow",
+                error_message="Overflow compaction failed",
+            ),
+            AgentSettledEvent(),
+        ]
+    )
+    app = TauTuiApp(session)
+    app._refresh = lambda: None  # type: ignore[method-assign]
+
+    await app._run_prompt("break")
+
+    assert app.state.error is not None
+    assert "context window exceeded" in app.state.error
     assert app.state.items[-1].role == "error"
-    assert app.state.items[-1].text == "Error: prompt is too long: context window exceeded"
     assert app.state.running is False
 
 

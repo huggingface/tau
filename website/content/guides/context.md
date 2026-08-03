@@ -9,8 +9,10 @@ history) and lets you tune how hard the model works with **thinking modes**.
 
 ## Seeing context usage
 
-The compact status below the TUI prompt shows the approximate active context as
-`used/limit`. Run `/session` to see its detailed breakdown:
+The compact status below the TUI prompt shows provider-anchored active context as
+`used/limit`. When no valid provider usage exists yet, it shows `?/limit` instead
+of presenting the fallback estimate as provider-confirmed usage. Run `/session`
+to see the detailed provider basis or fallback estimate:
 
 ```text
 Estimated context tokens: <count>
@@ -20,10 +22,18 @@ Context token breakdown: system=<count>, messages=<count>, tools=<count>
 Thinking mode: <mode>
 ```
 
-The estimate is deterministic (roughly `characters / 4` plus small per-message
-and per-tool overhead), not a provider tokenizer — treat it as approximate. It
-covers the system prompt, project context (`AGENTS.md`), skill metadata, the
-active message history, and tool schemas.
+After a successful model response, Tau uses the provider-reported token usage as
+the authoritative size of the context processed by that response, then estimates
+only messages added afterward. Before the first response, immediately after
+compaction, or when no valid usage is available, Tau falls back to a deterministic
+estimate (roughly `characters / 4` plus small per-message and per-tool overhead).
+The fallback covers the system prompt, project context (`AGENTS.md`), skill
+metadata, active message history, and tool schemas.
+
+`/session` reports `Context token basis: provider=<count>, estimated
+trailing=<count>` when provider usage anchors the active count. Otherwise it shows
+the fallback system/message/tool breakdown. Provider usage from errored or aborted
+responses is not trusted.
 
 This is different from **cumulative usage** in the sidebar. Cumulative usage adds
 the provider-reported input and output tokens from every request on the active
@@ -39,7 +49,8 @@ model's context window. It checks three moments:
 
 - before a new prompt (to catch context added out-of-band),
 - after a successful turn (to compact before your next turn), and
-- after a context-overflow error (compact and retry once).
+- after a context-overflow error (force compaction regardless of the local estimate,
+  then retry once).
 
 When it compacts, Tau asks the model to summarize older messages, keeps a recent
 suffix of the conversation, and continues. The original session file is never
@@ -55,8 +66,10 @@ You can override the resulting threshold for a run:
 tau --auto-compact-threshold 100000
 ```
 
-Automatic compaction is best-effort: if summarization fails, Tau logs it, keeps
-the original context, and carries on.
+Automatic compaction is best-effort: if summarization fails, Tau logs it and keeps
+the original context. During successful overflow recovery, the TUI shows compaction
+and retry progress instead of presenting the intermediate provider rejection as a
+terminal error. The error becomes visible only if recovery cannot complete.
 
 ## Manual compaction
 
