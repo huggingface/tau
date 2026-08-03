@@ -20,6 +20,8 @@ from tau_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
 from tau_coding.events import (
     AgentSettledEvent,
     AutoRetryStartEvent,
+    CompactionEndEvent,
+    CompactionStartEvent,
     QueueUpdateEvent,
     SessionAgentEndEvent,
 )
@@ -53,6 +55,35 @@ def test_tui_adapter_waits_for_session_settlement_after_low_level_agent_end() ->
 
     adapter.apply(AgentSettledEvent())
     assert state.running is False
+
+
+def test_tui_adapter_replaces_recovered_overflow_with_terminal_retry_error() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+    overflow = AssistantMessage(
+        stop_reason="error",
+        error_message="prompt is too long: context window exceeded",
+    )
+    retry_error = AssistantMessage(
+        stop_reason="error",
+        error_message="authentication failed: API token expired",
+    )
+
+    adapter.apply(AgentStartEvent())
+    adapter.apply(MessageEndEvent(message=overflow))
+    adapter.apply(SessionAgentEndEvent())
+    adapter.apply(CompactionStartEvent(reason="overflow"))
+    adapter.apply(CompactionEndEvent(reason="overflow", will_retry=True))
+    adapter.apply(AgentStartEvent())
+    adapter.apply(MessageEndEvent(message=retry_error))
+    adapter.apply(SessionAgentEndEvent())
+    adapter.apply(AgentSettledEvent())
+
+    error_items = [item for item in state.items if item.role == "error"]
+    assert len(error_items) == 1
+    assert error_items[0].text == "Error: authentication failed: API token expired"
+    assert state.error == "authentication failed: API token expired"
+    assert "context window exceeded" not in state.error
 
 
 def test_tui_adapter_builds_assistant_item_from_nested_stream_events() -> None:

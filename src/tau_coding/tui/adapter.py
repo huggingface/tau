@@ -88,6 +88,9 @@ class TuiEventAdapter:
                         # overflow compaction and retry are still in progress.
                         self._pending_overflow_error = message
                     else:
+                        # Successful overflow compaction makes the retry failure the
+                        # only terminal error worth presenting.
+                        self._pending_overflow_error = None
                         self.state.add_assistant_error(message)
                         self.state.running = False
                 else:
