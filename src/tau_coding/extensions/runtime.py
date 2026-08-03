@@ -146,11 +146,10 @@ class InputHookOutcome:
 class ExtensionRuntime:
     """Owns loaded extensions and dispatches events between them and a session.
 
-    The runtime outlives any single `CodingSession`: session replacement flows
-    (resume, new, branch) re-bind the same runtime rather than re-running
-    extension discovery and `setup`. `/reload`, by contrast, replaces the
-    registration set and invalidates the previous extension generation (see
-    `reset_for_reload`), so pre-reload API objects fail loudly.
+    Each runtime belongs to one prepared session snapshot. Reload and
+    destination replacement stage a fresh runtime, then retire the prior
+    generation only after preparation succeeds. This prevents project extension
+    registrations from crossing cwd trust boundaries.
     """
 
     def __init__(self, *, ui: UiBridge | None = None) -> None:
@@ -191,6 +190,13 @@ class ExtensionRuntime:
         self._load_diagnostics.extend(result.diagnostics)
         for extension in result.extensions:
             self._setup_extension(extension)
+
+    def retire(self) -> None:
+        """Invalidate a successfully replaced runtime without touching its successor."""
+        self._generation.invalidate()
+        if self._harness_unsubscribe is not None:
+            self._harness_unsubscribe()
+            self._harness_unsubscribe = None
 
     def reset_for_reload(self) -> None:
         """Drop all registrations and imported modules ahead of a re-load.

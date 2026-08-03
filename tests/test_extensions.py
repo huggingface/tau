@@ -1794,13 +1794,14 @@ async def test_runtime_survives_new_session_swap(tmp_path: Path) -> None:
     config = dataclass_replace(config, session_manager=manager, session_id=record.id)
     session = await CodingSession.load(config)
     runtime_before = session.extension_runtime
+    module_before = _loaded_extension_module("integration")
 
     await session.new_session()
 
-    module = _loaded_extension_module("integration")
-    assert session.extension_runtime is runtime_before
-    assert ("stop", "new") in module.EVENTS
-    assert ("start", "new") in module.EVENTS
+    module_after = _loaded_extension_module("integration")
+    assert session.extension_runtime is not runtime_before
+    assert ("stop", "new") in module_before.EVENTS
+    assert ("start", "new") in module_after.EVENTS
 
 
 async def test_session_swap_clears_host_extension_components(tmp_path: Path) -> None:
@@ -1993,7 +1994,7 @@ async def test_reload_awaits_shutdown_before_invalidation_and_starts_new_generat
     ]
 
 
-async def test_session_rebinding_does_not_invalidate_extension_instances(
+async def test_session_replacement_rebuilds_and_invalidates_source_extensions(
     tmp_path: Path,
 ) -> None:
     from dataclasses import replace as dataclass_replace
@@ -2013,11 +2014,11 @@ async def test_session_rebinding_does_not_invalidate_extension_instances(
 
     await session.new_session()
 
-    # Same instance continues by design (setup did not re-run); its context
-    # views simply reflect the newly bound session.
-    assert len(module.APIS) == 1  # type: ignore[attr-defined]
-    assert api.context.session_id == session.session_id
-    api.send_user_message("still alive")  # must not raise
+    new_module = _loaded_extension_module("integration")
+    new_api = cast(ExtensionAPI, new_module.APIS[-1])  # type: ignore[attr-defined]
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = api.context
+    assert new_api.context.session_id == session.session_id
 
 
 async def test_inflight_handler_touching_stale_api_records_diagnostic(

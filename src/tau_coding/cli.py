@@ -841,7 +841,7 @@ async def run_print_mode(
     custom_system_prompt: str | None = None,
     append_system_prompt: str | None = None,
     trust_override: TrustOverride | None = None,
-    trust_default: TrustDefault = "always",
+    trust_default: TrustDefault = "ask",
 ) -> bool:
     """Run one non-interactive prompt and print streamed events.
 

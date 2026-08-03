@@ -662,6 +662,7 @@ async def test_run_print_mode_uses_custom_and_appended_system_prompt(
         resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
         custom_system_prompt="Custom base.",
         append_system_prompt="First append.\n\nSecond append.",
+        trust_default="always",
     )
 
     _captured = capsys.readouterr()
@@ -747,6 +748,7 @@ async def test_run_print_mode_includes_discovered_context(
         cwd=tmp_path,
         provider=provider,
         resource_paths=TauResourcePaths(root=tmp_path / "resources", agents_root=None),
+        trust_default="always",
     )
 
     _captured = capsys.readouterr()
@@ -1662,3 +1664,29 @@ def test_setup_command_warns_when_api_key_env_is_missing(
 
     assert result.exit_code == 0
     assert "Set MISSING_API_KEY before running Tau with this provider." in result.stderr
+
+
+@pytest.mark.parametrize("output", [PrintOutputMode.json, PrintOutputMode.transcript])
+@pytest.mark.anyio
+async def test_headless_ask_declines_without_corrupting_structured_stdout(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, output: PrintOutputMode
+) -> None:
+    (tmp_path / "AGENTS.md").write_text("PROTECTED-STRUCTURED-SECRET", encoding="utf-8")
+    provider = FakeProvider(
+        [[assistant_start(model="fake"), assistant_done(message=AssistantMessage(content="Done"))]]
+    )
+
+    ok = await run_print_mode(
+        prompt="Hello",
+        model="fake",
+        cwd=tmp_path,
+        provider=provider,
+        output=output,
+        resource_paths=TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None),
+    )
+
+    captured = capsys.readouterr()
+    assert ok is True
+    assert "PROTECTED-STRUCTURED-SECRET" not in provider.calls[0][1]
+    assert "Project inputs" not in captured.out
+    assert "Project inputs" in captured.err

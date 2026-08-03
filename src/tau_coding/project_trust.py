@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import IO, Literal
 
 from tau_coding.paths import TauPaths
+from tau_coding.prompt_templates import is_prompt_template_candidate
+from tau_coding.skills import is_skill_candidate
 
 TrustDefault = Literal["ask", "always", "never"]
 TrustDecision = Literal["trusted", "untrusted"]
@@ -148,10 +150,23 @@ class ProtectedResourceDetector:
     def detect(self, cwd: CanonicalProjectPath) -> ProtectedResourceSummary:
         root = cwd.value
         found: dict[str, list[Path]] = {category: [] for category in _RESOURCE_CATEGORIES}
-        self._file(found, "settings", root / ".tau" / "settings.json")
+        # Project settings are not supported by a Tau loader, so they cannot
+        # trigger trust until that loader exists.
         for namespace in (".tau", ".agents"):
-            self._glob(found, "skills", root / namespace / "skills", "*/SKILL.md")
-            self._glob(found, "prompts", root / namespace / "prompts", "*.md")
+            self._glob(
+                found,
+                "skills",
+                root / namespace / "skills",
+                "*/SKILL.md",
+                predicate=is_skill_candidate,
+            )
+            self._glob(
+                found,
+                "prompts",
+                root / namespace / "prompts",
+                "*.md",
+                predicate=is_prompt_template_candidate,
+            )
         self._glob(found, "themes", root / ".tau" / "themes", "*.json")
         self._file(found, "system-prompts", root / ".tau" / "SYSTEM.md")
         self._file(found, "system-prompts", root / ".tau" / "APPEND_SYSTEM.md")
@@ -182,14 +197,25 @@ class ProtectedResourceDetector:
             found[category].append(path)
 
     def _glob(
-        self, found: dict[str, list[Path]], category: str, directory: Path, pattern: str
+        self,
+        found: dict[str, list[Path]],
+        category: str,
+        directory: Path,
+        pattern: str,
+        *,
+        predicate: Callable[[Path], bool] | None = None,
     ) -> None:
         try:
             entries = tuple(directory.glob(pattern)) if directory.is_dir() else ()
         except OSError:
             # An unreadable protected directory is itself a meaningful trigger.
-            entries = (directory,)
-        found[category].extend(path for path in entries if self._is_candidate(path))
+            found[category].append(directory)
+            return
+        found[category].extend(
+            path
+            for path in entries
+            if self._is_candidate(path) and (predicate is None or predicate(path))
+        )
 
     def _context(self, found: dict[str, list[Path]], cwd: Path) -> None:
         # Match current Tau discovery: nearest project marker through cwd, then
@@ -334,7 +360,11 @@ class ProjectTrustStore:
         }
         fd = -1
         temporary: Path | None = None
+        replaced = False
+        prior_bytes: bytes | None = None
         try:
+            if self.path.exists():
+                prior_bytes = self.path.read_bytes()
             fd, raw_temporary = tempfile.mkstemp(
                 prefix=".trust-", suffix=".tmp", dir=self.paths.home
             )
@@ -347,10 +377,12 @@ class ProjectTrustStore:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary, self.path)
+            replaced = True
             temporary = None
-            os.chmod(self.path, 0o600)
             _fsync_directory(self.paths.home)
         except OSError as exc:
+            if replaced:
+                self._restore_prior_bytes(prior_bytes)
             raise ProjectTrustError(
                 f"Could not write project trust store {self.path}: {exc}"
             ) from exc
@@ -360,6 +392,33 @@ class ProjectTrustStore:
             if temporary is not None:
                 with suppress(OSError):
                     temporary.unlink(missing_ok=True)
+
+    def _restore_prior_bytes(self, prior_bytes: bytes | None) -> None:
+        """Best-effort rollback after a failure following destination replace."""
+        rollback: Path | None = None
+        try:
+            if prior_bytes is None:
+                self.path.unlink(missing_ok=True)
+            else:
+                fd, raw = tempfile.mkstemp(prefix=".trust-rollback-", dir=self.paths.home)
+                rollback = Path(raw)
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(prior_bytes)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.chmod(rollback, 0o600)
+                os.replace(rollback, self.path)
+                rollback = None
+            with suppress(OSError):
+                _fsync_directory(self.paths.home)
+        except OSError as exc:
+            raise ProjectTrustError(
+                f"Could not restore prior project trust store {self.path}: {exc}"
+            ) from exc
+        finally:
+            if rollback is not None:
+                with suppress(OSError):
+                    rollback.unlink(missing_ok=True)
 
 
 class ProjectTrustCoordinator:

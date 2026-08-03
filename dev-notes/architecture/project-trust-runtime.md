@@ -17,8 +17,10 @@ resources. The accepted policy and Pi compatibility research remain in
 - CLI entry points supply the user-global default and invocation override.
   Structured/headless modes use no prompt. The TUI adapts the frontend-neutral
   request to an accessible Textual modal.
-- Reload re-detects. Resume stages and resolves the destination cwd before
-  adoption. A cancelled reload/replacement keeps the current snapshot.
+- Reload and destination replacement stage fresh cwd-bound extension runtimes,
+  resources, tools, commands, and prompts before adoption. Source-project
+  registrations never cross cwd boundaries; cancellation or preparation failure
+  keeps the current snapshot.
 
 `tau_agent` has no trust, path, Typer, or Textual dependency. Textual remains in
 `tau_coding.tui`.
@@ -28,8 +30,9 @@ resources. The accepted policy and Pi compatibility research remain in
 `~/.tau/trust.json` has `version` and sorted `decisions`. Reads reject unknown
 fields/versions, duplicate or relative/non-normalized paths, and unknown
 values. Updates lock the store, write/fsync a mode-0600 same-directory temporary
-file, replace, and fsync the directory. Errors diagnose and fail closed; run-only
-explicit approval does not depend on storage.
+file, replace, and fsync the directory. A post-replace failure restores the prior
+non-granting bytes before reporting failure. Errors diagnose and fail closed;
+run-only explicit approval does not depend on storage.
 
 ## Migration
 

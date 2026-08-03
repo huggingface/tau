@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 
 from tau_agent.provider import ModelProvider
 from tau_agent.session import SessionEntry
+from tau_coding import project_trust as project_trust_module
 from tau_coding.cli import app
 from tau_coding.paths import TauPaths
 from tau_coding.project_trust import (
@@ -24,7 +25,10 @@ from tau_coding.project_trust import (
     canonicalize_project_path,
     format_trust_diagnostic,
 )
-from tau_coding.resources import TauResourcePaths, resource_paths_with_project_trust
+from tau_coding.resources import (
+    TauResourcePaths,
+    resource_paths_with_project_trust,
+)
 from tau_coding.session import CodingSession, CodingSessionConfig
 from tau_coding.tui.project_trust import ProjectTrustScreen
 
@@ -78,7 +82,6 @@ def test_detector_covers_protected_matrix_without_reading_contents(tmp_path: Pat
         "context",
         "extensions",
         "prompts",
-        "settings",
         "skills",
         "system-prompts",
         "themes",
@@ -87,7 +90,6 @@ def test_detector_covers_protected_matrix_without_reading_contents(tmp_path: Pat
         "context": 3,
         "extensions": 3,
         "prompts": 2,
-        "settings": 1,
         "skills": 2,
         "system-prompts": 2,
         "themes": 1,
@@ -99,6 +101,8 @@ def test_detector_ignores_empty_and_unsupported_resources(tmp_path: Path) -> Non
     project = tmp_path / "project"
     (project / ".tau/skills").mkdir(parents=True)
     (project / ".agents/prompts").mkdir(parents=True)
+    (project / ".tau/settings.json").write_text("{}", encoding="utf-8")
+    (project / ".agents/prompts/reload.md").write_text("reserved", encoding="utf-8")
     (project / "CLAUDE.md").write_text("unsupported", encoding="utf-8")
     (project / "pyproject.toml").write_text("[project]", encoding="utf-8")
 
@@ -360,3 +364,302 @@ def test_cli_rejects_conflicting_overrides() -> None:
 
     assert result.exit_code != 0
     assert "cannot be used together" in result.output
+
+
+def test_store_failures_preserve_prior_non_granting_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    key = canonicalize_project_path(project)
+
+    operations = ("chmod", "fsync", "replace", "directory-fsync")
+    for operation in operations:
+        store = ProjectTrustStore(paths)
+        monkeypatch.undo()
+        store.set(key, "untrusted")
+        before = store.path.read_bytes()
+
+        if operation == "chmod":
+            monkeypatch.setattr(
+                project_trust_module.os,
+                "chmod",
+                lambda *_args: (_ for _ in ()).throw(OSError("chmod")),
+            )
+        elif operation == "fsync":
+            monkeypatch.setattr(
+                project_trust_module.os,
+                "fsync",
+                lambda *_args: (_ for _ in ()).throw(OSError("fsync")),
+            )
+        elif operation == "replace":
+            monkeypatch.setattr(
+                project_trust_module.os,
+                "replace",
+                lambda *_args: (_ for _ in ()).throw(OSError("replace")),
+            )
+        else:
+            monkeypatch.setattr(
+                project_trust_module,
+                "_fsync_directory",
+                lambda *_args: (_ for _ in ()).throw(OSError("directory fsync")),
+            )
+
+        with pytest.raises(ProjectTrustError):
+            store.set(key, "trusted")
+        assert store.path.read_bytes() == before
+        assert json.loads(before)["decisions"][0]["decision"] == "untrusted"
+
+
+@pytest.mark.anyio
+async def test_session_default_declines_project_input_and_explicit_approval_loads_it(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "AGENTS.md").write_text("protected-default-probe", encoding="utf-8")
+    resources = TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None)
+    common = {
+        "provider": cast(ModelProvider, object()),
+        "model": "fake",
+        "cwd": project,
+        "resource_paths": resources,
+    }
+
+    declined = await CodingSession.load(CodingSessionConfig(**common, storage=_Storage()))
+    approved = await CodingSession.load(
+        CodingSessionConfig(**common, storage=_Storage(), trust_override="approve")
+    )
+
+    assert declined.project_trust_resolution is not None
+    assert declined.project_trust_resolution.trusted is False
+    assert "protected-default-probe" not in declined.system_prompt
+    assert "protected-default-probe" in approved.system_prompt
+
+
+@pytest.mark.anyio
+async def test_destination_rebuild_drops_source_project_extensions(tmp_path: Path) -> None:
+    home_extensions = tmp_path / "home/.tau/extensions"
+    source_extensions = tmp_path / "source/.tau/extensions"
+    destination = tmp_path / "destination"
+    home_extensions.mkdir(parents=True)
+    source_extensions.mkdir(parents=True)
+    destination.mkdir()
+    (destination / "AGENTS.md").write_text("destination protected", encoding="utf-8")
+    (home_extensions / "global.py").write_text(
+        "def setup(tau):\n    tau.add_prompt_guideline('GLOBAL-GUIDELINE')\n",
+        encoding="utf-8",
+    )
+    (source_extensions / "source.py").write_text(
+        "def setup(tau):\n    tau.add_prompt_guideline('SOURCE-PROJECT-GUIDELINE')\n",
+        encoding="utf-8",
+    )
+    resources = TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None)
+    source = await CodingSession.load(
+        CodingSessionConfig(
+            provider=cast(ModelProvider, object()),
+            model="fake",
+            storage=_Storage(),
+            cwd=tmp_path / "source",
+            resource_paths=resources,
+            trust_override="approve",
+            project_extensions_enabled=True,
+        )
+    )
+    replacement = await CodingSession.load(
+        CodingSessionConfig(
+            provider=cast(ModelProvider, object()),
+            model="fake",
+            storage=_Storage(),
+            cwd=destination,
+            resource_paths=resources,
+            trust_override="decline",
+            project_extensions_enabled=True,
+            extension_runtime=source._extension_runtime,
+        )
+    )
+
+    assert "GLOBAL-GUIDELINE" in replacement.system_prompt
+    assert "SOURCE-PROJECT-GUIDELINE" not in replacement.system_prompt
+    assert "destination protected" not in replacement.system_prompt
+
+
+@pytest.mark.anyio
+async def test_failed_reload_preserves_complete_live_snapshot(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    agents = project / "AGENTS.md"
+    agents.write_text("stable snapshot", encoding="utf-8")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=cast(ModelProvider, object()),
+            model="fake",
+            storage=_Storage(),
+            cwd=project,
+            resource_paths=TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None),
+            trust_override="approve",
+        )
+    )
+    old_prompt = session.system_prompt
+    old_runtime = session._extension_runtime
+    old_tools = tuple(tool.name for tool in session._harness.config.tools)
+    old_resolution = session.project_trust_resolution
+    agents.write_bytes(b"\xff")
+
+    with pytest.raises(UnicodeDecodeError):
+        await session.reload()
+
+    assert session.system_prompt == old_prompt
+    assert session._extension_runtime is old_runtime
+    assert tuple(tool.name for tool in session._harness.config.tools) == old_tools
+    assert session.project_trust_resolution == old_resolution
+
+
+@pytest.mark.parametrize(
+    ("button_id", "expected"),
+    [
+        ("#trust-trust-exact", "trust-exact"),
+        ("#trust-trust-parent", "trust-parent"),
+        ("#trust-trust-run", "trust-run"),
+        ("#trust-decline-exact", "decline-exact"),
+        ("#trust-decline-run", "decline-run"),
+    ],
+)
+@pytest.mark.anyio
+async def test_tui_trust_modal_all_choices_are_keyboard_focusable(
+    tmp_path: Path, button_id: str, expected: str
+) -> None:
+    project = tmp_path / "parent/project"
+    project.mkdir(parents=True)
+    (project / "AGENTS.md").write_text("rules", encoding="utf-8")
+    summary = ProtectedResourceDetector().detect(canonicalize_project_path(project))
+    request = ProjectTrustRequest(canonicalize_project_path(project), summary, None)
+    results: list[object | None] = []
+
+    class Host(App[None]):
+        def on_mount(self) -> None:
+            self.push_screen(ProjectTrustScreen(request), results.append)
+
+    host = Host()
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        assert isinstance(host.screen.focused, Button)
+        host.screen.query_one(button_id, Button).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert results == [expected]
+
+
+@pytest.mark.anyio
+async def test_extension_order_errors_and_remember_failure_are_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "AGENTS.md").write_text("rules", encoding="utf-8")
+    calls: list[str] = []
+
+    async def broken(_event: object) -> ExtensionTrustResult:
+        calls.append("broken")
+        raise RuntimeError("handler failure")
+
+    async def approve(_event: object) -> ExtensionTrustResult:
+        calls.append("approve")
+        return ExtensionTrustResult("approve", remember=True)
+
+    async def never_reached(_event: object) -> ExtensionTrustResult:
+        calls.append("late")
+        return ExtensionTrustResult("decline")
+
+    store = ProjectTrustStore(_paths(tmp_path))
+    monkeypatch.setattr(
+        store, "set", lambda *_args: (_ for _ in ()).throw(ProjectTrustError("write failed"))
+    )
+    _summary, resolution = await ProjectTrustCoordinator(store).resolve(
+        project, extension_deciders=(broken, approve, never_reached)
+    )
+
+    assert calls == ["broken", "approve"]
+    assert resolution.trusted is False
+    assert resolution.source == "extension"
+    assert any("handler failure" in item for item in resolution.diagnostics)
+    assert any("write failed" in item for item in resolution.diagnostics)
+
+
+def test_store_read_lock_and_write_permission_failures_are_safe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    key = canonicalize_project_path(project)
+    store = ProjectTrustStore(paths)
+    store.set(key, "untrusted")
+    before = store.path.read_bytes()
+
+    original_read_text = Path.read_text
+    monkeypatch.setattr(
+        Path,
+        "read_text",
+        lambda self, *args, **kwargs: (
+            (_ for _ in ()).throw(PermissionError("read denied"))
+            if self == store.path
+            else original_read_text(self, *args, **kwargs)
+        ),
+    )
+    with pytest.raises(ProjectTrustError, match="read"):
+        store.read()
+    monkeypatch.undo()
+
+    monkeypatch.setattr(
+        project_trust_module,
+        "_lock",
+        lambda _handle: (_ for _ in ()).throw(ProjectTrustError("lock denied")),
+    )
+    with pytest.raises(ProjectTrustError, match="lock"):
+        store.read()
+    monkeypatch.undo()
+
+    monkeypatch.setattr(
+        project_trust_module.tempfile,
+        "mkstemp",
+        lambda *args, **kwargs: (_ for _ in ()).throw(PermissionError("write denied")),
+    )
+    with pytest.raises(ProjectTrustError, match="write"):
+        store.set(key, "trusted")
+    assert store.path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("choice", "trusted", "saved_decision"),
+    [
+        ("trust-exact", True, "trusted"),
+        ("trust-run", True, None),
+        ("decline-exact", False, "untrusted"),
+        ("decline-run", False, None),
+        (None, False, None),
+    ],
+)
+@pytest.mark.anyio
+async def test_interactive_choices_have_exact_persistence_semantics(
+    tmp_path: Path, choice: object, trusted: bool, saved_decision: str | None
+) -> None:
+    project = tmp_path / "parent/project"
+    project.mkdir(parents=True)
+    (project / "AGENTS.md").write_text("rules", encoding="utf-8")
+    store = ProjectTrustStore(_paths(tmp_path))
+
+    async def prompt(_request: ProjectTrustRequest) -> object:
+        return choice
+
+    _summary, resolution = await ProjectTrustCoordinator(store).resolve(
+        project,
+        interactive=True,
+        prompt=prompt,  # type: ignore[arg-type]
+    )
+
+    assert resolution.trusted is trusted
+    saved = store.nearest(canonicalize_project_path(project))
+    assert (saved.decision if saved else None) == saved_decision

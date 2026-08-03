@@ -17,7 +17,12 @@ from tau_coding.resources import (
 
 _TEMPLATE_VARIABLE_RE = re.compile(r"{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}")
 _ARGUMENT_TEMPLATE_VARIABLES = {"arguments", "args"}
-_RESERVED_TEMPLATE_NAMES = frozenset({"prompts", "skills", "tools"})
+_RESERVED_TEMPLATE_NAMES = frozenset({"prompts", "skills", "tools", "reload"})
+
+
+def is_prompt_template_candidate(path: Path) -> bool:
+    """Return whether a directory entry is eligible for prompt loading."""
+    return path.suffix.lower() == ".md" and path.stem.casefold() not in _RESERVED_TEMPLATE_NAMES
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,7 +171,7 @@ def _load_prompt_templates_from_dir_with_diagnostics(
     seen: set[str] = set()
     for path in sorted(prompts_dir.glob("*.md"), key=lambda item: item.name):
         name = path.stem
-        if name.casefold() in _RESERVED_TEMPLATE_NAMES:
+        if not is_prompt_template_candidate(path):
             diagnostics.append(
                 ResourceDiagnostic(
                     kind="prompt",

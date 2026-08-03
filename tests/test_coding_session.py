@@ -1861,6 +1861,7 @@ async def test_session_builds_system_prompt_when_system_is_omitted(tmp_path: Pat
         model="fake",
         storage=storage,
         cwd=tmp_path,
+        trust_default="always",
         resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
     )
     session = await CodingSession.load(config)
@@ -2214,6 +2215,7 @@ async def test_session_skills_disabled_suppresses_skill_index(tmp_path: Path) ->
         model="fake",
         storage=storage,
         cwd=tmp_path,
+        trust_default="always",
         skills_enabled=False,
         resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
     )
@@ -2485,6 +2487,7 @@ async def test_session_loads_tau_native_system_prompt_files(tmp_path: Path) -> N
             model="fake",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
+            trust_default="always",
             resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
         )
     )
@@ -2542,6 +2545,7 @@ async def test_session_reload_tracks_system_prompt_file_precedence(tmp_path: Pat
             model="fake",
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
+            trust_default="always",
             resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
         )
     )
@@ -2655,6 +2659,7 @@ async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Pa
             model="fake",
             storage=storage,
             cwd=tmp_path,
+            trust_default="always",
             resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
         )
     )
