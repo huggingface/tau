@@ -121,6 +121,7 @@ from tau_coding.tui.terminal_title import TerminalTitleController
 from tau_coding.tui.widgets import (
     TRANSCRIPT_WINDOW_ITEMS,
     TRANSCRIPT_WINDOW_OVERSCAN_ITEMS,
+    CompactSessionInfo,
     LeftAlignedMarkdownHeading,
     StreamingTranscriptMessageWidget,
     TauMarkdownBlock,
@@ -733,6 +734,28 @@ def test_compact_session_info_shows_unknown_without_provider_usage() -> None:
     console.print(render_compact_session_info(session))
 
     assert "?/200k" in console.export_text()
+
+
+def test_compact_session_info_redraws_when_provider_usage_becomes_available() -> None:
+    session = FakeSession()
+    session.has_provider_context_usage = False
+    widget = CompactSessionInfo()
+    updates: list[object] = []
+    widget.update = updates.append  # type: ignore[method-assign]
+
+    widget.update_from_session(session)
+    first_console = Console(record=True, width=120)
+    first_console.print(updates[-1])
+    assert "?/200k" in first_console.export_text()
+
+    session.has_provider_context_usage = True
+    widget.update_from_session(session)
+    assert len(updates) == 2
+    second_console = Console(record=True, width=120)
+    second_console.print(updates[-1])
+    second_output = second_console.export_text()
+    assert "12k/200k" in second_output
+    assert "?/200k" not in second_output
 
 
 def test_compact_session_info_styles_provider_as_metadata() -> None:

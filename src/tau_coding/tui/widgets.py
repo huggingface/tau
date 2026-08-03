@@ -162,6 +162,7 @@ def _session_summary_fingerprint(
         session.model,
         session.thinking_level,
         session.context_token_estimate,
+        session.has_provider_context_usage,
         session.auto_compact_token_threshold,
         session.context_window_tokens,
         session.session_title,
