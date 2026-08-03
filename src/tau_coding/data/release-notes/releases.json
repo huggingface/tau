@@ -1,17 +1,33 @@
 [
   {
-    "version": "0.3.5",
-    "date": "2026-07-31",
+    "version": "0.3.6",
+    "date": "2026-08-03",
     "sections": {
       "New": [
-        "Let print-mode automation choose a safe, durable session ID with `--session-id`, while preserving isolated-session guarantees.",
         "Customize the generated system prompt in print or TUI sessions with `--system-prompt` and repeatable `--append-system-prompt` text-or-file inputs.",
         "Load Tau-native `SYSTEM.md` and `APPEND_SYSTEM.md` files from user or project `.tau` directories, with CLI and project precedence plus `/reload` support."
       ],
       "Changed": [
+        "Rebuild provider configuration from the current catalog during upgrades while preserving preferences and custom providers, so stale metadata cannot hide new capabilities or restore withdrawn models.",
+        "Include the current system prompt in live HTML session exports as a separate collapsed section; review exports before sharing because project instructions may be exposed, while JSONL and offline exports remain prompt-free."
+      ],
+      "Fixed": [
+        "Anchor context estimates to provider-reported token usage, proactively compact large sessions, and present automatic overflow recovery without misleading terminal errors.",
+        "Keep `@` file-reference completion available in skill arguments and custom prompt text.",
+        "Prevent direct `!` and `!!` shell commands from cancelling an active agent run."
+      ]
+    }
+  },
+  {
+    "version": "0.3.5",
+    "date": "2026-07-31",
+    "sections": {
+      "New": [
+        "Let print-mode automation choose a safe, durable session ID with `--session-id`, while preserving isolated-session guarantees."
+      ],
+      "Changed": [
         "Cache Anthropic prompt prefixes to reduce repeated input billing, with auth-aware retention, compatibility overrides, and a sidebar cache hit rate.",
         "Redesign self-contained HTML session exports with compact accordions, entry filters and counts, expand/collapse controls, clearer tool labels, and offline JSONL download.",
-        "Include the current system prompt in live HTML session exports as a separate collapsed section; review exports before sharing because project instructions may be exposed, while JSONL and offline exports remain prompt-free.",
         "Show normal working indicators and unfocused completion notifications while manual `/compact` runs."
       ],
       "Fixed": [
