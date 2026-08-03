@@ -48,11 +48,40 @@ features and fixes.
 | `--session TEXT` | Resume a session id in the TUI |
 | `--new-session` | Start a new session instead of resuming the default |
 | `--session-id TEXT` | Set the exact id for a newly created print-mode session; errors if it already exists |
+| `--system-prompt TEXT_OR_PATH` | Replace Tau's default system-prompt base with literal text or an existing UTF-8 file |
+| `--append-system-prompt TEXT_OR_PATH` | Append literal text or an existing UTF-8 file (repeatable) |
 | `--auto-compact-threshold INT` | Auto-compact above this rough token estimate |
 | `-e, --extension PATH` | Load an [extension]({{< relref "../guides/extensions.md" >}}) file or directory (repeatable) |
 | `--no-extensions` | Disable extension directory discovery (explicit `-e` paths still load) |
 | `--project-extensions` | Also load `<project>/.tau/extensions` (runs project-supplied code at startup) |
 | `-v, --version` | Print the version and exit |
+
+### System prompt input
+
+`--system-prompt` replaces Tau's default base prompt. Repeat
+`--append-system-prompt` to add sections in command-line order; Tau separates each
+resolved value with exactly one blank line. Put these flags before the positional
+prompt, like other recognized options:
+
+```bash
+tau --system-prompt "You are a focused reviewer." \
+  --append-system-prompt ./team-rules.md \
+  --append-system-prompt "Report risky changes first." \
+  -p "review this repository"
+```
+
+For either option, Tau reads the value as a UTF-8 file when that path exists.
+Otherwise it uses the value verbatim, so a nonexistent path is literal prompt
+text. Existing directories, unreadable files, and invalid UTF-8 files stop
+startup with an error naming the option and path. `~` is expanded when checking
+for a file.
+
+A custom base still receives appended text, discovered project instructions,
+eligible skills when the `read` tool is enabled, the current date, and the
+working directory. The options apply to print mode and interactive startup;
+when used with `--session`, they configure the resumed session's next provider
+request. They are startup controls and are not stored in session history, so
+pass them again on a later resume when needed.
 
 `--resume`, `--prompt`, `-o/--output`, and `-x` are removed; each now exits
 with an error naming its replacement (`--session`, `--print`, `--mode`, and

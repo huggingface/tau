@@ -8155,6 +8155,9 @@ async def test_run_tui_app_creates_new_session_by_default(
             assert config.provider_name == "local"  # type: ignore[attr-defined]
             assert config.auto_compact_token_threshold == 1000  # type: ignore[attr-defined]
             assert config.index_on_first_persist is True  # type: ignore[attr-defined]
+            assert config.system is None  # type: ignore[attr-defined]
+            assert config.custom_system_prompt == "Custom base"  # type: ignore[attr-defined]
+            assert config.append_system_prompt == "First\n\nSecond"  # type: ignore[attr-defined]
             calls.append("load")
             return "session"
 
@@ -8196,6 +8199,8 @@ async def test_run_tui_app_creates_new_session_by_default(
         auto_compact_token_threshold=1000,
         initial_prompt="explain this repo",
         session_manager=FakeManager(),
+        custom_system_prompt="Custom base",
+        append_system_prompt="First\n\nSecond",
     )
 
     assert calls == [
@@ -8417,6 +8422,9 @@ async def test_run_tui_app_resumes_explicit_session(
         async def load(cls, config: object) -> str:
             assert config.provider_name == "local"  # type: ignore[attr-defined]
             assert config.model == "fake-model"  # type: ignore[attr-defined]
+            assert config.system is None  # type: ignore[attr-defined]
+            assert config.custom_system_prompt == "Resume base"  # type: ignore[attr-defined]
+            assert config.append_system_prompt == "Resume append"  # type: ignore[attr-defined]
             calls.append("load")
             return "session"
 
@@ -8462,6 +8470,8 @@ async def test_run_tui_app_resumes_explicit_session(
         cwd=tmp_path,
         session_id="session-1",
         session_manager=FakeManager(),
+        custom_system_prompt="Resume base",
+        append_system_prompt="Resume append",
     )
 
     assert calls == [

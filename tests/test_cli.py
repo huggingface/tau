@@ -112,6 +112,122 @@ def test_version_command(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.stdout.strip() == "tau 1.2.3"
 
 
+def test_help_lists_system_prompt_options() -> None:
+    result = CliRunner().invoke(app, ["--help"], env={"COLUMNS": "160"})
+
+    output = re.sub(r"\s+", "", _strip_ansi(result.output))
+    assert result.exit_code == 0
+    assert "--system-promptTEXT_OR_PATH" in output
+    assert "--append-system-promptTEXT_OR_PATH" in output
+
+
+def test_prompt_inputs_resolve_files_literals_and_append_order(tmp_path: Path) -> None:
+    base_path = tmp_path / "base.md"
+    append_path = tmp_path / "append.md"
+    base_path.write_text("File base ü", encoding="utf-8")
+    append_path.write_text("File append", encoding="utf-8")
+
+    assert cli._resolve_prompt_input(str(base_path), option="--system-prompt") == "File base ü"
+    assert cli._resolve_prompt_input("literal base", option="--system-prompt") == "literal base"
+    assert (
+        cli._resolve_append_system_prompts(["first", str(append_path), "third"])
+        == "first\n\nFile append\n\nthird"
+    )
+
+
+def test_prompt_input_reports_invalid_utf8_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    prompt_path = tmp_path / "invalid.md"
+    prompt_path.write_bytes(b"\xff")
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(
+        app,
+        ["--system-prompt", prompt_path.name, "--new-session"],
+    )
+
+    assert result.exit_code == 2
+    output = _strip_ansi(result.output)
+    assert "--system-prompt" in output
+    assert prompt_path.name in output
+    assert "Could not read" in output
+
+
+def test_system_prompt_flags_are_parsed_before_positional_prompt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    base_path = tmp_path / "base.md"
+    append_path = tmp_path / "append.md"
+    base_path.write_text("Custom base", encoding="utf-8")
+    append_path.write_text("second", encoding="utf-8")
+    calls: list[tuple[str, str | None, str | None]] = []
+
+    async def fake_run_openai_print_mode(*args: object) -> bool:
+        calls.append((str(args[0]), args[-2], args[-1]))  # type: ignore[arg-type]
+        return True
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--print",
+            "--system-prompt",
+            str(base_path),
+            "--append-system-prompt",
+            "first",
+            "--append-system-prompt",
+            str(append_path),
+            "explain",
+            "this",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [("explain this", "Custom base", "first\n\nsecond")]
+
+
+def test_prompt_input_reports_existing_unreadable_path(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        app,
+        ["--append-system-prompt", str(tmp_path), "--new-session"],
+    )
+
+    assert result.exit_code == 2
+    output = _strip_ansi(result.output)
+    assert "--append-system-prompt" in output
+    assert "Could not read" in output
+
+
+def test_system_prompt_flags_forward_to_resumed_tui(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str | None, str | None, str | None]] = []
+
+    async def fake_run_openai_tui(*args: object) -> None:
+        calls.append((args[2], args[-2], args[-1]))  # type: ignore[arg-type]
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--session",
+            "session-1",
+            "--system-prompt",
+            "Resume base",
+            "--append-system-prompt",
+            "Resume append",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [("session-1", "Resume base", "Resume append")]
+
+
 def test_version_command_does_not_check_for_updates(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "_current_version", lambda: "1.2.3")
     monkeypatch.setattr(
@@ -362,11 +478,16 @@ def test_cli_positional_prompt_invokes_tui_runner(
 async def test_run_openai_tui_combines_release_notes_and_update_notice(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    calls: list[tuple[str | None, tuple[str, ...]]] = []
+    calls: list[tuple[str | None, tuple[str, ...], str | None, str | None]] = []
 
     async def fake_run_tui_app(**kwargs: object) -> None:
         calls.append(  # type: ignore[arg-type]
-            (kwargs["startup_update_notice"], kwargs["startup_notices"])
+            (
+                kwargs["startup_update_notice"],
+                kwargs["startup_notices"],
+                kwargs["custom_system_prompt"],
+                kwargs["append_system_prompt"],
+            )
         )
 
     monkeypatch.setattr(cli, "run_tui_app", fake_run_tui_app)
@@ -391,12 +512,16 @@ async def test_run_openai_tui_combines_release_notes_and_update_notice(
         model=None,
         cwd=tmp_path,
         update_notice=UpdateNotice(current_version="0.1.2", latest_version="0.1.3"),
+        custom_system_prompt="Custom base",
+        append_system_prompt="Custom append",
     )
 
     assert calls == [
         (
             "Tau 0.1.3 is available (installed: 0.1.2). Run `tau update` to upgrade.",
             ("Tau updated to 0.1.2\n\n**New**\n- Release note",),
+            "Custom base",
+            "Custom append",
         )
     ]
 
@@ -438,6 +563,43 @@ async def test_run_print_mode_prints_final_assistant_text(
         )
     )
     assert [tool.name for tool in provider.calls[0][3]] == ["read", "write", "edit", "bash"]
+
+
+@pytest.mark.anyio
+async def test_run_print_mode_uses_custom_and_appended_system_prompt(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    resource_root = tmp_path / "resources"
+    skill_dir = resource_root / "skills" / "testing"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\ndescription: Test code\n---\n# Testing",
+        encoding="utf-8",
+    )
+    (tmp_path / "AGENTS.md").write_text("Follow project rules.", encoding="utf-8")
+    provider = FakeProvider(
+        [[assistant_start(model="fake"), assistant_done(message=AssistantMessage(content="Done"))]]
+    )
+
+    ok = await run_print_mode(
+        prompt="Hello",
+        model="fake",
+        cwd=tmp_path,
+        provider=provider,
+        resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        custom_system_prompt="Custom base.",
+        append_system_prompt="First append.\n\nSecond append.",
+    )
+
+    _captured = capsys.readouterr()
+    system = provider.calls[0][1]
+    assert ok is True
+    assert system.startswith("Custom base.\n\nFirst append.\n\nSecond append.")
+    assert "You are an expert coding assistant operating inside Tau" not in system
+    assert "Follow project rules." in system
+    assert "<available_skills>" in system
+    assert "Current date:" in system
+    assert f"Current working directory: {tmp_path}" in system
 
 
 @pytest.mark.anyio
@@ -716,6 +878,8 @@ def test_print_mode_passes_exact_session_id_without_changing_output(
         extensions_enabled: bool,
         project_extensions_enabled: bool,
         session_id: str | None,
+        custom_system_prompt: str | None,
+        append_system_prompt: str | None,
     ) -> bool:
         del (
             prompt,
@@ -727,6 +891,8 @@ def test_print_mode_passes_exact_session_id_without_changing_output(
             extension_paths,
             extensions_enabled,
             project_extensions_enabled,
+            custom_system_prompt,
+            append_system_prompt,
         )
         calls.append(session_id)
         return True

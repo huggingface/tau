@@ -237,6 +237,22 @@ def main(
             help="Set the exact id for the newly created print-mode session.",
         ),
     ] = None,
+    system_prompt: Annotated[
+        str | None,
+        typer.Option(
+            "--system-prompt",
+            metavar="TEXT_OR_PATH",
+            help="Replace the default system-prompt base with literal text or a UTF-8 file.",
+        ),
+    ] = None,
+    append_system_prompt: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--append-system-prompt",
+            metavar="TEXT_OR_PATH",
+            help="Append literal text or a UTF-8 file to the system prompt (repeatable).",
+        ),
+    ] = None,
     auto_compact_threshold: Annotated[
         int | None,
         typer.Option(
@@ -368,6 +384,12 @@ def main(
         raise typer.Exit()
 
     extension_paths = tuple(extension or ())
+    custom_system_prompt = (
+        _resolve_prompt_input(system_prompt, option="--system-prompt")
+        if system_prompt is not None
+        else None
+    )
+    resolved_append_system_prompt = _resolve_append_system_prompts(append_system_prompt or ())
 
     if not print_requested:
         notice = _startup_update_notice()
@@ -385,6 +407,8 @@ def main(
                 extension_paths,
                 not no_extensions,
                 project_extensions,
+                custom_system_prompt,
+                resolved_append_system_prompt,
             )
         except (RuntimeError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
@@ -416,6 +440,8 @@ def main(
             not no_extensions,
             project_extensions,
             session_id,
+            custom_system_prompt,
+            resolved_append_system_prompt,
         )
     except (RuntimeError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -435,6 +461,8 @@ async def run_openai_tui(
     extension_paths: tuple[Path, ...] = (),
     extensions_enabled: bool = True,
     project_extensions_enabled: bool = False,
+    custom_system_prompt: str | None = None,
+    append_system_prompt: str | None = None,
 ) -> str | None:
     """Run the Textual TUI and return its resumable session id, if any."""
     release_notes_notice = startup_release_notes_notice(_current_version())
@@ -452,6 +480,8 @@ async def run_openai_tui(
         extension_paths=extension_paths,
         extensions_enabled=extensions_enabled,
         project_extensions_enabled=project_extensions_enabled,
+        custom_system_prompt=custom_system_prompt,
+        append_system_prompt=append_system_prompt,
     )
 
 
@@ -531,6 +561,33 @@ def _run_export_cli(args: list[str]) -> None:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"Exported session to {exported_path}")
     raise typer.Exit()
+
+
+def _resolve_prompt_input(value: str, *, option: str) -> str:
+    """Resolve an existing UTF-8 file, otherwise preserve literal prompt text."""
+    path = Path(value).expanduser()
+    try:
+        exists = path.exists()
+    except OSError:
+        exists = False
+    if not exists:
+        return value
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise typer.BadParameter(
+            f"Could not read {option} file {path}: {exc}",
+            param_hint=option,
+        ) from exc
+
+
+def _resolve_append_system_prompts(values: tuple[str, ...] | list[str]) -> str | None:
+    """Resolve repeated append inputs in order and separate them by one blank line."""
+    if not values:
+        return None
+    return "\n\n".join(
+        _resolve_prompt_input(value, option="--append-system-prompt") for value in values
+    )
 
 
 def _merge_stdin_prompt(prompt: str) -> str:
@@ -675,6 +732,8 @@ async def run_openai_print_mode(
     extensions_enabled: bool = True,
     project_extensions_enabled: bool = False,
     session_id: str | None = None,
+    custom_system_prompt: str | None = None,
+    append_system_prompt: str | None = None,
 ) -> bool:
     """Run print mode with the OpenAI-compatible provider configured from the environment."""
     settings = load_provider_settings()
@@ -709,6 +768,8 @@ async def run_openai_print_mode(
             extension_paths=extension_paths,
             extensions_enabled=extensions_enabled,
             project_extensions_enabled=project_extensions_enabled,
+            custom_system_prompt=custom_system_prompt,
+            append_system_prompt=append_system_prompt,
         )
     finally:
         await provider.aclose()
@@ -743,6 +804,8 @@ async def run_print_mode(
     extension_paths: tuple[Path, ...] = (),
     extensions_enabled: bool = True,
     project_extensions_enabled: bool = False,
+    custom_system_prompt: str | None = None,
+    append_system_prompt: str | None = None,
 ) -> bool:
     """Run one non-interactive prompt and print streamed events.
 
@@ -765,6 +828,8 @@ async def run_print_mode(
             extension_paths=extension_paths,
             extensions_enabled=extensions_enabled,
             project_extensions_enabled=project_extensions_enabled,
+            custom_system_prompt=custom_system_prompt,
+            append_system_prompt=append_system_prompt,
         )
     )
     session.extension_runtime.set_ui_bridge(StderrUiBridge())

@@ -4,7 +4,8 @@
     "date": "2026-07-31",
     "sections": {
       "New": [
-        "Let print-mode automation choose a safe, durable session ID with `--session-id`, while preserving isolated-session guarantees."
+        "Let print-mode automation choose a safe, durable session ID with `--session-id`, while preserving isolated-session guarantees.",
+        "Customize the generated system prompt in print or TUI sessions with `--system-prompt` and repeatable `--append-system-prompt` text-or-file inputs."
       ],
       "Changed": [
         "Cache Anthropic prompt prefixes to reduce repeated input billing, with auth-aware retention, compatibility overrides, and a sidebar cache hit rate.",
