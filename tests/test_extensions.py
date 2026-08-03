@@ -15,7 +15,7 @@ from tau_agent.session import CustomEntry, JsonlSessionStorage, LeafEntry, Messa
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
 from tau_ai import FakeProvider
-from tau_coding import CodingSession, CodingSessionConfig, TauResourcePaths
+from tau_coding import CodingSession, CodingSessionConfig, ResourceError, TauResourcePaths
 from tau_coding.extensions import (
     CustomMessageView,
     ExtensionAPI,
@@ -1932,6 +1932,29 @@ async def test_reload_invalidates_old_instance_and_new_instance_works(
     assert new_api is not old_api
     assert new_api.context.cwd == session.cwd
     new_api.send_user_message("fresh")  # the reloaded instance works normally
+
+
+async def test_failed_resource_reload_does_not_emit_extension_shutdown(tmp_path: Path) -> None:
+    body = (
+        "EVENTS = []\n\n"
+        "def setup(tau):\n"
+        "    tau.on('session_shutdown', "
+        "lambda event, context: EVENTS.append(('stop', event.reason)))\n"
+    )
+    paths = _paths(tmp_path)
+    paths.root.mkdir(parents=True)
+    prompt_path = paths.root / "SYSTEM.md"
+    prompt_path.write_text("Valid base", encoding="utf-8")
+    session = await CodingSession.load(
+        _session_config(tmp_path, FakeProvider([]), extension_body=body)
+    )
+    module = _loaded_extension_module("integration")
+
+    prompt_path.write_bytes(b"\xff")
+    with pytest.raises(ResourceError, match="Could not read replacement system prompt file"):
+        await session.reload()
+
+    assert module.EVENTS == []  # type: ignore[attr-defined]
 
 
 async def test_reload_awaits_shutdown_before_invalidation_and_starts_new_generation(

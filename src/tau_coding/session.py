@@ -1183,7 +1183,6 @@ class CodingSession:
         ``session_start(reason="reload")`` so startup-mounted UI is restored
         before the command reports completion.
         """
-        await self._extension_runtime.emit_session_shutdown("reload")
         before_skills = _skill_signatures(self._skills)
         before_prompt_templates = _prompt_template_signatures(self._prompt_templates)
         before_context_files = _context_file_signatures(self._context_files)
@@ -1208,6 +1207,7 @@ class CodingSession:
             custom_system_prompt_explicit=self._config.custom_system_prompt is not None,
             append_system_prompt_explicit=self._config.append_system_prompt is not None,
         )
+        await self._extension_runtime.emit_session_shutdown("reload")
         self._reload_extensions()
 
         after_skills = _skill_signatures(resources.skills)
@@ -1468,6 +1468,10 @@ class CodingSession:
         self._skills = replacement._skills
         self._prompt_templates = replacement._prompt_templates
         self._context_files = replacement._context_files
+        self._custom_system_prompt = replacement._custom_system_prompt
+        self._custom_system_prompt_path = replacement._custom_system_prompt_path
+        self._append_system_prompt = replacement._append_system_prompt
+        self._append_system_prompt_path = replacement._append_system_prompt_path
         self._resource_diagnostics = replacement._resource_diagnostics
         self._command_registry = replacement._command_registry
         self._provider_name = replacement._provider_name

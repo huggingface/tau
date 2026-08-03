@@ -2602,6 +2602,37 @@ async def test_failed_system_prompt_file_reload_keeps_previous_prompt(tmp_path: 
 
 
 @pytest.mark.anyio
+async def test_new_session_adopts_system_prompt_resource_tracking(tmp_path: Path) -> None:
+    tau_home = tmp_path / "tau-home"
+    tau_home.mkdir()
+    prompt_path = tau_home / "SYSTEM.md"
+    prompt_path.write_text("Base A", encoding="utf-8")
+    manager = SessionManager(TauPaths(home=tau_home, agents_home=tmp_path / "agents-home"))
+    record = manager.create_session(cwd=tmp_path, model="fake")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=JsonlSessionStorage(record.path),
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+        )
+    )
+
+    prompt_path.write_text("Base B", encoding="utf-8")
+    await session.new_session()
+    assert session.system_prompt.startswith("Base B")
+
+    prompt_path.write_text("Base A", encoding="utf-8")
+    summary = await session.reload()
+
+    assert summary.system_prompt_rebuilt is True
+    assert session.system_prompt.startswith("Base A")
+
+
+@pytest.mark.anyio
 async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Path) -> None:
     resource_root = tmp_path / "resources"
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
