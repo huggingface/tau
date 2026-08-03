@@ -169,6 +169,7 @@ Provider preferences live in `~/.tau/providers.json`:
 
 ```json
 {
+  "schema_version": 2,
   "default_provider": "local-gateway",
   "provider_preferences": {
     "local-gateway": {

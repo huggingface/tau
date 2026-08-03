@@ -771,7 +771,9 @@ def _migrate_legacy_provider_settings(
 
 
 def _save_migrated_provider_settings(settings: ProviderSettings, *, paths: TauPaths) -> None:
-    """Persist one legacy migration without turning built-ins into user overlays."""
+    """Persist one legacy migration after creating its required recovery backup."""
+    path = provider_settings_path(paths)
+    _backup_provider_settings(path, strict=True)
     catalog_names = {entry.name for entry in effective_catalog(paths)}
     custom_entries = [
         _catalog_entry_from_provider(provider)
@@ -780,8 +782,18 @@ def _save_migrated_provider_settings(settings: ProviderSettings, *, paths: TauPa
     ]
     if custom_entries:
         save_user_catalog_entries(custom_entries, paths=paths)
-    path = provider_settings_path(paths)
-    _write_provider_settings(settings, path=path, backup=True)
+    _write_provider_settings(settings, path=path, backup=False)
+
+
+def _backup_provider_settings(path: Path, *, strict: bool) -> None:
+    """Copy existing settings to the recovery path, optionally requiring success."""
+    if not path.exists():
+        return
+    if strict:
+        copy2(path, path.with_suffix(path.suffix + ".bak"))
+        return
+    with suppress(OSError):
+        copy2(path, path.with_suffix(path.suffix + ".bak"))
 
 
 def _write_provider_settings(
@@ -792,9 +804,8 @@ def _write_provider_settings(
 ) -> None:
     """Atomically write preferences, optionally retaining the previous file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    if backup and path.exists():
-        with suppress(OSError):
-            copy2(path, path.with_suffix(path.suffix + ".bak"))
+    if backup:
+        _backup_provider_settings(path, strict=False)
     _atomic_write_text(path, dumps(settings.to_json(), indent=2, sort_keys=True) + "\n")
 
 

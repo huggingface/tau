@@ -1332,6 +1332,42 @@ def test_load_provider_settings_migrates_custom_provider_to_catalog(
     assert 'models = ["qwen"]' in catalog
 
 
+def test_legacy_migration_aborts_before_changes_when_backup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(provider_config, "environ", {})
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    original = {
+        "default_provider": "local",
+        "providers": [
+            {
+                "type": "openai-compatible",
+                "name": "local",
+                "base_url": "http://localhost:11434/v1",
+                "api_key_env": "LOCAL_API_KEY",
+                "models": ["qwen"],
+                "default_model": "qwen",
+            }
+        ],
+    }
+    settings_path = tau_home / "providers.json"
+    settings_path.write_text(json.dumps(original), encoding="utf-8")
+
+    def fail_backup(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError("backup denied")
+
+    monkeypatch.setattr(provider_config, "copy2", fail_backup)
+
+    with pytest.raises(PermissionError, match="backup denied"):
+        load_provider_settings(TauPaths(home=tau_home))
+
+    assert json.loads(settings_path.read_text()) == original
+    assert not (tau_home / "providers.json.bak").exists()
+    assert not (tau_home / "catalog.toml").exists()
+
+
 def test_load_provider_settings_restores_builtin_providers_with_stored_credentials(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
