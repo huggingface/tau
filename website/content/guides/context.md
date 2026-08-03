@@ -9,9 +9,10 @@ history) and lets you tune how hard the model works with **thinking modes**.
 
 ## Seeing context usage
 
-The compact status below the TUI prompt shows the approximate active context as
-`~used/limit`; the `~` marks the count as approximate. Run `/session` to see its
-detailed basis or fallback breakdown:
+The compact status below the TUI prompt shows provider-anchored active context as
+`used/limit`. When no valid provider usage exists yet, it shows `?/limit` instead
+of presenting the fallback estimate as provider-confirmed usage. Run `/session`
+to see the detailed provider basis or fallback estimate:
 
 ```text
 Estimated context tokens: <count>

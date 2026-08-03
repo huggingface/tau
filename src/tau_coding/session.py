@@ -648,8 +648,13 @@ class CodingSession:
 
     @property
     def context_token_estimate(self) -> int:
-        """Return a rough token estimate for the active provider context."""
+        """Return the best available token count for the active provider context."""
         return self.context_usage.total_tokens
+
+    @property
+    def has_provider_context_usage(self) -> bool:
+        """Return whether valid provider usage anchors the active context count."""
+        return self.context_usage.uses_provider_usage
 
     @property
     def context_usage(self) -> ContextUsageEstimate:

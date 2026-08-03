@@ -187,6 +187,7 @@ class FakeSession:
             ProjectContextFile(path=str(self.cwd / "AGENTS.md"), content="Follow rules."),
         )
         self.context_token_estimate = 12034
+        self.has_provider_context_usage = True
         self.auto_compact_token_threshold = 200000
         self.context_window_tokens = 216384
         self.thinking_level = "medium"
@@ -716,12 +717,22 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
     output = console.export_text()
     lines = output.splitlines()
     provider_line = next(index for index, line in enumerate(lines) if "openai:fake-model" in line)
-    context_line = next(index for index, line in enumerate(lines) if "~12k/200k" in line)
+    context_line = next(index for index, line in enumerate(lines) if "12k/200k" in line)
     assert "/workspace/project (--)" in output
-    assert "context ~12k/200k" not in output
+    assert "context 12k/200k" not in output
     assert "openai:fake-model" in lines[provider_line]
     assert "(medium)" in lines[provider_line]
     assert context_line == provider_line + 1
+
+
+def test_compact_session_info_shows_unknown_without_provider_usage() -> None:
+    console = Console(record=True, width=120)
+    session = FakeSession()
+    session.has_provider_context_usage = False
+
+    console.print(render_compact_session_info(session))
+
+    assert "?/200k" in console.export_text()
 
 
 def test_compact_session_info_styles_provider_as_metadata() -> None:

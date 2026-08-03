@@ -2764,6 +2764,7 @@ async def test_session_auto_compacts_from_provider_reported_usage(
     # character estimate remains below the configured 50k threshold.
     await _collect_session_events(session.prompt("First prompt.\n" + ("old " * 25_000)))
     assert session.context_usage.provider_tokens == 1_000
+    assert session.has_provider_context_usage is True
     await _collect_session_events(session.prompt("Second short prompt."))
 
     compactions = [entry for entry in await storage.read_all() if entry.type == "compaction"]
