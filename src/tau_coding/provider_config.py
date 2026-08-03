@@ -1240,9 +1240,8 @@ def _apply_provider_preference(
         if "default_model" in value
         else provider.default_model
     )
-    models = (
-        provider.models if default_model in provider.models else (*provider.models, default_model)
-    )
+    if default_model not in provider.models:
+        default_model = provider.default_model
     headers = (
         _string_dict(value.get("headers"), f"provider_preferences.{provider.name}.headers")
         if "headers" in value
@@ -1277,13 +1276,13 @@ def _apply_provider_preference(
             value.get("thinking_defaults"),
             provider,
             f"provider_preferences.{provider.name}.thinking_defaults",
+            ignore_unknown_models=True,
         )
         if "thinking_defaults" in value
         else provider.thinking_defaults
     )
     return replace(
         provider,
-        models=models,
         default_model=default_model,
         headers=headers,
         timeout_seconds=timeout_seconds,
@@ -1297,8 +1296,12 @@ def _thinking_defaults_dict(
     value: object,
     provider: ProviderConfig,
     field_name: str,
+    *,
+    ignore_unknown_models: bool = False,
 ) -> dict[str, ThinkingLevel]:
     raw = _raw_thinking_defaults_dict(value, field_name)
+    if ignore_unknown_models:
+        raw = {model: level for model, level in raw.items() if model in provider.models}
     for model, thinking_level in raw.items():
         validate_provider_model(provider, model)
         available = provider_thinking_levels(provider, model=model)

@@ -104,6 +104,12 @@ metadata fields—including the complete `cost_tiers` array—replace the built-
 value. A model's `compat` wins over the provider's, so a built-in per-model value
 overrides a provider-level overlay — override at the model level to change it.
 
+`removed_models` is an additive provider-scoped tombstone list. Tau applies it
+last and removes matching model-list, metadata, context-window, thinking, and
+default references after merging. Bundled tombstones therefore prevent stale
+user overlays from restoring models that Tau previously advertised for the wrong
+provider. They do not affect the same model ID on another provider.
+
 ### Anthropic prompt-cache compat keys
 
 Providers using the `anthropic-messages` API accept three `compat` booleans

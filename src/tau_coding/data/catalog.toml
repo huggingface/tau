@@ -460,6 +460,7 @@ api_key_env = "OPENAI_CODEX_ACCESS_TOKEN"
 credential_name = "openai-codex"
 auth_methods = ["oauth"]
 models = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"]
+removed_models = ["gpt-5.6"]
 default_model = "gpt-5.5"
 docs_url = "https://chatgpt.com/codex"
 thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]

@@ -18,6 +18,13 @@ When Tau loads the old `providers` array format, it immediately:
 
 Stale scoped-model and thinking-default references are removed during migration.
 
+Provider catalogs also support additive `removed_models` tombstones. Tau applies
+them after merging built-in and user catalogs, removing matching model,
+context-window, metadata, thinking, and default references. This handles stale
+user overlays that were written before Tau stopped advertising a model for a
+provider. The first tombstone removes the API-only `gpt-5.6` alias from
+`openai-codex` without affecting `openai:gpt-5.6`.
+
 ## Why
 
 Legacy settings stored complete snapshots of built-in providers. A later Tau

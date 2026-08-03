@@ -34,6 +34,33 @@ from tau_coding.provider_config import (
 )
 
 
+def test_stale_preferences_cannot_restore_removed_codex_alias(tmp_path: Path) -> None:
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    (tau_home / "providers.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "default_provider": "openai-codex",
+                "provider_preferences": {
+                    "openai-codex": {
+                        "default_model": "gpt-5.6",
+                        "thinking_defaults": {"gpt-5.6": "low"},
+                    }
+                },
+                "scoped_models": [],
+            }
+        )
+    )
+
+    settings = load_provider_settings(TauPaths(home=tau_home))
+    codex = settings.get_provider("openai-codex")
+
+    assert codex.default_model == "gpt-5.5"
+    assert "gpt-5.6" not in codex.models
+    assert "gpt-5.6" not in codex.thinking_defaults
+
+
 def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path) -> None:
     settings = load_provider_settings(TauPaths(home=tmp_path / ".tau"))
 
