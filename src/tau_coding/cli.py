@@ -568,8 +568,11 @@ def _resolve_prompt_input(value: str, *, option: str) -> str:
     path = Path(value).expanduser()
     try:
         exists = path.exists()
-    except OSError:
-        exists = False
+    except OSError as exc:
+        raise typer.BadParameter(
+            f"Could not inspect {option} path {path}: {exc}",
+            param_hint=option,
+        ) from exc
     if not exists:
         return value
     try:

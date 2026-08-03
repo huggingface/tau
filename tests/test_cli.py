@@ -201,6 +201,43 @@ def test_prompt_input_reports_existing_unreadable_path(tmp_path: Path) -> None:
     assert "Could not read" in output
 
 
+def test_prompt_input_reports_path_inspection_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    prompt_path = tmp_path / "base.md"
+    prompt_path.write_text("Custom base", encoding="utf-8")
+    original_exists = Path.exists
+    tui_calls = 0
+
+    def fail_for_prompt_path(path: Path) -> bool:
+        if path == prompt_path:
+            raise PermissionError("permission denied")
+        return original_exists(path)
+
+    async def fake_run_openai_tui(*args: object) -> None:
+        nonlocal tui_calls
+        tui_calls += 1
+
+    monkeypatch.setattr(Path, "exists", fail_for_prompt_path)
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(
+        app,
+        ["--system-prompt", str(prompt_path), "--new-session"],
+        env={"COLUMNS": "300"},
+    )
+
+    assert result.exit_code == 2
+    output = _strip_ansi(result.output)
+    compact_output = re.sub(r"\s+", "", output)
+    assert "--system-prompt" in output
+    assert str(prompt_path) in compact_output
+    assert "Could not inspect" in output
+    assert "permission denied" in output
+    assert tui_calls == 0
+
+
 def test_system_prompt_flags_forward_to_resumed_tui(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
