@@ -188,6 +188,32 @@ def test_skill_name_completion_hides_after_completed_skill_command_space() -> No
     assert request_state.items == ()
 
 
+def test_file_reference_completion_works_in_skill_command_arguments(tmp_path: Path) -> None:
+    # Regression test for issue #316: @ file references stopped working in the
+    # argument text of a /skill invocation.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+
+    state = build_completion_state(
+        "/skill:review fix @app",
+        command_registry=create_default_command_registry(),
+        skills=(
+            Skill(
+                name="review",
+                path=Path("review.md"),
+                content="Review code",
+                description="Review code",
+            ),
+        ),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in state.items] == ["@src/app.py"]
+    assert state.selected is not None
+    assert state.selected.apply("/skill:review fix @app") == "/skill:review fix @src/app.py"
+
+
 def test_custom_prompt_completion_hides_after_completed_prompt_command_space() -> None:
     trailing_space_state = build_completion_state(
         "/example ",
