@@ -135,6 +135,42 @@ def test_prompt_inputs_resolve_files_literals_and_append_order(tmp_path: Path) -
     )
 
 
+@pytest.mark.parametrize(
+    ("option", "expected_base", "expected_append"),
+    [
+        ("--system-prompt", "~unknown-tau-user/base.md", None),
+        ("--append-system-prompt", None, "~unknown-tau-user/append.md"),
+    ],
+)
+def test_unknown_user_prompt_path_is_forwarded_as_literal(
+    monkeypatch: pytest.MonkeyPatch,
+    option: str,
+    expected_base: str | None,
+    expected_append: str | None,
+) -> None:
+    value = expected_base or expected_append
+    assert value is not None
+    calls: list[tuple[str | None, str | None]] = []
+    original_expanduser = Path.expanduser
+
+    def fail_for_unknown_user(path: Path) -> Path:
+        if str(path).startswith("~unknown-tau-user/"):
+            raise RuntimeError("Could not determine home directory")
+        return original_expanduser(path)
+
+    async def fake_run_openai_tui(*args: object) -> None:
+        calls.append((args[-2], args[-1]))  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "expanduser", fail_for_unknown_user)
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, [option, value, "--new-session"])
+
+    assert result.exit_code == 0
+    assert calls == [(expected_base, expected_append)]
+
+
 def test_prompt_input_reports_invalid_utf8_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

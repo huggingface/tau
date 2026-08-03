@@ -565,7 +565,10 @@ def _run_export_cli(args: list[str]) -> None:
 
 def _resolve_prompt_input(value: str, *, option: str) -> str:
     """Resolve an existing UTF-8 file, otherwise preserve literal prompt text."""
-    path = Path(value).expanduser()
+    try:
+        path = Path(value).expanduser()
+    except RuntimeError:
+        return value
     try:
         exists = path.exists()
     except OSError as exc:
