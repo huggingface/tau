@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from tau_agent import AssistantMessage, TextContent, ToolCall, ToolResultMessage, UserMessage
+from tau_agent import AssistantMessage, TextContent, ToolCall, ToolResultMessage, Usage, UserMessage
 from tau_agent.messages import assistant_content
 from tau_coding.context_window import (
     ContextUsageEstimate,
@@ -51,6 +51,53 @@ def test_context_token_estimate_includes_system_messages_and_tools(tmp_path: Pat
     )
 
     assert estimate > estimate_text_tokens("You are Tau.hellohi")
+
+
+def test_context_usage_uses_latest_provider_report_and_estimates_only_trailing_messages() -> None:
+    reported = AssistantMessage(
+        content="answer",
+        usage=Usage(input=70_000, output=2_000, cache_read=28_000, total_tokens=100_000),
+        timestamp=200,
+    )
+    trailing = UserMessage(content="follow up", timestamp=300)
+
+    usage = estimate_context_usage(
+        system="ignored because provider usage includes it",
+        messages=(UserMessage(content="large history", timestamp=100), reported, trailing),
+        tools=(),
+    )
+
+    assert usage.uses_provider_usage is True
+    assert usage.provider_tokens == 100_000
+    assert usage.trailing_tokens == estimate_message_tokens(trailing)
+    assert usage.total_tokens == 100_000 + usage.trailing_tokens
+
+
+def test_context_usage_ignores_stale_provider_report_after_newer_prefix_is_inserted() -> None:
+    stale = AssistantMessage(
+        content="old answer",
+        usage=Usage(total_tokens=100_000),
+        timestamp=100,
+    )
+    summary = UserMessage(content="Previous conversation summary", timestamp=200)
+
+    usage = estimate_context_usage(system="system", messages=(summary, stale), tools=())
+
+    assert usage.uses_provider_usage is False
+    assert usage.total_tokens < 100_000
+
+
+def test_context_usage_ignores_error_response_usage() -> None:
+    failed = AssistantMessage(
+        stop_reason="error",
+        error_message="failed",
+        usage=Usage(total_tokens=100_000),
+    )
+
+    usage = estimate_context_usage(system="system", messages=(failed,), tools=())
+
+    assert usage.uses_provider_usage is False
+    assert usage.total_tokens < 100_000
 
 
 def test_auto_compaction_threshold_keeps_pi_style_reserve() -> None:

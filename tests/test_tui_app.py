@@ -50,6 +50,7 @@ from tau_coding.events import (
     CompactionEndEvent,
     CompactionStartEvent,
     QueueUpdateEvent,
+    SessionAgentEndEvent,
 )
 from tau_coding.paths import TauPaths
 from tau_coding.prompt_templates import PromptTemplate
@@ -7506,7 +7507,7 @@ async def test_tui_prompt_worker_shows_diagnostic_log_path_for_error_event(tmp_p
 
 
 @pytest.mark.anyio
-async def test_tui_prompt_worker_skips_retry_hint_for_context_overflow() -> None:
+async def test_tui_prompt_worker_shows_recovery_status_instead_of_overflow_error() -> None:
     class OverflowSession(FakeSession):
         def __init__(self) -> None:
             super().__init__(
@@ -7518,7 +7519,13 @@ async def test_tui_prompt_worker_skips_retry_hint_for_context_overflow() -> None
                             error_message="prompt is too long: context window exceeded",
                         )
                     ),
-                    AgentEndEvent(),
+                    SessionAgentEndEvent(will_retry=False),
+                    CompactionStartEvent(reason="overflow"),
+                    CompactionEndEvent(reason="overflow", will_retry=True),
+                    AgentStartEvent(),
+                    MessageEndEvent(message=AssistantMessage(content="Recovered answer")),
+                    SessionAgentEndEvent(will_retry=False),
+                    AgentSettledEvent(),
                 ]
             )
 
@@ -7528,9 +7535,42 @@ async def test_tui_prompt_worker_skips_retry_hint_for_context_overflow() -> None
 
     await app._run_prompt("break")
 
-    assert app.state.error == "prompt is too long: context window exceeded"
+    assert app.state.error is None
+    assert not any(item.role == "error" for item in app.state.items)
+    assert any(
+        item.role == "status" and "compacting and retrying" in item.text for item in app.state.items
+    )
+    assert app.state.items[-1].text == "Recovered answer"
+    assert app.state.running is False
+
+
+@pytest.mark.anyio
+async def test_tui_prompt_worker_surfaces_overflow_when_compaction_fails() -> None:
+    message = AssistantMessage(
+        stop_reason="error",
+        error_message="prompt is too long: context window exceeded",
+    )
+    session = FakeSession(
+        events=[
+            AgentStartEvent(),
+            MessageEndEvent(message=message),
+            SessionAgentEndEvent(will_retry=False),
+            CompactionStartEvent(reason="overflow"),
+            CompactionEndEvent(
+                reason="overflow",
+                error_message="Overflow compaction failed",
+            ),
+            AgentSettledEvent(),
+        ]
+    )
+    app = TauTuiApp(session)
+    app._refresh = lambda: None  # type: ignore[method-assign]
+
+    await app._run_prompt("break")
+
+    assert app.state.error is not None
+    assert "context window exceeded" in app.state.error
     assert app.state.items[-1].role == "error"
-    assert app.state.items[-1].text == "Error: prompt is too long: context window exceeded"
     assert app.state.running is False
 
 

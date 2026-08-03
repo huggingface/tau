@@ -17,7 +17,12 @@ from tau_agent import (
     UserMessage,
 )
 from tau_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
-from tau_coding.events import AutoRetryStartEvent, QueueUpdateEvent
+from tau_coding.events import (
+    AgentSettledEvent,
+    AutoRetryStartEvent,
+    QueueUpdateEvent,
+    SessionAgentEndEvent,
+)
 from tau_coding.skills import Skill, format_skill_invocation
 from tau_coding.tui import TuiEventAdapter, TuiState
 from tau_coding.tui.state import format_tool_call_block, format_tool_result_block
@@ -35,6 +40,18 @@ def test_tui_adapter_tracks_running_state() -> None:
     assert state.running is True
 
     adapter.apply(AgentEndEvent())
+    assert state.running is False
+
+
+def test_tui_adapter_waits_for_session_settlement_after_low_level_agent_end() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+
+    adapter.apply(AgentStartEvent())
+    adapter.apply(SessionAgentEndEvent())
+    assert state.running is True
+
+    adapter.apply(AgentSettledEvent())
     assert state.running is False
 
 

@@ -20,6 +20,7 @@ from tau_agent import (
     ThinkingContent,
     ToolCall,
     ToolResultMessage,
+    Usage,
     UserMessage,
 )
 from tau_agent.messages import AssistantMessageDiagnostic, assistant_content
@@ -2713,6 +2714,61 @@ async def test_session_auto_compacts_after_response_when_threshold_is_exceeded(
             UserMessage(content="Next."),
         ],
     )
+
+
+@pytest.mark.anyio
+async def test_session_auto_compacts_from_provider_reported_usage(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(
+                    message=AssistantMessage(
+                        content="First answer",
+                        usage=Usage(total_tokens=1_000),
+                        timestamp=2_000_000_000_000,
+                    )
+                ),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(
+                    message=AssistantMessage(
+                        content="Second answer",
+                        usage=Usage(total_tokens=60_000),
+                        timestamp=2_000_000_000_001,
+                    )
+                ),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Provider-usage summary")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            auto_compact_token_threshold=50_000,
+        )
+    )
+
+    # The first turn is large enough to provide a compaction cut point, while its
+    # character estimate remains below the configured 50k threshold.
+    await _collect_session_events(session.prompt("First prompt.\n" + ("old " * 25_000)))
+    assert session.context_usage.provider_tokens == 1_000
+    await _collect_session_events(session.prompt("Second short prompt."))
+
+    compactions = [entry for entry in await storage.read_all() if entry.type == "compaction"]
+    assert len(compactions) == 1
+    assert compactions[0].summary == "Provider-usage summary"
 
 
 @pytest.mark.anyio

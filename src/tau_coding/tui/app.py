@@ -77,6 +77,8 @@ from tau_coding.events import (
     AgentSettledEvent,
     AutoRetryStartEvent,
     CodingSessionEvent,
+    CompactionEndEvent,
+    CompactionStartEvent,
     QueueUpdateEvent,
 )
 from tau_coding.extensions.api import (
@@ -4627,6 +4629,12 @@ class TauTuiApp(App[None]):
                 ):
                     _attach_diagnostic_log_path_to_error(self.state, self.session)
                     _attach_retry_hint_to_error(self.state, event.message)
+                elif (
+                    isinstance(event, CompactionEndEvent)
+                    and event.reason == "overflow"
+                    and (event.aborted or event.error_message)
+                ):
+                    _attach_diagnostic_log_path_to_error(self.state, self.session)
                 await self._apply_streaming_transcript_event(event)
                 if isinstance(event, AgentSettledEvent) and not self._app_has_focus:
                     self._terminal_notification.notify_turn_finished()
@@ -4743,15 +4751,23 @@ class TauTuiApp(App[None]):
                 )
             self._refresh_chrome()
             return
-        if isinstance(event, AutoRetryStartEvent):
+        if isinstance(event, (AutoRetryStartEvent, CompactionStartEvent)):
             await transcript.finish_assistant_message()
-            if self.state.items:
+            if self.state.items and (
+                isinstance(event, AutoRetryStartEvent) or event.reason == "overflow"
+            ):
                 await transcript.append_item(
                     self.state.items[-1],
                     theme=theme,
                     show_tool_results=self.state.show_tool_results,
                 )
             self._refresh_chrome()
+            return
+        if isinstance(event, CompactionEndEvent):
+            if event.reason == "overflow" and (event.aborted or event.error_message):
+                self._refresh()
+            else:
+                self._refresh_chrome()
             return
         if isinstance(event, ToolExecutionEndEvent):
             updated_item = self.state.find_tool_item(event.tool_call_id)
