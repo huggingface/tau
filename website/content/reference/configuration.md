@@ -20,6 +20,8 @@ those locations and file formats.
 ├── skills/             # user-level skills
 ├── prompts/            # user-level prompt templates
 ├── themes/             # user-level TUI themes
+├── SYSTEM.md           # optional replacement system-prompt base
+├── APPEND_SYSTEM.md    # optional appended system-prompt instructions
 ├── AGENTS.md           # global project instructions
 └── logs/               # diagnostics
 ```
@@ -30,6 +32,36 @@ Tau also reads user-level `.agents` resources: `~/.agents/skills/`,
 Startup update checks cache their latest PyPI result in
 `~/.tau/cache/update-check.json` and refresh at most once per day. Set
 `TAU_NO_UPDATE_CHECK=1` to disable the check; Tau also skips it when `CI` is set.
+
+## System prompt files
+
+Tau can replace or extend its generated system prompt with Tau-native Markdown
+files:
+
+```text
+~/.tau/SYSTEM.md                 # user replacement
+~/.tau/APPEND_SYSTEM.md          # user append
+<project>/.tau/SYSTEM.md         # project replacement
+<project>/.tau/APPEND_SYSTEM.md  # project append
+```
+
+For each kind, precedence is explicit CLI input, then the project file, then the
+user file. A higher-precedence append file replaces the lower-precedence append
+file; Tau does not concatenate project and user files. Replacement content still
+receives the selected append text, project instructions, eligible skills, the
+current date, and the working directory. Empty files are valid explicit values.
+
+Run `/reload` after adding, changing, or removing a file. Tau rebuilds the prompt
+for the next model request without adding it to session history. `/session`
+resource diagnostics identify selected, shadowed, or CLI-overridden files. A
+selected file that cannot be inspected or decoded as UTF-8 stops startup or
+reload rather than silently falling back.
+
+System prompt files are Tau-specific and are not discovered from `.agents`.
+Project files currently load automatically, like Tau's other project instruction
+resources. Inspect a repository's `.tau/SYSTEM.md` and `.tau/APPEND_SYSTEM.md`
+before starting Tau there: they can replace or extend the model's highest-priority
+instructions.
 
 ## Network proxies
 
