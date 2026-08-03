@@ -3754,6 +3754,7 @@ class TauTuiApp(App[None]):
                     terminal_command.command,
                     add_to_context=terminal_command.add_to_context,
                 ),
+                group="terminal-command",
                 exclusive=True,
             )
             return
