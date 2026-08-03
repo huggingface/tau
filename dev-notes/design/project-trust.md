@@ -421,10 +421,16 @@ Requirements:
 - sort decisions by path for stable diffs;
 - lock across read-modify-write so concurrent Tau processes cannot lose updates;
 - create the Tau home with user-only permissions where supported;
+- durably install a restrictive same-directory undo journal before replacing
+  the destination; readers fail closed whenever that journal remains;
 - write a same-directory temporary file, flush and `fsync` it, set restrictive
   permissions, `os.replace()` it over the destination, then `fsync` the parent
   directory where supported;
-- clean up a failed temporary file without replacing the last valid store.
+- remove the journal only after that commit point; on a reported failure restore
+  the prior store, and retain the fail-closed journal if any recovery operation
+  fails, so newly granting bytes can never become an effective saved decision;
+- clean up unrelated failed temporary files without replacing the last valid
+  store.
 
 Malformed/unreadable store means no saved decision can grant trust. Emit one
 clear diagnostic and fail closed for protected resources unless the user gives

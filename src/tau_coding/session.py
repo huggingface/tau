@@ -381,6 +381,7 @@ class CodingSession:
             interactive=config.trust_interactive,
             prompt=config.trust_prompt,
             extension_deciders=(extension_runtime.decide_project_trust,),
+            cache_result=False,
         )
         canonical_cwd = summary.cwd.value
         resource_paths = resource_paths_with_project_trust(
@@ -502,6 +503,8 @@ class CodingSession:
         # session_start is deferred: hosts emit it via emit_pending_session_start()
         # after installing their UI bridge.
         session._session_start_pending = True
+        if not trust_resolution.cancelled:
+            coordinator.commit(summary.cwd, trust_resolution)
         return session
 
     @property
@@ -1301,6 +1304,7 @@ class CodingSession:
                 prompt=self._config.trust_prompt,
                 extension_deciders=(staged_runtime.decide_project_trust,),
                 refresh=True,
+                cache_result=False,
             )
             if staged_resolution.cancelled:
                 raise ValueError("Project trust decision cancelled; keeping current resources")
@@ -1392,6 +1396,9 @@ class CodingSession:
         # Commit boundary: every fallible discovery/composition step succeeded.
         old_runtime = self._extension_runtime
         await old_runtime.emit_session_shutdown("reload")
+        if coordinator is not None and trust_summary is not None:
+            assert staged_resolution is not None
+            coordinator.commit(trust_summary.cwd, staged_resolution)
         old_runtime.clear_ui_components()
         old_runtime.retire()
         self._resource_paths = staged_paths

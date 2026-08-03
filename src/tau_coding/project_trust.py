@@ -261,6 +261,7 @@ class ProjectTrustStore:
         self.paths = paths or TauPaths()
         self.path = self.paths.home / "trust.json"
         self.lock_path = self.paths.home / "trust.json.lock"
+        self.pending_path = self.paths.home / "trust.json.pending"
 
     def nearest(self, cwd: CanonicalProjectPath) -> SavedTrustEntry | None:
         decisions = self.read()
@@ -317,6 +318,15 @@ class ProjectTrustStore:
             ) from exc
 
     def _read_unlocked(self) -> dict[Path, TrustDecision]:
+        # A pending journal means an update did not reach its commit point.
+        # Never inspect the possibly replaced destination in that state.
+        if self.pending_path.exists():
+            recovery_error = self._recover_unlocked()
+            if recovery_error is not None:
+                raise ProjectTrustError(
+                    f"Project trust store {self.path} has an incomplete update; "
+                    f"recovery failed: {recovery_error}"
+                )
         if not self.path.exists():
             return {}
         try:
@@ -358,34 +368,54 @@ class ProjectTrustStore:
                 for path, decision in sorted(decisions.items(), key=lambda item: str(item[0]))
             ],
         }
+        data = (json.dumps(payload, indent=2) + "\n").encode()
+        prior_bytes = self.path.read_bytes() if self.path.exists() else None
+
+        # Persist a fail-closed undo journal before touching trust.json. Readers
+        # reject the store while this marker exists, so even failed recovery can
+        # never expose a newly granting destination.
+        journal = (b"present\n" + prior_bytes) if prior_bytes is not None else b"absent\n"
+        try:
+            self._atomic_replace(self.pending_path, journal, prefix=".trust-pending-")
+            self._atomic_replace(self.path, data, prefix=".trust-")
+        except OSError as exc:
+            recovery_error = self._recover_unlocked()
+            detail = f"; recovery failed: {recovery_error}" if recovery_error else ""
+            raise ProjectTrustError(
+                f"Could not write project trust store {self.path}: {exc}{detail}"
+            ) from exc
+
+        # The destination and its directory entry are durable. Failure to clear
+        # the journal is still a failed update and must restore the prior state.
+        try:
+            self.pending_path.unlink()
+        except OSError as exc:
+            recovery_error = self._recover_unlocked()
+            detail = f"; recovery failed: {recovery_error}" if recovery_error else ""
+            raise ProjectTrustError(
+                f"Could not commit project trust store {self.path}: {exc}{detail}"
+            ) from exc
+        # Journal cleanup is not part of the data commit. If this fsync fails,
+        # either the deletion persists (the durable destination grants) or the
+        # journal reappears after a crash (reads fail closed).
+        with suppress(OSError):
+            _fsync_directory(self.paths.home)
+
+    def _atomic_replace(self, destination: Path, data: bytes, *, prefix: str) -> None:
         fd = -1
         temporary: Path | None = None
-        replaced = False
-        prior_bytes: bytes | None = None
         try:
-            if self.path.exists():
-                prior_bytes = self.path.read_bytes()
-            fd, raw_temporary = tempfile.mkstemp(
-                prefix=".trust-", suffix=".tmp", dir=self.paths.home
-            )
-            temporary = Path(raw_temporary)
+            fd, raw = tempfile.mkstemp(prefix=prefix, suffix=".tmp", dir=self.paths.home)
+            temporary = Path(raw)
             os.chmod(temporary, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            with os.fdopen(fd, "wb") as handle:
                 fd = -1
-                json.dump(payload, handle, indent=2)
-                handle.write("\n")
+                handle.write(data)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(temporary, self.path)
-            replaced = True
+            os.replace(temporary, destination)
             temporary = None
             _fsync_directory(self.paths.home)
-        except OSError as exc:
-            if replaced:
-                self._restore_prior_bytes(prior_bytes)
-            raise ProjectTrustError(
-                f"Could not write project trust store {self.path}: {exc}"
-            ) from exc
         finally:
             if fd >= 0:
                 os.close(fd)
@@ -393,32 +423,26 @@ class ProjectTrustStore:
                 with suppress(OSError):
                     temporary.unlink(missing_ok=True)
 
-    def _restore_prior_bytes(self, prior_bytes: bytes | None) -> None:
-        """Best-effort rollback after a failure following destination replace."""
-        rollback: Path | None = None
+    def _recover_unlocked(self) -> OSError | None:
+        """Restore the journaled state; retain the marker on every failure."""
+        if not self.pending_path.exists():
+            return None
         try:
-            if prior_bytes is None:
-                self.path.unlink(missing_ok=True)
+            journal = self.pending_path.read_bytes()
+            marker, separator, prior_bytes = journal.partition(b"\n")
+            if not separator or marker not in {b"present", b"absent"}:
+                raise OSError("malformed project trust recovery journal")
+            if marker == b"present":
+                self._atomic_replace(self.path, prior_bytes, prefix=".trust-rollback-")
             else:
-                fd, raw = tempfile.mkstemp(prefix=".trust-rollback-", dir=self.paths.home)
-                rollback = Path(raw)
-                with os.fdopen(fd, "wb") as handle:
-                    handle.write(prior_bytes)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.chmod(rollback, 0o600)
-                os.replace(rollback, self.path)
-                rollback = None
+                self.path.unlink(missing_ok=True)
+                _fsync_directory(self.paths.home)
+            self.pending_path.unlink()
             with suppress(OSError):
                 _fsync_directory(self.paths.home)
         except OSError as exc:
-            raise ProjectTrustError(
-                f"Could not restore prior project trust store {self.path}: {exc}"
-            ) from exc
-        finally:
-            if rollback is not None:
-                with suppress(OSError):
-                    rollback.unlink(missing_ok=True)
+            return exc
+        return None
 
 
 class ProjectTrustCoordinator:
@@ -441,9 +465,16 @@ class ProjectTrustCoordinator:
         prompt: TrustPrompt | None = None,
         extension_deciders: Sequence[ExtensionDecider] = (),
         refresh: bool = False,
+        cache_result: bool = True,
     ) -> tuple[ProtectedResourceSummary, ProjectTrustResolution]:
         canonical = canonicalize_project_path(cwd, base=Path.cwd())
         summary = self.detector.detect(canonical)
+
+        def finish(result: ProjectTrustResolution) -> ProjectTrustResolution:
+            if cache_result:
+                self._cache[canonical.value] = result
+            return result
+
         cached = self._cache.get(canonical.value)
         if cached is not None and cached.had_candidates:
             return summary, cached
@@ -456,10 +487,10 @@ class ProjectTrustCoordinator:
                 source="override",
                 had_candidates=bool(summary.categories),
             )
-            return summary, self._remember(canonical, result)
+            return summary, finish(result)
         if not summary.categories:
             result = ProjectTrustResolution(trusted=True, source="empty", had_candidates=False)
-            return summary, self._remember(canonical, result)
+            return summary, finish(result)
 
         event = ProjectTrustEvent(
             cwd=canonical.value,
@@ -492,7 +523,7 @@ class ProjectTrustCoordinator:
                 saved_path=saved_path,
                 diagnostics=tuple(diagnostics),
             )
-            return summary, self._remember(canonical, result)
+            return summary, finish(result)
 
         inherited: SavedTrustEntry | None = None
         store_failed = False
@@ -508,19 +539,19 @@ class ProjectTrustCoordinator:
                 saved_path=inherited.path,
                 diagnostics=tuple(diagnostics),
             )
-            return summary, self._remember(canonical, result)
+            return summary, finish(result)
         if default != "ask":
             result = ProjectTrustResolution(
                 trusted=default == "always" and not store_failed,
                 source="default",
                 diagnostics=tuple(diagnostics),
             )
-            return summary, self._remember(canonical, result)
+            return summary, finish(result)
         if not interactive or prompt is None:
             result = ProjectTrustResolution(
                 trusted=False, source="default", diagnostics=tuple(diagnostics)
             )
-            return summary, self._remember(canonical, result)
+            return summary, finish(result)
 
         choice = await prompt(ProjectTrustRequest(canonical, summary, inherited))
         trusted = choice in {"trust-exact", "trust-parent", "trust-run"}
@@ -545,13 +576,11 @@ class ProjectTrustCoordinator:
             diagnostics=tuple(diagnostics),
             cancelled=choice is None,
         )
-        return summary, self._remember(canonical, result)
+        return summary, finish(result)
 
-    def _remember(
-        self, cwd: CanonicalProjectPath, result: ProjectTrustResolution
-    ) -> ProjectTrustResolution:
+    def commit(self, cwd: CanonicalProjectPath, result: ProjectTrustResolution) -> None:
+        """Publish a staged resolution after its resource snapshot succeeds."""
         self._cache[cwd.value] = result
-        return result
 
 
 def format_trust_diagnostic(

@@ -18,9 +18,10 @@ resources. The accepted policy and Pi compatibility research remain in
   Structured/headless modes use no prompt. The TUI adapts the frontend-neutral
   request to an accessible Textual modal.
 - Reload and destination replacement stage fresh cwd-bound extension runtimes,
-  resources, tools, commands, and prompts before adoption. Source-project
-  registrations never cross cwd boundaries; cancellation or preparation failure
-  keeps the current snapshot.
+  resources, tools, commands, prompts, and trust-cache entries before adoption.
+  Resource plans are unconditionally rebound to the canonical destination;
+  source-project registrations never cross cwd boundaries. Cancellation or any
+  preparation failure keeps the current snapshot and prior coordinator cache.
 
 `tau_agent` has no trust, path, Typer, or Textual dependency. Textual remains in
 `tau_coding.tui`.
@@ -29,9 +30,14 @@ resources. The accepted policy and Pi compatibility research remain in
 
 `~/.tau/trust.json` has `version` and sorted `decisions`. Reads reject unknown
 fields/versions, duplicate or relative/non-normalized paths, and unknown
-values. Updates lock the store, write/fsync a mode-0600 same-directory temporary
-file, replace, and fsync the directory. A post-replace failure restores the prior
-non-granting bytes before reporting failure. Errors diagnose and fail closed;
+values. Updates lock the store and first durably install a mode-0600 undo journal,
+then write/fsync a same-directory temporary file, replace `trust.json`, and fsync
+the directory. Readers reject any store with a pending journal. The journal is
+removed only after the destination commit point; failures attempt restoration,
+and a failed restoration leaves the journal in place so even combined commit and
+recovery failures cannot expose newly granting bytes. Journal-cleanup fsync
+failure is safe in either durable outcome: the committed store remains visible,
+or the journal reappears and reads fail closed. Errors diagnose and fail closed;
 run-only explicit approval does not depend on storage.
 
 ## Migration

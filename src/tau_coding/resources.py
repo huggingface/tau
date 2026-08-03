@@ -256,8 +256,9 @@ def resource_paths_with_cwd(
     """Return resource paths with a cwd available for project-local discovery."""
     if paths is None:
         return TauResourcePaths(cwd=cwd)
-    if paths.cwd is not None:
-        return paths
+    # A resource plan is destination-bound. Replacement/resume callers may
+    # supply a plan created for the source session, but only its user/global
+    # roots and feature flags are reusable.
     return TauResourcePaths(
         root=paths.root,
         cwd=cwd,

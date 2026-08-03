@@ -27,6 +27,7 @@ from tau_coding.project_trust import (
 )
 from tau_coding.resources import (
     TauResourcePaths,
+    resource_paths_with_cwd,
     resource_paths_with_project_trust,
 )
 from tau_coding.session import CodingSession, CodingSessionConfig
@@ -663,3 +664,290 @@ async def test_interactive_choices_have_exact_persistence_semantics(
     assert resolution.trusted is trusted
     saved = store.nearest(canonicalize_project_path(project))
     assert (saved.decision if saved else None) == saved_decision
+
+
+@pytest.mark.parametrize(
+    "recovery_operation",
+    ["create", "write", "fsync", "chmod", "replace", "unlink"],
+)
+def test_combined_commit_and_recovery_failures_remain_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recovery_operation: str
+) -> None:
+    store = ProjectTrustStore(_paths(tmp_path))
+    project = tmp_path / "project"
+    project.mkdir()
+    key = canonicalize_project_path(project)
+    store.set(key, "untrusted")
+    prior = store.path.read_bytes()
+
+    real_fsync_directory = project_trust_module._fsync_directory
+    directory_syncs = 0
+
+    def fail_target_directory_sync(directory: Path) -> None:
+        nonlocal directory_syncs
+        directory_syncs += 1
+        if directory_syncs == 2:
+            raise OSError("post-replace directory fsync")
+        real_fsync_directory(directory)
+
+    monkeypatch.setattr(project_trust_module, "_fsync_directory", fail_target_directory_sync)
+    if recovery_operation == "unlink":
+        real_unlink = Path.unlink
+
+        def fail_pending_unlink(path: Path, *args: object, **kwargs: object) -> None:
+            if path == store.pending_path:
+                raise OSError("rollback unlink")
+            real_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", fail_pending_unlink)
+    else:
+        real_atomic_replace = store._atomic_replace
+
+        def fail_rollback(destination: Path, data: bytes, *, prefix: str) -> None:
+            if prefix == ".trust-rollback-":
+                raise OSError(f"rollback {recovery_operation}")
+            real_atomic_replace(destination, data, prefix=prefix)
+
+        monkeypatch.setattr(store, "_atomic_replace", fail_rollback)
+
+    with pytest.raises(ProjectTrustError, match="recovery failed"):
+        store.set(key, "trusted")
+
+    assert store.pending_path.read_bytes() == b"present\n" + prior
+    with pytest.raises(ProjectTrustError, match="incomplete update"):
+        store.nearest(key)
+
+
+def test_resource_plan_always_rebinds_to_destination(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    destination.mkdir()
+    original = TauResourcePaths(
+        root=tmp_path / "home/.tau",
+        cwd=source,
+        agents_root=tmp_path / "home/.agents",
+        paths=_paths(tmp_path),
+        project_resources_enabled=False,
+    )
+
+    rebound = resource_paths_with_cwd(original, destination.resolve())
+
+    assert rebound.cwd == destination.resolve()
+    assert rebound.root == original.root
+    assert rebound.agents_root == original.agents_root
+    assert rebound.paths == original.paths
+    assert rebound.project_resources_enabled is False
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("choice", "expected_text"),
+    [("trust-run", "DESTINATION-CONTEXT"), ("decline-run", None)],
+)
+async def test_source_bound_plan_uses_destination_resources_for_trust_choice(
+    tmp_path: Path, choice: str, expected_text: str | None
+) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    destination.mkdir()
+    (source / "AGENTS.md").write_text("SOURCE-CONTEXT", encoding="utf-8")
+    (destination / "AGENTS.md").write_text("DESTINATION-CONTEXT", encoding="utf-8")
+    source_extension = source / ".tau/extensions/source.py"
+    destination_extension = destination / ".tau/extensions/destination.py"
+    source_extension.parent.mkdir(parents=True)
+    destination_extension.parent.mkdir(parents=True)
+    source_extension.write_text(
+        "def setup(tau):\n    tau.add_prompt_guideline('SOURCE-EXTENSION')\n",
+        encoding="utf-8",
+    )
+    destination_extension.write_text(
+        "def setup(tau):\n    tau.add_prompt_guideline('DESTINATION-EXTENSION')\n",
+        encoding="utf-8",
+    )
+    observed: list[Path] = []
+
+    async def prompt(request: ProjectTrustRequest) -> str:
+        observed.append(request.cwd.value)
+        return choice
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=cast(ModelProvider, object()),
+            model="fake",
+            storage=_Storage(),
+            cwd=destination,
+            resource_paths=TauResourcePaths(
+                root=tmp_path / "home/.tau", agents_root=None, cwd=source
+            ),
+            trust_interactive=True,
+            trust_prompt=prompt,  # type: ignore[arg-type]
+            project_extensions_enabled=True,
+        )
+    )
+
+    assert observed == [destination.resolve()]
+    assert session._resource_paths.cwd == destination.resolve()
+    assert "SOURCE-CONTEXT" not in session.system_prompt
+    assert "SOURCE-EXTENSION" not in session.system_prompt
+    assert ("DESTINATION-CONTEXT" in session.system_prompt) is (expected_text is not None)
+    assert ("DESTINATION-EXTENSION" in session.system_prompt) is (expected_text is not None)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("choice", ["trust-run", "decline-run"])
+async def test_failed_reload_does_not_commit_run_choice_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, choice: str
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    coordinator = ProjectTrustCoordinator(ProjectTrustStore(_paths(tmp_path)))
+    prompts = 0
+
+    async def prompt(_request: ProjectTrustRequest) -> str:
+        nonlocal prompts
+        prompts += 1
+        return choice
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=cast(ModelProvider, object()),
+            model="fake",
+            storage=_Storage(),
+            cwd=project,
+            resource_paths=TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None),
+            project_trust_coordinator=coordinator,
+            trust_interactive=True,
+            trust_prompt=prompt,  # type: ignore[arg-type]
+        )
+    )
+    (project / "AGENTS.md").write_text("NEW-CONTEXT", encoding="utf-8")
+
+    from tau_coding import session as session_module
+
+    real_load = session_module._load_session_resources
+    attempts = 0
+
+    def fail_once(*args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ValueError("resource preparation failed")
+        return real_load(*args, **kwargs)
+
+    monkeypatch.setattr(session_module, "_load_session_resources", fail_once)
+    with pytest.raises(ValueError, match="resource preparation failed"):
+        await session.reload()
+    assert prompts == 1
+    assert session.project_trust_resolution is not None
+    assert session.project_trust_resolution.source == "empty"
+
+    await session.reload()
+    assert prompts == 2
+    assert ("NEW-CONTEXT" in session.system_prompt) is (choice == "trust-run")
+
+
+@pytest.mark.anyio
+async def test_failed_project_extension_reload_re_resolves_trust(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    coordinator = ProjectTrustCoordinator(ProjectTrustStore(_paths(tmp_path)))
+    prompts = 0
+
+    async def prompt(_request: ProjectTrustRequest) -> str:
+        nonlocal prompts
+        prompts += 1
+        return "trust-run"
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=cast(ModelProvider, object()),
+            model="fake",
+            storage=_Storage(),
+            cwd=project,
+            resource_paths=TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None),
+            project_trust_coordinator=coordinator,
+            project_extensions_enabled=True,
+            trust_interactive=True,
+            trust_prompt=prompt,
+        )
+    )
+    extension = project / ".tau/extensions/project.py"
+    extension.parent.mkdir(parents=True)
+    extension.write_text(
+        "def setup(tau):\n    tau.add_prompt_guideline('DESTINATION-EXTENSION')\n",
+        encoding="utf-8",
+    )
+    from tau_coding.extensions.runtime import ExtensionRuntime
+
+    real_load = ExtensionRuntime.load
+
+    def fail_project_setup(self: ExtensionRuntime, *args: object, **kwargs: object) -> None:
+        if kwargs.get("include_project_dir") is True:
+            raise RuntimeError("setup failed")
+        real_load(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(ExtensionRuntime, "load", fail_project_setup)
+    with pytest.raises(RuntimeError, match="setup failed"):
+        await session.reload()
+    assert prompts == 1
+    assert session.project_trust_resolution is not None
+    assert session.project_trust_resolution.source == "empty"
+
+    monkeypatch.setattr(ExtensionRuntime, "load", real_load)
+    await session.reload()
+    assert prompts == 2
+    assert "DESTINATION-EXTENSION" in session.system_prompt
+
+
+@pytest.mark.anyio
+async def test_cancelled_destination_staging_leaves_source_session_and_cache_unchanged(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    destination.mkdir()
+    (source / "AGENTS.md").write_text("SOURCE-ACTIVE", encoding="utf-8")
+    (destination / "AGENTS.md").write_text("DESTINATION-CANCELLED", encoding="utf-8")
+    coordinator = ProjectTrustCoordinator(ProjectTrustStore(_paths(tmp_path)))
+    resources = TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None)
+    active = await CodingSession.load(
+        CodingSessionConfig(
+            provider=cast(ModelProvider, object()),
+            model="fake",
+            storage=_Storage(),
+            cwd=source,
+            resource_paths=resources,
+            project_trust_coordinator=coordinator,
+            trust_override="approve",
+        )
+    )
+    source_prompt = active.system_prompt
+    source_runtime = active._extension_runtime
+
+    async def cancel(_request: ProjectTrustRequest) -> None:
+        return None
+
+    staged = await CodingSession.load(
+        CodingSessionConfig(
+            provider=cast(ModelProvider, object()),
+            model="fake",
+            storage=_Storage(),
+            cwd=destination,
+            resource_paths=active._resource_paths,
+            project_trust_coordinator=coordinator,
+            trust_interactive=True,
+            trust_prompt=cancel,
+        )
+    )
+
+    assert staged.project_trust_resolution is not None
+    assert staged.project_trust_resolution.cancelled is True
+    assert active.cwd == source.resolve()
+    assert active.system_prompt == source_prompt
+    assert active._extension_runtime is source_runtime
+    assert destination.resolve() not in coordinator._cache
