@@ -154,6 +154,7 @@ def test_builtin_catalog_separates_openai_api_and_codex_context_limits() -> None
     assert "gpt-5.6" not in codex.models
     assert "gpt-5.6" not in codex.context_windows
     assert "gpt-5.6" not in codex.model_metadata
+    assert codex.removed_models == ("gpt-5.6",)
     assert openai.context_windows["gpt-5.6-sol"] == 1_050_000
     assert codex.context_windows["gpt-5.6-sol"] == 272_000
     assert codex.context_windows["gpt-5.6-terra"] == 272_000
@@ -510,6 +511,35 @@ default_model = "claude-next-1"
     # Untouched fields come from the builtin entry.
     assert entry.base_url == "https://api.anthropic.com"
     assert entry.thinking_parameter == "anthropic.thinking"
+
+
+def test_builtin_tombstone_removes_model_from_user_catalog_overlay(tmp_path: Path) -> None:
+    paths = _write_user_catalog(
+        tmp_path / ".tau",
+        """
+[[providers]]
+name = "openai-codex"
+models = ["gpt-5.6"]
+default_model = "gpt-5.6"
+thinking_models = ["gpt-5.6"]
+
+[providers.context_windows]
+"gpt-5.6" = 272000
+
+[providers.model_metadata."gpt-5.6"]
+name = "GPT-5.6"
+""",
+    )
+
+    entry = next(e for e in effective_catalog(paths) if e.name == "openai-codex")
+
+    assert entry.default_model == "gpt-5.5"
+    assert "gpt-5.6" not in entry.models
+    assert "gpt-5.6" not in entry.thinking_models
+    assert entry.context_windows is not None
+    assert "gpt-5.6" not in entry.context_windows
+    assert "gpt-5.6" not in entry.model_metadata
+    assert entry.removed_models == ("gpt-5.6",)
 
 
 def test_user_catalog_thinking_fields_replace_as_group(tmp_path: Path) -> None:

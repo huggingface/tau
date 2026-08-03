@@ -35,6 +35,11 @@ thinking_level_map = { xhigh = "max" }
 unsupported_thinking_levels = ["off", "minimal", "low", "medium", "high"]
 ```
 
+When withdrawing a model from one built-in provider, add it to that provider's
+`removed_models` list. Tombstones are applied after user overlays, preventing
+stale saved catalog definitions from restoring an unroutable provider/model
+combination while leaving the same model ID available on other providers.
+
 Test both the exposed levels and the actual API value produced by provider configuration. Update `website/content/guides/providers-and-models.md` and add a beginner-friendly development note for substantial user-facing changes. Inspect `src/tau_coding/data/release-notes/releases.json`, but update it only when appropriate.
 
 Run focused provider tests followed by the repository's full pytest, Ruff, formatting, and mypy checks. Build the website when published provider documentation changes.
