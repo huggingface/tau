@@ -23,6 +23,7 @@ from tau_coding.catalog_loader import user_catalog_path
 from tau_coding.commands import format_reload_summary
 from tau_coding.credentials import FileCredentialStore
 from tau_coding.extensions import StderrUiBridge
+from tau_coding.project_trust import TrustDefault, TrustOverride
 from tau_coding.provider_config import (
     DEFAULT_MODEL,
     DEFAULT_PROVIDER_NAME,
@@ -294,8 +295,16 @@ def main(
         bool,
         typer.Option(
             "--project-extensions",
-            help="Also load project .tau/extensions (runs project-supplied code at startup).",
+            help="Also load trusted project .tau/extensions (additional code opt-in).",
         ),
+    ] = False,
+    approve: Annotated[
+        bool,
+        typer.Option("--approve", "-a", help="Trust protected project inputs for this run."),
+    ] = False,
+    no_approve: Annotated[
+        bool,
+        typer.Option("--no-approve", "-na", help="Decline protected project inputs for this run."),
     ] = False,
     version: Annotated[
         bool,
@@ -310,6 +319,12 @@ def main(
 
     if ctx.invoked_subcommand is not None:
         return
+
+    if approve and no_approve:
+        raise typer.BadParameter("--approve and --no-approve cannot be used together")
+    trust_override: TrustOverride | None = (
+        "approve" if approve else "decline" if no_approve else None
+    )
 
     if resume is not None:
         raise typer.BadParameter(
@@ -394,8 +409,7 @@ def main(
     if not print_requested:
         notice = _startup_update_notice()
         try:
-            resumable_session_id = anyio.run(
-                run_openai_tui,
+            tui_args = (
                 model,
                 cwd or Path.cwd(),
                 session,
@@ -409,6 +423,11 @@ def main(
                 project_extensions,
                 custom_system_prompt,
                 resolved_append_system_prompt,
+            )
+            resumable_session_id = (
+                anyio.run(run_openai_tui, *tui_args)
+                if trust_override is None
+                else anyio.run(run_openai_tui, *tui_args, trust_override)
             )
         except (RuntimeError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
@@ -428,8 +447,7 @@ def main(
         typer.echo(notice.message, err=True)
 
     try:
-        ok = anyio.run(
-            run_openai_print_mode,
+        print_args = (
             prompt,
             model,
             cwd or Path.cwd(),
@@ -442,6 +460,11 @@ def main(
             session_id,
             custom_system_prompt,
             resolved_append_system_prompt,
+        )
+        ok = (
+            anyio.run(run_openai_print_mode, *print_args)
+            if trust_override is None
+            else anyio.run(run_openai_print_mode, *print_args, trust_override)
         )
     except (RuntimeError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -463,6 +486,7 @@ async def run_openai_tui(
     project_extensions_enabled: bool = False,
     custom_system_prompt: str | None = None,
     append_system_prompt: str | None = None,
+    trust_override: TrustOverride | None = None,
 ) -> str | None:
     """Run the Textual TUI and return its resumable session id, if any."""
     release_notes_notice = startup_release_notes_notice(_current_version())
@@ -482,6 +506,7 @@ async def run_openai_tui(
         project_extensions_enabled=project_extensions_enabled,
         custom_system_prompt=custom_system_prompt,
         append_system_prompt=append_system_prompt,
+        trust_override=trust_override,
     )
 
 
@@ -740,6 +765,7 @@ async def run_openai_print_mode(
     session_id: str | None = None,
     custom_system_prompt: str | None = None,
     append_system_prompt: str | None = None,
+    trust_override: TrustOverride | None = None,
 ) -> bool:
     """Run print mode with the OpenAI-compatible provider configured from the environment."""
     settings = load_provider_settings()
@@ -776,6 +802,8 @@ async def run_openai_print_mode(
             project_extensions_enabled=project_extensions_enabled,
             custom_system_prompt=custom_system_prompt,
             append_system_prompt=append_system_prompt,
+            trust_override=trust_override,
+            trust_default=shell_settings.default_project_trust,
         )
     finally:
         await provider.aclose()
@@ -812,6 +840,8 @@ async def run_print_mode(
     project_extensions_enabled: bool = False,
     custom_system_prompt: str | None = None,
     append_system_prompt: str | None = None,
+    trust_override: TrustOverride | None = None,
+    trust_default: TrustDefault = "always",
 ) -> bool:
     """Run one non-interactive prompt and print streamed events.
 
@@ -836,9 +866,14 @@ async def run_print_mode(
             project_extensions_enabled=project_extensions_enabled,
             custom_system_prompt=custom_system_prompt,
             append_system_prompt=append_system_prompt,
+            trust_override=trust_override,
+            trust_default=trust_default,
         )
     )
     session.extension_runtime.set_ui_bridge(StderrUiBridge())
+    for diagnostic in session.resource_diagnostics:
+        if diagnostic.kind == "project-trust":
+            typer.echo(diagnostic.format(), err=True)
     await session.emit_pending_session_start()
     renderer = create_event_renderer(
         output,

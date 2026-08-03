@@ -58,6 +58,7 @@ class TauResourcePaths:
     cwd: Path | None = None
     agents_root: Path | None = field(default_factory=lambda: Path.home() / ".agents")
     paths: TauPaths | None = None
+    project_resources_enabled: bool = True
 
     @property
     def skills_dir(self) -> Path:
@@ -91,7 +92,7 @@ class TauResourcePaths:
         dirs = [self.skills_dir]
         if self.agents_root is not None:
             dirs.append(self.agents_root / "skills")
-        if self.cwd is not None:
+        if self.cwd is not None and self.project_resources_enabled:
             dirs.extend(
                 [
                     paths.project_skills_dir(self.cwd),
@@ -109,7 +110,7 @@ class TauResourcePaths:
         """
         paths = self._paths()
         dirs = [self.root / "themes"]
-        if self.cwd is not None:
+        if self.cwd is not None and self.project_resources_enabled:
             dirs.append(paths.project_themes_dir(self.cwd))
         return tuple(_dedupe_paths(dirs))
 
@@ -120,7 +121,7 @@ class TauResourcePaths:
         dirs = [self.prompts_dir]
         if self.agents_root is not None:
             dirs.append(self.agents_root / "prompts")
-        if self.cwd is not None:
+        if self.cwd is not None and self.project_resources_enabled:
             dirs.extend(
                 [
                     paths.project_prompts_dir(self.cwd),
@@ -190,7 +191,7 @@ def _discover_system_prompt_file(
     diagnostics: list[ResourceDiagnostic],
 ) -> tuple[str | None, Path | None]:
     candidates: list[tuple[str, Path]] = []
-    if paths.cwd is not None:
+    if paths.cwd is not None and paths.project_resources_enabled:
         candidates.append(("project", paths.cwd / ".tau" / filename))
     candidates.append(("user", paths.root / filename))
 
@@ -262,6 +263,22 @@ def resource_paths_with_cwd(
         cwd=cwd,
         agents_root=paths.agents_root,
         paths=paths.paths,
+        project_resources_enabled=paths.project_resources_enabled,
+    )
+
+
+def resource_paths_with_project_trust(
+    paths: TauResourcePaths,
+    *,
+    trusted: bool,
+) -> TauResourcePaths:
+    """Return a coherent global-only or global-plus-project resource plan."""
+    return TauResourcePaths(
+        root=paths.root,
+        cwd=paths.cwd,
+        agents_root=paths.agents_root,
+        paths=paths.paths,
+        project_resources_enabled=trusted,
     )
 
 

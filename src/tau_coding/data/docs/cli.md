@@ -10,6 +10,14 @@ For current user-facing behavior in a Tau checkout, read:
 
 Keep command parsing and application-specific resource loading in `tau_coding`, not the reusable `tau_agent` harness. When changing behavior, test both command results and the relevant print/TUI integration, then update published reference documentation.
 
+## Project trust startup controls
+
+`--approve`/`-a` and `--no-approve`/`-na` are mutually exclusive run-only
+overrides. They are parsed before protected resource loading and never persist.
+Headless modes never prompt; user-global `defaultProjectTrust` controls unresolved
+projects. Keep diagnostics on stderr for structured stdout modes. See
+`security.md` and `website/content/guides/project-trust.md`.
+
 ## System prompt startup controls
 
 `--system-prompt TEXT_OR_PATH` replaces the default base prompt.
@@ -43,6 +51,6 @@ rebuilt without adding prompt contents to session history. Selected, shadowed,
 and CLI-overridden sources appear in resource diagnostics. Unreadable or invalid
 UTF-8 selected files stop startup/reload with an actionable error.
 
-Project files currently load automatically. Users should inspect repository
-`.tau/SYSTEM.md` and `.tau/APPEND_SYSTEM.md` files because they can replace or
-extend the model's highest-priority instructions.
+Project files load only after the canonical cwd trust decision. Users should
+still inspect trusted `.tau/SYSTEM.md` and `.tau/APPEND_SYSTEM.md`: project trust
+is an input-loading guard, not a sandbox or prompt-safety guarantee.

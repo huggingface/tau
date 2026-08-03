@@ -61,6 +61,7 @@ from tau_coding.extensions.loader import (
     load_extensions,
     unload_extension_modules,
 )
+from tau_coding.project_trust import ExtensionTrustResult, ProjectTrustEvent
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
 
 # Host callback that delivers a message through the frontend's serialized run
@@ -177,6 +178,7 @@ class ExtensionRuntime:
         extra_paths: Sequence[Path] = (),
         include_resource_dirs: bool = True,
         include_project_dir: bool = False,
+        include_user_dir: bool = True,
     ) -> None:
         """Discover extensions and run each `setup` with an isolated API."""
         result = load_extensions(
@@ -184,6 +186,7 @@ class ExtensionRuntime:
             extra_paths=extra_paths,
             include_resource_dirs=include_resource_dirs,
             include_project_dir=include_project_dir,
+            include_user_dir=include_user_dir,
         )
         self._load_diagnostics.extend(result.diagnostics)
         for extension in result.extensions:
@@ -767,6 +770,27 @@ class ExtensionRuntime:
         return handler
 
     # -- event dispatch -----------------------------------------------------------
+
+    async def decide_project_trust(self, event: ProjectTrustEvent) -> ExtensionTrustResult | None:
+        """Return the first decisive eligible extension trust result.
+
+        This runtime must contain only built-in, user, and explicit extensions;
+        callers load project extensions only after this method resolves.
+        """
+        for extension, handler in self._handlers_for("project_trust"):
+            try:
+                result = await _resolve(handler(event, self._fresh_context(extension)))
+            except Exception as exc:  # noqa: BLE001 - trust handlers fail closed/defer
+                self._record_runtime_failure(extension, "project_trust", exc)
+                continue
+            if result is None:
+                continue
+            if not isinstance(result, ExtensionTrustResult):
+                self._record_bad_result(extension, "project_trust", result)
+                continue
+            if result.decision != "defer":
+                return result
+        return None
 
     async def emit_session_start(self, reason: SessionLifecycleReason) -> None:
         """Dispatch `session_start` to subscribed extensions."""

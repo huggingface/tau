@@ -46,7 +46,7 @@ def _context_file_candidates(paths: TauResourcePaths) -> tuple[Path, ...]:
     if paths.agents_root is not None:
         candidates.append(paths.agents_root / "AGENTS.md")
 
-    if paths.cwd is not None:
+    if paths.cwd is not None and paths.project_resources_enabled:
         cwd = paths.cwd.expanduser().resolve()
         project_root = _find_project_root(cwd)
         candidates.extend(_ancestor_agents_files(project_root, cwd))

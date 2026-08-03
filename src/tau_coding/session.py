@@ -72,6 +72,15 @@ from tau_coding.events import (
 )
 from tau_coding.extensions.runtime import ExtensionRuntime
 from tau_coding.paths import TauPaths
+from tau_coding.project_trust import (
+    ProjectTrustCoordinator,
+    ProjectTrustResolution,
+    ProjectTrustStore,
+    TrustDefault,
+    TrustOverride,
+    TrustPrompt,
+    format_trust_diagnostic,
+)
 from tau_coding.prompt_templates import (
     PromptTemplate,
     expand_prompt_template_command,
@@ -101,6 +110,7 @@ from tau_coding.resources import (
     TauResourcePaths,
     discover_system_prompt_resources,
     resource_paths_with_cwd,
+    resource_paths_with_project_trust,
 )
 from tau_coding.session_export import (
     default_session_export_artifact_path,
@@ -241,6 +251,11 @@ class CodingSessionConfig:
     extensions_enabled: bool = True
     project_extensions_enabled: bool = False
     extension_runtime: ExtensionRuntime | None = None
+    project_trust_coordinator: ProjectTrustCoordinator | None = None
+    trust_override: TrustOverride | None = None
+    trust_default: TrustDefault = "always"
+    trust_interactive: bool = False
+    trust_prompt: TrustPrompt | None = None
 
 
 class CodingSession:
@@ -270,6 +285,7 @@ class CodingSession:
         pending_initial_entries: tuple[SessionEntry, ...] = (),
         extension_runtime: ExtensionRuntime | None = None,
         image_support: ImageSupportState | None = None,
+        project_trust_resolution: ProjectTrustResolution | None = None,
     ) -> None:
         self._config = config
         self._state = state
@@ -308,6 +324,7 @@ class CodingSession:
         self._runtime_model_limits: RuntimeModelLimits | None = None
         self._runtime_model_limits_key: tuple[str, str] | None = None
         self._model_limits_discovery_error: str | None = None
+        self._project_trust_resolution = project_trust_resolution
 
     @classmethod
     async def load(cls, config: CodingSessionConfig) -> CodingSession:
@@ -337,7 +354,46 @@ class CodingSession:
             if latest_leaf is not None
             else linear_state
         )
-        resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
+        unfiltered_resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
+
+        extension_runtime = config.extension_runtime
+        fresh_extension_runtime = extension_runtime is None
+        if extension_runtime is None:
+            extension_runtime = ExtensionRuntime()
+            if config.extensions_enabled or config.extension_paths:
+                extension_runtime.load(
+                    unfiltered_resource_paths,
+                    extra_paths=config.extension_paths,
+                    include_resource_dirs=config.extensions_enabled,
+                    include_project_dir=False,
+                )
+
+        coordinator = config.project_trust_coordinator or ProjectTrustCoordinator(
+            ProjectTrustStore(
+                unfiltered_resource_paths.paths or TauPaths(home=unfiltered_resource_paths.root)
+            )
+        )
+        summary, trust_resolution = await coordinator.resolve(
+            config.cwd,
+            override=config.trust_override,
+            default=config.trust_default,
+            interactive=config.trust_interactive,
+            prompt=config.trust_prompt,
+            extension_deciders=(extension_runtime.decide_project_trust,)
+            if fresh_extension_runtime
+            else (),
+        )
+        canonical_cwd = summary.cwd.value
+        resource_paths = resource_paths_with_project_trust(
+            resource_paths_with_cwd(config.resource_paths, canonical_cwd),
+            trusted=trust_resolution.trusted,
+        )
+        config = replace(
+            config,
+            cwd=canonical_cwd,
+            resource_paths=resource_paths,
+            project_trust_coordinator=coordinator,
+        )
         resources = _load_session_resources(
             resource_paths,
             config.context_files,
@@ -346,18 +402,30 @@ class CodingSession:
             custom_system_prompt_explicit=config.custom_system_prompt is not None,
             append_system_prompt_explicit=config.append_system_prompt is not None,
         )
+        if summary.categories:
+            resources = replace(
+                resources,
+                diagnostics=(
+                    *resources.diagnostics,
+                    ResourceDiagnostic(
+                        kind="project-trust",
+                        message=format_trust_diagnostic(summary, trust_resolution),
+                        severity="info" if trust_resolution.trusted else "warning",
+                    ),
+                ),
+            )
 
-        extension_runtime = config.extension_runtime
-        fresh_extension_runtime = extension_runtime is None
-        if extension_runtime is None:
-            extension_runtime = ExtensionRuntime()
-            if config.extensions_enabled or config.extension_paths:
-                extension_runtime.load(
-                    resource_paths,
-                    extra_paths=config.extension_paths,
-                    include_resource_dirs=config.extensions_enabled,
-                    include_project_dir=config.project_extensions_enabled,
-                )
+        if (
+            fresh_extension_runtime
+            and trust_resolution.trusted
+            and config.project_extensions_enabled
+        ):
+            extension_runtime.load(
+                resource_paths,
+                include_resource_dirs=True,
+                include_project_dir=True,
+                include_user_dir=False,
+            )
 
         active_model = _runtime_model_for_state(config, state)
         image_support = ImageSupportState(
@@ -422,6 +490,7 @@ class CodingSession:
             pending_initial_entries=pending_initial_entries,
             extension_runtime=extension_runtime,
             image_support=image_support,
+            project_trust_resolution=trust_resolution,
         )
         await session._persist_loaded_interrupted_tool_repairs()
         session._sync_thinking_level_to_active_model()
@@ -747,9 +816,20 @@ class CodingSession:
         return self._command_registry
 
     @property
+    def project_trust_resolution(self) -> ProjectTrustResolution | None:
+        """Return this cwd's completed project-input trust resolution."""
+        return self._project_trust_resolution
+
+    @property
     def resource_diagnostics(self) -> tuple[ResourceDiagnostic, ...]:
         """Return non-fatal resource and extension diagnostics."""
-        return self._resource_diagnostics + self._extension_runtime.diagnostics
+        trust_diagnostics: tuple[ResourceDiagnostic, ...] = ()
+        if self._project_trust_resolution is not None:
+            trust_diagnostics = tuple(
+                ResourceDiagnostic(kind="project-trust", message=message, severity="error")
+                for message in self._project_trust_resolution.diagnostics
+            )
+        return self._resource_diagnostics + trust_diagnostics + self._extension_runtime.diagnostics
 
     @property
     def extension_runtime(self) -> ExtensionRuntime:
@@ -891,6 +971,14 @@ class CodingSession:
     def last_diagnostic_log_path(self) -> Path | None:
         """Return the last diagnostic log path written by this session."""
         return self._last_diagnostic_log_path
+
+    def set_project_trust_prompt(self, prompt: TrustPrompt) -> None:
+        """Install the active frontend's trust prompt for reload/replacement."""
+        self._config = replace(
+            self._config,
+            trust_interactive=True,
+            trust_prompt=prompt,
+        )
 
     def cancel(self) -> None:
         """Cancel the currently running agent turn, if any."""
@@ -1184,6 +1272,29 @@ class CodingSession:
         ``session_start(reason="reload")`` so startup-mounted UI is restored
         before the command reports completion.
         """
+        coordinator = self._config.project_trust_coordinator
+        if coordinator is not None:
+            summary, trust_resolution = await coordinator.resolve(
+                self.cwd,
+                override=self._config.trust_override,
+                default=self._config.trust_default,
+                interactive=self._config.trust_interactive,
+                prompt=self._config.trust_prompt,
+                refresh=True,
+            )
+            if trust_resolution.cancelled:
+                raise ValueError("Project trust decision cancelled; keeping current resources")
+            self._project_trust_resolution = trust_resolution
+            self._resource_paths = resource_paths_with_project_trust(
+                resource_paths_with_cwd(self._config.resource_paths, summary.cwd.value),
+                trusted=trust_resolution.trusted,
+            )
+            self._config = replace(
+                self._config,
+                cwd=summary.cwd.value,
+                resource_paths=self._resource_paths,
+            )
+
         before_skills = _skill_signatures(self._skills)
         before_prompt_templates = _prompt_template_signatures(self._prompt_templates)
         before_context_files = _context_file_signatures(self._context_files)
@@ -1383,8 +1494,19 @@ class CodingSession:
                 extensions_enabled=self._config.extensions_enabled,
                 project_extensions_enabled=self._config.project_extensions_enabled,
                 extension_runtime=self._extension_runtime,
+                project_trust_coordinator=self._config.project_trust_coordinator,
+                trust_override=self._config.trust_override,
+                trust_default=self._config.trust_default,
+                trust_interactive=self._config.trust_interactive,
+                trust_prompt=self._config.trust_prompt,
             )
         )
+        if (
+            replacement.project_trust_resolution is not None
+            and replacement.project_trust_resolution.cancelled
+        ):
+            await replacement.aclose()
+            raise ValueError("Project trust decision cancelled; current session unchanged")
         if restore_record_model:
             if runtime_provider_config is None:
                 raise ProviderConfigError(f"Session provider is not configured: {provider_name}")
@@ -1485,6 +1607,7 @@ class CodingSession:
         self._pending_initial_entries = replacement._pending_initial_entries
         self._extension_runtime = replacement._extension_runtime
         self._image_support = replacement._image_support
+        self._project_trust_resolution = replacement._project_trust_resolution
         self._extension_runtime.bind(self)
         self._extension_runtime.attach_harness_listener(self._harness.subscribe)
         await self._extension_runtime.emit_session_start(reason)

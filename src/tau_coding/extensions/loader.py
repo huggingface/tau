@@ -48,6 +48,7 @@ def extension_dirs(
     paths: TauResourcePaths,
     *,
     include_project_dir: bool = False,
+    include_user_dir: bool = True,
 ) -> tuple[Path, ...]:
     """Return extension directories in load order (project first, then user).
 
@@ -57,9 +58,10 @@ def extension_dirs(
     project trust store, because they execute at session startup.
     """
     dirs: list[Path] = []
-    if include_project_dir and paths.cwd is not None:
+    if include_project_dir and paths.cwd is not None and paths.project_resources_enabled:
         dirs.append(paths.cwd / ".tau" / "extensions")
-    dirs.append(paths.root / "extensions")
+    if include_user_dir:
+        dirs.append(paths.root / "extensions")
     return tuple(_dedupe(dirs))
 
 
@@ -69,6 +71,7 @@ def discover_extensions(
     extra_paths: Sequence[Path] = (),
     include_resource_dirs: bool = True,
     include_project_dir: bool = False,
+    include_user_dir: bool = True,
 ) -> tuple[tuple[DiscoveredExtension, ...], tuple[ResourceDiagnostic, ...]]:
     """Discover extension entry files.
 
@@ -100,7 +103,11 @@ def discover_extensions(
         discovered.append(entry)
 
     if include_resource_dirs:
-        for directory in extension_dirs(paths, include_project_dir=include_project_dir):
+        for directory in extension_dirs(
+            paths,
+            include_project_dir=include_project_dir,
+            include_user_dir=include_user_dir,
+        ):
             for entry in _discover_in_dir(directory, diagnostics):
                 add(entry)
 
@@ -149,6 +156,7 @@ def load_extensions(
     extra_paths: Sequence[Path] = (),
     include_resource_dirs: bool = True,
     include_project_dir: bool = False,
+    include_user_dir: bool = True,
 ) -> ExtensionLoadResult:
     """Discover and import extensions, isolating per-extension failures."""
     discovered, diagnostics = discover_extensions(
@@ -156,6 +164,7 @@ def load_extensions(
         extra_paths=extra_paths,
         include_resource_dirs=include_resource_dirs,
         include_project_dir=include_project_dir,
+        include_user_dir=include_user_dir,
     )
     loaded: list[LoadedExtension] = []
     all_diagnostics = list(diagnostics)

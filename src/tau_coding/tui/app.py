@@ -98,6 +98,7 @@ from tau_coding.oauth_types import (
     OAuthPrompt,
     OAuthSelectPrompt,
 )
+from tau_coding.project_trust import ProjectTrustRequest, TrustChoice, TrustOverride
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_catalog import (
     BUILTIN_PROVIDER_CATALOG,
@@ -150,6 +151,7 @@ from tau_coding.tui.config import (
     save_tui_settings,
 )
 from tau_coding.tui.file_drop import normalize_dropped_paths
+from tau_coding.tui.project_trust import ProjectTrustScreen, prompt_project_trust
 from tau_coding.tui.state import TuiState, format_terminal_command_result_block
 from tau_coding.tui.terminal_notification import TerminalNotificationController
 from tau_coding.tui.terminal_title import TerminalTitleController
@@ -3471,6 +3473,10 @@ class TauTuiApp(App[None]):
         self._supports_pyperclip: bool | None = None
         self._sync_session_title()
 
+    async def prompt_project_trust(self, request: ProjectTrustRequest) -> TrustChoice | None:
+        """Resolve a trust request through the active Textual modal stack."""
+        return await self.push_screen_wait(ProjectTrustScreen(request))
+
     def _sync_session_title(self) -> None:
         """Reflect the active session name in the terminal tab title."""
         self._sync_terminal_title()
@@ -6720,6 +6726,7 @@ async def run_tui_app(
     project_extensions_enabled: bool = False,
     custom_system_prompt: str | None = None,
     append_system_prompt: str | None = None,
+    trust_override: TrustOverride | None = None,
 ) -> str | None:
     """Run the Textual app and return the active id when its session is persisted."""
     if new_session and session_id is not None:
@@ -6795,10 +6802,19 @@ async def run_tui_app(
                 project_extensions_enabled=project_extensions_enabled,
                 custom_system_prompt=custom_system_prompt,
                 append_system_prompt=append_system_prompt,
+                trust_override=trust_override,
+                trust_default=shell_settings.default_project_trust,
+                trust_interactive=True,
+                trust_prompt=prompt_project_trust,
             )
         )
+        trust_resolution = getattr(session, "project_trust_resolution", None)
+        trusted = trust_resolution is None or trust_resolution.trusted
         custom_themes, theme_diagnostics = load_custom_tui_themes(
-            TauResourcePaths(cwd=record.cwd).themes_dirs
+            TauResourcePaths(
+                cwd=record.cwd,
+                project_resources_enabled=trusted,
+            ).themes_dirs
         )
         set_custom_tui_themes(custom_themes)
         legacy_notices = (startup_notice,) if startup_notice else ()
@@ -6815,6 +6831,9 @@ async def run_tui_app(
             startup_notices=all_startup_notices,
             initial_prompt=initial_prompt,
         )
+        set_trust_prompt = getattr(session, "set_project_trust_prompt", None)
+        if set_trust_prompt is not None:
+            set_trust_prompt(app.prompt_project_trust)
         await app.run_async()
     finally:
         if session is not None:

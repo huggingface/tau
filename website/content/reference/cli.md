@@ -53,8 +53,15 @@ features and fixes.
 | `--auto-compact-threshold INT` | Auto-compact above this rough token estimate |
 | `-e, --extension PATH` | Load an [extension]({{< relref "../guides/extensions.md" >}}) file or directory (repeatable) |
 | `--no-extensions` | Disable extension directory discovery (explicit `-e` paths still load) |
-| `--project-extensions` | Also load `<project>/.tau/extensions` (runs project-supplied code at startup) |
+| `--project-extensions` | Also load trusted `<project>/.tau/extensions`; project trust and this code opt-in are both required |
+| `-a, --approve` | Trust protected project inputs for this invocation only |
+| `-na, --no-approve` | Decline protected project inputs for this invocation only |
 | `-v, --version` | Print the version and exit |
+
+`--approve` and `--no-approve` are mutually exclusive and never write the
+trust store. See [Project trust]({{< relref "../guides/project-trust.md" >}})
+for interactive scopes, headless defaults, protected resources, and the
+non-sandbox boundary.
 
 ### System prompt input
 
@@ -84,8 +91,8 @@ request. They are startup controls and are not stored in session history, so
 pass them again on a later resume when needed.
 
 Without flags, Tau also discovers `SYSTEM.md` and `APPEND_SYSTEM.md` under the
-project or user `.tau` directory. CLI values win over project files, and project
-files win over user files. Use `/reload` after changing a file. These are
+project or user `.tau` directory. CLI values win over trusted project files, and
+project files win over user files. Use `/reload` after changing a file. These are
 Tau-specific configuration files, not `.agents` resources. See
 [Configuration & files]({{< relref "./configuration.md#system-prompt-files" >}})
 for paths, precedence, diagnostics, and the project-resource security warning.

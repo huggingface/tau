@@ -14,7 +14,8 @@ those locations and file formats.
 ├── catalog.toml        # optional provider/model catalog overlay
 ├── providers.json      # provider/model preferences
 ├── credentials.json    # saved API keys / OAuth tokens (0600, atomic writes)
-├── settings.json       # general settings (e.g. shell command prefix)
+├── settings.json       # general settings (trust default, shell prefix)
+├── trust.json          # versioned project-input trust decisions
 ├── tui.json            # TUI theme, keybindings, and layout
 ├── sessions/           # saved sessions, per project
 ├── skills/             # user-level skills
@@ -28,6 +29,13 @@ those locations and file formats.
 
 Tau also reads user-level `.agents` resources: `~/.agents/skills/`,
 `~/.agents/prompts/`, `~/.agents/AGENTS.md`.
+
+`settings.json` may contain `"defaultProjectTrust": "ask" | "always" |
+"never"`. It is user-global only; a project cannot choose its own trust
+policy. The default is `ask`. Interactive `ask` opens the trust modal; headless
+`ask` safely declines. `trust.json` is managed atomically by Tau; do not add
+relative paths or unknown fields. See [Project trust]({{< relref
+"../guides/project-trust.md" >}}).
 
 Startup update checks cache their latest PyPI result in
 `~/.tau/cache/update-check.json` and refresh at most once per day. Set
@@ -58,10 +66,10 @@ selected file that cannot be inspected or decoded as UTF-8 stops startup or
 reload rather than silently falling back.
 
 System prompt files are Tau-specific and are not discovered from `.agents`.
-Project files currently load automatically, like Tau's other project instruction
-resources. Inspect a repository's `.tau/SYSTEM.md` and `.tau/APPEND_SYSTEM.md`
-before starting Tau there: they can replace or extend the model's highest-priority
-instructions.
+Project files load only after the destination cwd is trusted. User files and
+explicit CLI values remain available when project inputs are declined. Trust is
+an input-loading guard, not a sandbox; inspect trusted prompt files because they
+can replace or extend the model's highest-priority instructions.
 
 ## Network proxies
 
