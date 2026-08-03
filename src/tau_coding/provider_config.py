@@ -50,6 +50,7 @@ from tau_coding.thinking import (
 
 DEFAULT_PROVIDER_NAME = "openai"
 DEFAULT_MODEL = "gpt-5.4"
+PROVIDER_SETTINGS_SCHEMA_VERSION = 2
 
 
 class ProviderConfigError(ValueError):
@@ -360,6 +361,7 @@ class ProviderSettings:
     def to_json(self) -> dict[str, Any]:
         """Serialize runtime preferences to JSON-compatible data."""
         return {
+            "schema_version": PROVIDER_SETTINGS_SCHEMA_VERSION,
             "default_provider": self.default_provider,
             "provider_preferences": {
                 provider.name: _provider_preference_to_json(provider) for provider in self.providers
@@ -508,6 +510,10 @@ def load_provider_settings(paths: TauPaths | None = None) -> ProviderSettings:
     if not isinstance(raw, dict):
         raise ProviderConfigError("Provider settings must be a JSON object")
     settings = provider_settings_from_json(raw, paths=resolved_paths)
+    if "provider_preferences" not in raw:
+        settings = _migrate_legacy_provider_settings(settings, paths=resolved_paths)
+        _save_migrated_provider_settings(settings, paths=resolved_paths)
+        return settings
     return _with_builtin_catalog_models(settings, paths=resolved_paths)
 
 
@@ -517,10 +523,7 @@ def save_provider_settings(settings: ProviderSettings, paths: TauPaths | None = 
     _save_provider_definitions_to_catalog(settings, paths=resolved_paths)
     path = provider_settings_path(resolved_paths)
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        with suppress(OSError):
-            copy2(path, path.with_suffix(path.suffix + ".bak"))
-    _atomic_write_text(path, dumps(settings.to_json(), indent=2, sort_keys=True) + "\n")
+    _write_provider_settings(settings, path=path, backup=True)
     return path
 
 
@@ -717,6 +720,93 @@ def _with_builtin_catalog_models(
         providers=providers,
         scoped_models=settings.scoped_models,
     )
+
+
+def _migrate_legacy_provider_settings(
+    settings: ProviderSettings,
+    *,
+    paths: TauPaths,
+) -> ProviderSettings:
+    """Move legacy full provider records onto catalog-owned definitions.
+
+    Built-in and user-catalog provider capabilities come exclusively from the
+    current effective catalog. Legacy records contribute only runtime
+    preferences. Providers absent from the catalog remain intact so the
+    migration can persist them as custom catalog entries.
+    """
+    catalog_configs = {config.name: config for config in _effective_provider_configs(paths)}
+    providers: list[ProviderConfig] = []
+    for legacy in settings.providers:
+        catalog_provider = catalog_configs.get(legacy.name)
+        if catalog_provider is None:
+            providers.append(legacy)
+            continue
+        preferences = _provider_preference_to_json(legacy)
+        if legacy.default_model not in catalog_provider.models:
+            preferences.pop("default_model")
+        preferences["thinking_defaults"] = {
+            model: level
+            for model, level in legacy.thinking_defaults.items()
+            if model in catalog_provider.models
+            and level in provider_thinking_levels(catalog_provider, model=model)
+        }
+        providers.append(_apply_provider_preference(catalog_provider, preferences))
+
+    merged = _append_catalog_providers(tuple(providers), catalog_configs, paths=paths)
+    names = {provider.name for provider in merged}
+    default_provider = settings.default_provider
+    if default_provider not in names:
+        default_provider = merged[0].name if merged else DEFAULT_PROVIDER_NAME
+    return ProviderSettings(
+        default_provider=default_provider,
+        providers=merged,
+        scoped_models=tuple(
+            scoped
+            for scoped in settings.scoped_models
+            if scoped.provider in names
+            and scoped.model
+            in next(provider.models for provider in merged if provider.name == scoped.provider)
+        ),
+    )
+
+
+def _save_migrated_provider_settings(settings: ProviderSettings, *, paths: TauPaths) -> None:
+    """Persist one legacy migration after creating its required recovery backup."""
+    path = provider_settings_path(paths)
+    _backup_provider_settings(path, strict=True)
+    catalog_names = {entry.name for entry in effective_catalog(paths)}
+    custom_entries = [
+        _catalog_entry_from_provider(provider)
+        for provider in settings.providers
+        if provider.name not in catalog_names
+    ]
+    if custom_entries:
+        save_user_catalog_entries(custom_entries, paths=paths)
+    _write_provider_settings(settings, path=path, backup=False)
+
+
+def _backup_provider_settings(path: Path, *, strict: bool) -> None:
+    """Copy existing settings to the recovery path, optionally requiring success."""
+    if not path.exists():
+        return
+    if strict:
+        copy2(path, path.with_suffix(path.suffix + ".bak"))
+        return
+    with suppress(OSError):
+        copy2(path, path.with_suffix(path.suffix + ".bak"))
+
+
+def _write_provider_settings(
+    settings: ProviderSettings,
+    *,
+    path: Path,
+    backup: bool,
+) -> None:
+    """Atomically write preferences, optionally retaining the previous file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if backup:
+        _backup_provider_settings(path, strict=False)
+    _atomic_write_text(path, dumps(settings.to_json(), indent=2, sort_keys=True) + "\n")
 
 
 def _effective_provider_configs(paths: TauPaths | None = None) -> tuple[ProviderConfig, ...]:
@@ -1081,6 +1171,11 @@ def provider_settings_from_json(
     migration and compatibility; saves rewrite it to provider_preferences and
     move custom provider definitions to catalog.toml.
     """
+    schema_version = data.get("schema_version")
+    if schema_version not in (None, PROVIDER_SETTINGS_SCHEMA_VERSION):
+        raise ProviderConfigError(
+            f"Unsupported provider settings schema_version: {schema_version!r}"
+        )
     default_provider = _string(data.get("default_provider"), "default_provider")
     scoped_models = _scoped_models_from_json(data.get("scoped_models"))
     if "provider_preferences" in data:
@@ -1156,9 +1251,8 @@ def _apply_provider_preference(
         if "default_model" in value
         else provider.default_model
     )
-    models = (
-        provider.models if default_model in provider.models else (*provider.models, default_model)
-    )
+    if default_model not in provider.models:
+        default_model = provider.default_model
     headers = (
         _string_dict(value.get("headers"), f"provider_preferences.{provider.name}.headers")
         if "headers" in value
@@ -1193,13 +1287,13 @@ def _apply_provider_preference(
             value.get("thinking_defaults"),
             provider,
             f"provider_preferences.{provider.name}.thinking_defaults",
+            ignore_unknown_models=True,
         )
         if "thinking_defaults" in value
         else provider.thinking_defaults
     )
     return replace(
         provider,
-        models=models,
         default_model=default_model,
         headers=headers,
         timeout_seconds=timeout_seconds,
@@ -1213,8 +1307,12 @@ def _thinking_defaults_dict(
     value: object,
     provider: ProviderConfig,
     field_name: str,
+    *,
+    ignore_unknown_models: bool = False,
 ) -> dict[str, ThinkingLevel]:
     raw = _raw_thinking_defaults_dict(value, field_name)
+    if ignore_unknown_models:
+        raw = {model: level for model, level in raw.items() if model in provider.models}
     for model, thinking_level in raw.items():
         validate_provider_model(provider, model)
         available = provider_thinking_levels(provider, model=model)

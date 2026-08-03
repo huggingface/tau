@@ -34,6 +34,33 @@ from tau_coding.provider_config import (
 )
 
 
+def test_stale_preferences_cannot_restore_removed_codex_alias(tmp_path: Path) -> None:
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    (tau_home / "providers.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "default_provider": "openai-codex",
+                "provider_preferences": {
+                    "openai-codex": {
+                        "default_model": "gpt-5.6",
+                        "thinking_defaults": {"gpt-5.6": "low"},
+                    }
+                },
+                "scoped_models": [],
+            }
+        )
+    )
+
+    settings = load_provider_settings(TauPaths(home=tau_home))
+    codex = settings.get_provider("openai-codex")
+
+    assert codex.default_model == "gpt-5.5"
+    assert "gpt-5.6" not in codex.models
+    assert "gpt-5.6" not in codex.thinking_defaults
+
+
 def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path) -> None:
     settings = load_provider_settings(TauPaths(home=tmp_path / ".tau"))
 
@@ -340,6 +367,7 @@ def test_save_and_load_provider_settings_round_trip(
     loaded = load_provider_settings(paths)
 
     assert path == tmp_path / ".tau" / "providers.json"
+    assert json.loads(path.read_text())["schema_version"] == 2
     assert loaded == settings
 
 
@@ -1189,7 +1217,11 @@ def test_load_provider_settings_does_not_restore_stale_codex_builtin_models(
       "api_key_env": "OPENAI_CODEX_ACCESS_TOKEN",
       "credential_name": "openai-codex",
       "models": ["gpt-5", "gpt-5.5"],
-      "default_model": "gpt-5"
+      "default_model": "gpt-5",
+      "thinking_levels": ["off", "minimal", "low", "medium", "high", "xhigh"],
+      "thinking_models": ["gpt-5.5"],
+      "thinking_default": "medium",
+      "thinking_parameter": "reasoning.effort"
     }
   ]
 }
@@ -1212,6 +1244,18 @@ def test_load_provider_settings_does_not_restore_stale_codex_builtin_models(
         "gpt-5.2",
     )
     assert provider.default_model == "gpt-5.5"
+    assert provider_thinking_levels(provider, model="gpt-5.6-sol") == (
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    )
+    migrated = json.loads((tau_home / "providers.json").read_text())
+    assert migrated["schema_version"] == 2
+    assert "providers" not in migrated
+    assert (tau_home / "providers.json.bak").exists()
+    assert not (tau_home / "catalog.toml").exists()
 
 
 def test_load_provider_settings_merges_builtin_model_catalog(tmp_path: Path) -> None:
@@ -1246,7 +1290,82 @@ def test_load_provider_settings_merges_builtin_model_catalog(tmp_path: Path) -> 
     assert provider.context_windows["MiniMaxAI/MiniMax-M2.7"] == 204_800
     assert "Qwen/Qwen3-Coder-480B-A35B-Instruct" in provider.models
     assert "moonshotai/Kimi-K2.6" in provider.models
-    assert "custom/coder" in provider.models
+    assert "custom/coder" not in provider.models
+
+
+def test_load_provider_settings_migrates_custom_provider_to_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(provider_config, "environ", {})
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    original = {
+        "default_provider": "local",
+        "providers": [
+            {
+                "type": "openai-compatible",
+                "name": "local",
+                "base_url": "http://localhost:11434/v1",
+                "api_key_env": "LOCAL_API_KEY",
+                "credential_name": None,
+                "models": ["qwen"],
+                "default_model": "qwen",
+                "context_windows": {"qwen": 64000},
+                "headers": {"X-Test": "yes"},
+            }
+        ],
+    }
+    (tau_home / "providers.json").write_text(json.dumps(original), encoding="utf-8")
+
+    settings = load_provider_settings(TauPaths(home=tau_home))
+
+    provider = settings.get_provider("local")
+    assert provider.context_windows == {"qwen": 64_000}
+    assert provider.headers == {"X-Test": "yes"}
+    assert json.loads((tau_home / "providers.json.bak").read_text()) == original
+    migrated = json.loads((tau_home / "providers.json").read_text())
+    assert migrated["schema_version"] == 2
+    assert migrated["provider_preferences"]["local"]["default_model"] == "qwen"
+    catalog = (tau_home / "catalog.toml").read_text()
+    assert 'name = "local"' in catalog
+    assert 'models = ["qwen"]' in catalog
+
+
+def test_legacy_migration_aborts_before_changes_when_backup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(provider_config, "environ", {})
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    original = {
+        "default_provider": "local",
+        "providers": [
+            {
+                "type": "openai-compatible",
+                "name": "local",
+                "base_url": "http://localhost:11434/v1",
+                "api_key_env": "LOCAL_API_KEY",
+                "models": ["qwen"],
+                "default_model": "qwen",
+            }
+        ],
+    }
+    settings_path = tau_home / "providers.json"
+    settings_path.write_text(json.dumps(original), encoding="utf-8")
+
+    def fail_backup(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError("backup denied")
+
+    monkeypatch.setattr(provider_config, "copy2", fail_backup)
+
+    with pytest.raises(PermissionError, match="backup denied"):
+        load_provider_settings(TauPaths(home=tau_home))
+
+    assert json.loads(settings_path.read_text()) == original
+    assert not (tau_home / "providers.json.bak").exists()
+    assert not (tau_home / "catalog.toml").exists()
 
 
 def test_load_provider_settings_restores_builtin_providers_with_stored_credentials(
@@ -1346,6 +1465,17 @@ def test_load_provider_settings_restores_builtin_credential_name(
         credential_reader=FakeCredentials(),
     )
     assert config.api_key == "stored-key"
+
+
+def test_provider_settings_from_json_rejects_unknown_schema_version() -> None:
+    with pytest.raises(ProviderConfigError, match="schema_version"):
+        provider_settings_from_json(
+            {
+                "schema_version": 99,
+                "default_provider": "openai",
+                "provider_preferences": {},
+            }
+        )
 
 
 def test_provider_settings_from_json_rejects_invalid_headers() -> None:
