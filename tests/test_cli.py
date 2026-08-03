@@ -1434,6 +1434,7 @@ async def test_export_session_command_writes_html_for_indexed_session(tmp_path: 
     assert "<title>Exported Session</title>" in html
     assert "Export this" in html
     assert str(record.path) in html
+    assert '<details class="system-prompt">' not in html
 
 
 @pytest.mark.anyio
@@ -1456,6 +1457,7 @@ async def test_export_session_command_writes_html_for_jsonl_path(tmp_path: Path)
     assert output_path == tmp_path / "session.html"
     assert "<title>Tau session session</title>" in html
     assert "Path export" in html
+    assert '<details class="system-prompt">' not in html
 
 
 @pytest.mark.anyio

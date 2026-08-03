@@ -81,11 +81,17 @@ def export_session_html(
     *,
     title: str = "Tau Session Export",
     source: str | None = None,
+    system_prompt: str | None = None,
 ) -> Path:
     """Write a self-contained HTML session export and return its path."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
-        render_session_html(entries, title=title, source=source),
+        render_session_html(
+            entries,
+            title=title,
+            source=source,
+            system_prompt=system_prompt,
+        ),
         encoding="utf-8",
     )
     return output_path
@@ -98,12 +104,19 @@ def export_session_artifact(
     title: str = "Tau Session Export",
     source: str | None = None,
     format: str | None = None,
+    system_prompt: str | None = None,
 ) -> Path:
     """Write a session export in the requested or inferred format."""
     export_format = normalize_export_format(format or output_path.suffix.removeprefix("."))
     if export_format == "jsonl":
         return export_session_jsonl(entries, output_path)
-    return export_session_html(entries, output_path, title=title, source=source)
+    return export_session_html(
+        entries,
+        output_path,
+        title=title,
+        source=source,
+        system_prompt=system_prompt,
+    )
 
 
 def normalize_export_format(value: str | None) -> str:
@@ -135,6 +148,7 @@ def render_session_html(
     *,
     title: str = "Tau Session Export",
     source: str | None = None,
+    system_prompt: str | None = None,
 ) -> str:
     """Render a session transcript/tree as standalone HTML."""
     entry_list = list(entries)
@@ -144,6 +158,7 @@ def render_session_html(
     tree_html = _render_tree(visible_entries, active_path_ids, active_leaf_id)
     details_html = _render_entry_details(visible_entries, active_path_ids, active_leaf_id)
     source_html = f'<p class="source">Source: <code>{_escape(source)}</code></p>' if source else ""
+    system_prompt_html = _render_system_prompt(system_prompt)
     generated_at = datetime.now(UTC).replace(microsecond=0).isoformat()
     jsonl_b64 = base64.b64encode(_session_jsonl_text(entry_list).encode("utf-8")).decode("ascii")
     jsonl_filename = _jsonl_filename(title, source)
@@ -305,6 +320,33 @@ def render_session_html(
       flex-wrap: wrap;
       gap: 4px 18px;
       margin-top: 8px;
+    }}
+    details.system-prompt {{
+      margin-top: 16px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }}
+    .system-prompt-summary {{
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-family: var(--sans);
+      font-size: 0.78rem;
+      font-weight: 600;
+    }}
+    .system-prompt-warning {{
+      color: var(--muted);
+      font-size: 0.68rem;
+      font-weight: 400;
+    }}
+    .system-prompt-body {{ padding: 0 12px 12px; }}
+    .system-prompt-body pre {{
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }}
     .filter-bar {{
       display: flex;
@@ -674,6 +716,7 @@ def render_session_html(
         Generated: <time datetime="{_attr(generated_at)}">{_escape(generated_at)}</time>
       </p>
     </div>
+    {system_prompt_html}
     <div class="filter-bar" aria-label="Transcript filters">
       <span class="filter-label">View</span>
       <label class="chip">
@@ -821,6 +864,20 @@ def render_session_html(
 </body>
 </html>
 """
+
+
+def _render_system_prompt(system_prompt: str | None) -> str:
+    """Render live request configuration separately from transcript entries."""
+    if system_prompt is None:
+        return ""
+    return (
+        '<details class="system-prompt">'
+        '<summary class="system-prompt-summary">System Prompt'
+        '<span class="system-prompt-warning">May include project instructions</span>'
+        "</summary>"
+        f'<div class="system-prompt-body"><pre>{_escape(system_prompt)}</pre></div>'
+        "</details>"
+    )
 
 
 def _visible_entries(entries: Sequence[SessionEntry]) -> list[SessionEntry]:

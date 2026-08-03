@@ -88,6 +88,29 @@ def test_render_session_html_uses_static_document_layout() -> None:
     assert "http://" not in html and "https://" not in html
 
 
+def test_render_session_html_includes_escaped_readable_system_prompt() -> None:
+    entries = [MessageEntry(id="root", message=UserMessage(content="Hello"))]
+    system_prompt = "First line\n  indented <script>alert('x')</script>\n" + "long-word-" * 40
+
+    html = render_session_html(entries, system_prompt=system_prompt)
+
+    assert '<details class="system-prompt">' in html
+    assert "System Prompt" in html
+    assert "May include project instructions" in html
+    assert "First line\n  indented &lt;script&gt;alert('x')&lt;/script&gt;\n" in html
+    assert "<script>alert('x')</script>" not in html
+    assert "white-space: pre-wrap" in html
+    assert "overflow-wrap: anywhere" in html
+    assert html.index('class="system-prompt"') < html.index('<main class="session-shell">')
+
+
+def test_render_session_html_omits_unavailable_system_prompt() -> None:
+    html = render_session_html([])
+
+    assert '<details class="system-prompt">' not in html
+    assert "May include project instructions" not in html
+
+
 def test_render_session_html_syntax_highlights_tool_call_arguments() -> None:
     entries = [
         MessageEntry(
@@ -202,7 +225,10 @@ def test_render_session_html_includes_jsonl_download() -> None:
     ]
 
     html = render_session_html(
-        entries, title="Download Export", source="/home/user/.tau/sessions/abc123.jsonl"
+        entries,
+        title="Download Export",
+        source="/home/user/.tau/sessions/abc123.jsonl",
+        system_prompt="Private live prompt",
     )
 
     assert 'id="downloadJsonl"' in html
@@ -215,9 +241,12 @@ def test_render_session_html_includes_jsonl_download() -> None:
     assert match is not None
     decoded = base64.b64decode(match.group(1)).decode("utf-8")
     lines = decoded.splitlines()
-    # The download embeds every entry, including leaf pointers filtered from the view.
+    # The download embeds every entry, including leaf pointers filtered from the view,
+    # but keeps the live prompt outside persisted transcript data.
     assert len(lines) == 3
     assert '"id":"leaf"' in lines[2]
+    assert "Private live prompt" not in decoded
+    assert "system_prompt" not in decoded
 
 
 def test_render_session_html_jsonl_filename_falls_back_to_title_slug() -> None:

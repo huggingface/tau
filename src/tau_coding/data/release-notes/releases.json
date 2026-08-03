@@ -10,6 +10,7 @@
       "Changed": [
         "Cache Anthropic prompt prefixes to reduce repeated input billing, with auth-aware retention, compatibility overrides, and a sidebar cache hit rate.",
         "Redesign self-contained HTML session exports with compact accordions, entry filters and counts, expand/collapse controls, clearer tool labels, and offline JSONL download.",
+        "Include the current system prompt in live HTML session exports as a separate collapsed section; review exports before sharing because project instructions may be exposed, while JSONL and offline exports remain prompt-free.",
         "Show normal working indicators and unfocused completion notifications while manual `/compact` runs."
       ],
       "Fixed": [

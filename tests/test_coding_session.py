@@ -237,6 +237,8 @@ async def test_session_export_defaults_to_cwd(tmp_path: Path) -> None:
     html = output_path.read_text(encoding="utf-8")
     assert "Export me" in html
     assert str(storage.path) in html
+    assert '<details class="system-prompt">' in html
+    assert "You are Tau." in html
 
 
 @pytest.mark.anyio
@@ -248,7 +250,10 @@ async def test_session_export_writes_jsonl_to_destination_directory(tmp_path: Pa
     output_path = await session.export(Path("exports"), format="jsonl")
 
     assert output_path == tmp_path / "exports" / "session-1.jsonl"
-    assert "Export me" in output_path.read_text(encoding="utf-8")
+    jsonl = output_path.read_text(encoding="utf-8")
+    assert "Export me" in jsonl
+    assert "You are Tau." not in jsonl
+    assert "system_prompt" not in jsonl
 
 
 @pytest.mark.anyio

@@ -29,6 +29,13 @@ command palette with **Ctrl+K**.
 | `/skills` | Open a searchable picker of loaded skills and insert a selection into the prompt |
 | `/skill:<name> [request]` | Expand a loaded skill into your prompt |
 
+{{% note title="Live HTML exports include the system prompt" %}}
+`/export` includes the current system prompt in a collapsed section when it
+creates HTML. Review it before sharing because it may expose project
+instructions or other local context. JSONL exports do not include the prompt.
+Offline `tau export` from stored JSONL cannot recover it and omits the section.
+{{% /note %}}
+
 {{% note title="`/skill:` is special" %}}
 `/skill:<name>` is a *prompt-expansion* path, not a normal command — Tau expands
 the named skill into your prompt and runs it as a turn. Its optional request may

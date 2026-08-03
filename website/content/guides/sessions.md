@@ -99,7 +99,18 @@ tau export <session-id> --format jsonl
 
 The source can be an indexed session id **or** a path to a JSONL session file.
 HTML exports are self-contained and include the preserved session tree plus the
-transcript in storage order. Every transcript entry is a compact accordion row
+transcript in storage order. When `/export` creates HTML from the live session,
+it also includes the current system prompt in a separate, collapsed **System
+Prompt** section. Review that section before sharing: the prompt may expose
+project instructions, skill guidance, paths, or other local context. Offline
+`tau export` of an indexed session or arbitrary JSONL file omits this section
+because session JSONL does not persist the prompt.
+
+The system prompt is display-only export metadata, not a transcript entry.
+Direct JSONL exports and JSONL downloaded from the HTML remain entry-only and do
+not contain it.
+
+Every transcript entry is a compact accordion row
 (icon, title, one-line preview, timestamp) that expands to reveal the full
 content; thinking blocks, tool-call arguments, and tool-result details are
 nested accordions. The export header includes controls to:
