@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from os import environ
+from typing import Literal
 
 from tau_agent.types import JSONValue
 
@@ -13,6 +14,15 @@ DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
 DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS = 60.0
 DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES = 2
 DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS = 1.0
+
+# Prompt-cache retention preferences. "short" uses the provider default TTL
+# (5 minutes on Anthropic), "long" requests the 1 hour TTL, and "none" disables
+# cache breakpoints entirely for backends that reject them.
+type CacheRetention = Literal["none", "short", "long"]
+
+CACHE_RETENTION_NONE: CacheRetention = "none"
+CACHE_RETENTION_SHORT: CacheRetention = "short"
+CACHE_RETENTION_LONG: CacheRetention = "long"
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +78,8 @@ class AnthropicConfig:
     thinking_mode: str = "budget"
     provider_name: str = "Anthropic"
     oauth_system_prompt: str | None = None
+    cache_retention: CacheRetention = CACHE_RETENTION_SHORT
+    cache_control_on_tools: bool = True
     credential_resolver: RuntimeProviderAuthResolver | None = None
 
 

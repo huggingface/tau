@@ -60,6 +60,25 @@ OAuth tokens refresh automatically. `/logout` removes Tau's local credential,
 but does not revoke the grant remotely; use the provider's account settings for
 remote revocation.
 
+#### Anthropic prompt caching
+
+Tau marks cache breakpoints on Anthropic requests so the system prompt, tool
+schemas, and conversation history are reused between turns instead of being
+reprocessed. Which retention Tau asks for depends on how you authenticated:
+
+- **Claude Pro/Max via OAuth** requests the one-hour cache. Subscription auth is
+  not billed per token, and the five-minute default is shorter than a build, a
+  test run, or the time it takes to read a diff — any of which would otherwise
+  expire the cache mid-session.
+- **An Anthropic API key** uses the five-minute default, because one-hour cache
+  writes cost more per token and that should be a deliberate choice.
+
+Providers that speak the Anthropic protocol through a gateway rather than being
+Anthropic itself — `minimax`, `minimax-cn`, `fireworks`, and `vercel-ai-gateway` —
+send no cache breakpoints, since not every gateway accepts them. Watch the
+sidebar's cache hit rate to see caching working; see
+[The interactive session]({{< relref "./tui.md" >}}) for how to read it.
+
 #### Codex subscription context limits
 
 OpenAI's public API and the ChatGPT/Codex subscription are separate serving
@@ -82,7 +101,9 @@ the API model page. Vision-capable Codex models retain their image-input
 metadata separately from these runtime context limits, allowing image files read
 by Tau to reach the model. The `gpt-5.6` alias, which routes to GPT-5.6 Sol, is only
 available through the direct OpenAI API; Codex subscription users should select
-the explicit `gpt-5.6-sol` model instead.
+the explicit `gpt-5.6-sol` model instead. Tau tombstones the API-only alias for
+the Codex provider, so older user catalog overlays and saved preferences cannot
+restore it after an upgrade.
 
 ### OpenCode Go and Zen
 
@@ -162,11 +183,15 @@ edits saved credentials — it never touches your environment or `providers.json
 
 {{% note title="OAuth troubleshooting" %}}
 Browser login can fall back to a pasted redirect URL/code when the callback
-port is unavailable or the browser runs on another machine. Copilot uses a
-device code instead. A denied or expired code requires a new `/login`. If a
-Copilot model reports that it is unsupported, enable it in Copilot Chat's model
-selector or ask your organization administrator; provider/model access varies
-by plan and policy.
+port is unavailable or the browser runs on another machine. In that flow the
+login screen copies the authorization URL to your clipboard and renders it as
+a link, so paste or click it rather than selecting the wrapped text — a URL
+reassembled by hand loses characters at the line breaks and the provider
+rejects it. Copilot uses a device code instead: open the short verification
+URL and enter the code shown beneath it. A denied or expired code requires a
+new `/login`. If a Copilot model reports that it is unsupported, enable it in
+Copilot Chat's model selector or ask your organization administrator;
+provider/model access varies by plan and policy.
 {{% /note %}}
 
 ## Choosing and switching models

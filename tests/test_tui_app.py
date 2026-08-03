@@ -198,6 +198,7 @@ class FakeSession:
             tool_call_count=23,
             input_tokens=1_200_000,
             output_tokens=48_000,
+            cached_input_tokens=1_140_000,
             estimated_cost=1.24,
         )
         self.system_prompt = "You are Tau."
@@ -499,7 +500,7 @@ def test_session_sidebar_renders_session_metadata() -> None:
     assert "14 turns, 23 tool calls" in output
     assert "cumulative usage" in output
     assert "1.2m in, 48k out" in output
-    assert "1.2m in, 48k out · ~$1.24" in output
+    assert "1.2m in, 48k out · 95% cached · ~$1.24" in output
     assert "auto at 200k" in output
     assert "read, write, edit, bash" in output
     assert "• review" in output
@@ -631,12 +632,24 @@ def test_session_sidebar_uses_na_when_cost_is_unavailable() -> None:
     assert "cost unavailable" not in output
 
 
+def test_session_sidebar_omits_cache_rate_for_providers_without_caching() -> None:
+    session = FakeSession()
+    session.session_stats = SessionStats(input_tokens=1200, output_tokens=300)
+    console = Console(record=True, width=80)
+
+    console.print(render_session_sidebar(session))
+
+    output = console.export_text()
+    assert "cached" not in output
+    assert "1.2k in, 300 out" in output
+
+
 def test_session_sidebar_brand_includes_current_version() -> None:
     console = Console(record=True, width=80)
 
     console.print(_sidebar_brand(theme=TAU_DARK_THEME))
 
-    assert "τ = 2π  0.3.4" in console.export_text()
+    assert "τ = 2π  0.3.5" in console.export_text()
 
 
 def test_session_sidebar_uses_prominent_title_and_accented_section_headers() -> None:
@@ -6681,6 +6694,50 @@ async def test_tui_app_runs_terminal_command_without_context() -> None:
     assert session.prompt_texts == []
     assert app.state.items[-1].tool_result_text == "✓ bash · not added to context\ncommand output"
     assert app.state.items[-1].always_show_tool_result is True
+
+
+@pytest.mark.anyio
+async def test_tui_app_terminal_command_does_not_cancel_active_agent() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    completed = asyncio.Event()
+
+    class RunningSession(FakeSession):
+        async def prompt(
+            self,
+            text: str,
+            **kwargs: object,
+        ) -> AsyncIterator[AgentEvent]:
+            del kwargs
+            self.prompt_texts.append(text)
+            yield AgentStartEvent()
+            started.set()
+            await release.wait()
+            yield AgentEndEvent()
+            yield AgentSettledEvent()
+            completed.set()
+
+    session = RunningSession()
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "keep working"
+        await pilot.press("enter")
+        await started.wait()
+
+        prompt.value = "!! code ."
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert session.terminal_commands == [("code .", False)]
+        assert not completed.is_set()
+
+        release.set()
+        await pilot.pause()
+
+        assert completed.is_set()
+        assert app.state.running is False
 
 
 @pytest.mark.anyio

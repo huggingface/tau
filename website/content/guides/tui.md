@@ -148,7 +148,7 @@ when you want to reduce what is sent to the model.
 On wide-enough terminals Tau shows the session name prominently without a
 redundant section label, followed by active-branch
 turn and tool-call totals, provider-reported token usage under **cumulative usage**,
-estimated cost, automatic-compaction threshold, and loaded tools, skills, prompt
+prompt-cache hit rate, estimated cost, automatic-compaction threshold, and loaded tools, skills, prompt
 templates, extensions, and context files such as `AGENTS.md`. Tool, prompt, and extension
 names use compact comma-separated lists limited to three rendered lines. Skills
 and context files use bullet lists, with one item or path per line, limited to
@@ -170,6 +170,13 @@ compaction. Input usage counts tokens processed on every
 provider request, so it can be much larger than the context used by the next
 request. Cost is an estimate based on provider-reported usage and configured
 catalog rates; the sidebar shows `$N/A` when Tau lacks complete pricing data.
+
+The cache hit rate is the share of those input tokens the provider served from its
+prompt cache instead of processing again. A healthy long coding session sits well
+above 90%; a low rate usually means something early in the request keeps changing,
+such as a reloaded tool list or a changed thinking level, or that a pause outlived
+the provider's cache. Tau hides the figure entirely for providers that do not
+report cache usage.
 
 The compact status block below the prompt puts `provider:model (thinking)` on its
 first line and the approximate active context as `used/limit` on the second.

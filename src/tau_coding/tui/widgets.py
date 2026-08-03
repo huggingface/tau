@@ -1494,6 +1494,10 @@ def render_session_sidebar(
     usage = Text(style=theme.completion_description)
     usage.append(f"{_compact_usage_count(stats.input_tokens)} in, ")
     usage.append(f"{_compact_usage_count(stats.output_tokens)} out")
+    hit_rate = stats.cache_hit_rate
+    if hit_rate is not None:
+        usage.append(" · ", style=theme.completion_description)
+        usage.append(f"{hit_rate:.0%} cached", style=theme.completion_description)
     usage.append(" · ", style=theme.completion_description)
     if stats.estimated_cost is None:
         usage.append("$N/A", style=theme.completion_description)
