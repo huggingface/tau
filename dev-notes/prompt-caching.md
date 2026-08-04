@@ -109,12 +109,14 @@ wiring makes that data live rather than inventing a parallel vocabulary.
 ## Observability
 
 Without a visible hit rate there is no way to tell caching is working except by
-watching a rate limit, so `SessionStats` now accumulates `cached_input_tokens` and
-`cache_write_tokens` and exposes a `cache_hit_rate` property. The session sidebar
-renders it between the token counts and the cost estimate. The rate is `None` —
-and the sidebar omits it — when no provider in the branch reported any cache
-activity at all, so backends without prompt caching are not shown a permanent
-misleading `0%`.
+watching a rate limit, so `SessionStats` accumulates `cached_input_tokens` and
+`cache_write_tokens` and exposes both cumulative and latest-request cache hit
+rates. The sidebar labels both: the latest rate diagnoses the most recent model
+request, while the session rate describes lifetime cache efficiency on the active
+branch. After tools run, latest means the final model continuation rather than the
+user's initial request. Both rates are omitted when no provider in the branch has
+reported cache activity, so backends without prompt caching are not shown a
+permanent misleading `0%`.
 
 ## Validate
 

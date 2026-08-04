@@ -2350,7 +2350,7 @@ async def test_openai_codex_provider_reports_usage() -> None:
                 'data: {"type":"response.output_text.delta","delta":"Hi"}\n\n'
                 'data: {"type":"response.completed","response":{"status":"completed",'
                 '"usage":{"input_tokens":50,"output_tokens":8,"total_tokens":58,'
-                '"input_tokens_details":{"cached_tokens":12},'
+                '"input_tokens_details":{"cached_tokens":12,"cache_write_tokens":8},'
                 '"output_tokens_details":{"reasoning_tokens":3}}}}\n\n'
             ),
             headers={"content-type": "text/event-stream"},
@@ -2377,10 +2377,10 @@ async def test_openai_codex_provider_reports_usage() -> None:
     assert isinstance(events[-1], AssistantDoneEvent)
     usage = events[-1].message.usage
     assert usage is not None
-    assert usage.input == 38  # 50 input - 12 cached
+    assert usage.input == 30  # 50 input - 12 cached - 8 written
     assert usage.output == 8
     assert usage.cache_read == 12
-    assert usage.cache_write == 0
+    assert usage.cache_write == 8
     assert usage.reasoning == 3
     assert usage.total_tokens == 58
     assert usage.cost.total == 0
@@ -2395,7 +2395,7 @@ async def test_openai_compatible_responses_api_reports_usage() -> None:
                 'data: {"type":"response.output_text.delta","delta":"Hi"}\n\n'
                 'data: {"type":"response.completed","response":{"status":"completed",'
                 '"usage":{"input_tokens":50,"output_tokens":8,"total_tokens":58,'
-                '"input_tokens_details":{"cached_tokens":12},'
+                '"input_tokens_details":{"cached_tokens":12,"cache_write_tokens":8},'
                 '"output_tokens_details":{"reasoning_tokens":3}}}}\n\n'
             ),
             headers={"content-type": "text/event-stream"},
@@ -2422,10 +2422,10 @@ async def test_openai_compatible_responses_api_reports_usage() -> None:
     assert isinstance(events[-1], AssistantDoneEvent)
     usage = events[-1].message.usage
     assert usage is not None
-    assert usage.input == 38  # 50 input - 12 cached
+    assert usage.input == 30  # 50 input - 12 cached - 8 written
     assert usage.output == 8
     assert usage.cache_read == 12
-    assert usage.cache_write == 0
+    assert usage.cache_write == 8
     assert usage.reasoning == 3
     assert usage.total_tokens == 58
     assert usage.cost.total == 0

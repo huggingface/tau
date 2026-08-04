@@ -202,6 +202,8 @@ class FakeSession:
             input_tokens=1_200_000,
             output_tokens=48_000,
             cached_input_tokens=1_140_000,
+            latest_prompt_tokens=1_200_000,
+            latest_cached_input_tokens=1_188_000,
             estimated_cost=1.24,
         )
         self.system_prompt = "You are Tau."
@@ -501,9 +503,10 @@ def test_session_sidebar_renders_session_metadata() -> None:
     assert "location" not in output
     assert "branch" not in output
     assert "14 turns, 23 tool calls" in output
-    assert "cumulative usage" in output
-    assert "1.2m in, 48k out" in output
-    assert "1.2m in, 48k out · 95% cached · ~$1.24" in output
+    assert "usage" in output
+    assert "cumulative usage" not in output
+    assert "1.2m in, 48k out · ~$1.24" in output
+    assert "cache: 99% latest · 95% session" in output
     assert "auto at 200k" in output
     assert "read, write, edit, bash" in output
     assert "• review" in output
@@ -645,6 +648,23 @@ def test_session_sidebar_omits_cache_rate_for_providers_without_caching() -> Non
     output = console.export_text()
     assert "cached" not in output
     assert "1.2k in, 300 out" in output
+
+
+def test_session_sidebar_shows_latest_cache_miss_with_session_rate() -> None:
+    session = FakeSession()
+    session.session_stats = SessionStats(
+        input_tokens=2_000,
+        output_tokens=300,
+        cached_input_tokens=500,
+        cache_write_tokens=500,
+        latest_prompt_tokens=1_000,
+    )
+    console = Console(record=True, width=80)
+
+    console.print(render_session_sidebar(session))
+
+    output = console.export_text()
+    assert "cache: 0% latest · 25% session" in output
 
 
 def test_session_sidebar_brand_includes_current_version() -> None:

@@ -23,6 +23,8 @@ class SessionStats:
     output_tokens: int = 0
     cached_input_tokens: int = 0
     cache_write_tokens: int = 0
+    latest_prompt_tokens: int = 0
+    latest_cached_input_tokens: int = 0
     estimated_cost: float | None = None
 
     @property
@@ -38,6 +40,15 @@ class SessionStats:
             return None
         return self.cached_input_tokens / self.input_tokens
 
+    @property
+    def latest_cache_hit_rate(self) -> float | None:
+        """Share of the latest request's prompt served from cache."""
+        if self.latest_prompt_tokens <= 0:
+            return None
+        if self.cached_input_tokens == 0 and self.cache_write_tokens == 0:
+            return None
+        return self.latest_cached_input_tokens / self.latest_prompt_tokens
+
 
 def calculate_session_stats(
     entries: Sequence[SessionEntry],
@@ -51,6 +62,8 @@ def calculate_session_stats(
     output_tokens = 0
     cached_input_tokens = 0
     cache_write_tokens = 0
+    latest_prompt_tokens = 0
+    latest_cached_input_tokens = 0
     estimated_cost = 0.0
     has_billable_usage = False
     has_complete_pricing = True
@@ -68,6 +81,8 @@ def calculate_session_stats(
         tool_call_count += len(message.tool_calls)
         usage = message.usage
         prompt_tokens = usage.input + usage.cache_read + usage.cache_write
+        latest_prompt_tokens = prompt_tokens
+        latest_cached_input_tokens = usage.cache_read
         input_tokens += prompt_tokens
         cached_input_tokens += usage.cache_read
         cache_write_tokens += usage.cache_write
@@ -98,6 +113,8 @@ def calculate_session_stats(
         output_tokens=output_tokens,
         cached_input_tokens=cached_input_tokens,
         cache_write_tokens=cache_write_tokens,
+        latest_prompt_tokens=latest_prompt_tokens,
+        latest_cached_input_tokens=latest_cached_input_tokens,
         estimated_cost=(estimated_cost if has_billable_usage and has_complete_pricing else None),
     )
 
