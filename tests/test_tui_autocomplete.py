@@ -561,6 +561,7 @@ def test_file_reference_completion_uses_cursor_position_mid_text(tmp_path: Path)
     assert [item.display for item in state.items] == ["@src/app.py"]
     assert state.selected is not None
     assert state.selected.apply(text) == "look at @src/app.py and fix it"
+    assert state.selected.cursor_after_apply() == len("look at @src/app.py")
 
 
 def test_file_reference_completion_uses_cursor_position_in_prompt_arguments(
@@ -703,14 +704,66 @@ def test_file_reference_completion_clamps_out_of_range_cursor(tmp_path: Path) ->
     assert negative.items == ()
 
 
-def test_shell_path_completion_keeps_end_of_text_behavior_for_mid_text_cursor(
+def test_shell_path_completion_uses_cursor_position_mid_text(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("# Project\n", encoding="utf-8")
+    text = "!cat READ file"
+
+    state = build_completion_state(
+        text,
+        cursor=len("!cat READ"),
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in state.items] == ["README.md"]
+    assert state.items[0].apply(text) == "!cat README.md file"
+
+
+def test_shell_path_completion_replaces_full_token_for_mid_token_cursor(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "README.md").write_text("# Project\n", encoding="utf-8")
+    text = "!cat READx file"
 
     state = build_completion_state(
-        "!cat READ more",
+        text,
         cursor=len("!cat READ"),
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in state.items] == ["README.md"]
+    assert state.items[0].apply(text) == "!cat README.md file"
+
+
+def test_shell_path_completion_stays_off_when_token_tail_has_shell_syntax(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "foo.txt").write_text("hi\n", encoding="utf-8")
+    text = '!echo foo"bar baz"'
+
+    state = build_completion_state(
+        text,
+        cursor=len("!echo foo"),
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert state.items == ()
+
+
+def test_shell_path_completion_stays_off_before_command_prefix(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("# Project\n", encoding="utf-8")
+
+    state = build_completion_state(
+        "!cat READ",
+        cursor=0,
         command_registry=create_default_command_registry(),
         skills=(),
         prompt_templates=(),
