@@ -658,6 +658,7 @@ class CodingSession:
             source=str(session_path) if session_path is not None else self.session_id,
             format=export_format,
             system_prompt=self.system_prompt,
+            pricing=self._pricing_for_response,
         )
 
     @property

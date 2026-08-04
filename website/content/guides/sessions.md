@@ -110,10 +110,15 @@ The system prompt is display-only export metadata, not a transcript entry.
 Direct JSONL exports and JSONL downloaded from the HTML remain entry-only and do
 not contain it.
 
-Every transcript entry is a compact accordion row
-(icon, title, one-line preview, timestamp) that expands to reveal the full
-content; thinking blocks, tool-call arguments, and tool-result details are
-nested accordions. The export header includes controls to:
+The HTML export has separate **Transcript** and **Analysis** tabs. Every
+transcript entry is a compact accordion row (icon, title, one-line preview,
+timestamp) that expands to reveal the full content; thinking blocks, tool-call
+arguments, and tool-result details are nested accordions. The Analysis tab
+summarizes the active branch with model request totals, cache hit rate,
+prompt/output/reasoning tokens, estimated cost, compactions, tool counts, a
+per-request table, and interactive charts. Unknown pricing is shown as `N/A`.
+
+The transcript view includes controls to:
 
 - show or hide tool calls and tool results in both the transcript and session
   tree—the chip filters show how many entries of each kind the session contains

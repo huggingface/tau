@@ -83,6 +83,9 @@ def test_render_session_html_uses_static_document_layout() -> None:
     assert "Session" in html
     assert "Transcript" in html
     assert "border-right: 1px solid var(--line);" in html
+    assert 'id="transcriptTab"' in html
+    assert 'id="analysisTab"' in html
+    assert 'id="analysisView"' in html
     assert 'id="themeToggle"' in html
     assert "<link" not in html.lower()
     assert "http://" not in html and "https://" not in html
@@ -128,6 +131,52 @@ def test_render_session_html_syntax_highlights_tool_call_arguments() -> None:
 
     assert 'class="highlight"' in html
     assert '<span class="nt">' in html or '<span class="s2">' in html
+
+
+def test_render_session_html_includes_usage_analysis_tab() -> None:
+    entries = [
+        MessageEntry(id="root", message=UserMessage(content="Inspect")),
+        MessageEntry(
+            id="reply",
+            parent_id="root",
+            message=AssistantMessage(
+                provider="openai",
+                model="gpt-test",
+                content=assistant_content(
+                    "Done",
+                    [ToolCall(id="call-1", name="read", arguments={"path": "README.md"})],
+                ),
+                usage={
+                    "input": 100,
+                    "cacheRead": 300,
+                    "cacheWrite": 125,
+                    "output": 20,
+                    "reasoning": 5,
+                },
+            ),
+        ),
+        LeafEntry(id="leaf", entry_id="reply"),
+    ]
+
+    html = render_session_html(
+        entries,
+        pricing=lambda _provider, _model, _input: {
+            "input": 1.0,
+            "output": 2.0,
+            "cacheRead": 0.5,
+            "cacheWrite": 0.25,
+        },
+    )
+
+    assert 'id="analysisTab"' in html
+    assert 'id="analysisView" hidden' in html
+    assert "Active branch only" in html
+    assert "57.1%" in html
+    assert "Model requests</span><strong>1</strong>" in html
+    assert "Output and reasoning tokens" in html
+    assert "Tool calls" in html
+    assert 'class="analysis-chart"' in html
+    assert 'selectView("analysis")' in html
 
 
 def test_render_session_html_includes_filter_bar_and_accordions() -> None:

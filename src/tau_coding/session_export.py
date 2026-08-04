@@ -40,6 +40,12 @@ from tau_agent.session import (
     path_to_entry,
 )
 from tau_agent.types import JSONValue
+from tau_coding.session_analysis import (
+    SessionAnalysis,
+    analyze_session,
+    default_pricing,
+)
+from tau_coding.session_stats import PricingResolver
 
 
 class SessionExportError(ValueError):
@@ -82,6 +88,7 @@ def export_session_html(
     title: str = "Tau Session Export",
     source: str | None = None,
     system_prompt: str | None = None,
+    pricing: PricingResolver | None = None,
 ) -> Path:
     """Write a self-contained HTML session export and return its path."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -91,6 +98,7 @@ def export_session_html(
             title=title,
             source=source,
             system_prompt=system_prompt,
+            pricing=pricing,
         ),
         encoding="utf-8",
     )
@@ -105,6 +113,7 @@ def export_session_artifact(
     source: str | None = None,
     format: str | None = None,
     system_prompt: str | None = None,
+    pricing: PricingResolver | None = None,
 ) -> Path:
     """Write a session export in the requested or inferred format."""
     export_format = normalize_export_format(format or output_path.suffix.removeprefix("."))
@@ -116,6 +125,7 @@ def export_session_artifact(
         title=title,
         source=source,
         system_prompt=system_prompt,
+        pricing=pricing,
     )
 
 
@@ -149,9 +159,11 @@ def render_session_html(
     title: str = "Tau Session Export",
     source: str | None = None,
     system_prompt: str | None = None,
+    pricing: PricingResolver | None = None,
 ) -> str:
-    """Render a session transcript/tree as standalone HTML."""
+    """Render a session transcript/tree and usage analysis as standalone HTML."""
     entry_list = list(entries)
+    analysis = analyze_session(entry_list, pricing=pricing or default_pricing())
     active_leaf_id = _active_leaf_id(entry_list)
     active_path_ids = _active_path_ids(entry_list, active_leaf_id)
     visible_entries = _visible_entries(entry_list)
@@ -164,6 +176,7 @@ def render_session_html(
     jsonl_filename = _jsonl_filename(title, source)
     tool_count = sum(1 for entry in visible_entries if _entry_filter_kind(entry) == "tool")
     event_count = sum(1 for entry in visible_entries if _entry_filter_kind(entry) == "event")
+    analysis_html = _render_analysis(analysis)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -321,6 +334,29 @@ def render_session_html(
       gap: 4px 18px;
       margin-top: 8px;
     }}
+    .view-tabs {{
+      display: flex;
+      gap: 18px;
+      margin-top: 24px;
+      border-bottom: 1px solid var(--line);
+    }}
+    .view-tab {{
+      padding: 8px 2px 9px;
+      color: var(--muted);
+      background: transparent;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      font-family: var(--sans);
+      font-size: 0.76rem;
+      font-weight: 500;
+    }}
+    .view-tab:hover {{ color: var(--accent); }}
+    .view-tab[aria-selected="true"] {{
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }}
+    .view-panel[hidden] {{ display: none; }}
     details.system-prompt {{
       margin-top: 16px;
       background: var(--surface);
@@ -663,6 +699,150 @@ def render_session_html(
     .hide-tools .tool-content {{ display: none; }}
     .messages-only details.entry[data-entry-kind="event"] {{ display: none; }}
     .messages-only .tree-node[data-entry-kind="event"] > .node-link {{ display: none; }}
+    .analysis-shell {{
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 30px clamp(16px, 4vw, 44px) 56px;
+    }}
+    .analysis-heading {{
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }}
+    .analysis-heading p {{
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-family: var(--sans);
+    }}
+    .analysis-cards {{
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }}
+    .analysis-card {{
+      min-width: 0;
+      padding: 14px 14px 16px 0;
+      border-right: 1px solid var(--line);
+    }}
+    .analysis-card + .analysis-card {{ padding-left: 14px; }}
+    .analysis-card:nth-child(6) {{ border-right: 0; }}
+    .analysis-card span {{
+      color: var(--muted);
+      font-family: var(--sans);
+      font-size: 0.64rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }}
+    .analysis-card strong {{
+      display: block;
+      margin-top: 7px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 1rem;
+      font-weight: 500;
+    }}
+    .analysis-note {{
+      margin: 14px 0 26px;
+      color: var(--muted);
+      font-family: var(--sans);
+      font-size: 0.72rem;
+    }}
+    .analysis-charts {{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 34px;
+      margin-top: 26px;
+    }}
+    .analysis-charts svg {{
+      width: 100%;
+      height: auto;
+      overflow: visible;
+      border-bottom: 1px solid var(--line);
+    }}
+    .analysis-charts svg:first-child {{ grid-column: 1 / -1; }}
+    .analysis-chart {{ cursor: crosshair; touch-action: none; }}
+    .analysis-chart .grid {{ stroke: var(--line); stroke-width: 1; }}
+    .analysis-chart .chart-title {{
+      fill: var(--text);
+      font: 500 15px var(--serif);
+    }}
+    .analysis-chart .tick,
+    .analysis-chart .axis-label,
+    .analysis-chart .legend {{
+      fill: var(--muted);
+      font: 11px var(--mono);
+    }}
+    .analysis-chart .hover-line {{
+      stroke: var(--text);
+      stroke-width: 1;
+      stroke-dasharray: 3 4;
+      opacity: .55;
+      pointer-events: none;
+    }}
+    .analysis-chart .point {{ transition: r .12s ease, opacity .12s ease; }}
+    .analysis-chart .point.active {{ r: 6; stroke: var(--canvas); stroke-width: 2; }}
+    .analysis-chart .series {{ transition: opacity .15s ease; }}
+    .analysis-chart .series.is-hidden {{ opacity: .08; pointer-events: none; }}
+    .analysis-chart .series-toggle {{ cursor: pointer; outline: none; }}
+    .analysis-chart .series-toggle[aria-pressed="false"] {{ opacity: .3; }}
+    .analysis-chart .series-toggle:focus-visible text {{ text-decoration: underline; }}
+    .analysis-details {{
+      display: grid;
+      grid-template-columns: minmax(0, 3fr) minmax(180px, 1fr);
+      gap: 36px;
+      margin-top: 42px;
+      padding-top: 24px;
+      border-top: 2px solid var(--text);
+    }}
+    .analysis-table-wrap {{ overflow: auto; max-height: 560px; border-top: 1px solid var(--line); }}
+    .analysis-table {{
+      border-collapse: collapse;
+      width: 100%;
+      white-space: nowrap;
+      font: 11px var(--mono);
+    }}
+    .analysis-table th, .analysis-table td {{
+      padding: 8px 9px;
+      text-align: right;
+      border-bottom: 1px solid var(--line);
+    }}
+    .analysis-table th {{
+      position: sticky;
+      top: 0;
+      background: var(--canvas);
+      color: var(--muted);
+      font-size: 0.6rem;
+      font-weight: 600;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }}
+    .analysis-table th:first-child, .analysis-table td:first-child {{ padding-left: 0; }}
+    .analysis-table th:nth-child(2), .analysis-table th:nth-child(3),
+    .analysis-table td:nth-child(2), .analysis-table td:nth-child(3) {{ text-align: left; }}
+    .analysis-tool {{
+      display: flex;
+      justify-content: space-between;
+      padding: 9px 0;
+      border-top: 1px solid var(--line);
+    }}
+    .analysis-tool strong {{ font-family: var(--mono); font-weight: 500; }}
+    .chart-tooltip {{
+      position: fixed;
+      z-index: 10;
+      display: none;
+      min-width: 170px;
+      padding: 9px 11px;
+      background: rgba(19, 33, 60, .96);
+      color: #f4f6fa;
+      border-radius: 4px;
+      box-shadow: 0 5px 20px rgba(19, 33, 60, .16);
+      font: 11px/1.6 var(--mono);
+      white-space: pre-line;
+      pointer-events: none;
+    }}
     pre.highlight {{ padding: 9px 12px; }}
     .highlight .p {{ color: var(--muted); }}
     .highlight .nt {{ color: var(--accent); }}
@@ -682,6 +862,12 @@ def render_session_html(
     :root[data-theme="dark"] .highlight .mf {{ color: #e0a95e; }}
     :root[data-theme="dark"] .highlight .kc {{ color: #e58fc0; }}
     @media (max-width: 820px) {{
+      .analysis-cards {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
+      .analysis-card:nth-child(3) {{ border-right: 0; }}
+      .analysis-card:nth-child(n + 4) {{ border-top: 1px solid var(--line); }}
+      .analysis-charts {{ grid-template-columns: 1fr; }}
+      .analysis-charts svg:first-child {{ grid-column: auto; }}
+      .analysis-details {{ grid-template-columns: 1fr; }}
       main {{ grid-template-columns: 1fr; }}
       aside {{
         position: static;
@@ -692,6 +878,13 @@ def render_session_html(
       }}
       .entry-preview {{ display: none; }}
       .entry-body {{ padding-left: 14px; }}
+    }}
+    @media (max-width: 520px) {{
+      .analysis-cards {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .analysis-card:nth-child(3) {{ border-right: 1px solid var(--line); }}
+      .analysis-card:nth-child(2n) {{ border-right: 0; }}
+      .analysis-card:nth-child(n + 3) {{ border-top: 1px solid var(--line); }}
+      .analysis-heading {{ display: block; }}
     }}
   </style>
 </head>
@@ -717,7 +910,19 @@ def render_session_html(
       </p>
     </div>
     {system_prompt_html}
-    <div class="filter-bar" aria-label="Transcript filters">
+    <nav class="view-tabs" aria-label="Export views">
+      <button
+        type="button" class="view-tab" id="transcriptTab" aria-selected="true"
+        aria-controls="transcriptView">
+        Transcript
+      </button>
+      <button
+        type="button" class="view-tab" id="analysisTab" aria-selected="false"
+        aria-controls="analysisView">
+        Analysis
+      </button>
+    </nav>
+    <div class="filter-bar" id="transcriptControls" aria-label="Transcript filters">
       <span class="filter-label">View</span>
       <label class="chip">
         <input type="checkbox" id="showTools" checked>
@@ -747,6 +952,7 @@ def render_session_html(
       </button>
     </div>
   </header>
+  <div class="view-panel" id="transcriptView">
   <main class="session-shell">
     <aside class="tree-rail">
       <h2>Session</h2>
@@ -757,6 +963,11 @@ def render_session_html(
       {details_html}
     </section>
   </main>
+  </div>
+  <section class="view-panel" id="analysisView" hidden aria-label="Session analysis">
+    {analysis_html}
+  </section>
+  <div class="chart-tooltip" role="status" aria-live="polite"></div>
   <script id="sessionJsonlData" type="application/octet-stream">{jsonl_b64}</script>
   <script>
     (function () {{
@@ -785,6 +996,22 @@ def render_session_html(
           }}
         }});
       }}
+
+      var transcriptTab = document.getElementById("transcriptTab");
+      var analysisTab = document.getElementById("analysisTab");
+      var transcriptView = document.getElementById("transcriptView");
+      var analysisView = document.getElementById("analysisView");
+      var transcriptControls = document.getElementById("transcriptControls");
+      function selectView(view) {{
+        var analysisSelected = view === "analysis";
+        transcriptTab.setAttribute("aria-selected", String(!analysisSelected));
+        analysisTab.setAttribute("aria-selected", String(analysisSelected));
+        transcriptView.hidden = analysisSelected;
+        analysisView.hidden = !analysisSelected;
+        transcriptControls.hidden = analysisSelected;
+      }}
+      transcriptTab.addEventListener("click", function () {{ selectView("transcript"); }});
+      analysisTab.addEventListener("click", function () {{ selectView("analysis"); }});
 
       var showTools = document.getElementById("showTools");
       var showEvents = document.getElementById("showEvents");
@@ -857,6 +1084,74 @@ def render_session_html(
       if (window.location.hash.indexOf("#entry-") === 0) {{
         openEntry(window.location.hash.slice(1));
       }}
+
+      var chartTooltip = document.querySelector(".chart-tooltip");
+      function hideChartTooltip(chart) {{
+        chartTooltip.style.display = "none";
+        chart.querySelector(".hover-line").setAttribute("visibility", "hidden");
+        chart.querySelectorAll(".point.active").forEach(function (point) {{
+          point.classList.remove("active");
+        }});
+      }}
+      document.querySelectorAll(".analysis-chart").forEach(function (chart) {{
+        var count = Number(chart.dataset.count);
+        var left = Number(chart.dataset.left);
+        var right = Number(chart.dataset.right);
+        var viewWidth = chart.viewBox.baseVal.width;
+        chart.addEventListener("pointermove", function (event) {{
+          var rect = chart.getBoundingClientRect();
+          var svgX = (event.clientX - rect.left) * viewWidth / rect.width;
+          var plotWidth = viewWidth - left - right;
+          if (svgX < left || svgX > viewWidth - right || count < 1) {{
+            hideChartTooltip(chart);
+            return;
+          }}
+          var index = Math.max(0, Math.min(count - 1, Math.round(
+            (svgX - left) / plotWidth * Math.max(count - 1, 1)
+          )));
+          var points = Array.from(chart.querySelectorAll('.point[data-index="' + index + '"]'))
+            .filter(function (point) {{
+              return !point.closest(".series").classList.contains("is-hidden");
+            }});
+          if (!points.length) return;
+          chart.querySelectorAll(".point.active").forEach(function (point) {{
+            point.classList.remove("active");
+          }});
+          points.forEach(function (point) {{ point.classList.add("active"); }});
+          var x = points[0].getAttribute("cx");
+          var line = chart.querySelector(".hover-line");
+          line.setAttribute("x1", x); line.setAttribute("x2", x);
+          line.setAttribute("visibility", "visible");
+          chartTooltip.textContent = "Request " + (index + 1) + "\\n" + points.map(
+            function (point) {{ return point.dataset.name + "  " + point.dataset.label; }}
+          ).join("\\n");
+          chartTooltip.style.display = "block";
+          var tooltipRect = chartTooltip.getBoundingClientRect();
+          chartTooltip.style.left = Math.min(
+            window.innerWidth - tooltipRect.width - 10, event.clientX + 14
+          ) + "px";
+          chartTooltip.style.top = Math.max(10, event.clientY - tooltipRect.height - 12) + "px";
+        }});
+        chart.addEventListener("pointerleave", function () {{ hideChartTooltip(chart); }});
+        function toggleSeries(control) {{
+          var series = chart.querySelector(
+            '.series[data-series-id="' + control.dataset.seriesId + '"]'
+          );
+          var visible = control.getAttribute("aria-pressed") === "true";
+          control.setAttribute("aria-pressed", String(!visible));
+          series.classList.toggle("is-hidden", visible);
+        }}
+        chart.querySelectorAll(".series-toggle").forEach(function (control) {{
+          control.addEventListener("click", function (event) {{
+            event.stopPropagation(); toggleSeries(control);
+          }});
+          control.addEventListener("keydown", function (event) {{
+            if (event.key === "Enter" || event.key === " ") {{
+              event.preventDefault(); toggleSeries(control);
+            }}
+          }});
+        }});
+      }});
       applyFilters();
       syncAccordionToggle();
     }})();
@@ -864,6 +1159,211 @@ def render_session_html(
 </body>
 </html>
 """
+
+
+def _render_analysis(analysis: SessionAnalysis) -> str:
+    """Render the active-branch usage dashboard for the analysis tab."""
+    requests = analysis.requests
+    if not requests:
+        return (
+            '<div class="analysis-shell">'
+            '<div class="analysis-heading"><h2>Usage analysis</h2></div>'
+            '<p class="empty">No assistant request usage was found on the active branch.</p>'
+            "</div>"
+        )
+
+    rates = [request.hit_rate for request in requests]
+    cumulative_rates: list[float] = []
+    cumulative_cached = cumulative_prompt = 0
+    for request in requests:
+        cumulative_cached += request.cached
+        cumulative_prompt += request.prompt
+        cumulative_rates.append(cumulative_cached / cumulative_prompt if cumulative_prompt else 0.0)
+
+    charts = "".join(
+        (
+            _line_chart(
+                "Prompt input by request",
+                [
+                    ("cached", [float(item.cached) for item in requests], "#3f6b61"),
+                    ("cache writes", [float(item.cache_write) for item in requests], "#9a7b3f"),
+                    ("fresh", [float(item.fresh) for item in requests], "#b56b45"),
+                ],
+            ),
+            _line_chart(
+                "Cache hit rate",
+                [("request", rates, "#a8644a"), ("cumulative", cumulative_rates, "#385d7a")],
+                y_max=1.0,
+                percent=True,
+            ),
+            _line_chart(
+                "Output and reasoning tokens",
+                [
+                    ("output", [float(item.output) for item in requests], "#6e5a7d"),
+                    ("reasoning", [float(item.reasoning) for item in requests], "#9a7b3f"),
+                ],
+            ),
+        )
+    )
+    table_rows = "".join(
+        "<tr>"
+        f"<td>{item.number}</td><td>{_escape(item.provider)}</td>"
+        f"<td>{_escape(item.model)}</td><td>{item.fresh:,}</td>"
+        f"<td>{item.cached:,}</td><td>{item.cache_write:,}</td>"
+        f"<td>{item.prompt:,}</td><td>{item.hit_rate:.1%}</td>"
+        f"<td>{item.output:,}</td><td>{item.reasoning:,}</td>"
+        f"<td>{_format_cost(item.estimated_cost)}</td>"
+        f"<td>{_escape(item.stop_reason)}</td></tr>"
+        for item in requests
+    )
+    tool_rows = (
+        "".join(
+            f'<div class="analysis-tool"><span>{_escape(name)}</span><strong>{count}</strong></div>'
+            for name, count in analysis.tool_counts
+        )
+        or '<p class="empty">No tool calls on active branch.</p>'
+    )
+    cost_note = (
+        "Costs use Tau's provider catalog rates. OAuth subscription estimates are API-rate "
+        "equivalents, not actual subscription charges. Unknown rates are shown as N/A."
+    )
+    return f"""<div class="analysis-shell">
+  <div class="analysis-heading">
+    <h2>Usage analysis</h2>
+    <p>Active branch only</p>
+  </div>
+  <div class="analysis-cards" aria-label="Usage summary">
+    <div class="analysis-card"><span>Model requests</span><strong>{len(requests):,}</strong></div>
+    <div class="analysis-card"><span>Cache hit rate</span>
+      <strong>{analysis.cache_hit_rate:.1%}</strong></div>
+    <div class="analysis-card"><span>Prompt input</span>
+      <strong>{analysis.total_prompt:,}</strong></div>
+    <div class="analysis-card"><span>Output tokens</span>
+      <strong>{analysis.total_output:,}</strong></div>
+    <div class="analysis-card"><span>Estimated cost</span>
+      <strong>{_format_cost(analysis.estimated_cost)}</strong></div>
+    <div class="analysis-card"><span>Compactions</span>
+      <strong>{analysis.compaction_count:,}</strong></div>
+  </div>
+  <p class="analysis-note">{_escape(cost_note)} Hover or tap a request for exact values.
+    Select a legend item to hide a series.</p>
+  <div class="analysis-charts">{charts}</div>
+  <div class="analysis-details">
+    <div>
+      <h2>Requests</h2>
+      <div class="analysis-table-wrap">
+        <table class="analysis-table">
+          <thead><tr><th>#</th><th>Provider</th><th>Model</th><th>Fresh</th>
+            <th>Cached</th><th>Written</th><th>Prompt</th><th>Hit rate</th>
+            <th>Output</th><th>Reasoning</th><th>Est. cost</th><th>Stop</th></tr></thead>
+          <tbody>{table_rows}</tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      <h2>Tool calls</h2>
+      {tool_rows}
+    </div>
+  </div>
+</div>"""
+
+
+def _line_chart(
+    title: str,
+    series: Sequence[tuple[str, Sequence[float], str]],
+    *,
+    y_max: float | None = None,
+    percent: bool = False,
+) -> str:
+    """Render a self-contained SVG line chart for the analysis dashboard."""
+    width, height = 900, 300
+    left, right, top, bottom = 62, 18, 38, 44
+    plot_width, plot_height = width - left - right, height - top - bottom
+    count = max((len(values) for _, values, _ in series), default=0)
+    observed_max = max((max(values, default=0.0) for _, values, _ in series), default=0.0)
+    maximum = y_max or max(observed_max, 1.0)
+    if not percent:
+        magnitude = 10 ** max(0, len(str(int(maximum))) - 1)
+        maximum = ((maximum + magnitude - 1) // magnitude) * magnitude
+
+    def point(index: int, value: float) -> tuple[float, float]:
+        x = left + (index / max(count - 1, 1)) * plot_width
+        y = top + plot_height - (value / maximum) * plot_height
+        return x, y
+
+    parts = [
+        f'<svg class="analysis-chart" viewBox="0 0 {width} {height}" role="img" '
+        f'aria-label="{_attr(title)}" data-left="{left}" data-right="{right}" '
+        f'data-count="{count}">',
+        f'<text class="chart-title" x="{left}" y="22">{_escape(title)}</text>',
+    ]
+    for tick in range(6):
+        value = maximum * tick / 5
+        y = top + plot_height - tick * plot_height / 5
+        label = f"{value:.0%}" if percent else _compact_number(value)
+        parts.append(
+            f'<line class="grid" x1="{left}" y1="{y:.1f}" x2="{width - right}" y2="{y:.1f}"/>'
+        )
+        parts.append(
+            f'<text class="tick" x="{left - 8}" y="{y + 4:.1f}" text-anchor="end">{label}</text>'
+        )
+    for index in range(count):
+        if count <= 20 or index % max(1, count // 12) == 0 or index == count - 1:
+            x, _ = point(index, 0)
+            parts.append(
+                f'<text class="tick" x="{x:.1f}" y="{height - 16}" '
+                f'text-anchor="middle">{index + 1}</text>'
+            )
+    parts.append(
+        f'<line class="hover-line" x1="{left}" y1="{top}" x2="{left}" '
+        f'y2="{top + plot_height}" visibility="hidden"/>'
+    )
+    for series_index, (name, values, color) in enumerate(series):
+        points = " ".join(
+            f"{x:.1f},{y:.1f}" for x, y in (point(i, value) for i, value in enumerate(values))
+        )
+        parts.append(f'<g class="series" data-series-id="{series_index}">')
+        parts.append(
+            f'<polyline points="{points}" fill="none" stroke="{color}" stroke-width="2.5"/>'
+        )
+        for index, value in enumerate(values):
+            x, y = point(index, value)
+            label = f"{value:.1%}" if percent else f"{int(value):,}"
+            parts.append(
+                f'<circle class="point" data-index="{index}" data-name="{_attr(name)}" '
+                f'data-label="{_attr(label)}" cx="{x:.1f}" cy="{y:.1f}" r="3.5" fill="{color}"/>'
+            )
+        parts.append("</g>")
+    legend_x = width - right
+    for series_index, (name, _, color) in reversed(list(enumerate(series))):
+        legend_x -= 18 + len(name) * 7
+        parts.append(
+            f'<g class="series-toggle" data-series-id="{series_index}" role="button" '
+            f'tabindex="0" aria-pressed="true"><circle cx="{legend_x}" cy="18" r="4" '
+            f'fill="{color}"/><text class="legend" x="{legend_x + 8}" y="22">'
+            f"{_escape(name)}</text></g>"
+        )
+    parts.append(
+        f'<text class="axis-label" x="{left + plot_width / 2}" y="{height - 2}" '
+        'text-anchor="middle">Model request</text></svg>'
+    )
+    return "".join(parts)
+
+
+def _format_cost(value: float | None) -> str:
+    if value is None:
+        return "$N/A"
+    if 0 < value < 0.01:
+        return f"${value:.3f}"
+    return f"${value:.2f}"
+
+
+def _compact_number(value: float) -> str:
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}m"
+    if value >= 1_000:
+        return f"{value / 1_000:.0f}k"
+    return f"{value:.0f}"
 
 
 def _render_system_prompt(system_prompt: str | None) -> str:
