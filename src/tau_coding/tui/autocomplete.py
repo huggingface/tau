@@ -175,6 +175,8 @@ def _file_reference_completions(*, text: str, cursor: int, cwd: Path) -> tuple[C
         if prefix.lower() not in relative.lower():
             continue
         display = f"@{relative}{'/' if path.is_dir() else ''}"
+        if display == text[start:end]:
+            continue
         suggestions.append(
             CompletionItem(
                 display=display,
