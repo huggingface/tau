@@ -2407,7 +2407,7 @@ async def test_tui_file_reference_completion_follows_cursor_mid_prompt(
 
 
 @pytest.mark.anyio
-async def test_tui_file_reference_completion_refreshes_on_caret_move(
+async def test_tui_caret_move_clears_open_completions_but_does_not_open(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "src").mkdir()
@@ -2418,15 +2418,17 @@ async def test_tui_file_reference_completion_refreshes_on_caret_move(
 
     async with app.run_test() as pilot:
         prompt = app.query_one("#prompt", PromptInput)
-        prompt.text = "look at @app and fix it"
-        await pilot.pause()
-        assert app._completion_state.items == ()
-
-        prompt.cursor_position = len("look at @app")
+        prompt.text = "look at @a and fix it"
+        prompt.cursor_position = len("look at @a")
+        prompt.insert("p")
         await pilot.pause()
         assert [item.display for item in app._completion_state.items] == ["@src/app.py"]
 
-        prompt.cursor_position = len("look at @app and")
+        prompt.cursor_position = len("look at @ap and")
+        await pilot.pause()
+        assert app._completion_state.items == ()
+
+        prompt.cursor_position = len("look at @ap")
         await pilot.pause()
         assert app._completion_state.items == ()
 

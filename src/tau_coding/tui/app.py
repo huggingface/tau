@@ -3706,6 +3706,9 @@ class TauTuiApp(App[None]):
         """Rebuild prompt autocomplete when the caret moves without an edit."""
         if event.text_area.id != "prompt":
             return
+        # Only typing opens the popup; a caret move may update or clear it.
+        if not self._completion_state.items:
+            return
         # Runs after queued edits and accepts, so it is the last writer of the state.
         prompt = self.query_one("#prompt", PromptInput)
         self._completion_state = self._build_completion_state(
