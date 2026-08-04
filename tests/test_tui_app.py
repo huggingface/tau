@@ -2434,6 +2434,28 @@ async def test_tui_caret_move_clears_open_completions_but_does_not_open(
 
 
 @pytest.mark.anyio
+async def test_tui_enter_submits_with_caret_parked_in_complete_mention(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    session = FakeSession()
+    session.cwd = tmp_path
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.text = "look at @src/app.py and fix"
+        prompt.cursor_position = len("look at @src")
+        await pilot.pause()
+        assert app._completion_state.items == ()
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert session.prompt_texts == ["look at @src/app.py and fix"]
+
+
+@pytest.mark.anyio
 async def test_tui_accepting_mid_prompt_completion_keeps_cursor_after_mention(
     tmp_path: Path,
 ) -> None:
