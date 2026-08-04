@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 
 from tau_agent.provider import ModelProvider
 from tau_agent.session import SessionEntry
+from tau_coding import SessionManager, jsonl_session_storage
 from tau_coding import project_trust as project_trust_module
 from tau_coding.cli import app
 from tau_coding.paths import TauPaths
@@ -1035,6 +1036,59 @@ async def test_cancelled_destination_staging_leaves_source_session_and_cache_unc
     assert active.system_prompt == source_prompt
     assert active._extension_runtime is source_runtime
     assert destination.resolve() not in coordinator._cache
+
+
+@pytest.mark.anyio
+async def test_new_session_trust_cancellation_preserves_active_session(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    paths = _paths(tmp_path)
+    manager = SessionManager(paths)
+    record = manager.create_session(cwd=project, model="fake")
+    coordinator = ProjectTrustCoordinator(ProjectTrustStore(paths))
+    prompts = 0
+
+    async def cancel(_request: ProjectTrustRequest) -> None:
+        nonlocal prompts
+        prompts += 1
+        return None
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=cast(ModelProvider, object()),
+            model="fake",
+            storage=jsonl_session_storage(record.path),
+            cwd=project,
+            session_id=record.id,
+            session_manager=manager,
+            resource_paths=TauResourcePaths(
+                root=paths.home,
+                agents_root=paths.agents_home,
+                paths=paths,
+            ),
+            project_trust_coordinator=coordinator,
+            trust_interactive=True,
+            trust_prompt=cancel,
+        )
+    )
+    await session.emit_pending_session_start()
+    old_id = session.session_id
+    old_runtime = session._extension_runtime
+    old_prompt = session.system_prompt
+    old_resolution = session.project_trust_resolution
+    (project / "AGENTS.md").write_text("NEW-PROTECTED-CONTEXT", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="current session unchanged"):
+        await session.new_session()
+
+    assert prompts == 1
+    assert session.session_id == old_id
+    assert session._extension_runtime is old_runtime
+    assert session.system_prompt == old_prompt
+    assert session.project_trust_resolution == old_resolution
+    assert project.resolve() in coordinator._cache
+    assert coordinator._cache[project.resolve()].source == "empty"
 
 
 @pytest.mark.anyio

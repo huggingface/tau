@@ -3569,6 +3569,47 @@ class TauTuiApp(App[None]):
         for theme_name in available_tui_theme_names():
             self.register_theme(_textual_theme_for_tau_theme(theme_name))
 
+    def _reload_session_themes(self) -> None:
+        """Rebind custom themes to the active session's accepted trust snapshot."""
+        theme_dirs = getattr(self.session, "theme_dirs", None)
+        if theme_dirs is None:
+            trust_resolution = getattr(self.session, "project_trust_resolution", None)
+            trusted = trust_resolution is None or trust_resolution.trusted
+            theme_dirs = TauResourcePaths(
+                cwd=self.session.cwd,
+                project_resources_enabled=trusted,
+            ).themes_dirs
+        try:
+            custom_themes, diagnostics = load_custom_tui_themes(theme_dirs)
+        except (OSError, RuntimeError) as exc:
+            # Theme discovery must fail closed after a trust/cwd transition:
+            # never retain themes from the previous project snapshot.
+            custom_themes = {}
+            diagnostics = []
+            self._notify(f"Could not reload custom themes: {exc}", severity="error")
+
+        set_custom_tui_themes(custom_themes)
+        self._register_tau_textual_themes()
+        resolved_theme = self.tui_settings.resolved_theme.name
+        self._applying_settings_theme = True
+        try:
+            if self.theme == resolved_theme:
+                # Re-apply CSS when a same-named custom theme changed in place.
+                self._watch_theme(resolved_theme)
+            else:
+                self.theme = resolved_theme
+        finally:
+            self._applying_settings_theme = False
+        for diagnostic in diagnostics:
+            severity: Literal["information", "warning", "error"] = (
+                "error"
+                if diagnostic.severity == "error"
+                else "warning"
+                if diagnostic.severity == "warning"
+                else "information"
+            )
+            self._notify(diagnostic.format(), severity=severity)
+
     def _watch_theme(self, theme_name: str) -> None:
         """Keep Textual theme changes synchronized with Tau's durable TUI theme."""
         super()._watch_theme(theme_name)
@@ -3819,6 +3860,7 @@ class TauTuiApp(App[None]):
                 except ValueError as exc:
                     command = replace(command, message=f"Could not reload: {exc}")
                 else:
+                    self._reload_session_themes()
                     command = replace(command, message=format_reload_summary(summary))
             if command.new_session_requested:
                 await self._new_session()
@@ -5130,6 +5172,7 @@ class TauTuiApp(App[None]):
     async def _resume_session(self, session_id: str) -> None:
         try:
             resume_message = await self.session.resume(session_id)
+            self._reload_session_themes()
             self.state.clear()
             self.state.set_skills(self.session.skills)
             self._load_session_messages_from_session()
@@ -5222,6 +5265,7 @@ class TauTuiApp(App[None]):
             return
         try:
             await new_session()
+            self._reload_session_themes()
             self.state.clear()
             self.state.set_skills(self.session.skills)
             self._load_session_messages_from_session()
@@ -6797,14 +6841,15 @@ async def run_tui_app(
                 trust_prompt=prompt_project_trust,
             )
         )
-        trust_resolution = getattr(session, "project_trust_resolution", None)
-        trusted = trust_resolution is None or trust_resolution.trusted
-        custom_themes, theme_diagnostics = load_custom_tui_themes(
-            TauResourcePaths(
+        theme_dirs = getattr(session, "theme_dirs", None)
+        if theme_dirs is None:
+            trust_resolution = getattr(session, "project_trust_resolution", None)
+            trusted = trust_resolution is None or trust_resolution.trusted
+            theme_dirs = TauResourcePaths(
                 cwd=record.cwd,
                 project_resources_enabled=trusted,
             ).themes_dirs
-        )
+        custom_themes, theme_diagnostics = load_custom_tui_themes(theme_dirs)
         set_custom_tui_themes(custom_themes)
         legacy_notices = (startup_notice,) if startup_notice else ()
         error_notices = (startup_error_notice,) if startup_error_notice else ()

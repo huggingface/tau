@@ -819,6 +819,11 @@ class CodingSession:
         return self._project_trust_resolution
 
     @property
+    def theme_dirs(self) -> tuple[Path, ...]:
+        """Return theme directories permitted by this session's trust snapshot."""
+        return self._resource_paths.themes_dirs
+
+    @property
     def resource_diagnostics(self) -> tuple[ResourceDiagnostic, ...]:
         """Return non-fatal resource and extension diagnostics."""
         trust_diagnostics: tuple[ResourceDiagnostic, ...] = ()
@@ -1539,12 +1544,6 @@ class CodingSession:
                 trust_prompt=self._config.trust_prompt,
             )
         )
-        if (
-            replacement.project_trust_resolution is not None
-            and replacement.project_trust_resolution.cancelled
-        ):
-            await replacement.aclose()
-            raise ValueError("Project trust decision cancelled; current session unchanged")
         if restore_record_model:
             if runtime_provider_config is None:
                 raise ProviderConfigError(f"Session provider is not configured: {provider_name}")
@@ -1615,6 +1614,13 @@ class CodingSession:
         (transcript persistence, parent ids) mutates here, not on the discarded
         replacement instance.
         """
+        if (
+            replacement.project_trust_resolution is not None
+            and replacement.project_trust_resolution.cancelled
+        ):
+            await replacement.aclose()
+            raise ValueError("Project trust decision cancelled; current session unchanged")
+
         old_runtime = self._extension_runtime
         await old_runtime.emit_session_shutdown(reason)
         old_runtime.clear_ui_components()

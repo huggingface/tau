@@ -2880,6 +2880,42 @@ def test_tui_app_registers_and_applies_custom_theme() -> None:
         set_custom_tui_themes({})
 
 
+@pytest.mark.anyio
+async def test_tui_app_removes_source_project_themes_after_resume(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tau_coding.tui.themes import (
+        THEME_COLOR_FIELDS,
+        TRANSCRIPT_ROLES,
+        available_tui_theme_names,
+        parse_tui_theme_json,
+        set_custom_tui_themes,
+    )
+
+    theme_data = {
+        "name": "project-theme",
+        "colors": dict.fromkeys(THEME_COLOR_FIELDS, "#123456"),
+        "roles": {role: {"border": "#123456", "body": "#e0e0e0"} for role in TRANSCRIPT_ROLES},
+    }
+    project_theme = parse_tui_theme_json(theme_data)
+    set_custom_tui_themes({"project-theme": project_theme})
+    monkeypatch.setattr(tui_app, "load_custom_tui_themes", lambda _dirs: ({}, []))
+    session = FakeSession()
+    session.theme_dirs = ()
+    app = TauTuiApp(session, tui_settings=TuiSettings(theme="project-theme"))
+    try:
+        async with app.run_test() as pilot:
+            await app._resume_session("destination-session")
+            await pilot.pause()
+
+            assert app.theme == "tau-dark"
+            assert "project-theme" not in app.available_themes
+            assert "project-theme" not in available_tui_theme_names()
+            assert app.tui_settings.theme == "project-theme"
+    finally:
+        set_custom_tui_themes({})
+
+
 def test_tui_app_falls_back_to_tau_dark_when_theme_is_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
