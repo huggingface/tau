@@ -3,6 +3,7 @@ from tau_agent.messages import (
     CustomMessage,
     TextContent,
     ToolCall,
+    ToolResultMessage,
     Usage,
     UserMessage,
 )
@@ -32,6 +33,88 @@ def test_cache_hit_rate_divides_reads_by_total_prompt_tokens() -> None:
     stats = SessionStats(input_tokens=1_000, cached_input_tokens=950, cache_write_tokens=50)
 
     assert stats.cache_hit_rate == 0.95
+
+
+def test_latest_cache_hit_rate_uses_latest_request_tokens() -> None:
+    stats = SessionStats(
+        input_tokens=2_000,
+        cached_input_tokens=1_400,
+        latest_prompt_tokens=1_000,
+        latest_cached_input_tokens=950,
+    )
+
+    assert stats.latest_cache_hit_rate == 0.95
+
+
+def test_latest_cache_hit_rate_is_hidden_without_reported_cache_activity() -> None:
+    stats = SessionStats(
+        input_tokens=1_000,
+        latest_prompt_tokens=1_000,
+    )
+
+    assert stats.latest_cache_hit_rate is None
+
+
+def test_calculate_session_stats_uses_latest_tool_continuation_cache_rate() -> None:
+    user = MessageEntry(message=UserMessage(content="Inspect it"))
+    tool_request = MessageEntry(
+        parent_id=user.id,
+        message=AssistantMessage(
+            provider="anthropic",
+            model="claude-test",
+            content=[ToolCall(id="call-1", name="read", arguments={})],
+            usage=Usage(input=100, cache_write=100),
+        ),
+    )
+    tool_result = MessageEntry(
+        parent_id=tool_request.id,
+        message=ToolResultMessage(
+            tool_call_id="call-1",
+            tool_name="read",
+            content="result",
+        ),
+    )
+    continuation = MessageEntry(
+        parent_id=tool_result.id,
+        message=AssistantMessage(
+            provider="anthropic",
+            model="claude-test",
+            usage=Usage(input=10, cache_read=190),
+        ),
+    )
+
+    stats = calculate_session_stats(
+        [user, tool_request, tool_result, continuation],
+        pricing=lambda _provider, _model, _input: {},
+    )
+
+    assert stats.cache_hit_rate == 0.475
+    assert stats.latest_cache_hit_rate == 0.95
+
+
+def test_latest_cache_hit_rate_reports_miss_after_earlier_cache_activity() -> None:
+    first = MessageEntry(
+        message=AssistantMessage(
+            provider="anthropic",
+            model="claude-test",
+            usage=Usage(input=100, cache_write=100),
+        )
+    )
+    latest = MessageEntry(
+        parent_id=first.id,
+        message=AssistantMessage(
+            provider="anthropic",
+            model="claude-test",
+            usage=Usage(input=200),
+        ),
+    )
+
+    stats = calculate_session_stats(
+        [first, latest],
+        pricing=lambda _provider, _model, _input: {},
+    )
+
+    assert stats.latest_cache_hit_rate == 0.0
 
 
 def test_calculate_session_stats_keeps_compacted_active_branch_usage() -> None:

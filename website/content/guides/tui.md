@@ -147,9 +147,10 @@ when you want to reduce what is sent to the model.
 
 On wide-enough terminals Tau shows the session name prominently without a
 redundant section label, followed by active-branch
-turn and tool-call totals, provider-reported token usage under **cumulative usage**,
-prompt-cache hit rate, estimated cost, automatic-compaction threshold, and loaded tools, skills, prompt
-templates, extensions, and context files such as `AGENTS.md`. Tool, prompt, and extension
+turn and tool-call totals, provider-reported token usage, latest-request and
+session prompt-cache hit rates, estimated cost, automatic-compaction threshold,
+and loaded tools, skills, prompt templates, extensions, and context files such as
+`AGENTS.md`. Tool, prompt, and extension
 names use compact comma-separated lists limited to three rendered lines. Skills
 and context files use bullet lists, with one item or path per line, limited to
 five entries. Truncated sections end with `...(X more)` showing how many entries
@@ -171,12 +172,15 @@ provider request, so it can be much larger than the context used by the next
 request. Cost is an estimate based on provider-reported usage and configured
 catalog rates; the sidebar shows `$N/A` when Tau lacks complete pricing data.
 
-The cache hit rate is the share of those input tokens the provider served from its
-prompt cache instead of processing again. A healthy long coding session sits well
-above 90%; a low rate usually means something early in the request keeps changing,
-such as a reloaded tool list or a changed thinking level, or that a pause outlived
-the provider's cache. Tau hides the figure entirely for providers that do not
-report cache usage.
+The cache line separates the latest model request from the cumulative session.
+Both rates are the share of prompt tokens the provider served from its cache
+instead of processing again. The latest rate makes a cache miss immediately visible and,
+after tool use, describes the most recent model continuation. The session rate
+includes every request on the active branch, including the initial cold request.
+A low latest rate usually means something early in the request changed, such as
+a reloaded tool list or thinking level, or that a pause outlived the provider's
+cache.
+Tau hides both figures for providers that do not report cache usage.
 
 The compact status block below the prompt puts `provider:model (thinking)` on its
 first line and provider-anchored active context as `used/limit` on the second. When

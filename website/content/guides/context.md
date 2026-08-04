@@ -35,8 +35,8 @@ trailing=<count>` when provider usage anchors the active count. Otherwise it sho
 the fallback system/message/tool breakdown. Provider usage from errored or aborted
 responses is not trusted.
 
-This is different from **cumulative usage** in the sidebar. Cumulative usage adds
-the provider-reported input and output tokens from every request on the active
+This is different from the cumulative token totals in the sidebar's **usage**
+section. Cumulative usage adds the provider-reported input and output tokens from every request on the active
 branch, including history later replaced by compaction. Repeatedly sending the
 same context therefore increases cumulative input usage, while active context
 consumption describes only what Tau expects to send next. The two figures are

@@ -1498,15 +1498,19 @@ def render_session_sidebar(
     usage = Text(style=theme.completion_description)
     usage.append(f"{_compact_usage_count(stats.input_tokens)} in, ")
     usage.append(f"{_compact_usage_count(stats.output_tokens)} out")
-    hit_rate = stats.cache_hit_rate
-    if hit_rate is not None:
-        usage.append(" · ", style=theme.completion_description)
-        usage.append(f"{hit_rate:.0%} cached", style=theme.completion_description)
     usage.append(" · ", style=theme.completion_description)
     if stats.estimated_cost is None:
         usage.append("$N/A", style=theme.completion_description)
     else:
         usage.append(f"~{_format_cost(stats.estimated_cost)}")
+    cache_rates: list[str] = []
+    if (latest_hit_rate := stats.latest_cache_hit_rate) is not None:
+        cache_rates.append(f"{latest_hit_rate:.0%} latest")
+    if (session_hit_rate := stats.cache_hit_rate) is not None:
+        cache_rates.append(f"{session_hit_rate:.0%} session")
+    if cache_rates:
+        usage.append("\ncache: ", style=theme.completion_description)
+        usage.append(" · ".join(cache_rates), style=theme.completion_description)
 
     threshold = session.auto_compact_token_threshold
     compaction = Text(
@@ -1537,7 +1541,7 @@ def render_session_sidebar(
     sections = (
         Padding(title, (0, 0, 0, 1)),
         _sidebar_section("activity", activity, theme=theme),
-        _sidebar_section("cumulative usage", usage, theme=theme),
+        _sidebar_section("usage", usage, theme=theme),
         _sidebar_section("compaction", compaction, theme=theme),
         _sidebar_section("context", context, theme=theme),
         _sidebar_section("tools", tools, theme=theme),
