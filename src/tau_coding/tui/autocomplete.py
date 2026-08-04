@@ -195,7 +195,7 @@ def _active_file_reference_token(text: str, cursor: int) -> tuple[int, int] | No
     if at_index == -1:
         return None
     end = cursor
-    while end < len(text) and text[end] not in " \n":
+    while end < len(text) and not text[end].isspace():
         end += 1
     return at_index, end
 
