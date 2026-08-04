@@ -89,6 +89,7 @@ class CompletionState:
 def build_completion_state(
     text: str,
     *,
+    cursor: int | None = None,
     command_registry: CommandRegistry,
     skills: Sequence[Skill],
     prompt_templates: Sequence[PromptTemplate],
@@ -101,12 +102,13 @@ def build_completion_state(
     cwd: Path | None = None,
 ) -> CompletionState:
     """Build autocomplete suggestions for the current prompt text."""
+    cursor = len(text) if cursor is None else max(0, min(cursor, len(text)))
     if not text.startswith("/") or text.startswith("//"):
         if cwd is not None:
             shell_completions = _shell_path_completions(text=text, cwd=cwd)
             if shell_completions is not None:
                 return CompletionState(shell_completions)
-            return CompletionState(_file_reference_completions(text=text, cwd=cwd))
+            return CompletionState(_file_reference_completions(text=text, cursor=cursor, cwd=cwd))
         return CompletionState()
 
     token_end = _first_token_end(text)
@@ -116,7 +118,9 @@ def build_completion_state(
         if has_argument_text and _matches_skill_command(token, skills):
             # Skill arguments are prompt text, so @ file references stay available.
             if cwd is not None:
-                return CompletionState(_file_reference_completions(text=text, cwd=cwd))
+                return CompletionState(
+                    _file_reference_completions(text=text, cursor=cursor, cwd=cwd)
+                )
             return CompletionState()
         return CompletionState(_skill_completions(token=token, token_end=token_end, skills=skills))
 
@@ -138,7 +142,7 @@ def build_completion_state(
 
     if has_argument_text and _matches_prompt_template_command(token, prompt_templates):
         if cwd is not None:
-            return CompletionState(_file_reference_completions(text=text, cwd=cwd))
+            return CompletionState(_file_reference_completions(text=text, cursor=cursor, cwd=cwd))
         return CompletionState()
 
     if has_argument_text and _matches_registered_command(token, command_registry):
@@ -154,12 +158,12 @@ def build_completion_state(
     )
 
 
-def _file_reference_completions(*, text: str, cwd: Path) -> tuple[CompletionItem, ...]:
-    token = _active_file_reference_token(text)
+def _file_reference_completions(*, text: str, cursor: int, cwd: Path) -> tuple[CompletionItem, ...]:
+    token = _active_file_reference_token(text, cursor)
     if token is None:
         return ()
     start, end = token
-    prefix = text[start + 1 : end]
+    prefix = text[start + 1 : cursor]
     suggestions: list[CompletionItem] = []
     for path in _iter_file_reference_paths(cwd):
         relative = path.relative_to(cwd).as_posix()
@@ -180,13 +184,15 @@ def _file_reference_completions(*, text: str, cwd: Path) -> tuple[CompletionItem
     return tuple(suggestions)
 
 
-def _active_file_reference_token(text: str) -> tuple[int, int] | None:
-    cursor = len(text)
+def _active_file_reference_token(text: str, cursor: int) -> tuple[int, int] | None:
     token_start = max(text.rfind(" ", 0, cursor), text.rfind("\n", 0, cursor)) + 1
     at_index = text.rfind("@", token_start, cursor)
     if at_index == -1:
         return None
-    return at_index, cursor
+    end = cursor
+    while end < len(text) and text[end] not in " \n":
+        end += 1
+    return at_index, end
 
 
 def _iter_file_reference_paths(cwd: Path) -> tuple[Path, ...]:

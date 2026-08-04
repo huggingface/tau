@@ -2408,6 +2408,49 @@ async def test_tui_submit_multiple_large_pastes_sends_all_full_content() -> None
 
 
 @pytest.mark.anyio
+async def test_tui_file_reference_completion_follows_cursor_mid_prompt(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    session = FakeSession()
+    session.cwd = tmp_path
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.text = "look at @ap and fix it"
+        prompt.cursor_position = len("look at @ap")
+        prompt.insert("p")
+        await pilot.pause()
+
+        assert [item.display for item in app._completion_state.items] == ["@src/app.py"]
+
+
+@pytest.mark.anyio
+async def test_tui_accepting_mid_prompt_completion_keeps_cursor_after_mention(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    session = FakeSession()
+    session.cwd = tmp_path
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.text = "look at @ap and fix it"
+        prompt.cursor_position = len("look at @ap")
+        prompt.insert("p")
+        await pilot.pause()
+        app.action_accept_completion()
+        await pilot.pause()
+
+        assert prompt.text == "look at @src/app.py and fix it"
+        assert prompt.cursor_position == len("look at @src/app.py")
+
+
+@pytest.mark.anyio
 async def test_tui_app_mounts_sidebar_and_transcript() -> None:
     app = TauTuiApp(FakeSession())
 

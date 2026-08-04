@@ -543,6 +543,217 @@ def test_file_reference_completion_works_in_multiline_custom_prompt_arguments(
     assert state.selected.apply(text) == "/review inspect\n@src/app.py"
 
 
+def test_file_reference_completion_uses_cursor_position_mid_text(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    text = "look at @app and fix it"
+    cursor = len("look at @app")
+
+    state = build_completion_state(
+        text,
+        cursor=cursor,
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in state.items] == ["@src/app.py"]
+    assert state.selected is not None
+    assert state.selected.apply(text) == "look at @src/app.py and fix it"
+
+
+def test_file_reference_completion_uses_cursor_position_in_prompt_arguments(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    text = "/review inspect @app then summarize"
+    cursor = len("/review inspect @app")
+
+    state = build_completion_state(
+        text,
+        cursor=cursor,
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(
+            PromptTemplate(
+                name="review",
+                path=Path("review.md"),
+                content="Review:\n{{ arguments }}",
+            ),
+        ),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in state.items] == ["@src/app.py"]
+    assert state.selected is not None
+    assert state.selected.apply(text) == "/review inspect @src/app.py then summarize"
+
+
+def test_file_reference_completion_replaces_full_token_for_mid_token_cursor(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    text = "@srcapp.py fix"
+    cursor = len("@src")
+
+    state = build_completion_state(
+        text,
+        cursor=cursor,
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in state.items] == ["@src/", "@src/app.py"]
+    assert state.items[1].apply(text) == "@src/app.py fix"
+
+
+def test_file_reference_completion_replaces_full_token_for_cursor_after_at(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    text = "@src/app.py extra"
+    cursor = len("@")
+
+    state = build_completion_state(
+        text,
+        cursor=cursor,
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in state.items] == ["@src/", "@src/app.py"]
+    assert state.items[1].apply(text) == "@src/app.py extra"
+
+
+def test_file_reference_completion_uses_cursor_position_in_skill_arguments(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    text = "/skill:review fix @ap please"
+    cursor = len("/skill:review fix @ap")
+
+    state = build_completion_state(
+        text,
+        cursor=cursor,
+        command_registry=create_default_command_registry(),
+        skills=(Skill(name="review", path=Path("review.md"), content="Review code"),),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in state.items] == ["@src/app.py"]
+    assert state.selected is not None
+    assert state.selected.apply(text) == "/skill:review fix @src/app.py please"
+
+
+def test_file_reference_completion_uses_cursor_position_on_earlier_line(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    text = "look at @app\nand fix it"
+    cursor = len("look at @app")
+
+    state = build_completion_state(
+        text,
+        cursor=cursor,
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in state.items] == ["@src/app.py"]
+    assert state.selected is not None
+    assert state.selected.apply(text) == "look at @src/app.py\nand fix it"
+
+
+def test_file_reference_completion_clamps_out_of_range_cursor(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    text = "please read @app"
+
+    beyond_end = build_completion_state(
+        text,
+        cursor=len(text) + 10,
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+    negative = build_completion_state(
+        text,
+        cursor=-1,
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in beyond_end.items] == ["@src/app.py"]
+    assert negative.items == ()
+
+
+def test_shell_path_completion_keeps_end_of_text_behavior_for_mid_text_cursor(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "README.md").write_text("# Project\n", encoding="utf-8")
+
+    state = build_completion_state(
+        "!cat READ more",
+        cursor=len("!cat READ"),
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert state.items == ()
+
+
+def test_file_reference_completion_stays_off_when_cursor_leaves_mention(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    text = "look at @app and fix it"
+
+    state = build_completion_state(
+        text,
+        cursor=len(text),
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert state.items == ()
+
+
+def test_file_reference_completion_defaults_cursor_to_end_of_text(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+
+    state = build_completion_state(
+        "please read @app",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in state.items] == ["@src/app.py"]
+
+
 def test_file_reference_completion_stays_off_for_slash_commands(tmp_path: Path) -> None:
     (tmp_path / "README.md").write_text("# Project\n", encoding="utf-8")
 
