@@ -123,6 +123,21 @@ TrustPrompt = Callable[[ProjectTrustRequest], Awaitable[TrustChoice | None]]
 ExtensionDecider = Callable[[ProjectTrustEvent], Awaitable[ExtensionTrustResult | None]]
 
 
+def _darwin_filesystem_path(path: Path) -> Path:
+    """Return macOS's case-preserving path for an existing filesystem object."""
+    import fcntl
+
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        raw = fcntl.fcntl(descriptor, 50, b"\0" * 1024)  # F_GETPATH / MAXPATHLEN
+    finally:
+        os.close(descriptor)
+    value = raw.split(b"\0", 1)[0]
+    if not value:
+        raise OSError(f"Could not determine filesystem casing for {path}")
+    return Path(os.fsdecode(value))
+
+
 def canonicalize_project_path(path: Path, *, base: Path | None = None) -> CanonicalProjectPath:
     """Strictly canonicalize an existing destination cwd."""
     expanded = path.expanduser()
@@ -136,8 +151,19 @@ def canonicalize_project_path(path: Path, *, base: Path | None = None) -> Canoni
         raise ProjectTrustError(f"Could not canonicalize project cwd {expanded}: {exc}") from exc
     if not resolved.is_dir():
         raise ProjectTrustError(f"Project cwd is not a directory: {resolved}")
-    if sys.platform in {"win32", "darwin"}:
-        resolved = Path(os.path.normcase(str(resolved)))
+    try:
+        if sys.platform == "win32":
+            resolved = Path(os.path.normcase(str(resolved)))
+        elif sys.platform == "darwin":
+            # normcase() is a no-op on Darwin. F_GETPATH asks the mounted
+            # filesystem for its case-preserving spelling, so aliases on a
+            # case-insensitive volume share a key without collapsing distinct
+            # paths on a case-sensitive volume.
+            resolved = _darwin_filesystem_path(resolved)
+    except (OSError, UnicodeError) as exc:
+        raise ProjectTrustError(
+            f"Could not canonicalize project cwd casing {resolved}: {exc}"
+        ) from exc
     return CanonicalProjectPath(resolved)
 
 
@@ -319,14 +345,15 @@ class ProjectTrustStore:
 
     def _read_unlocked(self) -> dict[Path, TrustDecision]:
         # A pending journal means an update did not reach its commit point.
-        # Never inspect the possibly replaced destination in that state.
+        # Ordinary reads must never guess whether the interrupted operation was
+        # a grant or a revocation: either direction could resurrect trust.
+        # Recovery is attempted only by the writer that observed its own
+        # failure; a journal left by a crash remains visibly fail-closed.
         if self.pending_path.exists():
-            recovery_error = self._recover_unlocked()
-            if recovery_error is not None:
-                raise ProjectTrustError(
-                    f"Project trust store {self.path} has an incomplete update; "
-                    f"recovery failed: {recovery_error}"
-                )
+            raise ProjectTrustError(
+                f"Project trust store {self.path} has an incomplete update; "
+                f"pending journal requires explicit recovery: {self.pending_path}"
+            )
         if not self.path.exists():
             return {}
         try:
@@ -350,11 +377,18 @@ class ProjectTrustStore:
             candidate = Path(raw_path)
             if not candidate.is_absolute() or Path(os.path.normpath(raw_path)) != candidate:
                 raise ProjectTrustError(f"Noncanonical path in project trust store {self.path}")
-            normalized = (
-                Path(os.path.normcase(raw_path))
-                if sys.platform in {"win32", "darwin"}
-                else candidate
-            )
+            normalized = Path(os.path.normcase(raw_path)) if sys.platform == "win32" else candidate
+            if sys.platform == "darwin" and candidate.exists():
+                try:
+                    normalized = _darwin_filesystem_path(candidate)
+                except (OSError, UnicodeError) as exc:
+                    raise ProjectTrustError(
+                        f"Could not validate path casing in project trust store {self.path}: {exc}"
+                    ) from exc
+                if normalized != candidate:
+                    raise ProjectTrustError(
+                        f"Noncanonical path casing in project trust store {self.path}: {candidate}"
+                    )
             if normalized in result:
                 raise ProjectTrustError(f"Duplicate path in project trust store {self.path}")
             result[normalized] = decision

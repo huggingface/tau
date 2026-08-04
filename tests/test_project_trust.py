@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import cast
@@ -56,6 +57,30 @@ def test_canonical_project_path_requires_existing_directory_and_resolves_alias(
     assert canonicalize_project_path(alias).value == project.resolve()
     with pytest.raises(ProjectTrustError, match="canonicalize"):
         canonicalize_project_path(tmp_path / "missing")
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS filesystem casing regression")
+def test_macos_alternate_case_preserves_exact_child_decline(tmp_path: Path) -> None:
+    parent = tmp_path / "Parent"
+    child = parent / "MixedCase"
+    child.mkdir(parents=True)
+    alternate = parent / "mixedcase"
+    if not alternate.is_dir():
+        pytest.skip("temporary filesystem is case-sensitive")
+
+    store = ProjectTrustStore(_paths(tmp_path))
+    parent_key = canonicalize_project_path(parent)
+    child_key = canonicalize_project_path(child)
+    alternate_key = canonicalize_project_path(alternate)
+    assert alternate_key == child_key
+
+    store.set(parent_key, "trusted")
+    store.set(child_key, "untrusted")
+
+    saved = store.nearest(alternate_key)
+    assert saved is not None
+    assert saved.path == child_key
+    assert saved.decision == "untrusted"
 
 
 def test_detector_covers_protected_matrix_without_reading_contents(tmp_path: Path) -> None:
@@ -755,6 +780,26 @@ def test_combined_commit_and_recovery_failures_remain_fail_closed(
     assert store.pending_path.read_bytes() == b"present\n" + prior
     with pytest.raises(ProjectTrustError, match="incomplete update"):
         store.nearest(key)
+
+
+def test_pending_journal_after_revocation_never_restores_prior_trust(tmp_path: Path) -> None:
+    store = ProjectTrustStore(_paths(tmp_path))
+    project = tmp_path / "project"
+    project.mkdir()
+    key = canonicalize_project_path(project)
+    store.set(key, "trusted")
+    prior_trusted = store.path.read_bytes()
+    store.set(key, "untrusted")
+    revoked = store.path.read_bytes()
+
+    # Simulate a crash after trust.json was replaced with the revocation but
+    # before the writer removed its undo journal.
+    store.pending_path.write_bytes(b"present\n" + prior_trusted)
+
+    with pytest.raises(ProjectTrustError, match="explicit recovery"):
+        store.nearest(key)
+    assert store.path.read_bytes() == revoked
+    assert store.pending_path.read_bytes() == b"present\n" + prior_trusted
 
 
 def test_resource_plan_always_rebinds_to_destination(tmp_path: Path) -> None:
