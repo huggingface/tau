@@ -52,6 +52,10 @@ class CompletionItem:
         """Apply this completion to input text."""
         return f"{text[: self.start]}{self.replacement}{text[self.end :]}"
 
+    def cursor_after_apply(self) -> int:
+        """Return the cursor offset just after the applied replacement."""
+        return self.start + len(self.replacement)
+
 
 @dataclass(frozen=True, slots=True)
 class CompletionState:

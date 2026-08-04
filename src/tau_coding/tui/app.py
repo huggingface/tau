@@ -3726,7 +3726,7 @@ class TauTuiApp(App[None]):
         ):
             prompt.text = applied_completion
             prompt._clear_pending_paste()
-            cursor = selected_item.start + len(selected_item.replacement)
+            cursor = selected_item.cursor_after_apply()
             prompt.cursor_position = cursor
             self._completion_state = self._build_completion_state(applied_completion, cursor=cursor)
             self._refresh_completions()
@@ -4870,7 +4870,7 @@ class TauTuiApp(App[None]):
         if applied is None or item is None:
             return
         prompt.text = applied
-        cursor = item.start + len(item.replacement)
+        cursor = item.cursor_after_apply()
         prompt.cursor_position = cursor
         self._completion_state = self._build_completion_state(prompt.text, cursor=cursor)
         self._refresh_completions()
