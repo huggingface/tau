@@ -24,7 +24,6 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.events import Key, Resize
 from textual.screen import ModalScreen
-from textual.theme import Theme
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import (
@@ -157,9 +156,10 @@ from tau_coding.tui.terminal_notification import TerminalNotificationController
 from tau_coding.tui.terminal_title import TerminalTitleController
 from tau_coding.tui.themes import (
     available_tui_theme_names,
-    get_tui_theme,
     load_custom_tui_themes,
     set_custom_tui_themes,
+    textual_theme_for_tui_theme,
+    theme_css_variables,
 )
 from tau_coding.tui.widgets import (
     CompactSessionInfo,
@@ -168,6 +168,9 @@ from tau_coding.tui.widgets import (
     _custom_markup_to_text,
     render_completion_suggestions,
 )
+
+_textual_theme_for_tau_theme = textual_theme_for_tui_theme
+_theme_css_variables = theme_css_variables
 
 type BindingEntry = Binding | tuple[str, str] | tuple[str, str, str]
 SIDEBAR_MIN_WIDTH = 96
@@ -6363,62 +6366,6 @@ def _is_thinking_cycle_key(key: str, configured_key: str) -> bool:
     if key == configured_key:
         return True
     return configured_key == "shift+tab" and key == "backtab"
-
-
-def _textual_theme_for_tau_theme(theme_name: TuiThemeName) -> Theme:
-    """Map a Tau theme to Textual's native theme type."""
-    theme = get_tui_theme(theme_name)
-    return Theme(
-        name=theme.name,
-        primary=theme.accent,
-        secondary=theme.prompt_border,
-        warning=theme.markdown_bullet,
-        error=theme.error,
-        success=theme.success,
-        accent=theme.accent,
-        foreground=theme.screen_text,
-        background=theme.screen_background,
-        surface=theme.chrome_background,
-        panel=theme.sidebar_background,
-        dark=theme.dark,
-        variables=_theme_css_variables(theme),
-    )
-
-
-def _theme_css_variables(theme: TuiTheme) -> dict[str, str]:
-    """Return Textual CSS variables for a resolved Tau theme."""
-    return {
-        "tau-screen-background": theme.screen_background,
-        "tau-screen-text": theme.screen_text,
-        "tau-chrome-background": theme.chrome_background,
-        "tau-chrome-text": theme.chrome_text,
-        "tau-muted-text": theme.muted_text,
-        "tau-sidebar-background": theme.sidebar_background,
-        "tau-border": theme.border,
-        "tau-transcript-background": theme.transcript_background,
-        "tau-prompt-background": theme.prompt_background,
-        "tau-prompt-text": theme.prompt_text,
-        "tau-prompt-border": theme.prompt_border,
-        "tau-autocomplete-background": theme.autocomplete_background,
-        "tau-accent": theme.accent,
-        "tau-tool-running": theme.role_styles["tool"].border,
-        "tau-highlight-background": theme.highlight_background,
-        "tau-highlight-text": theme.highlight_text,
-        "tau-markdown-highlight": theme.markdown_heading,
-        "tau-markdown-table-header": theme.markdown_table_header,
-        "tau-markdown-table-border": theme.markdown_table_border,
-        "tau-markdown-inline-code": theme.markdown_inline_code,
-        "tau-markdown-code-block-background": theme.markdown_code_block_background,
-        "tau-markdown-link": theme.markdown_link,
-        "tau-markdown-bullet": theme.markdown_bullet,
-        "footer-background": theme.chrome_background,
-        "footer-foreground": theme.chrome_text,
-        "footer-description-background": theme.chrome_background,
-        "footer-description-foreground": theme.chrome_text,
-        "footer-key-background": theme.chrome_background,
-        "footer-key-foreground": theme.accent,
-        "footer-item-background": theme.chrome_background,
-    }
 
 
 def _render_queued_messages(state: TuiState, *, theme: TuiTheme) -> Group:

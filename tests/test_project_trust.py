@@ -8,7 +8,9 @@ from typing import cast
 
 import pytest
 from textual.app import App
-from textual.widgets import ListItem, ListView, Static
+from textual.color import Color
+from textual.containers import Vertical
+from textual.widgets import Label, ListItem, ListView, Static
 from typer.testing import CliRunner
 
 from tau_agent.provider import ModelProvider
@@ -32,7 +34,8 @@ from tau_coding.resources import (
     resource_paths_with_project_trust,
 )
 from tau_coding.session import CodingSession, CodingSessionConfig
-from tau_coding.tui.project_trust import ProjectTrustScreen
+from tau_coding.tui.project_trust import ProjectTrustScreen, _ProjectTrustApp
+from tau_coding.tui.themes import TAU_DARK_THEME
 
 
 def _paths(tmp_path: Path) -> TauPaths:
@@ -562,6 +565,31 @@ async def test_tui_trust_modal_all_choices_support_arrow_navigation(
         await pilot.pause()
 
     assert results == [expected]
+
+
+@pytest.mark.anyio
+async def test_standalone_trust_modal_uses_tau_dark_palette(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "AGENTS.md").write_text("rules", encoding="utf-8")
+    summary = ProtectedResourceDetector().detect(canonicalize_project_path(project))
+    request = ProjectTrustRequest(canonicalize_project_path(project), summary, None)
+    host = _ProjectTrustApp(request)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        dialog = host.screen.query_one("#project-trust-dialog", Vertical)
+        choice_list = host.screen.query_one("#project-trust-list", ListView)
+        highlighted_label = choice_list.query_one(ListItem).query_one(Label)
+
+        assert host.theme == TAU_DARK_THEME.name
+        assert dialog.styles.background == Color.parse(TAU_DARK_THEME.chrome_background)
+        assert dialog.styles.color == Color.parse(TAU_DARK_THEME.chrome_text)
+        assert choice_list.styles.background == Color.parse(TAU_DARK_THEME.transcript_background)
+        assert highlighted_label.styles.background == Color.parse(
+            TAU_DARK_THEME.highlight_background
+        )
+        assert highlighted_label.styles.color == Color.parse(TAU_DARK_THEME.highlight_text)
 
 
 @pytest.mark.anyio

@@ -12,6 +12,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Label, ListItem, ListView, Static
 
 from tau_coding.project_trust import ProjectTrustRequest, TrustChoice
+from tau_coding.tui.themes import TAU_DARK_THEME, textual_theme_for_tui_theme
 
 _LABELS: tuple[tuple[TrustChoice, str], ...] = (
     ("trust-exact", "Trust this folder"),
@@ -34,7 +35,7 @@ class ProjectTrustScreen(ModalScreen[TrustChoice | None]):
     DEFAULT_CSS = """
     ProjectTrustScreen {
         align: center middle;
-        background: $background 60%;
+        background: #000000 70%;
     }
     #project-trust-dialog {
         width: 76;
@@ -42,9 +43,9 @@ class ProjectTrustScreen(ModalScreen[TrustChoice | None]):
         height: auto;
         max-height: 90%;
         padding: 1 2;
-        background: $panel;
-        color: $text;
-        border: tall $primary;
+        background: #000000;
+        color: #d8dee9;
+        border: tall #141922;
     }
     #project-trust-title {
         height: 1;
@@ -54,7 +55,7 @@ class ProjectTrustScreen(ModalScreen[TrustChoice | None]):
     #project-trust-path-label,
     #project-trust-summary-label {
         height: 1;
-        color: $text-muted;
+        color: #667085;
     }
     #project-trust-path,
     #project-trust-summary,
@@ -63,23 +64,24 @@ class ProjectTrustScreen(ModalScreen[TrustChoice | None]):
         margin-bottom: 1;
     }
     #project-trust-boundary {
-        color: $text-muted;
+        color: #667085;
     }
     #project-trust-list {
         height: auto;
         max-height: 7;
-        background: $surface;
-        border: tall $primary;
+        background: #000000;
+        color: #d8dee9;
+        border: tall #141922;
     }
     #project-trust-list ListItem.-highlight,
     #project-trust-list ListItem.-highlight Label {
-        background: $accent;
-        color: $text;
+        background: #a7f3f0;
+        color: #061a1a;
     }
     #project-trust-help {
         height: 1;
         margin-top: 1;
-        color: $text-muted;
+        color: #667085;
     }
     """
 
@@ -156,6 +158,9 @@ class ProjectTrustScreen(ModalScreen[TrustChoice | None]):
 class _ProjectTrustApp(App[TrustChoice | None]):
     def __init__(self, request: ProjectTrustRequest) -> None:
         super().__init__()
+        tau_dark = textual_theme_for_tui_theme(TAU_DARK_THEME.name)
+        self.register_theme(tau_dark)
+        self.theme = tau_dark.name
         self.request = request
 
     def on_mount(self) -> None:
