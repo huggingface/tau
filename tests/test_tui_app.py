@@ -2467,6 +2467,7 @@ async def test_tui_enter_submits_with_caret_parked_in_complete_mention(
     async with app.run_test() as pilot:
         prompt = app.query_one("#prompt", PromptInput)
         prompt.text = "look at @src/app.py and fix"
+        await pilot.pause()
         prompt.cursor_position = len("look at @src")
         await pilot.pause()
         assert app._completion_state.items == ()
