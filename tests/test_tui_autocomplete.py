@@ -630,8 +630,24 @@ def test_file_reference_completion_replaces_full_token_for_cursor_after_at(
         cwd=tmp_path,
     )
 
-    assert [item.display for item in state.items] == ["@src/", "@src/app.py"]
-    assert state.items[1].apply(text) == "@src/app.py extra"
+    assert [item.display for item in state.items] == ["@src/"]
+
+
+def test_file_reference_completion_skips_identical_replacement(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    text = "read @src/app.py now"
+
+    state = build_completion_state(
+        text,
+        cursor=len("read @src/app.py"),
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert state.items == ()
 
 
 def test_file_reference_completion_uses_cursor_position_in_skill_arguments(

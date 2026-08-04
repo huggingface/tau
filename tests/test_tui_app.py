@@ -2473,7 +2473,7 @@ async def test_tui_accepting_mid_prompt_completion_keeps_cursor_after_mention(
 
         assert prompt.text == "look at @src/app.py and fix it"
         assert prompt.cursor_position == len("look at @src/app.py")
-        assert [item.display for item in app._completion_state.items] == ["@src/app.py"]
+        assert app._completion_state.items == ()
 
 
 @pytest.mark.anyio
