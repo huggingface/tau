@@ -886,6 +886,314 @@ def render_session_html(
       .analysis-card:nth-child(n + 3) {{ border-top: 1px solid var(--line); }}
       .analysis-heading {{ display: block; }}
     }}
+
+    /* Restrained application shell: flat surfaces, dense data, one quiet accent. */
+    :root {{
+      color-scheme: dark;
+      --canvas: #0d0e10;
+      --surface: #121416;
+      --surface-muted: #181a1d;
+      --text: #e7e7e5;
+      --muted: #8b8e93;
+      --line: #292c30;
+      --line-soft: #202327;
+      --line-strong: #3a3e42;
+      --accent: #a7c080;
+      --accent-soft: #1d241c;
+      --danger: #bd766f;
+      --code-bg: #0f1113;
+      --serif: "SF Pro Display", "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif;
+      --sans: "SF Pro Text", "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-family: var(--sans);
+    }}
+    :root[data-theme="light"] {{
+      color-scheme: light;
+      --canvas: #f2f2ee;
+      --surface: #fafaf7;
+      --surface-muted: #e9ebe5;
+      --text: #1b1d1b;
+      --muted: #73766f;
+      --line: #d5d8d0;
+      --line-soft: #e5e7e1;
+      --line-strong: #bfc4b9;
+      --accent: #61784c;
+      --accent-soft: #e6ece0;
+      --danger: #a84b44;
+      --code-bg: #eef0eb;
+    }}
+    html {{ background: var(--canvas); }}
+    body {{
+      background: var(--canvas);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -.005em;
+    }}
+    header {{
+      display: grid;
+      grid-template-columns: 1fr auto;
+      grid-template-areas: "eyebrow theme" "title meta";
+      align-items: end;
+      max-width: 1240px;
+      margin: 0 auto 30px;
+      padding: 38px 24px 22px;
+      border-bottom: 1px solid var(--line);
+    }}
+    h1 {{
+      grid-area: title;
+      margin: 7px 0 0;
+      color: var(--text);
+      font-size: 32px;
+      font-weight: 590;
+      letter-spacing: -.035em;
+      line-height: 1.1;
+    }}
+    h2 {{
+      color: var(--text);
+      font-size: 16px;
+      font-weight: 590;
+      letter-spacing: -.012em;
+      text-transform: none;
+    }}
+    h3, h4 {{ font-weight: 580; letter-spacing: -.01em; }}
+    .header-top {{ display: contents; }}
+    .eyebrow {{
+      grid-area: eyebrow;
+      color: var(--muted);
+      font: 600 10px/1.2 var(--mono);
+      letter-spacing: .12em;
+    }}
+    .theme-toggle {{
+      grid-area: theme;
+      width: 28px;
+      height: 28px;
+      color: var(--muted);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 5px;
+    }}
+    .theme-toggle:hover {{ color: var(--text); border-color: var(--accent); }}
+    .source, .generated {{
+      color: var(--muted);
+      font: 11px/1.7 var(--mono);
+    }}
+    .export-meta {{
+      display: block;
+      grid-area: meta;
+      max-width: 360px;
+      margin-top: 0;
+      text-align: right;
+    }}
+    .export-meta > * {{ margin: 0; }}
+    .source code, code {{ color: var(--accent); }}
+    details.system-prompt {{
+      grid-column: 1 / -1;
+      margin-top: 16px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }}
+    .system-prompt-summary {{
+      padding: 9px 12px;
+      font: 600 11px var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }}
+    .system-prompt-warning {{ color: var(--muted); font-size: 10px; }}
+    .system-prompt-body {{ padding: 0 12px 12px; }}
+    .system-prompt-body pre {{ background: var(--code-bg); }}
+    .view-tabs {{
+      grid-column: 1 / -1;
+      gap: 24px;
+      margin-top: 24px;
+      border-bottom: 1px solid var(--line);
+    }}
+    .view-tab {{
+      padding: 12px 1px 11px;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      border-radius: 0;
+      background: transparent;
+      color: #777b81;
+      font-size: 12px;
+    }}
+    .view-tab:hover {{ background: transparent; color: #c7c9c6; }}
+    .view-tab[aria-selected="true"] {{ color: var(--text); border-bottom-color: var(--accent); }}
+    .filter-bar {{
+      grid-column: 1 / -1;
+      gap: 5px;
+      margin-top: 0;
+      padding: 10px 0 16px;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+    }}
+    .filter-label {{ font: 500 10px var(--mono); letter-spacing: .07em; }}
+    .chip-label, .jsonl-download, .expand-toggle {{
+      padding: 5px 10px;
+      color: #969a9f;
+      background: #17191c;
+      border: 1px solid #34373b;
+      border-radius: 5px;
+      font-size: 11px;
+    }}
+    .chip-label {{ gap: 6px; }}
+    .chip-label::before {{ width: 6px; height: 6px; border-radius: 1px; }}
+    .chip input:checked + .chip-label {{
+      color: #111315;
+      background: #e2e3df;
+      border-color: #e2e3df;
+    }}
+    .chip input:checked + .chip-label::before {{ background: var(--accent); }}
+    .chip-count {{ background: transparent; font-size: 10px; }}
+    .chip input:checked + .chip-label .chip-count {{ background: transparent; }}
+    .jsonl-download:hover, .expand-toggle:hover {{
+      color: var(--text);
+      background: #1e2124;
+      border-color: #45494e;
+    }}
+    .expand-toggle {{ color: var(--accent); border-color: var(--accent); }}
+    main, .analysis-shell {{
+      width: min(1240px, calc(100% - 48px));
+      max-width: 1240px;
+      padding: 28px 0 64px;
+    }}
+    main {{ gap: 24px; }}
+    aside {{
+      top: 14px;
+      padding-right: 18px;
+      border-right: 1px solid var(--line);
+    }}
+    aside h2 {{
+      color: var(--muted);
+      font: 500 10px/1.4 var(--mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }}
+    .tree .tree {{ border-color: var(--line); }}
+    .node-link {{ padding: 5px 7px; border-radius: 3px; }}
+    .node-link:hover {{ background: var(--surface-muted); }}
+    .active-path > .node-link {{ color: var(--accent); }}
+    .active-leaf > .node-link {{ background: var(--accent-soft); color: var(--text); }}
+    .node-type {{ font-size: 11px; }}
+    details.entry {{
+      margin-bottom: 7px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      box-shadow: none;
+    }}
+    details.entry.active-entry {{ background: var(--surface-muted); }}
+    details.entry.is-error {{ border-color: var(--danger); }}
+    .entry-summary {{ padding: 9px 12px; border-radius: 6px; }}
+    .entry-summary:hover {{ background: var(--accent-soft); }}
+    .entry-title {{ font-size: 11px; font-weight: 600; }}
+    .entry-preview {{ color: var(--muted); font-size: 11px; }}
+    .entry-status {{ color: var(--accent); font: 600 9px var(--mono); }}
+    .entry-time {{ color: var(--muted); font: 10px var(--mono); }}
+    .entry-body {{ padding: 10px 12px 12px 30px; border-top-color: var(--line); }}
+    .entry-meta-line {{ font-size: 10px; }}
+    details.block {{
+      background: var(--code-bg);
+      border-color: var(--line-soft, #202327);
+      border-radius: 4px;
+    }}
+    .block-summary {{ padding: 6px 9px; font-size: 10px; }}
+    .block-body {{ padding: 2px 9px 9px; }}
+    pre {{
+      background: var(--code-bg);
+      border-color: var(--line);
+      border-radius: 4px;
+      font-size: 11px;
+    }}
+    .highlight .p {{ color: var(--muted); }}
+    .highlight .nt {{ color: var(--accent); }}
+    .highlight .s2, .highlight .s1 {{ color: #9eaa8e; }}
+    .highlight .mi, .highlight .mf {{ color: #b89564; }}
+    .highlight .kc {{ color: #b58d9b; }}
+    .analysis-shell {{ padding-top: 28px; }}
+    .analysis-heading {{ margin: 0 2px 18px; }}
+    .analysis-heading p {{ color: var(--muted); font: 11px var(--mono); }}
+    .analysis-cards {{
+      gap: 0;
+      margin-bottom: 28px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }}
+    .analysis-card {{ padding: 17px 19px; border-right-color: var(--line); }}
+    .analysis-card span {{
+      font: 500 10px/1.3 var(--mono);
+      color: var(--muted);
+      letter-spacing: .07em;
+    }}
+    .analysis-card strong {{
+      color: var(--text);
+      font-size: 25px;
+      font-weight: 580;
+      letter-spacing: -.035em;
+    }}
+    .analysis-note {{ color: var(--muted); font-size: 11px; }}
+    .analysis-charts {{ gap: 12px; margin-top: 12px; }}
+    .analysis-charts svg {{
+      padding: 25px 27px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }}
+    .analysis-chart .grid {{ stroke: var(--line); }}
+    .analysis-chart .chart-title {{ fill: var(--text); font: 590 16px var(--sans); }}
+    .analysis-chart .tick, .analysis-chart .axis-label, .analysis-chart .legend {{
+      fill: var(--muted);
+      font: 10px var(--mono);
+    }}
+    .analysis-chart .point.active {{ stroke: var(--canvas); }}
+    .analysis-details {{
+      gap: 12px;
+      margin-top: 12px;
+      padding-top: 0;
+      border-top: 0;
+    }}
+    .analysis-details > div {{
+      min-width: 0;
+      padding: 25px 27px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }}
+    .analysis-table-wrap {{ border-top-color: var(--line); }}
+    .analysis-table th {{
+      background: var(--surface);
+      color: #74787e;
+      font: 500 9px/1.4 var(--mono);
+      letter-spacing: .07em;
+    }}
+    .analysis-table td {{ color: #c3c5c2; font-size: 11px; }}
+    .analysis-tool {{ border-top-color: var(--line-soft, #202327); font-size: 11px; }}
+    .chart-tooltip {{
+      background: #181a1d;
+      border: 1px solid #3a3e42;
+      border-radius: 6px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+      color: #d4d5d2;
+    }}
+    :root:not([data-theme="light"]) .theme-toggle .theme-icon-light {{ display: none; }}
+    :root:not([data-theme="light"]) .theme-toggle .theme-icon-dark {{ display: inline-block; }}
+    @media (max-width: 820px) {{
+      header {{ display: block; padding-top: 24px; }}
+      .header-top {{ display: flex; }}
+      .export-meta {{ max-width: none; margin-top: 8px; text-align: left; }}
+      main, .analysis-shell {{ width: min(100% - 28px, 1240px); padding-top: 24px; }}
+      header {{ max-width: 100%; }}
+      .analysis-details > div {{ padding: 20px 17px; }}
+    }}
+    @media (max-width: 520px) {{
+      main, .analysis-shell {{ width: calc(100% - 28px); }}
+      .analysis-card {{ padding: 15px; }}
+    }}
   </style>
 </head>
 <body>
@@ -984,9 +1292,7 @@ def render_session_html(
       var toggle = document.getElementById("themeToggle");
       if (toggle) {{
         toggle.addEventListener("click", function () {{
-          var prefersDark =
-            window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-          var current = root.getAttribute("data-theme") || (prefersDark ? "dark" : "light");
+          var current = root.getAttribute("data-theme") || "dark";
           var next = current === "dark" ? "light" : "dark";
           root.setAttribute("data-theme", next);
           try {{

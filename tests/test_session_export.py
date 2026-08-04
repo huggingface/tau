@@ -86,6 +86,9 @@ def test_render_session_html_uses_static_document_layout() -> None:
     assert 'id="transcriptTab"' in html
     assert 'id="analysisTab"' in html
     assert 'id="analysisView"' in html
+    assert "--canvas: #0d0e10" in html
+    assert "--accent: #a7c080" in html
+    assert "flat surfaces, dense data, one quiet accent" in html
     assert 'id="themeToggle"' in html
     assert "<link" not in html.lower()
     assert "http://" not in html and "https://" not in html
@@ -177,6 +180,7 @@ def test_render_session_html_includes_usage_analysis_tab() -> None:
     assert "Tool calls" in html
     assert 'class="analysis-chart"' in html
     assert 'selectView("analysis")' in html
+    assert 'root.getAttribute("data-theme") || "dark"' in html
 
 
 def test_render_session_html_includes_filter_bar_and_accordions() -> None:

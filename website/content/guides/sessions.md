@@ -110,8 +110,9 @@ The system prompt is display-only export metadata, not a transcript entry.
 Direct JSONL exports and JSONL downloaded from the HTML remain entry-only and do
 not contain it.
 
-The HTML export has separate **Transcript** and **Analysis** tabs. Every
-transcript entry is a compact accordion row (icon, title, one-line preview,
+The HTML export has separate **Transcript** and **Analysis** tabs and uses a
+compact dark, data-dashboard layout with a quiet green accent (the theme toggle
+can switch to light mode). Every transcript entry is a compact accordion row (icon, title, one-line preview,
 timestamp) that expands to reveal the full content; thinking blocks, tool-call
 arguments, and tool-result details are nested accordions. The Analysis tab
 summarizes the active branch with model request totals, cache hit rate,
