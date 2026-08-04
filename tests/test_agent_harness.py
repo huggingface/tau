@@ -61,7 +61,12 @@ async def test_subscribers_receive_nested_message_updates_and_unsubscribe() -> N
         ]
     )
     harness = AgentHarness(
-        AgentHarnessConfig(provider=provider, model="fake", system="You are Tau.")
+        AgentHarnessConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            session_id="session-123",
+        )
     )
     seen: list[str] = []
     unsubscribe = harness.subscribe(lambda event: seen.append(event.type))
@@ -73,6 +78,7 @@ async def test_subscribers_receive_nested_message_updates_and_unsubscribe() -> N
     assert "message_update" in seen
     assert seen[-1] == "agent_end"
     assert len(provider.calls) == 2
+    assert provider.session_ids == ["session-123", "session-123"]
 
 
 @pytest.mark.anyio

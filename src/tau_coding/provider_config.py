@@ -1503,6 +1503,10 @@ def _detected_compat(provider: ProviderConfig, model: str) -> dict[str, Any]:
     is_deepseek = provider.name == "deepseek" or "deepseek.com" in base_url
     is_cerebras = provider.name == "cerebras" or "cerebras.ai" in base_url
     is_openrouter = provider.name == "openrouter" or "openrouter.ai" in base_url
+    is_openai_api = (
+        urlsplit(base_url).hostname == urlsplit(DEFAULT_OPENAI_COMPATIBLE_BASE_URL).hostname
+    )
+    is_openai_responses = _provider_api(provider, model) == "openai-responses"
     is_nonstandard = is_cerebras or is_grok or is_together or is_deepseek or is_zai or is_moonshot
     use_max_tokens = is_moonshot or is_together
     is_anthropic_api = urlsplit(base_url).hostname == urlsplit(DEFAULT_ANTHROPIC_BASE_URL).hostname
@@ -1524,6 +1528,12 @@ def _detected_compat(provider: ProviderConfig, model: str) -> dict[str, Any]:
         ),
         "supportsStrictMode": not (is_moonshot or is_together),
         "supportsLongCacheRetention": not is_together,
+        # OpenAI's prompt-cache fields and affinity headers are not universally
+        # accepted by compatible gateways. Default them on only for the official
+        # endpoint; provider/model compat can opt another route in explicitly.
+        "supportsPromptCacheKey": is_openai_api,
+        "sendSessionAffinityHeaders": is_openai_api and is_openai_responses,
+        "sessionAffinityFormat": "openrouter" if is_openrouter else "openai",
         # Only first-party Anthropic is known to accept cache_control. Several
         # catalog providers speak the Anthropic protocol through a gateway, and one
         # proxies to non-Anthropic models, so they default to no breakpoints. This

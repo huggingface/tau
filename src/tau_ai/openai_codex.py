@@ -46,6 +46,7 @@ from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
 from tau_ai.model_limits import RuntimeModelLimits
+from tau_ai.openai_cache import openai_prompt_cache_key
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 from tau_ai.stream import canonicalize_provider_stream
@@ -139,10 +140,16 @@ class OpenAICodexProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[AssistantMessageEvent]:
         """Stream one response as Pi-compatible assistant message events."""
         raw = self._stream_provider_events(
-            model=model, system=system, messages=messages, tools=tools, signal=signal
+            model=model,
+            system=system,
+            messages=messages,
+            tools=tools,
+            signal=signal,
+            session_id=session_id,
         )
         return canonicalize_provider_stream(
             raw, api="openai-codex-responses", provider="openai-codex", model=model
@@ -156,11 +163,13 @@ class OpenAICodexProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Stream one Codex Responses request as provider-neutral events."""
 
         async def iterator() -> AsyncIterator[ProviderEvent]:
             client = self._get_client()
+            cache_key = openai_prompt_cache_key(session_id)
             payload = _build_codex_payload(
                 model=model,
                 system=system,
@@ -169,6 +178,7 @@ class OpenAICodexProvider:
                 reasoning_effort=self._config.reasoning_effort,
                 reasoning_summary=self._config.reasoning_summary,
                 supports_images=self._config.supports_images,
+                prompt_cache_key=cache_key,
             )
             url = _resolve_codex_url(self._config.base_url)
 
@@ -183,6 +193,7 @@ class OpenAICodexProvider:
                         access_token=credentials.access_token,
                         account_id=credentials.account_id,
                         originator=self._config.originator,
+                        session_id=cache_key,
                     )
                     async with client.stream(
                         "POST",
@@ -367,6 +378,7 @@ def _build_codex_payload(
     reasoning_effort: str | None = None,
     reasoning_summary: str = "auto",
     supports_images: bool = False,
+    prompt_cache_key: str | None = None,
 ) -> dict[str, JSONValue]:
     payload: dict[str, JSONValue] = {
         "model": model,
@@ -379,6 +391,8 @@ def _build_codex_payload(
         "tool_choice": "auto",
         "parallel_tool_calls": True,
     }
+    if prompt_cache_key is not None:
+        payload["prompt_cache_key"] = prompt_cache_key
     if reasoning_effort is not None:
         payload["reasoning"] = {
             "effort": reasoning_effort,
@@ -952,6 +966,7 @@ def _build_codex_headers(
     access_token: str,
     account_id: str,
     originator: str,
+    session_id: str | None = None,
 ) -> dict[str, str]:
     headers = {
         **dict(configured_headers or {}),
@@ -963,6 +978,9 @@ def _build_codex_headers(
         "accept": "text/event-stream",
         "content-type": "application/json",
     }
+    if session_id is not None:
+        headers["session-id"] = session_id
+        headers["x-client-request-id"] = session_id
     return headers
 
 

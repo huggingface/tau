@@ -51,6 +51,7 @@ async def run_agent_loop(
     prompts: Sequence[AgentMessage] = (),
     max_turns: int | None = None,
     signal: CancellationToken | None = None,
+    session_id: str | None = None,
     get_steering_messages: Callable[[], Sequence[AgentMessage]] | None = None,
     get_follow_up_messages: Callable[[], Sequence[AgentMessage]] | None = None,
     before_tool_call: BeforeToolCall | None = None,
@@ -117,6 +118,7 @@ async def run_agent_loop(
                 messages=_provider_context(messages),
                 tools=tools,
                 signal=signal,
+                session_id=session_id,
             ):
                 yield event
                 if isinstance(event, MessageEndEvent) and isinstance(
@@ -194,6 +196,7 @@ async def _assistant_events(
     messages: list[AgentMessage],
     tools: list[AgentTool],
     signal: CancellationToken | None,
+    session_id: str | None,
 ) -> AsyncIterator[AgentEvent]:
     source: AsyncIterator[AssistantMessageEvent] = provider.stream_response(
         model=model,
@@ -201,6 +204,7 @@ async def _assistant_events(
         messages=messages,
         tools=tools,
         signal=signal,
+        session_id=session_id,
     )
     started = False
     async for event in source:

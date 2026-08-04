@@ -49,6 +49,36 @@ def test_create_model_provider_uses_codex_model_image_capability(tmp_path) -> No
     assert text_provider._config.supports_images is False
 
 
+def test_direct_openai_runtime_enables_responses_cache_affinity(tmp_path) -> None:
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key("openai", "sk-test")
+
+    provider = create_model_provider(
+        provider_config_from_catalog_entry("openai"),
+        credential_store=store,
+        model="gpt-5.4",
+    )
+
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider._config.compat["supportsPromptCacheKey"] is True
+    assert provider._config.compat["sendSessionAffinityHeaders"] is True
+    assert provider._config.compat["sessionAffinityFormat"] == "openai"
+
+
+def test_compatible_gateway_defaults_to_no_openai_cache_affinity(tmp_path) -> None:
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key("together", "gateway-key")
+
+    provider = create_model_provider(
+        provider_config_from_catalog_entry("together"),
+        credential_store=store,
+    )
+
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider._config.compat["supportsPromptCacheKey"] is False
+    assert provider._config.compat["sendSessionAffinityHeaders"] is False
+
+
 def test_create_model_provider_uses_anthropic_oauth_runtime_auth(tmp_path) -> None:
     store = FileCredentialStore(tmp_path / "credentials.json")
     store.set_oauth(

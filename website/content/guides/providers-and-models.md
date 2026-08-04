@@ -60,6 +60,22 @@ OAuth tokens refresh automatically. `/logout` removes Tau's local credential,
 but does not revoke the grant remotely; use the provider's account settings for
 remote revocation.
 
+#### OpenAI prompt caching
+
+For direct OpenAI API and Codex OAuth sessions, Tau sends a stable session-derived
+prompt-cache key with every model request, including continuations after tool
+calls. OpenAI can use that key to keep successive append-only requests on the same
+cache path, improving reuse of the system prompt, tool schemas, and conversation
+prefix. Resuming a Tau session reuses its key; starting or branching a session
+creates a new one.
+
+Requests remain stateless: Tau keeps provider storage disabled and resends the
+complete transcript. The key improves cache affinity but cannot preserve a hit if
+the prefix changes or the provider cache expires. OpenAI-compatible gateways do
+not receive these fields unless their catalog compatibility settings explicitly
+opt in. The TUI sidebar's latest-request cache rate shows whether the most recent
+request actually hit.
+
 #### Anthropic prompt caching
 
 Tau marks cache breakpoints on Anthropic requests so the system prompt, tool

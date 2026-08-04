@@ -129,8 +129,9 @@ class RaisingProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[AssistantMessageEvent]:
-        del model, system, messages, tools, signal
+        del model, system, messages, tools, signal, session_id
         self.call_count += 1
         should_fail = self.call_count == self.fail_on_call
 
@@ -158,8 +159,9 @@ class WaitingProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[AssistantMessageEvent]:
-        del model, system, tools, signal
+        del model, system, tools, signal, session_id
         call_index = self.call_count
         self.call_count += 1
         self.calls.append(list(messages))
@@ -191,8 +193,9 @@ class CancellableWaitingProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[AssistantMessageEvent]:
-        del model, system, tools
+        del model, system, tools, session_id
         self.calls.append(list(messages))
 
         async def iterator() -> AsyncIterator[AssistantMessageEvent]:
@@ -320,6 +323,7 @@ async def test_prompt_logs_error_event_diagnostic_data(tmp_path: Path) -> None:
 
     await _collect_session_events(session.prompt("Hello"))
 
+    assert provider.session_ids == ["session-1"]
     log_path = tau_paths.agent_calls_log_path
     assert session.last_diagnostic_log_path == log_path
     entry = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])

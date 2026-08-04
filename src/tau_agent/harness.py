@@ -43,6 +43,7 @@ class AgentHarnessConfig:
     tools: list[AgentTool] = field(default_factory=list)
     max_turns: int | None = None
     queue_mode: QueueMode = "one_at_a_time"
+    session_id: str | None = None
     before_tool_call: BeforeToolCall | None = None
     after_tool_call: AfterToolCall | None = None
 
@@ -175,6 +176,7 @@ class AgentHarness:
                 tools=self._config.tools,
                 max_turns=self._config.max_turns,
                 signal=signal,
+                session_id=self._config.session_id,
                 get_steering_messages=self._drain_steering_messages,
                 get_follow_up_messages=self._drain_follow_up_messages,
                 before_tool_call=self._config.before_tool_call,

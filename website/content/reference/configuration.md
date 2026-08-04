@@ -150,6 +150,22 @@ default references after merging. Bundled tombstones therefore prevent stale
 user overlays from restoring models that Tau previously advertised for the wrong
 provider. They do not affect the same model ID on another provider.
 
+### OpenAI prompt-cache compat keys
+
+Tau enables OpenAI cache affinity automatically only for `api.openai.com` and the
+dedicated Codex OAuth provider. OpenAI-compatible gateways can opt in per provider
+or model:
+
+| Key | Effect |
+| --- | --- |
+| `supportsPromptCacheKey` | Sends the stable session-derived `prompt_cache_key` body field |
+| `sendSessionAffinityHeaders` | Sends headers using `sessionAffinityFormat` |
+| `sessionAffinityFormat` | `openai` sends `session_id` and `x-client-request-id`; `openai-nosession` sends only `x-client-request-id`; `openrouter` sends `x-session-id` |
+
+Unknown gateways retain their existing request shape by default. Enable only fields
+documented by the target service. Codex uses its dedicated `session-id` header
+mapping and does not read these OpenAI-compatible settings.
+
 ### Anthropic prompt-cache compat keys
 
 Providers using the `anthropic-messages` API accept three `compat` booleans

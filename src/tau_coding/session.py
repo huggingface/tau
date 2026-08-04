@@ -469,6 +469,7 @@ class CodingSession:
                 model=active_model,
                 system=system,
                 tools=tools,
+                session_id=config.session_id,
             ),
             messages=state.messages,
         )
@@ -2012,6 +2013,7 @@ class CodingSession:
                 tools=self._harness.config.tools,
                 max_turns=self._harness.config.max_turns,
                 queue_mode=self._harness.config.queue_mode,
+                session_id=self._config.session_id,
             ),
             messages=self._state.messages,
         )
