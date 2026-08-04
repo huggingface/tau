@@ -6841,9 +6841,12 @@ async def run_tui_app(
                 trust_prompt=prompt_project_trust,
             )
         )
+        trust_resolution = getattr(session, "project_trust_resolution", None)
+        if trust_resolution is not None and trust_resolution.cancelled:
+            return None
+
         theme_dirs = getattr(session, "theme_dirs", None)
         if theme_dirs is None:
-            trust_resolution = getattr(session, "project_trust_resolution", None)
             trusted = trust_resolution is None or trust_resolution.trusted
             theme_dirs = TauResourcePaths(
                 cwd=record.cwd,

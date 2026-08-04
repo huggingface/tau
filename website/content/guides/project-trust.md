@@ -30,8 +30,9 @@ Interactive startup offers:
 - decline this exact folder and save it;
 - decline for this run only.
 
-Escape/cancel safely declines for startup. During `/reload` or cross-project
-session replacement, cancellation preserves the current session snapshot.
+Escape/cancel exits Tau during startup without loading the project. During
+`/reload` or cross-project session replacement, cancellation preserves the
+current session snapshot and keeps Tau open.
 Saved decisions live in `~/.tau/trust.json`, version 1. Tau validates the whole
 file and updates it under a lock with restrictive permissions and atomic
 replacement. A malformed, unreadable, locked, or unwritable store never grants

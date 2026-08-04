@@ -10,8 +10,9 @@ Interactive users can save exact or displayed-parent decisions or choose a
 run-only result. `~/.tau/trust.json` is a locked, atomically replaced version-1
 store. `defaultProjectTrust` in user `~/.tau/settings.json` is `ask`, `always`,
 or `never`; headless `ask`/`never` decline. `--approve` and `--no-approve` are
-run-only. Trusted project extensions additionally require
-`--project-extensions`.
+run-only. Cancelling the interactive startup decision exits Tau; continuing
+without project inputs requires selecting a decline option. Trusted project
+extensions additionally require `--project-extensions`.
 
 Project trust is only an input-loading guard. It is not a filesystem, process,
 shell, network, tool, credential, provider, model, package-install,

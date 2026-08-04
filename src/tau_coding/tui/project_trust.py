@@ -27,7 +27,7 @@ class ProjectTrustScreen(ModalScreen[TrustChoice | None]):
     """Tau-style modal picker rendering one policy-owned request."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("escape", "cancel", "Decline for this run"),
+        Binding("escape", "cancel", "Cancel"),
         Binding("up", "cursor_up", "Up", show=False),
         Binding("down", "cursor_down", "Down", show=False),
         Binding("enter", "select_cursor", "Select", show=False),
@@ -85,9 +85,15 @@ class ProjectTrustScreen(ModalScreen[TrustChoice | None]):
     }
     """
 
-    def __init__(self, request: ProjectTrustRequest) -> None:
+    def __init__(
+        self,
+        request: ProjectTrustRequest,
+        *,
+        cancel_action: str = "cancels",
+    ) -> None:
         super().__init__()
         self.request = request
+        self.cancel_action = cancel_action
 
     def compose(self) -> ComposeResult:
         categories = ", ".join(
@@ -117,7 +123,10 @@ class ProjectTrustScreen(ModalScreen[TrustChoice | None]):
                 id="project-trust-boundary",
             )
             yield ListView(*choices, id="project-trust-list")
-            yield Static("↑/↓ choose · Enter selects · Escape declines", id="project-trust-help")
+            yield Static(
+                f"↑/↓ choose · Enter selects · Escape {self.cancel_action}",
+                id="project-trust-help",
+            )
 
     def on_mount(self) -> None:
         """Focus the first safe, explicit action for keyboard users."""
@@ -164,7 +173,10 @@ class _ProjectTrustApp(App[TrustChoice | None]):
         self.request = request
 
     def on_mount(self) -> None:
-        self.push_screen(ProjectTrustScreen(self.request), self.exit)
+        self.push_screen(
+            ProjectTrustScreen(self.request, cancel_action="exits Tau"),
+            self.exit,
+        )
 
 
 async def prompt_project_trust(request: ProjectTrustRequest) -> TrustChoice | None:

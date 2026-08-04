@@ -315,10 +315,12 @@ async def test_tui_trust_modal_shows_boundary_parent_and_keyboard_cancel(
     async with host.run_test() as pilot:
         await pilot.pause()
         boundary = str(host.screen.query_one("#project-trust-boundary", Static).content)
+        help_text = str(host.screen.query_one("#project-trust-help", Static).content)
         displayed_path = str(host.screen.query_one("#project-trust-path", Static).content)
         summary_copy = str(host.screen.query_one("#project-trust-summary", Static).content)
         parent_choice = host.screen.query_one("#trust-trust-parent", ListItem)
         assert "not a sandbox" in boundary
+        assert "Escape cancels" in help_text
         assert displayed_path == str(project.resolve())
         assert "context (1)" in summary_copy
         assert str(project.parent.resolve()) in str(parent_choice.query_one(Static).content)
@@ -607,8 +609,10 @@ async def test_standalone_trust_modal_uses_tau_dark_palette(tmp_path: Path) -> N
         dialog = host.screen.query_one("#project-trust-dialog", Vertical)
         choice_list = host.screen.query_one("#project-trust-list", ListView)
         highlighted_label = choice_list.query_one(ListItem).query_one(Label)
+        help_text = str(host.screen.query_one("#project-trust-help", Static).content)
 
         assert host.theme == TAU_DARK_THEME.name
+        assert "Escape exits Tau" in help_text
         assert dialog.styles.background == Color.parse(TAU_DARK_THEME.chrome_background)
         assert dialog.styles.color == Color.parse(TAU_DARK_THEME.chrome_text)
         assert choice_list.styles.background == Color.parse(TAU_DARK_THEME.transcript_background)

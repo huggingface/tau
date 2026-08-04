@@ -507,7 +507,9 @@ would load, and say “This controls project inputs; it is not a sandbox.” Cho
   with protected resources skipped;
 - **Do not trust for this run only** — skip without writing.
 
-Escape/cancel equals run-only decline. Parent scope must never default to `$HOME`
+Escape/cancel exits Tau during initial startup; users must explicitly select a
+run-only decline to continue without project inputs. During reload or session
+replacement, cancellation preserves the active snapshot. Parent scope must never default to `$HOME`
 or filesystem root without displaying the exact broad scope and requiring the
 same explicit selection. Accessibility, focus, and key handling belong to the
 Textual adapter/modal; available choices and semantics belong to `tau_coding`.

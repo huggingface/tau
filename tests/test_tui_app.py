@@ -7944,6 +7944,79 @@ async def test_run_tui_app_falls_back_to_first_credentialed_provider(
 
 
 @pytest.mark.anyio
+async def test_run_tui_app_exits_when_startup_trust_is_cancelled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    calls: list[str] = []
+    record = CodingSessionRecord(
+        id="new-session",
+        path=tmp_path / "new-session.jsonl",
+        cwd=tmp_path,
+        model="gpt-5",
+        title=None,
+        created_at=1.0,
+        updated_at=1.0,
+        provider_name="openai",
+    )
+
+    class FakeProvider:
+        async def aclose(self) -> None:
+            calls.append("provider_closed")
+
+    class FakeManager:
+        def prepare_session(
+            self,
+            *,
+            cwd: Path,
+            model: str,
+            provider_name: str | None = None,
+        ) -> CodingSessionRecord:
+            calls.append("prepare")
+            return record
+
+        def get_session(self, session_id: str) -> CodingSessionRecord | None:
+            return None
+
+    class CancelledSession:
+        project_trust_resolution = SimpleNamespace(cancelled=True)
+
+        async def aclose(self) -> None:
+            calls.append("session_closed")
+
+    class FakeCodingSession:
+        @classmethod
+        async def load(cls, config: object) -> CancelledSession:
+            calls.append("load")
+            return CancelledSession()
+
+    class UnexpectedApp:
+        def __init__(self, session: object, **kwargs: object) -> None:
+            raise AssertionError("main TUI must not open after startup trust cancellation")
+
+    settings = ProviderSettings(
+        default_provider="openai",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="openai",
+                models=("gpt-5",),
+                default_model="gpt-5",
+            ),
+        ),
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "stored-key")
+    monkeypatch.setattr(tui_app, "load_provider_settings", lambda: settings)
+    monkeypatch.setattr(tui_app, "create_model_provider", lambda *args, **kwargs: FakeProvider())
+    monkeypatch.setattr(tui_app, "CodingSession", FakeCodingSession)
+    monkeypatch.setattr(tui_app, "TauTuiApp", UnexpectedApp)
+
+    result = await tui_app.run_tui_app(cwd=tmp_path, model=None, session_manager=FakeManager())
+
+    assert result is None
+    assert calls == ["prepare", "load", "session_closed", "provider_closed"]
+
+
+@pytest.mark.anyio
 async def test_run_tui_app_surfaces_startup_provider_error_in_login_message(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
