@@ -491,9 +491,19 @@ Tool call interrupted by user
 The repair runs on cancelled cleanup and before the next prompt/continue, so even
 persisted broken sessions can recover.
 
+**Update (PR #526):** the cancelled-cleanup repair used to exist only in the
+in-memory harness — the TUI cancels the worker consuming `session.prompt()`, so
+consumer-side persistence never saw it, and session files were left with a
+dangling tool call that later replays (`/tree`) sent to providers as-is.
+Persistence is now a harness event subscriber, and the cleanup repair is pushed
+to subscribers, so the synthetic result reaches the session file at
+cancellation time.
+
 **Future instruction:** do not delete or skip tool results in UI/session code. If
 a run is interrupted mid-tool, the transcript still needs matching tool-result
-messages for provider validity.
+messages for provider validity. Persistence must stay push-based (subscribed to
+the harness); do not move it back into an event-consuming loop that a frontend
+can tear down.
 
 ### Roadblock: provider errors were too generic to debug
 
