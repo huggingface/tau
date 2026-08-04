@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from textual.app import App, ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.containers import Vertical
+from textual.events import Key
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Static
+from textual.widgets import Label, ListItem, ListView, Static
 
 from tau_coding.project_trust import ProjectTrustRequest, TrustChoice
 
@@ -20,18 +23,64 @@ _LABELS: tuple[tuple[TrustChoice, str], ...] = (
 
 
 class ProjectTrustScreen(ModalScreen[TrustChoice | None]):
-    """Keyboard-accessible modal rendering one policy-owned request."""
+    """Tau-style modal picker rendering one policy-owned request."""
 
-    BINDINGS = [Binding("escape", "cancel", "Decline for this run")]
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("escape", "cancel", "Decline for this run"),
+        Binding("up", "cursor_up", "Up", show=False),
+        Binding("down", "cursor_down", "Down", show=False),
+        Binding("enter", "select_cursor", "Select", show=False),
+    ]
     DEFAULT_CSS = """
-    ProjectTrustScreen { align: center middle; }
-    #project-trust-dialog {
-        width: 76; max-height: 90%; padding: 1 2;
-        border: round $accent; background: $panel;
+    ProjectTrustScreen {
+        align: center middle;
+        background: $background 60%;
     }
-    #project-trust-title { text-style: bold; margin-bottom: 1; }
-    #project-trust-copy { margin-bottom: 1; }
-    #project-trust-dialog Button { width: 100%; margin-top: 1; }
+    #project-trust-dialog {
+        width: 76;
+        max-width: 92%;
+        height: auto;
+        max-height: 90%;
+        padding: 1 2;
+        background: $panel;
+        color: $text;
+        border: tall $primary;
+    }
+    #project-trust-title {
+        height: 1;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    #project-trust-path-label,
+    #project-trust-summary-label {
+        height: 1;
+        color: $text-muted;
+    }
+    #project-trust-path,
+    #project-trust-summary,
+    #project-trust-boundary {
+        height: auto;
+        margin-bottom: 1;
+    }
+    #project-trust-boundary {
+        color: $text-muted;
+    }
+    #project-trust-list {
+        height: auto;
+        max-height: 7;
+        background: $surface;
+        border: tall $primary;
+    }
+    #project-trust-list ListItem.-highlight,
+    #project-trust-list ListItem.-highlight Label {
+        background: $accent;
+        color: $text;
+    }
+    #project-trust-help {
+        height: 1;
+        margin-top: 1;
+        color: $text-muted;
+    }
     """
 
     def __init__(self, request: ProjectTrustRequest) -> None:
@@ -44,22 +93,61 @@ class ProjectTrustScreen(ModalScreen[TrustChoice | None]):
             for category in self.request.resources.categories
         )
         parent = self.request.cwd.value.parent
-        with Vertical(id="project-trust-dialog"):
-            yield Label("Project inputs require a decision", id="project-trust-title")
-            yield Static(
-                f"Folder: {self.request.cwd.value}\n"
-                f"Protected inputs: {categories}\n\n"
-                "This controls project inputs; it is not a sandbox.",
-                id="project-trust-copy",
+        choices = []
+        for choice, label in _LABELS:
+            displayed = f"{label} ({parent})" if choice == "trust-parent" else label
+            choices.append(
+                ListItem(
+                    Label(displayed, markup=False),
+                    id=f"trust-{choice}",
+                    name=choice,
+                    classes="project-trust-choice",
+                )
             )
-            for choice, label in _LABELS:
-                displayed = f"{label} ({parent})" if choice == "trust-parent" else label
-                yield Button(displayed, id=f"trust-{choice}", name=choice)
+        with Vertical(id="project-trust-dialog"):
+            yield Static("Project inputs require a decision", id="project-trust-title")
+            yield Static("Folder", id="project-trust-path-label")
+            yield Static(str(self.request.cwd.value), id="project-trust-path", markup=False)
+            yield Static("Protected inputs", id="project-trust-summary-label")
+            yield Static(categories, id="project-trust-summary", markup=False)
+            yield Static(
+                "This controls project inputs; it is not a sandbox.",
+                id="project-trust-boundary",
+            )
+            yield ListView(*choices, id="project-trust-list")
+            yield Static("↑/↓ choose · Enter selects · Escape declines", id="project-trust-help")
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        choice = event.button.name
+    def on_mount(self) -> None:
+        """Focus the first safe, explicit action for keyboard users."""
+        choices = self.query_one("#project-trust-list", ListView)
+        choices.index = 0
+        choices.focus()
+
+    def on_key(self, event: Key) -> None:
+        """Keep navigation local when hosted by Tau's globally bound app."""
+        if event.key == "up":
+            event.stop()
+            self.action_cursor_up()
+        elif event.key == "down":
+            event.stop()
+            self.action_cursor_down()
+        elif event.key == "enter":
+            event.stop()
+            self.action_select_cursor()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        choice = event.item.name
         if choice is not None:
             self.dismiss(choice)  # type: ignore[arg-type]
+
+    def action_cursor_up(self) -> None:
+        self.query_one("#project-trust-list", ListView).action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        self.query_one("#project-trust-list", ListView).action_cursor_down()
+
+    def action_select_cursor(self) -> None:
+        self.query_one("#project-trust-list", ListView).action_select_cursor()
 
     def action_cancel(self) -> None:
         self.dismiss(None)

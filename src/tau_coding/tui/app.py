@@ -3143,8 +3143,13 @@ class TauTuiApp(App[None]):
 
     ExtensionSelectScreen,
     ExtensionConfirmScreen,
-    ExtensionInputScreen {
+    ExtensionInputScreen,
+    ProjectTrustScreen {
         align: center middle;
+    }
+
+    ProjectTrustScreen {
+        background: $tau-screen-background 60%;
     }
 
     #extension-select,
@@ -3193,6 +3198,40 @@ class TauTuiApp(App[None]):
         height: 1;
         margin-top: 1;
         color: $tau-muted-text;
+    }
+
+    #project-trust-dialog {
+        width: 76;
+        max-width: 92%;
+        height: auto;
+        max-height: 90%;
+        padding: 1 2;
+        background: $tau-chrome-background;
+        color: $tau-chrome-text;
+        border: tall $tau-border;
+    }
+
+    #project-trust-title {
+        color: $tau-chrome-text;
+    }
+
+    #project-trust-path-label,
+    #project-trust-summary-label,
+    #project-trust-boundary,
+    #project-trust-help {
+        color: $tau-muted-text;
+    }
+
+    #project-trust-list {
+        background: $tau-transcript-background;
+        color: $tau-screen-text;
+        border: tall $tau-border;
+    }
+
+    #project-trust-list ListItem.-highlight,
+    #project-trust-list ListItem.-highlight Label {
+        background: $tau-highlight-background;
+        color: $tau-highlight-text;
     }
 
     #command-output {
@@ -4858,7 +4897,8 @@ class TauTuiApp(App[None]):
             | LoginProviderPickerScreen
             | ThemePickerScreen
             | ExtensionSelectScreen
-            | ExtensionConfirmScreen,
+            | ExtensionConfirmScreen
+            | ProjectTrustScreen,
         ):
             self.screen.action_select_cursor()
             return
@@ -4888,7 +4928,8 @@ class TauTuiApp(App[None]):
             | ModelPickerScreen
             | ToolsReferenceScreen
             | ExtensionSelectScreen
-            | ExtensionConfirmScreen,
+            | ExtensionConfirmScreen
+            | ProjectTrustScreen,
         ):
             self.screen.action_cursor_down()
             return
@@ -4915,7 +4956,8 @@ class TauTuiApp(App[None]):
             | ModelPickerScreen
             | ToolsReferenceScreen
             | ExtensionSelectScreen
-            | ExtensionConfirmScreen,
+            | ExtensionConfirmScreen
+            | ProjectTrustScreen,
         ):
             self.screen.action_cursor_up()
             return

@@ -73,6 +73,7 @@ from tau_coding.events import (
 from tau_coding.extensions.runtime import ExtensionRuntime
 from tau_coding.paths import TauPaths
 from tau_coding.project_trust import (
+    CanonicalProjectPath,
     ProjectTrustCoordinator,
     ProjectTrustResolution,
     ProjectTrustStore,
@@ -325,6 +326,7 @@ class CodingSession:
         self._runtime_model_limits_key: tuple[str, str] | None = None
         self._model_limits_discovery_error: str | None = None
         self._project_trust_resolution = project_trust_resolution
+        self._project_trust_commit_pending = False
 
     @classmethod
     async def load(cls, config: CodingSessionConfig) -> CodingSession:
@@ -503,8 +505,7 @@ class CodingSession:
         # session_start is deferred: hosts emit it via emit_pending_session_start()
         # after installing their UI bridge.
         session._session_start_pending = True
-        if not trust_resolution.cancelled:
-            coordinator.commit(summary.cwd, trust_resolution)
+        session._project_trust_commit_pending = not trust_resolution.cancelled
         return session
 
     @property
@@ -877,8 +878,19 @@ class CodingSession:
         """
         if not self._session_start_pending:
             return
-        self._session_start_pending = False
         await self._extension_runtime.emit_session_start("startup")
+        self._commit_project_trust_resolution()
+        self._session_start_pending = False
+
+    def _commit_project_trust_resolution(self) -> None:
+        """Publish staged trust only after the session becomes live."""
+        if not self._project_trust_commit_pending:
+            return
+        coordinator = self._config.project_trust_coordinator
+        resolution = self._project_trust_resolution
+        if coordinator is not None and resolution is not None:
+            coordinator.commit(CanonicalProjectPath(self.cwd), resolution)
+        self._project_trust_commit_pending = False
 
     def queue_steering_message(
         self,
@@ -1393,13 +1405,21 @@ class CodingSession:
                 )
             )
 
-        # Commit boundary: every fallible discovery/composition step succeeded.
+        # Cancellable lifecycle work stays before the publication boundary. The
+        # staged runtime may inspect the still-live session during session_start;
+        # cancellation leaves that prior snapshot/runtime/cache untouched.
         old_runtime = self._extension_runtime
         await old_runtime.emit_session_shutdown("reload")
+        old_runtime.clear_ui_components()
+        staged_runtime.set_ui_bridge(previous_ui)
+        staged_runtime.bind(self)
+        await staged_runtime.emit_session_start("reload")
+
+        # Publication is synchronous: cancellation can no longer report failure
+        # after only part of the live snapshot or trust cache was adopted.
         if coordinator is not None and trust_summary is not None:
             assert staged_resolution is not None
             coordinator.commit(trust_summary.cwd, staged_resolution)
-        old_runtime.clear_ui_components()
         old_runtime.retire()
         self._resource_paths = staged_paths
         self._config = replace(
@@ -1419,14 +1439,11 @@ class CodingSession:
         self._resource_diagnostics = resources.diagnostics
         self._command_registry = staged_commands
         self._extension_runtime = staged_runtime
-        staged_runtime.set_ui_bridge(previous_ui)
         self._harness.config.tools = staged_tools
         self._harness.config.system = staged_system
         if system_prompt_rebuilt:
             self._invalidate_context_usage_cache()
-        staged_runtime.bind(self)
         staged_runtime.attach_harness_listener(self._harness.subscribe)
-        await staged_runtime.emit_session_start("reload")
 
         return CodingReloadSummary(
             skills=_category_summary(before_skills, _skill_signatures(resources.skills)),
@@ -1598,13 +1615,16 @@ class CodingSession:
         (transcript persistence, parent ids) mutates here, not on the discarded
         replacement instance.
         """
-        await self._extension_runtime.emit_session_shutdown(reason)
-        # Tear down extension-owned UI (slot widgets, main views, key
-        # interceptors) from the outgoing session after its shutdown handlers
-        # run and before session_start fires, so start handlers can re-mount
-        # into a clean frontend.
-        self._extension_runtime.clear_ui_components()
-        self._extension_runtime.retire()
+        old_runtime = self._extension_runtime
+        await old_runtime.emit_session_shutdown(reason)
+        old_runtime.clear_ui_components()
+        await replacement._extension_runtime.emit_session_start(reason)
+        replacement._commit_project_trust_resolution()
+        replacement._session_start_pending = False
+
+        # Every cancellable boundary has completed. Adopt synchronously so a
+        # reported cancellation cannot expose only part of the destination.
+        old_runtime.retire()
         self._config = replacement._config
         self._state = replacement._state
         self._harness = replacement._harness
@@ -1630,9 +1650,10 @@ class CodingSession:
         self._extension_runtime = replacement._extension_runtime
         self._image_support = replacement._image_support
         self._project_trust_resolution = replacement._project_trust_resolution
+        self._project_trust_commit_pending = False
+        self._session_start_pending = False
         self._extension_runtime.bind(self)
         self._extension_runtime.attach_harness_listener(self._harness.subscribe)
-        await self._extension_runtime.emit_session_start(reason)
 
     async def compact(self, instructions: str | None = None) -> str:
         """Generate a manual compaction summary and rebuild active context."""

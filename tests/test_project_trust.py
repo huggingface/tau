@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -7,7 +8,7 @@ from typing import cast
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Static
+from textual.widgets import ListItem, ListView, Static
 from typer.testing import CliRunner
 
 from tau_agent.provider import ModelProvider
@@ -272,6 +273,7 @@ async def test_tui_trust_modal_shows_boundary_parent_and_keyboard_cancel(
 ) -> None:
     project = tmp_path / "parent/project"
     project.mkdir(parents=True)
+    (project / "AGENTS.md").write_text("rules", encoding="utf-8")
     summary = ProtectedResourceDetector().detect(canonicalize_project_path(project))
     request = ProjectTrustRequest(canonicalize_project_path(project), summary, None)
     results: list[object | None] = []
@@ -283,10 +285,15 @@ async def test_tui_trust_modal_shows_boundary_parent_and_keyboard_cancel(
     host = Host()
     async with host.run_test() as pilot:
         await pilot.pause()
-        copy = str(host.screen.query_one("#project-trust-copy", Static).content)
-        parent_button = host.screen.query_one("#trust-trust-parent", Button)
-        assert "not a sandbox" in copy
-        assert str(project.parent.resolve()) in str(parent_button.label)
+        boundary = str(host.screen.query_one("#project-trust-boundary", Static).content)
+        displayed_path = str(host.screen.query_one("#project-trust-path", Static).content)
+        summary_copy = str(host.screen.query_one("#project-trust-summary", Static).content)
+        parent_choice = host.screen.query_one("#trust-trust-parent", ListItem)
+        assert "not a sandbox" in boundary
+        assert displayed_path == str(project.resolve())
+        assert "context (1)" in summary_copy
+        assert str(project.parent.resolve()) in str(parent_choice.query_one(Static).content)
+        assert parent_choice.has_class("project-trust-choice")
         await pilot.press("escape")
         await pilot.pause()
 
@@ -518,18 +525,18 @@ async def test_failed_reload_preserves_complete_live_snapshot(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(
-    ("button_id", "expected"),
+    ("choice_id", "index", "expected"),
     [
-        ("#trust-trust-exact", "trust-exact"),
-        ("#trust-trust-parent", "trust-parent"),
-        ("#trust-trust-run", "trust-run"),
-        ("#trust-decline-exact", "decline-exact"),
-        ("#trust-decline-run", "decline-run"),
+        ("#trust-trust-exact", 0, "trust-exact"),
+        ("#trust-trust-parent", 1, "trust-parent"),
+        ("#trust-trust-run", 2, "trust-run"),
+        ("#trust-decline-exact", 3, "decline-exact"),
+        ("#trust-decline-run", 4, "decline-run"),
     ],
 )
 @pytest.mark.anyio
-async def test_tui_trust_modal_all_choices_are_keyboard_focusable(
-    tmp_path: Path, button_id: str, expected: str
+async def test_tui_trust_modal_all_choices_support_arrow_navigation(
+    tmp_path: Path, choice_id: str, index: int, expected: str
 ) -> None:
     project = tmp_path / "parent/project"
     project.mkdir(parents=True)
@@ -545,8 +552,12 @@ async def test_tui_trust_modal_all_choices_are_keyboard_focusable(
     host = Host()
     async with host.run_test() as pilot:
         await pilot.pause()
-        assert isinstance(host.screen.focused, Button)
-        host.screen.query_one(button_id, Button).focus()
+        choice_list = host.screen.query_one("#project-trust-list", ListView)
+        assert host.screen.focused is choice_list
+        assert host.screen.query_one(choice_id, ListItem).has_class("project-trust-choice")
+        for _ in range(index):
+            await pilot.press("down")
+        assert choice_list.index == index
         await pilot.press("enter")
         await pilot.pause()
 
@@ -951,3 +962,184 @@ async def test_cancelled_destination_staging_leaves_source_session_and_cache_unc
     assert active.system_prompt == source_prompt
     assert active._extension_runtime is source_runtime
     assert destination.resolve() not in coordinator._cache
+
+
+@pytest.mark.anyio
+async def test_reload_cancellation_during_shutdown_preserves_snapshot_and_re_resolves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    coordinator = ProjectTrustCoordinator(ProjectTrustStore(_paths(tmp_path)))
+    prompts = 0
+
+    async def prompt(_request: ProjectTrustRequest) -> str:
+        nonlocal prompts
+        prompts += 1
+        return "trust-run"
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=cast(ModelProvider, object()),
+            model="fake",
+            storage=_Storage(),
+            cwd=project,
+            resource_paths=TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None),
+            project_trust_coordinator=coordinator,
+            trust_interactive=True,
+            trust_prompt=prompt,
+        )
+    )
+    await session.emit_pending_session_start()
+    old_runtime = session._extension_runtime
+    old_prompt = session.system_prompt
+    (project / "AGENTS.md").write_text("NEW-CONTEXT", encoding="utf-8")
+
+    async def cancel_shutdown(_reason: str) -> None:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(old_runtime, "emit_session_shutdown", cancel_shutdown)
+    with pytest.raises(asyncio.CancelledError):
+        await session.reload()
+
+    assert prompts == 1
+    assert session._extension_runtime is old_runtime
+    assert session.system_prompt == old_prompt
+    assert coordinator._cache[project.resolve()].source == "empty"
+
+    monkeypatch.undo()
+    await session.reload()
+    assert prompts == 2
+    assert "NEW-CONTEXT" in session.system_prompt
+
+
+@pytest.mark.anyio
+async def test_reload_cancellation_during_staged_start_preserves_snapshot_and_re_resolves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tau_coding.extensions.runtime import ExtensionRuntime
+
+    project = tmp_path / "project"
+    project.mkdir()
+    coordinator = ProjectTrustCoordinator(ProjectTrustStore(_paths(tmp_path)))
+    prompts = 0
+
+    async def prompt(_request: ProjectTrustRequest) -> str:
+        nonlocal prompts
+        prompts += 1
+        return "trust-run"
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=cast(ModelProvider, object()),
+            model="fake",
+            storage=_Storage(),
+            cwd=project,
+            resource_paths=TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None),
+            project_trust_coordinator=coordinator,
+            trust_interactive=True,
+            trust_prompt=prompt,
+        )
+    )
+    await session.emit_pending_session_start()
+    old_runtime = session._extension_runtime
+    old_prompt = session.system_prompt
+    (project / "AGENTS.md").write_text("NEW-CONTEXT", encoding="utf-8")
+    real_start = ExtensionRuntime.emit_session_start
+    cancelled = False
+
+    async def cancel_staged_start(self: ExtensionRuntime, reason: str) -> None:
+        nonlocal cancelled
+        if reason == "reload" and self is not old_runtime and not cancelled:
+            cancelled = True
+            raise asyncio.CancelledError
+        await real_start(self, reason)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(ExtensionRuntime, "emit_session_start", cancel_staged_start)
+    with pytest.raises(asyncio.CancelledError):
+        await session.reload()
+
+    assert prompts == 1
+    assert session._extension_runtime is old_runtime
+    assert session.system_prompt == old_prompt
+    assert coordinator._cache[project.resolve()].source == "empty"
+
+    await session.reload()
+    assert prompts == 2
+    assert "NEW-CONTEXT" in session.system_prompt
+
+
+@pytest.mark.anyio
+async def test_destination_adoption_cancellation_keeps_source_and_retry_resolves_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tau_coding.extensions.runtime import ExtensionRuntime
+
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    destination.mkdir()
+    (source / "AGENTS.md").write_text("SOURCE-CONTEXT", encoding="utf-8")
+    (destination / "AGENTS.md").write_text("DESTINATION-CONTEXT", encoding="utf-8")
+    coordinator = ProjectTrustCoordinator(ProjectTrustStore(_paths(tmp_path)))
+    resources = TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None)
+    active = await CodingSession.load(
+        CodingSessionConfig(
+            provider=cast(ModelProvider, object()),
+            model="fake",
+            storage=_Storage(),
+            cwd=source,
+            resource_paths=resources,
+            project_trust_coordinator=coordinator,
+            trust_override="approve",
+        )
+    )
+    await active.emit_pending_session_start()
+    source_runtime = active._extension_runtime
+    source_prompt = active.system_prompt
+    prompts = 0
+
+    async def prompt(_request: ProjectTrustRequest) -> str:
+        nonlocal prompts
+        prompts += 1
+        return "trust-run"
+
+    def replacement_config() -> CodingSessionConfig:
+        return CodingSessionConfig(
+            provider=cast(ModelProvider, object()),
+            model="fake",
+            storage=_Storage(),
+            cwd=destination,
+            resource_paths=resources,
+            project_trust_coordinator=coordinator,
+            trust_interactive=True,
+            trust_prompt=prompt,
+            extension_runtime=active._extension_runtime,
+        )
+
+    replacement = await CodingSession.load(replacement_config())
+    real_start = ExtensionRuntime.emit_session_start
+    cancelled_runtime = replacement._extension_runtime
+
+    async def cancel_adoption(self: ExtensionRuntime, reason: str) -> None:
+        if self is cancelled_runtime:
+            raise asyncio.CancelledError
+        await real_start(self, reason)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(ExtensionRuntime, "emit_session_start", cancel_adoption)
+    with pytest.raises(asyncio.CancelledError):
+        await active._adopt_replacement(replacement, reason="resume")
+
+    assert prompts == 1
+    assert active.cwd == source.resolve()
+    assert active.system_prompt == source_prompt
+    assert active._extension_runtime is source_runtime
+    assert destination.resolve() not in coordinator._cache
+
+    monkeypatch.setattr(ExtensionRuntime, "emit_session_start", real_start)
+    retry = await CodingSession.load(replacement_config())
+    await active._adopt_replacement(retry, reason="resume")
+    assert prompts == 2
+    assert active.cwd == destination.resolve()
+    assert "DESTINATION-CONTEXT" in active.system_prompt
+    assert coordinator._cache[destination.resolve()].source == "ui"
