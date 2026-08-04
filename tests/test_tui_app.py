@@ -2407,6 +2407,31 @@ async def test_tui_file_reference_completion_follows_cursor_mid_prompt(
 
 
 @pytest.mark.anyio
+async def test_tui_file_reference_completion_refreshes_on_caret_move(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    session = FakeSession()
+    session.cwd = tmp_path
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.text = "look at @app and fix it"
+        await pilot.pause()
+        assert app._completion_state.items == ()
+
+        prompt.cursor_position = len("look at @app")
+        await pilot.pause()
+        assert [item.display for item in app._completion_state.items] == ["@src/app.py"]
+
+        prompt.cursor_position = len("look at @app and")
+        await pilot.pause()
+        assert app._completion_state.items == ()
+
+
+@pytest.mark.anyio
 async def test_tui_accepting_mid_prompt_completion_keeps_cursor_after_mention(
     tmp_path: Path,
 ) -> None:
@@ -2427,6 +2452,7 @@ async def test_tui_accepting_mid_prompt_completion_keeps_cursor_after_mention(
 
         assert prompt.text == "look at @src/app.py and fix it"
         assert prompt.cursor_position == len("look at @src/app.py")
+        assert [item.display for item in app._completion_state.items] == ["@src/app.py"]
 
 
 @pytest.mark.anyio

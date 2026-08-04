@@ -3702,6 +3702,17 @@ class TauTuiApp(App[None]):
         self._completion_state = self._build_completion_state(text, cursor=prompt.cursor_position)
         self._refresh_completions()
 
+    def on_text_area_selection_changed(self, event: TextArea.SelectionChanged) -> None:
+        """Rebuild prompt autocomplete when the caret moves without an edit."""
+        if event.text_area.id != "prompt":
+            return
+        # Runs after queued edits and accepts, so it is the last writer of the state.
+        prompt = self.query_one("#prompt", PromptInput)
+        self._completion_state = self._build_completion_state(
+            prompt.text, cursor=prompt.cursor_position
+        )
+        self._refresh_completions()
+
     async def action_submit_prompt(self) -> None:
         """Submit the current prompt text or slash command."""
         await self._submit_prompt_from_editor(streaming_behavior="steer")
