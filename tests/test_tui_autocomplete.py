@@ -678,6 +678,26 @@ def test_file_reference_completion_uses_cursor_position_on_earlier_line(
     assert state.selected.apply(text) == "look at @src/app.py\nand fix it"
 
 
+def test_file_reference_completion_stops_token_at_tab(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    text = "read @app\tmore"
+    cursor = len("read @app")
+
+    state = build_completion_state(
+        text,
+        cursor=cursor,
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in state.items] == ["@src/app.py"]
+    assert state.selected is not None
+    assert state.selected.apply(text) == "read @src/app.py\tmore"
+
+
 def test_file_reference_completion_clamps_out_of_range_cursor(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
