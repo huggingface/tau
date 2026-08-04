@@ -1186,10 +1186,9 @@ def _parse_chunk_usage(raw: Mapping[str, Any]) -> Usage:
 def _usage_from_responses_event(chunk: Mapping[str, Any]) -> Usage | None:
     """Parse billed usage from a `/v1/responses` terminal event.
 
-    Mirrors the Codex adapter's ``_usage_from_response``: ``cached_tokens`` are
-    cache reads subtracted from ``input_tokens`` to leave fresh input, the
-    Responses API does not report cache writes (``cache_write`` stays 0), and
-    cost is left unset because Tau has no per-model pricing table.
+    Mirrors the Codex adapter's ``_usage_from_response``: cache reads and
+    writes are subtracted from ``input_tokens`` to leave fresh input. Cost is
+    left unset because Tau has no per-model pricing table.
     """
     response = chunk.get("response")
     if not isinstance(response, Mapping):
@@ -1203,6 +1202,11 @@ def _usage_from_responses_event(chunk: Mapping[str, Any]) -> Usage | None:
         if isinstance(input_details, Mapping)
         else 0
     )
+    cache_write = (
+        _int_or_zero(input_details.get("cache_write_tokens"))
+        if isinstance(input_details, Mapping)
+        else 0
+    )
     output_details = raw.get("output_tokens_details")
     # Leave reasoning None (not 0) when the provider reports no breakdown,
     # honoring the "None = not reported" contract on Usage.
@@ -1212,10 +1216,10 @@ def _usage_from_responses_event(chunk: Mapping[str, Any]) -> Usage | None:
         else None
     )
     return Usage(
-        input=max(0, _int_or_zero(raw.get("input_tokens")) - cache_read),
+        input=max(0, _int_or_zero(raw.get("input_tokens")) - cache_read - cache_write),
         output=_int_or_zero(raw.get("output_tokens")),
         cache_read=cache_read,
-        cache_write=0,
+        cache_write=cache_write,
         reasoning=reasoning,
         total_tokens=_int_or_zero(raw.get("total_tokens")),
     )

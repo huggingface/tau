@@ -821,10 +821,8 @@ def _int_or_zero(value: object) -> int:
 def _usage_from_response(event: Mapping[str, Any]) -> Usage | None:
     """Parse billed usage from a Responses ``response.completed``-style event.
 
-    Ports Pi's openai-responses-shared.ts usage handling: ``cached_tokens`` are
-    cache reads and are subtracted from ``input_tokens`` to leave fresh input.
-    The Responses API does not report cache writes, so ``cache_write`` stays 0.
-    Cost is left unset (None) because Tau has no per-model pricing table.
+    Cache reads and writes are subtracted from ``input_tokens`` to leave fresh
+    input. Cost is left unset (None) because Tau has no per-model pricing table.
     """
     response = event.get("response")
     if not isinstance(response, Mapping):
@@ -838,6 +836,11 @@ def _usage_from_response(event: Mapping[str, Any]) -> Usage | None:
         if isinstance(input_details, Mapping)
         else 0
     )
+    cache_write = (
+        _int_or_zero(input_details.get("cache_write_tokens"))
+        if isinstance(input_details, Mapping)
+        else 0
+    )
     output_details = raw.get("output_tokens_details")
     # Leave reasoning None (not 0) when the provider reports no breakdown,
     # honoring the "None = not reported" contract on Usage.
@@ -847,10 +850,10 @@ def _usage_from_response(event: Mapping[str, Any]) -> Usage | None:
         else None
     )
     return Usage(
-        input=max(0, _int_or_zero(raw.get("input_tokens")) - cache_read),
+        input=max(0, _int_or_zero(raw.get("input_tokens")) - cache_read - cache_write),
         output=_int_or_zero(raw.get("output_tokens")),
         cache_read=cache_read,
-        cache_write=0,
+        cache_write=cache_write,
         reasoning=reasoning,
         total_tokens=_int_or_zero(raw.get("total_tokens")),
     )
