@@ -47,7 +47,7 @@ defining `setup(tau)`, which runs once at startup with the extension API.
 | Location | Loaded |
 |---|---|
 | `~/.tau/extensions/` | by default |
-| `<project>/.tau/extensions/` | only with `--project-extensions` |
+| `<project>/.tau/extensions/` | only after project approval **and** `--project-extensions` |
 | any file or directory | with `tau -e PATH` (repeatable) |
 
 Within a directory, `*.py` files are extensions, and a subdirectory
@@ -75,7 +75,15 @@ package, so relative imports fail. Once an extension has sibling
 modules, always pass a directory: the package directory itself, or the
 repo root when a manifest declares the entry.
 
-Extensions load project-first; on name conflicts (extension names, tool
+Before a project decision, built-in, user-global, and explicit `-e` extensions
+may handle the `project_trust` event. The event contains canonical cwd, mode,
+UI availability, and bounded category counts—never protected contents. Return
+`ExtensionTrustResult("approve" | "decline" | "defer", remember=...)`; the
+first decisive result wins, errors safely defer, and remembered results save
+only the exact cwd before project loading. Project extensions cannot approve
+themselves.
+
+Extensions load project-first after approval; on name conflicts (extension names, tool
 names, command names) the first registration wins. `--no-extensions`
 disables directory discovery entirely (explicit `-e` paths still load).
 `/reload` awaits `session_shutdown(reason="reload")` on the outgoing
@@ -84,8 +92,9 @@ extension generation, clears its UI, re-imports every extension and re-runs
 Use those lifecycle hooks to stop and restart background work and to remount UI.
 
 > **Security.** Extensions execute arbitrary Python inside your session.
-> Project extensions are therefore off by default — enable them with
-> `--project-extensions` only in repositories you trust.
+> Project extensions are therefore off by default. Trust approval and
+> `--project-extensions` are both required. Project trust is not a process,
+> filesystem, network, credential, tool, model, or prompt-injection sandbox.
 
 ## The extension API
 

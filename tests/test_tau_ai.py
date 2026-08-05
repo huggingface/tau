@@ -177,6 +177,7 @@ async def test_openai_compatible_provider_formats_request_and_streams_text() -> 
                 system="You are Tau.",
                 messages=[UserMessage(content="Say hello")],
                 tools=[],
+                session_id="unsupported-session",
             )
         )
 
@@ -200,11 +201,49 @@ async def test_openai_compatible_provider_formats_request_and_streams_text() -> 
     payload = loads(request.content)
     assert payload["model"] == "test-model"
     assert payload["stream"] is True
+    assert "prompt_cache_key" not in payload
+    assert "session_id" not in request.headers
+    assert "x-client-request-id" not in request.headers
     assert "reasoning_effort" not in payload
     assert payload["messages"] == [
         {"role": "system", "content": "You are Tau."},
         {"role": "user", "content": "Say hello"},
     ]
+
+
+@pytest.mark.anyio
+async def test_openai_chat_completions_sends_prompt_cache_key_without_affinity_headers() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://api.openai.com/v1",
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="gpt-4.1",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+                session_id="chat-session",
+            )
+        )
+
+    assert loads(requests[0].content)["prompt_cache_key"] == "chat-session"
+    assert "session_id" not in requests[0].headers
+    assert "x-client-request-id" not in requests[0].headers
 
 
 @pytest.mark.anyio
@@ -2339,18 +2378,21 @@ async def test_openai_compatible_provider_reports_usage() -> None:
 
 
 @pytest.mark.anyio
-async def test_openai_codex_provider_reports_usage() -> None:
+async def test_openai_codex_provider_reports_usage_and_sends_cache_affinity() -> None:
+    requests: list[httpx.Request] = []
+
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(_request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
         return httpx.Response(
             200,
             text=(
                 'data: {"type":"response.output_text.delta","delta":"Hi"}\n\n'
                 'data: {"type":"response.completed","response":{"status":"completed",'
                 '"usage":{"input_tokens":50,"output_tokens":8,"total_tokens":58,'
-                '"input_tokens_details":{"cached_tokens":12},'
+                '"input_tokens_details":{"cached_tokens":12,"cache_write_tokens":8},'
                 '"output_tokens_details":{"reasoning_tokens":3}}}}\n\n'
             ),
             headers={"content-type": "text/event-stream"},
@@ -2371,31 +2413,39 @@ async def test_openai_codex_provider_reports_usage() -> None:
                 system="You are Tau.",
                 messages=[UserMessage(content="Say hi")],
                 tools=[],
+                session_id="c" * 70,
             )
         )
 
+    cache_key = "c" * 64
+    assert loads(requests[0].content)["prompt_cache_key"] == cache_key
+    assert requests[0].headers["session-id"] == cache_key
+    assert "x-client-request-id" not in requests[0].headers
     assert isinstance(events[-1], AssistantDoneEvent)
     usage = events[-1].message.usage
     assert usage is not None
-    assert usage.input == 38  # 50 input - 12 cached
+    assert usage.input == 30  # 50 input - 12 cached - 8 written
     assert usage.output == 8
     assert usage.cache_read == 12
-    assert usage.cache_write == 0
+    assert usage.cache_write == 8
     assert usage.reasoning == 3
     assert usage.total_tokens == 58
     assert usage.cost.total == 0
 
 
 @pytest.mark.anyio
-async def test_openai_compatible_responses_api_reports_usage() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
+async def test_openai_compatible_responses_reports_usage_and_sends_cache_affinity() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
         return httpx.Response(
             200,
             text=(
                 'data: {"type":"response.output_text.delta","delta":"Hi"}\n\n'
                 'data: {"type":"response.completed","response":{"status":"completed",'
                 '"usage":{"input_tokens":50,"output_tokens":8,"total_tokens":58,'
-                '"input_tokens_details":{"cached_tokens":12},'
+                '"input_tokens_details":{"cached_tokens":12,"cache_write_tokens":8},'
                 '"output_tokens_details":{"reasoning_tokens":3}}}}\n\n'
             ),
             headers={"content-type": "text/event-stream"},
@@ -2405,7 +2455,7 @@ async def test_openai_compatible_responses_api_reports_usage() -> None:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
-                base_url="https://example.test/v1",
+                base_url="https://api.openai.com/v1",
             ),
             client=client,
         )
@@ -2416,16 +2466,20 @@ async def test_openai_compatible_responses_api_reports_usage() -> None:
                 system="You are Tau.",
                 messages=[UserMessage(content="Say hi")],
                 tools=[],
+                session_id="responses-session",
             )
         )
 
+    assert loads(requests[0].content)["prompt_cache_key"] == "responses-session"
+    assert requests[0].headers["session_id"] == "responses-session"
+    assert "x-client-request-id" not in requests[0].headers
     assert isinstance(events[-1], AssistantDoneEvent)
     usage = events[-1].message.usage
     assert usage is not None
-    assert usage.input == 38  # 50 input - 12 cached
+    assert usage.input == 30  # 50 input - 12 cached - 8 written
     assert usage.output == 8
     assert usage.cache_read == 12
-    assert usage.cache_write == 0
+    assert usage.cache_write == 8
     assert usage.reasoning == 3
     assert usage.total_tokens == 58
     assert usage.cost.total == 0

@@ -48,6 +48,7 @@ from tau_ai.env import OpenAICompatibleConfig
 from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
+from tau_ai.openai_cache import is_direct_openai_url, openai_prompt_cache_key
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 from tau_ai.stream import canonicalize_provider_stream
@@ -95,10 +96,16 @@ class OpenAICompatibleProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[AssistantMessageEvent]:
         """Stream one response as Pi-compatible assistant message events."""
         raw = self._stream_provider_events(
-            model=model, system=system, messages=messages, tools=tools, signal=signal
+            model=model,
+            system=system,
+            messages=messages,
+            tools=tools,
+            signal=signal,
+            session_id=session_id,
         )
         return canonicalize_provider_stream(
             raw,
@@ -115,6 +122,7 @@ class OpenAICompatibleProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Stream one model response as provider-neutral events."""
         if self._config.api == "openai-responses" or _use_responses_api(model):
@@ -124,6 +132,7 @@ class OpenAICompatibleProvider:
                 messages=messages,
                 tools=tools,
                 signal=signal,
+                session_id=session_id,
             )
         return self._stream_chat_completions(
             model=model,
@@ -131,6 +140,7 @@ class OpenAICompatibleProvider:
             messages=messages,
             tools=tools,
             signal=signal,
+            session_id=session_id,
         )
 
     def _stream_chat_completions(
@@ -141,8 +151,11 @@ class OpenAICompatibleProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Stream one chat completion response as provider-neutral events."""
+        affinity_id = openai_prompt_cache_key(session_id)
+        cache_key = self._prompt_cache_key(affinity_id)
         payload = _build_chat_payload(
             model=model,
             system=system,
@@ -155,12 +168,15 @@ class OpenAICompatibleProvider:
             max_tokens=self._config.max_tokens,
             include_reasoning_effort_none=self._config.include_reasoning_effort_none,
             supports_images=self._config.supports_images,
+            prompt_cache_key=cache_key,
         )
         return self._stream(
             model=model,
             url=f"{self._config.base_url.rstrip('/')}/chat/completions",
             payload=payload,
             parser_factory=_ChatStreamParser,
+            session_id=affinity_id,
+            session_affinity_format=self._session_affinity_format(responses=False),
             has_images=(self._config.supports_images and messages_have_images(messages)),
             signal=signal,
         )
@@ -173,8 +189,11 @@ class OpenAICompatibleProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Stream one `/v1/responses` response as provider-neutral events."""
+        affinity_id = openai_prompt_cache_key(session_id)
+        cache_key = self._prompt_cache_key(affinity_id)
         payload = _build_responses_payload(
             model=model,
             system=system,
@@ -183,12 +202,15 @@ class OpenAICompatibleProvider:
             reasoning_effort=self._config.reasoning_effort,
             max_tokens=self._config.max_tokens,
             supports_images=self._config.supports_images,
+            prompt_cache_key=cache_key,
         )
         return self._stream(
             model=model,
             url=f"{self._config.base_url.rstrip('/')}/responses",
             payload=payload,
             parser_factory=_ResponsesStreamParser,
+            session_id=affinity_id,
+            session_affinity_format=self._session_affinity_format(responses=True),
             has_images=(self._config.supports_images and messages_have_images(messages)),
             signal=signal,
         )
@@ -200,6 +222,8 @@ class OpenAICompatibleProvider:
         url: str,
         payload: Mapping[str, JSONValue],
         parser_factory: Callable[[], _StreamParser],
+        session_id: str | None = None,
+        session_affinity_format: str | None = None,
         has_images: bool = False,
         signal: CancellationToken | None = None,
     ) -> AsyncIterator[ProviderEvent]:
@@ -233,6 +257,7 @@ class OpenAICompatibleProvider:
                 has_authorization = any(key.casefold() == "authorization" for key in headers)
                 if not has_authorization:
                     headers["Authorization"] = f"Bearer {api_key}"
+            _apply_session_affinity_headers(headers, session_id, session_affinity_format)
 
             attempt = 0
             while True:
@@ -327,6 +352,23 @@ class OpenAICompatibleProvider:
 
         return iterator()
 
+    def _prompt_cache_key(self, affinity_id: str | None) -> str | None:
+        supports = self._config.compat.get("supportsPromptCacheKey")
+        if supports is not True and not (
+            supports is None and is_direct_openai_url(self._config.base_url)
+        ):
+            return None
+        return affinity_id
+
+    def _session_affinity_format(self, *, responses: bool) -> str | None:
+        sends_headers = self._config.compat.get("sendSessionAffinityHeaders")
+        if sends_headers is not True and not (
+            sends_headers is None and responses and is_direct_openai_url(self._config.base_url)
+        ):
+            return None
+        value = self._config.compat.get("sessionAffinityFormat")
+        return value if isinstance(value, str) else "openai"
+
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
             self._client = create_async_client(timeout=self._config.timeout_seconds)
@@ -336,6 +378,20 @@ class OpenAICompatibleProvider:
         if attempt >= self._config.max_retries:
             return False
         return status_code is None or _is_transient_status(status_code)
+
+
+def _apply_session_affinity_headers(
+    headers: dict[str, str],
+    session_id: str | None,
+    affinity_format: str | None,
+) -> None:
+    if session_id is None or affinity_format is None:
+        return
+    if affinity_format == "openrouter":
+        headers["x-session-id"] = session_id
+        return
+    if affinity_format == "openai":
+        headers["session_id"] = session_id
 
 
 class _StreamParser(Protocol):
@@ -681,6 +737,7 @@ def _build_chat_payload(
     max_tokens: int | None = None,
     include_reasoning_effort_none: bool = False,
     supports_images: bool = False,
+    prompt_cache_key: str | None = None,
 ) -> dict[str, JSONValue]:
     resolved_compat = dict(compat or {})
     supports_store = bool(resolved_compat.get("supportsStore", True))
@@ -697,6 +754,8 @@ def _build_chat_payload(
             *_messages_to_openai_chat(messages, supports_images=supports_images),
         ],
     }
+    if prompt_cache_key is not None:
+        payload["prompt_cache_key"] = prompt_cache_key
     if supports_usage:
         payload["stream_options"] = {"include_usage": True}
     if supports_store:
@@ -773,6 +832,7 @@ def _build_responses_payload(
     reasoning_effort: str | None = None,
     max_tokens: int | None = None,
     supports_images: bool = False,
+    prompt_cache_key: str | None = None,
 ) -> dict[str, JSONValue]:
     payload: dict[str, JSONValue] = {
         "model": model,
@@ -784,6 +844,8 @@ def _build_responses_payload(
         "instructions": system,
         "input": _messages_to_responses_input(messages, supports_images=supports_images),
     }
+    if prompt_cache_key is not None:
+        payload["prompt_cache_key"] = prompt_cache_key
     if max_tokens is not None:
         payload["max_output_tokens"] = max_tokens
     effort = _normalize_responses_effort(reasoning_effort)
@@ -1186,10 +1248,9 @@ def _parse_chunk_usage(raw: Mapping[str, Any]) -> Usage:
 def _usage_from_responses_event(chunk: Mapping[str, Any]) -> Usage | None:
     """Parse billed usage from a `/v1/responses` terminal event.
 
-    Mirrors the Codex adapter's ``_usage_from_response``: ``cached_tokens`` are
-    cache reads subtracted from ``input_tokens`` to leave fresh input, the
-    Responses API does not report cache writes (``cache_write`` stays 0), and
-    cost is left unset because Tau has no per-model pricing table.
+    Mirrors the Codex adapter's ``_usage_from_response``: cache reads and
+    writes are subtracted from ``input_tokens`` to leave fresh input. Cost is
+    left unset because Tau has no per-model pricing table.
     """
     response = chunk.get("response")
     if not isinstance(response, Mapping):
@@ -1203,6 +1264,11 @@ def _usage_from_responses_event(chunk: Mapping[str, Any]) -> Usage | None:
         if isinstance(input_details, Mapping)
         else 0
     )
+    cache_write = (
+        _int_or_zero(input_details.get("cache_write_tokens"))
+        if isinstance(input_details, Mapping)
+        else 0
+    )
     output_details = raw.get("output_tokens_details")
     # Leave reasoning None (not 0) when the provider reports no breakdown,
     # honoring the "None = not reported" contract on Usage.
@@ -1212,10 +1278,10 @@ def _usage_from_responses_event(chunk: Mapping[str, Any]) -> Usage | None:
         else None
     )
     return Usage(
-        input=max(0, _int_or_zero(raw.get("input_tokens")) - cache_read),
+        input=max(0, _int_or_zero(raw.get("input_tokens")) - cache_read - cache_write),
         output=_int_or_zero(raw.get("output_tokens")),
         cache_read=cache_read,
-        cache_write=0,
+        cache_write=cache_write,
         reasoning=reasoning,
         total_tokens=_int_or_zero(raw.get("total_tokens")),
     )

@@ -1,5 +1,38 @@
 [
   {
+    "version": "0.3.7",
+    "date": "2026-08-04",
+    "sections": {
+      "New": [
+        "Decide project-input trust before Tau reads ambient project instructions, skills, prompts, themes, system prompts, or opted-in extensions; save exact/parent decisions or choose run-only scopes.",
+        "Control automation with run-only `--approve`/`--no-approve` flags and user-global `defaultProjectTrust` ask/always/never policy."
+      ],
+      "Changed": [
+        "Unresolved headless `ask` now skips protected project inputs; user/global and explicit CLI resources remain available, and project extensions still additionally require `--project-extensions`.",
+        "Project trust is explicitly an input-loading guard, not a filesystem, process, network, tool, model, credential, or prompt-injection sandbox."
+      ]
+    }
+  },
+  {
+    "version": "0.3.6",
+    "date": "2026-08-03",
+    "sections": {
+      "New": [
+        "Customize the generated system prompt in print or TUI sessions with `--system-prompt` and repeatable `--append-system-prompt` text-or-file inputs.",
+        "Load Tau-native `SYSTEM.md` and `APPEND_SYSTEM.md` files from user or project `.tau` directories, with CLI and project precedence plus `/reload` support."
+      ],
+      "Changed": [
+        "Rebuild provider configuration from the current catalog during upgrades while preserving preferences and custom providers, so stale metadata cannot hide new capabilities or restore withdrawn models.",
+        "Include the current system prompt in live HTML session exports as a separate collapsed section; review exports before sharing because project instructions may be exposed, while JSONL and offline exports remain prompt-free."
+      ],
+      "Fixed": [
+        "Anchor context estimates to provider-reported token usage, proactively compact large sessions, and present automatic overflow recovery without misleading terminal errors.",
+        "Keep `@` file-reference completion available in skill arguments and custom prompt text.",
+        "Prevent direct `!` and `!!` shell commands from cancelling an active agent run."
+      ]
+    }
+  },
+  {
     "version": "0.3.5",
     "date": "2026-07-31",
     "sections": {

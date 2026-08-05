@@ -51,6 +51,7 @@ LIFECYCLE_EVENT_TYPES: frozenset[str] = frozenset(
         "input",
         "tool_call",
         "tool_result",
+        "project_trust",
     }
 )
 

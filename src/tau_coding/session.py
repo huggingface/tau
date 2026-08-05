@@ -72,6 +72,16 @@ from tau_coding.events import (
 )
 from tau_coding.extensions.runtime import ExtensionRuntime
 from tau_coding.paths import TauPaths
+from tau_coding.project_trust import (
+    CanonicalProjectPath,
+    ProjectTrustCoordinator,
+    ProjectTrustResolution,
+    ProjectTrustStore,
+    TrustDefault,
+    TrustOverride,
+    TrustPrompt,
+    format_trust_diagnostic,
+)
 from tau_coding.prompt_templates import (
     PromptTemplate,
     expand_prompt_template_command,
@@ -99,7 +109,9 @@ from tau_coding.resources import (
     ResourceDiagnostic,
     ResourceError,
     TauResourcePaths,
+    discover_system_prompt_resources,
     resource_paths_with_cwd,
+    resource_paths_with_project_trust,
 )
 from tau_coding.session_export import (
     default_session_export_artifact_path,
@@ -183,6 +195,10 @@ class SessionResources:
     skills: tuple[Skill, ...]
     prompt_templates: tuple[PromptTemplate, ...]
     context_files: tuple[ProjectContextFile, ...]
+    custom_system_prompt: str | None
+    custom_system_prompt_path: Path | None
+    append_system_prompt: str | None
+    append_system_prompt_path: Path | None
     diagnostics: tuple[ResourceDiagnostic, ...]
 
 
@@ -236,6 +252,11 @@ class CodingSessionConfig:
     extensions_enabled: bool = True
     project_extensions_enabled: bool = False
     extension_runtime: ExtensionRuntime | None = None
+    project_trust_coordinator: ProjectTrustCoordinator | None = None
+    trust_override: TrustOverride | None = None
+    trust_default: TrustDefault = "ask"
+    trust_interactive: bool = False
+    trust_prompt: TrustPrompt | None = None
 
 
 class CodingSession:
@@ -256,11 +277,16 @@ class CodingSession:
         skills: tuple[Skill, ...] = (),
         prompt_templates: tuple[PromptTemplate, ...] = (),
         context_files: tuple[ProjectContextFile, ...] = (),
+        custom_system_prompt: str | None = None,
+        custom_system_prompt_path: Path | None = None,
+        append_system_prompt: str | None = None,
+        append_system_prompt_path: Path | None = None,
         resource_diagnostics: tuple[ResourceDiagnostic, ...] = (),
         command_registry: CommandRegistry | None = None,
         pending_initial_entries: tuple[SessionEntry, ...] = (),
         extension_runtime: ExtensionRuntime | None = None,
         image_support: ImageSupportState | None = None,
+        project_trust_resolution: ProjectTrustResolution | None = None,
     ) -> None:
         self._config = config
         self._state = state
@@ -273,6 +299,10 @@ class CodingSession:
         self._skills = skills
         self._prompt_templates = prompt_templates
         self._context_files = context_files
+        self._custom_system_prompt = custom_system_prompt
+        self._custom_system_prompt_path = custom_system_prompt_path
+        self._append_system_prompt = append_system_prompt
+        self._append_system_prompt_path = append_system_prompt_path
         self._resource_diagnostics = resource_diagnostics
         self._command_registry = command_registry or create_default_command_registry()
         self._provider_name = config.provider_name
@@ -295,6 +325,8 @@ class CodingSession:
         self._runtime_model_limits: RuntimeModelLimits | None = None
         self._runtime_model_limits_key: tuple[str, str] | None = None
         self._model_limits_discovery_error: str | None = None
+        self._project_trust_resolution = project_trust_resolution
+        self._project_trust_commit_pending = False
 
     @classmethod
     async def load(cls, config: CodingSessionConfig) -> CodingSession:
@@ -324,24 +356,75 @@ class CodingSession:
             if latest_leaf is not None
             else linear_state
         )
-        resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
+        unfiltered_resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
+
+        # A runtime is cwd-bound because it may contain project registrations.
+        # Always stage a fresh eligible-only runtime for a destination snapshot;
+        # never reuse source-project code across replacement trust boundaries.
+        previous_runtime = config.extension_runtime
+        extension_runtime = ExtensionRuntime()
+        if config.extensions_enabled or config.extension_paths:
+            extension_runtime.load(
+                unfiltered_resource_paths,
+                extra_paths=config.extension_paths,
+                include_resource_dirs=config.extensions_enabled,
+                include_project_dir=False,
+            )
+
+        coordinator = config.project_trust_coordinator or ProjectTrustCoordinator(
+            ProjectTrustStore(
+                unfiltered_resource_paths.paths or TauPaths(home=unfiltered_resource_paths.root)
+            )
+        )
+        summary, trust_resolution = await coordinator.resolve(
+            config.cwd,
+            override=config.trust_override,
+            default=config.trust_default,
+            interactive=config.trust_interactive,
+            prompt=config.trust_prompt,
+            extension_deciders=(extension_runtime.decide_project_trust,),
+            cache_result=False,
+        )
+        canonical_cwd = summary.cwd.value
+        resource_paths = resource_paths_with_project_trust(
+            resource_paths_with_cwd(config.resource_paths, canonical_cwd),
+            trusted=trust_resolution.trusted,
+        )
+        config = replace(
+            config,
+            cwd=canonical_cwd,
+            resource_paths=resource_paths,
+            project_trust_coordinator=coordinator,
+            extension_runtime=extension_runtime,
+        )
         resources = _load_session_resources(
             resource_paths,
             config.context_files,
             skills_enabled=config.skills_enabled,
+            system_prompt_enabled=config.system is None,
+            custom_system_prompt_explicit=config.custom_system_prompt is not None,
+            append_system_prompt_explicit=config.append_system_prompt is not None,
         )
+        if summary.categories:
+            resources = replace(
+                resources,
+                diagnostics=(
+                    *resources.diagnostics,
+                    ResourceDiagnostic(
+                        kind="project-trust",
+                        message=format_trust_diagnostic(summary, trust_resolution),
+                        severity="info" if trust_resolution.trusted else "warning",
+                    ),
+                ),
+            )
 
-        extension_runtime = config.extension_runtime
-        fresh_extension_runtime = extension_runtime is None
-        if extension_runtime is None:
-            extension_runtime = ExtensionRuntime()
-            if config.extensions_enabled or config.extension_paths:
-                extension_runtime.load(
-                    resource_paths,
-                    extra_paths=config.extension_paths,
-                    include_resource_dirs=config.extensions_enabled,
-                    include_project_dir=config.project_extensions_enabled,
-                )
+        if trust_resolution.trusted and config.project_extensions_enabled:
+            extension_runtime.load(
+                resource_paths,
+                include_resource_dirs=True,
+                include_project_dir=True,
+                include_user_dir=False,
+            )
 
         active_model = _runtime_model_for_state(config, state)
         image_support = ImageSupportState(
@@ -365,8 +448,16 @@ class CodingSession:
                     cwd=config.cwd,
                     tools=tools,
                     skills=resources.skills,
-                    custom_prompt=config.custom_system_prompt,
-                    append_system_prompt=config.append_system_prompt,
+                    custom_prompt=(
+                        config.custom_system_prompt
+                        if config.custom_system_prompt is not None
+                        else resources.custom_system_prompt
+                    ),
+                    append_system_prompt=(
+                        config.append_system_prompt
+                        if config.append_system_prompt is not None
+                        else resources.append_system_prompt
+                    ),
                     context_files=resources.context_files,
                     extra_guidelines=extension_runtime.prompt_guidelines,
                 )
@@ -378,9 +469,12 @@ class CodingSession:
                 model=active_model,
                 system=system,
                 tools=tools,
+                session_id=config.session_id,
             ),
             messages=state.messages,
         )
+        if previous_runtime is not None:
+            extension_runtime.set_ui_bridge(previous_runtime.ui)
         session = cls(
             config,
             state=state,
@@ -389,28 +483,30 @@ class CodingSession:
             skills=resources.skills,
             prompt_templates=resources.prompt_templates,
             context_files=resources.context_files,
+            custom_system_prompt=resources.custom_system_prompt,
+            custom_system_prompt_path=resources.custom_system_prompt_path,
+            append_system_prompt=resources.append_system_prompt,
+            append_system_prompt_path=resources.append_system_prompt_path,
             resource_diagnostics=resources.diagnostics,
             command_registry=config.command_registry or extension_runtime.build_command_registry(),
             pending_initial_entries=pending_initial_entries,
             extension_runtime=extension_runtime,
             image_support=image_support,
+            project_trust_resolution=trust_resolution,
         )
         await session._persist_loaded_interrupted_tool_repairs()
         session._sync_thinking_level_to_active_model()
         session._refresh_runtime_provider()
         await session._refresh_runtime_model_limits()
-        if fresh_extension_runtime:
-            extension_runtime.bind(session)
-            # Attach to session._harness, not the local `harness`:
-            # _persist_loaded_interrupted_tool_repairs() above may have
-            # replaced the harness, and listeners on the discarded one would
-            # never see an agent event.
-            extension_runtime.attach_harness_listener(session._harness.subscribe)
-            # session_start is deferred: hosts emit it via
-            # emit_pending_session_start() after installing their UI bridge,
-            # so handlers can use notifications and dialogs (Pi starts the UI
-            # before initializing extensions for the same reason).
-            session._session_start_pending = True
+        extension_runtime.bind(session)
+        # Attach to session._harness, not the local `harness`:
+        # _persist_loaded_interrupted_tool_repairs() above may have replaced the
+        # harness, and listeners on the discarded one would never see an event.
+        extension_runtime.attach_harness_listener(session._harness.subscribe)
+        # session_start is deferred: hosts emit it via emit_pending_session_start()
+        # after installing their UI bridge.
+        session._session_start_pending = True
+        session._project_trust_commit_pending = not trust_resolution.cancelled
         return session
 
     @property
@@ -629,6 +725,7 @@ class CodingSession:
             title=_session_export_title(self),
             source=str(session_path) if session_path is not None else self.session_id,
             format=export_format,
+            system_prompt=self.system_prompt,
         )
 
     @property
@@ -648,8 +745,13 @@ class CodingSession:
 
     @property
     def context_token_estimate(self) -> int:
-        """Return a rough token estimate for the active provider context."""
+        """Return the best available token count for the active provider context."""
         return self.context_usage.total_tokens
+
+    @property
+    def has_provider_context_usage(self) -> bool:
+        """Return whether valid provider usage anchors the active context count."""
+        return self.context_usage.uses_provider_usage
 
     @property
     def context_usage(self) -> ContextUsageEstimate:
@@ -713,9 +815,25 @@ class CodingSession:
         return self._command_registry
 
     @property
+    def project_trust_resolution(self) -> ProjectTrustResolution | None:
+        """Return this cwd's completed project-input trust resolution."""
+        return self._project_trust_resolution
+
+    @property
+    def theme_dirs(self) -> tuple[Path, ...]:
+        """Return theme directories permitted by this session's trust snapshot."""
+        return self._resource_paths.themes_dirs
+
+    @property
     def resource_diagnostics(self) -> tuple[ResourceDiagnostic, ...]:
         """Return non-fatal resource and extension diagnostics."""
-        return self._resource_diagnostics + self._extension_runtime.diagnostics
+        trust_diagnostics: tuple[ResourceDiagnostic, ...] = ()
+        if self._project_trust_resolution is not None:
+            trust_diagnostics = tuple(
+                ResourceDiagnostic(kind="project-trust", message=message, severity="error")
+                for message in self._project_trust_resolution.diagnostics
+            )
+        return self._resource_diagnostics + trust_diagnostics + self._extension_runtime.diagnostics
 
     @property
     def extension_runtime(self) -> ExtensionRuntime:
@@ -766,8 +884,19 @@ class CodingSession:
         """
         if not self._session_start_pending:
             return
-        self._session_start_pending = False
         await self._extension_runtime.emit_session_start("startup")
+        self._commit_project_trust_resolution()
+        self._session_start_pending = False
+
+    def _commit_project_trust_resolution(self) -> None:
+        """Publish staged trust only after the session becomes live."""
+        if not self._project_trust_commit_pending:
+            return
+        coordinator = self._config.project_trust_coordinator
+        resolution = self._project_trust_resolution
+        if coordinator is not None and resolution is not None:
+            coordinator.commit(CanonicalProjectPath(self.cwd), resolution)
+        self._project_trust_commit_pending = False
 
     def queue_steering_message(
         self,
@@ -857,6 +986,14 @@ class CodingSession:
     def last_diagnostic_log_path(self) -> Path | None:
         """Return the last diagnostic log path written by this session."""
         return self._last_diagnostic_log_path
+
+    def set_project_trust_prompt(self, prompt: TrustPrompt) -> None:
+        """Install the active frontend's trust prompt for reload/replacement."""
+        self._config = replace(
+            self._config,
+            trust_interactive=True,
+            trust_prompt=prompt,
+        )
 
     def cancel(self) -> None:
         """Cancel the currently running agent turn, if any."""
@@ -1142,15 +1279,7 @@ class CodingSession:
             self._model_limits_discovery_error = f"{type(exc).__name__}: {exc}"
 
     async def reload(self) -> CodingReloadSummary:
-        """Reload resources and extensions with an awaited lifecycle boundary.
-
-        Outgoing handlers finish ``session_shutdown(reason="reload")`` while
-        their API generation is still active. The runtime then clears UI,
-        invalidates/reloads registrations, and awaits the new generation's
-        ``session_start(reason="reload")`` so startup-mounted UI is restored
-        before the command reports completion.
-        """
-        await self._extension_runtime.emit_session_shutdown("reload")
+        """Stage and atomically publish a complete replacement snapshot."""
         before_skills = _skill_signatures(self._skills)
         before_prompt_templates = _prompt_template_signatures(self._prompt_templates)
         before_context_files = _context_file_signatures(self._context_files)
@@ -1158,88 +1287,83 @@ class CodingSession:
         before_system_prompt_inputs = _system_prompt_resource_signatures(
             skills=self._skills,
             context_files=self._context_files,
+            custom_system_prompt=self._custom_system_prompt,
+            custom_system_prompt_path=self._custom_system_prompt_path,
+            append_system_prompt=self._append_system_prompt,
+            append_system_prompt_path=self._append_system_prompt_path,
         )
         before_extensions = _extension_signatures(self._extension_runtime)
         before_tool_names = tuple(tool.name for tool in self._harness.config.tools)
         before_guidelines = self._extension_runtime.prompt_guidelines
 
-        resources = _load_session_resources(
-            self._resource_paths,
-            self._config.context_files,
-            skills_enabled=self._config.skills_enabled,
-        )
-        self._reload_extensions()
-
-        after_skills = _skill_signatures(resources.skills)
-        after_prompt_templates = _prompt_template_signatures(resources.prompt_templates)
-        after_context_files = _context_file_signatures(resources.context_files)
-        after_system_prompt_inputs = _system_prompt_resource_signatures(
-            skills=resources.skills,
-            context_files=resources.context_files,
-        )
-        after_extensions = _extension_signatures(self._extension_runtime)
-        after_tool_names = tuple(tool.name for tool in self._harness.config.tools)
-        after_guidelines = self._extension_runtime.prompt_guidelines
-
-        rebuilt_system_prompt: str | None = None
-        system_prompt_rebuilt = False
-        if self._config.system is None and (
-            before_system_prompt_inputs != after_system_prompt_inputs
-            or before_tool_names != after_tool_names
-            or before_guidelines != after_guidelines
-        ):
-            rebuilt_system_prompt = build_system_prompt(
-                BuildSystemPromptOptions(
-                    cwd=self._config.cwd,
-                    tools=self._harness.config.tools,
-                    skills=resources.skills,
-                    custom_prompt=self._config.custom_system_prompt,
-                    append_system_prompt=self._config.append_system_prompt,
-                    context_files=resources.context_files,
-                    extra_guidelines=after_guidelines,
-                )
-            )
-            system_prompt_rebuilt = True
-
-        self._skills = resources.skills
-        self._prompt_templates = resources.prompt_templates
-        self._context_files = resources.context_files
-        self._resource_diagnostics = resources.diagnostics
-        after_diagnostics = _diagnostic_signatures(self.resource_diagnostics)
-        if rebuilt_system_prompt is not None:
-            self._harness.config.system = rebuilt_system_prompt
-            self._invalidate_context_usage_cache()
-
-        await self._extension_runtime.emit_session_start("reload")
-
-        return CodingReloadSummary(
-            skills=_category_summary(before_skills, after_skills),
-            prompt_templates=_category_summary(
-                before_prompt_templates,
-                after_prompt_templates,
-            ),
-            context_files=_category_summary(before_context_files, after_context_files),
-            extensions=_category_summary(before_extensions, after_extensions),
-            diagnostics=_category_summary(before_diagnostics, after_diagnostics),
-            system_prompt_rebuilt=system_prompt_rebuilt,
-        )
-
-    def _reload_extensions(self) -> None:
-        """Re-discover extensions and rebuild dependent tools and commands.
-
-        Extension `setup` re-runs against freshly imported modules. Wrapped
-        tools are rebuilt in place on the live harness config, the session
-        command registry is rebuilt (unless the caller supplied its own), and
-        the harness event fan-out is re-subscribed.
-        """
-        self._extension_runtime.reset_for_reload()
+        # Nothing below mutates the live session. Eligible extensions are loaded
+        # first so project code cannot import before the destination decision.
+        unfiltered_paths = resource_paths_with_cwd(self._config.resource_paths, self.cwd)
+        previous_ui = self._extension_runtime.ui
+        staged_runtime = ExtensionRuntime()
         if self._config.extensions_enabled or self._config.extension_paths:
-            self._extension_runtime.load(
-                self._resource_paths,
+            staged_runtime.load(
+                unfiltered_paths,
                 extra_paths=self._config.extension_paths,
                 include_resource_dirs=self._config.extensions_enabled,
-                include_project_dir=self._config.project_extensions_enabled,
+                include_project_dir=False,
             )
+
+        staged_resolution = self._project_trust_resolution
+        staged_paths = self._resource_paths
+        coordinator = self._config.project_trust_coordinator
+        trust_summary = None
+        if coordinator is not None:
+            trust_summary, staged_resolution = await coordinator.resolve(
+                self.cwd,
+                override=self._config.trust_override,
+                default=self._config.trust_default,
+                interactive=self._config.trust_interactive,
+                prompt=self._config.trust_prompt,
+                extension_deciders=(staged_runtime.decide_project_trust,),
+                refresh=True,
+                cache_result=False,
+            )
+            if staged_resolution.cancelled:
+                raise ValueError("Project trust decision cancelled; keeping current resources")
+            staged_paths = resource_paths_with_project_trust(
+                resource_paths_with_cwd(self._config.resource_paths, trust_summary.cwd.value),
+                trusted=staged_resolution.trusted,
+            )
+
+        resources = _load_session_resources(
+            staged_paths,
+            self._config.context_files,
+            skills_enabled=self._config.skills_enabled,
+            system_prompt_enabled=self._config.system is None,
+            custom_system_prompt_explicit=self._config.custom_system_prompt is not None,
+            append_system_prompt_explicit=self._config.append_system_prompt is not None,
+        )
+        if trust_summary is not None and trust_summary.categories:
+            assert staged_resolution is not None
+            resources = replace(
+                resources,
+                diagnostics=(
+                    *resources.diagnostics,
+                    ResourceDiagnostic(
+                        kind="project-trust",
+                        message=format_trust_diagnostic(trust_summary, staged_resolution),
+                        severity="info" if staged_resolution.trusted else "warning",
+                    ),
+                ),
+            )
+        if (
+            staged_resolution is not None
+            and staged_resolution.trusted
+            and self._config.project_extensions_enabled
+        ):
+            staged_runtime.load(
+                staged_paths,
+                include_resource_dirs=True,
+                include_project_dir=True,
+                include_user_dir=False,
+            )
+
         base_tools = (
             self._config.tools
             if self._config.tools is not None
@@ -1249,10 +1373,98 @@ class CodingSession:
                 image_support=self._image_support,
             )
         )
-        self._harness.config.tools = self._extension_runtime.compose_tools(base_tools)
-        if self._config.command_registry is None:
-            self._command_registry = self._extension_runtime.build_command_registry()
-        self._extension_runtime.attach_harness_listener(self._harness.subscribe)
+        staged_tools = staged_runtime.compose_tools(base_tools)
+        staged_commands = self._config.command_registry or staged_runtime.build_command_registry()
+        after_system_prompt_inputs = _system_prompt_resource_signatures(
+            skills=resources.skills,
+            context_files=resources.context_files,
+            custom_system_prompt=resources.custom_system_prompt,
+            custom_system_prompt_path=resources.custom_system_prompt_path,
+            append_system_prompt=resources.append_system_prompt,
+            append_system_prompt_path=resources.append_system_prompt_path,
+        )
+        after_guidelines = staged_runtime.prompt_guidelines
+        system_prompt_rebuilt = self._config.system is None and (
+            before_system_prompt_inputs != after_system_prompt_inputs
+            or before_tool_names != tuple(tool.name for tool in staged_tools)
+            or before_guidelines != after_guidelines
+        )
+        staged_system = self._harness.config.system
+        if system_prompt_rebuilt:
+            staged_system = build_system_prompt(
+                BuildSystemPromptOptions(
+                    cwd=self._config.cwd,
+                    tools=staged_tools,
+                    skills=resources.skills,
+                    custom_prompt=(
+                        self._config.custom_system_prompt
+                        if self._config.custom_system_prompt is not None
+                        else resources.custom_system_prompt
+                    ),
+                    append_system_prompt=(
+                        self._config.append_system_prompt
+                        if self._config.append_system_prompt is not None
+                        else resources.append_system_prompt
+                    ),
+                    context_files=resources.context_files,
+                    extra_guidelines=after_guidelines,
+                )
+            )
+
+        # Cancellable lifecycle work stays before the publication boundary. The
+        # staged runtime may inspect the still-live session during session_start;
+        # cancellation leaves that prior snapshot/runtime/cache untouched.
+        old_runtime = self._extension_runtime
+        await old_runtime.emit_session_shutdown("reload")
+        old_runtime.clear_ui_components()
+        staged_runtime.set_ui_bridge(previous_ui)
+        staged_runtime.bind(self)
+        await staged_runtime.emit_session_start("reload")
+
+        # Publication is synchronous: cancellation can no longer report failure
+        # after only part of the live snapshot or trust cache was adopted.
+        if coordinator is not None and trust_summary is not None:
+            assert staged_resolution is not None
+            coordinator.commit(trust_summary.cwd, staged_resolution)
+        old_runtime.retire()
+        self._resource_paths = staged_paths
+        self._config = replace(
+            self._config,
+            cwd=staged_paths.cwd or self._config.cwd,
+            resource_paths=staged_paths,
+            extension_runtime=staged_runtime,
+        )
+        self._project_trust_resolution = staged_resolution
+        self._skills = resources.skills
+        self._prompt_templates = resources.prompt_templates
+        self._context_files = resources.context_files
+        self._custom_system_prompt = resources.custom_system_prompt
+        self._custom_system_prompt_path = resources.custom_system_prompt_path
+        self._append_system_prompt = resources.append_system_prompt
+        self._append_system_prompt_path = resources.append_system_prompt_path
+        self._resource_diagnostics = resources.diagnostics
+        self._command_registry = staged_commands
+        self._extension_runtime = staged_runtime
+        self._harness.config.tools = staged_tools
+        self._harness.config.system = staged_system
+        if system_prompt_rebuilt:
+            self._invalidate_context_usage_cache()
+        staged_runtime.attach_harness_listener(self._harness.subscribe)
+
+        return CodingReloadSummary(
+            skills=_category_summary(before_skills, _skill_signatures(resources.skills)),
+            prompt_templates=_category_summary(
+                before_prompt_templates, _prompt_template_signatures(resources.prompt_templates)
+            ),
+            context_files=_category_summary(
+                before_context_files, _context_file_signatures(resources.context_files)
+            ),
+            extensions=_category_summary(before_extensions, _extension_signatures(staged_runtime)),
+            diagnostics=_category_summary(
+                before_diagnostics, _diagnostic_signatures(self.resource_diagnostics)
+            ),
+            system_prompt_rebuilt=system_prompt_rebuilt,
+        )
 
     def reload_provider_settings(self) -> None:
         """Reload provider settings for login and model-selection flows."""
@@ -1326,6 +1538,11 @@ class CodingSession:
                 extensions_enabled=self._config.extensions_enabled,
                 project_extensions_enabled=self._config.project_extensions_enabled,
                 extension_runtime=self._extension_runtime,
+                project_trust_coordinator=self._config.project_trust_coordinator,
+                trust_override=self._config.trust_override,
+                trust_default=self._config.trust_default,
+                trust_interactive=self._config.trust_interactive,
+                trust_prompt=self._config.trust_prompt,
             )
         )
         if restore_record_model:
@@ -1398,12 +1615,23 @@ class CodingSession:
         (transcript persistence, parent ids) mutates here, not on the discarded
         replacement instance.
         """
-        await self._extension_runtime.emit_session_shutdown(reason)
-        # Tear down extension-owned UI (slot widgets, main views, key
-        # interceptors) from the outgoing session after its shutdown handlers
-        # run and before session_start fires, so start handlers can re-mount
-        # into a clean frontend.
-        self._extension_runtime.clear_ui_components()
+        if (
+            replacement.project_trust_resolution is not None
+            and replacement.project_trust_resolution.cancelled
+        ):
+            await replacement.aclose()
+            raise ValueError("Project trust decision cancelled; current session unchanged")
+
+        old_runtime = self._extension_runtime
+        await old_runtime.emit_session_shutdown(reason)
+        old_runtime.clear_ui_components()
+        await replacement._extension_runtime.emit_session_start(reason)
+        replacement._commit_project_trust_resolution()
+        replacement._session_start_pending = False
+
+        # Every cancellable boundary has completed. Adopt synchronously so a
+        # reported cancellation cannot expose only part of the destination.
+        old_runtime.retire()
         self._config = replacement._config
         self._state = replacement._state
         self._harness = replacement._harness
@@ -1412,6 +1640,10 @@ class CodingSession:
         self._skills = replacement._skills
         self._prompt_templates = replacement._prompt_templates
         self._context_files = replacement._context_files
+        self._custom_system_prompt = replacement._custom_system_prompt
+        self._custom_system_prompt_path = replacement._custom_system_prompt_path
+        self._append_system_prompt = replacement._append_system_prompt
+        self._append_system_prompt_path = replacement._append_system_prompt_path
         self._resource_diagnostics = replacement._resource_diagnostics
         self._command_registry = replacement._command_registry
         self._provider_name = replacement._provider_name
@@ -1424,9 +1656,11 @@ class CodingSession:
         self._pending_initial_entries = replacement._pending_initial_entries
         self._extension_runtime = replacement._extension_runtime
         self._image_support = replacement._image_support
+        self._project_trust_resolution = replacement._project_trust_resolution
+        self._project_trust_commit_pending = False
+        self._session_start_pending = False
         self._extension_runtime.bind(self)
         self._extension_runtime.attach_harness_listener(self._harness.subscribe)
-        await self._extension_runtime.emit_session_start(reason)
 
     async def compact(self, instructions: str | None = None) -> str:
         """Generate a manual compaction summary and rebuild active context."""
@@ -1779,6 +2013,7 @@ class CodingSession:
                 tools=self._harness.config.tools,
                 max_turns=self._harness.config.max_turns,
                 queue_mode=self._harness.config.queue_mode,
+                session_id=self._config.session_id,
             ),
             messages=self._state.messages,
         )
@@ -2596,12 +2831,23 @@ def _system_prompt_resource_signatures(
     *,
     skills: tuple[Skill, ...],
     context_files: tuple[ProjectContextFile, ...],
-) -> tuple[tuple[object, ...], tuple[object, ...]]:
+    custom_system_prompt: str | None,
+    custom_system_prompt_path: Path | None,
+    append_system_prompt: str | None,
+    append_system_prompt_path: Path | None,
+) -> tuple[object, ...]:
     prompt_skills = tuple(
         (skill.name, str(skill.path), skill.description)
         for skill in sorted(skills, key=lambda item: item.name)
     )
-    return (prompt_skills, _context_file_signatures(context_files))
+    return (
+        prompt_skills,
+        _context_file_signatures(context_files),
+        custom_system_prompt,
+        str(custom_system_prompt_path) if custom_system_prompt_path is not None else None,
+        append_system_prompt,
+        str(append_system_prompt_path) if append_system_prompt_path is not None else None,
+    )
 
 
 def _load_session_resources(
@@ -2609,6 +2855,9 @@ def _load_session_resources(
     explicit_context_files: tuple[ProjectContextFile, ...],
     *,
     skills_enabled: bool = True,
+    system_prompt_enabled: bool = True,
+    custom_system_prompt_explicit: bool = False,
+    append_system_prompt_explicit: bool = False,
 ) -> SessionResources:
     loaded_skills: list[Skill]
     skill_diagnostics: list[ResourceDiagnostic]
@@ -2622,11 +2871,28 @@ def _load_session_resources(
     discovered_context, context_diagnostics = discover_project_context_with_diagnostics(
         resource_paths
     )
+    system_prompts = discover_system_prompt_resources(
+        resource_paths,
+        custom_prompt_explicit=custom_system_prompt_explicit,
+        append_prompt_explicit=append_system_prompt_explicit,
+        enabled=system_prompt_enabled,
+    )
     return SessionResources(
         skills=tuple(loaded_skills),
         prompt_templates=tuple(loaded_prompt_templates),
         context_files=_merge_context_files(explicit_context_files, discovered_context),
-        diagnostics=tuple([*skill_diagnostics, *prompt_diagnostics, *context_diagnostics]),
+        custom_system_prompt=system_prompts.custom_prompt,
+        custom_system_prompt_path=system_prompts.custom_prompt_path,
+        append_system_prompt=system_prompts.append_prompt,
+        append_system_prompt_path=system_prompts.append_prompt_path,
+        diagnostics=tuple(
+            [
+                *skill_diagnostics,
+                *prompt_diagnostics,
+                *context_diagnostics,
+                *system_prompts.diagnostics,
+            ]
+        ),
     )
 
 

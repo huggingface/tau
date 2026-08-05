@@ -439,12 +439,19 @@ def _status_command(context: CommandContext) -> CommandResult:
     if discovery_error:
         lines.append(f"Model limit discovery: unavailable ({discovery_error})")
     if context_usage is not None:
-        lines.append(
-            "Context token breakdown: "
-            f"system={context_usage.system_tokens}, "
-            f"messages={context_usage.message_tokens}, "
-            f"tools={context_usage.tool_tokens}",
-        )
+        if context_usage.uses_provider_usage:
+            lines.append(
+                "Context token basis: "
+                f"provider={context_usage.provider_tokens}, "
+                f"estimated trailing={context_usage.trailing_tokens}",
+            )
+        else:
+            lines.append(
+                "Context token breakdown: "
+                f"system={context_usage.system_tokens}, "
+                f"messages={context_usage.message_tokens}, "
+                f"tools={context_usage.tool_tokens}",
+            )
     lines.extend(_thinking_status_lines(session))
     lines.append(f"Resource diagnostics: {len(session.resource_diagnostics)}")
     if session.auto_compact_token_threshold is not None:

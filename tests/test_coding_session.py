@@ -20,6 +20,7 @@ from tau_agent import (
     ThinkingContent,
     ToolCall,
     ToolResultMessage,
+    Usage,
     UserMessage,
 )
 from tau_agent.messages import AssistantMessageDiagnostic, assistant_content
@@ -128,8 +129,9 @@ class RaisingProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[AssistantMessageEvent]:
-        del model, system, messages, tools, signal
+        del model, system, messages, tools, signal, session_id
         self.call_count += 1
         should_fail = self.call_count == self.fail_on_call
 
@@ -157,8 +159,9 @@ class WaitingProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[AssistantMessageEvent]:
-        del model, system, tools, signal
+        del model, system, tools, signal, session_id
         call_index = self.call_count
         self.call_count += 1
         self.calls.append(list(messages))
@@ -190,8 +193,9 @@ class CancellableWaitingProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[AssistantMessageEvent]:
-        del model, system, tools
+        del model, system, tools, session_id
         self.calls.append(list(messages))
 
         async def iterator() -> AsyncIterator[AssistantMessageEvent]:
@@ -236,6 +240,8 @@ async def test_session_export_defaults_to_cwd(tmp_path: Path) -> None:
     html = output_path.read_text(encoding="utf-8")
     assert "Export me" in html
     assert str(storage.path) in html
+    assert '<details class="system-prompt">' in html
+    assert "You are Tau." in html
 
 
 @pytest.mark.anyio
@@ -247,7 +253,10 @@ async def test_session_export_writes_jsonl_to_destination_directory(tmp_path: Pa
     output_path = await session.export(Path("exports"), format="jsonl")
 
     assert output_path == tmp_path / "exports" / "session-1.jsonl"
-    assert "Export me" in output_path.read_text(encoding="utf-8")
+    jsonl = output_path.read_text(encoding="utf-8")
+    assert "Export me" in jsonl
+    assert "You are Tau." not in jsonl
+    assert "system_prompt" not in jsonl
 
 
 @pytest.mark.anyio
@@ -314,6 +323,7 @@ async def test_prompt_logs_error_event_diagnostic_data(tmp_path: Path) -> None:
 
     await _collect_session_events(session.prompt("Hello"))
 
+    assert provider.session_ids == ["session-1"]
     log_path = tau_paths.agent_calls_log_path
     assert session.last_diagnostic_log_path == log_path
     entry = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])
@@ -1855,6 +1865,7 @@ async def test_session_builds_system_prompt_when_system_is_omitted(tmp_path: Pat
         model="fake",
         storage=storage,
         cwd=tmp_path,
+        trust_default="always",
         resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
     )
     session = await CodingSession.load(config)
@@ -2208,6 +2219,7 @@ async def test_session_skills_disabled_suppresses_skill_index(tmp_path: Path) ->
         model="fake",
         storage=storage,
         cwd=tmp_path,
+        trust_default="always",
         skills_enabled=False,
         resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
     )
@@ -2463,6 +2475,177 @@ async def test_session_loads_with_resource_diagnostics_instead_of_failing(
 
 
 @pytest.mark.anyio
+async def test_session_loads_tau_native_system_prompt_files(tmp_path: Path) -> None:
+    tau_home = tmp_path / "tau-home"
+    project_tau = tmp_path / ".tau"
+    tau_home.mkdir()
+    project_tau.mkdir()
+    (tau_home / "SYSTEM.md").write_text("User base", encoding="utf-8")
+    (project_tau / "SYSTEM.md").write_text("Project base", encoding="utf-8")
+    (tau_home / "APPEND_SYSTEM.md").write_text("User append", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("Project instructions", encoding="utf-8")
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            trust_default="always",
+            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+        )
+    )
+
+    assert session.system_prompt.startswith("Project base\n\nUser append")
+    assert "User base" not in session.system_prompt
+    assert "Project instructions" in session.system_prompt
+    assert "Current date:" in session.system_prompt
+    assert f"Current working directory: {tmp_path}" in session.system_prompt
+    prompt_diagnostics = [
+        item for item in session.resource_diagnostics if item.kind == "system-prompt"
+    ]
+    assert [item.severity for item in prompt_diagnostics] == ["info", "warning", "info"]
+
+
+@pytest.mark.anyio
+async def test_explicit_system_prompt_values_override_discovered_files(tmp_path: Path) -> None:
+    tau_home = tmp_path / "tau-home"
+    tau_home.mkdir()
+    (tau_home / "SYSTEM.md").write_bytes(b"\xff")
+    (tau_home / "APPEND_SYSTEM.md").write_bytes(b"\xff")
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+            custom_system_prompt="Explicit base",
+            append_system_prompt="Explicit append",
+        )
+    )
+
+    assert session.system_prompt.startswith("Explicit base\n\nExplicit append")
+    assert all(
+        "explicit startup value" in item.message
+        for item in session.resource_diagnostics
+        if item.kind == "system-prompt"
+    )
+
+
+@pytest.mark.anyio
+async def test_session_reload_tracks_system_prompt_file_precedence(tmp_path: Path) -> None:
+    tau_home = tmp_path / "tau-home"
+    project_tau = tmp_path / ".tau"
+    tau_home.mkdir()
+    project_tau.mkdir()
+    user_prompt = tau_home / "SYSTEM.md"
+    project_prompt = project_tau / "SYSTEM.md"
+    append_prompt = tau_home / "APPEND_SYSTEM.md"
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            trust_default="always",
+            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+        )
+    )
+    assert "You are an expert coding assistant operating inside Tau" in session.system_prompt
+
+    user_prompt.write_text("User base", encoding="utf-8")
+    summary = await session.reload()
+    assert summary.system_prompt_rebuilt is True
+    assert session.system_prompt.startswith("User base")
+
+    append_prompt.write_text("Reloaded append", encoding="utf-8")
+    summary = await session.reload()
+    assert summary.system_prompt_rebuilt is True
+    assert session.system_prompt.startswith("User base\n\nReloaded append")
+
+    project_prompt.write_text("Project base", encoding="utf-8")
+    summary = await session.reload()
+    assert summary.system_prompt_rebuilt is True
+    assert session.system_prompt.startswith("Project base")
+
+    project_prompt.write_text("Changed project base", encoding="utf-8")
+    await session.reload()
+    assert session.system_prompt.startswith("Changed project base")
+
+    project_prompt.unlink()
+    await session.reload()
+    assert session.system_prompt.startswith("User base\n\nReloaded append")
+
+    user_prompt.unlink()
+    await session.reload()
+    assert session.system_prompt.startswith(
+        "You are an expert coding assistant operating inside Tau"
+    )
+    assert "Reloaded append" in session.system_prompt
+
+    append_prompt.unlink()
+    await session.reload()
+    assert "Reloaded append" not in session.system_prompt
+
+
+@pytest.mark.anyio
+async def test_failed_system_prompt_file_reload_keeps_previous_prompt(tmp_path: Path) -> None:
+    tau_home = tmp_path / "tau-home"
+    tau_home.mkdir()
+    prompt_path = tau_home / "SYSTEM.md"
+    prompt_path.write_text("Valid base", encoding="utf-8")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+        )
+    )
+    previous = session.system_prompt
+
+    prompt_path.write_bytes(b"\xff")
+    with pytest.raises(ResourceError, match="Could not read replacement system prompt file"):
+        await session.reload()
+
+    assert session.system_prompt == previous
+
+
+@pytest.mark.anyio
+async def test_new_session_adopts_system_prompt_resource_tracking(tmp_path: Path) -> None:
+    tau_home = tmp_path / "tau-home"
+    tau_home.mkdir()
+    prompt_path = tau_home / "SYSTEM.md"
+    prompt_path.write_text("Base A", encoding="utf-8")
+    manager = SessionManager(TauPaths(home=tau_home, agents_home=tmp_path / "agents-home"))
+    record = manager.create_session(cwd=tmp_path, model="fake")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=JsonlSessionStorage(record.path),
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+        )
+    )
+
+    prompt_path.write_text("Base B", encoding="utf-8")
+    await session.new_session()
+    assert session.system_prompt.startswith("Base B")
+
+    prompt_path.write_text("Base A", encoding="utf-8")
+    summary = await session.reload()
+
+    assert summary.system_prompt_rebuilt is True
+    assert session.system_prompt.startswith("Base A")
+
+
+@pytest.mark.anyio
 async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Path) -> None:
     resource_root = tmp_path / "resources"
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
@@ -2480,6 +2663,7 @@ async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Pa
             model="fake",
             storage=storage,
             cwd=tmp_path,
+            trust_default="always",
             resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
         )
     )
@@ -2713,6 +2897,62 @@ async def test_session_auto_compacts_after_response_when_threshold_is_exceeded(
             UserMessage(content="Next."),
         ],
     )
+
+
+@pytest.mark.anyio
+async def test_session_auto_compacts_from_provider_reported_usage(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(
+                    message=AssistantMessage(
+                        content="First answer",
+                        usage=Usage(total_tokens=1_000),
+                        timestamp=2_000_000_000_000,
+                    )
+                ),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(
+                    message=AssistantMessage(
+                        content="Second answer",
+                        usage=Usage(total_tokens=60_000),
+                        timestamp=2_000_000_000_001,
+                    )
+                ),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Provider-usage summary")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            auto_compact_token_threshold=50_000,
+        )
+    )
+
+    # The first turn is large enough to provide a compaction cut point, while its
+    # character estimate remains below the configured 50k threshold.
+    await _collect_session_events(session.prompt("First prompt.\n" + ("old " * 25_000)))
+    assert session.context_usage.provider_tokens == 1_000
+    assert session.has_provider_context_usage is True
+    await _collect_session_events(session.prompt("Second short prompt."))
+
+    compactions = [entry for entry in await storage.read_all() if entry.type == "compaction"]
+    assert len(compactions) == 1
+    assert compactions[0].summary == "Provider-usage summary"
 
 
 @pytest.mark.anyio
@@ -3187,7 +3427,9 @@ async def test_session_resume_preserves_shell_command_prefix(tmp_path: Path) -> 
 @pytest.mark.anyio
 async def test_session_resumes_indexed_session(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
-    first_record = manager.create_session(cwd=tmp_path / "first", model="fake", title="First")
+    first_cwd = tmp_path / "first"
+    first_cwd.mkdir()
+    first_record = manager.create_session(cwd=first_cwd, model="fake", title="First")
     second_cwd = tmp_path / "second"
     second_cwd.mkdir(parents=True)
     second_record = manager.create_session(cwd=second_cwd, model="fake", title="Second")
@@ -3778,8 +4020,10 @@ async def test_session_resume_uses_target_session_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    first_cwd = tmp_path / "first"
+    first_cwd.mkdir()
     first_record = manager.create_session(
-        cwd=tmp_path / "first",
+        cwd=first_cwd,
         model="gpt-5",
         provider_name="openai",
         title="First",
@@ -3854,8 +4098,10 @@ async def test_session_resume_missing_provider_preserves_active_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    first_cwd = tmp_path / "first"
+    first_cwd.mkdir()
     first_record = manager.create_session(
-        cwd=tmp_path / "first",
+        cwd=first_cwd,
         model="gpt-5",
         provider_name="openai",
         title="First",
@@ -3930,8 +4176,10 @@ async def test_session_resume_rejects_incompatible_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    first_cwd = tmp_path / "first"
+    first_cwd.mkdir()
     first_record = manager.create_session(
-        cwd=tmp_path / "first",
+        cwd=first_cwd,
         model="gpt-5",
         provider_name="openai",
         title="First",
@@ -4001,7 +4249,9 @@ async def test_session_resume_rejects_incompatible_provider_model(
 @pytest.mark.anyio
 async def test_session_context_usage_recalculates_after_resume(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
-    first_record = manager.create_session(cwd=tmp_path / "first", model="fake", title="First")
+    first_cwd = tmp_path / "first"
+    first_cwd.mkdir()
+    first_record = manager.create_session(cwd=first_cwd, model="fake", title="First")
     second_cwd = tmp_path / "second"
     second_cwd.mkdir(parents=True)
     second_record = manager.create_session(cwd=second_cwd, model="fake", title="Second")

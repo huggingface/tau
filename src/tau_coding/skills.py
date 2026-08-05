@@ -26,6 +26,11 @@ class Skill:
     description: str | None = None
 
 
+def is_skill_candidate(path: Path) -> bool:
+    """Return whether an entry is a loader-eligible ``*/SKILL.md`` candidate."""
+    return path.name == "SKILL.md" and (path.is_file() or path.is_symlink())
+
+
 @dataclass(frozen=True, slots=True)
 class SkillInvocation:
     """Parsed expanded skill invocation message."""
