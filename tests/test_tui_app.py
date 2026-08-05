@@ -5556,6 +5556,71 @@ async def test_tui_app_keeps_completion_window_height_stable_after_edit(
 
 
 @pytest.mark.anyio
+async def test_typing_command_does_not_oscillate_transcript_via_completion_box() -> None:
+    """Filtering the completion list must not resize the box / jump the transcript.
+
+    The autocomplete box sits inside the #main-pane flex layout. If it shrank as
+    the user refined a command (e.g. "/" -> "/p"), the transcript (height: 1fr)
+    would regrow/shrink on every keystroke, making a long transcript visibly jump
+    and flicker. The box height must grow monotonically while a completion session
+    is active and never shrink.
+    """
+    from tau_agent import AssistantMessage, TextContent
+
+    session = FakeSession()
+    session.prompt_templates = tuple(
+        PromptTemplate(
+            name=f"prompt-{index:02d}",
+            path=Path(f"prompt-{index:02d}.md"),
+            content="Run.",
+        )
+        for index in range(30)
+    )
+    session.messages = tuple(  # enough content that the transcript really scrolls
+        AssistantMessage(
+            content=[
+                TextContent(
+                    type="text",
+                    text=(
+                        f"answer {index} - a fairly long line so the transcript has "
+                        "real vertical extent and wraps across several rows"
+                    ),
+                )
+            ]
+        )
+        for index in range(40)
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        app._refresh()
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert transcript.max_scroll_y > 0  # long transcript really scrolls
+
+        autocomplete = app.query_one("#autocomplete")
+        prompt = app.query_one("#prompt")
+        prompt.text = "/"
+        app._completion_state = app._build_completion_state("/")
+        app._refresh_completions()
+        await pilot.pause()
+        assert autocomplete.display
+        height_on_cmd = app._completion_box_height
+        max_on_cmd = transcript.max_scroll_y
+
+        # Refine the command; the list shrinks drastically, but the box must not
+        # shrink and the transcript viewport must stay pinned to where it was.
+        prompt.text = "/pro"
+        app._completion_state = app._build_completion_state("/pro")
+        app._refresh_completions()
+        await pilot.pause()
+        assert autocomplete.display
+        assert app._completion_box_height == height_on_cmd
+        assert transcript.max_scroll_y == max_on_cmd
+
+
+@pytest.mark.anyio
 async def test_tui_app_cycles_completion_selection() -> None:
     app = TauTuiApp(FakeSession())
 

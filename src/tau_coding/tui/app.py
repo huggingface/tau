@@ -3502,6 +3502,7 @@ class TauTuiApp(App[None]):
         self._optimistic_user_messages: list[tuple[int, str]] = []
         self._completion_state = CompletionState()
         self._completion_visible_line_budget: int | None = None
+        self._completion_box_height: int | None = None
         self._activity_frame = 0
         self._activity_timer: Timer | None = None
         self._last_tool_timer_refresh_at = 0.0
@@ -5859,6 +5860,8 @@ class TauTuiApp(App[None]):
         suggestions.display = bool(self._completion_state.items)
         if not self._completion_state.items:
             self._completion_visible_line_budget = None
+            self._completion_box_height = None
+            suggestions.styles.height = "auto"
             suggestions.update(
                 render_completion_suggestions(
                     CompletionState(),
@@ -5868,16 +5871,25 @@ class TauTuiApp(App[None]):
             self._refresh_footer_bindings()
             return
         max_lines = self._completion_window_line_budget(suggestions)
-        suggestions.update(
-            render_completion_suggestions(
-                _visible_completion_state(
-                    self._completion_state,
-                    max_lines=max_lines,
-                    width=max(suggestions.content_size.width or suggestions.size.width, 1),
-                ),
-                theme=self.tui_settings.resolved_theme,
-            )
+        width = max(suggestions.content_size.width or suggestions.size.width, 1)
+        visible = _visible_completion_state(
+            self._completion_state,
+            max_lines=max_lines,
+            width=width,
         )
+        suggestions.update(
+            render_completion_suggestions(visible, theme=self.tui_settings.resolved_theme)
+        )
+        # Keep the box height stable while a completion session is active: it
+        # grows monotonically to the largest content seen so far and never
+        # shrinks as the user filters (e.g. "/" -> "/m"). Because the box is a
+        # flex child of #main-pane, shrinking it would resize the transcript
+        # above and make the viewport jump on every keystroke, especially with
+        # long transcripts.
+        content_lines = _completion_render_line_count(visible, width=width)
+        if self._completion_box_height is None or content_lines > self._completion_box_height:
+            self._completion_box_height = content_lines
+        suggestions.styles.height = self._completion_box_height
         self._refresh_footer_bindings()
 
     def _completion_window_line_budget(self, suggestions: Static) -> int:
