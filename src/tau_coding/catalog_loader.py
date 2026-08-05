@@ -63,6 +63,10 @@ class _CatalogCostTier(BaseModel):
     output: _NonNegativeFloat
     cacheRead: _NonNegativeFloat
     cacheWrite: _NonNegativeFloat
+    # Optional 1-hour TTL cache-write rate (Anthropic bills those above the
+    # 5-minute cacheWrite rate). Omitted from the cost dict when unset so
+    # consumers can fall back to cacheWrite.
+    cacheWrite1h: _NonNegativeFloat | None = None
 
 
 class _CatalogModelMetadata(BaseModel):
@@ -431,12 +435,7 @@ def _model_metadata_from_provider(metadata: _CatalogModelMetadata) -> ModelCatal
         cost_tiers=tuple(
             ModelCostTier(
                 max_input_tokens=tier.max_input_tokens,
-                cost={
-                    "input": tier.input,
-                    "output": tier.output,
-                    "cacheRead": tier.cacheRead,
-                    "cacheWrite": tier.cacheWrite,
-                },
+                cost=_cost_tier_rates(tier),
             )
             for tier in metadata.cost_tiers
         ),
@@ -446,6 +445,18 @@ def _model_metadata_from_provider(metadata: _CatalogModelMetadata) -> ModelCatal
         compat=_json_object(metadata.compat, "model_metadata.compat"),
         thinking_level_map=thinking_level_map,
     )
+
+
+def _cost_tier_rates(tier: _CatalogCostTier) -> dict[str, float]:
+    rates = {
+        "input": tier.input,
+        "output": tier.output,
+        "cacheRead": tier.cacheRead,
+        "cacheWrite": tier.cacheWrite,
+    }
+    if tier.cacheWrite1h is not None:
+        rates["cacheWrite1h"] = tier.cacheWrite1h
+    return rates
 
 
 def _json_object(value: Mapping[str, Any], field_name: str) -> dict[str, JSONValue]:

@@ -421,6 +421,55 @@ def test_legacy_provider_model_cost_tiers_round_trip() -> None:
     )
 
 
+def test_legacy_provider_cost_tier_accepts_one_hour_cache_write_rate() -> None:
+    raw = {
+        "default_provider": "local",
+        "providers": [
+            {
+                "type": "openai-compatible",
+                "name": "local",
+                "base_url": "http://localhost:11434/v1",
+                "api_key_env": "LOCAL_API_KEY",
+                "models": ["qwen"],
+                "default_model": "qwen",
+                "model_metadata": {
+                    "qwen": {
+                        "cost_tiers": [
+                            {
+                                "max_input_tokens": 512000,
+                                "input": 0.3,
+                                "output": 1.2,
+                                "cacheRead": 0.06,
+                                "cacheWrite": 0.375,
+                                "cacheWrite1h": 0.6,
+                            },
+                            {
+                                "input": 0.6,
+                                "output": 2.4,
+                                "cacheRead": 0.12,
+                                "cacheWrite": 0.75,
+                            },
+                        ],
+                    }
+                },
+            }
+        ],
+        "scoped_models": [],
+    }
+
+    settings = provider_settings_from_json(raw)
+    provider = settings.get_provider("local")
+    assert isinstance(provider, OpenAICompatibleProviderConfig)
+    tiers = provider.model_metadata["qwen"].cost_tiers
+    assert tiers[0].cost["cacheWrite1h"] == 0.6
+    # Tiers without the key omit it, so billing can fall back to cacheWrite.
+    assert "cacheWrite1h" not in tiers[1].cost
+    assert (
+        provider.model_metadata["qwen"].to_json()["cost_tiers"]
+        == raw["providers"][0]["model_metadata"]["qwen"]["cost_tiers"]
+    )
+
+
 @pytest.mark.parametrize(
     ("cost_tiers", "match"),
     [

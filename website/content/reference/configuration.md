@@ -219,6 +219,11 @@ Limits are inclusive, must increase strictly, and the final tier must omit
 tiers should select the first tier whose limit includes the input-token count;
 older callers continue to see `cost` as the base rate.
 
+All rates are per million tokens. `cacheWrite` is the 5-minute cache-write
+rate; entries may add an optional `cacheWrite1h` rate for Anthropic's 1-hour
+TTL cache writes, which Anthropic bills higher. When `cacheWrite1h` is absent,
+1-hour writes fall back to the `cacheWrite` rate.
+
 ### Provider preferences
 
 Provider preferences live in `~/.tau/providers.json`:

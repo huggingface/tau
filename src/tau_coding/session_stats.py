@@ -103,6 +103,7 @@ def calculate_session_stats(
             output_tokens=usage.output,
             cache_read_tokens=usage.cache_read,
             cache_write_tokens=usage.cache_write,
+            cache_write_1h_tokens=usage.cache_write_1h or 0,
             rates=rates,
         )
 
@@ -125,12 +126,21 @@ def _response_cost(
     output_tokens: int,
     cache_read_tokens: int,
     cache_write_tokens: int,
+    cache_write_1h_tokens: int,
     rates: Mapping[str, float],
 ) -> float:
-    """Calculate one response's estimated USD cost from per-million-token rates."""
+    """Calculate one response's estimated USD cost from per-million-token rates.
+
+    ``cache_write_tokens`` is the provider-reported total, which already
+    includes any 1-hour TTL writes. Anthropic bills those at a higher rate, so
+    they are priced at ``cacheWrite1h`` when the catalog provides it, falling
+    back to the 5-minute ``cacheWrite`` rate otherwise.
+    """
+    write_1h = min(cache_write_1h_tokens, cache_write_tokens)
     return (
         input_tokens * rates.get("input", 0.0)
         + output_tokens * rates.get("output", 0.0)
         + cache_read_tokens * rates.get("cacheRead", 0.0)
-        + cache_write_tokens * rates.get("cacheWrite", 0.0)
+        + (cache_write_tokens - write_1h) * rates.get("cacheWrite", 0.0)
+        + write_1h * rates.get("cacheWrite1h", rates.get("cacheWrite", 0.0))
     ) / _TOKENS_PER_MILLION

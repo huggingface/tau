@@ -574,7 +574,7 @@ input = ["text", "image"]
 context_window = 1000000
 max_tokens = 128000
 compat = { forceAdaptiveThinking = true }
-cost = { input = 10, output = 50, cacheRead = 1, cacheWrite = 12.5 }
+cost = { input = 10, output = 50, cacheRead = 1, cacheWrite = 12.5, cacheWrite1h = 20 }
 unsupported_thinking_levels = ["minimal"]
 
 [providers.model_metadata.claude-haiku-4-5]
@@ -583,7 +583,7 @@ reasoning = true
 input = ["text", "image"]
 context_window = 200000
 max_tokens = 64000
-cost = { input = 1, output = 5, cacheRead = 0.1, cacheWrite = 1.25 }
+cost = { input = 1, output = 5, cacheRead = 0.1, cacheWrite = 1.25, cacheWrite1h = 2 }
 
 [providers.model_metadata.claude-haiku-4-5-20251001]
 name = "Claude Haiku 4.5"
@@ -591,7 +591,7 @@ reasoning = true
 input = ["text", "image"]
 context_window = 200000
 max_tokens = 64000
-cost = { input = 1, output = 5, cacheRead = 0.1, cacheWrite = 1.25 }
+cost = { input = 1, output = 5, cacheRead = 0.1, cacheWrite = 1.25, cacheWrite1h = 2 }
 
 [providers.model_metadata.claude-opus-4-1]
 name = "Claude Opus 4.1 (latest)"
@@ -599,7 +599,7 @@ reasoning = true
 input = ["text", "image"]
 context_window = 200000
 max_tokens = 32000
-cost = { input = 15, output = 75, cacheRead = 1.5, cacheWrite = 18.75 }
+cost = { input = 15, output = 75, cacheRead = 1.5, cacheWrite = 18.75, cacheWrite1h = 30 }
 
 [providers.model_metadata.claude-opus-4-1-20250805]
 name = "Claude Opus 4.1"
@@ -607,7 +607,7 @@ reasoning = true
 input = ["text", "image"]
 context_window = 200000
 max_tokens = 32000
-cost = { input = 15, output = 75, cacheRead = 1.5, cacheWrite = 18.75 }
+cost = { input = 15, output = 75, cacheRead = 1.5, cacheWrite = 18.75, cacheWrite1h = 30 }
 
 [providers.model_metadata.claude-opus-4-5]
 name = "Claude Opus 4.5 (latest)"
@@ -615,7 +615,7 @@ reasoning = true
 input = ["text", "image"]
 context_window = 200000
 max_tokens = 64000
-cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25 }
+cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25, cacheWrite1h = 10 }
 
 [providers.model_metadata.claude-opus-4-5-20251101]
 name = "Claude Opus 4.5"
@@ -623,7 +623,7 @@ reasoning = true
 input = ["text", "image"]
 context_window = 200000
 max_tokens = 64000
-cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25 }
+cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25, cacheWrite1h = 10 }
 
 [providers.model_metadata.claude-opus-4-6]
 name = "Claude Opus 4.6"
@@ -632,7 +632,7 @@ input = ["text", "image"]
 context_window = 1000000
 max_tokens = 128000
 compat = { forceAdaptiveThinking = true }
-cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25 }
+cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25, cacheWrite1h = 10 }
 thinking_level_map = { xhigh = "max" }
 unsupported_thinking_levels = ["minimal"]
 
@@ -643,7 +643,7 @@ input = ["text", "image"]
 context_window = 1000000
 max_tokens = 128000
 compat = { forceAdaptiveThinking = true }
-cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25 }
+cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25, cacheWrite1h = 10 }
 thinking_level_map = { xhigh = "xhigh" }
 unsupported_thinking_levels = ["minimal"]
 
@@ -654,7 +654,7 @@ input = ["text", "image"]
 context_window = 1000000
 max_tokens = 128000
 compat = { forceAdaptiveThinking = true }
-cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25 }
+cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25, cacheWrite1h = 10 }
 thinking_level_map = { xhigh = "max" }
 unsupported_thinking_levels = ["minimal"]
 
@@ -664,7 +664,7 @@ reasoning = true
 input = ["text", "image"]
 context_window = 200000
 max_tokens = 64000
-cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75 }
+cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75, cacheWrite1h = 6 }
 
 [providers.model_metadata.claude-sonnet-4-5-20250929]
 name = "Claude Sonnet 4.5"
@@ -672,7 +672,7 @@ reasoning = true
 input = ["text", "image"]
 context_window = 200000
 max_tokens = 64000
-cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75 }
+cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75, cacheWrite1h = 6 }
 
 [providers.model_metadata.claude-sonnet-4-6]
 name = "Claude Sonnet 4.6"
@@ -681,7 +681,7 @@ input = ["text", "image"]
 context_window = 1000000
 max_tokens = 64000
 compat = { forceAdaptiveThinking = true }
-cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75 }
+cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75, cacheWrite1h = 6 }
 unsupported_thinking_levels = ["minimal"]
 
 [providers.model_metadata.claude-sonnet-5]
@@ -691,7 +691,7 @@ input = ["text", "image"]
 context_window = 1000000
 max_tokens = 128000
 compat = { forceAdaptiveThinking = true }
-cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75 }
+cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75, cacheWrite1h = 6 }
 unsupported_thinking_levels = ["minimal"]
 
 [[providers]]

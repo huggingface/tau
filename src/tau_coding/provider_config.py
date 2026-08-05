@@ -2365,13 +2365,24 @@ def _cost_tiers(value: object, field_name: str) -> tuple[ModelCostTier, ...]:
         if not isinstance(item, dict):
             raise ProviderConfigError(f"Provider cost tiers must be objects: {field_name}")
         tier_field = f"{field_name}.{index}"
-        allowed = {"max_input_tokens", "input", "output", "cacheRead", "cacheWrite"}
+        allowed = {
+            "max_input_tokens",
+            "input",
+            "output",
+            "cacheRead",
+            "cacheWrite",
+            "cacheWrite1h",
+        }
         if set(item) - allowed:
             raise ProviderConfigError(f"Provider cost tier has unknown fields: {tier_field}")
         cost = {
             key: _non_negative_float(item.get(key), f"{tier_field}.{key}")
             for key in ("input", "output", "cacheRead", "cacheWrite")
         }
+        if item.get("cacheWrite1h") is not None:
+            cost["cacheWrite1h"] = _non_negative_float(
+                item.get("cacheWrite1h"), f"{tier_field}.cacheWrite1h"
+            )
         tiers.append(
             ModelCostTier(
                 max_input_tokens=_optional_positive_int(
