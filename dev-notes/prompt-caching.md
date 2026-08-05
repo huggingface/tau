@@ -8,15 +8,15 @@ key. Tau carries its durable coding-session id through `AgentHarness` into every
 model request, including tool continuations, and clamps it to OpenAI's 64-character
 `prompt_cache_key` limit.
 
-Direct OpenAI Responses requests send the same value in three places:
+Direct OpenAI Responses requests send the same value as `prompt_cache_key` in
+the request body and `session_id` in the request headers. Codex OAuth uses the
+same body field, but its subscription backend spells the header `session-id`.
+Direct Chat Completions sends only `prompt_cache_key`.
 
-- `prompt_cache_key` in the request body;
-- `session_id` in the request headers;
-- `x-client-request-id` in the request headers.
-
-Codex OAuth uses the same body field and `x-client-request-id`, but its subscription
-backend spells the other header `session-id`. Direct Chat Completions sends only
-`prompt_cache_key`. This remains stateless operation: Tau keeps `store: false` and
+Tau deliberately omits the optional `x-client-request-id` header. OpenAI defines
+it as a unique per-request diagnostic identifier, not a stable cache-affinity key;
+reusing the session id there would make individual requests ambiguous in provider
+logs. This remains stateless operation: Tau keeps `store: false` and
 resends the complete transcript. The id helps routing and grouping; it cannot make
 a changed system prompt, tool schema, or transcript prefix cacheable.
 

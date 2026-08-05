@@ -160,7 +160,7 @@ or model:
 | --- | --- |
 | `supportsPromptCacheKey` | Sends the stable session-derived `prompt_cache_key` body field |
 | `sendSessionAffinityHeaders` | Sends headers using `sessionAffinityFormat` |
-| `sessionAffinityFormat` | `openai` sends `session_id` and `x-client-request-id`; `openai-nosession` sends only `x-client-request-id`; `openrouter` sends `x-session-id` |
+| `sessionAffinityFormat` | `openai` sends `session_id`; `openrouter` sends `x-session-id` |
 
 Unknown gateways retain their existing request shape by default. Enable only fields
 documented by the target service. Codex uses its dedicated `session-id` header

@@ -2420,7 +2420,7 @@ async def test_openai_codex_provider_reports_usage_and_sends_cache_affinity() ->
     cache_key = "c" * 64
     assert loads(requests[0].content)["prompt_cache_key"] == cache_key
     assert requests[0].headers["session-id"] == cache_key
-    assert requests[0].headers["x-client-request-id"] == cache_key
+    assert "x-client-request-id" not in requests[0].headers
     assert isinstance(events[-1], AssistantDoneEvent)
     usage = events[-1].message.usage
     assert usage is not None
@@ -2472,7 +2472,7 @@ async def test_openai_compatible_responses_reports_usage_and_sends_cache_affinit
 
     assert loads(requests[0].content)["prompt_cache_key"] == "responses-session"
     assert requests[0].headers["session_id"] == "responses-session"
-    assert requests[0].headers["x-client-request-id"] == "responses-session"
+    assert "x-client-request-id" not in requests[0].headers
     assert isinstance(events[-1], AssistantDoneEvent)
     usage = events[-1].message.usage
     assert usage is not None

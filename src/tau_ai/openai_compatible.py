@@ -392,8 +392,6 @@ def _apply_session_affinity_headers(
         return
     if affinity_format == "openai":
         headers["session_id"] = session_id
-    if affinity_format in {"openai", "openai-nosession"}:
-        headers["x-client-request-id"] = session_id
 
 
 class _StreamParser(Protocol):

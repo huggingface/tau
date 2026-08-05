@@ -980,7 +980,6 @@ def _build_codex_headers(
     }
     if session_id is not None:
         headers["session-id"] = session_id
-        headers["x-client-request-id"] = session_id
     return headers
 
 
