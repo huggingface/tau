@@ -1,7 +1,7 @@
 [
   {
     "version": "0.3.7",
-    "date": "2026-08-04",
+    "date": "2026-08-05",
     "sections": {
       "New": [
         "Decide project-input trust before Tau reads ambient project instructions, skills, prompts, themes, system prompts, or opted-in extensions; save exact/parent decisions or choose run-only scopes.",
@@ -9,7 +9,11 @@
       ],
       "Changed": [
         "Unresolved headless `ask` now skips protected project inputs; user/global and explicit CLI resources remain available, and project extensions still additionally require `--project-extensions`.",
-        "Project trust is explicitly an input-loading guard, not a filesystem, process, network, tool, model, credential, or prompt-injection sandbox."
+        "Project trust is explicitly an input-loading guard, not a filesystem, process, network, tool, model, credential, or prompt-injection sandbox.",
+        "Show latest-request and session prompt-cache hit rates in the sidebar, track OpenAI Responses cache writes, and improve OpenAI prompt-cache affinity."
+      ],
+      "Fixed": [
+        "Exit Tau when the initial project-trust prompt is cancelled instead of continuing untrusted."
       ]
     }
   },
