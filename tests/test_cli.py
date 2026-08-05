@@ -12,6 +12,7 @@ from tau_ai import (
     FakeProvider,
 )
 from tau_coding import CodingSessionRecord, SessionManager, cli
+from tau_coding._kitty import opt_out_kitty_keyboard_protocol
 from tau_coding.cli import app, run_print_mode
 from tau_coding.paths import TauPaths
 from tau_coding.provider_config import (
@@ -56,6 +57,34 @@ def _panel_text(value: str) -> str:
     no_ansi = _strip_ansi(value)
     borders = str.maketrans({ch: " " for ch in "│╭╮╰╯─"})
     return _collapse_ws(no_ansi.translate(borders))
+
+
+def test_opt_out_kitty_keyboard_protocol_on_iterm() -> None:
+    """iTerm2 arms the kitty keyboard protocol, breaking IME; opt out there."""
+    environ: dict[str, str] = {"TERM_PROGRAM": "iTerm.app"}
+    opt_out_kitty_keyboard_protocol(environ)
+    assert environ["TEXTUAL_DISABLE_KITTY_KEY"] == "1"
+    assert environ["TERM_PROGRAM"] == "iTerm.app"
+
+
+def test_opt_out_kitty_keyboard_protocol_ignores_other_terminals() -> None:
+    """Other terminals keep the kitty protocol enabled (Textual's default)."""
+    for term in ("ghostty", "Apple_Terminal", "tmux", "kitty", None):
+        environ: dict[str, str] = {}
+        if term is not None:
+            environ["TERM_PROGRAM"] = term
+        opt_out_kitty_keyboard_protocol(environ)
+        assert "TEXTUAL_DISABLE_KITTY_KEY" not in environ, term
+
+
+def test_opt_out_kitty_keyboard_protocol_respects_explicit_setting() -> None:
+    """A user-set TEXTUAL_DISABLE_KITTY_KEY is never overridden."""
+    environ = {
+        "TERM_PROGRAM": "iTerm.app",
+        "TEXTUAL_DISABLE_KITTY_KEY": "0",
+    }
+    opt_out_kitty_keyboard_protocol(environ)
+    assert environ["TEXTUAL_DISABLE_KITTY_KEY"] == "0"
 
 
 def test_force_utf8_streams_reconfigures_non_utf8_streams() -> None:

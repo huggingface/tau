@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+# Importing this module opts iTerm2 out of Textual's kitty keyboard protocol
+# (whose DISABLE_KITTY_KEY constant is read once at import time) before any
+# of the imports below load `textual`; without it, iTerm2 mangles IME
+# composition and Chinese/Japanese/Korean input breaks. See tau_coding._kitty.
+import tau_coding._kitty  # noqa: F401  (import for its import-time side effect)
 from tau_coding.commands import (
     CommandRegistry,
     CommandResult,
