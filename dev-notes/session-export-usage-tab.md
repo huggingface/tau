@@ -11,7 +11,7 @@ The Cache tab includes interactive SVG charts (hover tooltips, legend series tog
 
 ## Tabs
 
-Tab switching is real `<button>`-driven `role="tablist"` behavior: click or use Left/Right arrows to move between panels; panels toggle with the `hidden` attribute and the transcript filter bar hides while the Cache tab is active. The active tab is reflected in the URL hash (`#cache`) so links can open the analytics directly.
+Tab switching uses focusable `<button>` elements in a `role="tablist"`: click or use Left/Right arrows to move between panels. Panels toggle with the `hidden` attribute, and the transcript filter bar hides while Cache is active. Tab links use `#transcript` and `#cache`; transcript entry deep links remain unchanged.
 
 ## Tau theming
 
@@ -20,7 +20,7 @@ The export template now uses Tau's own TUI themes instead of ad-hoc colors:
 - Light mode: `tau-light` (`src/tau_coding/tui/themes/tau-light.json`) — white canvas, `#0f766e` teal accent.
 - Dark mode: `tau-dark` (`tau-dark.json`) — black canvas, `#a7f3f0` cyan accent.
 
-Charts ship both palette variants per series (`data-dark`/`data-light` attributes) and recolor live when the theme toggle or system preference changes, via a `tau-themechange` event and a `.theme-dark` class on `<html>`. PNG downloads always render on white with print-friendly darker variants of the Tau accents.
+Export CSS and chart series colors are derived from the loaded built-in theme definitions. Charts ship both palette variants per series (`data-dark`/`data-light` attributes) and recolor live when the theme toggle or system preference changes, via a `tau-themechange` event and a `.theme-dark` class on `<html>`. PNG downloads always render on white with the light-theme variants.
 
 The layout borrows the analysis-script terminal aesthetic: JetBrains Mono everywhere, `$`/`#` prompt markers, dashed rules, and flat squared panels.
 
@@ -28,7 +28,7 @@ The layout borrows the analysis-script terminal aesthetic: JetBrains Mono everyw
 
 Usage collection and rendering live in `src/tau_coding/session_usage.py`. This keeps analytics separate from the existing transcript renderer while allowing `render_session_html()` to compose both views into one standalone file.
 
-The collector reads typed `SessionEntry` and `AssistantMessage` models rather than reparsing JSONL. Cost estimates use Tau's built-in provider catalog and its input-token pricing tiers. If no catalog rate exists, cost remains unavailable instead of guessing.
+The collector reads typed `SessionEntry` and `AssistantMessage` models rather than reparsing JSONL. Cost estimates reuse the session-statistics cost calculation and Tau's built-in provider catalog, including input-token pricing tiers. Provider-reported total cost is the fallback when catalog pricing is unavailable.
 
 Only entries on the active session path feed the dashboard. If an export has no resolvable active path, it falls back to all visible entries.
 

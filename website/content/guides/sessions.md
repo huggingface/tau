@@ -107,8 +107,9 @@ series—and can be downloaded as static PNG images with white backgrounds. The
 export follows Tau's themes: tau-light in light mode and tau-dark in dark mode,
 with charts recoloring live when you toggle the theme. When `/export` creates
 HTML from the live session, it also includes the current
-system prompt in a separate, collapsed **System Prompt** section. Review that section before sharing: the prompt may expose
-project instructions, skill guidance, paths, or other local context. Offline
+system prompt in a separate, collapsed **System Prompt** section. Review that
+section before sharing: the prompt may expose project instructions, skill
+guidance, paths, or other local context. Offline
 `tau export` of an indexed session or arbitrary JSONL file omits this section
 because session JSONL does not persist the prompt.
 

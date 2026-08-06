@@ -1,5 +1,5 @@
 from tau_agent import AssistantMessage, CompactionEntry, MessageEntry, ToolCall, UserMessage
-from tau_agent.messages import Usage, assistant_content
+from tau_agent.messages import Usage, UsageCost, assistant_content
 from tau_coding.session_usage import collect_session_usage, render_usage_dashboard
 
 
@@ -61,6 +61,24 @@ def test_collect_session_usage_estimates_cost_from_catalog() -> None:
     assert unknown.requests[0].estimated_cost is None
 
 
+def test_collect_session_usage_falls_back_to_reported_cost_and_keeps_partial_total() -> None:
+    usage = collect_session_usage(
+        [
+            _assistant(
+                "a1",
+                provider="mystery",
+                model="priced-by-provider",
+                usage=Usage(input=10, cost=UsageCost(total=0.42)),
+            ),
+            _assistant("a2", provider="mystery", model="unpriced", usage=Usage(input=10)),
+        ]
+    )
+
+    assert usage.requests[0].estimated_cost == 0.42
+    assert usage.requests[1].estimated_cost is None
+    assert usage.total_cost == 0.42
+
+
 def test_render_usage_dashboard_renders_charts_and_table() -> None:
     usage = collect_session_usage(
         [_assistant("a1", usage=Usage(input=10, output=5, cache_read=90, cache_write=0))]
@@ -73,6 +91,29 @@ def test_render_usage_dashboard_renders_charts_and_table() -> None:
     assert "Prompt input by request" in markup
     assert "Cache hit rate" in markup
     assert "claude-sonnet-4-5" in markup
+
+
+def test_render_usage_dashboard_without_cache_activity_shows_na() -> None:
+    usage = collect_session_usage([_assistant("a1", usage=Usage(input=10, output=5))])
+
+    markup = render_usage_dashboard(usage)
+
+    assert usage.hit_rate is None
+    assert "Cache hit rate</span><strong>N/A</strong>" in markup
+    assert markup.count('class="usage-chart"') == 2
+    assert 'data-labels="0.0%"' not in markup
+
+
+def test_render_usage_dashboard_keeps_large_sessions_compact() -> None:
+    usage = collect_session_usage(
+        [_assistant(f"a{index}", usage=Usage(input=index, output=1)) for index in range(1, 400)]
+    )
+
+    markup = render_usage_dashboard(usage)
+
+    assert 'class="point"' not in markup
+    assert markup.count('class="hover-point"') == 5
+    assert len(markup.encode()) < 200_000
 
 
 def test_render_usage_dashboard_without_requests() -> None:

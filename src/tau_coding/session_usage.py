@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from tau_agent.messages import AssistantMessage
 from tau_agent.session import CompactionEntry, MessageEntry, SessionEntry
 from tau_coding.provider_catalog import builtin_provider_entry, model_cost_for_input_tokens
+from tau_coding.session_stats import _response_cost
+from tau_coding.tui.themes import TAU_DARK_THEME, TAU_LIGHT_THEME
 
 __all__ = [
     "RequestUsage",
@@ -74,15 +76,17 @@ class SessionUsage:
         return sum(item.output for item in self.requests)
 
     @property
-    def hit_rate(self) -> float:
-        return self.total_cached / self.total_prompt if self.total_prompt else 0.0
+    def hit_rate(self) -> float | None:
+        if self.total_prompt <= 0:
+            return None
+        if self.total_cached == 0 and self.total_cache_write == 0:
+            return None
+        return self.total_cached / self.total_prompt
 
     @property
     def total_cost(self) -> float | None:
-        costs = [item.estimated_cost for item in self.requests]
-        if not costs or any(cost is None for cost in costs):
-            return None
-        return sum(cost for cost in costs if cost is not None)
+        costs = [item.estimated_cost for item in self.requests if item.estimated_cost is not None]
+        return sum(costs) if costs else None
 
 
 def estimated_request_cost(
@@ -106,14 +110,14 @@ def estimated_request_cost(
     # cache_write already includes the 1-hour TTL writes; Anthropic bills those at
     # the higher cacheWrite1h rate, falling back to the 5-minute rate when the
     # catalog entry has no cacheWrite1h value.
-    write_1h = min(cache_write_1h, cache_write)
-    return (
-        fresh * rates.get("input", 0.0)
-        + cached * rates.get("cacheRead", 0.0)
-        + (cache_write - write_1h) * rates.get("cacheWrite", 0.0)
-        + write_1h * rates.get("cacheWrite1h", rates.get("cacheWrite", 0.0))
-        + output * rates.get("output", 0.0)
-    ) / 1_000_000
+    return _response_cost(
+        input_tokens=fresh,
+        output_tokens=output,
+        cache_read_tokens=cached,
+        cache_write_tokens=cache_write,
+        cache_write_1h_tokens=cache_write_1h,
+        rates=rates,
+    )
 
 
 def collect_session_usage(entries: Sequence[SessionEntry]) -> SessionUsage:
@@ -143,6 +147,8 @@ def collect_session_usage(entries: Sequence[SessionEntry]) -> SessionUsage:
             cache_write_1h=cache_write_1h,
             output=usage.output,
         )
+        if estimated is None and usage.cost.total > 0:
+            estimated = usage.cost.total
         requests.append(
             RequestUsage(
                 number=len(requests) + 1,
@@ -163,38 +169,25 @@ def collect_session_usage(entries: Sequence[SessionEntry]) -> SessionUsage:
 
 
 _SERIES_COLORS = {
-    # tau-dark / tau-light pairs; charts resolve the active theme at runtime.
-    "cached": ("#a7f3f0", "#0f766e"),
-    "cache writes": ("#9cffb1", "#166534"),
-    "fresh": ("#ff4f4f", "#b91c1c"),
-    "request": ("#ff4f4f", "#b91c1c"),
-    "cumulative": ("#93c5fd", "#2563eb"),
-    "output": ("#c084fc", "#7c3aed"),
-    "reasoning": ("#9cffb1", "#166534"),
+    # Derived from the built-in themes so exported charts cannot drift from them.
+    "cached": (TAU_DARK_THEME.accent, TAU_LIGHT_THEME.accent),
+    "cache writes": (TAU_DARK_THEME.success, TAU_LIGHT_THEME.success),
+    "fresh": (TAU_DARK_THEME.error, TAU_LIGHT_THEME.error),
+    "request": (TAU_DARK_THEME.error, TAU_LIGHT_THEME.error),
+    "cumulative": (TAU_DARK_THEME.markdown_link, TAU_LIGHT_THEME.markdown_link),
+    "output": (
+        TAU_DARK_THEME.role_styles["branch_summary"].border,
+        TAU_LIGHT_THEME.role_styles["branch_summary"].border,
+    ),
+    "reasoning": (TAU_DARK_THEME.success, TAU_LIGHT_THEME.success),
 }
-
-
-# Print-friendly series colors for the white-background PNG downloads.
-_PRINT_SERIES_COLORS = {
-    "#a7f3f0": "#0f766e",
-    "#9cffb1": "#166534",
-    "#ff4f4f": "#b91c1c",
-    "#93c5fd": "#2563eb",
-    "#c084fc": "#7c3aed",
-    "#0f766e": "#0f766e",
-    "#166534": "#166534",
-    "#b91c1c": "#b91c1c",
-    "#2563eb": "#2563eb",
-    "#7c3aed": "#7c3aed",
-}
-
-
-def _series_color(name: str) -> str:
-    return _SERIES_COLORS.get(name, ("#93c5fd", "#2563eb"))[0]
 
 
 def _series_color_pair(name: str) -> tuple[str, str]:
-    return _SERIES_COLORS.get(name, ("#93c5fd", "#2563eb"))
+    return _SERIES_COLORS.get(
+        name,
+        (TAU_DARK_THEME.markdown_link, TAU_LIGHT_THEME.markdown_link),
+    )
 
 
 def _compact_number(value: float) -> str:
@@ -266,21 +259,18 @@ def _line_chart(
         points = " ".join(
             f"{x:.1f},{y:.1f}" for x, y in (point(i, value) for i, value in enumerate(values))
         )
-        parts.append(f'<g class="series" data-series-id="{series_index}">')
+        labels = "|".join(f"{value:.1%}" if percent else f"{int(value):,}" for value in values)
+        parts.append(
+            f'<g class="series" data-series-id="{series_index}" '
+            f'data-name="{html.escape(name, quote=True)}" '
+            f'data-labels="{labels}">'
+        )
         parts.append(
             f'<polyline class="series-line" data-dark="{dark}" data-light="{light}" '
             f'points="{points}" fill="none" stroke="{dark}" stroke-width="3"/>'
+            f'<circle class="hover-point" data-dark="{dark}" data-light="{light}" '
+            f'r="5" fill="{dark}" visibility="hidden"/></g>'
         )
-        for index, value in enumerate(values):
-            x, y = point(index, value)
-            label = f"{value:.1%}" if percent else f"{int(value):,}"
-            parts.append(
-                f'<circle class="point" data-dark="{dark}" data-light="{light}" '
-                f'data-index="{index}" '
-                f'data-name="{html.escape(name, quote=True)}" data-label="{label}" '
-                f'cx="{x:.1f}" cy="{y:.1f}" r="3.5" fill="{dark}"/>'
-            )
-        parts.append("</g>")
     legend_x = float(width - right)
     for series_index, (name, _) in reversed(list(enumerate(series))):
         dark, light = _series_color_pair(name)
@@ -328,10 +318,11 @@ def render_usage_dashboard(usage: SessionUsage) -> str:
         running_cached += item.cached
         running_prompt += item.prompt
         cumulative_rates.append(running_cached / running_prompt if running_prompt else 0.0)
+    cache_hit_rate = usage.hit_rate
 
     cards = [
         ("Model requests", f"{len(requests):,}"),
-        ("Cache hit rate", f"{usage.hit_rate:.1%}"),
+        ("Cache hit rate", f"{cache_hit_rate:.1%}" if cache_hit_rate is not None else "N/A"),
         ("Cached input", f"{usage.total_cached:,}"),
         ("Cache writes", f"{usage.total_cache_write:,}"),
         ("Fresh input", f"{usage.total_fresh:,}"),
@@ -346,30 +337,35 @@ def render_usage_dashboard(usage: SessionUsage) -> str:
         for label, value in cards
     )
 
-    charts_html = "".join(
-        _figure(chart)
-        for chart in (
-            _line_chart(
-                "Prompt input by request",
-                [("cached", cached), ("cache writes", cache_writes), ("fresh", fresh)],
-            ),
+    charts = [
+        _line_chart(
+            "Prompt input by request",
+            [("cached", cached), ("cache writes", cache_writes), ("fresh", fresh)],
+        )
+    ]
+    if cache_hit_rate is not None:
+        charts.append(
             _line_chart(
                 "Cache hit rate",
                 [("request", rates), ("cumulative", cumulative_rates)],
                 y_max=1.0,
                 percent=True,
-            ),
-            _line_chart(
-                "Output and reasoning tokens",
-                [("output", outputs), ("reasoning", reasoning)],
-            ),
+            )
+        )
+    charts.append(
+        _line_chart(
+            "Output and reasoning tokens",
+            [("output", outputs), ("reasoning", reasoning)],
         )
     )
+    charts_html = "".join(_figure(chart) for chart in charts)
+    show_hit_rates = cache_hit_rate is not None
 
     table_rows = "".join(
         f"<tr><td>{item.number}</td><td>{html.escape(item.provider)}</td>"
         f"<td>{html.escape(item.model)}</td><td>{item.fresh:,}</td><td>{item.cached:,}</td>"
-        f"<td>{item.cache_write:,}</td><td>{item.prompt:,}</td><td>{item.hit_rate:.1%}</td>"
+        f"<td>{item.cache_write:,}</td><td>{item.prompt:,}</td>"
+        f"<td>{f'{item.hit_rate:.1%}' if show_hit_rates else 'N/A'}</td>"
         f"<td>{item.output:,}</td><td>{_format_cost(item.estimated_cost)}</td>"
         f"<td>{html.escape(item.stop_reason)}</td></tr>"
         for item in requests
@@ -483,7 +479,7 @@ USAGE_STYLES = """
     }
     .png-button:hover { color: var(--bright); border-color: var(--accent); }
     .png-button[disabled] { opacity: .5; cursor: progress; }
-    .grid { stroke: var(--line); stroke-width: 1; }
+    .grid { stroke: var(--line-strong); stroke-width: 1; opacity: .75; }
     .chart-title {
       fill: var(--bright);
       font-family: var(--mono);
@@ -501,8 +497,7 @@ USAGE_STYLES = """
       stroke-dasharray: 3 4;
       pointer-events: none;
     }
-    .point { transition: r .12s ease; }
-    .point.active { r: 6; stroke: var(--surface); stroke-width: 2; }
+    .hover-point { stroke: var(--surface); stroke-width: 2; pointer-events: none; }
     .series { transition: opacity .15s ease; }
     .series.is-hidden { opacity: .07; pointer-events: none; }
     .series-toggle { cursor: pointer; outline: none; }
@@ -622,8 +617,8 @@ USAGE_SCRIPT = """
         if (line) {
           line.setAttribute("visibility", "hidden");
         }
-        chart.querySelectorAll(".point.active").forEach(function (point) {
-          point.classList.remove("active");
+        chart.querySelectorAll(".hover-point").forEach(function (point) {
+          point.setAttribute("visibility", "hidden");
         });
       }
       charts.forEach(function (chart) {
@@ -641,23 +636,28 @@ USAGE_SCRIPT = """
           }
           var ratio = (svgX - left) / plotWidth * Math.max(count - 1, 1);
           var index = Math.max(0, Math.min(count - 1, Math.round(ratio)));
-          var selector = '.point[data-index="' + index + '"]';
-          var points = Array.prototype.filter.call(
-            chart.querySelectorAll(selector),
-            function (point) {
-              return !point.closest(".series").classList.contains("is-hidden");
-            }
+          var activeSeries = Array.prototype.filter.call(
+            chart.querySelectorAll(".series"),
+            function (series) { return !series.classList.contains("is-hidden"); }
           );
-          if (!points.length) {
+          if (!activeSeries.length) {
             return;
           }
-          chart.querySelectorAll(".point.active").forEach(function (point) {
-            point.classList.remove("active");
+          var tooltipLines = [];
+          activeSeries.forEach(function (series) {
+            var polyline = series.querySelector(".series-line");
+            var point = polyline && polyline.points.getItem(index);
+            var marker = series.querySelector(".hover-point");
+            if (!point || !marker) {
+              return;
+            }
+            marker.setAttribute("cx", point.x);
+            marker.setAttribute("cy", point.y);
+            marker.setAttribute("visibility", "visible");
+            var labels = (series.dataset.labels || "").split("|");
+            tooltipLines.push(series.dataset.name + "  " + labels[index]);
           });
-          points.forEach(function (point) {
-            point.classList.add("active");
-          });
-          var x = points[0].getAttribute("cx");
+          var x = activeSeries[0].querySelector(".hover-point").getAttribute("cx");
           var line = chart.querySelector(".hover-line");
           line.setAttribute("x1", x);
           line.setAttribute("x2", x);
@@ -665,9 +665,7 @@ USAGE_SCRIPT = """
           if (!tooltip) {
             return;
           }
-          tooltip.textContent = "Request " + (index + 1) + "\\n" + points.map(function (point) {
-            return point.dataset.name + "  " + point.dataset.label;
-          }).join("\\n");
+          tooltip.textContent = "Request " + (index + 1) + "\\n" + tooltipLines.join("\\n");
           tooltip.style.display = "block";
           var tooltipRect = tooltip.getBoundingClientRect();
           var maxLeft = window.innerWidth - tooltipRect.width - 10;
@@ -699,13 +697,7 @@ USAGE_SCRIPT = """
       });
 
       var SVG_NS = "http:" + "//www.w3.org/2000/svg";
-      // Print palette: legible versions of the Tau accents on a white canvas.
-      var PRINT_COLORS = {
-        "#a7f3f0": "#0f766e", "#9cffb1": "#166534", "#ff4f4f": "#b91c1c",
-        "#93c5fd": "#2563eb", "#c084fc": "#7c3aed", "#0f766e": "#0f766e",
-        "#166534": "#166534", "#b91c1c": "#b91c1c", "#2563eb": "#2563eb",
-        "#7c3aed": "#7c3aed"
-      };
+      // The light-theme variants are designed to remain legible on white.
       var PRINT_CSS = [
         'text{font-family:"JetBrains Mono",Consolas,Menlo,monospace}',
         ".chart-title{fill:#111827;font-size:15px;font-weight:600}",
@@ -733,16 +725,15 @@ USAGE_SCRIPT = """
           }
           node.remove();
         });
-        clone.querySelectorAll(".point.active").forEach(function (node) {
-          node.classList.remove("active");
+        clone.querySelectorAll(".hover-point").forEach(function (node) {
+          node.remove();
         });
-        clone.querySelectorAll("[stroke],[fill]").forEach(function (node) {
-          ["stroke", "fill"].forEach(function (attribute) {
-            var value = (node.getAttribute(attribute) || "").toLowerCase();
-            if (PRINT_COLORS[value]) {
-              node.setAttribute(attribute, PRINT_COLORS[value]);
-            }
-          });
+        clone.querySelectorAll("[data-light]").forEach(function (node) {
+          if (node.tagName.toLowerCase() === "polyline") {
+            node.setAttribute("stroke", node.dataset.light);
+          } else {
+            node.setAttribute("fill", node.dataset.light);
+          }
         });
         var style = document.createElementNS(SVG_NS, "style");
         style.textContent = PRINT_CSS;

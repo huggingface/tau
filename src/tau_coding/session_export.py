@@ -46,6 +46,7 @@ from tau_coding.session_usage import (
     collect_session_usage,
     render_usage_dashboard,
 )
+from tau_coding.tui.themes import TAU_DARK_THEME, TAU_LIGHT_THEME, TuiTheme
 
 
 class SessionExportError(ValueError):
@@ -149,6 +150,27 @@ def _jsonl_filename(title: str, source: str | None) -> str:
     return f"{slug or 'tau-session'}.jsonl"
 
 
+def _export_theme_css(theme: TuiTheme) -> str:
+    """Map a built-in TUI theme to the export's semantic CSS variables."""
+    return "\n".join(
+        (
+            f"      --bg: {theme.screen_background};",
+            f"      --canvas: {theme.chrome_background};",
+            f"      --surface: {theme.prompt_background};",
+            f"      --surface-2: {theme.markdown_code_block_background};",
+            f"      --text: {theme.screen_text};",
+            f"      --bright: {theme.prompt_text};",
+            f"      --muted: {theme.muted_text};",
+            f"      --line: {theme.border};",
+            f"      --line-strong: {theme.prompt_border};",
+            f"      --accent: {theme.accent};",
+            f"      --accent-soft: {theme.highlight_background};",
+            f"      --danger: {theme.error};",
+            f"      --code-bg: {theme.markdown_code_block_background};",
+        )
+    )
+
+
 def render_session_html(
     entries: Sequence[SessionEntry],
     *,
@@ -176,6 +198,8 @@ def render_session_html(
             or list(visible_entries)
         )
     )
+    light_theme_css = _export_theme_css(TAU_LIGHT_THEME)
+    dark_theme_css = _export_theme_css(TAU_DARK_THEME)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -185,59 +209,20 @@ def render_session_html(
   <style>
     :root {{
       color-scheme: light;
-      /* tau-light TUI theme */
-      --bg: #ffffff;
-      --canvas: #f3f4f6;
-      --surface: #f8fafc;
-      --surface-2: #f1f5f9;
-      --text: #111827;
-      --bright: #111827;
-      --muted: #475569;
-      --line: #cbd5e1;
-      --line-strong: #2563eb;
-      --accent: #0f766e;
-      --accent-soft: #dbeafe;
-      --danger: #b91c1c;
-      --code-bg: #f1f5f9;
+{light_theme_css}
       --mono: "JetBrains Mono", "SFMono-Regular", Consolas, Menlo, monospace;
       font-family: var(--mono);
     }}
     :root.theme-dark {{
       color-scheme: dark;
-      --bg: #000000;
-      --canvas: #000000;
-      --surface: #101419;
-      --surface-2: #161b21;
-      --text: #d8dee9;
-      --bright: #e5e7eb;
-      --muted: #667085;
-      --line: #141922;
-      --line-strong: #2d3748;
-      --accent: #a7f3f0;
-      --accent-soft: #061a1a;
-      --danger: #ff4f4f;
-      --code-bg: #161b21;
+{dark_theme_css}
     }}
     @media (prefers-color-scheme: dark) {{
       :root:not([data-theme="light"]):not(.theme-light) {{
         color-scheme: dark;
-        /* tau-dark TUI theme */
-        --bg: #000000;
-        --canvas: #000000;
-        --surface: #101419;
-        --surface-2: #161b21;
-        --text: #d8dee9;
-        --bright: #e5e7eb;
-        --muted: #667085;
-        --line: #141922;
-        --line-strong: #2d3748;
-        --accent: #a7f3f0;
-        --accent-soft: #061a1a;
-        --danger: #ff4f4f;
-        --code-bg: #161b21;
+{dark_theme_css}
       }}
     }}
-    /* Legacy attribute-only dark selector, kept for no-script preference. */
     * {{ box-sizing: border-box; }}
     html {{ background: var(--bg); scroll-behavior: smooth; }}
     body {{
@@ -371,23 +356,8 @@ def render_session_html(
       overflow-wrap: anywhere;
       word-break: break-word;
     }}
-    .view-radio {{
-      position: fixed;
-      top: -100px;
-      opacity: 0;
-      pointer-events: none;
-    }}
-    /* Tab switching is CSS-driven (radio :checked) so it works without JS;
-       the inline script only syncs ARIA state and the URL hash. */
-    #panel-usage {{ display: none; }}
-    #view-cache:checked ~ #panel-usage {{ display: block; }}
-    #view-cache:checked ~ #panel-transcript {{ display: none; }}
-    #view-cache:checked ~ header #filterBar {{ display: none; }}
-    #view-cache:checked ~ header #tab-usage {{
-      color: var(--accent);
-      border-bottom-color: var(--accent);
-    }}
-    #view-transcript:checked ~ header #tab-transcript {{
+    [hidden] {{ display: none !important; }}
+    .tab[aria-selected="true"] {{
       color: var(--accent);
       border-bottom-color: var(--accent);
     }}
@@ -412,6 +382,7 @@ def render_session_html(
       user-select: none;
     }}
     .tab:hover {{ color: var(--bright); }}
+    .tab:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
     .usage-shell {{
       max-width: 1240px;
       margin: 0 auto;
@@ -453,7 +424,6 @@ def render_session_html(
       color: var(--muted);
       background: var(--surface);
       border: 1px solid var(--line-strong);
-      
       font-size: 0.76rem;
       font-weight: 500;
       transition: color .15s, border-color .15s, background .15s;
@@ -479,7 +449,6 @@ def render_session_html(
     .chip-count {{
       padding: 0 6px;
       background: var(--surface-2);
-      
       font-size: 0.66rem;
       font-variant-numeric: tabular-nums;
     }}
@@ -493,7 +462,6 @@ def render_session_html(
       color: var(--muted);
       background: var(--surface);
       border: 1px solid var(--line-strong);
-      
       font-family: var(--mono);
       font-size: 0.76rem;
       font-weight: 500;
@@ -510,7 +478,6 @@ def render_session_html(
       color: var(--accent);
       background: var(--surface);
       border: 1px solid var(--accent);
-      
       font-family: var(--mono);
       font-size: 0.76rem;
       font-weight: 500;
@@ -777,19 +744,6 @@ def render_session_html(
   </style>
 </head>
 <body>
-  <input
-    type="radio"
-    class="view-radio"
-    name="export-view"
-    id="view-transcript"
-    checked
-  >
-  <input
-    type="radio"
-    class="view-radio"
-    name="export-view"
-    id="view-cache"
-  >
   <header>
     <div class="header-top">
       <p class="eyebrow">Tau session export</p>
@@ -812,26 +766,28 @@ def render_session_html(
     </div>
     {system_prompt_html}
     <nav class="tab-bar" role="tablist" aria-label="Export views">
-      <label
+      <button
+        type="button"
         class="tab"
         id="tab-transcript"
         role="tab"
         aria-controls="panel-transcript"
         aria-selected="true"
-        for="view-transcript"
+        tabindex="0"
       >
         Transcript
-      </label>
-      <label
+      </button>
+      <button
+        type="button"
         class="tab"
-        id="tab-usage"
+        id="tab-cache"
         role="tab"
-        aria-controls="panel-usage"
+        aria-controls="panel-cache"
         aria-selected="false"
-        for="view-cache"
+        tabindex="-1"
       >
         Cache
-      </label>
+      </button>
     </nav>
     <div class="filter-bar" id="filterBar" aria-label="Transcript filters">
       <span class="filter-label">View</span>
@@ -879,9 +835,10 @@ def render_session_html(
   </main>
   <section
     class="usage-shell"
-    id="panel-usage"
+    id="panel-cache"
     role="tabpanel"
-    aria-labelledby="tab-usage"
+    aria-labelledby="tab-cache"
+    hidden
   >
     {usage_html}
   </section>
@@ -1030,36 +987,45 @@ def render_session_html(
       applyFilters();
       syncAccordionToggle();
 
-      // Tabs switch panels via the radio :checked CSS rules above, so they
-      // work even without JavaScript. Here we only sync ARIA state, deep-link
-      // the selection into the URL hash, and honor an initial #cache hash.
-      var viewTranscript = document.getElementById("view-transcript");
-      var viewCache = document.getElementById("view-cache");
-      var tabTranscript = document.getElementById("tab-transcript");
-      var tabUsage = document.getElementById("tab-usage");
-      function syncViewState() {{
-        var cacheActive = viewCache && viewCache.checked;
-        if (tabTranscript) {{
-          tabTranscript.setAttribute("aria-selected", cacheActive ? "false" : "true");
+      var tabs = [
+        document.getElementById("tab-transcript"),
+        document.getElementById("tab-cache")
+      ];
+      var panels = [
+        document.getElementById("panel-transcript"),
+        document.getElementById("panel-cache")
+      ];
+      function selectTab(index, updateHash) {{
+        tabs.forEach(function (tab, tabIndex) {{
+          var selected = tabIndex === index;
+          tab.setAttribute("aria-selected", String(selected));
+          tab.setAttribute("tabindex", selected ? "0" : "-1");
+          panels[tabIndex].hidden = !selected;
+        }});
+        document.getElementById("filterBar").hidden = index !== 0;
+        var currentHash = window.location.hash;
+        var tabHash = !currentHash || currentHash === "#transcript" || currentHash === "#cache";
+        if (updateHash && tabHash) {{
+          try {{
+            window.history.replaceState(null, "", index === 1 ? "#cache" : "#transcript");
+          }} catch (err) {{ /* file:// pages may restrict history APIs. */ }}
         }}
-        if (tabUsage) {{
-          tabUsage.setAttribute("aria-selected", cacheActive ? "true" : "false");
-        }}
-        try {{
-          var hash = cacheActive ? "#cache" : "#transcript";
-          if (window.location.hash !== hash) {{
-            window.history.replaceState(null, "", hash);
+      }}
+      tabs.forEach(function (tab, index) {{
+        tab.addEventListener("click", function () {{ selectTab(index, true); }});
+        tab.addEventListener("keydown", function (event) {{
+          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {{
+            return;
           }}
-        }} catch (err) {{ /* file:// pages may restrict history APIs. */ }}
-      }}
-      if (viewTranscript && viewCache) {{
-        if (window.location.hash === "#cache") {{
-          viewCache.checked = true;
-        }}
-        viewTranscript.addEventListener("change", syncViewState);
-        viewCache.addEventListener("change", syncViewState);
-        syncViewState();
-      }}
+          event.preventDefault();
+          var next = event.key === "ArrowRight" ? (index + 1) % tabs.length
+            : (index + tabs.length - 1) % tabs.length;
+          selectTab(next, true);
+          tabs[next].focus();
+        }});
+      }});
+      // Preserve transcript entry deep links. Only tab hashes select a panel.
+      selectTab(window.location.hash === "#cache" ? 1 : 0, false);
     }})();
   </script>
   <script>{USAGE_SCRIPT}</script>

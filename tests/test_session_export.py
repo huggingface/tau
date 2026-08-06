@@ -16,6 +16,7 @@ from tau_agent import (
 )
 from tau_agent.messages import Usage, assistant_content
 from tau_coding.session_export import export_session_html, render_session_html
+from tau_coding.tui.themes import TAU_DARK_THEME, TAU_LIGHT_THEME
 
 
 def test_render_session_html_preserves_branch_tree() -> None:
@@ -295,14 +296,17 @@ def test_render_session_html_includes_usage_tab() -> None:
 
     html = render_session_html(entries, title="Usage Export")
 
-    assert 'id="panel-usage"' in html
+    assert 'id="panel-cache"' in html
     assert 'class="usage-chart"' in html
     assert 'class="png-button"' in html
     assert "Cache hit rate" in html
     assert "Estimated cost" in html
-    # Tabs are CSS-driven radios so switching works without JavaScript.
-    assert 'id="view-cache"' in html
-    assert "#view-cache:checked ~ #panel-transcript" in html
+    # Tabs use focusable buttons and implement the ARIA keyboard interaction.
+    assert '<button\n        type="button"\n        class="tab"\n        id="tab-cache"' in html
+    assert 'event.key !== "ArrowLeft" && event.key !== "ArrowRight"' in html
+    assert "tabs[next].focus()" in html
+    assert 'currentHash === "#transcript" || currentHash === "#cache"' in html
+    assert 'selectTab(window.location.hash === "#cache" ? 1 : 0, false)' in html
 
 
 def test_render_session_html_uses_tau_theme_palette() -> None:
@@ -317,12 +321,12 @@ def test_render_session_html_uses_tau_theme_palette() -> None:
 
     html = render_session_html(entries)
 
-    # tau-light / tau-dark TUI accent colors.
-    assert "--accent: #0f766e" in html
-    assert "--accent: #a7f3f0" in html
+    assert f"--accent: {TAU_LIGHT_THEME.accent}" in html
+    assert f"--accent: {TAU_DARK_THEME.accent}" in html
+    assert f"--bg: {TAU_LIGHT_THEME.screen_background}" in html
+    assert f"--bg: {TAU_DARK_THEME.screen_background}" in html
     assert ":root.theme-dark" in html
-    assert 'id="tab-usage"' in html
-    compact = html.replace("\n        ", "").replace("\n      ", "")
-    assert 'for="view-cache">Cache</label>' in compact
+    assert 'id="tab-cache"' in html
     assert "tau-themechange" in html
-    assert "data-dark=" in html
+    assert f'data-dark="{TAU_DARK_THEME.error}"' in html
+    assert f'data-light="{TAU_LIGHT_THEME.error}"' in html
