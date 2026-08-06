@@ -11,6 +11,7 @@ the original chat-completions path unchanged.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import suppress
 from json import JSONDecodeError, dumps, loads
 from typing import Any, Protocol
 
@@ -19,6 +20,7 @@ import httpx
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    AssistantMessageDiagnostic,
     ImageContent,
     ThinkingContent,
     ToolResultMessage,
@@ -324,7 +326,13 @@ class OpenAICompatibleProvider:
                         final_events = parser.finalize()
                         observer = self._config.response_headers_observer
                         if observer is not None:
-                            observer(dict(response.headers))
+                            try:
+                                observer(dict(response.headers))
+                            except Exception as exc:
+                                # Observer reporting is also best-effort; response
+                                # completion must never depend on metadata hooks.
+                                with suppress(Exception):
+                                    _append_response_observer_diagnostic(final_events, exc)
                         for parser_event in final_events:
                             yield parser_event
                         return
@@ -396,6 +404,26 @@ def _apply_session_affinity_headers(
         return
     if affinity_format == "openai":
         headers["session_id"] = session_id
+
+
+def _append_response_observer_diagnostic(
+    events: list[ProviderEvent],
+    exc: Exception,
+) -> None:
+    for event in events:
+        if isinstance(event, ProviderResponseEndEvent):
+            diagnostic = AssistantMessageDiagnostic(
+                type="response_headers_observer_error",
+                details={
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
+            )
+            event.message.diagnostics = [
+                *(event.message.diagnostics or []),
+                diagnostic,
+            ]
+            return
 
 
 class _StreamParser(Protocol):

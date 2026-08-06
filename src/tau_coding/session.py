@@ -1056,9 +1056,10 @@ class CodingSession:
                 "Inference-provider routing requires the huggingface provider"
             )
         normalized = validate_huggingface_inference_provider(route) if route is not None else None
-        self._inference_provider = normalized
-        self._config = replace(self._config, inference_provider=normalized)
-        self._refresh_runtime_provider()
+        provider, provider_config = self._build_runtime_provider(
+            inference_provider=normalized,
+        )
+        self._owned_providers.append(provider)
         if self._config.session_manager is not None and self._config.session_id is not None:
             self._config.session_manager.touch_session(
                 self._config.session_id,
@@ -1067,6 +1068,9 @@ class CodingSession:
                 inference_provider=normalized,
                 preserve_inference_provider=False,
             )
+        self._inference_provider = normalized
+        self._config = replace(self._config, inference_provider=normalized)
+        self._activate_runtime_provider(provider, provider_config)
         return normalized or "automatic (will pin after the next successful response)"
 
     def set_model_choice(self, choice: ModelChoice) -> None:
@@ -1293,8 +1297,12 @@ class CodingSession:
             route = validate_huggingface_inference_provider(route)
         except ProviderConfigError:
             return
-        self._inference_provider = route
-        self._config = replace(self._config, inference_provider=route)
+        provider, provider_config = self._build_runtime_provider(
+            inference_provider=route,
+        )
+        # Track staged providers immediately so a later index-write failure does
+        # not leak a provider-owned client. The active runtime remains unchanged.
+        self._owned_providers.append(provider)
         if self._config.session_manager is not None and self._config.session_id is not None:
             self._config.session_manager.touch_session(
                 self._config.session_id,
@@ -1303,11 +1311,17 @@ class CodingSession:
                 inference_provider=route,
                 preserve_inference_provider=False,
             )
-        self._refresh_runtime_provider()
+        self._inference_provider = route
+        self._config = replace(self._config, inference_provider=route)
+        self._activate_runtime_provider(provider, provider_config)
 
-    def _refresh_runtime_provider(self) -> None:
+    def _build_runtime_provider(
+        self,
+        *,
+        inference_provider: str | None,
+    ) -> tuple[ClosableModelProvider, ProviderConfig]:
         if self._runtime_provider_config is None:
-            return
+            raise ProviderConfigError("Runtime provider configuration is unavailable")
         provider_config = self._active_provider_config() or self._runtime_provider_config
         validate_provider_model(provider_config, self.model)
         try:
@@ -1316,7 +1330,7 @@ class CodingSession:
                 credential_store=self._credential_store,
                 model=self.model,
                 thinking_level=self._thinking_level,
-                inference_provider=self._inference_provider,
+                inference_provider=inference_provider,
                 response_headers_observer=(
                     self._observe_response_headers
                     if provider_config.name == "huggingface"
@@ -1325,10 +1339,25 @@ class CodingSession:
             )
         except RuntimeError as exc:
             raise ProviderConfigError(str(exc)) from exc
-        self._owned_providers.append(provider)
+        return provider, provider_config
+
+    def _activate_runtime_provider(
+        self,
+        provider: ClosableModelProvider,
+        provider_config: ProviderConfig,
+    ) -> None:
         self._harness.config.provider = provider
         self._runtime_provider_config = provider_config
         self._invalidate_runtime_model_limits()
+
+    def _refresh_runtime_provider(self) -> None:
+        if self._runtime_provider_config is None:
+            return
+        provider, provider_config = self._build_runtime_provider(
+            inference_provider=self._inference_provider,
+        )
+        self._owned_providers.append(provider)
+        self._activate_runtime_provider(provider, provider_config)
 
     def _invalidate_runtime_model_limits(self) -> None:
         self._runtime_model_limits = None

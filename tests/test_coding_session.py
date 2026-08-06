@@ -3195,6 +3195,21 @@ async def test_huggingface_session_pins_successful_automatic_route(
 
     observer = created[0][1]
     assert callable(observer)
+    original_touch_session = manager.touch_session
+    active_provider = session._harness.config.provider
+
+    def fail_touch_session(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise PermissionError("session index is read-only")
+
+    monkeypatch.setattr(manager, "touch_session", fail_touch_session)
+    with pytest.raises(PermissionError, match="session index is read-only"):
+        observer({"X-Inference-Provider": "deepinfra"})
+
+    assert session.inference_provider is None
+    assert session._harness.config.provider is active_provider
+
+    monkeypatch.setattr(manager, "touch_session", original_touch_session)
     observer({"X-Inference-Provider": "deepinfra"})
 
     assert session.inference_provider == "deepinfra"

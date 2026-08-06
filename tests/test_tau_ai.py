@@ -297,6 +297,50 @@ async def test_openai_compatible_provider_observes_headers_after_success() -> No
 
 
 @pytest.mark.anyio
+async def test_openai_compatible_provider_observer_failure_keeps_completed_response() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
+            headers={
+                "content-type": "text/event-stream",
+                "x-inference-provider": "deepinfra",
+            },
+        )
+
+    def fail_observer(headers: Mapping[str, str]) -> None:
+        del headers
+        raise PermissionError("session index is read-only")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://router.huggingface.co/v1",
+                response_headers_observer=fail_observer,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="zai-org/GLM-5.2",
+                system="You are Tau.",
+                messages=[UserMessage(content="hello")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], AssistantDoneEvent)
+    assert events[-1].message.text == "ok"
+    assert events[-1].message.diagnostics[-1].type == "response_headers_observer_error"
+    assert events[-1].message.diagnostics[-1].details == {
+        "error": "session index is read-only",
+        "error_type": "PermissionError",
+    }
+
+
+@pytest.mark.anyio
 async def test_openai_compatible_provider_does_not_retry_after_partial_output() -> None:
     requests: list[httpx.Request] = []
 
