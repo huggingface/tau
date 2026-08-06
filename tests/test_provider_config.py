@@ -818,6 +818,24 @@ def test_openai_compatible_config_from_provider_uses_configured_env_var(
     assert config.timeout_seconds == 60.0
     assert config.max_retries == 2
     assert config.max_retry_delay_seconds == 1.0
+    assert config.response_provider_header is None
+
+
+def test_huggingface_runtime_config_captures_inference_provider_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HF_TEST_TOKEN", "test-key")
+    provider = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        base_url="https://router.huggingface.co/v1",
+        api_key_env="HF_TEST_TOKEN",
+        models=("test-model",),
+        default_model="test-model",
+    )
+
+    config = openai_compatible_config_from_provider(provider)
+
+    assert config.response_provider_header == "x-inference-provider"
 
 
 def test_openai_compatible_config_from_provider_preserves_openai_base_url_env(
