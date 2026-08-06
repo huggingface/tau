@@ -29,6 +29,7 @@ class RequestUsage:
     number: int
     provider: str
     model: str
+    response_provider: str | None
     fresh: int
     cached: int
     cache_write: int
@@ -154,6 +155,7 @@ def collect_session_usage(entries: Sequence[SessionEntry]) -> SessionUsage:
                 number=len(requests) + 1,
                 provider=message.provider,
                 model=message.model,
+                response_provider=message.response_provider,
                 fresh=usage.input,
                 cached=usage.cache_read,
                 cache_write=usage.cache_write,
@@ -363,7 +365,9 @@ def render_usage_dashboard(usage: SessionUsage) -> str:
 
     table_rows = "".join(
         f"<tr><td>{item.number}</td><td>{html.escape(item.provider)}</td>"
-        f"<td>{html.escape(item.model)}</td><td>{item.fresh:,}</td><td>{item.cached:,}</td>"
+        f"<td>{html.escape(item.model)}</td>"
+        f"<td>{html.escape(item.response_provider) if item.response_provider else '-'}</td>"
+        f"<td>{item.fresh:,}</td><td>{item.cached:,}</td>"
         f"<td>{item.cache_write:,}</td><td>{item.prompt:,}</td>"
         f"<td>{f'{item.hit_rate:.1%}' if show_hit_rates else 'N/A'}</td>"
         f"<td>{item.output:,}</td><td>{_format_cost(item.estimated_cost)}</td>"
