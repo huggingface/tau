@@ -3892,7 +3892,7 @@ default_model = "kimi-for-coding"
 docs_url = "https://www.kimi.com/code/docs/en/kimi-code/models"
 api = "openai-completions"
 thinking_levels = ["low", "medium", "high", "xhigh"]
-thinking_default = "medium"
+thinking_default = "xhigh"
 thinking_parameter = "reasoning_effort"
 
 [providers.context_windows]
@@ -3917,6 +3917,7 @@ context_window = 262144
 max_tokens = 32768
 compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = false, maxTokensField = "max_tokens", supportsStrictMode = false }
 cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+unsupported_thinking_levels = ["off", "minimal", "low", "high", "xhigh"]
 
 [[providers]]
 name = "moonshotai-cn"

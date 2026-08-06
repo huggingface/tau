@@ -32,6 +32,7 @@ from tau_coding.provider_config import (
     set_provider_thinking_level,
     upsert_openai_compatible_provider,
 )
+from tau_coding.thinking import ThinkingLevel
 
 
 def test_stale_preferences_cannot_restore_removed_codex_alias(tmp_path: Path) -> None:
@@ -677,7 +678,7 @@ def _kimi_code_like_provider() -> OpenAICompatibleProviderConfig:
         models=("k3", "kimi-for-coding"),
         default_model="k3",
         thinking_levels=("low", "medium", "high", "xhigh"),
-        thinking_default="medium",
+        thinking_default="xhigh",
         thinking_parameter="reasoning_effort",
         model_metadata={
             "k3": ProviderModelMetadata(
@@ -691,17 +692,26 @@ def _kimi_code_like_provider() -> OpenAICompatibleProviderConfig:
                     "xhigh": "max",
                 },
             ),
+            "kimi-for-coding": ProviderModelMetadata(
+                reasoning=True,
+                thinking_level_map={
+                    "off": None,
+                    "minimal": None,
+                    "low": None,
+                    "high": None,
+                    "xhigh": None,
+                },
+            ),
         },
     )
 
 
-def test_resolve_startup_thinking_level_falls_back_when_default_unsupported() -> None:
+def test_resolve_startup_thinking_level_uses_k3_max_default() -> None:
     provider = _kimi_code_like_provider()
 
-    # k3 no longer supports xhigh only: low, high, xhigh are all available.
-    # The global "medium" default is unsupported, so it falls back to the
-    # first available level ("low") instead of crashing startup.
-    assert resolve_startup_thinking_level(provider, "k3") == "low"
+    # K3 does not support the global "medium" default, so startup uses its
+    # catalog default (xhigh, sent as "max") instead of the first level.
+    assert resolve_startup_thinking_level(provider, "k3") == "xhigh"
 
 
 def test_resolve_startup_thinking_level_prefers_remembered_model_default() -> None:
@@ -723,7 +733,8 @@ def test_resolve_startup_thinking_level_prefers_remembered_model_default() -> No
 def test_resolve_startup_thinking_level_keeps_supported_default() -> None:
     provider = _kimi_code_like_provider()
 
-    # kimi-for-coding supports the provider default (medium).
+    # kimi-for-coding supports global medium but not K3's xhigh default.
+    assert provider_thinking_levels(provider, model="kimi-for-coding") == ("medium",)
     assert resolve_startup_thinking_level(provider, "kimi-for-coding") == "medium"
 
 
@@ -910,7 +921,15 @@ def test_openai_compatible_config_from_provider_sets_reasoning_effort(
     assert plain.reasoning_effort is None
 
 
-def test_kimi_k3_maps_xhigh_thinking_to_max(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("level", "expected_effort"),
+    [("low", "low"), ("high", "high"), ("xhigh", "max")],
+)
+def test_kimi_k3_maps_thinking_levels_to_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+    level: ThinkingLevel,
+    expected_effort: str,
+) -> None:
     monkeypatch.setenv("KIMI_CODE_API_KEY", "test-key")
     settings = load_provider_settings(TauPaths(home=Path("/missing")))
     provider = settings.get_provider("kimi-code")
@@ -918,11 +937,11 @@ def test_kimi_k3_maps_xhigh_thinking_to_max(monkeypatch: pytest.MonkeyPatch) -> 
     config = openai_compatible_config_from_provider(
         provider,
         model="k3",
-        thinking_level="xhigh",
+        thinking_level=level,
     )
 
     assert provider_thinking_levels(provider, model="k3") == ("low", "high", "xhigh")
-    assert config.reasoning_effort == "max"
+    assert config.reasoning_effort == expected_effort
 
 
 def test_openai_compatible_config_from_provider_rejects_unsupported_thinking_level(

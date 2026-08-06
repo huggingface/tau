@@ -310,7 +310,7 @@ def test_create_model_provider_coerces_unsupported_startup_thinking_level(
         models=("k3",),
         default_model="k3",
         thinking_levels=("low", "medium", "high", "xhigh"),
-        thinking_default="medium",
+        thinking_default="xhigh",
         thinking_parameter="reasoning_effort",
         model_metadata={
             "k3": ProviderModelMetadata(
@@ -346,7 +346,7 @@ def test_create_model_provider_coerces_unsupported_startup_thinking_level(
     )
 
     assert isinstance(provider, OpenAICompatibleProvider)
-    assert provider._config.reasoning_effort == "low"
+    assert provider._config.reasoning_effort == "max"
 
 
 @pytest.mark.anyio

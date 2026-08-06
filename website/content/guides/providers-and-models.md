@@ -162,8 +162,9 @@ Kimi K3 uses the `k3` model ID, accepts text and image input, and supports up to
 a 1,048,576-token context window on eligible plans. It supports three
 reasoning-effort levels via the `reasoning_effort` field: `low`, `high`, and
 `max` (default). Tau exposes these as the `low`, `high`, and `xhigh` thinking
-levels respectively. Start a new session when
-switching to K3 so the previous model's context cache is not re-prefilled. See
+levels respectively, and starts new K3 sessions at `xhigh` unless a remembered
+per-model choice exists. Start a new session when switching to K3 so the
+previous model's context cache is not re-prefilled. See
 [Kimi's model documentation](https://www.kimi.com/code/docs/en/kimi-code/models)
 for current plan availability and context limits.
 
