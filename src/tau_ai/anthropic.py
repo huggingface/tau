@@ -208,6 +208,7 @@ class AnthropicProvider:
                             return
 
                         yield ProviderResponseStartEvent(model=model)
+                        stream_error: dict[str, JSONValue] | None = None
                         content_parts: list[str] = []
                         thinking_parts: list[str] = []
                         thinking_signature: str | None = None
@@ -284,12 +285,37 @@ class AnthropicProvider:
                                     )
                                 usage = _apply_message_delta_usage(usage, chunk.get("usage"))
                             elif event_type == "error":
-                                error = chunk.get("error")
-                                message = "Provider returned an error"
-                                if isinstance(error, Mapping):
-                                    message = _string_or_empty(error.get("message")) or message
-                                yield ProviderErrorEvent(message=message, data=chunk)
+                                error_type, message = _anthropic_stream_error_details(chunk)
+                                if (
+                                    not emitted_content
+                                    and self._should_retry(attempt)
+                                    and _retryable_anthropic_stream_error(error_type)
+                                ):
+                                    stream_error = chunk
+                                    break
+                                yield ProviderErrorEvent(
+                                    message=message,
+                                    data={"event": chunk, "attempts": attempt + 1},
+                                )
                                 return
+
+                        if stream_error is not None:
+                            error_type, _message = _anthropic_stream_error_details(stream_error)
+                            delay = retry_delay_seconds(
+                                attempt,
+                                max_delay_seconds=self._config.max_retry_delay_seconds,
+                            )
+                            yield provider_retry_event(
+                                attempt=attempt,
+                                max_retries=self._config.max_retries,
+                                delay_seconds=delay,
+                                reason=f"stream error ({error_type or 'unknown'})",
+                                data={"event": stream_error},
+                            )
+                            attempt += 1
+                            if not await wait_for_retry(delay, signal=signal):
+                                return
+                            continue
 
                         tool_calls = [
                             builder.build(index) for index, builder in sorted(tool_builders.items())
@@ -351,6 +377,30 @@ class AnthropicProvider:
         if attempt >= self._config.max_retries:
             return False
         return status_code is None or status_code in {408, 409, 425, 429} or status_code >= 500
+
+
+_TRANSIENT_ANTHROPIC_STREAM_ERROR_TYPES = frozenset(
+    {
+        "api_error",
+        "overloaded_error",
+        "rate_limit_error",
+    }
+)
+
+
+def _anthropic_stream_error_details(event: Mapping[str, JSONValue]) -> tuple[str, str]:
+    """Return the provider classification and message from an Anthropic SSE error."""
+    error = event.get("error")
+    if not isinstance(error, Mapping):
+        return "", "Provider returned an error"
+    error_type = _string_or_empty(error.get("type"))
+    message = _string_or_empty(error.get("message")) or "Provider returned an error"
+    return error_type, message
+
+
+def _retryable_anthropic_stream_error(error_type: str) -> bool:
+    """Return whether an Anthropic SSE error is transient and safe to retry."""
+    return error_type.lower() in _TRANSIENT_ANTHROPIC_STREAM_ERROR_TYPES
 
 
 class _AnthropicToolBuilder:

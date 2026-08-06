@@ -1842,6 +1842,240 @@ async def test_anthropic_provider_retries_overloaded_529() -> None:
 
 
 @pytest.mark.anyio
+async def test_anthropic_provider_retries_transient_stream_error() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(
+                200,
+                text=(
+                    'data: {"type":"error","error":{"type":"overloaded_error",'
+                    '"message":"Overloaded"}}\n\n'
+                ),
+                headers={"content-type": "text/event-stream"},
+            )
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"content_block_delta","index":0,'
+                '"delta":{"type":"text_delta","text":"ok"}}\n\n'
+                'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n'
+                'data: {"type":"message_stop"}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+                max_retries=1,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 2
+    assert [event.type for event in events] == [
+        "start",
+        "text_start",
+        "text_delta",
+        "text_end",
+        "done",
+    ]
+
+
+@pytest.mark.anyio
+async def test_anthropic_provider_surfaces_stream_error_after_retry_exhaustion() -> None:
+    requests: list[httpx.Request] = []
+    error_event = {
+        "type": "error",
+        "error": {"type": "overloaded_error", "message": "Overloaded"},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"error","error":{"type":"overloaded_error",'
+                '"message":"Overloaded"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+                max_retries=2,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 3
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.error_message == "Overloaded"
+    assert events[-1].error.diagnostics[0].details == {
+        "event": error_event,
+        "attempts": 3,
+    }
+
+
+@pytest.mark.anyio
+async def test_anthropic_provider_does_not_retry_non_transient_stream_error() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"error","error":{"type":"authentication_error",'
+                '"message":"Invalid API key"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+                max_retries=2,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 1
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.error_message == "Invalid API key"
+
+
+@pytest.mark.anyio
+async def test_anthropic_provider_does_not_retry_stream_error_after_content() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"content_block_delta","index":0,'
+                '"delta":{"type":"text_delta","text":"partial"}}\n\n'
+                'data: {"type":"error","error":{"type":"overloaded_error",'
+                '"message":"Overloaded"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+                max_retries=2,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 1
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.text == "partial"
+    assert events[-1].error.error_message == "Overloaded"
+
+
+@pytest.mark.anyio
+async def test_anthropic_provider_cancellation_stops_stream_error_retry_backoff() -> None:
+    requests: list[httpx.Request] = []
+
+    class CancelDuringBackoff(SimpleCancellationToken):
+        def __init__(self) -> None:
+            super().__init__()
+            self.checks = 0
+
+        def is_cancelled(self) -> bool:
+            self.checks += 1
+            return self.checks >= 2
+
+    signal = CancelDuringBackoff()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"error","error":{"type":"overloaded_error",'
+                '"message":"Overloaded"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+                max_retries=2,
+                max_retry_delay_seconds=1,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+                signal=signal,
+            )
+        )
+
+    assert len(requests) == 1
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.error_message == "Provider stream ended without a terminal event"
+
+
+@pytest.mark.anyio
 async def test_anthropic_provider_includes_http_error_detail_in_message() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(

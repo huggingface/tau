@@ -257,9 +257,11 @@ Provider preferences live in `~/.tau/providers.json`:
   their session history. `timeout_seconds` defaults to `60` (> 0); `max_retries`
   defaults to `2`; `max_retry_delay_seconds` defaults to `1` (both ≥ 0).
   Retries cover transient HTTP statuses (`408`, `409`, `425`, `429`, `5xx`),
-  transport errors, and — for the OpenAI Codex provider — transient in-stream
-  SSE error events such as `server_is_overloaded` that arrive on an otherwise
-  successful HTTP 200 response.
+  transport errors, and transient in-stream SSE errors that arrive on an
+  otherwise successful HTTP 200 response. Anthropic retries `api_error`,
+  `overloaded_error`, and `rate_limit_error`; OpenAI Codex retries transient
+  events such as `server_is_overloaded`. In-stream errors remain terminal after
+  partial content to prevent duplicate output or tool calls.
 - API keys and OAuth credentials are **not** stored here — they live in
   `~/.tau/credentials.json` (private but not encrypted). OAuth objects may contain
   provider metadata such as a GitHub Enterprise domain and are refreshed
