@@ -260,13 +260,6 @@ def render_session_html(
       font-size: 24px;
       font-weight: 600;
     }}
-    h1::after {{
-      content: "▌";
-      margin-left: 5px;
-      color: var(--accent);
-      animation: blink 1.1s steps(1) infinite;
-    }}
-    @keyframes blink {{ 0%,49% {{ opacity: 1; }} 50%,100% {{ opacity: 0; }} }}
     h2 {{
       color: var(--muted);
       font-size: 0.68rem;

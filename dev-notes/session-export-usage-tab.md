@@ -22,7 +22,7 @@ The export template now uses Tau's own TUI themes instead of ad-hoc colors:
 
 Charts ship both palette variants per series (`data-dark`/`data-light` attributes) and recolor live when the theme toggle or system preference changes, via a `tau-themechange` event and a `.theme-dark` class on `<html>`. PNG downloads always render on white with print-friendly darker variants of the Tau accents.
 
-The layout borrows the analysis-script terminal aesthetic: JetBrains Mono everywhere, `$`/`#` prompt markers, dashed rules, blinking cursor on the title, and flat squared panels.
+The layout borrows the analysis-script terminal aesthetic: JetBrains Mono everywhere, `$`/`#` prompt markers, dashed rules, and flat squared panels.
 
 ## Design
 
