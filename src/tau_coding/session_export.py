@@ -662,6 +662,10 @@ def render_session_html(
       padding: 10px 14px 12px 33px;
       border-top: 1px solid var(--line);
     }}
+    .entry-body > p {{
+      font-size: 0.74rem;
+      margin: 2px 0;
+    }}
     .entry-meta-line {{
       display: flex;
       flex-wrap: wrap;
