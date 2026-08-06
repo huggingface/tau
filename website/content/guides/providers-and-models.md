@@ -225,6 +225,13 @@ list before creating or refreshing a runtime provider. This prevents accidental
 provider/model mismatches, such as trying to send an API-only OpenAI model to the
 separate `openai-codex` subscription provider.
 
+When a switch crosses provider APIs, Tau compiles existing tool history for the
+target provider. Provider-specific tool-call IDs are deterministically translated
+to a portable format, with the same translated ID used for each call and result.
+When compiling history for Anthropic, Tau also omits opaque reasoning signatures
+created by other APIs. This lets a session continue after tools have run without
+exposing users to provider validation errors or rewriting the saved JSONL history.
+
 ### Claude Opus 5
 
 Tau supports Anthropic's `claude-opus-5` through the direct `anthropic`
