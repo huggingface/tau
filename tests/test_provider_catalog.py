@@ -419,9 +419,9 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
     assert k3.thinking_level_map == {
         "off": None,
         "minimal": None,
-        "low": None,
+        "low": "low",
         "medium": None,
-        "high": None,
+        "high": "high",
         "xhigh": "max",
     }
 

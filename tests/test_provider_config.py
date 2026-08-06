@@ -670,13 +670,13 @@ def test_resolve_provider_selection_rejects_unknown_provider() -> None:
 
 
 def _kimi_code_like_provider() -> OpenAICompatibleProviderConfig:
-    # Mirrors the catalog kimi-code entry: k3 only supports xhigh (mapped to
-    # "max"); every other level is marked unsupported (None) in the map.
+    # Mirrors the catalog kimi-code entry: k3 supports low, high, and xhigh
+    # mapped to "low", "high", "max" respectively.
     return OpenAICompatibleProviderConfig(
         name="kimi-code",
         models=("k3", "kimi-for-coding"),
         default_model="k3",
-        thinking_levels=("medium", "xhigh"),
+        thinking_levels=("low", "medium", "high", "xhigh"),
         thinking_default="medium",
         thinking_parameter="reasoning_effort",
         model_metadata={
@@ -685,9 +685,9 @@ def _kimi_code_like_provider() -> OpenAICompatibleProviderConfig:
                 thinking_level_map={
                     "off": None,
                     "minimal": None,
-                    "low": None,
+                    "low": "low",
                     "medium": None,
-                    "high": None,
+                    "high": "high",
                     "xhigh": "max",
                 },
             ),
@@ -698,9 +698,10 @@ def _kimi_code_like_provider() -> OpenAICompatibleProviderConfig:
 def test_resolve_startup_thinking_level_falls_back_when_default_unsupported() -> None:
     provider = _kimi_code_like_provider()
 
-    # k3 only supports xhigh, so the global "medium" default must be coerced
-    # instead of crashing startup.
-    assert resolve_startup_thinking_level(provider, "k3") == "xhigh"
+    # k3 no longer supports xhigh only: low, high, xhigh are all available.
+    # The global "medium" default is unsupported, so it falls back to the
+    # first available level ("low") instead of crashing startup.
+    assert resolve_startup_thinking_level(provider, "k3") == "low"
 
 
 def test_resolve_startup_thinking_level_prefers_remembered_model_default() -> None:
@@ -920,7 +921,7 @@ def test_kimi_k3_maps_xhigh_thinking_to_max(monkeypatch: pytest.MonkeyPatch) -> 
         thinking_level="xhigh",
     )
 
-    assert provider_thinking_levels(provider, model="k3") == ("xhigh",)
+    assert provider_thinking_levels(provider, model="k3") == ("low", "high", "xhigh")
     assert config.reasoning_effort == "max"
 
 
