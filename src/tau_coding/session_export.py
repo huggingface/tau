@@ -423,13 +423,18 @@ def render_session_html(
       display: inline-flex;
       align-items: center;
       gap: 7px;
-      padding: 4px 11px;
+      padding: 5px 12px;
       color: var(--muted);
       background: var(--surface);
-      border: 1px solid var(--line-strong);
+      border: 1px solid var(--line);
+      border-radius: 6px;
       font-size: 0.76rem;
       font-weight: 500;
       transition: color .15s, border-color .15s, background .15s;
+    }}
+    .chip-label:hover {{
+      color: var(--bright);
+      border-color: var(--line-strong);
     }}
     .chip-label::before {{
       content: "";
@@ -461,33 +466,43 @@ def render_session_html(
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 4px 12px;
+      padding: 5px 12px;
       color: var(--muted);
       background: var(--surface);
-      border: 1px solid var(--line-strong);
+      border: 1px solid var(--line);
+      border-radius: 6px;
       font-family: var(--mono);
       font-size: 0.76rem;
       font-weight: 500;
       cursor: pointer;
-      transition: color .15s, border-color .15s;
+      transition: color .15s, border-color .15s, background .15s;
     }}
-    .jsonl-download:hover {{ color: var(--accent); border-color: var(--accent); }}
+    .jsonl-download:hover {{
+      color: var(--bright);
+      background: var(--surface-2);
+      border-color: var(--line-strong);
+    }}
     .jsonl-download .icon {{ width: 12px; height: 12px; }}
     .expand-toggle {{
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 4px 12px;
+      padding: 5px 12px;
       color: var(--accent);
       background: var(--surface);
       border: 1px solid var(--accent);
+      border-radius: 6px;
       font-family: var(--mono);
       font-size: 0.76rem;
       font-weight: 500;
       cursor: pointer;
-      transition: background .15s;
+      transition: color .15s, border-color .15s, background .15s;
     }}
-    .expand-toggle:hover {{ background: var(--accent-soft); }}
+    .expand-toggle:hover {{
+      color: var(--bright);
+      background: var(--accent-soft);
+      border-color: var(--accent);
+    }}
     main {{
       display: grid;
       grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
