@@ -81,6 +81,38 @@ def test_anthropic_compiles_codex_tool_history_with_portable_ids() -> None:
     assert all(re.fullmatch(r"[A-Za-z0-9_-]+", value) for value in tool_use_ids)
 
 
+def test_anthropic_omits_foreign_thinking_only_assistant_turn() -> None:
+    messages = [
+        UserMessage(content="Think about this"),
+        AssistantMessage(
+            api="openai-responses",
+            provider="openai",
+            model="gpt-test",
+            content=[
+                ThinkingContent(
+                    thinking="private reasoning",
+                    thinking_signature='{"type":"reasoning","id":"rs_1"}',
+                )
+            ],
+            stop_reason="length",
+        ),
+        UserMessage(content="Continue with Claude"),
+    ]
+
+    payload = _build_messages_payload(
+        model="claude-test",
+        system="You are Tau.",
+        messages=messages,
+        tools=[],
+        cache_retention=CACHE_RETENTION_NONE,
+    )
+
+    assert payload["messages"] == [
+        {"role": "user", "content": "Think about this"},
+        {"role": "user", "content": "Continue with Claude"},
+    ]
+
+
 def test_anthropic_preserves_native_anthropic_thinking_and_safe_tool_ids() -> None:
     messages = [
         AssistantMessage(

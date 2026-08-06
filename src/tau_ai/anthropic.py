@@ -441,9 +441,14 @@ def _build_messages_payload(
     if thinking_budget_tokens is not None:
         resolved_max_tokens = max(resolved_max_tokens, thinking_budget_tokens + 1024)
     cache_control = _cache_control(cache_retention)
-    payload_messages = [
-        _anthropic_message(message, supports_images=supports_images) for message in messages
-    ]
+    payload_messages = []
+    for message in messages:
+        converted = _anthropic_message(message, supports_images=supports_images)
+        # Dropping foreign provider reasoning can empty a reasoning-only turn.
+        # Anthropic rejects empty assistant content, so omit that inert turn too.
+        if converted.get("role") == "assistant" and not converted.get("content"):
+            continue
+        payload_messages.append(converted)
     _apply_message_cache_breakpoints(payload_messages, cache_control)
     payload: dict[str, JSONValue] = {
         "model": model,
