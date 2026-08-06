@@ -35,6 +35,7 @@ class RuntimeProviderAuth:
 
 
 type RuntimeProviderAuthResolver = Callable[[], Awaitable[RuntimeProviderAuth]]
+type RuntimeResponseHeadersObserver = Callable[[Mapping[str, str]], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +60,7 @@ class OpenAICompatibleConfig:
     provider_name: str = "OpenAI-compatible provider"
     omit_authorization_header: bool = False
     credential_resolver: RuntimeProviderAuthResolver | None = None
+    response_headers_observer: RuntimeResponseHeadersObserver | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -3148,6 +3148,61 @@ async def test_session_compacts_and_retries_once_after_context_overflow(
 
 
 @pytest.mark.anyio
+async def test_huggingface_session_pins_successful_automatic_route(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    created: list[tuple[str | None, object | None]] = []
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+        inference_provider: str | None = None,
+        response_headers_observer: object | None = None,
+    ) -> SwitchableFakeProvider:
+        del credential_store, thinking_level
+        created.append((inference_provider, response_headers_observer))
+        return SwitchableFakeProvider(provider_config)
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    provider_config = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=("zai-org/GLM-5.2",),
+        default_model="zai-org/GLM-5.2",
+    )
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(
+        cwd=tmp_path,
+        model="zai-org/GLM-5.2",
+        provider_name="huggingface",
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="zai-org/GLM-5.2",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(record.path),
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+            provider_name="huggingface",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            runtime_provider_config=provider_config,
+        )
+    )
+
+    observer = created[0][1]
+    assert callable(observer)
+    observer({"X-Inference-Provider": "deepinfra"})
+
+    assert session.inference_provider == "deepinfra"
+    assert created[-1][0] == "deepinfra"
+    assert manager.get_session(record.id).inference_provider == "deepinfra"  # type: ignore[union-attr]
+
+
+@pytest.mark.anyio
 async def test_huggingface_session_re_resolves_pin_on_model_switch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -3160,8 +3215,9 @@ async def test_huggingface_session_re_resolves_pin_on_model_switch(
         model: str | None = None,
         thinking_level: str | None = None,
         inference_provider: str | None = None,
+        response_headers_observer: object | None = None,
     ) -> SwitchableFakeProvider:
-        del credential_store, thinking_level
+        del credential_store, thinking_level, response_headers_observer
         created.append((model, inference_provider))
         return SwitchableFakeProvider(provider_config)
 

@@ -4,11 +4,12 @@ Issue: <https://github.com/huggingface/tau/issues/559>
 
 ## What changed
 
-Tau can pin a logical model from its built-in `huggingface` provider to one
-explicit Hugging Face Inference Provider. Users configure a per-model
-`inference_providers` map in `~/.tau/providers.json`. A new session snapshots the
-selected suffix into its index record, preserving the route when the session is
-resumed even if preferences later change.
+Tau pins a logical model from its built-in `huggingface` provider to one
+explicit Hugging Face Inference Provider. Users can configure a per-model
+`inference_providers` map in `~/.tau/providers.json`. Without a preference, the
+first request uses automatic routing; after it succeeds, Tau reads the
+`x-inference-provider` response header and rebuilds the runtime with that explicit
+suffix. The session index records the route for resume.
 
 The OpenAI-compatible runtime now supports an internal logical-to-wire model alias.
 For example, the harness and persisted assistant messages continue to use
@@ -17,9 +18,11 @@ For example, the harness and persisted assistant messages continue to use
 catalog and keeps context windows, capabilities, pricing, thinking controls, and
 model selection keyed by the logical model.
 
-`/session` reports the pin. Switching logical models selects the new model's
-configured pin or returns to automatic Hugging Face routing when none exists.
-Existing records without the optional field remain compatible and automatic.
+`/session` and `/route` report the pin. `/route <provider>` changes it and
+`/route automatic` resets resolution. Switching logical models selects the new
+model's configured pin or returns to automatic Hugging Face routing when none
+exists. Existing records without the optional field remain compatible and pin
+after their next successful automatic response.
 
 ## Why it exists
 
@@ -41,12 +44,18 @@ no Hugging Face-specific behavior. `tau_ai` only gains a provider-neutral
 `model_aliases` transport option, used to put a different model ID in the wire
 payload while preserving the logical model in normalized events.
 
-The first version deliberately does not discover or guess the fastest provider,
-automatically fail over, or send provider-specific cache-affinity fields. Hugging
-Face does not document a stable route-identity response field for its
-OpenAI-compatible auto router, and backing providers differ in accepted request
-fields. Explicit configuration is deterministic and does not silently alter
-request shape beyond the documented model suffix.
+[Hugging Face's own Chat UI](https://github.com/huggingface/chat-ui/blob/main/src/lib/server/endpoints/openai/endpointOai.ts)
+consumes `x-inference-provider` from OpenAI-compatible responses, so Tau uses
+that header rather than guessing which mapping is fastest.
+The pin is committed only after a successful stream. Existing OpenAI-compatible
+retries keep the same wire model and stop retrying after streamed model output.
+
+The first version deliberately does not automatically fail over a stale explicit
+pin or send provider-specific cache-affinity fields. Safe failover also needs a
+user-visible reroute event plus durable retry/reroute telemetry; silently falling
+back would hide temporary cache-locality loss. Users can explicitly reset with
+`/route automatic`. Backing providers differ in accepted affinity fields, so no
+unknown field is enabled for the entire gateway.
 
 ## Configure and validate
 
@@ -64,9 +73,9 @@ request shape beyond the documented model suffix.
 }
 ```
 
-Use `/session` to confirm the selected route. For opt-in live validation, start a
-new session, issue repeated requests that append to the same long prefix, and
-compare cache-read counts with an otherwise equivalent automatic-routing session.
+Use `/session` or `/route` to confirm the selected route. For opt-in live
+validation, start a new session, issue repeated requests that append to the same
+long prefix, and compare cache-read counts before and after automatic resolution.
 Do not commit credentials or generated session artifacts.
 
 Project checks:

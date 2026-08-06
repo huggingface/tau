@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from asyncio import AbstractEventLoop, get_running_loop
-from collections.abc import MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import replace
 from os import environ
 from typing import Protocol
@@ -61,6 +61,7 @@ def create_model_provider(
     model: str | None = None,
     thinking_level: ThinkingLevel | None = None,
     inference_provider: str | None = None,
+    response_headers_observer: Callable[[Mapping[str, str]], None] | None = None,
 ) -> ClosableModelProvider:
     """Create a runtime model provider from durable provider settings."""
     if model is not None:
@@ -129,6 +130,11 @@ def create_model_provider(
             compatible_config = replace(
                 compatible_config,
                 model_aliases={model: f"{model}:{inference_provider}"},
+            )
+        if response_headers_observer is not None:
+            compatible_config = replace(
+                compatible_config,
+                response_headers_observer=response_headers_observer,
             )
         if credential is not None:
             runtime_auth = _required_oauth_provider(provider.name).runtime_auth(credential)

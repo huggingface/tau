@@ -321,7 +321,11 @@ class OpenAICompatibleProvider:
 
                         if parser.fatal:
                             return
-                        for parser_event in parser.finalize():
+                        final_events = parser.finalize()
+                        observer = self._config.response_headers_observer
+                        if observer is not None:
+                            observer(dict(response.headers))
+                        for parser_event in final_events:
                             yield parser_event
                         return
                 except httpx.HTTPError as exc:
