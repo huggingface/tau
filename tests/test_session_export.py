@@ -295,12 +295,14 @@ def test_render_session_html_includes_usage_tab() -> None:
 
     html = render_session_html(entries, title="Usage Export")
 
-    assert 'data-panel="panel-usage"' in html
     assert 'id="panel-usage"' in html
     assert 'class="usage-chart"' in html
     assert 'class="png-button"' in html
     assert "Cache hit rate" in html
     assert "Estimated cost" in html
+    # Tabs are CSS-driven radios so switching works without JavaScript.
+    assert 'id="view-cache"' in html
+    assert "#view-cache:checked ~ #panel-transcript" in html
 
 
 def test_render_session_html_uses_tau_theme_palette() -> None:
@@ -321,6 +323,6 @@ def test_render_session_html_uses_tau_theme_palette() -> None:
     assert ":root.theme-dark" in html
     assert 'id="tab-usage"' in html
     compact = html.replace("\n        ", "").replace("\n      ", "")
-    assert 'data-panel="panel-usage">Cache</button>' in compact
+    assert 'for="view-cache">Cache</label>' in compact
     assert "tau-themechange" in html
     assert "data-dark=" in html

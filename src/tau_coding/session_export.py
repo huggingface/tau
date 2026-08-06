@@ -378,6 +378,26 @@ def render_session_html(
       overflow-wrap: anywhere;
       word-break: break-word;
     }}
+    .view-radio {{
+      position: fixed;
+      top: -100px;
+      opacity: 0;
+      pointer-events: none;
+    }}
+    /* Tab switching is CSS-driven (radio :checked) so it works without JS;
+       the inline script only syncs ARIA state and the URL hash. */
+    #panel-usage {{ display: none; }}
+    #view-cache:checked ~ #panel-usage {{ display: block; }}
+    #view-cache:checked ~ #panel-transcript {{ display: none; }}
+    #view-cache:checked ~ header #filterBar {{ display: none; }}
+    #view-cache:checked ~ header #tab-usage {{
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }}
+    #view-transcript:checked ~ header #tab-transcript {{
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }}
     .tab-bar {{
       display: flex;
       gap: 20px;
@@ -396,13 +416,9 @@ def render_session_html(
       font-weight: 600;
       letter-spacing: 0.1em;
       text-transform: uppercase;
+      user-select: none;
     }}
     .tab:hover {{ color: var(--bright); }}
-    .tab[aria-selected="true"] {{
-      color: var(--accent);
-      border-bottom-color: var(--accent);
-    }}
-    .tab:focus-visible {{ outline: 1px solid var(--accent); outline-offset: 2px; }}
     .usage-shell {{
       max-width: 1240px;
       margin: 0 auto;
@@ -764,6 +780,19 @@ def render_session_html(
   </style>
 </head>
 <body>
+  <input
+    type="radio"
+    class="view-radio"
+    name="export-view"
+    id="view-transcript"
+    checked
+  >
+  <input
+    type="radio"
+    class="view-radio"
+    name="export-view"
+    id="view-cache"
+  >
   <header>
     <div class="header-top">
       <p class="eyebrow">Tau session export</p>
@@ -786,28 +815,26 @@ def render_session_html(
     </div>
     {system_prompt_html}
     <nav class="tab-bar" role="tablist" aria-label="Export views">
-      <button
-        type="button"
+      <label
         class="tab"
         id="tab-transcript"
         role="tab"
         aria-controls="panel-transcript"
         aria-selected="true"
-        data-panel="panel-transcript"
+        for="view-transcript"
       >
         Transcript
-      </button>
-      <button
-        type="button"
+      </label>
+      <label
         class="tab"
         id="tab-usage"
         role="tab"
         aria-controls="panel-usage"
         aria-selected="false"
-        data-panel="panel-usage"
+        for="view-cache"
       >
         Cache
-      </button>
+      </label>
     </nav>
     <div class="filter-bar" id="filterBar" aria-label="Transcript filters">
       <span class="filter-label">View</span>
@@ -858,7 +885,6 @@ def render_session_html(
     id="panel-usage"
     role="tabpanel"
     aria-labelledby="tab-usage"
-    hidden
   >
     {usage_html}
   </section>
@@ -872,6 +898,16 @@ def render_session_html(
       }} catch (err) {{
         stored = null;
       }}
+      function fireThemeChange() {{
+        var event;
+        try {{
+          event = new CustomEvent("tau-themechange");
+        }} catch (err) {{
+          event = document.createEvent("Event");
+          event.initEvent("tau-themechange", false, false);
+        }}
+        window.dispatchEvent(event);
+      }}
       function applyTheme(theme) {{
         root.classList.toggle("theme-dark", theme === "dark");
         root.classList.toggle("theme-light", theme === "light");
@@ -882,7 +918,7 @@ def render_session_html(
         }} else {{
           root.removeAttribute("data-theme");
         }}
-        window.dispatchEvent(new CustomEvent("tau-themechange"));
+        fireThemeChange();
       }}
       function currentTheme() {{
         var explicit = root.getAttribute("data-theme");
@@ -897,12 +933,19 @@ def render_session_html(
         root.setAttribute("data-theme", stored);
       }}
       applyTheme(currentTheme());
-      var themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
-      themeQuery.addEventListener("change", function () {{
-        if (!root.getAttribute("data-theme")) {{
-          applyTheme(currentTheme());
+      if (window.matchMedia) {{
+        var themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+        var onSchemeChange = function () {{
+          if (!root.getAttribute("data-theme")) {{
+            applyTheme(currentTheme());
+          }}
+        }};
+        if (themeQuery.addEventListener) {{
+          themeQuery.addEventListener("change", onSchemeChange);
+        }} else if (themeQuery.addListener) {{
+          themeQuery.addListener(onSchemeChange);
         }}
-      }});
+      }}
       var toggle = document.getElementById("themeToggle");
       if (toggle) {{
         toggle.addEventListener("click", function () {{
@@ -990,45 +1033,36 @@ def render_session_html(
       applyFilters();
       syncAccordionToggle();
 
-      var filterBar = document.getElementById("filterBar");
-      var tabs = Array.prototype.slice.call(document.querySelectorAll(".tab"));
-      function selectTab(tab) {{
-        tabs.forEach(function (other) {{
-          var selected = other === tab;
-          other.setAttribute("aria-selected", selected ? "true" : "false");
-          document.getElementById(other.dataset.panel).hidden = !selected;
-        }});
-        if (filterBar) {{
-          filterBar.hidden = tab.dataset.panel !== "panel-transcript";
+      // Tabs switch panels via the radio :checked CSS rules above, so they
+      // work even without JavaScript. Here we only sync ARIA state, deep-link
+      // the selection into the URL hash, and honor an initial #cache hash.
+      var viewTranscript = document.getElementById("view-transcript");
+      var viewCache = document.getElementById("view-cache");
+      var tabTranscript = document.getElementById("tab-transcript");
+      var tabUsage = document.getElementById("tab-usage");
+      function syncViewState() {{
+        var cacheActive = viewCache && viewCache.checked;
+        if (tabTranscript) {{
+          tabTranscript.setAttribute("aria-selected", cacheActive ? "false" : "true");
+        }}
+        if (tabUsage) {{
+          tabUsage.setAttribute("aria-selected", cacheActive ? "true" : "false");
         }}
         try {{
-          var hash = tab.dataset.panel === "panel-usage" ? "#cache" : "#transcript";
+          var hash = cacheActive ? "#cache" : "#transcript";
           if (window.location.hash !== hash) {{
             window.history.replaceState(null, "", hash);
           }}
         }} catch (err) {{ /* file:// pages may restrict history APIs. */ }}
       }}
-      if (window.location.hash === "#cache") {{
-        selectTab(tabs[1]);
+      if (viewTranscript && viewCache) {{
+        if (window.location.hash === "#cache") {{
+          viewCache.checked = true;
+        }}
+        viewTranscript.addEventListener("change", syncViewState);
+        viewCache.addEventListener("change", syncViewState);
+        syncViewState();
       }}
-      tabs.forEach(function (tab, index) {{
-        tab.addEventListener("click", function () {{
-          selectTab(tab);
-        }});
-        tab.addEventListener("keydown", function (event) {{
-          var target = null;
-          if (event.key === "ArrowRight") {{
-            target = tabs[(index + 1) % tabs.length];
-          }} else if (event.key === "ArrowLeft") {{
-            target = tabs[(index + tabs.length - 1) % tabs.length];
-          }}
-          if (target) {{
-            event.preventDefault();
-            selectTab(target);
-            target.focus();
-          }}
-        }});
-      }});
     }})();
   </script>
   <script>{USAGE_SCRIPT}</script>
