@@ -185,71 +185,88 @@ def render_session_html(
   <style>
     :root {{
       color-scheme: light;
-      --canvas: #f4f6fa;
-      --surface: #ffffff;
-      --surface-muted: #eef1f7;
-      --text: #13213c;
-      --muted: #5a667e;
-      --line: #dce4f2;
-      --line-strong: #c9d6ee;
-      --accent: #1b3fa0;
-      --accent-soft: #e6ecf9;
-      --danger: #b3261e;
-      --code-bg: #f6f8fc;
-      --serif: Charter, "Iowan Old Style", Georgia, ui-serif, serif;
-      --sans: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-      font-family: var(--serif);
+      /* tau-light TUI theme */
+      --bg: #ffffff;
+      --canvas: #f3f4f6;
+      --surface: #f8fafc;
+      --surface-2: #f1f5f9;
+      --text: #111827;
+      --bright: #111827;
+      --muted: #475569;
+      --line: #cbd5e1;
+      --line-strong: #2563eb;
+      --accent: #0f766e;
+      --accent-soft: #dbeafe;
+      --danger: #b91c1c;
+      --code-bg: #f1f5f9;
+      --mono: "JetBrains Mono", "SFMono-Regular", Consolas, Menlo, monospace;
+      font-family: var(--mono);
+    }}
+    :root.theme-dark {{
+      color-scheme: dark;
+      --bg: #000000;
+      --canvas: #000000;
+      --surface: #101419;
+      --surface-2: #161b21;
+      --text: #d8dee9;
+      --bright: #e5e7eb;
+      --muted: #667085;
+      --line: #141922;
+      --line-strong: #2d3748;
+      --accent: #a7f3f0;
+      --accent-soft: #061a1a;
+      --danger: #ff4f4f;
+      --code-bg: #161b21;
     }}
     @media (prefers-color-scheme: dark) {{
-      :root:not([data-theme="light"]) {{
+      :root:not([data-theme="light"]):not(.theme-light) {{
         color-scheme: dark;
-        --canvas: #0c111d;
-        --surface: #131928;
-        --surface-muted: #1a2133;
-        --text: #e7ecf7;
-        --muted: #9aa5c0;
-        --line: #242e46;
-        --line-strong: #333f5c;
-        --accent: #8fa8f2;
-        --accent-soft: #1d2740;
-        --danger: #e67a72;
-        --code-bg: #171e30;
+        /* tau-dark TUI theme */
+        --bg: #000000;
+        --canvas: #000000;
+        --surface: #101419;
+        --surface-2: #161b21;
+        --text: #d8dee9;
+        --bright: #e5e7eb;
+        --muted: #667085;
+        --line: #141922;
+        --line-strong: #2d3748;
+        --accent: #a7f3f0;
+        --accent-soft: #061a1a;
+        --danger: #ff4f4f;
+        --code-bg: #161b21;
       }}
     }}
-    :root[data-theme="dark"] {{
-      color-scheme: dark;
-      --canvas: #0c111d;
-      --surface: #131928;
-      --surface-muted: #1a2133;
-      --text: #e7ecf7;
-      --muted: #9aa5c0;
-      --line: #242e46;
-      --line-strong: #333f5c;
-      --accent: #8fa8f2;
-      --accent-soft: #1d2740;
-      --danger: #e67a72;
-      --code-bg: #171e30;
-    }}
+    /* Legacy attribute-only dark selector, kept for no-script preference. */
     * {{ box-sizing: border-box; }}
-    html {{ scroll-behavior: smooth; }}
+    html {{ background: var(--bg); scroll-behavior: smooth; }}
     body {{
       margin: 0;
-      background: var(--canvas);
+      background: var(--bg);
       color: var(--text);
       line-height: 1.55;
+      font-variant-numeric: tabular-nums;
     }}
+    ::selection {{ background: var(--accent); color: var(--bg); }}
     header {{
-      max-width: 1180px;
+      max-width: 1240px;
       margin: 0 auto;
-      padding: 30px clamp(16px, 4vw, 44px) 16px;
+      padding: 34px clamp(16px, 4vw, 38px) 0;
     }}
-    h1, h2, h3, h4 {{ margin: 0; line-height: 1.25; font-family: var(--sans); }}
+    h1, h2, h3, h4 {{ margin: 0; line-height: 1.25; }}
     h1 {{
-      font-size: clamp(1.45rem, 2.4vw, 1.85rem);
-      font-weight: 500;
-      letter-spacing: -0.01em;
+      margin: 8px 0 10px;
+      color: var(--bright);
+      font-size: 24px;
+      font-weight: 600;
     }}
+    h1::after {{
+      content: "▌";
+      margin-left: 5px;
+      color: var(--accent);
+      animation: blink 1.1s steps(1) infinite;
+    }}
+    @keyframes blink {{ 0%,49% {{ opacity: 1; }} 50%,100% {{ opacity: 0; }} }}
     h2 {{
       color: var(--muted);
       font-size: 0.68rem;
@@ -276,7 +293,6 @@ def render_session_html(
       overflow-wrap: anywhere;
       background: var(--code-bg);
       border: 1px solid var(--line);
-      border-radius: 6px;
       padding: 9px 12px;
       margin: 6px 0 0;
       font-size: 0.82rem;
@@ -290,14 +306,13 @@ def render_session_html(
       gap: 12px;
     }}
     .eyebrow {{
-      font-family: var(--sans);
-      color: var(--muted);
-      font-size: 0.68rem;
-      font-weight: 500;
-      letter-spacing: 0.14em;
+      color: var(--accent);
+      font-size: 0.74rem;
+      font-weight: 600;
       margin: 0;
-      text-transform: uppercase;
+      text-transform: lowercase;
     }}
+    .eyebrow::before {{ content: "$ "; color: var(--muted); }}
     .theme-toggle {{
       display: inline-flex;
       align-items: center;
@@ -315,6 +330,8 @@ def render_session_html(
     .theme-toggle:hover {{ color: var(--accent); border-color: var(--accent); }}
     .theme-toggle .icon {{ width: 14px; height: 14px; }}
     .theme-toggle .theme-icon-dark {{ display: none; }}
+    :root.theme-dark .theme-toggle .theme-icon-light {{ display: none; }}
+    :root.theme-dark .theme-toggle .theme-icon-dark {{ display: inline-block; }}
     :root[data-theme="dark"] .theme-toggle .theme-icon-light {{ display: none; }}
     :root[data-theme="dark"] .theme-toggle .theme-icon-dark {{ display: inline-block; }}
     @media (prefers-color-scheme: dark) {{
@@ -324,9 +341,11 @@ def render_session_html(
     .source, .generated {{
       margin: 0;
       color: var(--muted);
-      font-size: 0.8rem;
-      font-family: var(--sans);
+      font-size: 0.72rem;
+      overflow-wrap: anywhere;
     }}
+    .source::before {{ content: "# "; color: var(--accent); }}
+    .generated::before {{ content: "# "; color: var(--accent); }}
     .export-meta {{
       display: flex;
       flex-wrap: wrap;
@@ -337,7 +356,6 @@ def render_session_html(
       margin-top: 16px;
       background: var(--surface);
       border: 1px solid var(--line);
-      border-radius: 10px;
     }}
     .system-prompt-summary {{
       display: flex;
@@ -345,7 +363,7 @@ def render_session_html(
       gap: 10px;
       padding: 8px 12px;
       cursor: pointer;
-      font-family: var(--sans);
+      font-family: var(--mono);
       font-size: 0.78rem;
       font-weight: 600;
     }}
@@ -362,30 +380,33 @@ def render_session_html(
     }}
     .tab-bar {{
       display: flex;
-      gap: 6px;
+      gap: 20px;
       margin-top: 16px;
-      border-bottom: 1px solid var(--line);
+      border-bottom: 1px dashed var(--line);
     }}
     .tab {{
-      padding: 7px 14px;
+      padding: 6px 2px;
       color: var(--muted);
       background: none;
       border: 0;
       border-bottom: 2px solid transparent;
       cursor: pointer;
-      font-family: var(--sans);
-      font-size: 0.8rem;
-      font-weight: 500;
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
     }}
-    .tab:hover {{ color: var(--text); }}
+    .tab:hover {{ color: var(--bright); }}
     .tab[aria-selected="true"] {{
       color: var(--accent);
       border-bottom-color: var(--accent);
     }}
+    .tab:focus-visible {{ outline: 1px solid var(--accent); outline-offset: 2px; }}
     .usage-shell {{
-      max-width: 1180px;
+      max-width: 1240px;
       margin: 0 auto;
-      padding: 18px clamp(16px, 4vw, 44px) 56px;
+      padding: 22px clamp(16px, 4vw, 38px) 60px;
     }}
 {USAGE_STYLES}
     .filter-bar {{
@@ -394,11 +415,10 @@ def render_session_html(
       align-items: center;
       gap: 8px;
       margin-top: 16px;
-      padding: 8px 10px;
+      padding: 8px 12px;
       background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      font-family: var(--sans);
+      border: 1px dashed var(--line);
+      font-family: var(--mono);
     }}
     .filter-label {{
       color: var(--muted);
@@ -424,7 +444,7 @@ def render_session_html(
       color: var(--muted);
       background: var(--surface);
       border: 1px solid var(--line-strong);
-      border-radius: 999px;
+      
       font-size: 0.76rem;
       font-weight: 500;
       transition: color .15s, border-color .15s, background .15s;
@@ -449,8 +469,8 @@ def render_session_html(
     }}
     .chip-count {{
       padding: 0 6px;
-      background: var(--surface-muted);
-      border-radius: 999px;
+      background: var(--surface-2);
+      
       font-size: 0.66rem;
       font-variant-numeric: tabular-nums;
     }}
@@ -464,8 +484,8 @@ def render_session_html(
       color: var(--muted);
       background: var(--surface);
       border: 1px solid var(--line-strong);
-      border-radius: 999px;
-      font-family: var(--sans);
+      
+      font-family: var(--mono);
       font-size: 0.76rem;
       font-weight: 500;
       cursor: pointer;
@@ -481,8 +501,8 @@ def render_session_html(
       color: var(--accent);
       background: var(--surface);
       border: 1px solid var(--accent);
-      border-radius: 999px;
-      font-family: var(--sans);
+      
+      font-family: var(--mono);
       font-size: 0.76rem;
       font-weight: 500;
       cursor: pointer;
@@ -493,9 +513,9 @@ def render_session_html(
       display: grid;
       grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
       gap: 28px;
-      max-width: 1180px;
+      max-width: 1240px;
       margin: 0 auto;
-      padding: 14px clamp(16px, 4vw, 44px) 56px;
+      padding: 18px clamp(16px, 4vw, 38px) 60px;
     }}
     aside {{
       position: sticky;
@@ -531,20 +551,26 @@ def render_session_html(
       gap: 7px;
       color: var(--text);
       text-decoration: none;
-      border-radius: 6px;
       padding: 4px 8px;
     }}
-    .node-link:hover {{ background: var(--surface-muted); }}
+    .node-link:hover {{ background: var(--surface-2); }}
     .active-path > .node-link {{ color: var(--accent); }}
     .active-leaf > .node-link {{
       background: var(--accent-soft);
+      color: var(--bright);
       font-weight: 500;
+    }}
+    :root.theme-dark .active-leaf > .node-link {{ color: var(--accent); }}
+    @media (prefers-color-scheme: dark) {{
+      :root:not([data-theme="light"]):not(.theme-light) .active-leaf > .node-link {{
+        color: var(--accent);
+      }}
     }}
     .node-link .icon {{ color: var(--muted); }}
     .active-path > .node-link .icon {{ color: var(--accent); }}
     .node-type {{
       display: block;
-      font-family: var(--sans);
+      font-family: var(--mono);
       font-size: 0.75rem;
       white-space: nowrap;
       overflow: hidden;
@@ -554,10 +580,9 @@ def render_session_html(
       margin: 0 0 8px;
       background: var(--surface);
       border: 1px solid var(--line);
-      border-radius: 10px;
       scroll-margin-top: 14px;
     }}
-    details.entry.active-entry {{ background: var(--surface-muted); }}
+    details.entry.active-entry {{ background: var(--surface-2); }}
     details.entry.is-error {{ border-color: var(--danger); }}
     details.entry.is-error .entry-title {{ color: var(--danger); }}
     .entry-summary {{
@@ -565,10 +590,9 @@ def render_session_html(
       align-items: center;
       gap: 9px;
       padding: 8px 14px 8px 12px;
-      border-radius: 10px;
       cursor: pointer;
       list-style: none;
-      font-family: var(--sans);
+      font-family: var(--mono);
       user-select: none;
     }}
     .entry-summary::-webkit-details-marker {{ display: none; }}
@@ -635,7 +659,7 @@ def render_session_html(
       gap: 3px 14px;
       margin: 0 0 6px;
       color: var(--muted);
-      font-family: var(--sans);
+      font-family: var(--mono);
       font-size: 0.68rem;
     }}
     .entry-meta-line a {{ color: var(--accent); text-decoration: none; }}
@@ -650,7 +674,6 @@ def render_session_html(
       margin-top: 6px;
       background: var(--surface);
       border: 1px solid var(--line);
-      border-radius: 6px;
     }}
     details.entry.active-entry details.block {{ background: var(--surface); }}
     .block-summary {{
@@ -661,7 +684,7 @@ def render_session_html(
       color: var(--muted);
       cursor: pointer;
       list-style: none;
-      font-family: var(--sans);
+      font-family: var(--mono);
       font-size: 0.74rem;
       font-weight: 500;
       user-select: none;
@@ -691,7 +714,7 @@ def render_session_html(
     .block-body > :first-child {{ margin-top: 0; }}
     .call-id {{
       color: var(--muted);
-      font-family: var(--sans);
+      font-family: var(--mono);
       font-size: 0.68rem;
     }}
     .empty {{
@@ -716,6 +739,11 @@ def render_session_html(
       :root:not([data-theme="light"]) .highlight .mf {{ color: #e0a95e; }}
       :root:not([data-theme="light"]) .highlight .kc {{ color: #e58fc0; }}
     }}
+    :root.theme-dark .highlight .s2,
+    :root.theme-dark .highlight .s1 {{ color: #7fd08a; }}
+    :root.theme-dark .highlight .mi,
+    :root.theme-dark .highlight .mf {{ color: #e0a95e; }}
+    :root.theme-dark .highlight .kc {{ color: #e58fc0; }}
     :root[data-theme="dark"] .highlight .s2,
     :root[data-theme="dark"] .highlight .s1 {{ color: #7fd08a; }}
     :root[data-theme="dark"] .highlight .mi,
@@ -778,7 +806,7 @@ def render_session_html(
         aria-selected="false"
         data-panel="panel-usage"
       >
-        Usage
+        Cache
       </button>
     </nav>
     <div class="filter-bar" id="filterBar" aria-label="Transcript filters">
@@ -844,17 +872,42 @@ def render_session_html(
       }} catch (err) {{
         stored = null;
       }}
+      function applyTheme(theme) {{
+        root.classList.toggle("theme-dark", theme === "dark");
+        root.classList.toggle("theme-light", theme === "light");
+        if (theme === "dark") {{
+          root.setAttribute("data-theme", "dark");
+        }} else if (theme === "light") {{
+          root.setAttribute("data-theme", "light");
+        }} else {{
+          root.removeAttribute("data-theme");
+        }}
+        window.dispatchEvent(new CustomEvent("tau-themechange"));
+      }}
+      function currentTheme() {{
+        var explicit = root.getAttribute("data-theme");
+        if (explicit === "light" || explicit === "dark") {{
+          return explicit;
+        }}
+        var prefersDark =
+          window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        return prefersDark ? "dark" : "light";
+      }}
       if (stored === "light" || stored === "dark") {{
         root.setAttribute("data-theme", stored);
       }}
+      applyTheme(currentTheme());
+      var themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      themeQuery.addEventListener("change", function () {{
+        if (!root.getAttribute("data-theme")) {{
+          applyTheme(currentTheme());
+        }}
+      }});
       var toggle = document.getElementById("themeToggle");
       if (toggle) {{
         toggle.addEventListener("click", function () {{
-          var prefersDark =
-            window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-          var current = root.getAttribute("data-theme") || (prefersDark ? "dark" : "light");
-          var next = current === "dark" ? "light" : "dark";
-          root.setAttribute("data-theme", next);
+          var next = currentTheme() === "dark" ? "light" : "dark";
+          applyTheme(next);
           try {{
             window.localStorage.setItem("tau-session-export-theme", next);
           }} catch (err) {{
@@ -938,16 +991,41 @@ def render_session_html(
       syncAccordionToggle();
 
       var filterBar = document.getElementById("filterBar");
-      var tabs = document.querySelectorAll(".tab");
-      Array.prototype.forEach.call(tabs, function (tab) {{
+      var tabs = Array.prototype.slice.call(document.querySelectorAll(".tab"));
+      function selectTab(tab) {{
+        tabs.forEach(function (other) {{
+          var selected = other === tab;
+          other.setAttribute("aria-selected", selected ? "true" : "false");
+          document.getElementById(other.dataset.panel).hidden = !selected;
+        }});
+        if (filterBar) {{
+          filterBar.hidden = tab.dataset.panel !== "panel-transcript";
+        }}
+        try {{
+          var hash = tab.dataset.panel === "panel-usage" ? "#cache" : "#transcript";
+          if (window.location.hash !== hash) {{
+            window.history.replaceState(null, "", hash);
+          }}
+        }} catch (err) {{ /* file:// pages may restrict history APIs. */ }}
+      }}
+      if (window.location.hash === "#cache") {{
+        selectTab(tabs[1]);
+      }}
+      tabs.forEach(function (tab, index) {{
         tab.addEventListener("click", function () {{
-          Array.prototype.forEach.call(tabs, function (other) {{
-            var selected = other === tab;
-            other.setAttribute("aria-selected", selected ? "true" : "false");
-            document.getElementById(other.dataset.panel).hidden = !selected;
-          }});
-          if (filterBar) {{
-            filterBar.hidden = tab.dataset.panel !== "panel-transcript";
+          selectTab(tab);
+        }});
+        tab.addEventListener("keydown", function (event) {{
+          var target = null;
+          if (event.key === "ArrowRight") {{
+            target = tabs[(index + 1) % tabs.length];
+          }} else if (event.key === "ArrowLeft") {{
+            target = tabs[(index + tabs.length - 1) % tabs.length];
+          }}
+          if (target) {{
+            event.preventDefault();
+            selectTab(target);
+            target.focus();
           }}
         }});
       }});

@@ -163,14 +163,38 @@ def collect_session_usage(entries: Sequence[SessionEntry]) -> SessionUsage:
 
 
 _SERIES_COLORS = {
-    "cached": "#1f9d94",
-    "cache writes": "#3fa34d",
-    "fresh": "#e5484d",
-    "request": "#e5484d",
-    "cumulative": "#4c6ef5",
-    "output": "#9c56d6",
-    "reasoning": "#3fa34d",
+    # tau-dark / tau-light pairs; charts resolve the active theme at runtime.
+    "cached": ("#a7f3f0", "#0f766e"),
+    "cache writes": ("#9cffb1", "#166534"),
+    "fresh": ("#ff4f4f", "#b91c1c"),
+    "request": ("#ff4f4f", "#b91c1c"),
+    "cumulative": ("#93c5fd", "#2563eb"),
+    "output": ("#c084fc", "#7c3aed"),
+    "reasoning": ("#9cffb1", "#166534"),
 }
+
+
+# Print-friendly series colors for the white-background PNG downloads.
+_PRINT_SERIES_COLORS = {
+    "#a7f3f0": "#0f766e",
+    "#9cffb1": "#166534",
+    "#ff4f4f": "#b91c1c",
+    "#93c5fd": "#2563eb",
+    "#c084fc": "#7c3aed",
+    "#0f766e": "#0f766e",
+    "#166534": "#166534",
+    "#b91c1c": "#b91c1c",
+    "#2563eb": "#2563eb",
+    "#7c3aed": "#7c3aed",
+}
+
+
+def _series_color(name: str) -> str:
+    return _SERIES_COLORS.get(name, ("#93c5fd", "#2563eb"))[0]
+
+
+def _series_color_pair(name: str) -> tuple[str, str]:
+    return _SERIES_COLORS.get(name, ("#93c5fd", "#2563eb"))
 
 
 def _compact_number(value: float) -> str:
@@ -238,31 +262,34 @@ def _line_chart(
         f'y2="{top + plot_height}" visibility="hidden"/>'
     )
     for series_index, (name, values) in enumerate(series):
-        color = _SERIES_COLORS.get(name, "#4c6ef5")
+        dark, light = _series_color_pair(name)
         points = " ".join(
             f"{x:.1f},{y:.1f}" for x, y in (point(i, value) for i, value in enumerate(values))
         )
         parts.append(f'<g class="series" data-series-id="{series_index}">')
         parts.append(
-            f'<polyline points="{points}" fill="none" stroke="{color}" stroke-width="2.5"/>'
+            f'<polyline class="series-line" data-dark="{dark}" data-light="{light}" '
+            f'points="{points}" fill="none" stroke="{dark}" stroke-width="3"/>'
         )
         for index, value in enumerate(values):
             x, y = point(index, value)
             label = f"{value:.1%}" if percent else f"{int(value):,}"
             parts.append(
-                f'<circle class="point" data-index="{index}" '
+                f'<circle class="point" data-dark="{dark}" data-light="{light}" '
+                f'data-index="{index}" '
                 f'data-name="{html.escape(name, quote=True)}" data-label="{label}" '
-                f'cx="{x:.1f}" cy="{y:.1f}" r="3.2" fill="{color}"/>'
+                f'cx="{x:.1f}" cy="{y:.1f}" r="3.5" fill="{dark}"/>'
             )
         parts.append("</g>")
     legend_x = float(width - right)
     for series_index, (name, _) in reversed(list(enumerate(series))):
+        dark, light = _series_color_pair(name)
         legend_x -= 18 + len(name) * 8
         parts.append(
             f'<g class="series-toggle" data-series-id="{series_index}" role="button" '
             f'tabindex="0" aria-pressed="true">'
-            f'<circle cx="{legend_x:.1f}" cy="20" r="4" '
-            f'fill="{_SERIES_COLORS.get(name, "#4c6ef5")}"/>'
+            f'<circle class="series-swatch" data-dark="{dark}" data-light="{light}" '
+            f'cx="{legend_x:.1f}" cy="20" r="4" fill="{dark}"/>'
             f'<text class="legend" x="{legend_x + 8:.1f}" y="24">{html.escape(name)}</text></g>'
         )
     parts.append(
@@ -378,53 +405,57 @@ USAGE_STYLES = """
     .usage-cards {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
+      gap: 1px;
+      background: var(--line);
+      border: 1px solid var(--line);
     }
     .usage-card {
       min-width: 0;
-      padding: 12px 14px;
+      padding: 16px 18px;
       background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 10px;
+      transition: background .16s ease;
     }
+    .usage-card:hover { background: var(--surface-2); }
     .usage-card span {
       display: block;
-      color: var(--muted);
-      font-family: var(--sans);
-      font-size: 0.64rem;
+      color: var(--accent);
+      font-size: 0.62rem;
       font-weight: 500;
       letter-spacing: 0.1em;
       text-transform: uppercase;
     }
     .usage-card strong {
       display: block;
-      margin-top: 5px;
-      font-family: var(--sans);
-      font-size: 1.15rem;
+      margin-top: 6px;
+      color: var(--bright);
+      font-size: 1.25rem;
       font-weight: 500;
       font-variant-numeric: tabular-nums;
     }
     .usage-note {
-      margin: 14px 0 0;
-      padding-left: 10px;
-      border-left: 2px solid var(--line-strong);
+      margin: 18px 0 0;
+      padding: 2px 0 2px 13px;
+      border-left: 2px solid var(--line);
       color: var(--muted);
-      font-family: var(--sans);
-      font-size: 0.76rem;
+      font-size: 0.74rem;
+    }
+    .usage-note::before {
+      content: "# ";
+      color: var(--accent);
+      font-weight: 700;
     }
     .usage-charts {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-top: 14px;
+      gap: 16px;
+      margin-top: 18px;
     }
     .usage-figure {
       position: relative;
       margin: 0;
-      padding: 12px 12px 4px;
+      padding: 16px 16px 6px;
       background: var(--surface);
       border: 1px solid var(--line);
-      border-radius: 10px;
     }
     .usage-figure:first-child { grid-column: 1 / -1; }
     .usage-chart {
@@ -441,28 +472,27 @@ USAGE_STYLES = """
       right: 10px;
       padding: 3px 9px;
       color: var(--muted);
-      background: var(--surface);
+      background: var(--surface-2);
       border: 1px solid var(--line-strong);
-      border-radius: 999px;
-      font-family: var(--sans);
-      font-size: 0.66rem;
-      font-weight: 500;
-      letter-spacing: 0.08em;
+      font-family: var(--mono);
+      font-size: 0.62rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
       cursor: pointer;
       transition: color .15s, border-color .15s;
     }
-    .png-button:hover { color: var(--accent); border-color: var(--accent); }
+    .png-button:hover { color: var(--bright); border-color: var(--accent); }
     .png-button[disabled] { opacity: .5; cursor: progress; }
     .grid { stroke: var(--line); stroke-width: 1; }
     .chart-title {
-      fill: var(--text);
-      font-family: var(--sans);
-      font-size: 14px;
-      font-weight: 500;
+      fill: var(--bright);
+      font-family: var(--mono);
+      font-size: 15px;
+      font-weight: 600;
     }
     .tick, .axis-label, .legend {
       fill: var(--muted);
-      font-family: var(--sans);
+      font-family: var(--mono);
       font-size: 11px;
     }
     .hover-line {
@@ -472,71 +502,73 @@ USAGE_STYLES = """
       pointer-events: none;
     }
     .point { transition: r .12s ease; }
-    .point.active { r: 5.5; stroke: var(--surface); stroke-width: 2; }
+    .point.active { r: 6; stroke: var(--surface); stroke-width: 2; }
     .series { transition: opacity .15s ease; }
-    .series.is-hidden { opacity: .08; pointer-events: none; }
+    .series.is-hidden { opacity: .07; pointer-events: none; }
     .series-toggle { cursor: pointer; outline: none; }
-    .series-toggle[aria-pressed="false"] { opacity: .3; }
+    .series-toggle[aria-pressed="false"] { opacity: .25; }
     .series-toggle:hover text { text-decoration: underline; }
     .usage-tooltip {
       position: fixed;
       z-index: 30;
       display: none;
       min-width: 170px;
-      padding: 8px 11px;
-      background: var(--surface);
+      padding: 10px 12px;
+      background: var(--bg);
       color: var(--text);
       border: 1px solid var(--line-strong);
-      border-radius: 8px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, .18);
+      box-shadow: 0 10px 35px rgba(0, 0, 0, .35);
       font-family: var(--mono);
       font-size: 0.74rem;
-      line-height: 1.6;
+      line-height: 1.7;
       white-space: pre-line;
       pointer-events: none;
     }
     .usage-details {
       display: grid;
-      grid-template-columns: minmax(0, 3fr) minmax(180px, 1fr);
-      gap: 12px;
-      margin-top: 12px;
+      grid-template-columns: minmax(0, 3fr) minmax(190px, 1fr);
+      gap: 16px;
+      margin-top: 16px;
     }
     .usage-panel {
       min-width: 0;
-      padding: 14px;
+      padding: 18px;
       background: var(--surface);
       border: 1px solid var(--line);
-      border-radius: 10px;
     }
+    .usage-panel h2 { margin: 0 0 14px; text-transform: lowercase; }
+    .usage-panel h2::before { content: "$ "; color: var(--accent); }
     .usage-table-wrap {
       overflow: auto;
-      max-height: 520px;
+      max-height: 560px;
       border: 1px solid var(--line);
-      border-radius: 8px;
+      scrollbar-color: var(--line-strong) var(--surface);
     }
     .usage-panel table {
       border-collapse: collapse;
       width: 100%;
       white-space: nowrap;
-      font-family: var(--sans);
-      font-size: 0.74rem;
+      font-size: 0.72rem;
       font-variant-numeric: tabular-nums;
     }
     .usage-panel th, .usage-panel td {
-      padding: 6px 9px;
+      padding: 8px 10px;
       text-align: right;
       border-bottom: 1px solid var(--line);
     }
+    .usage-panel tbody tr { transition: background .12s ease; }
+    .usage-panel tbody tr:hover { background: var(--surface-2); color: var(--bright); }
     .usage-panel th {
       position: sticky;
       top: 0;
       z-index: 1;
-      background: var(--surface-muted);
+      background: var(--bg);
       color: var(--muted);
-      font-size: 0.62rem;
-      font-weight: 600;
-      letter-spacing: 0.06em;
+      font-size: 0.58rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
+      border-bottom: 1px solid var(--line-strong);
     }
     .usage-panel th:nth-child(2), .usage-panel th:nth-child(3),
     .usage-panel td:nth-child(2), .usage-panel td:nth-child(3) { text-align: left; }
@@ -544,9 +576,8 @@ USAGE_STYLES = """
       display: flex;
       justify-content: space-between;
       gap: 10px;
-      padding: 6px 2px;
+      padding: 8px 2px;
       border-bottom: 1px solid var(--line);
-      font-family: var(--sans);
       font-size: 0.76rem;
     }
     .usage-tool:last-child { border-bottom: none; }
@@ -559,14 +590,33 @@ USAGE_STYLES = """
     }
 """
 
-
 USAGE_SCRIPT = """
     (function () {
       var tooltip = document.querySelector(".usage-tooltip");
-      if (!tooltip) {
-        return;
+      var charts = Array.prototype.slice.call(document.querySelectorAll(".usage-chart"));
+
+      // The Tau palette ships both variants; switch series colors with the page theme.
+      function syncTheme() {
+        var dark = document.documentElement.classList.contains("theme-dark");
+        charts.forEach(function (chart) {
+          var colored = chart.querySelectorAll("[data-dark][data-light]");
+          Array.prototype.forEach.call(colored, function (node) {
+            var color = dark ? node.dataset.dark : node.dataset.light;
+            if (node.tagName.toLowerCase() === "polyline") {
+              node.setAttribute("stroke", color);
+            } else {
+              node.setAttribute("fill", color);
+            }
+          });
+        });
       }
+      window.addEventListener("tau-themechange", syncTheme);
+      syncTheme();
+
       function hideTooltip(chart) {
+        if (!tooltip) {
+          return;
+        }
         tooltip.style.display = "none";
         var line = chart.querySelector(".hover-line");
         if (line) {
@@ -576,7 +626,7 @@ USAGE_SCRIPT = """
           point.classList.remove("active");
         });
       }
-      document.querySelectorAll(".usage-chart").forEach(function (chart) {
+      charts.forEach(function (chart) {
         var count = Number(chart.dataset.count);
         var left = Number(chart.dataset.left);
         var right = Number(chart.dataset.right);
@@ -612,6 +662,9 @@ USAGE_SCRIPT = """
           line.setAttribute("x1", x);
           line.setAttribute("x2", x);
           line.setAttribute("visibility", "visible");
+          if (!tooltip) {
+            return;
+          }
           tooltip.textContent = "Request " + (index + 1) + "\\n" + points.map(function (point) {
             return point.dataset.name + "  " + point.dataset.label;
           }).join("\\n");
@@ -646,11 +699,18 @@ USAGE_SCRIPT = """
       });
 
       var SVG_NS = "http:" + "//www.w3.org/2000/svg";
+      // Print palette: legible versions of the Tau accents on a white canvas.
+      var PRINT_COLORS = {
+        "#a7f3f0": "#0f766e", "#9cffb1": "#166534", "#ff4f4f": "#b91c1c",
+        "#93c5fd": "#2563eb", "#c084fc": "#7c3aed", "#0f766e": "#0f766e",
+        "#166534": "#166534", "#b91c1c": "#b91c1c", "#2563eb": "#2563eb",
+        "#7c3aed": "#7c3aed"
+      };
       var PRINT_CSS = [
-        'text{font-family:"Space Grotesk",Helvetica,Arial,sans-serif}',
-        ".chart-title{fill:#13213c;font-size:14px;font-weight:600}",
-        ".tick,.axis-label,.legend{fill:#5a667e;font-size:11px}",
-        ".grid{stroke:#dce4f2;stroke-width:1}",
+        'text{font-family:"JetBrains Mono",Consolas,Menlo,monospace}',
+        ".chart-title{fill:#111827;font-size:15px;font-weight:600}",
+        ".tick,.axis-label,.legend{fill:#475569;font-size:11px}",
+        ".grid{stroke:#cbd5e1;stroke-width:1}",
         ".point{stroke:#ffffff;stroke-width:1}"
       ].join("");
 
@@ -661,6 +721,7 @@ USAGE_SCRIPT = """
         clone.setAttribute("xmlns", SVG_NS);
         clone.setAttribute("width", width);
         clone.setAttribute("height", height);
+        clone.removeAttribute("class");
         clone.querySelectorAll(".hover-line").forEach(function (node) {
           node.remove();
         });
@@ -674,6 +735,14 @@ USAGE_SCRIPT = """
         });
         clone.querySelectorAll(".point.active").forEach(function (node) {
           node.classList.remove("active");
+        });
+        clone.querySelectorAll("[stroke],[fill]").forEach(function (node) {
+          ["stroke", "fill"].forEach(function (attribute) {
+            var value = (node.getAttribute(attribute) || "").toLowerCase();
+            if (PRINT_COLORS[value]) {
+              node.setAttribute(attribute, PRINT_COLORS[value]);
+            }
+          });
         });
         var style = document.createElementNS(SVG_NS, "style");
         style.textContent = PRINT_CSS;
@@ -727,7 +796,8 @@ USAGE_SCRIPT = """
 
       document.querySelectorAll(".png-button").forEach(function (button) {
         button.addEventListener("click", function () {
-          var chart = button.parentNode.querySelector(".usage-chart");
+          var figure = button.closest(".usage-figure");
+          var chart = figure ? figure.querySelector(".usage-chart") : null;
           if (!chart) {
             return;
           }

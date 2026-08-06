@@ -301,3 +301,26 @@ def test_render_session_html_includes_usage_tab() -> None:
     assert 'class="png-button"' in html
     assert "Cache hit rate" in html
     assert "Estimated cost" in html
+
+
+def test_render_session_html_uses_tau_theme_palette() -> None:
+    entries = [
+        MessageEntry(id="root", message=UserMessage(content="Hello")),
+        MessageEntry(
+            id="reply",
+            parent_id="root",
+            message=AssistantMessage(content="Hi", usage=Usage(input=10, output=5)),
+        ),
+    ]
+
+    html = render_session_html(entries)
+
+    # tau-light / tau-dark TUI accent colors.
+    assert "--accent: #0f766e" in html
+    assert "--accent: #a7f3f0" in html
+    assert ":root.theme-dark" in html
+    assert 'id="tab-usage"' in html
+    compact = html.replace("\n        ", "").replace("\n      ", "")
+    assert 'data-panel="panel-usage">Cache</button>' in compact
+    assert "tau-themechange" in html
+    assert "data-dark=" in html
