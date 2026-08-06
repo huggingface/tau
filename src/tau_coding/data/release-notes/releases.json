@@ -1,5 +1,25 @@
 [
   {
+    "version": "0.3.8",
+    "date": "2026-08-06",
+    "sections": {
+      "New": [
+        "Add a reactive cache analytics tab to live self-contained HTML session exports.",
+        "Pin a Hugging Face model to an explicit backing Inference Provider for the lifetime of a session.",
+        "Expose the resolved Hugging Face response provider in session metadata and diagnostics."
+      ],
+      "Changed": [
+        "Update Kimi K3 reasoning effort levels to low, high, and max.",
+        "Add request timestamps to the cache tab tooltip and cache statistics table.",
+        "Bill Anthropic 1-hour cache writes at their own independent rate instead of blending with input token rates."
+      ],
+      "Fixed": [
+        "Retry transient Anthropic stream errors instead of failing the entire turn.",
+        "Fix tool history reset across provider switches so the active provider sees the correct prior tool results."
+      ]
+    }
+  },
+  {
     "version": "0.3.7",
     "date": "2026-08-05",
     "sections": {
