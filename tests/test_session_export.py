@@ -14,8 +14,9 @@ from tau_agent import (
     ToolResultMessage,
     UserMessage,
 )
-from tau_agent.messages import assistant_content
+from tau_agent.messages import Usage, assistant_content
 from tau_coding.session_export import export_session_html, render_session_html
+from tau_coding.tui.themes import TAU_DARK_THEME, TAU_LIGHT_THEME
 
 
 def test_render_session_html_preserves_branch_tree() -> None:
@@ -76,7 +77,7 @@ def test_render_session_html_uses_static_document_layout() -> None:
     html = render_session_html(entries, title="Layout Export")
 
     assert '<p class="eyebrow">Tau session export</p>' in html
-    assert '<main class="session-shell">' in html
+    assert '<main class="session-shell"' in html
     assert '<aside class="tree-rail">' in html
     assert '<section class="entry-stream" aria-label="Session entries">' in html
     assert 'class="entry active-entry"' in html
@@ -101,7 +102,7 @@ def test_render_session_html_includes_escaped_readable_system_prompt() -> None:
     assert "<script>alert('x')</script>" not in html
     assert "white-space: pre-wrap" in html
     assert "overflow-wrap: anywhere" in html
-    assert html.index('class="system-prompt"') < html.index('<main class="session-shell">')
+    assert html.index('class="system-prompt"') < html.index('class="session-shell"')
 
 
 def test_render_session_html_omits_unavailable_system_prompt() -> None:
@@ -275,3 +276,57 @@ def test_export_session_html_writes_file(tmp_path: Path) -> None:
 
     assert result == output_path
     assert output_path.read_text(encoding="utf-8").startswith("<!doctype html>")
+
+
+def test_render_session_html_includes_usage_tab() -> None:
+    entries = [
+        MessageEntry(id="root", message=UserMessage(content="Hello")),
+        MessageEntry(
+            id="reply",
+            parent_id="root",
+            message=AssistantMessage(
+                content="Hi",
+                provider="anthropic",
+                model="claude-sonnet-4-5",
+                usage=Usage(input=120, output=30, cache_read=880, cache_write=40),
+            ),
+        ),
+        LeafEntry(id="leaf", parent_id="reply", entry_id="reply"),
+    ]
+
+    html = render_session_html(entries, title="Usage Export")
+
+    assert 'id="panel-cache"' in html
+    assert 'class="usage-chart"' in html
+    assert 'class="png-button"' in html
+    assert "Cache hit rate" in html
+    assert "Estimated cost" in html
+    # Tabs use focusable buttons and implement the ARIA keyboard interaction.
+    assert '<button\n        type="button"\n        class="tab"\n        id="tab-cache"' in html
+    assert 'event.key !== "ArrowLeft" && event.key !== "ArrowRight"' in html
+    assert "tabs[next].focus()" in html
+    assert 'currentHash === "#transcript" || currentHash === "#cache"' in html
+    assert 'selectTab(window.location.hash === "#cache" ? 1 : 0, false)' in html
+
+
+def test_render_session_html_uses_tau_theme_palette() -> None:
+    entries = [
+        MessageEntry(id="root", message=UserMessage(content="Hello")),
+        MessageEntry(
+            id="reply",
+            parent_id="root",
+            message=AssistantMessage(content="Hi", usage=Usage(input=10, output=5)),
+        ),
+    ]
+
+    html = render_session_html(entries)
+
+    assert f"--accent: {TAU_LIGHT_THEME.accent}" in html
+    assert f"--accent: {TAU_DARK_THEME.accent}" in html
+    assert f"--bg: {TAU_LIGHT_THEME.screen_background}" in html
+    assert f"--bg: {TAU_DARK_THEME.screen_background}" in html
+    assert ":root.theme-dark" in html
+    assert 'id="tab-cache"' in html
+    assert "tau-themechange" in html
+    assert f'data-dark="{TAU_DARK_THEME.error}"' in html
+    assert f'data-light="{TAU_LIGHT_THEME.error}"' in html

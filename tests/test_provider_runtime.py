@@ -301,7 +301,7 @@ def test_create_model_provider_coerces_unsupported_startup_thinking_level(
 ) -> None:
     # Regression: startup used to pass the global default ("medium") straight
     # to create_model_provider, which crashed for models like kimi-code:k3
-    # that only support xhigh.
+    # that only support xhigh. Now k3 also supports low and high.
     monkeypatch.setenv("TAU_TEST_KIMI_CODE_API_KEY", "test-key")
     store = FileCredentialStore(tmp_path / "credentials.json")
     provider_config = OpenAICompatibleProviderConfig(
@@ -309,8 +309,8 @@ def test_create_model_provider_coerces_unsupported_startup_thinking_level(
         api_key_env="TAU_TEST_KIMI_CODE_API_KEY",
         models=("k3",),
         default_model="k3",
-        thinking_levels=("medium", "xhigh"),
-        thinking_default="medium",
+        thinking_levels=("low", "medium", "high", "xhigh"),
+        thinking_default="xhigh",
         thinking_parameter="reasoning_effort",
         model_metadata={
             "k3": ProviderModelMetadata(
@@ -318,9 +318,9 @@ def test_create_model_provider_coerces_unsupported_startup_thinking_level(
                 thinking_level_map={
                     "off": None,
                     "minimal": None,
-                    "low": None,
+                    "low": "low",
                     "medium": None,
-                    "high": None,
+                    "high": "high",
                     "xhigh": "max",
                 },
             ),

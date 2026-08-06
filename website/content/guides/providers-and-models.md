@@ -159,10 +159,12 @@ different endpoints, and charge against different billing plans:
 | `kimi-code` | Subscription key from the [Kimi Code console](https://www.kimi.com/code/console) | `k3` or rolling `kimi-for-coding` alias | `https://api.kimi.com/coding/v1` | `KIMI_CODE_API_KEY` |
 
 Kimi K3 uses the `k3` model ID, accepts text and image input, and supports up to
-a 1,048,576-token context window on eligible plans. Its reasoning effort is
-currently fixed at `max`,
-which Tau exposes as the `xhigh` thinking level. Start a new session when
-switching to K3 so the previous model's context cache is not re-prefilled. See
+a 1,048,576-token context window on eligible plans. It supports three
+reasoning-effort levels via the `reasoning_effort` field: `low`, `high`, and
+`max` (default). Tau exposes these as the `low`, `high`, and `xhigh` thinking
+levels respectively, and starts new K3 sessions at `xhigh` unless a remembered
+per-model choice exists. Start a new session when switching to K3 so the
+previous model's context cache is not re-prefilled. See
 [Kimi's model documentation](https://www.kimi.com/code/docs/en/kimi-code/models)
 for current plan availability and context limits.
 

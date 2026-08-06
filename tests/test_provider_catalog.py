@@ -409,6 +409,7 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
     assert coding.credential_name == "kimi-code"
     assert coding.models == ("k3", "kimi-for-coding")
     assert coding.default_model == "kimi-for-coding"
+    assert coding.thinking_default == "xhigh"
     assert coding.context_windows == {"k3": 1_048_576, "kimi-for-coding": 262_144}
 
     k3 = coding.model_metadata["k3"]
@@ -419,9 +420,9 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
     assert k3.thinking_level_map == {
         "off": None,
         "minimal": None,
-        "low": None,
+        "low": "low",
         "medium": None,
-        "high": None,
+        "high": "high",
         "xhigh": "max",
     }
 
@@ -429,6 +430,13 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
     assert latest.name == "Kimi for Coding (latest)"
     assert latest.reasoning is True
     assert latest.context_window == 262_144
+    assert latest.thinking_level_map == {
+        "off": None,
+        "minimal": None,
+        "low": None,
+        "high": None,
+        "xhigh": None,
+    }
 
 
 def test_builtin_minimax_m3_has_tiered_pricing() -> None:
