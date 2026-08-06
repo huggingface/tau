@@ -50,6 +50,7 @@ from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 from tau_ai.stream import canonicalize_provider_stream
+from tau_ai.tool_call_ids import portable_tool_call_id
 
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_MAX_TOKENS = 4096
@@ -440,9 +441,14 @@ def _build_messages_payload(
     if thinking_budget_tokens is not None:
         resolved_max_tokens = max(resolved_max_tokens, thinking_budget_tokens + 1024)
     cache_control = _cache_control(cache_retention)
-    payload_messages = [
-        _anthropic_message(message, supports_images=supports_images) for message in messages
-    ]
+    payload_messages = []
+    for message in messages:
+        converted = _anthropic_message(message, supports_images=supports_images)
+        # Dropping foreign provider reasoning can empty a reasoning-only turn.
+        # Anthropic rejects empty assistant content, so omit that inert turn too.
+        if converted.get("role") == "assistant" and not converted.get("content"):
+            continue
+        payload_messages.append(converted)
     _apply_message_cache_breakpoints(payload_messages, cache_control)
     payload: dict[str, JSONValue] = {
         "model": model,
@@ -621,6 +627,11 @@ def _anthropic_message(message: AgentMessage, *, supports_images: bool) -> dict[
             if isinstance(block, TextContent):
                 content.append({"type": "text", "text": block.text})
             elif isinstance(block, ThinkingContent):
+                # Thinking signatures are provider-owned opaque state. Replaying
+                # an OpenAI/Google signature as an Anthropic thinking block makes
+                # an otherwise portable model switch fail validation.
+                if message.api != "anthropic-messages":
+                    continue
                 thinking: dict[str, JSONValue] = {
                     "type": "thinking",
                     "thinking": block.thinking,
@@ -632,7 +643,7 @@ def _anthropic_message(message: AgentMessage, *, supports_images: bool) -> dict[
                 content.append(
                     {
                         "type": "tool_use",
-                        "id": block.id,
+                        "id": portable_tool_call_id(block.id),
                         "name": block.name,
                         "input": block.arguments,
                     }
@@ -653,7 +664,7 @@ def _anthropic_message(message: AgentMessage, *, supports_images: bool) -> dict[
             "content": [
                 {
                     "type": "tool_result",
-                    "tool_use_id": message.tool_call_id,
+                    "tool_use_id": portable_tool_call_id(message.tool_call_id),
                     "content": result_content,
                     "is_error": bool(message.is_error),
                 }

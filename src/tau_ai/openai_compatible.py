@@ -54,6 +54,7 @@ from tau_ai.openai_cache import is_direct_openai_url, openai_prompt_cache_key
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 from tau_ai.stream import canonicalize_provider_stream
+from tau_ai.tool_call_ids import portable_tool_call_id
 
 # Models that reject function tools + reasoning_effort on /chat/completions and
 # must use the /v1/responses endpoint instead.
@@ -954,7 +955,7 @@ def _messages_to_responses_input(
                 items.append(
                     {
                         "type": "function_call",
-                        "call_id": tool_call.id,
+                        "call_id": portable_tool_call_id(tool_call.id),
                         "name": tool_call.name,
                         "arguments": dumps(tool_call.arguments),
                     }
@@ -977,7 +978,7 @@ def _messages_to_responses_input(
             items.append(
                 {
                     "type": "function_call_output",
-                    "call_id": message.tool_call_id,
+                    "call_id": portable_tool_call_id(message.tool_call_id),
                     "output": output,
                 }
             )
@@ -1150,7 +1151,7 @@ def _messages_to_openai_chat(
             converted.append(
                 {
                     "role": "tool",
-                    "tool_call_id": message.tool_call_id,
+                    "tool_call_id": portable_tool_call_id(message.tool_call_id),
                     "name": message.tool_name,
                     "content": text or ("(see attached image)" if images else "(no tool output)"),
                 }
@@ -1195,7 +1196,7 @@ def _message_to_openai(message: AgentMessage) -> dict[str, JSONValue]:
     if isinstance(message, ToolResultMessage):
         return {
             "role": "tool",
-            "tool_call_id": message.tool_call_id,
+            "tool_call_id": portable_tool_call_id(message.tool_call_id),
             "name": message.tool_name,
             "content": message.text,
         }
@@ -1215,7 +1216,7 @@ def _tool_to_openai(tool: AgentTool) -> dict[str, JSONValue]:
 
 def _tool_call_to_openai(tool_call: ToolCall) -> dict[str, JSONValue]:
     return {
-        "id": tool_call.id,
+        "id": portable_tool_call_id(tool_call.id),
         "type": "function",
         "function": {
             "name": tool_call.name,

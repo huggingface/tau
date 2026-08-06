@@ -41,6 +41,7 @@ from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 from tau_ai.stream import canonicalize_provider_stream
+from tau_ai.tool_call_ids import portable_tool_call_id
 
 
 class MistralConversationsProvider:
@@ -379,7 +380,7 @@ def _messages_to_mistral(
             converted.append(
                 {
                     "role": "tool",
-                    "tool_call_id": message.tool_call_id,
+                    "tool_call_id": portable_tool_call_id(message.tool_call_id),
                     "name": message.tool_name,
                     "content": text or ("(see attached image)" if images else "(no tool output)"),
                 }
@@ -419,7 +420,7 @@ def _message_to_mistral(message: AgentMessage) -> dict[str, JSONValue]:
     if isinstance(message, ToolResultMessage):
         return {
             "role": "tool",
-            "tool_call_id": message.tool_call_id,
+            "tool_call_id": portable_tool_call_id(message.tool_call_id),
             "name": message.tool_name,
             "content": message.text,
         }
@@ -440,7 +441,7 @@ def _tool_to_mistral(tool: AgentTool) -> dict[str, JSONValue]:
 
 def _tool_call_to_mistral(tool_call: ToolCall) -> dict[str, JSONValue]:
     return {
-        "id": tool_call.id,
+        "id": portable_tool_call_id(tool_call.id),
         "type": "function",
         "function": {"name": tool_call.name, "arguments": dumps(tool_call.arguments)},
     }
