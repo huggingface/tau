@@ -164,6 +164,7 @@ def _export_theme_css(theme: TuiTheme) -> str:
             f"      --line: {theme.border};",
             f"      --line-strong: {theme.prompt_border};",
             f"      --accent: {theme.accent};",
+            f"      --accent-text: {theme.highlight_text};",
             f"      --accent-soft: {theme.highlight_background};",
             f"      --danger: {theme.error};",
             f"      --code-bg: {theme.markdown_code_block_background};",
@@ -373,6 +374,7 @@ def render_session_html(
       background: none;
       border: 0;
       border-bottom: 2px solid transparent;
+      border-radius: 0;
       cursor: pointer;
       font-family: var(--mono);
       font-size: 0.68rem;
@@ -437,7 +439,7 @@ def render_session_html(
       transition: background .15s;
     }}
     .chip input:checked + .chip-label {{
-      color: var(--accent);
+      color: var(--accent-text);
       background: var(--accent-soft);
       border-color: var(--accent);
     }}

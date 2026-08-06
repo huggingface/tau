@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from tau_agent.messages import AssistantMessage
 from tau_agent.session import CompactionEntry, MessageEntry, SessionEntry
@@ -27,6 +28,7 @@ class RequestUsage:
     """Token usage for a single assistant response."""
 
     number: int
+    timestamp: str
     provider: str
     model: str
     fresh: int
@@ -152,6 +154,7 @@ def collect_session_usage(entries: Sequence[SessionEntry]) -> SessionUsage:
         requests.append(
             RequestUsage(
                 number=len(requests) + 1,
+                timestamp=datetime.fromtimestamp(entry.timestamp, tz=UTC).strftime("%H:%M:%S"),
                 provider=message.provider,
                 model=message.model,
                 fresh=usage.input,
@@ -212,6 +215,7 @@ def _line_chart(
     *,
     y_max: float | None = None,
     percent: bool = False,
+    timestamps: Sequence[str] | None = None,
 ) -> str:
     """Render one interactive line chart as inline SVG."""
     width, height = 900, 330
@@ -229,10 +233,13 @@ def _line_chart(
         y = top + plot_height - (value / maximum) * plot_height
         return x, y
 
+    ts_attr = (
+        f' data-timestamps="{html.escape("|".join(timestamps), quote=True)}"' if timestamps else ""
+    )
     parts = [
         f'<svg class="usage-chart" viewBox="0 0 {width} {height}" role="img" '
         f'aria-label="{html.escape(title, quote=True)}" data-left="{left}" '
-        f'data-right="{right}" data-count="{count}">',
+        f'data-right="{right}" data-count="{count}"{ts_attr}>',
         f'<text class="chart-title" x="{left}" y="24">{html.escape(title)}</text>',
     ]
     for tick in range(6):
@@ -306,6 +313,7 @@ def render_usage_dashboard(usage: SessionUsage) -> str:
             "in this session.</p>"
         )
 
+    timestamps = [item.timestamp for item in requests]
     cached = [float(item.cached) for item in requests]
     cache_writes = [float(item.cache_write) for item in requests]
     fresh = [float(item.fresh) for item in requests]
@@ -341,6 +349,7 @@ def render_usage_dashboard(usage: SessionUsage) -> str:
         _line_chart(
             "Prompt input by request",
             [("cached", cached), ("cache writes", cache_writes), ("fresh", fresh)],
+            timestamps=timestamps,
         )
     ]
     if cache_hit_rate is not None:
@@ -350,19 +359,22 @@ def render_usage_dashboard(usage: SessionUsage) -> str:
                 [("request", rates), ("cumulative", cumulative_rates)],
                 y_max=1.0,
                 percent=True,
+                timestamps=timestamps,
             )
         )
     charts.append(
         _line_chart(
             "Output and reasoning tokens",
             [("output", outputs), ("reasoning", reasoning)],
+            timestamps=timestamps,
         )
     )
     charts_html = "".join(_figure(chart) for chart in charts)
     show_hit_rates = cache_hit_rate is not None
 
     table_rows = "".join(
-        f"<tr><td>{item.number}</td><td>{html.escape(item.provider)}</td>"
+        f"<tr><td>{item.number}</td><td>{html.escape(item.timestamp)}</td>"
+        f"<td>{html.escape(item.provider)}</td>"
         f"<td>{html.escape(item.model)}</td><td>{item.fresh:,}</td><td>{item.cached:,}</td>"
         f"<td>{item.cache_write:,}</td><td>{item.prompt:,}</td>"
         f"<td>{f'{item.hit_rate:.1%}' if show_hit_rates else 'N/A'}</td>"
@@ -388,7 +400,7 @@ def render_usage_dashboard(usage: SessionUsage) -> str:
         f'<div class="usage-charts">{charts_html}</div>'
         '<div class="usage-details">'
         '<div class="usage-panel"><h2>Requests</h2><div class="usage-table-wrap"><table>'
-        "<thead><tr><th>#</th><th>Provider</th><th>Model</th><th>Fresh</th><th>Cached</th>"
+        "<thead><tr><th>#</th><th>Time</th><th>Provider</th><th>Model</th><th>Fresh</th><th>Cached</th>"
         "<th>Written</th><th>Prompt</th><th>Hit rate</th><th>Output</th><th>Est. cost</th>"
         f"<th>Stop</th></tr></thead><tbody>{table_rows}</tbody></table></div></div>"
         f'<div class="usage-panel"><h2>Tool calls</h2>{tool_rows}</div>'
@@ -565,8 +577,8 @@ USAGE_STYLES = """
       text-transform: uppercase;
       border-bottom: 1px solid var(--line-strong);
     }
-    .usage-panel th:nth-child(2), .usage-panel th:nth-child(3),
-    .usage-panel td:nth-child(2), .usage-panel td:nth-child(3) { text-align: left; }
+    .usage-panel th:nth-child(3), .usage-panel th:nth-child(4),
+    .usage-panel td:nth-child(3), .usage-panel td:nth-child(4) { text-align: left; }
     .usage-tool {
       display: flex;
       justify-content: space-between;
@@ -665,7 +677,10 @@ USAGE_SCRIPT = """
           if (!tooltip) {
             return;
           }
-          tooltip.textContent = "Request " + (index + 1) + "\\n" + tooltipLines.join("\\n");
+          var ts = chart.dataset.timestamps;
+          var tsLabel = ts ? " @ " + ts.split("|")[index] : "";
+          tooltip.textContent = "Request " + (index + 1) + tsLabel
+            + "\\n" + tooltipLines.join("\\n");
           tooltip.style.display = "block";
           var tooltipRect = tooltip.getBoundingClientRect();
           var maxLeft = window.innerWidth - tooltipRect.width - 10;
