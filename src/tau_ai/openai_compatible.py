@@ -268,6 +268,10 @@ class OpenAICompatibleProvider:
                     async with client.stream(
                         "POST", request_url, json=payload, headers=headers
                     ) as response:
+                        response_provider = _response_header_value(
+                            response,
+                            self._config.response_provider_header,
+                        )
                         if response.status_code >= 400:
                             body = await response.aread()
                             body_text = body.decode(errors="replace")
@@ -302,10 +306,14 @@ class OpenAICompatibleProvider:
                                     "body": body_text,
                                     "attempts": attempt + 1,
                                 },
+                                response_provider=response_provider,
                             )
                             return
 
-                        yield ProviderResponseStartEvent(model=model)
+                        yield ProviderResponseStartEvent(
+                            model=model,
+                            response_provider=response_provider,
+                        )
 
                         async for line in response.aiter_lines():
                             if signal is not None and signal.is_cancelled():
@@ -390,6 +398,17 @@ class OpenAICompatibleProvider:
         if attempt >= self._config.max_retries:
             return False
         return status_code is None or _is_transient_status(status_code)
+
+
+def _response_header_value(response: httpx.Response, header_name: str | None) -> str | None:
+    """Return one normalized response metadata header when configured."""
+    if header_name is None:
+        return None
+    value = response.headers.get(header_name)
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 def _apply_session_affinity_headers(

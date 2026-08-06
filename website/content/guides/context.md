@@ -111,8 +111,8 @@ isn't listed). Custom providers can opt in via `thinking_levels` in their config
 
 At startup Tau picks a valid level for the selected model automatically: a
 remembered per-model choice wins, then `medium`, then the provider's own
-default, then the first level the model supports. So a model that only supports
-`xhigh` (for example `kimi-code:k3`) opens at `xhigh` instead of failing with
-"Thinking mode medium is not available". Picking an unsupported level
-explicitly (via `/think` or the thinking picker) still shows an error listing
-the available modes.
+default, then the first level the model supports. For example, `kimi-code:k3`
+supports `low`, `high`, and `xhigh`; because `medium` is unavailable, it opens
+at its `xhigh` catalog default instead of failing with "Thinking mode medium is
+not available". Picking an unsupported level explicitly (via `/think` or the
+thinking picker) still shows an error listing the available modes.

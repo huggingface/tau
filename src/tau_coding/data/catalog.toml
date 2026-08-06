@@ -3891,8 +3891,8 @@ models = ["k3", "kimi-for-coding"]
 default_model = "kimi-for-coding"
 docs_url = "https://www.kimi.com/code/docs/en/kimi-code/models"
 api = "openai-completions"
-thinking_levels = ["medium", "xhigh"]
-thinking_default = "medium"
+thinking_levels = ["low", "medium", "high", "xhigh"]
+thinking_default = "xhigh"
 thinking_parameter = "reasoning_effort"
 
 [providers.context_windows]
@@ -3906,8 +3906,8 @@ input = ["text", "image"]
 context_window = 1048576
 compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = true, maxTokensField = "max_tokens", supportsStrictMode = false }
 cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
-thinking_level_map = { xhigh = "max" }
-unsupported_thinking_levels = ["off", "minimal", "low", "medium", "high"]
+thinking_level_map = { low = "low", high = "high", xhigh = "max" }
+unsupported_thinking_levels = ["off", "minimal", "medium"]
 
 [providers.model_metadata.kimi-for-coding]
 name = "Kimi for Coding (latest)"
@@ -3917,6 +3917,7 @@ context_window = 262144
 max_tokens = 32768
 compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = false, maxTokensField = "max_tokens", supportsStrictMode = false }
 cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+unsupported_thinking_levels = ["off", "minimal", "low", "high", "xhigh"]
 
 [[providers]]
 name = "moonshotai-cn"

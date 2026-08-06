@@ -833,6 +833,60 @@ async def test_openai_compatible_provider_streams_tool_calls() -> None:
 
 
 @pytest.mark.anyio
+async def test_openai_compatible_provider_reports_resolved_response_provider() -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(
+                503,
+                text="temporarily unavailable",
+                headers={"x-inference-provider": "provider-before-failover"},
+            )
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n'
+                "data: [DONE]\n\n"
+            ),
+            headers={
+                "content-type": "text/event-stream",
+                "x-inference-provider": "provider-after-failover",
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://router.huggingface.co/v1",
+                provider_name="huggingface",
+                response_provider_header="x-inference-provider",
+                max_retries=1,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="test-model",
+                system="You are Tau.",
+                messages=[UserMessage(content="hello")],
+                tools=[],
+            )
+        )
+
+    assert attempts == 2
+    assert isinstance(events[0], AssistantStartEvent)
+    assert events[0].partial.response_provider == "provider-after-failover"
+    assert isinstance(events[-1], AssistantDoneEvent)
+    assert events[-1].message.provider == "huggingface"
+    assert events[-1].message.response_provider == "provider-after-failover"
+
+
+@pytest.mark.anyio
 async def test_openai_compatible_provider_retries_transient_status() -> None:
     requests: list[httpx.Request] = []
 

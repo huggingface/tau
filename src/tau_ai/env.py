@@ -58,6 +58,7 @@ class OpenAICompatibleConfig:
     model_aliases: Mapping[str, str] = field(default_factory=dict)
     include_reasoning_effort_none: bool = False
     provider_name: str = "OpenAI-compatible provider"
+    response_provider_header: str | None = None
     omit_authorization_header: bool = False
     credential_resolver: RuntimeProviderAuthResolver | None = None
     response_headers_observer: RuntimeResponseHeadersObserver | None = None

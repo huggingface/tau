@@ -1670,6 +1670,9 @@ def openai_compatible_config_from_provider(
         reasoning_effort_parameter=provider.thinking_parameter or "reasoning_effort",
         thinking_format=_thinking_format(provider, selected_model),
         compat=compat,
+        response_provider_header=(
+            "x-inference-provider" if provider.name == "huggingface" else None
+        ),
         include_reasoning_effort_none=_include_reasoning_effort_none(
             provider,
             model=selected_model,

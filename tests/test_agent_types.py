@@ -48,6 +48,20 @@ def test_assistant_message_keeps_ordered_content_blocks() -> None:
     }
 
 
+def test_assistant_message_serializes_resolved_response_provider() -> None:
+    message = AssistantMessage(
+        provider="huggingface",
+        model="test-model",
+        response_provider="test-inference-provider",
+        timestamp=123,
+    )
+
+    payload = message.model_dump(by_alias=True)
+
+    assert payload["provider"] == "huggingface"
+    assert payload["responseProvider"] == "test-inference-provider"
+
+
 def test_assistant_message_persists_thinking_blocks_and_signatures() -> None:
     message = AssistantMessage(
         content=[
