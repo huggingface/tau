@@ -426,6 +426,7 @@ def render_session_html(
       color: var(--muted);
       background: var(--surface);
       border: 1px solid var(--line-strong);
+      border-radius: 0;
       font-size: 0.76rem;
       font-weight: 500;
       transition: color .15s, border-color .15s, background .15s;
