@@ -487,7 +487,10 @@ def render_session_html(
       cursor: pointer;
       transition: background .15s;
     }}
-    .expand-toggle:hover {{ background: var(--accent-soft); }}
+    .expand-toggle:hover {{
+      background: var(--accent-soft);
+      color: var(--accent-text);
+    }}
     main {{
       display: grid;
       grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
