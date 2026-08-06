@@ -40,6 +40,12 @@ from tau_agent.session import (
     path_to_entry,
 )
 from tau_agent.types import JSONValue
+from tau_coding.session_usage import (
+    USAGE_SCRIPT,
+    USAGE_STYLES,
+    collect_session_usage,
+    render_usage_dashboard,
+)
 
 
 class SessionExportError(ValueError):
@@ -164,6 +170,12 @@ def render_session_html(
     jsonl_filename = _jsonl_filename(title, source)
     tool_count = sum(1 for entry in visible_entries if _entry_filter_kind(entry) == "tool")
     event_count = sum(1 for entry in visible_entries if _entry_filter_kind(entry) == "event")
+    usage_html = render_usage_dashboard(
+        collect_session_usage(
+            [entry for entry in visible_entries if entry.id in active_path_ids]
+            or list(visible_entries)
+        )
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -348,6 +360,34 @@ def render_session_html(
       overflow-wrap: anywhere;
       word-break: break-word;
     }}
+    .tab-bar {{
+      display: flex;
+      gap: 6px;
+      margin-top: 16px;
+      border-bottom: 1px solid var(--line);
+    }}
+    .tab {{
+      padding: 7px 14px;
+      color: var(--muted);
+      background: none;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      font-family: var(--sans);
+      font-size: 0.8rem;
+      font-weight: 500;
+    }}
+    .tab:hover {{ color: var(--text); }}
+    .tab[aria-selected="true"] {{
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }}
+    .usage-shell {{
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 18px clamp(16px, 4vw, 44px) 56px;
+    }}
+{USAGE_STYLES}
     .filter-bar {{
       display: flex;
       flex-wrap: wrap;
@@ -717,7 +757,31 @@ def render_session_html(
       </p>
     </div>
     {system_prompt_html}
-    <div class="filter-bar" aria-label="Transcript filters">
+    <nav class="tab-bar" role="tablist" aria-label="Export views">
+      <button
+        type="button"
+        class="tab"
+        id="tab-transcript"
+        role="tab"
+        aria-controls="panel-transcript"
+        aria-selected="true"
+        data-panel="panel-transcript"
+      >
+        Transcript
+      </button>
+      <button
+        type="button"
+        class="tab"
+        id="tab-usage"
+        role="tab"
+        aria-controls="panel-usage"
+        aria-selected="false"
+        data-panel="panel-usage"
+      >
+        Usage
+      </button>
+    </nav>
+    <div class="filter-bar" id="filterBar" aria-label="Transcript filters">
       <span class="filter-label">View</span>
       <label class="chip">
         <input type="checkbox" id="showTools" checked>
@@ -747,7 +811,11 @@ def render_session_html(
       </button>
     </div>
   </header>
-  <main class="session-shell">
+  <main class="session-shell"
+    id="panel-transcript"
+    role="tabpanel"
+    aria-labelledby="tab-transcript"
+  >
     <aside class="tree-rail">
       <h2>Session</h2>
       {tree_html}
@@ -757,6 +825,15 @@ def render_session_html(
       {details_html}
     </section>
   </main>
+  <section
+    class="usage-shell"
+    id="panel-usage"
+    role="tabpanel"
+    aria-labelledby="tab-usage"
+    hidden
+  >
+    {usage_html}
+  </section>
   <script id="sessionJsonlData" type="application/octet-stream">{jsonl_b64}</script>
   <script>
     (function () {{
@@ -859,8 +936,24 @@ def render_session_html(
       }}
       applyFilters();
       syncAccordionToggle();
+
+      var filterBar = document.getElementById("filterBar");
+      var tabs = document.querySelectorAll(".tab");
+      Array.prototype.forEach.call(tabs, function (tab) {{
+        tab.addEventListener("click", function () {{
+          Array.prototype.forEach.call(tabs, function (other) {{
+            var selected = other === tab;
+            other.setAttribute("aria-selected", selected ? "true" : "false");
+            document.getElementById(other.dataset.panel).hidden = !selected;
+          }});
+          if (filterBar) {{
+            filterBar.hidden = tab.dataset.panel !== "panel-transcript";
+          }}
+        }});
+      }});
     }})();
   </script>
+  <script>{USAGE_SCRIPT}</script>
 </body>
 </html>
 """
