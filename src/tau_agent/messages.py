@@ -125,6 +125,7 @@ class AssistantMessage(WireModel):
     provider: str = "unknown"
     model: str = "unknown"
     response_model: str | None = None
+    response_provider: str | None = None
     response_id: str | None = None
     diagnostics: list[AssistantMessageDiagnostic] | None = None
     usage: Usage = Usage()

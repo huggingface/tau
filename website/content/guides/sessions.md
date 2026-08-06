@@ -98,11 +98,18 @@ tau export <session-id> --format jsonl
 ```
 
 The source can be an indexed session id **or** a path to a JSONL session file.
-HTML exports are self-contained and include the preserved session tree plus the
-transcript in storage order. When `/export` creates HTML from the live session,
-it also includes the current system prompt in a separate, collapsed **System
-Prompt** section. Review that section before sharing: the prompt may expose
-project instructions, skill guidance, paths, or other local context. Offline
+HTML exports are self-contained and include two tabs: **Transcript** preserves
+the session tree and entries in storage order, while **Cache** summarizes the
+active branch's model requests, prompt caching, output and reasoning tokens,
+estimated API-rate cost, tool calls, and compactions. Cache charts are
+interactive—hover for exact values and select a legend item to hide a
+series—and can be downloaded as static PNG images with white backgrounds. The
+export follows Tau's themes: tau-light in light mode and tau-dark in dark mode,
+with charts recoloring live when you toggle the theme. When `/export` creates
+HTML from the live session, it also includes the current
+system prompt in a separate, collapsed **System Prompt** section. Review that
+section before sharing: the prompt may expose project instructions, skill
+guidance, paths, or other local context. Offline
 `tau export` of an indexed session or arbitrary JSONL file omits this section
 because session JSONL does not persist the prompt.
 
