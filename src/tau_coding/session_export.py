@@ -444,7 +444,7 @@ def render_session_html(
       background: var(--accent-soft);
       border-color: var(--accent);
     }}
-    .chip input:checked + .chip-label::before {{ background: var(--accent); }}
+    .chip input:checked + .chip-label::before {{ background: var(--accent-text); }}
     .chip input:focus-visible + .chip-label {{
       outline: 2px solid var(--accent);
       outline-offset: 2px;
@@ -455,7 +455,7 @@ def render_session_html(
       font-size: 0.66rem;
       font-variant-numeric: tabular-nums;
     }}
-    .chip input:checked + .chip-label .chip-count {{ background: var(--surface); }}
+    .chip input:checked + .chip-label .chip-count {{ background: var(--accent-soft); }}
     .filter-spacer {{ flex: 1 1 auto; }}
     .jsonl-download {{
       display: inline-flex;
@@ -586,7 +586,10 @@ def render_session_html(
       transition: transform .15s;
     }}
     details.entry[open] > .entry-summary::before {{ transform: rotate(45deg); }}
-    .entry-summary:hover {{ background: var(--accent-soft); }}
+    .entry-summary:hover {{
+      background: var(--accent-soft);
+      color: var(--accent-text);
+    }}
     .entry-heading {{
       display: flex;
       align-items: baseline;
