@@ -3148,6 +3148,72 @@ async def test_session_compacts_and_retries_once_after_context_overflow(
 
 
 @pytest.mark.anyio
+async def test_huggingface_session_re_resolves_pin_on_model_switch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    created: list[tuple[str | None, str | None]] = []
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+        inference_provider: str | None = None,
+    ) -> SwitchableFakeProvider:
+        del credential_store, thinking_level
+        created.append((model, inference_provider))
+        return SwitchableFakeProvider(provider_config)
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    provider_config = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=("zai-org/GLM-5.2", "deepseek-ai/DeepSeek-V4-Flash"),
+        default_model="zai-org/GLM-5.2",
+        inference_providers={
+            "zai-org/GLM-5.2": "deepinfra",
+            "deepseek-ai/DeepSeek-V4-Flash": "fireworks-ai",
+        },
+    )
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(
+        cwd=tmp_path,
+        model="zai-org/GLM-5.2",
+        provider_name="huggingface",
+        inference_provider="deepinfra",
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="zai-org/GLM-5.2",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(record.path),
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+            provider_name="huggingface",
+            inference_provider="deepinfra",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            runtime_provider_config=provider_config,
+            resource_paths=TauResourcePaths(
+                root=tmp_path / ".tau",
+                paths=TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"),
+            ),
+        )
+    )
+
+    session.set_model("deepseek-ai/DeepSeek-V4-Flash")
+
+    assert created == [
+        ("zai-org/GLM-5.2", "deepinfra"),
+        ("deepseek-ai/DeepSeek-V4-Flash", "fireworks-ai"),
+    ]
+    assert session.model == "deepseek-ai/DeepSeek-V4-Flash"
+    assert session.inference_provider == "fireworks-ai"
+    assert manager.get_session(record.id).inference_provider == "fireworks-ai"  # type: ignore[union-attr]
+
+
+@pytest.mark.anyio
 async def test_session_switches_configured_provider(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

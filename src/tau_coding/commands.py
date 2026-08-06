@@ -36,6 +36,9 @@ class CommandSession(Protocol):
     def provider_name(self) -> str: ...
 
     @property
+    def inference_provider(self) -> str | None: ...
+
+    @property
     def available_models(self) -> Sequence[str]: ...
 
     @property
@@ -424,6 +427,7 @@ def _status_command(context: CommandContext) -> CommandResult:
     context_usage = getattr(session, "context_usage", None)
     lines = [
         f"Model: {session.model}",
+        f"Provider: {session.provider_name}",
         f"CWD: {session.cwd}",
         f"Tools: {len(session.tools)}",
         f"Skills: {len(session.skills)}",
@@ -432,6 +436,9 @@ def _status_command(context: CommandContext) -> CommandResult:
         f"Estimated context tokens: {session.context_token_estimate}",
         f"Context window: {session.context_window_tokens}",
     ]
+    if session.provider_name == "huggingface":
+        route = getattr(session, "inference_provider", None) or "automatic"
+        lines.append(f"Hugging Face inference provider: {route}")
     context_window_source = getattr(session, "context_window_source", None)
     if context_window_source:
         lines.append(f"Context window source: {context_window_source}")

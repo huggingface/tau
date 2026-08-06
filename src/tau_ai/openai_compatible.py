@@ -157,7 +157,7 @@ class OpenAICompatibleProvider:
         affinity_id = openai_prompt_cache_key(session_id)
         cache_key = self._prompt_cache_key(affinity_id)
         payload = _build_chat_payload(
-            model=model,
+            model=self._config.model_aliases.get(model, model),
             system=system,
             messages=messages,
             tools=tools,
@@ -195,7 +195,7 @@ class OpenAICompatibleProvider:
         affinity_id = openai_prompt_cache_key(session_id)
         cache_key = self._prompt_cache_key(affinity_id)
         payload = _build_responses_payload(
-            model=model,
+            model=self._config.model_aliases.get(model, model),
             system=system,
             messages=messages,
             tools=tools,

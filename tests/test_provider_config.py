@@ -61,6 +61,33 @@ def test_stale_preferences_cannot_restore_removed_codex_alias(tmp_path: Path) ->
     assert "gpt-5.6" not in codex.thinking_defaults
 
 
+def test_load_provider_settings_accepts_huggingface_inference_provider_preferences(
+    tmp_path: Path,
+) -> None:
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    (tau_home / "providers.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "default_provider": "huggingface",
+                "provider_preferences": {
+                    "huggingface": {
+                        "default_model": "zai-org/GLM-5.2",
+                        "inference_providers": {"zai-org/GLM-5.2": "deepinfra"},
+                    }
+                },
+                "scoped_models": [],
+            }
+        )
+    )
+
+    provider = load_provider_settings(TauPaths(home=tau_home)).get_provider("huggingface")
+
+    assert isinstance(provider, OpenAICompatibleProviderConfig)
+    assert provider.inference_providers == {"zai-org/GLM-5.2": "deepinfra"}
+
+
 def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path) -> None:
     settings = load_provider_settings(TauPaths(home=tmp_path / ".tau"))
 

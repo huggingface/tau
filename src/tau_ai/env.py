@@ -54,6 +54,7 @@ class OpenAICompatibleConfig:
     reasoning_effort_parameter: str = "reasoning_effort"
     thinking_format: str = "openai"
     compat: Mapping[str, JSONValue] = field(default_factory=dict)
+    model_aliases: Mapping[str, str] = field(default_factory=dict)
     include_reasoning_effort_none: bool = False
     provider_name: str = "OpenAI-compatible provider"
     omit_authorization_header: bool = False

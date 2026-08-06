@@ -212,6 +212,41 @@ async def test_openai_compatible_provider_formats_request_and_streams_text() -> 
 
 
 @pytest.mark.anyio
+async def test_openai_compatible_provider_uses_wire_model_alias_but_reports_logical_model() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://router.huggingface.co/v1",
+                model_aliases={"zai-org/GLM-5.2": "zai-org/GLM-5.2:deepinfra"},
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="zai-org/GLM-5.2",
+                system="You are Tau.",
+                messages=[UserMessage(content="hello")],
+                tools=[],
+            )
+        )
+
+    assert loads(requests[0].content)["model"] == "zai-org/GLM-5.2:deepinfra"
+    assert isinstance(events[-1], AssistantDoneEvent)
+    assert events[-1].message.model == "zai-org/GLM-5.2"
+
+
+@pytest.mark.anyio
 async def test_openai_chat_completions_sends_prompt_cache_key_without_affinity_headers() -> None:
     requests: list[httpx.Request] = []
 

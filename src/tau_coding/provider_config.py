@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from json import dumps, loads
@@ -131,6 +132,7 @@ class OpenAICompatibleProviderConfig:
     thinking_default: ThinkingLevel | None = None
     thinking_parameter: ThinkingParameter | None = None
     thinking_defaults: dict[str, ThinkingLevel] = field(default_factory=dict)
+    inference_providers: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_provider_numbers(
@@ -148,6 +150,7 @@ class OpenAICompatibleProviderConfig:
             thinking_parameter=self.thinking_parameter,
         )
         _validate_thinking_defaults(self.thinking_defaults)
+        _validate_inference_providers(self.name, self.models, self.inference_providers)
 
     def to_json(self) -> dict[str, Any]:
         """Serialize this provider config to JSON-compatible data."""
@@ -176,6 +179,7 @@ class OpenAICompatibleProviderConfig:
             "thinking_default": self.thinking_default,
             "thinking_parameter": self.thinking_parameter,
             "thinking_defaults": dict(self.thinking_defaults),
+            "inference_providers": dict(self.inference_providers),
         }
 
 
@@ -938,6 +942,7 @@ def _merge_openai_compatible_provider(
             else incoming.thinking_parameter
         ),
         thinking_defaults=existing.thinking_defaults,
+        inference_providers=existing.inference_providers,
     )
 
 
@@ -1044,7 +1049,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
 
 def _provider_preference_to_json(provider: ProviderConfig) -> dict[str, Any]:
     """Serialize only runtime preferences for one provider."""
-    return {
+    preference = {
         "default_model": provider.default_model,
         "headers": dict(provider.headers),
         "timeout_seconds": provider.timeout_seconds,
@@ -1052,6 +1057,9 @@ def _provider_preference_to_json(provider: ProviderConfig) -> dict[str, Any]:
         "max_retry_delay_seconds": provider.max_retry_delay_seconds,
         "thinking_defaults": dict(provider.thinking_defaults),
     }
+    if isinstance(provider, OpenAICompatibleProviderConfig) and provider.inference_providers:
+        preference["inference_providers"] = dict(provider.inference_providers)
+    return preference
 
 
 def _save_provider_definitions_to_catalog(
@@ -1292,6 +1300,26 @@ def _apply_provider_preference(
         if "thinking_defaults" in value
         else provider.thinking_defaults
     )
+    if isinstance(provider, OpenAICompatibleProviderConfig):
+        inference_providers = (
+            _inference_providers_dict(
+                value.get("inference_providers"),
+                provider,
+                f"provider_preferences.{provider.name}.inference_providers",
+            )
+            if "inference_providers" in value
+            else provider.inference_providers
+        )
+        return replace(
+            provider,
+            default_model=default_model,
+            headers=headers,
+            timeout_seconds=timeout_seconds,
+            max_retries=max_retries,
+            max_retry_delay_seconds=max_retry_delay_seconds,
+            thinking_defaults=thinking_defaults,
+            inference_providers=inference_providers,
+        )
     return replace(
         provider,
         default_model=default_model,
@@ -1301,6 +1329,17 @@ def _apply_provider_preference(
         max_retry_delay_seconds=max_retry_delay_seconds,
         thinking_defaults=thinking_defaults,
     )
+
+
+def _inference_providers_dict(
+    value: object,
+    provider: OpenAICompatibleProviderConfig,
+    field_name: str,
+) -> dict[str, str]:
+    routes = _string_dict(value, field_name)
+    routes = {model: route.strip() for model, route in routes.items() if model in provider.models}
+    _validate_inference_providers(provider.name, provider.models, routes)
+    return routes
 
 
 def _thinking_defaults_dict(
@@ -2143,6 +2182,40 @@ def _validate_json_value(value: object, field_name: str) -> None:
 def _reject_codex_legacy_compat(compat: dict[str, Any]) -> None:
     if compat:
         raise ProviderConfigError("OpenAI Codex legacy provider compat is not supported")
+
+
+_HF_INFERENCE_PROVIDER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def validate_huggingface_inference_provider(value: str) -> str:
+    """Return a normalized explicit Hugging Face provider suffix."""
+    normalized = value.strip()
+    if not _HF_INFERENCE_PROVIDER_PATTERN.fullmatch(normalized):
+        raise ProviderConfigError(
+            "Hugging Face inference provider must contain only letters, numbers, '.', '_', or '-'"
+        )
+    if normalized in {"fastest", "cheapest", "preferred"}:
+        raise ProviderConfigError(
+            f"Hugging Face inference provider must be explicit, not routing policy: {normalized}"
+        )
+    return normalized
+
+
+def _validate_inference_providers(
+    provider_name: str,
+    models: tuple[str, ...],
+    inference_providers: dict[str, str],
+) -> None:
+    if inference_providers and provider_name != "huggingface":
+        raise ProviderConfigError(
+            "inference_providers preferences are only supported for the huggingface provider"
+        )
+    for model, route in inference_providers.items():
+        if model not in models:
+            raise ProviderConfigError(
+                f"Inference-provider preference references unknown model: {model}"
+            )
+        validate_huggingface_inference_provider(route)
 
 
 def _validate_thinking_defaults(thinking_defaults: dict[str, ThinkingLevel]) -> None:
