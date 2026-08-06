@@ -357,22 +357,19 @@ def render_session_html(
       word-break: break-word;
     }}
     [hidden] {{ display: none !important; }}
-    .tab[aria-selected="true"] {{
-      color: var(--accent);
-      border-bottom-color: var(--accent);
-    }}
     .tab-bar {{
       display: flex;
-      gap: 20px;
+      gap: 4px;
       margin-top: 16px;
-      border-bottom: 1px dashed var(--line);
+      border-bottom: 1px solid var(--line);
     }}
     .tab {{
-      padding: 6px 2px;
+      padding: 7px 14px;
       color: var(--muted);
-      background: none;
-      border: 0;
-      border-bottom: 2px solid transparent;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-bottom: 0;
+      border-radius: 6px 6px 0 0;
       cursor: pointer;
       font-family: var(--mono);
       font-size: 0.68rem;
@@ -380,8 +377,14 @@ def render_session_html(
       letter-spacing: 0.1em;
       text-transform: uppercase;
       user-select: none;
+      transition: color .15s, background .15s;
     }}
-    .tab:hover {{ color: var(--bright); }}
+    .tab:hover {{ color: var(--bright); background: var(--surface-2); }}
+    .tab[aria-selected="true"] {{
+      color: var(--accent);
+      background: var(--bg);
+      border-bottom-color: var(--bg);
+    }}
     .tab:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
     .usage-shell {{
       max-width: 1240px;
