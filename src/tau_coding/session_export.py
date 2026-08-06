@@ -1327,6 +1327,14 @@ def _render_message_entry(entry: MessageEntry) -> str:
         return f"<pre>{_escape(message.text)}</pre>"
     if isinstance(message, AssistantMessage):
         blocks: list[str] = []
+        if message.response_provider:
+            blocks.append(
+                '<p class="entry-meta-line">'
+                f"{_escape(message.model)}"
+                ' <span class="dim">\u2192</span> '
+                f"{_escape(message.response_provider)}"
+                "</p>"
+            )
         for block in message.content:
             if isinstance(block, ThinkingContent):
                 blocks.append(_render_block("Thinking", f"<pre>{_escape(block.thinking)}</pre>"))
