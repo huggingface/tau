@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import string
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
@@ -88,6 +88,7 @@ from tau_coding.prompt_templates import (
     load_prompt_templates_with_diagnostics,
 )
 from tau_coding.provider_config import (
+    OpenAICompatibleProviderConfig,
     ProviderConfig,
     ProviderConfigError,
     ProviderSettings,
@@ -101,6 +102,7 @@ from tau_coding.provider_config import (
     save_default_provider_model,
     save_provider_thinking_level,
     toggle_saved_scoped_model,
+    validate_huggingface_inference_provider,
     validate_provider_model,
 )
 from tau_coding.provider_runtime import ClosableModelProvider, create_model_provider
@@ -228,6 +230,7 @@ class CodingSessionConfig:
     session_manager: SessionManager | None = None
     command_registry: CommandRegistry | None = None
     provider_name: str = "openai"
+    inference_provider: str | None = None
     provider_settings: ProviderSettings | None = None
     runtime_provider_config: ProviderConfig | None = None
     auto_compact_token_threshold: int | None = None
@@ -306,6 +309,7 @@ class CodingSession:
         self._resource_diagnostics = resource_diagnostics
         self._command_registry = command_registry or create_default_command_registry()
         self._provider_name = config.provider_name
+        self._inference_provider = config.inference_provider
         self._provider_settings = config.provider_settings
         self._runtime_provider_config = config.runtime_provider_config
         self._resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
@@ -523,6 +527,11 @@ class CodingSession:
     def provider_name(self) -> str:
         """Return the active provider name."""
         return self._provider_name
+
+    @property
+    def inference_provider(self) -> str | None:
+        """Return the pinned Hugging Face backing provider, if any."""
+        return self._inference_provider
 
     @property
     def available_providers(self) -> tuple[str, ...]:
@@ -1026,6 +1035,7 @@ class CodingSession:
         if provider is not None:
             validate_provider_model(provider, model)
         self._harness.config.model = model
+        self._inference_provider = _configured_inference_provider(provider, model)
         self._sync_thinking_level_to_active_model()
         self._refresh_runtime_provider()
         self._sync_image_support()
@@ -1035,7 +1045,33 @@ class CodingSession:
                 self._config.session_id,
                 model=model,
                 provider_name=self.provider_name,
+                inference_provider=self._inference_provider,
+                preserve_inference_provider=False,
             )
+
+    def set_inference_provider(self, route: str | None) -> str:
+        """Select or reset the active Hugging Face session route."""
+        if self.provider_name != "huggingface":
+            raise ProviderConfigError(
+                "Inference-provider routing requires the huggingface provider"
+            )
+        normalized = validate_huggingface_inference_provider(route) if route is not None else None
+        provider, provider_config = self._build_runtime_provider(
+            inference_provider=normalized,
+        )
+        self._owned_providers.append(provider)
+        if self._config.session_manager is not None and self._config.session_id is not None:
+            self._config.session_manager.touch_session(
+                self._config.session_id,
+                model=self.model,
+                provider_name=self.provider_name,
+                inference_provider=normalized,
+                preserve_inference_provider=False,
+            )
+        self._inference_provider = normalized
+        self._config = replace(self._config, inference_provider=normalized)
+        self._activate_runtime_provider(provider, provider_config)
+        return normalized or "automatic (will pin after the next successful response)"
 
     def set_model_choice(self, choice: ModelChoice) -> None:
         """Switch provider/model as one operation."""
@@ -1113,17 +1149,24 @@ class CodingSession:
             current=self._thinking_level,
         )
         try:
-            provider = create_model_provider(
+            provider = _create_runtime_provider(
                 provider_config,
                 credential_store=self._credential_store,
                 model=model,
                 thinking_level=thinking_level,
+                inference_provider=_configured_inference_provider(provider_config, model),
+                response_headers_observer=(
+                    self._observe_response_headers
+                    if provider_config.name == "huggingface"
+                    else None
+                ),
             )
         except RuntimeError as exc:
             raise ProviderConfigError(str(exc)) from exc
         self._owned_providers.append(provider)
         self._harness.config.provider = provider
         self._provider_name = provider_config.name
+        self._inference_provider = _configured_inference_provider(provider_config, model)
         self._runtime_provider_config = provider_config
         self._invalidate_runtime_model_limits()
         self._harness.config.model = model
@@ -1136,6 +1179,8 @@ class CodingSession:
                 self._config.session_id,
                 model=model,
                 provider_name=self.provider_name,
+                inference_provider=self._inference_provider,
+                preserve_inference_provider=False,
             )
 
     async def set_thinking_level(self, level: str) -> str:
@@ -1239,24 +1284,80 @@ class CodingSession:
         except ProviderConfigError:
             return
 
-    def _refresh_runtime_provider(self) -> None:
-        if self._runtime_provider_config is None:
+    def _observe_response_headers(self, headers: Mapping[str, str]) -> None:
+        if self.provider_name != "huggingface" or self._inference_provider is not None:
             return
+        route = next(
+            (value for key, value in headers.items() if key.casefold() == "x-inference-provider"),
+            None,
+        )
+        if route is None:
+            return
+        try:
+            route = validate_huggingface_inference_provider(route)
+        except ProviderConfigError:
+            return
+        provider, provider_config = self._build_runtime_provider(
+            inference_provider=route,
+        )
+        # Track staged providers immediately so a later index-write failure does
+        # not leak a provider-owned client. The active runtime remains unchanged.
+        self._owned_providers.append(provider)
+        if self._config.session_manager is not None and self._config.session_id is not None:
+            self._config.session_manager.touch_session(
+                self._config.session_id,
+                model=self.model,
+                provider_name=self.provider_name,
+                inference_provider=route,
+                preserve_inference_provider=False,
+            )
+        self._inference_provider = route
+        self._config = replace(self._config, inference_provider=route)
+        self._activate_runtime_provider(provider, provider_config)
+
+    def _build_runtime_provider(
+        self,
+        *,
+        inference_provider: str | None,
+    ) -> tuple[ClosableModelProvider, ProviderConfig]:
+        if self._runtime_provider_config is None:
+            raise ProviderConfigError("Runtime provider configuration is unavailable")
         provider_config = self._active_provider_config() or self._runtime_provider_config
         validate_provider_model(provider_config, self.model)
         try:
-            provider = create_model_provider(
+            provider = _create_runtime_provider(
                 provider_config,
                 credential_store=self._credential_store,
                 model=self.model,
                 thinking_level=self._thinking_level,
+                inference_provider=inference_provider,
+                response_headers_observer=(
+                    self._observe_response_headers
+                    if provider_config.name == "huggingface"
+                    else None
+                ),
             )
         except RuntimeError as exc:
             raise ProviderConfigError(str(exc)) from exc
-        self._owned_providers.append(provider)
+        return provider, provider_config
+
+    def _activate_runtime_provider(
+        self,
+        provider: ClosableModelProvider,
+        provider_config: ProviderConfig,
+    ) -> None:
         self._harness.config.provider = provider
         self._runtime_provider_config = provider_config
         self._invalidate_runtime_model_limits()
+
+    def _refresh_runtime_provider(self) -> None:
+        if self._runtime_provider_config is None:
+            return
+        provider, provider_config = self._build_runtime_provider(
+            inference_provider=self._inference_provider,
+        )
+        self._owned_providers.append(provider)
+        self._activate_runtime_provider(provider, provider_config)
 
     def _invalidate_runtime_model_limits(self) -> None:
         self._runtime_model_limits = None
@@ -1527,6 +1628,7 @@ class CodingSession:
                 session_manager=manager,
                 command_registry=self._config.command_registry,
                 provider_name=provider_name,
+                inference_provider=record.inference_provider,
                 provider_settings=self._provider_settings,
                 runtime_provider_config=runtime_provider_config,
                 auto_compact_token_threshold=self._auto_compact_token_threshold,
@@ -1578,10 +1680,20 @@ class CodingSession:
                 current=self._thinking_level,
             )
 
-        record = manager.prepare_session(
-            cwd=self.cwd,
-            model=model,
-            provider_name=provider_name,
+        inference_provider = _configured_inference_provider(runtime_provider_config, model)
+        record = (
+            manager.prepare_session(
+                cwd=self.cwd,
+                model=model,
+                provider_name=provider_name,
+                inference_provider=inference_provider,
+            )
+            if inference_provider is not None
+            else manager.prepare_session(
+                cwd=self.cwd,
+                model=model,
+                provider_name=provider_name,
+            )
         )
         replacement = await type(self).load(
             replace(
@@ -1592,6 +1704,7 @@ class CodingSession:
                 storage=jsonl_session_storage(record.path),
                 session_id=record.id,
                 provider_name=provider_name,
+                inference_provider=inference_provider,
                 provider_settings=self._provider_settings,
                 runtime_provider_config=runtime_provider_config,
                 thinking_level=thinking_level,
@@ -1647,6 +1760,7 @@ class CodingSession:
         self._resource_diagnostics = replacement._resource_diagnostics
         self._command_registry = replacement._command_registry
         self._provider_name = replacement._provider_name
+        self._inference_provider = replacement._inference_provider
         self._provider_settings = replacement._provider_settings
         self._runtime_provider_config = replacement._runtime_provider_config
         self._resource_paths = replacement._resource_paths
@@ -1701,6 +1815,7 @@ class CodingSession:
                 cwd=self.cwd,
                 model=self.model,
                 provider_name=self.provider_name,
+                inference_provider=self._inference_provider,
                 session_id=self._config.session_id,
             )
         self._config = replace(self._config, index_on_first_persist=False)
@@ -2052,6 +2167,8 @@ class CodingSession:
                 self._config.session_id,
                 model=self.model,
                 provider_name=self.provider_name,
+                inference_provider=self._inference_provider,
+                preserve_inference_provider=False,
             )
 
     async def _read_session_entries(self) -> list[SessionEntry]:
@@ -2092,6 +2209,7 @@ class CodingSession:
             cwd=self.cwd,
             model=self.model,
             provider_name=self.provider_name,
+            inference_provider=self._inference_provider,
             session_id=self._config.session_id,
         )
 
@@ -2684,6 +2802,49 @@ def _state_thinking_level(
     if thinking_level is None:
         return default
     return normalize_thinking_level(thinking_level)
+
+
+def _create_runtime_provider(
+    provider: ProviderConfig,
+    *,
+    credential_store: FileCredentialStore,
+    model: str,
+    thinking_level: ThinkingLevel | None,
+    inference_provider: str | None,
+    response_headers_observer: Callable[[Mapping[str, str]], None] | None = None,
+) -> ClosableModelProvider:
+    if inference_provider is None and response_headers_observer is None:
+        return create_model_provider(
+            provider,
+            credential_store=credential_store,
+            model=model,
+            thinking_level=thinking_level,
+        )
+    if inference_provider is None:
+        return create_model_provider(
+            provider,
+            credential_store=credential_store,
+            model=model,
+            thinking_level=thinking_level,
+            response_headers_observer=response_headers_observer,
+        )
+    return create_model_provider(
+        provider,
+        credential_store=credential_store,
+        model=model,
+        thinking_level=thinking_level,
+        inference_provider=inference_provider,
+        response_headers_observer=response_headers_observer,
+    )
+
+
+def _configured_inference_provider(
+    provider: ProviderConfig | None,
+    model: str,
+) -> str | None:
+    if not isinstance(provider, OpenAICompatibleProviderConfig) or provider.name != "huggingface":
+        return None
+    return provider.inference_providers.get(model)
 
 
 def _default_thinking_level_for_active_model(session: CodingSession) -> ThinkingLevel:

@@ -3148,6 +3148,143 @@ async def test_session_compacts_and_retries_once_after_context_overflow(
 
 
 @pytest.mark.anyio
+async def test_huggingface_session_pins_successful_automatic_route(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    created: list[tuple[str | None, object | None]] = []
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+        inference_provider: str | None = None,
+        response_headers_observer: object | None = None,
+    ) -> SwitchableFakeProvider:
+        del credential_store, thinking_level
+        created.append((inference_provider, response_headers_observer))
+        return SwitchableFakeProvider(provider_config)
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    provider_config = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=("zai-org/GLM-5.2",),
+        default_model="zai-org/GLM-5.2",
+    )
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(
+        cwd=tmp_path,
+        model="zai-org/GLM-5.2",
+        provider_name="huggingface",
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="zai-org/GLM-5.2",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(record.path),
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+            provider_name="huggingface",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            runtime_provider_config=provider_config,
+        )
+    )
+
+    observer = created[0][1]
+    assert callable(observer)
+    original_touch_session = manager.touch_session
+    active_provider = session._harness.config.provider
+
+    def fail_touch_session(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise PermissionError("session index is read-only")
+
+    monkeypatch.setattr(manager, "touch_session", fail_touch_session)
+    with pytest.raises(PermissionError, match="session index is read-only"):
+        observer({"X-Inference-Provider": "deepinfra"})
+
+    assert session.inference_provider is None
+    assert session._harness.config.provider is active_provider
+
+    monkeypatch.setattr(manager, "touch_session", original_touch_session)
+    observer({"X-Inference-Provider": "deepinfra"})
+
+    assert session.inference_provider == "deepinfra"
+    assert created[-1][0] == "deepinfra"
+    assert manager.get_session(record.id).inference_provider == "deepinfra"  # type: ignore[union-attr]
+
+
+@pytest.mark.anyio
+async def test_huggingface_session_re_resolves_pin_on_model_switch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    created: list[tuple[str | None, str | None]] = []
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+        inference_provider: str | None = None,
+        response_headers_observer: object | None = None,
+    ) -> SwitchableFakeProvider:
+        del credential_store, thinking_level, response_headers_observer
+        created.append((model, inference_provider))
+        return SwitchableFakeProvider(provider_config)
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    provider_config = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=("zai-org/GLM-5.2", "deepseek-ai/DeepSeek-V4-Flash"),
+        default_model="zai-org/GLM-5.2",
+        inference_providers={
+            "zai-org/GLM-5.2": "deepinfra",
+            "deepseek-ai/DeepSeek-V4-Flash": "fireworks-ai",
+        },
+    )
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(
+        cwd=tmp_path,
+        model="zai-org/GLM-5.2",
+        provider_name="huggingface",
+        inference_provider="deepinfra",
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="zai-org/GLM-5.2",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(record.path),
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+            provider_name="huggingface",
+            inference_provider="deepinfra",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            runtime_provider_config=provider_config,
+            resource_paths=TauResourcePaths(
+                root=tmp_path / ".tau",
+                paths=TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"),
+            ),
+        )
+    )
+
+    session.set_model("deepseek-ai/DeepSeek-V4-Flash")
+
+    assert created == [
+        ("zai-org/GLM-5.2", "deepinfra"),
+        ("deepseek-ai/DeepSeek-V4-Flash", "fireworks-ai"),
+    ]
+    assert session.model == "deepseek-ai/DeepSeek-V4-Flash"
+    assert session.inference_provider == "fireworks-ai"
+    assert manager.get_session(record.id).inference_provider == "fireworks-ai"  # type: ignore[union-attr]
+
+
+@pytest.mark.anyio
 async def test_session_switches_configured_provider(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

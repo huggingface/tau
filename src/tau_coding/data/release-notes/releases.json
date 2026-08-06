@@ -5,7 +5,8 @@
     "sections": {
       "New": [
         "Decide project-input trust before Tau reads ambient project instructions, skills, prompts, themes, system prompts, or opted-in extensions; save exact/parent decisions or choose run-only scopes.",
-        "Control automation with run-only `--approve`/`--no-approve` flags and user-global `defaultProjectTrust` ask/always/never policy."
+        "Control automation with run-only `--approve`/`--no-approve` flags and user-global `defaultProjectTrust` ask/always/never policy.",
+        "Pin a Hugging Face model to an explicit backing Inference Provider for the lifetime of a session."
       ],
       "Changed": [
         "Unresolved headless `ask` now skips protected project inputs; user/global and explicit CLI resources remain available, and project extensions still additionally require `--project-extensions`.",

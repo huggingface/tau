@@ -358,22 +358,18 @@ def render_session_html(
       word-break: break-word;
     }}
     [hidden] {{ display: none !important; }}
-    .tab[aria-selected="true"] {{
-      color: var(--accent);
-      border-bottom-color: var(--accent);
-    }}
     .tab-bar {{
       display: flex;
-      gap: 20px;
+      gap: 4px;
       margin-top: 16px;
-      border-bottom: 1px dashed var(--line);
+      border-bottom: 1px solid var(--line);
     }}
     .tab {{
-      padding: 6px 2px;
+      padding: 7px 14px;
       color: var(--muted);
-      background: none;
-      border: 0;
-      border-bottom: 2px solid transparent;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-bottom: 0;
       border-radius: 0;
       cursor: pointer;
       font-family: var(--mono);
@@ -382,8 +378,14 @@ def render_session_html(
       letter-spacing: 0.1em;
       text-transform: uppercase;
       user-select: none;
+      transition: color .15s, background .15s;
     }}
-    .tab:hover {{ color: var(--bright); }}
+    .tab:hover {{ color: var(--bright); background: var(--surface-2); }}
+    .tab[aria-selected="true"] {{
+      color: var(--accent);
+      background: var(--bg);
+      border-bottom-color: var(--bg);
+    }}
     .tab:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
     .usage-shell {{
       max-width: 1240px;
@@ -422,14 +424,18 @@ def render_session_html(
       display: inline-flex;
       align-items: center;
       gap: 7px;
-      padding: 4px 11px;
+      padding: 5px 12px;
       color: var(--muted);
       background: var(--surface);
-      border: 1px solid var(--line-strong);
+      border: 1px solid var(--line);
       border-radius: 0;
       font-size: 0.76rem;
       font-weight: 500;
       transition: color .15s, border-color .15s, background .15s;
+    }}
+    .chip-label:hover {{
+      color: var(--bright);
+      border-color: var(--line-strong);
     }}
     .chip-label::before {{
       content: "";
@@ -461,36 +467,44 @@ def render_session_html(
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 4px 12px;
+      padding: 5px 12px;
       color: var(--muted);
       background: var(--surface);
-      border: 1px solid var(--line-strong);
+      border: 1px solid var(--line);
+      border-radius: 6px;
       font-family: var(--mono);
       font-size: 0.76rem;
       font-weight: 500;
       cursor: pointer;
-      transition: color .15s, border-color .15s;
+      transition: color .15s, border-color .15s, background .15s;
     }}
-    .jsonl-download:hover {{ color: var(--accent); border-color: var(--accent); }}
+    .jsonl-download:hover {{
+      color: var(--bright);
+      background: var(--surface-2);
+      border-color: var(--line-strong);
+    }}
     .jsonl-download .icon {{ width: 12px; height: 12px; }}
     .expand-toggle {{
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 4px 12px;
+      padding: 5px 12px;
       color: var(--accent);
       background: var(--surface);
       border: 1px solid var(--accent);
+      border-radius: 6px;
       font-family: var(--mono);
       font-size: 0.76rem;
       font-weight: 500;
       cursor: pointer;
-      transition: background .15s;
+      transition: color .15s, border-color .15s, background .15s;
     }}
     .expand-toggle:hover {{
-      background: var(--accent-soft);
       color: var(--accent-text);
+      background: var(--accent-soft);
+      border-color: var(--accent);
     }}
+
     main {{
       display: grid;
       grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
@@ -1336,6 +1350,14 @@ def _render_message_entry(entry: MessageEntry) -> str:
         return f"<pre>{_escape(message.text)}</pre>"
     if isinstance(message, AssistantMessage):
         blocks: list[str] = []
+        if message.response_provider:
+            blocks.append(
+                '<p class="entry-meta-line">'
+                f"{_escape(message.model)}"
+                ' <span class="dim">\u2192</span> '
+                f"{_escape(message.response_provider)}"
+                "</p>"
+            )
         for block in message.content:
             if isinstance(block, ThinkingContent):
                 blocks.append(_render_block("Thinking", f"<pre>{_escape(block.thinking)}</pre>"))

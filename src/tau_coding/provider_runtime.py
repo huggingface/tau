@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from asyncio import AbstractEventLoop, get_running_loop
-from collections.abc import MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import replace
 from os import environ
 from typing import Protocol
@@ -40,6 +40,7 @@ from tau_coding.provider_config import (
     openai_compatible_config_from_provider,
     provider_model_supports_images,
     provider_thinking_levels,
+    validate_huggingface_inference_provider,
     validate_provider_model,
 )
 from tau_coding.thinking import ThinkingLevel, normalize_thinking_level, reasoning_effort_for_level
@@ -59,10 +60,18 @@ def create_model_provider(
     credential_store: FileCredentialStore | None = None,
     model: str | None = None,
     thinking_level: ThinkingLevel | None = None,
+    inference_provider: str | None = None,
+    response_headers_observer: Callable[[Mapping[str, str]], None] | None = None,
 ) -> ClosableModelProvider:
     """Create a runtime model provider from durable provider settings."""
     if model is not None:
         validate_provider_model(provider, model)
+    if inference_provider is not None:
+        if provider.name != "huggingface" or model is None:
+            raise ProviderConfigError(
+                "Inference-provider pinning is only available for Hugging Face models"
+            )
+        inference_provider = validate_huggingface_inference_provider(inference_provider)
     credentials = credential_store or FileCredentialStore()
     if isinstance(provider, AnthropicProviderConfig):
         credential = _oauth_credential(provider, credentials)
@@ -117,6 +126,16 @@ def create_model_provider(
             model=model,
             thinking_level=thinking_level,
         )
+        if inference_provider is not None and model is not None:
+            compatible_config = replace(
+                compatible_config,
+                model_aliases={model: f"{model}:{inference_provider}"},
+            )
+        if response_headers_observer is not None:
+            compatible_config = replace(
+                compatible_config,
+                response_headers_observer=response_headers_observer,
+            )
         if credential is not None:
             runtime_auth = _required_oauth_provider(provider.name).runtime_auth(credential)
             compatible_config = replace(

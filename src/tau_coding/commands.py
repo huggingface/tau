@@ -36,6 +36,9 @@ class CommandSession(Protocol):
     def provider_name(self) -> str: ...
 
     @property
+    def inference_provider(self) -> str | None: ...
+
+    @property
     def available_models(self) -> Sequence[str]: ...
 
     @property
@@ -86,6 +89,8 @@ class CommandSession(Protocol):
     def ensure_session_indexed(self) -> None: ...
 
     def set_model(self, model: str) -> None: ...
+
+    def set_inference_provider(self, route: str | None) -> str: ...
 
     def reload_provider_settings(self) -> None: ...
 
@@ -248,6 +253,15 @@ def create_default_command_registry() -> CommandRegistry:
             description="Show session info and stats.",
             handler=_status_command,
             search_terms=("info",),
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="route",
+            usage="/route [automatic|<inference-provider>]",
+            description="Show or change Hugging Face session routing.",
+            handler=_route_command,
+            search_terms=("huggingface", "inference provider", "pin"),
         )
     )
     registry.register(
@@ -419,11 +433,24 @@ def _export_command(context: CommandContext) -> CommandResult:
     )
 
 
+def _route_command(context: CommandContext) -> CommandResult:
+    if context.session.provider_name != "huggingface":
+        return CommandResult(handled=True, message="/route requires the huggingface provider")
+    value = context.args.strip()
+    if not value:
+        route = context.session.inference_provider or "automatic"
+        return CommandResult(handled=True, message=f"Hugging Face route: {route}")
+    selected_route = None if value.casefold() in {"automatic", "auto", "reset"} else value
+    selected = context.session.set_inference_provider(selected_route)
+    return CommandResult(handled=True, message=f"Hugging Face route: {selected}")
+
+
 def _status_command(context: CommandContext) -> CommandResult:
     session = context.session
     context_usage = getattr(session, "context_usage", None)
     lines = [
         f"Model: {session.model}",
+        f"Provider: {session.provider_name}",
         f"CWD: {session.cwd}",
         f"Tools: {len(session.tools)}",
         f"Skills: {len(session.skills)}",
@@ -432,6 +459,9 @@ def _status_command(context: CommandContext) -> CommandResult:
         f"Estimated context tokens: {session.context_token_estimate}",
         f"Context window: {session.context_window_tokens}",
     ]
+    if session.provider_name == "huggingface":
+        route = getattr(session, "inference_provider", None) or "automatic"
+        lines.append(f"Hugging Face inference provider: {route}")
     context_window_source = getattr(session, "context_window_source", None)
     if context_window_source:
         lines.append(f"Context window source: {context_window_source}")

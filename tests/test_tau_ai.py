@@ -212,6 +212,177 @@ async def test_openai_compatible_provider_formats_request_and_streams_text() -> 
 
 
 @pytest.mark.anyio
+async def test_openai_compatible_provider_uses_wire_model_alias_but_reports_logical_model() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://router.huggingface.co/v1",
+                model_aliases={"zai-org/GLM-5.2": "zai-org/GLM-5.2:deepinfra"},
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="zai-org/GLM-5.2",
+                system="You are Tau.",
+                messages=[UserMessage(content="hello")],
+                tools=[],
+            )
+        )
+
+    assert loads(requests[0].content)["model"] == "zai-org/GLM-5.2:deepinfra"
+    assert isinstance(events[-1], AssistantDoneEvent)
+    assert events[-1].message.model == "zai-org/GLM-5.2"
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_provider_observes_headers_after_success() -> None:
+    observed: list[dict[str, str]] = []
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(
+                500,
+                headers={"x-inference-provider": "failed-provider"},
+            )
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
+            headers={
+                "content-type": "text/event-stream",
+                "x-inference-provider": "deepinfra",
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://router.huggingface.co/v1",
+                max_retries=1,
+                max_retry_delay_seconds=0,
+                model_aliases={"zai-org/GLM-5.2": "zai-org/GLM-5.2:deepinfra"},
+                response_headers_observer=lambda headers: observed.append(dict(headers)),
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="zai-org/GLM-5.2",
+                system="You are Tau.",
+                messages=[UserMessage(content="hello")],
+                tools=[],
+            )
+        )
+
+    assert [loads(request.content)["model"] for request in requests] == [
+        "zai-org/GLM-5.2:deepinfra",
+        "zai-org/GLM-5.2:deepinfra",
+    ]
+    assert len(observed) == 1
+    assert observed[0]["x-inference-provider"] == "deepinfra"
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_provider_observer_failure_keeps_completed_response() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
+            headers={
+                "content-type": "text/event-stream",
+                "x-inference-provider": "deepinfra",
+            },
+        )
+
+    def fail_observer(headers: Mapping[str, str]) -> None:
+        del headers
+        raise PermissionError("session index is read-only")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://router.huggingface.co/v1",
+                response_headers_observer=fail_observer,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="zai-org/GLM-5.2",
+                system="You are Tau.",
+                messages=[UserMessage(content="hello")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], AssistantDoneEvent)
+    assert events[-1].message.text == "ok"
+    assert events[-1].message.diagnostics[-1].type == "response_headers_observer_error"
+    assert events[-1].message.diagnostics[-1].details == {
+        "error": "session index is read-only",
+        "error_type": "PermissionError",
+    }
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_provider_does_not_retry_after_partial_output() -> None:
+    requests: list[httpx.Request] = []
+
+    class FailingStream(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+            raise httpx.ReadError("stream dropped")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            stream=FailingStream(),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://router.huggingface.co/v1",
+                max_retries=2,
+                max_retry_delay_seconds=0,
+                model_aliases={"zai-org/GLM-5.2": "zai-org/GLM-5.2:deepinfra"},
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="zai-org/GLM-5.2",
+                system="You are Tau.",
+                messages=[UserMessage(content="hello")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 1
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.text == "partial"
+
+
+@pytest.mark.anyio
 async def test_openai_chat_completions_sends_prompt_cache_key_without_affinity_headers() -> None:
     requests: list[httpx.Request] = []
 

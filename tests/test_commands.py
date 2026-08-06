@@ -14,6 +14,7 @@ class FakeSession:
     def __init__(self, tmp_path: Path, manager: SessionManager | None = None) -> None:
         self.cwd = tmp_path
         self.provider_name = "openai"
+        self.inference_provider: str | None = None
         self.model = "fake-model"
         self.available_models = ("fake-model", "other-model")
         self.available_model_choices = (
@@ -63,6 +64,10 @@ class FakeSession:
 
     def set_model(self, model: str) -> None:
         self.model = model
+
+    def set_inference_provider(self, route: str | None) -> str:
+        self.inference_provider = route
+        return route or "automatic (will pin after the next successful response)"
 
     def set_provider(self, provider_name: str) -> None:
         self.provider_name = provider_name
@@ -130,6 +135,7 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
         "quit",
         "reload",
         "resume",
+        "route",
         "scoped-models",
         "session",
         "skill",
@@ -244,6 +250,22 @@ def test_session_command_includes_session_details(tmp_path: Path) -> None:
     assert (
         create_default_command_registry().execute(FakeSession(tmp_path), "/status").handled is False
     )
+
+
+def test_route_command_inspects_selects_and_resets_huggingface_route(tmp_path: Path) -> None:
+    session = FakeSession(tmp_path)
+    session.provider_name = "huggingface"
+    registry = create_default_command_registry()
+
+    assert registry.execute(session, "/route").message == "Hugging Face route: automatic"
+    assert registry.execute(session, "/route deepinfra").message == (
+        "Hugging Face route: deepinfra"
+    )
+    assert session.inference_provider == "deepinfra"
+    assert registry.execute(session, "/route reset").message == (
+        "Hugging Face route: automatic (will pin after the next successful response)"
+    )
+    assert session.inference_provider is None
 
 
 def test_session_command_includes_named_session_title(tmp_path: Path) -> None:

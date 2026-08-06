@@ -11,6 +11,7 @@ the original chat-completions path unchanged.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import suppress
 from json import JSONDecodeError, dumps, loads
 from typing import Any, Protocol
 
@@ -19,6 +20,7 @@ import httpx
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    AssistantMessageDiagnostic,
     ImageContent,
     ThinkingContent,
     ToolResultMessage,
@@ -158,7 +160,7 @@ class OpenAICompatibleProvider:
         affinity_id = openai_prompt_cache_key(session_id)
         cache_key = self._prompt_cache_key(affinity_id)
         payload = _build_chat_payload(
-            model=model,
+            model=self._config.model_aliases.get(model, model),
             system=system,
             messages=messages,
             tools=tools,
@@ -196,7 +198,7 @@ class OpenAICompatibleProvider:
         affinity_id = openai_prompt_cache_key(session_id)
         cache_key = self._prompt_cache_key(affinity_id)
         payload = _build_responses_payload(
-            model=model,
+            model=self._config.model_aliases.get(model, model),
             system=system,
             messages=messages,
             tools=tools,
@@ -330,7 +332,17 @@ class OpenAICompatibleProvider:
 
                         if parser.fatal:
                             return
-                        for parser_event in parser.finalize():
+                        final_events = parser.finalize()
+                        observer = self._config.response_headers_observer
+                        if observer is not None:
+                            try:
+                                observer(dict(response.headers))
+                            except Exception as exc:
+                                # Observer reporting is also best-effort; response
+                                # completion must never depend on metadata hooks.
+                                with suppress(Exception):
+                                    _append_response_observer_diagnostic(final_events, exc)
+                        for parser_event in final_events:
                             yield parser_event
                         return
                 except httpx.HTTPError as exc:
@@ -412,6 +424,26 @@ def _apply_session_affinity_headers(
         return
     if affinity_format == "openai":
         headers["session_id"] = session_id
+
+
+def _append_response_observer_diagnostic(
+    events: list[ProviderEvent],
+    exc: Exception,
+) -> None:
+    for event in events:
+        if isinstance(event, ProviderResponseEndEvent):
+            diagnostic = AssistantMessageDiagnostic(
+                type="response_headers_observer_error",
+                details={
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
+            )
+            event.message.diagnostics = [
+                *(event.message.diagnostics or []),
+                diagnostic,
+            ]
+            return
 
 
 class _StreamParser(Protocol):

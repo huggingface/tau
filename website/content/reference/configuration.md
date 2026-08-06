@@ -254,7 +254,17 @@ Provider preferences live in `~/.tau/providers.json`:
   billing can be configured with `"headers": { "X-HF-Bill-To": "my-org" }` on
   the `huggingface` provider preference. `thinking_defaults` remembers the
   preferred thinking level per model for new sessions; resumed sessions still use
-  their session history. `timeout_seconds` defaults to `60` (> 0); `max_retries`
+  their session history. The built-in `huggingface` preference also accepts
+  `"inference_providers": { "zai-org/GLM-5.2": "deepinfra" }`. Each key must be
+  a configured model and each value an explicit provider suffix advertised by
+  Hugging Face—not the `fastest`, `cheapest`, or `preferred` routing policies.
+  Tau snapshots the selected suffix into new session metadata, retains it on
+  resume, and sends only the suffixed wire model; ordinary model identity and
+  catalog metadata remain unsuffixed. Without a preference, Tau starts with
+  automatic routing and pins the `x-inference-provider` reported by the first
+  successful response. `/session` reports the route; `/route <provider>` selects
+  one and `/route automatic` resets automatic resolution for the active session.
+  `timeout_seconds` defaults to `60` (> 0); `max_retries`
   defaults to `2`; `max_retry_delay_seconds` defaults to `1` (both ≥ 0).
   Retries cover transient HTTP statuses (`408`, `409`, `425`, `429`, `5xx`),
   transport errors, and transient in-stream SSE errors that arrive on an

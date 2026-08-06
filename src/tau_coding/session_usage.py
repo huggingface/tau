@@ -31,6 +31,7 @@ class RequestUsage:
     timestamp: str
     provider: str
     model: str
+    response_provider: str | None
     fresh: int
     cached: int
     cache_write: int
@@ -157,6 +158,7 @@ def collect_session_usage(entries: Sequence[SessionEntry]) -> SessionUsage:
                 timestamp=datetime.fromtimestamp(entry.timestamp, tz=UTC).strftime("%H:%M:%S"),
                 provider=message.provider,
                 model=message.model,
+                response_provider=message.response_provider,
                 fresh=usage.input,
                 cached=usage.cache_read,
                 cache_write=usage.cache_write,
@@ -375,6 +377,7 @@ def render_usage_dashboard(usage: SessionUsage) -> str:
     table_rows = "".join(
         f"<tr><td>{item.number}</td><td>{html.escape(item.timestamp)}</td>"
         f"<td>{html.escape(item.provider)}</td>"
+        f"<td>{html.escape(item.response_provider) if item.response_provider else '-'}</td>"
         f"<td>{html.escape(item.model)}</td><td>{item.fresh:,}</td><td>{item.cached:,}</td>"
         f"<td>{item.cache_write:,}</td><td>{item.prompt:,}</td>"
         f"<td>{f'{item.hit_rate:.1%}' if show_hit_rates else 'N/A'}</td>"
@@ -400,7 +403,9 @@ def render_usage_dashboard(usage: SessionUsage) -> str:
         f'<div class="usage-charts">{charts_html}</div>'
         '<div class="usage-details">'
         '<div class="usage-panel"><h2>Requests</h2><div class="usage-table-wrap"><table>'
-        "<thead><tr><th>#</th><th>Time</th><th>Provider</th><th>Model</th><th>Fresh</th><th>Cached</th>"
+        "<thead><tr><th>#</th><th>Time</th><th>Provider</th>"
+        "<th>Response Provider</th><th>Model</th><th>Fresh</th>"
+        "<th>Cached</th>"
         "<th>Written</th><th>Prompt</th><th>Hit rate</th><th>Output</th><th>Est. cost</th>"
         f"<th>Stop</th></tr></thead><tbody>{table_rows}</tbody></table></div></div>"
         f'<div class="usage-panel"><h2>Tool calls</h2>{tool_rows}</div>'
@@ -578,7 +583,9 @@ USAGE_STYLES = """
       border-bottom: 1px solid var(--line-strong);
     }
     .usage-panel th:nth-child(3), .usage-panel th:nth-child(4),
-    .usage-panel td:nth-child(3), .usage-panel td:nth-child(4) { text-align: left; }
+    .usage-panel th:nth-child(5),
+    .usage-panel td:nth-child(3), .usage-panel td:nth-child(4),
+    .usage-panel td:nth-child(5) { text-align: left; }
     .usage-tool {
       display: flex;
       justify-content: space-between;
