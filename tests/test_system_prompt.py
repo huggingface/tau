@@ -122,6 +122,45 @@ def test_skills_are_formatted_as_xml_and_escaped(tmp_path: Path) -> None:
     assert f"<location>{skill_path}</location>" in formatted
 
 
+def test_skills_with_disabled_model_invocation_are_excluded_from_prompt(tmp_path: Path) -> None:
+    visible = Skill(
+        name="visible",
+        path=tmp_path / "skills" / "visible" / "SKILL.md",
+        content="",
+        description="Shown to the model",
+    )
+    hidden = Skill(
+        name="hidden",
+        path=tmp_path / "skills" / "hidden" / "SKILL.md",
+        content="",
+        description="User-only",
+        disable_model_invocation=True,
+    )
+
+    formatted = format_skills_for_prompt([visible, hidden])
+
+    assert "<name>visible</name>" in formatted
+    assert "hidden" not in formatted
+
+
+def test_only_disabled_skills_produce_no_skills_section(tmp_path: Path) -> None:
+    hidden = Skill(
+        name="hidden",
+        path=tmp_path / "skills" / "hidden" / "SKILL.md",
+        content="",
+        description="User-only",
+        disable_model_invocation=True,
+    )
+
+    assert format_skills_for_prompt([hidden]) == ""
+    prompt = build_system_prompt(
+        BuildSystemPromptOptions(
+            cwd=tmp_path, tools=create_coding_tools(cwd=tmp_path), skills=[hidden]
+        )
+    )
+    assert "<available_skills>" not in prompt
+
+
 def test_skills_are_included_only_when_read_tool_is_available(tmp_path: Path) -> None:
     skill = Skill(name="testing", path=tmp_path / "testing.md", content="", description="Test")
     no_read_tool = AgentTool(
