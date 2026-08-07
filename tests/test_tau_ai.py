@@ -1846,6 +1846,48 @@ async def test_anthropic_provider_formats_request_and_streams_text() -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("configured_max_tokens", "expected_max_tokens"),
+    [(64_000, 64_000), (None, 4096)],
+)
+async def test_anthropic_provider_sends_configured_max_tokens(
+    configured_max_tokens: int | None,
+    expected_max_tokens: int,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"type":"message_stop"}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+                max_tokens=configured_max_tokens,
+            ),
+            client=client,
+        )
+
+        await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hello")],
+                tools=[],
+            )
+        )
+
+    payload = loads(requests[0].content)
+    assert payload["max_tokens"] == expected_max_tokens
+
+
+@pytest.mark.anyio
 async def test_anthropic_provider_includes_configured_thinking_budget() -> None:
     requests: list[httpx.Request] = []
 
