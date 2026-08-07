@@ -358,6 +358,35 @@ async def test_bash_tool_captures_stdout_and_exit_code(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
+async def test_bash_tool_disconnects_stdin_from_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subprocess_options: dict[str, object] = {}
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, None]:
+            return b"", None
+
+    async def fake_create_subprocess_shell(
+        command: str,
+        **options: object,
+    ) -> FakeProcess:
+        del command
+        subprocess_options.update(options)
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_shell", fake_create_subprocess_shell)
+    tool = create_bash_tool(cwd=tmp_path)
+
+    await tool.execute("test-call", {"command": "python"})
+
+    assert subprocess_options["stdin"] == asyncio.subprocess.DEVNULL
+
+
+@pytest.mark.anyio
 async def test_create_coding_tools_applies_shell_command_prefix(
     tmp_path: Path,
 ) -> None:

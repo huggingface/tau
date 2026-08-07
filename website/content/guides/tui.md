@@ -72,6 +72,9 @@ You can run a shell command yourself without asking the model:
   command and output in the conversation context.
 - `!!<command>` runs it and shows the output **without** adding it to context.
 
+Shell commands are non-interactive: their stdin is disconnected from the TUI.
+Programs that require an interactive terminal should be run in a separate terminal.
+
 As soon as the input starts with `!`, the whole input and its left border turn
 the same amber/orange color as a tool while it is running, and the `τ` prompt
 prefix becomes a matching `$`, so you can tell at a glance that submitting will
