@@ -13,6 +13,7 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 | --- | --- |
 | `Enter` | Submit the prompt (or apply a highlighted completion) |
 | `Shift+Enter` | Insert a newline |
+| `Alt+E` | Edit the current prompt in an external editor |
 | `Esc` | Cancel the active run |
 | `Enter` (while running) | Queue text as steering for the current run |
 | `Alt+Enter` | Queue a follow-up that waits until the run would stop |
@@ -44,6 +45,10 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 | `Ctrl+D` | Quit |
 
 {{% note title="Remapping" %}}
+The external-editor command resolves `$VISUAL`, then `$EDITOR`, and falls back to
+Notepad on Windows or `nano` elsewhere. Tau suspends its terminal UI until the
+editor exits; only a successful editor exit replaces the current prompt.
+
 Keys use Textual's syntax (`ctrl+k`, `shift+tab`, `down`, `f2`, …). Tau rejects
 unknown names, empty keys, and duplicate assignments so mistakes fail early. Any
 key you don't set keeps its default.
