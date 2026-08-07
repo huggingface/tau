@@ -4313,7 +4313,11 @@ async def test_tui_app_export_command_runs_session_export() -> None:
         await pilot.press("enter")
 
         assert session.export_calls == [(Path("out.jsonl"), "jsonl")]
-        assert notifications == ["Exported session to /workspace/project/session.html"]
+        assert notifications == []
+        assert app.state.items[-1] == ChatItem(
+            role="status",
+            text="/export\nExported session to /workspace/project/session.html",
+        )
         assert session.prompt_texts == []
 
 

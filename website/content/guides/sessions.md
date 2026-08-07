@@ -98,6 +98,10 @@ tau export <session-id> --format jsonl
 ```
 
 The source can be an indexed session id **or** a path to a JSONL session file.
+After a successful `/export`, Tau shows the destination in the TUI transcript.
+This status is display-only: it is not saved to session history or sent to the
+model as context.
+
 HTML exports are self-contained and include two tabs: **Transcript** preserves
 the session tree and entries in storage order, while **Cache** summarizes the
 active branch's model requests, prompt caching, output and reasoning tokens,
