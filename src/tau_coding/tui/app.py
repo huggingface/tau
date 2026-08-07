@@ -140,6 +140,7 @@ from tau_coding.tui.autocomplete import (
     CompletionState,
     build_completion_state,
 )
+from tau_coding.tui.clipboard import ClipboardReader, read_clipboard_for_prompt
 from tau_coding.tui.config import (
     TAU_DARK_THEME,
     TuiKeybindings,
@@ -491,11 +492,13 @@ class PromptInput(TextArea):
         self,
         *,
         tui_keybindings: TuiKeybindings | None = None,
+        clipboard_reader: ClipboardReader | None = None,
         **kwargs: Any,
     ) -> None:
         kwargs.setdefault("highlight_cursor_line", False)
         super().__init__(**kwargs)
         self.tui_keybindings = tui_keybindings or TuiKeybindings()
+        self._clipboard_reader = clipboard_reader or read_clipboard_for_prompt
         self._base_bindings = self._bindings.copy()
         self._footer_mode: Literal["normal", "completion", "running"] = "normal"
         self._pending_pastes: list[tuple[str, str]] = []
@@ -622,6 +625,15 @@ class PromptInput(TextArea):
         """Insert a newline in the prompt."""
         self.insert("\n")
 
+    async def action_paste_clipboard(self) -> None:
+        """Insert an OS clipboard image path, falling back to clipboard text."""
+        try:
+            content = await self._clipboard_reader()
+        except Exception:  # noqa: BLE001 - clipboard integrations must not crash the TUI
+            return
+        if content:
+            self.insert_pasted_text(content)
+
     async def action_quit(self) -> None:
         """Quit the app through the app-level action."""
         await self.app.action_quit()
@@ -728,7 +740,11 @@ class PromptInput(TextArea):
         bindings), so there is no interceptor splice here.
         """
         keybindings = self.tui_keybindings
-        if event.key == keybindings.queue_follow_up:
+        if event.key == keybindings.paste_clipboard:
+            event.stop()
+            event.prevent_default()
+            await self.action_paste_clipboard()
+        elif event.key == keybindings.queue_follow_up:
             event.stop()
             event.prevent_default()
             await self._completion_target().action_submit_follow_up()
@@ -6568,6 +6584,7 @@ def _hidden_prompt_bindings(
         (keybindings.model_cycle, "cycle_model"),
         (keybindings.toggle_tool_results, "toggle_tool_results"),
         (keybindings.toggle_thinking, "toggle_thinking"),
+        (keybindings.paste_clipboard, "paste_clipboard"),
         (keybindings.copy_message, "clear_prompt"),
         (keybindings.accept_completion, "accept_completion"),
         (keybindings.completion_next, "completion_next"),
