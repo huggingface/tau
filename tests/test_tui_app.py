@@ -4409,6 +4409,25 @@ async def test_tui_app_submits_multiline_prompt_with_enter() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_app_uses_configured_newline_keybinding() -> None:
+    app = TauTuiApp(
+        FakeSession(),
+        tui_settings=TuiSettings(keybindings=TuiKeybindings(insert_newline="f7")),
+    )
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "first"
+        prompt.cursor_position = len(prompt.value)
+
+        await pilot.press("f7")
+
+        assert prompt.value == "first\n"
+        assert "F7 inserts a newline" in prompt.placeholder
+        assert _visible_footer_bindings(app)["Newline"] == "f7"
+
+
+@pytest.mark.anyio
 async def test_tui_extension_turn_delivers_source_extension() -> None:
     # An extension-initiated idle turn threads source="extension" through the
     # serialized prompt path; ordinary user submits stay source="interactive".
