@@ -5,7 +5,22 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from hashlib import sha256
+from os import environ
 from pathlib import Path
+
+
+def _default_tau_home() -> Path:
+    """Return the Tau home directory, respecting TAU_HOME if set."""
+    if tau_home := environ.get("TAU_HOME"):
+        return Path(tau_home).expanduser()
+    return Path.home() / ".tau"
+
+
+def _default_agents_home() -> Path:
+    """Return the agents home directory, respecting TAU_AGENTS_HOME if set."""
+    if agents_home := environ.get("TAU_AGENTS_HOME"):
+        return Path(agents_home).expanduser()
+    return Path.home() / ".agents"
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,8 +31,8 @@ class TauPaths:
     loading project-local resources from the active working directory.
     """
 
-    home: Path = field(default_factory=lambda: Path.home() / ".tau")
-    agents_home: Path = field(default_factory=lambda: Path.home() / ".agents")
+    home: Path = field(default_factory=_default_tau_home)
+    agents_home: Path = field(default_factory=_default_agents_home)
 
     @property
     def sessions_dir(self) -> Path:

@@ -9,6 +9,29 @@ those locations and file formats.
 
 ## Tau home
 
+Tau stores user-level configuration and data in `~/.tau/` by default. You can
+override this location using the `TAU_HOME` environment variable:
+
+```bash
+# Use XDG-compliant location
+export TAU_HOME="$HOME/.config/tau"
+
+# Use project-specific directory
+export TAU_HOME="$HOME/.local/share/tau-project-x"
+
+# Per-invocation override
+TAU_HOME=/tmp/tau-test tau -p "hello"
+```
+
+Similarly, the `.agents` directory defaults to `~/.agents/` but can be
+overridden with `TAU_AGENTS_HOME`:
+
+```bash
+export TAU_AGENTS_HOME="$HOME/.config/agents"
+```
+
+### Default directory structure
+
 ```text
 ~/.tau/
 ├── catalog.toml        # optional provider/model catalog overlay
