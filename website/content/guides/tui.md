@@ -78,7 +78,7 @@ prefix becomes a matching `$`, so you can tell at a glance that submitting will
 execute a shell command instead of messaging the model.
 
 While typing a path after `!`/`!!`, press **Tab** to complete filenames from the
-working directory.
+working directory. Dot-prefixed paths such as `.env` and `.agents/` are included.
 
 {{% note title="Aliases" %}}
 These commands (and the agent's `bash` tool) run in a non-interactive shell, so
@@ -90,8 +90,9 @@ aliases, set a `shellCommandPrefix` — see
 ## Referencing files with `@`
 
 Type `@` in the prompt to open file suggestions from the project tree, and insert
-a path like `@src/app.py`. Tau skips hidden and generated directories (`.git`,
-`.venv`, `node_modules`, `__pycache__`, `build`, `dist`).
+a path like `@src/app.py`. Dot-prefixed project content such as `.env` and
+`.agents/` is included. Tau still skips known metadata and generated directories
+such as `.git`, `.venv`, `node_modules`, `__pycache__`, `build`, and `dist`.
 
 ## Dropping files into the prompt
 

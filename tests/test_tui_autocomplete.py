@@ -470,6 +470,29 @@ def test_file_reference_completion_matches_workspace_files(tmp_path: Path) -> No
     assert state.selected.apply("please read @app") == "please read @src/app.py"
 
 
+def test_file_reference_completion_includes_dotfiles_and_dot_directories(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".env").write_text("TOKEN=value\n", encoding="utf-8")
+    (tmp_path / ".agents").mkdir()
+    (tmp_path / ".agents" / "rules.md").write_text("# Rules\n", encoding="utf-8")
+    (tmp_path / ".git").mkdir()
+
+    state = build_completion_state(
+        "please read @.",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert {item.display for item in state.items} == {
+        "@.agents/",
+        "@.agents/rules.md",
+        "@.env",
+    }
+
+
 def test_file_reference_completion_works_in_custom_prompt_arguments(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
@@ -532,6 +555,33 @@ def test_file_reference_completion_stays_off_for_slash_commands(tmp_path: Path) 
     )
 
     assert state.items == ()
+
+
+def test_shell_path_completion_includes_dotfiles_and_dot_directories(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("TOKEN=value\n", encoding="utf-8")
+    (tmp_path / ".agents").mkdir()
+    (tmp_path / ".agents" / "rules.md").write_text("# Rules\n", encoding="utf-8")
+    (tmp_path / ".git").mkdir()
+
+    root_state = build_completion_state(
+        "!cat .",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+    child_state = build_completion_state(
+        "!!cat .agents/ru",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert {item.display for item in root_state.items} == {".agents/", ".env"}
+    assert [item.display for item in child_state.items] == [".agents/rules.md"]
+    assert child_state.selected is not None
+    assert child_state.selected.apply("!!cat .agents/ru") == "!!cat .agents/rules.md"
 
 
 def test_shell_path_completion_preserves_bang_prefix(tmp_path: Path) -> None:
