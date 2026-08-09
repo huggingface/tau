@@ -33,6 +33,9 @@ class BuildSystemPromptOptions:
     context_files: Sequence[ProjectContextFile] = ()
     current_date: date | None = None
     extra_guidelines: Sequence[str] = field(default_factory=tuple)
+    provider_name: str | None = None
+    model: str | None = None
+    reasoning: str | None = None
 
 
 def build_system_prompt(options: BuildSystemPromptOptions) -> str:
@@ -54,6 +57,21 @@ def build_system_prompt(options: BuildSystemPromptOptions) -> str:
     prompt = (
         "You are an expert coding assistant operating inside Tau, a coding agent harness. "
         "You help users by reading files, executing commands, editing code, and writing new files."
+    )
+
+    # Inject dynamic model identity so the agent knows what it's running as.
+    if options.provider_name or options.model or options.reasoning:
+        identity_parts: list[str] = []
+        if options.provider_name:
+            identity_parts.append(f"provider: {options.provider_name}")
+        if options.model:
+            identity_parts.append(f"model: {options.model}")
+        if options.reasoning:
+            identity_parts.append(f"reasoning: {options.reasoning}")
+        identity_line = ", ".join(identity_parts)
+        prompt += f"\n\nYou are running as: {identity_line}."
+
+    prompt += (
         f"\n\nAvailable tools:\n{format_available_tools(options.tools)}"
         "\n\nIn addition to the tools above, you may have access to other custom tools "
         "depending on the project."
