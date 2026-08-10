@@ -17,9 +17,7 @@ from tau_coding.resources import (
 
 _TEMPLATE_VARIABLE_RE = re.compile(r"{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}")
 _ARGUMENT_TEMPLATE_VARIABLES = {"arguments", "args"}
-_RESERVED_TEMPLATE_NAMES = frozenset(
-    {"diagnostics", "prompts", "skills", "tools", "reload"}
-)
+_RESERVED_TEMPLATE_NAMES = frozenset({"diagnostics", "prompts", "skills", "tools", "reload"})
 
 
 def is_prompt_template_candidate(path: Path) -> bool:
