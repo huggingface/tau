@@ -1160,8 +1160,9 @@ def _base64_text(data: bytes) -> str:
 
 def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
     if os.name == "posix":
-        killpg = getattr(os, "killpg")
-        sigkill = getattr(signal, "SIGKILL")
+        # `getattr` keeps mypy happy on the Windows stubs (see issue #513).
+        killpg = getattr(os, "killpg")  # noqa: B009
+        sigkill = getattr(signal, "SIGKILL")  # noqa: B009
         try:
             killpg(process.pid, sigkill)
         except ProcessLookupError:
