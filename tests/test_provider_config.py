@@ -1183,6 +1183,24 @@ def test_provider_model_max_tokens_reads_model_metadata() -> None:
     assert provider_model_max_tokens(provider) == 64_000
 
 
+def test_openai_compatible_config_from_provider_uses_model_max_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "test-key")
+    provider = OpenAICompatibleProviderConfig(
+        name="local",
+        base_url="http://localhost:11434/v1",
+        api_key_env="LOCAL_API_KEY",
+        models=("capped",),
+        default_model="capped",
+        model_metadata={"capped": ProviderModelMetadata(max_tokens=32_000)},
+    )
+
+    config = openai_compatible_config_from_provider(provider, model="capped")
+
+    assert config.max_tokens == 32_000
+
+
 @pytest.mark.parametrize(
     ("parameter", "expected"),
     [

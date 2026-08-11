@@ -88,12 +88,19 @@ If a change crosses layers, prefer adding a small typed boundary instead of impo
 
 ## Adding a provider or model
 
-The built-in provider catalog is data, not code: edit
-`src/tau_coding/data/catalog.toml` and open a PR — no Python changes needed.
-Each `[[providers]]` table declares the provider's name, kind
-(`openai-compatible`, `anthropic`, or `openai-codex`), base URL, models,
-default model, context windows, and thinking configuration. Validation happens
-at load time, so a typo fails tests with a pointed error message.
+The committed `src/tau_coding/data/catalog.toml` is generated. Edit
+`src/tau_coding/data/catalog_overrides.toml` to select models or change Tau-specific
+provider, authentication, compatibility, thinking, or cache behavior. Then regenerate
+metadata from models.dev:
+
+```bash
+uv run python scripts/generate_catalog.py --generate --strict
+uv run python scripts/generate_catalog.py --check
+```
+
+Strict generation stops when the reviewed upstream model set changes. Review additions or
+removals, update the overlay as needed, then accept the new set explicitly with
+`--update-allowlist`. Commit the generated catalog, overlay, and manifest together.
 
 For personal or unreleased providers, create `~/.tau/catalog.toml` with the
 same schema — it is overlaid on the built-in catalog (your values win, models
