@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Mapping
 
 import pytest
@@ -205,6 +206,101 @@ def test_queue_mutators_return_canonical_snapshots() -> None:
     assert harness.pending_message_count == 0
 
 
+def _blocking_tool(tool_started: "asyncio.Event", release: "asyncio.Event") -> AgentTool:
+    async def hang(
+        tool_call_id: str,
+        arguments: Mapping[str, JSONValue],
+        signal=None,  # noqa: ANN001
+        on_update=None,  # noqa: ANN001
+    ) -> AgentToolResult:
+        del tool_call_id, arguments, signal, on_update
+        tool_started.set()
+        await release.wait()
+        return AgentToolResult(content="done")
+
+    return AgentTool(
+        name="hang",
+        label="Hang",
+        description="Block until released.",
+        parameters={"type": "object"},
+        execute_fn=hang,
+    )
+
+
+def _blocking_run_harness(tool_started: "asyncio.Event", release: "asyncio.Event") -> AgentHarness:
+    call = ToolCall(id="call-1", name="hang", arguments={})
+    assistant = AssistantMessage(content=[call])
+    provider = FakeProvider(
+        [[assistant_start(), tool_call_end(call), assistant_done(assistant, "toolUse")]]
+    )
+    return AgentHarness(
+        AgentHarnessConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            tools=[_blocking_tool(tool_started, release)],
+        )
+    )
+
+
+@pytest.mark.anyio
+async def test_cancelled_run_notifies_listeners_of_interrupted_tool_repair() -> None:
+    # Regression: the cancelled-cleanup repair emitted no events, so
+    # push-based subscribers never saw it.
+    tool_started = asyncio.Event()
+    release = asyncio.Event()
+    harness = _blocking_run_harness(tool_started, release)
+    seen: list[object] = []
+    harness.subscribe(seen.append)
+
+    async def consume() -> None:
+        async for _event in harness.prompt("go"):
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(tool_started.wait(), timeout=5)
+    harness.cancel()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    repair = harness.messages[-1]
+    assert isinstance(repair, ToolResultMessage)
+    assert repair.text == "Tool call interrupted by user"
+    repair_ends = [
+        event
+        for event in seen
+        if isinstance(event, MessageEndEvent) and isinstance(event.message, ToolResultMessage)
+    ]
+    assert [event.message.tool_call_id for event in repair_ends] == ["call-1"]
+
+
+@pytest.mark.anyio
+async def test_listener_error_during_teardown_does_not_mask_cancellation() -> None:
+    tool_started = asyncio.Event()
+    release = asyncio.Event()
+    harness = _blocking_run_harness(tool_started, release)
+
+    def explode(event: object) -> None:
+        if isinstance(event, MessageEndEvent) and isinstance(event.message, ToolResultMessage):
+            raise RuntimeError("listener exploded")
+
+    harness.subscribe(explode)
+
+    async def consume() -> None:
+        async for _event in harness.prompt("go"):
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(tool_started.wait(), timeout=5)
+    harness.cancel()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert isinstance(harness.messages[-1], ToolResultMessage)
+
+
 def test_harness_repairs_interrupted_tool_calls() -> None:
     call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
     harness = AgentHarness(
@@ -217,3 +313,46 @@ def test_harness_repairs_interrupted_tool_calls() -> None:
     assert isinstance(repair, ToolResultMessage)
     assert repair.is_error is True
     assert repair.text == "Tool call interrupted by user"
+
+
+@pytest.mark.anyio
+async def test_entry_path_repair_is_pushed_to_listeners() -> None:
+    # A transcript can reach prompt()/continue_() with a dangling tool call
+    # (for example after a persist failure killed the previous run). The
+    # synthetic repair must flow through events so push persistence sees it.
+    call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
+    harness = AgentHarness(
+        AgentHarnessConfig(
+            provider=FakeProvider(
+                [[assistant_start(), assistant_done(AssistantMessage(content="Recovered."))]]
+            ),
+            model="fake",
+            system="You are Tau.",
+        ),
+        messages=[AssistantMessage(content=[call])],
+    )
+    seen: list[object] = []
+    harness.subscribe(seen.append)
+
+    events = [event async for event in harness.prompt("continue")]
+
+    assert [event.type for event in events[:4]] == [
+        "agent_start",
+        "turn_start",
+        "message_start",
+        "message_end",
+    ]
+    repair = next(message for message in harness.messages if isinstance(message, ToolResultMessage))
+    assert repair.tool_call_id == "call-1"
+    listener_ends = [
+        event.message.tool_call_id
+        for event in seen
+        if isinstance(event, MessageEndEvent) and isinstance(event.message, ToolResultMessage)
+    ]
+    assert listener_ends == ["call-1"]
+    consumer_ends = [
+        event.message.tool_call_id
+        for event in events
+        if isinstance(event, MessageEndEvent) and isinstance(event.message, ToolResultMessage)
+    ]
+    assert consumer_ends == ["call-1"]

@@ -39,7 +39,7 @@ Tau can now:
 
 ## Durable message boundary
 
-`CodingSession` treats `MessageEndEvent` as the durable-message boundary. When the harness emits a completed message, the coding session appends that message to storage immediately instead of waiting for the whole agent run to finish.
+`CodingSession` treats `MessageEndEvent` as the durable-message boundary. Persistence is push-based: the coding session subscribes a listener to the harness, and every `message_end` notification appends that message to storage before the event reaches the consuming frontend. Persistence does not run in the event consumer, so a frontend that stops consuming (the TUI cancels its worker on Esc) cannot lose writes — including the synthetic "Tool call interrupted by user" results the harness appends and pushes to subscribers during cancelled cleanup.
 
 This mirrors Pi's session model and matters for interactive UIs:
 
@@ -47,6 +47,8 @@ This mirrors Pi's session model and matters for interactive UIs:
 - queued steering and follow-up messages become durable when they are injected
 - cancellation or process failure preserves completed messages
 - the TUI can read tree state that matches the active run
+
+A message whose `message_end` never fired is deliberately not persisted: abandoning a run before the first completed message leaves no durable trace, so an aborted first prompt does not index a new session.
 
 Each persisted message is followed by a `leaf` entry pointing at that message. The leaf entries form an append-only history of the active branch pointer.
 

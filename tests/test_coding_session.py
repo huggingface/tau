@@ -13,6 +13,7 @@ from pi_event_helpers import assistant_done, assistant_error, assistant_start
 from tau_agent import (
     AgentMessage,
     AgentTool,
+    AgentToolResult,
     AssistantMessage,
     ImageContent,
     MessageEndEvent,
@@ -31,6 +32,7 @@ from tau_agent.session import (
     LeafEntry,
     MessageEntry,
     ModelChangeEntry,
+    SessionEntry,
     SessionInfoEntry,
     ThinkingLevelChangeEntry,
 )
@@ -396,6 +398,271 @@ async def test_prompt_logs_safe_provider_stream_error_details(tmp_path: Path) ->
         },
     }
     assert "Hello" not in log_path.read_text(encoding="utf-8")
+
+
+class _CountingStorage:
+    def __init__(self) -> None:
+        self.entries: list[SessionEntry] = []
+        self.reads = 0
+
+    async def append(self, entry: SessionEntry) -> None:
+        self.entries.append(entry)
+
+    async def read_all(self) -> list[SessionEntry]:
+        self.reads += 1
+        return list(self.entries)
+
+
+class _FaultInjectingStorage:
+    def __init__(self, phase: str) -> None:
+        self.entries: list[SessionEntry] = []
+        self.phase = phase
+        self.failed = False
+        self.failures_remaining = 2 if phase == "message_twice" else 1
+
+    async def append(self, entry: SessionEntry) -> None:
+        target = (
+            self.phase.startswith("message")
+            and isinstance(entry, MessageEntry)
+            or self.phase.startswith("leaf")
+            and isinstance(entry, LeafEntry)
+        )
+        if target and (self.failures_remaining > 0 or self.phase == "message_always"):
+            self.failed = True
+            self.failures_remaining -= 1
+            if self.phase.endswith("after"):
+                self.entries.append(entry)
+            raise OSError(f"simulated {self.phase} failure")
+        self.entries.append(entry)
+
+    async def read_all(self) -> list[SessionEntry]:
+        if (
+            self.phase == "refresh"
+            and not self.failed
+            and any(isinstance(entry, LeafEntry) for entry in self.entries)
+        ):
+            self.failed = True
+            raise OSError("simulated refresh failure")
+        return list(self.entries)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "phase",
+    ["message_before", "message_after", "leaf_before", "leaf_after", "refresh"],
+)
+async def test_message_persistence_retry_is_idempotent(tmp_path: Path, phase: str) -> None:
+    storage = _FaultInjectingStorage(phase)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    with pytest.raises(OSError, match="simulated"):
+        await _collect_session_events(session.prompt("go"))
+
+    messages = [entry for entry in storage.entries if isinstance(entry, MessageEntry)]
+    assert len(messages) == 1
+    assert messages[0].message.text == "go"
+    leaves = [
+        entry
+        for entry in storage.entries
+        if isinstance(entry, LeafEntry) and entry.entry_id == messages[0].id
+    ]
+    assert len(leaves) == 1
+    restored = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+    _assert_messages(restored.messages, [UserMessage(content="go")])
+
+
+@pytest.mark.anyio
+async def test_next_prompt_flushes_a_repair_that_failed_twice(tmp_path: Path) -> None:
+    storage = _FaultInjectingStorage("message_twice")
+    provider = FakeProvider(
+        [[assistant_start(), assistant_done(AssistantMessage(content="Recovered."))]]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    with pytest.raises(OSError, match="simulated message_twice failure"):
+        await _collect_session_events(session.prompt("go"))
+    await _collect_session_events(session.prompt("continue"))
+
+    persisted_texts = [
+        entry.message.text for entry in storage.entries if isinstance(entry, MessageEntry)
+    ]
+    assert persisted_texts == ["go", "continue", "Recovered."]
+    _model, _system, sent, _tools = provider.calls[-1]
+    assert [message.text for message in sent] == ["go", "continue"]
+
+
+@pytest.mark.anyio
+async def test_clean_persist_reads_storage_once_per_message(tmp_path: Path) -> None:
+    storage = _CountingStorage()
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider(
+                [[assistant_start(), assistant_done(AssistantMessage(content="Hi."))]]
+            ),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    reads_before = storage.reads
+    await _collect_session_events(session.prompt("go"))
+
+    persisted = [entry for entry in storage.entries if isinstance(entry, MessageEntry)]
+    assert len(persisted) == 2
+    # One deferred-metadata read plus one state refresh per message. A first
+    # attempt must not also read to check ids it just minted.
+    assert storage.reads - reads_before == len(persisted) + 1
+
+
+@pytest.mark.anyio
+async def test_reconcile_persistence_failure_is_logged(tmp_path: Path) -> None:
+    storage = _FaultInjectingStorage("message_always")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    with pytest.raises(OSError, match="simulated message_always failure"):
+        await _collect_session_events(session.prompt("go"))
+
+    assert session.last_diagnostic_log_path is not None
+    diagnostics = [
+        json.loads(line)
+        for line in session.last_diagnostic_log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert diagnostics[-1]["phase"] == "session_persistence_reconcile"
+    assert diagnostics[-1]["exception"]["message"] == "simulated message_always failure"
+
+
+def _hang_tool(tool_started: asyncio.Event, release: asyncio.Event) -> AgentTool:
+    async def hang(
+        tool_call_id: object,
+        arguments: object,
+        signal: object = None,
+        on_update: object = None,
+    ) -> AgentToolResult:
+        tool_started.set()
+        await release.wait()
+        return AgentToolResult(content=[TextContent(text="done")])
+
+    return AgentTool(
+        name="hang",
+        label="Hang",
+        description="Block until released.",
+        parameters={"type": "object"},
+        execute_fn=hang,
+    )
+
+
+@pytest.mark.anyio
+async def test_cancelled_prompt_teardown_persists_interrupted_tool_result(
+    tmp_path: Path,
+) -> None:
+    # Regression: Esc mid-tool-call cancels the consumer, and the synthetic
+    # interrupted tool result never reached the session file, leaving a
+    # dangling tool_use that providers reject with a 400 on later replays.
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    tool_started = asyncio.Event()
+    release = asyncio.Event()
+    tool_call = ToolCall(id="call-1", name="hang", arguments={})
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(
+                    message=AssistantMessage(
+                        content=assistant_content("Running.", [tool_call]),
+                        stop_reason="toolUse",
+                    )
+                ),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Recovered.")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            tools=[_hang_tool(tool_started, release)],
+        )
+    )
+
+    async def consume() -> None:
+        async for _event in session.prompt("go"):
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(tool_started.wait(), timeout=5)
+    # Mirror the TUI interrupt: cancel the session, then the worker, with no
+    # await in between.
+    session.cancel()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    expected_repair = ToolResultMessage(
+        tool_call_id="call-1",
+        tool_name="hang",
+        content=[TextContent(text="Tool call interrupted by user")],
+        is_error=True,
+    )
+    entries = await storage.read_all()
+    message_entries = [entry for entry in entries if entry.type == "message"]
+    by_id = {entry.id: entry for entry in message_entries}
+    repairs = [entry for entry in message_entries if isinstance(entry.message, ToolResultMessage)]
+    assert len(repairs) == 1
+    _assert_messages([repairs[0].message], [expected_repair])
+    parent = by_id[repairs[0].parent_id]
+    assert isinstance(parent.message, AssistantMessage)
+    assert parent.message.tool_calls
+
+    _ = await _collect_session_events(session.prompt("continue"))
+
+    _model, _system, sent, _tools = provider.calls[-1]
+    call_index = next(
+        index
+        for index, message in enumerate(sent)
+        if isinstance(message, AssistantMessage) and message.tool_calls
+    )
+    _assert_messages([sent[call_index + 1]], [expected_repair])
+    assert sum(isinstance(message, ToolResultMessage) for message in sent) == 1
 
 
 @pytest.mark.anyio
@@ -3611,6 +3878,11 @@ async def test_session_resumes_indexed_session(tmp_path: Path) -> None:
             UserMessage(content="Continue."),
         ],
     )
+    # The replacement session's persistence listener must be detached on
+    # adoption, or every message after resume is persisted twice.
+    entries = await second_storage.read_all()
+    persisted_texts = [entry.message.text for entry in entries if entry.type == "message"]
+    assert persisted_texts == ["Earlier", "Restored", "Continue.", "Second answer"]
 
 
 @pytest.mark.anyio
