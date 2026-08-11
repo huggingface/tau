@@ -214,6 +214,15 @@ class CompactionPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class _PendingMessageWrite:
+    """Stable entries retained while a message persistence attempt is retried."""
+
+    message: AgentMessage
+    message_entry: MessageEntry
+    leaf_entry: LeafEntry
+
+
+@dataclass(frozen=True, slots=True)
 class CodingSessionConfig:
     """Configuration for a persistent coding session."""
 
@@ -335,6 +344,7 @@ class CodingSession:
         self._persistence_unsubscribe: Callable[[], None] | None = None
         self._persisted_message_ids: set[int] = set()
         self._ended_message_ids: set[int] = set()
+        self._pending_message_writes: dict[int, _PendingMessageWrite] = {}
         self._attach_persistence_listener()
 
     @classmethod
@@ -630,6 +640,7 @@ class CodingSession:
         """Move the active leaf to a previous entry, preserving existing history."""
         if self._harness.is_running:
             raise RuntimeError(TREE_RUNNING_MESSAGE)
+        await self._flush_pending_message_writes(context=self._diagnostic_context())
         entries = await self._read_session_entries()
         by_id = {entry.id: entry for entry in entries}
         if entry_id not in by_id:
@@ -1590,6 +1601,7 @@ class CodingSession:
 
     async def resume(self, session_id: str) -> str:
         """Replace this session's active state with another indexed session."""
+        await self._flush_pending_message_writes(context=self._diagnostic_context())
         manager = self._config.session_manager
         if manager is None:
             raise ValueError("Session manager is not available")
@@ -1666,6 +1678,7 @@ class CodingSession:
 
     async def new_session(self) -> str:
         """Replace this session's active state with a pending unindexed session."""
+        await self._flush_pending_message_writes(context=self._diagnostic_context())
         manager = self._config.session_manager
         if manager is None:
             raise ValueError("Session manager is not available")
@@ -1779,6 +1792,7 @@ class CodingSession:
         self._auto_compact_enabled = replacement._auto_compact_enabled
         self._thinking_level = replacement._thinking_level
         self._pending_initial_entries = replacement._pending_initial_entries
+        self._pending_message_writes = replacement._pending_message_writes
         self._extension_runtime = replacement._extension_runtime
         self._image_support = replacement._image_support
         self._project_trust_resolution = replacement._project_trust_resolution
@@ -1789,6 +1803,7 @@ class CodingSession:
 
     async def compact(self, instructions: str | None = None) -> str:
         """Generate a manual compaction summary and rebuild active context."""
+        await self._flush_pending_message_writes(context=self._diagnostic_context())
         plan = self._manual_compaction_plan()
         summary = await self._generate_compaction_summary(
             plan.messages_to_summarize,
@@ -1862,6 +1877,7 @@ class CodingSession:
             exit_code = raw_exit_code if isinstance(raw_exit_code, int) else None
 
         if add_to_context:
+            await self._flush_pending_message_writes(context=self._diagnostic_context())
             context_message = UserMessage(
                 content=_terminal_command_context_message(
                     normalized_command,
@@ -1935,6 +1951,7 @@ class CodingSession:
                 "CodingSession is already running; pass streaming_behavior to queue a message."
             )
 
+        await self._flush_pending_message_writes(context=context)
         await self._refresh_runtime_model_limits()
         await self._try_auto_compact(context=context, phase="auto_compact_before_prompt")
         # id() values can be reused once earlier message objects are freed.
@@ -2053,11 +2070,12 @@ class CodingSession:
             )
             raise
         finally:
-            await self._reconcile_run_persistence(events)
+            await self._reconcile_run_persistence(events, context=context)
 
     async def continue_(self) -> AsyncIterator[CodingSessionEvent]:
         """Continue the agent from restored state and persist new messages."""
         context = self._diagnostic_context()
+        await self._flush_pending_message_writes(context=context)
         await self._refresh_runtime_model_limits()
         # id() values can be reused once earlier message objects are freed.
         self._ended_message_ids.clear()
@@ -2095,7 +2113,7 @@ class CodingSession:
             )
             raise
         finally:
-            await self._reconcile_run_persistence(events)
+            await self._reconcile_run_persistence(events, context=context)
 
     def _diagnostic_context(self) -> AgentCallDiagnosticContext:
         return AgentCallDiagnosticContext(
@@ -2165,24 +2183,40 @@ class CodingSession:
             await self._persist_message(event.message)
 
     async def _persist_message(self, message: AgentMessage) -> None:
-        """Persist one completed message at the active branch tip.
+        """Persist one completed message at the active branch tip, idempotently.
 
-        Message lifecycle events are the durable-message boundary. Each persisted
-        message advances the append-only tree and records a leaf pointer so tree
-        navigation can observe the current branch while a run is still active.
+        Message lifecycle events are the durable-message boundary. Stable entry
+        ids let a retry finish a partially completed message/leaf pair without
+        appending the message a second time.
         """
-        entry = MessageEntry(parent_id=self._last_parent_id, message=message)
-        await self._append_session_entry(entry)
-        self._last_parent_id = entry.id
-        leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
-        await self._append_session_entry(leaf)
-        self._persisted_message_ids.add(id(message))
+        message_id = id(message)
+        pending = self._pending_message_writes.get(message_id)
+        if pending is None:
+            entry = MessageEntry(parent_id=self._last_parent_id, message=message)
+            pending = _PendingMessageWrite(
+                message=message,
+                message_entry=entry,
+                leaf_entry=LeafEntry(parent_id=entry.id, entry_id=entry.id),
+            )
+            self._pending_message_writes[message_id] = pending
+
+        durable_ids = {entry.id for entry in await self._read_session_entries()}
+        if pending.message_entry.id not in durable_ids:
+            await self._append_session_entry(pending.message_entry)
+        self._last_parent_id = pending.message_entry.id
+        if pending.leaf_entry.id not in durable_ids:
+            await self._append_session_entry(pending.leaf_entry)
+
         await self._refresh_persisted_state(leaf_id=self._last_parent_id)
+        self._persisted_message_ids.add(message_id)
+        self._pending_message_writes.pop(message_id, None)
         self._invalidate_context_usage_cache()
 
     async def _reconcile_run_persistence(
         self,
         events: AsyncIterator[AgentEvent] | None,
+        *,
+        context: AgentCallDiagnosticContext,
     ) -> None:
         """Close a run and retry failed persists still present in the transcript.
 
@@ -2203,10 +2237,35 @@ class CodingSession:
                 and message_id not in self._persisted_message_ids
             ):
                 # Runs in a finally: a repeat failure must not mask cancellation.
-                with suppress(Exception):
+                try:
                     await self._persist_message(message)
+                except Exception as exc:  # noqa: BLE001 - preserve cancellation
+                    self._log_persistence_failure(context=context, exc=exc)
         self._ended_message_ids.clear()
         self._persisted_message_ids.clear()
+
+    async def _flush_pending_message_writes(self, *, context: AgentCallDiagnosticContext) -> None:
+        """Finish earlier partial writes before another storage-dependent action."""
+        harness_message_ids = {id(message) for message in self._harness.messages}
+        for pending in tuple(self._pending_message_writes.values()):
+            if id(pending.message) not in harness_message_ids:
+                self._harness.append_message(pending.message)
+                harness_message_ids.add(id(pending.message))
+            try:
+                await self._persist_message(pending.message)
+            except Exception as exc:
+                self._log_persistence_failure(context=context, exc=exc)
+                raise
+
+    def _log_persistence_failure(
+        self, *, context: AgentCallDiagnosticContext, exc: BaseException
+    ) -> None:
+        with suppress(Exception):
+            self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
+                context=context,
+                phase="session_persistence_reconcile",
+                exc=exc,
+            )
 
     def _invalidate_context_usage_cache(self) -> None:
         """Mark context accounting dirty after transcript/system/tool changes."""
@@ -2241,8 +2300,10 @@ class CodingSession:
             self._index_current_session()
 
     async def _write_pending_initial_entries(self) -> None:
+        durable_ids = {entry.id for entry in await self._config.storage.read_all()}
         for entry in self._pending_initial_entries:
-            await self._config.storage.append(entry)
+            if entry.id not in durable_ids:
+                await self._config.storage.append(entry)
         self._pending_initial_entries = ()
 
     def _ensure_session_file_initialized(self) -> None:

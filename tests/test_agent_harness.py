@@ -336,6 +336,12 @@ async def test_entry_path_repair_is_pushed_to_listeners() -> None:
 
     events = [event async for event in harness.prompt("continue")]
 
+    assert [event.type for event in events[:4]] == [
+        "agent_start",
+        "turn_start",
+        "message_start",
+        "message_end",
+    ]
     repair = next(message for message in harness.messages if isinstance(message, ToolResultMessage))
     assert repair.tool_call_id == "call-1"
     listener_ends = [

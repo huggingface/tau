@@ -170,19 +170,14 @@ class AgentHarness:
             # subscribers (persistence) as well as the consumer.
             repaired_from = len(self._messages)
             self._append_interrupted_tool_results()
-            for message in self._messages[repaired_from:]:
-                start = MessageStartEvent(message=message)
-                await self._notify(start)
-                yield start
-                end = MessageEndEvent(message=message)
-                await self._notify(end)
-                yield end
+            repairs = self._messages[repaired_from:]
             async for event in run_agent_loop(
                 provider=self._config.provider,
                 model=self._config.model,
                 system=self._config.system,
                 messages=self._messages,
                 prompts=prompts,
+                prelude_messages=repairs,
                 tools=self._config.tools,
                 max_turns=self._config.max_turns,
                 signal=signal,

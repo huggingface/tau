@@ -32,6 +32,7 @@ from tau_agent.session import (
     LeafEntry,
     MessageEntry,
     ModelChangeEntry,
+    SessionEntry,
     SessionInfoEntry,
     ThinkingLevelChangeEntry,
 )
@@ -397,6 +398,133 @@ async def test_prompt_logs_safe_provider_stream_error_details(tmp_path: Path) ->
         },
     }
     assert "Hello" not in log_path.read_text(encoding="utf-8")
+
+
+class _FaultInjectingStorage:
+    def __init__(self, phase: str) -> None:
+        self.entries: list[SessionEntry] = []
+        self.phase = phase
+        self.failed = False
+        self.failures_remaining = 2 if phase == "message_twice" else 1
+
+    async def append(self, entry: SessionEntry) -> None:
+        target = (
+            self.phase.startswith("message")
+            and isinstance(entry, MessageEntry)
+            or self.phase.startswith("leaf")
+            and isinstance(entry, LeafEntry)
+        )
+        if target and (self.failures_remaining > 0 or self.phase == "message_always"):
+            self.failed = True
+            self.failures_remaining -= 1
+            if self.phase.endswith("after"):
+                self.entries.append(entry)
+            raise OSError(f"simulated {self.phase} failure")
+        self.entries.append(entry)
+
+    async def read_all(self) -> list[SessionEntry]:
+        if (
+            self.phase == "refresh"
+            and not self.failed
+            and any(isinstance(entry, LeafEntry) for entry in self.entries)
+        ):
+            self.failed = True
+            raise OSError("simulated refresh failure")
+        return list(self.entries)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "phase",
+    ["message_before", "message_after", "leaf_before", "leaf_after", "refresh"],
+)
+async def test_message_persistence_retry_is_idempotent(tmp_path: Path, phase: str) -> None:
+    storage = _FaultInjectingStorage(phase)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    with pytest.raises(OSError, match="simulated"):
+        await _collect_session_events(session.prompt("go"))
+
+    messages = [entry for entry in storage.entries if isinstance(entry, MessageEntry)]
+    assert len(messages) == 1
+    assert messages[0].message.text == "go"
+    leaves = [
+        entry
+        for entry in storage.entries
+        if isinstance(entry, LeafEntry) and entry.entry_id == messages[0].id
+    ]
+    assert len(leaves) == 1
+    restored = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+    _assert_messages(restored.messages, [UserMessage(content="go")])
+
+
+@pytest.mark.anyio
+async def test_next_prompt_flushes_a_repair_that_failed_twice(tmp_path: Path) -> None:
+    storage = _FaultInjectingStorage("message_twice")
+    provider = FakeProvider(
+        [[assistant_start(), assistant_done(AssistantMessage(content="Recovered."))]]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    with pytest.raises(OSError, match="simulated message_twice failure"):
+        await _collect_session_events(session.prompt("go"))
+    await _collect_session_events(session.prompt("continue"))
+
+    persisted_texts = [
+        entry.message.text for entry in storage.entries if isinstance(entry, MessageEntry)
+    ]
+    assert persisted_texts == ["go", "continue", "Recovered."]
+    _model, _system, sent, _tools = provider.calls[-1]
+    assert [message.text for message in sent] == ["go", "continue"]
+
+
+@pytest.mark.anyio
+async def test_reconcile_persistence_failure_is_logged(tmp_path: Path) -> None:
+    storage = _FaultInjectingStorage("message_always")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    with pytest.raises(OSError, match="simulated message_always failure"):
+        await _collect_session_events(session.prompt("go"))
+
+    assert session.last_diagnostic_log_path is not None
+    diagnostics = [
+        json.loads(line)
+        for line in session.last_diagnostic_log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert diagnostics[-1]["phase"] == "session_persistence_reconcile"
+    assert diagnostics[-1]["exception"]["message"] == "simulated message_always failure"
 
 
 def _hang_tool(tool_started: asyncio.Event, release: asyncio.Event) -> AgentTool:

@@ -41,7 +41,8 @@ change moves persistence to the same side of the event stream.
 
 - `tau_agent.harness` stays portable: dangling-call repairs now run inside
   `_run` and flow through events — at run start as normal
-  `message_start`/`message_end`, and during cancelled cleanup as notify-only
+  `message_start`/`message_end` after canonical `agent_start`/`turn_start`, and
+  during cancelled cleanup as notify-only
   pushes wrapped in `suppress(Exception)` so a listener failure cannot mask
   the in-flight `CancelledError`.
 - `tau_coding.session` owns persistence as a harness subscriber. The listener
@@ -56,7 +57,12 @@ change moves persistence to the same side of the event stream.
   run generator and retries only messages whose `message_end` fired but whose
   write failed. It is keyed on message identity, never counts: the loop emits
   an assistant's `message_end` before appending it to the transcript, so
-  count-based sweeps can double-write.
+  count-based sweeps can double-write. Each pending write retains stable
+  message and leaf entry ids; reconciliation reads durable ids and appends only
+  the missing pieces, so a failure between the two appends cannot duplicate the
+  message. Repeated failures are logged without masking cancellation, retained,
+  and flushed before the next prompt, continuation, compaction, or contextual
+  terminal command.
 
 A deliberate non-goal: repairing files that older builds already damaged. A
 branch-time heal was prototyped (PR #525) and closed — re-parenting the branch
@@ -79,6 +85,11 @@ Key regression tests:
   its tool call.
 - `test_cancelled_run_notifies_listeners_of_interrupted_tool_repair` and
   `test_listener_error_during_teardown_does_not_mask_cancellation` pin the
-  harness contract.
+  harness contract; `test_entry_path_repair_is_pushed_to_listeners` also pins
+  canonical run event ordering.
+- `test_message_persistence_retry_is_idempotent` injects failures before and
+  after the message and leaf appends, plus during refresh, and verifies retry
+  leaves exactly one message and one leaf. The next-prompt test verifies a write
+  that fails twice is retained and flushed before provider context is built.
 - `test_session_resumes_indexed_session` asserts each message persists exactly
   once after resume (guards the listener detach in `_adopt_replacement`).
