@@ -49,6 +49,7 @@ async def run_agent_loop(
     messages: list[AgentMessage],
     tools: list[AgentTool],
     prompts: Sequence[AgentMessage] = (),
+    prelude_messages: Sequence[AgentMessage] = (),
     max_turns: int | None = None,
     signal: CancellationToken | None = None,
     session_id: str | None = None,
@@ -64,6 +65,9 @@ async def run_agent_loop(
 
     yield AgentStartEvent()
     yield TurnStartEvent()
+    for message in prelude_messages:
+        yield MessageStartEvent(message=message)
+        yield MessageEndEvent(message=message)
     for prompt in prompts:
         yield MessageStartEvent(message=prompt)
         yield MessageEndEvent(message=prompt)
