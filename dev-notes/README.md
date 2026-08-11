@@ -16,6 +16,8 @@ User-facing documentation lives in `website/content/` and is published at
   - `03-tools.md` — built-in tool design
   - `04-sessions.md` — session tree / persistence design
   - `05-core-types-and-events.md` — provider-neutral types and events
+  - `project-trust.md` — researched, implementation-ready project-trust design
+    (design only; enforcement is not implemented)
   - `agent-loop.md`, `harness.md` — harness/loop reference notes
 - `architecture/` — per-phase implementation notes (`phase-1` … `phase-24`, plus
   hardening and feature notes). Each answers: what was added, why it exists, how

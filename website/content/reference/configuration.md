@@ -37,12 +37,15 @@ export TAU_AGENTS_HOME="$HOME/.config/agents"
 ├── catalog.toml        # optional provider/model catalog overlay
 ├── providers.json      # provider/model preferences
 ├── credentials.json    # saved API keys / OAuth tokens (0600, atomic writes)
-├── settings.json       # general settings (e.g. shell command prefix)
+├── settings.json       # general settings (trust default, shell prefix)
+├── trust.json          # versioned project-input trust decisions
 ├── tui.json            # TUI theme, keybindings, and layout
 ├── sessions/           # saved sessions, per project
 ├── skills/             # user-level skills
 ├── prompts/            # user-level prompt templates
 ├── themes/             # user-level TUI themes
+├── SYSTEM.md           # optional replacement system-prompt base
+├── APPEND_SYSTEM.md    # optional appended system-prompt instructions
 ├── AGENTS.md           # global project instructions
 └── logs/               # diagnostics
 ```
@@ -50,9 +53,46 @@ export TAU_AGENTS_HOME="$HOME/.config/agents"
 Tau also reads user-level `.agents` resources: `~/.agents/skills/`,
 `~/.agents/prompts/`, `~/.agents/AGENTS.md`.
 
+`settings.json` may contain `"defaultProjectTrust": "ask" | "always" |
+"never"`. It is user-global only; a project cannot choose its own trust
+policy. The default is `ask`. Interactive `ask` opens the trust modal; headless
+`ask` safely declines. `trust.json` is managed atomically by Tau; do not add
+relative paths or unknown fields. See [Project trust]({{< relref
+"../guides/project-trust.md" >}}).
+
 Startup update checks cache their latest PyPI result in
 `~/.tau/cache/update-check.json` and refresh at most once per day. Set
 `TAU_NO_UPDATE_CHECK=1` to disable the check; Tau also skips it when `CI` is set.
+
+## System prompt files
+
+Tau can replace or extend its generated system prompt with Tau-native Markdown
+files:
+
+```text
+~/.tau/SYSTEM.md                 # user replacement
+~/.tau/APPEND_SYSTEM.md          # user append
+<project>/.tau/SYSTEM.md         # project replacement
+<project>/.tau/APPEND_SYSTEM.md  # project append
+```
+
+For each kind, precedence is explicit CLI input, then the project file, then the
+user file. A higher-precedence append file replaces the lower-precedence append
+file; Tau does not concatenate project and user files. Replacement content still
+receives the selected append text, project instructions, eligible skills, the
+current date, and the working directory. Empty files are valid explicit values.
+
+Run `/reload` after adding, changing, or removing a file. Tau rebuilds the prompt
+for the next model request without adding it to session history. `/session`
+resource diagnostics identify selected, shadowed, or CLI-overridden files. A
+selected file that cannot be inspected or decoded as UTF-8 stops startup or
+reload rather than silently falling back.
+
+System prompt files are Tau-specific and are not discovered from `.agents`.
+Project files load only after the destination cwd is trusted. User files and
+explicit CLI values remain available when project inputs are declined. Trust is
+an input-loading guard, not a sandbox; inspect trusted prompt files because they
+can replace or extend the model's highest-priority instructions.
 
 ## Network proxies
 
@@ -120,10 +160,59 @@ Catalog entries support `kind` values of `openai-compatible`, `anthropic`, and
 
 User catalog overlays can be partial when they use the same `name` as a built-in
 provider. Scalar fields replace built-in values, `models` are merged with user
-models first, and `context_windows` are merged. Model metadata is merged by model;
+models first, and `context_windows` are merged. Provider-level `compat` is merged
+key by key. Model metadata is merged by model;
 its `headers`, `compat`, and `thinking_level_map` mappings are merged, while other
 metadata fields—including the complete `cost_tiers` array—replace the built-in
-value. The thinking fields (`thinking_levels`, `thinking_models`,
+value. A model's `compat` wins over the provider's, so a built-in per-model value
+overrides a provider-level overlay — override at the model level to change it.
+
+`removed_models` is an additive provider-scoped tombstone list. Tau applies it
+last and removes matching model-list, metadata, context-window, thinking, and
+default references after merging. Bundled tombstones therefore prevent stale
+user overlays from restoring models that Tau previously advertised for the wrong
+provider. They do not affect the same model ID on another provider.
+
+### OpenAI prompt-cache compat keys
+
+Tau enables OpenAI cache affinity automatically only for `api.openai.com` and the
+dedicated Codex OAuth provider. OpenAI-compatible gateways can opt in per provider
+or model:
+
+| Key | Effect |
+| --- | --- |
+| `supportsPromptCacheKey` | Sends the stable session-derived `prompt_cache_key` body field |
+| `sendSessionAffinityHeaders` | Sends headers using `sessionAffinityFormat` |
+| `sessionAffinityFormat` | `openai` sends `session_id`; `openrouter` sends `x-session-id` |
+
+Unknown gateways retain their existing request shape by default. Enable only fields
+documented by the target service. Codex uses its dedicated `session-id` header
+mapping and does not read these OpenAI-compatible settings.
+
+### Anthropic prompt-cache compat keys
+
+Providers using the `anthropic-messages` API accept three `compat` booleans
+controlling prompt caching. All default to enabled, except that `cache_control` is
+detected as unsupported for any base URL that is not `api.anthropic.com`, since
+several providers speak the Anthropic protocol through a gateway.
+
+| Key | Effect when `false` |
+| --- | --- |
+| `supportsCacheControl` | No cache breakpoints at all; the request is byte-identical to an uncached one |
+| `supportsLongCacheRetention` | Clamps the 1 hour TTL to the 5 minute default |
+| `supportsCacheControlOnTools` | Drops only the tool-schema breakpoint |
+
+Set them per provider or per model. For example, to stop requesting the one-hour
+cache on a Claude subscription:
+
+```toml
+schema_version = 1
+[[providers]]
+name = "anthropic"
+compat = { supportsLongCacheRetention = false }
+```
+
+The thinking fields (`thinking_levels`, `thinking_models`,
 `thinking_default`, `thinking_parameter`) replace as a group when
 `thinking_levels` is present.
 
@@ -153,12 +242,18 @@ Limits are inclusive, must increase strictly, and the final tier must omit
 tiers should select the first tier whose limit includes the input-token count;
 older callers continue to see `cost` as the base rate.
 
+All rates are per million tokens. `cacheWrite` is the 5-minute cache-write
+rate; entries may add an optional `cacheWrite1h` rate for Anthropic's 1-hour
+TTL cache writes, which Anthropic bills higher. When `cacheWrite1h` is absent,
+1-hour writes fall back to the `cacheWrite` rate.
+
 ### Provider preferences
 
 Provider preferences live in `~/.tau/providers.json`:
 
 ```json
 {
+  "schema_version": 2,
   "default_provider": "local-gateway",
   "provider_preferences": {
     "local-gateway": {
@@ -182,12 +277,24 @@ Provider preferences live in `~/.tau/providers.json`:
   billing can be configured with `"headers": { "X-HF-Bill-To": "my-org" }` on
   the `huggingface` provider preference. `thinking_defaults` remembers the
   preferred thinking level per model for new sessions; resumed sessions still use
-  their session history. `timeout_seconds` defaults to `60` (> 0); `max_retries`
+  their session history. The built-in `huggingface` preference also accepts
+  `"inference_providers": { "zai-org/GLM-5.2": "deepinfra" }`. Each key must be
+  a configured model and each value an explicit provider suffix advertised by
+  Hugging Face—not the `fastest`, `cheapest`, or `preferred` routing policies.
+  Tau snapshots the selected suffix into new session metadata, retains it on
+  resume, and sends only the suffixed wire model; ordinary model identity and
+  catalog metadata remain unsuffixed. Without a preference, Tau starts with
+  automatic routing and pins the `x-inference-provider` reported by the first
+  successful response. `/session` reports the route; `/route <provider>` selects
+  one and `/route automatic` resets automatic resolution for the active session.
+  `timeout_seconds` defaults to `60` (> 0); `max_retries`
   defaults to `2`; `max_retry_delay_seconds` defaults to `1` (both ≥ 0).
   Retries cover transient HTTP statuses (`408`, `409`, `425`, `429`, `5xx`),
-  transport errors, and — for the OpenAI Codex provider — transient in-stream
-  SSE error events such as `server_is_overloaded` that arrive on an otherwise
-  successful HTTP 200 response.
+  transport errors, and transient in-stream SSE errors that arrive on an
+  otherwise successful HTTP 200 response. Anthropic retries `api_error`,
+  `overloaded_error`, and `rate_limit_error`; OpenAI Codex retries transient
+  events such as `server_is_overloaded`. In-stream errors remain terminal after
+  partial content to prevent duplicate output or tool calls.
 - API keys and OAuth credentials are **not** stored here — they live in
   `~/.tau/credentials.json` (private but not encrypted). OAuth objects may contain
   provider metadata such as a GitHub Enterprise domain and are refreshed
@@ -197,12 +304,18 @@ Provider preferences live in `~/.tau/providers.json`:
   custom or local model names to `models` before using them as defaults,
   CLI/TUI selections, or scoped models.
 - `scoped_models` are favorites for the **Ctrl+P** quick-cycle.
-- Older `providers.json` files that contain full `providers` entries are still
-  accepted for compatibility. Tau ignores unrecognized top-level settings and
-  provider-preference fields so files written by newer Tau versions do not block
-  older versions from starting. Recognized fields remain strictly validated.
-  When Tau saves settings again, provider definitions are moved to
-  `~/.tau/catalog.toml` and `providers.json` is rewritten as runtime preferences.
+- `providers.json` uses `schema_version: 2` and stores preferences only. Provider
+  capabilities—model lists, context windows, transports, metadata, and thinking
+  support—always come from the current effective catalog.
+- Older `providers.json` files that contain full `providers` entries are migrated
+  automatically on first load. Tau keeps the original as `providers.json.bak`,
+  moves custom provider definitions to `~/.tau/catalog.toml`, and rewrites
+  built-in providers from the current catalog while preserving safe preferences.
+  This prevents old model or thinking metadata from hiding capabilities added by
+  a Tau upgrade.
+- Tau ignores unrecognized preference fields for cross-version compatibility,
+  but rejects an unsupported `schema_version` rather than risking a destructive
+  rewrite with the wrong format.
 - Custom models declare thinking support in `catalog.toml` with
   `thinking_levels`, `thinking_default`, `thinking_models`, and
   `thinking_parameter` (`"reasoning_effort"`, `"reasoning.effort"`, or

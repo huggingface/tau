@@ -12,7 +12,15 @@ from tau_agent.events import (
 )
 from tau_agent.messages import AssistantMessage, CustomMessage, ToolCall, UserMessage
 from tau_ai.events import TextDeltaEvent, ThinkingDeltaEvent
-from tau_coding.events import AutoRetryStartEvent, CodingSessionEvent, QueueUpdateEvent
+from tau_coding.events import (
+    AutoRetryStartEvent,
+    CodingSessionEvent,
+    CompactionEndEvent,
+    CompactionStartEvent,
+    QueueUpdateEvent,
+    SessionAgentEndEvent,
+)
+from tau_coding.session import is_context_overflow_error
 from tau_coding.tui.state import TuiState
 
 
@@ -20,6 +28,7 @@ class TuiEventAdapter:
     def __init__(self, state: TuiState) -> None:
         self.state = state
         self._assistant_start_item_index: int | None = None
+        self._pending_overflow_error: AssistantMessage | None = None
 
     def apply(self, event: CodingSessionEvent) -> None:
         if isinstance(event, AgentStartEvent):
@@ -27,11 +36,19 @@ class TuiEventAdapter:
             self.state.error = None
             return
         if isinstance(event, AgentEndEvent):
+            # A bare harness event is terminal for legacy/direct adapter callers.
             self._flush()
             self.state.running = False
             return
+        if isinstance(event, SessionAgentEndEvent):
+            # Session orchestration may still compact, retry, or drain queued work.
+            self._flush()
+            return
         if event.type == "agent_settled":
             self._flush()
+            if self._pending_overflow_error is not None:
+                self.state.add_assistant_error(self._pending_overflow_error)
+                self._pending_overflow_error = None
             self.state.running = False
             return
         if isinstance(event, QueueUpdateEvent):
@@ -66,9 +83,18 @@ class TuiEventAdapter:
                 if start is not None:
                     del self.state.items[start:]
                 if message.stop_reason in {"error", "aborted"}:
-                    self.state.add_assistant_error(message)
-                    self.state.running = False
+                    if is_context_overflow_error(message):
+                        # Keep the provider failure provisional while session-level
+                        # overflow compaction and retry are still in progress.
+                        self._pending_overflow_error = message
+                    else:
+                        # Successful overflow compaction makes the retry failure the
+                        # only terminal error worth presenting.
+                        self._pending_overflow_error = None
+                        self.state.add_assistant_error(message)
+                        self.state.running = False
                 else:
+                    self._pending_overflow_error = None
                     self.state.add_assistant_message(message, include_tool_calls=False)
                 self.state.assistant_buffer = ""
                 self._assistant_start_item_index = None
@@ -89,6 +115,14 @@ class TuiEventAdapter:
                 event.result,
                 event.is_error,
             )
+            return
+        if isinstance(event, CompactionStartEvent) and event.reason == "overflow":
+            self.state.add_item("status", "… Context limit reached; compacting and retrying")
+            return
+        if isinstance(event, CompactionEndEvent) and event.reason == "overflow":
+            if (event.aborted or event.error_message) and self._pending_overflow_error is not None:
+                self.state.add_assistant_error(self._pending_overflow_error)
+                self._pending_overflow_error = None
             return
         if isinstance(event, AutoRetryStartEvent):
             self.state.add_item("status", f"… {event.error_message}")

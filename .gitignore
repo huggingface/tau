@@ -18,5 +18,10 @@ website/.hugo_build.lock
 # System files
 .DS_Store
 
+# Export artifacts (hex-named test export files)
+[0-9a-f]*.html
+
 # Agent tools
 .firecrawl/
+# Local scratch tooling
+scripts/analyze_session.py

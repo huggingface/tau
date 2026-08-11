@@ -114,6 +114,9 @@ def build_completion_state(
     has_argument_text = token_end < len(text)
     if token.startswith("/skill:"):
         if has_argument_text and _matches_skill_command(token, skills):
+            # Skill arguments are prompt text, so @ file references stay available.
+            if cwd is not None:
+                return CompletionState(_file_reference_completions(text=text, cwd=cwd))
             return CompletionState()
         return CompletionState(_skill_completions(token=token, token_end=token_end, skills=skills))
 
@@ -133,10 +136,12 @@ def build_completion_state(
     if argument_completions is not None:
         return CompletionState(argument_completions)
 
-    if has_argument_text and (
-        _matches_prompt_template_command(token, prompt_templates)
-        or _matches_registered_command(token, command_registry)
-    ):
+    if has_argument_text and _matches_prompt_template_command(token, prompt_templates):
+        if cwd is not None:
+            return CompletionState(_file_reference_completions(text=text, cwd=cwd))
+        return CompletionState()
+
+    if has_argument_text and _matches_registered_command(token, command_registry):
         return CompletionState()
 
     return CompletionState(
@@ -209,9 +214,7 @@ def _is_ignored_file_completion_path(path: Path, *, cwd: Path) -> bool:
         relative_parts = path.relative_to(cwd).parts
     except ValueError:
         return True
-    return any(
-        part.startswith(".") or part in IGNORED_FILE_COMPLETION_DIRS for part in relative_parts
-    )
+    return any(part in IGNORED_FILE_COMPLETION_DIRS for part in relative_parts)
 
 
 def _shell_path_completions(*, text: str, cwd: Path) -> tuple[CompletionItem, ...] | None:

@@ -15,7 +15,7 @@ from tau_agent.session import CustomEntry, JsonlSessionStorage, LeafEntry, Messa
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
 from tau_ai import FakeProvider
-from tau_coding import CodingSession, CodingSessionConfig, TauResourcePaths
+from tau_coding import CodingSession, CodingSessionConfig, ResourceError, TauResourcePaths
 from tau_coding.extensions import (
     CustomMessageView,
     ExtensionAPI,
@@ -1794,13 +1794,14 @@ async def test_runtime_survives_new_session_swap(tmp_path: Path) -> None:
     config = dataclass_replace(config, session_manager=manager, session_id=record.id)
     session = await CodingSession.load(config)
     runtime_before = session.extension_runtime
+    module_before = _loaded_extension_module("integration")
 
     await session.new_session()
 
-    module = _loaded_extension_module("integration")
-    assert session.extension_runtime is runtime_before
-    assert ("stop", "new") in module.EVENTS
-    assert ("start", "new") in module.EVENTS
+    module_after = _loaded_extension_module("integration")
+    assert session.extension_runtime is not runtime_before
+    assert ("stop", "new") in module_before.EVENTS
+    assert ("start", "new") in module_after.EVENTS
 
 
 async def test_session_swap_clears_host_extension_components(tmp_path: Path) -> None:
@@ -1934,6 +1935,29 @@ async def test_reload_invalidates_old_instance_and_new_instance_works(
     new_api.send_user_message("fresh")  # the reloaded instance works normally
 
 
+async def test_failed_resource_reload_does_not_emit_extension_shutdown(tmp_path: Path) -> None:
+    body = (
+        "EVENTS = []\n\n"
+        "def setup(tau):\n"
+        "    tau.on('session_shutdown', "
+        "lambda event, context: EVENTS.append(('stop', event.reason)))\n"
+    )
+    paths = _paths(tmp_path)
+    paths.root.mkdir(parents=True)
+    prompt_path = paths.root / "SYSTEM.md"
+    prompt_path.write_text("Valid base", encoding="utf-8")
+    session = await CodingSession.load(
+        _session_config(tmp_path, FakeProvider([]), extension_body=body)
+    )
+    module = _loaded_extension_module("integration")
+
+    prompt_path.write_bytes(b"\xff")
+    with pytest.raises(ResourceError, match="Could not read replacement system prompt file"):
+        await session.reload()
+
+    assert module.EVENTS == []  # type: ignore[attr-defined]
+
+
 async def test_reload_awaits_shutdown_before_invalidation_and_starts_new_generation(
     tmp_path: Path,
 ) -> None:
@@ -1970,7 +1994,7 @@ async def test_reload_awaits_shutdown_before_invalidation_and_starts_new_generat
     ]
 
 
-async def test_session_rebinding_does_not_invalidate_extension_instances(
+async def test_session_replacement_rebuilds_and_invalidates_source_extensions(
     tmp_path: Path,
 ) -> None:
     from dataclasses import replace as dataclass_replace
@@ -1990,11 +2014,11 @@ async def test_session_rebinding_does_not_invalidate_extension_instances(
 
     await session.new_session()
 
-    # Same instance continues by design (setup did not re-run); its context
-    # views simply reflect the newly bound session.
-    assert len(module.APIS) == 1  # type: ignore[attr-defined]
-    assert api.context.session_id == session.session_id
-    api.send_user_message("still alive")  # must not raise
+    new_module = _loaded_extension_module("integration")
+    new_api = cast(ExtensionAPI, new_module.APIS[-1])  # type: ignore[attr-defined]
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = api.context
+    assert new_api.context.session_id == session.session_id
 
 
 async def test_inflight_handler_touching_stale_api_records_diagnostic(

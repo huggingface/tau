@@ -3,11 +3,118 @@ from tau_agent.messages import (
     CustomMessage,
     TextContent,
     ToolCall,
+    ToolResultMessage,
     Usage,
     UserMessage,
 )
 from tau_agent.session import CompactionEntry, MessageEntry
-from tau_coding.session_stats import calculate_session_stats
+from tau_coding.session_stats import SessionStats, calculate_session_stats
+
+
+def test_cache_hit_rate_is_hidden_when_no_provider_reported_cache_usage() -> None:
+    """Backends without prompt caching must not show a permanent 0%."""
+    stats = SessionStats(input_tokens=5_000, output_tokens=100)
+
+    assert stats.cache_hit_rate is None
+
+
+def test_cache_hit_rate_is_zero_when_a_write_happened_but_nothing_was_read() -> None:
+    """A cold first turn genuinely is 0% cached, and saying so is useful."""
+    stats = SessionStats(input_tokens=5_000, cache_write_tokens=4_000)
+
+    assert stats.cache_hit_rate == 0.0
+
+
+def test_cache_hit_rate_is_none_without_billed_input() -> None:
+    assert SessionStats().cache_hit_rate is None
+
+
+def test_cache_hit_rate_divides_reads_by_total_prompt_tokens() -> None:
+    stats = SessionStats(input_tokens=1_000, cached_input_tokens=950, cache_write_tokens=50)
+
+    assert stats.cache_hit_rate == 0.95
+
+
+def test_latest_cache_hit_rate_uses_latest_request_tokens() -> None:
+    stats = SessionStats(
+        input_tokens=2_000,
+        cached_input_tokens=1_400,
+        latest_prompt_tokens=1_000,
+        latest_cached_input_tokens=950,
+    )
+
+    assert stats.latest_cache_hit_rate == 0.95
+
+
+def test_latest_cache_hit_rate_is_hidden_without_reported_cache_activity() -> None:
+    stats = SessionStats(
+        input_tokens=1_000,
+        latest_prompt_tokens=1_000,
+    )
+
+    assert stats.latest_cache_hit_rate is None
+
+
+def test_calculate_session_stats_uses_latest_tool_continuation_cache_rate() -> None:
+    user = MessageEntry(message=UserMessage(content="Inspect it"))
+    tool_request = MessageEntry(
+        parent_id=user.id,
+        message=AssistantMessage(
+            provider="anthropic",
+            model="claude-test",
+            content=[ToolCall(id="call-1", name="read", arguments={})],
+            usage=Usage(input=100, cache_write=100),
+        ),
+    )
+    tool_result = MessageEntry(
+        parent_id=tool_request.id,
+        message=ToolResultMessage(
+            tool_call_id="call-1",
+            tool_name="read",
+            content="result",
+        ),
+    )
+    continuation = MessageEntry(
+        parent_id=tool_result.id,
+        message=AssistantMessage(
+            provider="anthropic",
+            model="claude-test",
+            usage=Usage(input=10, cache_read=190),
+        ),
+    )
+
+    stats = calculate_session_stats(
+        [user, tool_request, tool_result, continuation],
+        pricing=lambda _provider, _model, _input: {},
+    )
+
+    assert stats.cache_hit_rate == 0.475
+    assert stats.latest_cache_hit_rate == 0.95
+
+
+def test_latest_cache_hit_rate_reports_miss_after_earlier_cache_activity() -> None:
+    first = MessageEntry(
+        message=AssistantMessage(
+            provider="anthropic",
+            model="claude-test",
+            usage=Usage(input=100, cache_write=100),
+        )
+    )
+    latest = MessageEntry(
+        parent_id=first.id,
+        message=AssistantMessage(
+            provider="anthropic",
+            model="claude-test",
+            usage=Usage(input=200),
+        ),
+    )
+
+    stats = calculate_session_stats(
+        [first, latest],
+        pricing=lambda _provider, _model, _input: {},
+    )
+
+    assert stats.latest_cache_hit_rate == 0.0
 
 
 def test_calculate_session_stats_keeps_compacted_active_branch_usage() -> None:
@@ -66,3 +173,53 @@ def test_calculate_session_stats_marks_cost_unavailable_when_pricing_is_missing(
     assert stats.input_tokens == 100
     assert stats.output_tokens == 20
     assert stats.estimated_cost is None
+
+
+def test_calculate_session_stats_prices_one_hour_cache_writes() -> None:
+    """Anthropic's cache_write total includes 1h writes, billed at cacheWrite1h."""
+    entry = MessageEntry(
+        message=AssistantMessage(
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            usage=Usage(input=1_000, output=100, cache_write=800, cache_write_1h=400),
+        )
+    )
+
+    stats = calculate_session_stats(
+        [entry],
+        pricing=lambda _provider, _model, _input: {
+            "input": 3.0,
+            "output": 15.0,
+            "cacheRead": 0.3,
+            "cacheWrite": 3.75,
+            "cacheWrite1h": 6.0,
+        },
+    )
+
+    assert stats.cache_write_tokens == 800
+    # 1000*3 + 100*15 + 400*3.75 (5m writes) + 400*6 (1h writes) = 8400 per 1M
+    assert stats.estimated_cost == 0.0084
+
+
+def test_calculate_session_stats_falls_back_to_cache_write_rate_without_1h_rate() -> None:
+    """Catalogs without cacheWrite1h keep billing all writes at the 5m rate."""
+    entry = MessageEntry(
+        message=AssistantMessage(
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            usage=Usage(input=1_000, output=100, cache_write=800, cache_write_1h=400),
+        )
+    )
+
+    stats = calculate_session_stats(
+        [entry],
+        pricing=lambda _provider, _model, _input: {
+            "input": 3.0,
+            "output": 15.0,
+            "cacheRead": 0.3,
+            "cacheWrite": 3.75,
+        },
+    )
+
+    # 1000*3 + 100*15 + 800*3.75 = 7500 per 1M
+    assert stats.estimated_cost == 0.0075

@@ -6,6 +6,7 @@ Tau is a minimalist Python coding-agent harness inspired by Pi. Use these instal
 - [Skills](skills.md): install reusable task knowledge and prompt templates.
 - [Models](models.md): configure providers and models or change Tau's built-in catalog.
 - [CLI](cli.md): command-line and slash-command entry points.
+- [Security](security.md): project-input trust behavior and its non-sandbox boundary.
 - [TUI](tui.md): interactive interface behavior.
 - [Architecture](architecture.md): package boundaries and contributor design rules.
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from json import dumps, loads
@@ -10,14 +11,19 @@ from pathlib import Path
 from shutil import copy2
 from tempfile import NamedTemporaryFile
 from typing import Any, Protocol, cast
+from urllib.parse import urlsplit
 
 from tau_ai.env import (
+    CACHE_RETENTION_LONG,
+    CACHE_RETENTION_NONE,
+    CACHE_RETENTION_SHORT,
     DEFAULT_ANTHROPIC_BASE_URL,
     DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
     DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES,
     DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS,
     DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS,
     AnthropicConfig,
+    CacheRetention,
     OpenAICompatibleConfig,
 )
 from tau_ai.openai_codex import DEFAULT_OPENAI_CODEX_BASE_URL
@@ -45,6 +51,7 @@ from tau_coding.thinking import (
 
 DEFAULT_PROVIDER_NAME = "openai"
 DEFAULT_MODEL = "gpt-5.4"
+PROVIDER_SETTINGS_SCHEMA_VERSION = 2
 
 
 class ProviderConfigError(ValueError):
@@ -125,6 +132,7 @@ class OpenAICompatibleProviderConfig:
     thinking_default: ThinkingLevel | None = None
     thinking_parameter: ThinkingParameter | None = None
     thinking_defaults: dict[str, ThinkingLevel] = field(default_factory=dict)
+    inference_providers: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_provider_numbers(
@@ -142,6 +150,7 @@ class OpenAICompatibleProviderConfig:
             thinking_parameter=self.thinking_parameter,
         )
         _validate_thinking_defaults(self.thinking_defaults)
+        _validate_inference_providers(self.name, self.models, self.inference_providers)
 
     def to_json(self) -> dict[str, Any]:
         """Serialize this provider config to JSON-compatible data."""
@@ -170,6 +179,7 @@ class OpenAICompatibleProviderConfig:
             "thinking_default": self.thinking_default,
             "thinking_parameter": self.thinking_parameter,
             "thinking_defaults": dict(self.thinking_defaults),
+            "inference_providers": dict(self.inference_providers),
         }
 
 
@@ -355,6 +365,7 @@ class ProviderSettings:
     def to_json(self) -> dict[str, Any]:
         """Serialize runtime preferences to JSON-compatible data."""
         return {
+            "schema_version": PROVIDER_SETTINGS_SCHEMA_VERSION,
             "default_provider": self.default_provider,
             "provider_preferences": {
                 provider.name: _provider_preference_to_json(provider) for provider in self.providers
@@ -503,6 +514,10 @@ def load_provider_settings(paths: TauPaths | None = None) -> ProviderSettings:
     if not isinstance(raw, dict):
         raise ProviderConfigError("Provider settings must be a JSON object")
     settings = provider_settings_from_json(raw, paths=resolved_paths)
+    if "provider_preferences" not in raw:
+        settings = _migrate_legacy_provider_settings(settings, paths=resolved_paths)
+        _save_migrated_provider_settings(settings, paths=resolved_paths)
+        return settings
     return _with_builtin_catalog_models(settings, paths=resolved_paths)
 
 
@@ -512,10 +527,7 @@ def save_provider_settings(settings: ProviderSettings, paths: TauPaths | None = 
     _save_provider_definitions_to_catalog(settings, paths=resolved_paths)
     path = provider_settings_path(resolved_paths)
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        with suppress(OSError):
-            copy2(path, path.with_suffix(path.suffix + ".bak"))
-    _atomic_write_text(path, dumps(settings.to_json(), indent=2, sort_keys=True) + "\n")
+    _write_provider_settings(settings, path=path, backup=True)
     return path
 
 
@@ -714,6 +726,93 @@ def _with_builtin_catalog_models(
     )
 
 
+def _migrate_legacy_provider_settings(
+    settings: ProviderSettings,
+    *,
+    paths: TauPaths,
+) -> ProviderSettings:
+    """Move legacy full provider records onto catalog-owned definitions.
+
+    Built-in and user-catalog provider capabilities come exclusively from the
+    current effective catalog. Legacy records contribute only runtime
+    preferences. Providers absent from the catalog remain intact so the
+    migration can persist them as custom catalog entries.
+    """
+    catalog_configs = {config.name: config for config in _effective_provider_configs(paths)}
+    providers: list[ProviderConfig] = []
+    for legacy in settings.providers:
+        catalog_provider = catalog_configs.get(legacy.name)
+        if catalog_provider is None:
+            providers.append(legacy)
+            continue
+        preferences = _provider_preference_to_json(legacy)
+        if legacy.default_model not in catalog_provider.models:
+            preferences.pop("default_model")
+        preferences["thinking_defaults"] = {
+            model: level
+            for model, level in legacy.thinking_defaults.items()
+            if model in catalog_provider.models
+            and level in provider_thinking_levels(catalog_provider, model=model)
+        }
+        providers.append(_apply_provider_preference(catalog_provider, preferences))
+
+    merged = _append_catalog_providers(tuple(providers), catalog_configs, paths=paths)
+    names = {provider.name for provider in merged}
+    default_provider = settings.default_provider
+    if default_provider not in names:
+        default_provider = merged[0].name if merged else DEFAULT_PROVIDER_NAME
+    return ProviderSettings(
+        default_provider=default_provider,
+        providers=merged,
+        scoped_models=tuple(
+            scoped
+            for scoped in settings.scoped_models
+            if scoped.provider in names
+            and scoped.model
+            in next(provider.models for provider in merged if provider.name == scoped.provider)
+        ),
+    )
+
+
+def _save_migrated_provider_settings(settings: ProviderSettings, *, paths: TauPaths) -> None:
+    """Persist one legacy migration after creating its required recovery backup."""
+    path = provider_settings_path(paths)
+    _backup_provider_settings(path, strict=True)
+    catalog_names = {entry.name for entry in effective_catalog(paths)}
+    custom_entries = [
+        _catalog_entry_from_provider(provider)
+        for provider in settings.providers
+        if provider.name not in catalog_names
+    ]
+    if custom_entries:
+        save_user_catalog_entries(custom_entries, paths=paths)
+    _write_provider_settings(settings, path=path, backup=False)
+
+
+def _backup_provider_settings(path: Path, *, strict: bool) -> None:
+    """Copy existing settings to the recovery path, optionally requiring success."""
+    if not path.exists():
+        return
+    if strict:
+        copy2(path, path.with_suffix(path.suffix + ".bak"))
+        return
+    with suppress(OSError):
+        copy2(path, path.with_suffix(path.suffix + ".bak"))
+
+
+def _write_provider_settings(
+    settings: ProviderSettings,
+    *,
+    path: Path,
+    backup: bool,
+) -> None:
+    """Atomically write preferences, optionally retaining the previous file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if backup:
+        _backup_provider_settings(path, strict=False)
+    _atomic_write_text(path, dumps(settings.to_json(), indent=2, sort_keys=True) + "\n")
+
+
 def _effective_provider_configs(paths: TauPaths | None = None) -> tuple[ProviderConfig, ...]:
     """Return provider configs for the effective catalog (builtin + user overlay)."""
     return tuple(provider_config_from_entry(entry) for entry in effective_catalog(paths))
@@ -843,6 +942,7 @@ def _merge_openai_compatible_provider(
             else incoming.thinking_parameter
         ),
         thinking_defaults=existing.thinking_defaults,
+        inference_providers=existing.inference_providers,
     )
 
 
@@ -949,7 +1049,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
 
 def _provider_preference_to_json(provider: ProviderConfig) -> dict[str, Any]:
     """Serialize only runtime preferences for one provider."""
-    return {
+    preference = {
         "default_model": provider.default_model,
         "headers": dict(provider.headers),
         "timeout_seconds": provider.timeout_seconds,
@@ -957,6 +1057,9 @@ def _provider_preference_to_json(provider: ProviderConfig) -> dict[str, Any]:
         "max_retry_delay_seconds": provider.max_retry_delay_seconds,
         "thinking_defaults": dict(provider.thinking_defaults),
     }
+    if isinstance(provider, OpenAICompatibleProviderConfig) and provider.inference_providers:
+        preference["inference_providers"] = dict(provider.inference_providers)
+    return preference
 
 
 def _save_provider_definitions_to_catalog(
@@ -1076,6 +1179,11 @@ def provider_settings_from_json(
     migration and compatibility; saves rewrite it to provider_preferences and
     move custom provider definitions to catalog.toml.
     """
+    schema_version = data.get("schema_version")
+    if schema_version not in (None, PROVIDER_SETTINGS_SCHEMA_VERSION):
+        raise ProviderConfigError(
+            f"Unsupported provider settings schema_version: {schema_version!r}"
+        )
     default_provider = _string(data.get("default_provider"), "default_provider")
     scoped_models = _scoped_models_from_json(data.get("scoped_models"))
     if "provider_preferences" in data:
@@ -1151,9 +1259,8 @@ def _apply_provider_preference(
         if "default_model" in value
         else provider.default_model
     )
-    models = (
-        provider.models if default_model in provider.models else (*provider.models, default_model)
-    )
+    if default_model not in provider.models:
+        default_model = provider.default_model
     headers = (
         _string_dict(value.get("headers"), f"provider_preferences.{provider.name}.headers")
         if "headers" in value
@@ -1188,13 +1295,33 @@ def _apply_provider_preference(
             value.get("thinking_defaults"),
             provider,
             f"provider_preferences.{provider.name}.thinking_defaults",
+            ignore_unknown_models=True,
         )
         if "thinking_defaults" in value
         else provider.thinking_defaults
     )
+    if isinstance(provider, OpenAICompatibleProviderConfig):
+        inference_providers = (
+            _inference_providers_dict(
+                value.get("inference_providers"),
+                provider,
+                f"provider_preferences.{provider.name}.inference_providers",
+            )
+            if "inference_providers" in value
+            else provider.inference_providers
+        )
+        return replace(
+            provider,
+            default_model=default_model,
+            headers=headers,
+            timeout_seconds=timeout_seconds,
+            max_retries=max_retries,
+            max_retry_delay_seconds=max_retry_delay_seconds,
+            thinking_defaults=thinking_defaults,
+            inference_providers=inference_providers,
+        )
     return replace(
         provider,
-        models=models,
         default_model=default_model,
         headers=headers,
         timeout_seconds=timeout_seconds,
@@ -1204,12 +1331,27 @@ def _apply_provider_preference(
     )
 
 
+def _inference_providers_dict(
+    value: object,
+    provider: OpenAICompatibleProviderConfig,
+    field_name: str,
+) -> dict[str, str]:
+    routes = _string_dict(value, field_name)
+    routes = {model: route.strip() for model, route in routes.items() if model in provider.models}
+    _validate_inference_providers(provider.name, provider.models, routes)
+    return routes
+
+
 def _thinking_defaults_dict(
     value: object,
     provider: ProviderConfig,
     field_name: str,
+    *,
+    ignore_unknown_models: bool = False,
 ) -> dict[str, ThinkingLevel]:
     raw = _raw_thinking_defaults_dict(value, field_name)
+    if ignore_unknown_models:
+        raw = {model: level for model, level in raw.items() if model in provider.models}
     for model, thinking_level in raw.items():
         validate_provider_model(provider, model)
         available = provider_thinking_levels(provider, model=model)
@@ -1400,8 +1542,13 @@ def _detected_compat(provider: ProviderConfig, model: str) -> dict[str, Any]:
     is_deepseek = provider.name == "deepseek" or "deepseek.com" in base_url
     is_cerebras = provider.name == "cerebras" or "cerebras.ai" in base_url
     is_openrouter = provider.name == "openrouter" or "openrouter.ai" in base_url
+    is_openai_api = (
+        urlsplit(base_url).hostname == urlsplit(DEFAULT_OPENAI_COMPATIBLE_BASE_URL).hostname
+    )
+    is_openai_responses = _provider_api(provider, model) == "openai-responses"
     is_nonstandard = is_cerebras or is_grok or is_together or is_deepseek or is_zai or is_moonshot
     use_max_tokens = is_moonshot or is_together
+    is_anthropic_api = urlsplit(base_url).hostname == urlsplit(DEFAULT_ANTHROPIC_BASE_URL).hostname
     return {
         "supportsStore": not is_nonstandard,
         "supportsReasoningEffort": not (is_grok or is_zai or is_moonshot or is_together),
@@ -1420,10 +1567,23 @@ def _detected_compat(provider: ProviderConfig, model: str) -> dict[str, Any]:
         ),
         "supportsStrictMode": not (is_moonshot or is_together),
         "supportsLongCacheRetention": not is_together,
+        # OpenAI's prompt-cache fields and affinity headers are not universally
+        # accepted by compatible gateways. Default them on only for the official
+        # endpoint; provider/model compat can opt another route in explicitly.
+        "supportsPromptCacheKey": is_openai_api,
+        "sendSessionAffinityHeaders": is_openai_api and is_openai_responses,
+        "sessionAffinityFormat": "openrouter" if is_openrouter else "openai",
+        # Only first-party Anthropic is known to accept cache_control. Several
+        # catalog providers speak the Anthropic protocol through a gateway, and one
+        # proxies to non-Anthropic models, so they default to no breakpoints. This
+        # is a detected default, overridable per provider or per model.
+        "supportsCacheControl": is_anthropic_api,
+        "supportsCacheControlOnTools": True,
     }
 
 
-def _model_max_tokens(provider: ProviderConfig, model: str | None = None) -> int | None:
+def provider_model_max_tokens(provider: ProviderConfig, model: str | None = None) -> int | None:
+    """Return the catalog output token limit for a model, or None when it is unset."""
     selected_model = model or provider.default_model
     metadata = _metadata_for_model(provider, selected_model)
     return metadata.max_tokens if metadata is not None else None
@@ -1511,6 +1671,9 @@ def openai_compatible_config_from_provider(
         reasoning_effort_parameter=provider.thinking_parameter or "reasoning_effort",
         thinking_format=_thinking_format(provider, selected_model),
         compat=compat,
+        response_provider_header=(
+            "x-inference-provider" if provider.name == "huggingface" else None
+        ),
         include_reasoning_effort_none=_include_reasoning_effort_none(
             provider,
             model=selected_model,
@@ -1534,14 +1697,19 @@ def anthropic_config_from_provider(
         model=selected_model,
         thinking_level=thinking_level,
     )
+    base_url = _normalize_anthropic_base_url(_model_base_url(provider, selected_model))
+    cache_retention, cache_control_on_tools = anthropic_cache_settings(provider, selected_model)
     return AnthropicConfig(
         api_key=api_key,
         provider_name=provider.name,
-        base_url=_normalize_anthropic_base_url(_model_base_url(provider, selected_model)),
+        base_url=base_url,
+        cache_retention=cache_retention,
+        cache_control_on_tools=cache_control_on_tools,
         headers=_model_headers(provider, selected_model),
         timeout_seconds=provider.timeout_seconds,
         max_retries=provider.max_retries,
         max_retry_delay_seconds=provider.max_retry_delay_seconds,
+        max_tokens=provider_model_max_tokens(provider, selected_model),
         supports_images=provider_model_supports_images(provider, selected_model),
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_effort=_reasoning_effort_from_anthropic_provider(
@@ -1730,6 +1898,29 @@ def _normalize_anthropic_base_url(base_url: str) -> str:
     if normalized.endswith("/v1"):
         return normalized
     return f"{normalized}/v1"
+
+
+def anthropic_cache_settings(
+    provider: ProviderConfig,
+    model: str | None = None,
+    *,
+    oauth: bool = False,
+) -> tuple[CacheRetention, bool]:
+    """Resolve prompt-cache settings for one Anthropic-protocol request.
+
+    Capability comes from compat, which layers a detected default under the
+    provider's own compat and then per-model compat. Intent comes from the auth
+    mode: subscription OAuth is not billed per token, so it asks for the 1 hour
+    TTL, while an API key keeps the shorter default. Capability only ever narrows
+    intent, so the two compose without any precedence rule.
+    """
+    compat = _model_compat(provider, model)
+    if compat.get("supportsCacheControl") is False:
+        return CACHE_RETENTION_NONE, False
+    retention = CACHE_RETENTION_LONG if oauth else CACHE_RETENTION_SHORT
+    if retention == CACHE_RETENTION_LONG and compat.get("supportsLongCacheRetention") is False:
+        retention = CACHE_RETENTION_SHORT
+    return retention, compat.get("supportsCacheControlOnTools") is not False
 
 
 def _provider_from_json(data: object) -> ProviderConfig:
@@ -1998,6 +2189,40 @@ def _reject_codex_legacy_compat(compat: dict[str, Any]) -> None:
         raise ProviderConfigError("OpenAI Codex legacy provider compat is not supported")
 
 
+_HF_INFERENCE_PROVIDER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def validate_huggingface_inference_provider(value: str) -> str:
+    """Return a normalized explicit Hugging Face provider suffix."""
+    normalized = value.strip()
+    if not _HF_INFERENCE_PROVIDER_PATTERN.fullmatch(normalized):
+        raise ProviderConfigError(
+            "Hugging Face inference provider must contain only letters, numbers, '.', '_', or '-'"
+        )
+    if normalized in {"fastest", "cheapest", "preferred"}:
+        raise ProviderConfigError(
+            f"Hugging Face inference provider must be explicit, not routing policy: {normalized}"
+        )
+    return normalized
+
+
+def _validate_inference_providers(
+    provider_name: str,
+    models: tuple[str, ...],
+    inference_providers: dict[str, str],
+) -> None:
+    if inference_providers and provider_name != "huggingface":
+        raise ProviderConfigError(
+            "inference_providers preferences are only supported for the huggingface provider"
+        )
+    for model, route in inference_providers.items():
+        if model not in models:
+            raise ProviderConfigError(
+                f"Inference-provider preference references unknown model: {model}"
+            )
+        validate_huggingface_inference_provider(route)
+
+
 def _validate_thinking_defaults(thinking_defaults: dict[str, ThinkingLevel]) -> None:
     for model, thinking_level in thinking_defaults.items():
         if not isinstance(model, str) or not model.strip():
@@ -2218,13 +2443,24 @@ def _cost_tiers(value: object, field_name: str) -> tuple[ModelCostTier, ...]:
         if not isinstance(item, dict):
             raise ProviderConfigError(f"Provider cost tiers must be objects: {field_name}")
         tier_field = f"{field_name}.{index}"
-        allowed = {"max_input_tokens", "input", "output", "cacheRead", "cacheWrite"}
+        allowed = {
+            "max_input_tokens",
+            "input",
+            "output",
+            "cacheRead",
+            "cacheWrite",
+            "cacheWrite1h",
+        }
         if set(item) - allowed:
             raise ProviderConfigError(f"Provider cost tier has unknown fields: {tier_field}")
         cost = {
             key: _non_negative_float(item.get(key), f"{tier_field}.{key}")
             for key in ("input", "output", "cacheRead", "cacheWrite")
         }
+        if item.get("cacheWrite1h") is not None:
+            cost["cacheWrite1h"] = _non_negative_float(
+                item.get("cacheWrite1h"), f"{tier_field}.cacheWrite1h"
+            )
         tiers.append(
             ModelCostTier(
                 max_input_tokens=_optional_positive_int(

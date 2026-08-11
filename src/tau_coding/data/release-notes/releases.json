@@ -1,5 +1,101 @@
 [
   {
+    "version": "0.3.9",
+    "date": "2026-08-11",
+    "sections": {
+      "New": [
+        "Autocomplete dot-prefixed project files and directories in file references and shell commands while continuing to hide generated metadata paths.",
+        "Keep successful /export destinations visible and copyable in the TUI transcript without adding them to model context or session history.",
+        "Add Kimi K3 to the Hugging Face Inference Providers catalog with image input, a 1M-token context window, pricing, and reasoning effort controls."
+      ],
+      "Changed": [
+        "Improve Markdown heading and accent contrast in the built-in light theme.",
+        "Use model-specific output token limits for Anthropic-protocol requests, including explicit GitHub Copilot Claude limits."
+      ],
+      "Fixed": [
+        "Persist interrupted tool results during cancellation so newly interrupted sessions retain valid provider history.",
+        "Repair malformed tool-call history from older sessions before provider replay so affected sessions can resume normally."
+      ]
+    }
+  },
+  {
+    "version": "0.3.8",
+    "date": "2026-08-06",
+    "sections": {
+      "New": [
+        "Add a reactive cache analytics tab to live self-contained HTML session exports.",
+        "Pin a Hugging Face model to an explicit backing Inference Provider for the lifetime of a session.",
+        "Expose the resolved Hugging Face response provider in session metadata and diagnostics."
+      ],
+      "Changed": [
+        "Update Kimi K3 reasoning effort levels to low, high, and max.",
+        "Add request timestamps to the cache tab tooltip and cache statistics table.",
+        "Bill Anthropic 1-hour cache writes at their own independent rate instead of blending with input token rates."
+      ],
+      "Fixed": [
+        "Retry transient Anthropic stream errors instead of failing the entire turn.",
+        "Fix tool history reset across provider switches so the active provider sees the correct prior tool results."
+      ]
+    }
+  },
+  {
+    "version": "0.3.7",
+    "date": "2026-08-05",
+    "sections": {
+      "New": [
+        "Decide project-input trust before Tau reads ambient project instructions, skills, prompts, themes, system prompts, or opted-in extensions; save exact/parent decisions or choose run-only scopes.",
+        "Control automation with run-only `--approve`/`--no-approve` flags and user-global `defaultProjectTrust` ask/always/never policy.",
+        "Pin a Hugging Face model to an explicit backing Inference Provider for the lifetime of a session."
+      ],
+      "Changed": [
+        "Unresolved headless `ask` now skips protected project inputs; user/global and explicit CLI resources remain available, and project extensions still additionally require `--project-extensions`.",
+        "Project trust is explicitly an input-loading guard, not a filesystem, process, network, tool, model, credential, or prompt-injection sandbox.",
+        "Show latest-request and session prompt-cache hit rates in the sidebar, track OpenAI Responses cache writes, and improve OpenAI prompt-cache affinity."
+      ],
+      "Fixed": [
+        "Exit Tau when the initial project-trust prompt is cancelled instead of continuing untrusted."
+      ]
+    }
+  },
+  {
+    "version": "0.3.6",
+    "date": "2026-08-03",
+    "sections": {
+      "New": [
+        "Customize the generated system prompt in print or TUI sessions with `--system-prompt` and repeatable `--append-system-prompt` text-or-file inputs.",
+        "Load Tau-native `SYSTEM.md` and `APPEND_SYSTEM.md` files from user or project `.tau` directories, with CLI and project precedence plus `/reload` support."
+      ],
+      "Changed": [
+        "Rebuild provider configuration from the current catalog during upgrades while preserving preferences and custom providers, so stale metadata cannot hide new capabilities or restore withdrawn models.",
+        "Include the current system prompt in live HTML session exports as a separate collapsed section; review exports before sharing because project instructions may be exposed, while JSONL and offline exports remain prompt-free."
+      ],
+      "Fixed": [
+        "Anchor context estimates to provider-reported token usage, proactively compact large sessions, and present automatic overflow recovery without misleading terminal errors.",
+        "Keep `@` file-reference completion available in skill arguments and custom prompt text.",
+        "Prevent direct `!` and `!!` shell commands from cancelling an active agent run."
+      ]
+    }
+  },
+  {
+    "version": "0.3.5",
+    "date": "2026-07-31",
+    "sections": {
+      "New": [
+        "Let print-mode automation choose a safe, durable session ID with `--session-id`, while preserving isolated-session guarantees."
+      ],
+      "Changed": [
+        "Cache Anthropic prompt prefixes to reduce repeated input billing, with auth-aware retention, compatibility overrides, and a sidebar cache hit rate.",
+        "Redesign self-contained HTML session exports with compact accordions, entry filters and counts, expand/collapse controls, clearer tool labels, and offline JSONL download.",
+        "Show normal working indicators and unfocused completion notifications while manual `/compact` runs."
+      ],
+      "Fixed": [
+        "Fix Anthropic subscription login and serialize OAuth token refreshes so rotating refresh tokens are not spent concurrently.",
+        "Accept file drops when the terminal is unfocused without duplicating focused paste events.",
+        "Safely hand off `tau update` on Windows after the running process exits, preserving executable paths and arguments exactly."
+      ]
+    }
+  },
+  {
     "version": "0.3.4",
     "date": "2026-07-27",
     "sections": {

@@ -17,11 +17,13 @@ def test_session_manager_creates_and_lists_sessions(tmp_path: Path) -> None:
     record = manager.create_session(
         cwd=cwd,
         model="fake",
-        provider_name="fake-provider",
+        provider_name="huggingface",
+        inference_provider="deepinfra",
         title="Test session",
     )
 
-    assert record.provider_name == "fake-provider"
+    assert record.provider_name == "huggingface"
+    assert record.inference_provider == "deepinfra"
     assert record.path.parent.parent == tmp_path / ".tau" / "sessions"
     assert "project-" in record.path.parent.name
     assert len(record.path.parent.name.rsplit("-", maxsplit=1)[-1]) == 6

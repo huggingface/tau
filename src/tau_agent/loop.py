@@ -32,6 +32,7 @@ from tau_agent.provider_events import (
     AssistantMessageEvent,
     AssistantStartEvent,
 )
+from tau_agent.tool_history import repair_tool_history
 from tau_agent.tools import AgentTool, AgentToolResult
 
 BeforeToolCall = Callable[[ToolCall], Awaitable[tuple[bool, str | None]]]
@@ -49,8 +50,10 @@ async def run_agent_loop(
     messages: list[AgentMessage],
     tools: list[AgentTool],
     prompts: Sequence[AgentMessage] = (),
+    prelude_messages: Sequence[AgentMessage] = (),
     max_turns: int | None = None,
     signal: CancellationToken | None = None,
+    session_id: str | None = None,
     get_steering_messages: Callable[[], Sequence[AgentMessage]] | None = None,
     get_follow_up_messages: Callable[[], Sequence[AgentMessage]] | None = None,
     before_tool_call: BeforeToolCall | None = None,
@@ -63,6 +66,9 @@ async def run_agent_loop(
 
     yield AgentStartEvent()
     yield TurnStartEvent()
+    for message in prelude_messages:
+        yield MessageStartEvent(message=message)
+        yield MessageEndEvent(message=message)
     for prompt in prompts:
         yield MessageStartEvent(message=prompt)
         yield MessageEndEvent(message=prompt)
@@ -117,6 +123,7 @@ async def run_agent_loop(
                 messages=_provider_context(messages),
                 tools=tools,
                 signal=signal,
+                session_id=session_id,
             ):
                 yield event
                 if isinstance(event, MessageEndEvent) and isinstance(
@@ -175,7 +182,7 @@ def _provider_context(messages: list[AgentMessage]) -> list[AgentMessage]:
     persists terminal failures for diagnostics, but an empty failed or aborted
     turn is not model context and must not poison the next request.
     """
-    return [
+    replayable = tuple(
         message
         for message in messages
         if not (
@@ -183,7 +190,8 @@ def _provider_context(messages: list[AgentMessage]) -> list[AgentMessage]:
             and message.stop_reason in {"error", "aborted"}
             and not message.content
         )
-    ]
+    )
+    return list(repair_tool_history(replayable).messages)
 
 
 async def _assistant_events(
@@ -194,6 +202,7 @@ async def _assistant_events(
     messages: list[AgentMessage],
     tools: list[AgentTool],
     signal: CancellationToken | None,
+    session_id: str | None,
 ) -> AsyncIterator[AgentEvent]:
     source: AsyncIterator[AssistantMessageEvent] = provider.stream_response(
         model=model,
@@ -201,6 +210,7 @@ async def _assistant_events(
         messages=messages,
         tools=tools,
         signal=signal,
+        session_id=session_id,
     )
     started = False
     async for event in source:

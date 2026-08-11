@@ -14,6 +14,17 @@ class ResourceError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class SystemPromptResources:
+    """Discovered Tau-native system-prompt file contents and sources."""
+
+    custom_prompt: str | None = None
+    custom_prompt_path: Path | None = None
+    append_prompt: str | None = None
+    append_prompt_path: Path | None = None
+    diagnostics: tuple[ResourceDiagnostic, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ResourceDiagnostic:
     """A non-fatal resource discovery problem or precedence note."""
 
@@ -47,6 +58,7 @@ class TauResourcePaths:
     cwd: Path | None = None
     agents_root: Path | None = field(default_factory=lambda: Path.home() / ".agents")
     paths: TauPaths | None = None
+    project_resources_enabled: bool = True
 
     @property
     def skills_dir(self) -> Path:
@@ -57,6 +69,16 @@ class TauResourcePaths:
     def prompts_dir(self) -> Path:
         """Return the primary Tau prompt templates directory."""
         return self.root / "prompts"
+
+    @property
+    def system_prompt_path(self) -> Path:
+        """Return the user-level replacement system-prompt file."""
+        return self.root / "SYSTEM.md"
+
+    @property
+    def append_system_prompt_path(self) -> Path:
+        """Return the user-level appended system-prompt file."""
+        return self.root / "APPEND_SYSTEM.md"
 
     @property
     def skills_dirs(self) -> tuple[Path, ...]:
@@ -70,7 +92,7 @@ class TauResourcePaths:
         dirs = [self.skills_dir]
         if self.agents_root is not None:
             dirs.append(self.agents_root / "skills")
-        if self.cwd is not None:
+        if self.cwd is not None and self.project_resources_enabled:
             dirs.extend(
                 [
                     paths.project_skills_dir(self.cwd),
@@ -88,7 +110,7 @@ class TauResourcePaths:
         """
         paths = self._paths()
         dirs = [self.root / "themes"]
-        if self.cwd is not None:
+        if self.cwd is not None and self.project_resources_enabled:
             dirs.append(paths.project_themes_dir(self.cwd))
         return tuple(_dedupe_paths(dirs))
 
@@ -99,7 +121,7 @@ class TauResourcePaths:
         dirs = [self.prompts_dir]
         if self.agents_root is not None:
             dirs.append(self.agents_root / "prompts")
-        if self.cwd is not None:
+        if self.cwd is not None and self.project_resources_enabled:
             dirs.extend(
                 [
                     paths.project_prompts_dir(self.cwd),
@@ -125,6 +147,108 @@ def _dedupe_paths(paths: list[Path]) -> list[Path]:
     return deduped
 
 
+def discover_system_prompt_resources(
+    paths: TauResourcePaths,
+    *,
+    custom_prompt_explicit: bool = False,
+    append_prompt_explicit: bool = False,
+    enabled: bool = True,
+) -> SystemPromptResources:
+    """Discover Tau-native prompt files with CLI/project/user precedence."""
+    if not enabled:
+        return SystemPromptResources()
+
+    diagnostics: list[ResourceDiagnostic] = []
+    custom_prompt, custom_path = _discover_system_prompt_file(
+        paths,
+        filename="SYSTEM.md",
+        label="replacement",
+        explicit=custom_prompt_explicit,
+        diagnostics=diagnostics,
+    )
+    append_prompt, append_path = _discover_system_prompt_file(
+        paths,
+        filename="APPEND_SYSTEM.md",
+        label="append",
+        explicit=append_prompt_explicit,
+        diagnostics=diagnostics,
+    )
+    return SystemPromptResources(
+        custom_prompt=custom_prompt,
+        custom_prompt_path=custom_path,
+        append_prompt=append_prompt,
+        append_prompt_path=append_path,
+        diagnostics=tuple(diagnostics),
+    )
+
+
+def _discover_system_prompt_file(
+    paths: TauResourcePaths,
+    *,
+    filename: str,
+    label: str,
+    explicit: bool,
+    diagnostics: list[ResourceDiagnostic],
+) -> tuple[str | None, Path | None]:
+    candidates: list[tuple[str, Path]] = []
+    if paths.cwd is not None and paths.project_resources_enabled:
+        candidates.append(("project", paths.cwd / ".tau" / filename))
+    candidates.append(("user", paths.root / filename))
+
+    existing: list[tuple[str, Path]] = []
+    for scope, path in candidates:
+        try:
+            if path.exists():
+                existing.append((scope, path))
+        except OSError as exc:
+            raise ResourceError(
+                f"Could not inspect {label} system prompt file {path}: {exc}"
+            ) from exc
+
+    if explicit:
+        for _scope, path in existing:
+            diagnostics.append(
+                ResourceDiagnostic(
+                    kind="system-prompt",
+                    name=label,
+                    path=path,
+                    severity="info",
+                    message="ignored because an explicit startup value takes precedence",
+                )
+            )
+        return None, None
+    if not existing:
+        return None, None
+
+    selected_scope, selected_path = existing[0]
+    try:
+        content = selected_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ResourceError(
+            f"Could not read {label} system prompt file {selected_path} as UTF-8: {exc}"
+        ) from exc
+
+    diagnostics.append(
+        ResourceDiagnostic(
+            kind="system-prompt",
+            name=label,
+            path=selected_path,
+            severity="info",
+            message=f"selected {selected_scope} system prompt file",
+        )
+    )
+    for _scope, path in existing[1:]:
+        diagnostics.append(
+            ResourceDiagnostic(
+                kind="system-prompt",
+                name=label,
+                path=path,
+                message=f"shadowed by higher-precedence file {selected_path}",
+            )
+        )
+    return content, selected_path
+
+
 def resource_paths_with_cwd(
     paths: TauResourcePaths | None,
     cwd: Path,
@@ -132,13 +256,30 @@ def resource_paths_with_cwd(
     """Return resource paths with a cwd available for project-local discovery."""
     if paths is None:
         return TauResourcePaths(cwd=cwd)
-    if paths.cwd is not None:
-        return paths
+    # A resource plan is destination-bound. Replacement/resume callers may
+    # supply a plan created for the source session, but only its user/global
+    # roots and feature flags are reusable.
     return TauResourcePaths(
         root=paths.root,
         cwd=cwd,
         agents_root=paths.agents_root,
         paths=paths.paths,
+        project_resources_enabled=paths.project_resources_enabled,
+    )
+
+
+def resource_paths_with_project_trust(
+    paths: TauResourcePaths,
+    *,
+    trusted: bool,
+) -> TauResourcePaths:
+    """Return a coherent global-only or global-plus-project resource plan."""
+    return TauResourcePaths(
+        root=paths.root,
+        cwd=paths.cwd,
+        agents_root=paths.agents_root,
+        paths=paths.paths,
+        project_resources_enabled=trusted,
     )
 
 

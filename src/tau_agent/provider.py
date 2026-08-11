@@ -27,6 +27,11 @@ class ModelProvider(Protocol):
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[AssistantMessageEvent]:
-        """Stream one model response as assistant message events."""
+        """Stream one model response as assistant message events.
+
+        Providers may use ``session_id`` for request routing or prompt-cache
+        affinity. Unsupported providers ignore it.
+        """
         ...

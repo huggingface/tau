@@ -177,6 +177,7 @@ async def test_openai_compatible_provider_formats_request_and_streams_text() -> 
                 system="You are Tau.",
                 messages=[UserMessage(content="Say hello")],
                 tools=[],
+                session_id="unsupported-session",
             )
         )
 
@@ -200,11 +201,220 @@ async def test_openai_compatible_provider_formats_request_and_streams_text() -> 
     payload = loads(request.content)
     assert payload["model"] == "test-model"
     assert payload["stream"] is True
+    assert "prompt_cache_key" not in payload
+    assert "session_id" not in request.headers
+    assert "x-client-request-id" not in request.headers
     assert "reasoning_effort" not in payload
     assert payload["messages"] == [
         {"role": "system", "content": "You are Tau."},
         {"role": "user", "content": "Say hello"},
     ]
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_provider_uses_wire_model_alias_but_reports_logical_model() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://router.huggingface.co/v1",
+                model_aliases={"zai-org/GLM-5.2": "zai-org/GLM-5.2:deepinfra"},
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="zai-org/GLM-5.2",
+                system="You are Tau.",
+                messages=[UserMessage(content="hello")],
+                tools=[],
+            )
+        )
+
+    assert loads(requests[0].content)["model"] == "zai-org/GLM-5.2:deepinfra"
+    assert isinstance(events[-1], AssistantDoneEvent)
+    assert events[-1].message.model == "zai-org/GLM-5.2"
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_provider_observes_headers_after_success() -> None:
+    observed: list[dict[str, str]] = []
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(
+                500,
+                headers={"x-inference-provider": "failed-provider"},
+            )
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
+            headers={
+                "content-type": "text/event-stream",
+                "x-inference-provider": "deepinfra",
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://router.huggingface.co/v1",
+                max_retries=1,
+                max_retry_delay_seconds=0,
+                model_aliases={"zai-org/GLM-5.2": "zai-org/GLM-5.2:deepinfra"},
+                response_headers_observer=lambda headers: observed.append(dict(headers)),
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="zai-org/GLM-5.2",
+                system="You are Tau.",
+                messages=[UserMessage(content="hello")],
+                tools=[],
+            )
+        )
+
+    assert [loads(request.content)["model"] for request in requests] == [
+        "zai-org/GLM-5.2:deepinfra",
+        "zai-org/GLM-5.2:deepinfra",
+    ]
+    assert len(observed) == 1
+    assert observed[0]["x-inference-provider"] == "deepinfra"
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_provider_observer_failure_keeps_completed_response() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
+            headers={
+                "content-type": "text/event-stream",
+                "x-inference-provider": "deepinfra",
+            },
+        )
+
+    def fail_observer(headers: Mapping[str, str]) -> None:
+        del headers
+        raise PermissionError("session index is read-only")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://router.huggingface.co/v1",
+                response_headers_observer=fail_observer,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="zai-org/GLM-5.2",
+                system="You are Tau.",
+                messages=[UserMessage(content="hello")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], AssistantDoneEvent)
+    assert events[-1].message.text == "ok"
+    assert events[-1].message.diagnostics[-1].type == "response_headers_observer_error"
+    assert events[-1].message.diagnostics[-1].details == {
+        "error": "session index is read-only",
+        "error_type": "PermissionError",
+    }
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_provider_does_not_retry_after_partial_output() -> None:
+    requests: list[httpx.Request] = []
+
+    class FailingStream(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+            raise httpx.ReadError("stream dropped")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            stream=FailingStream(),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://router.huggingface.co/v1",
+                max_retries=2,
+                max_retry_delay_seconds=0,
+                model_aliases={"zai-org/GLM-5.2": "zai-org/GLM-5.2:deepinfra"},
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="zai-org/GLM-5.2",
+                system="You are Tau.",
+                messages=[UserMessage(content="hello")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 1
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.text == "partial"
+
+
+@pytest.mark.anyio
+async def test_openai_chat_completions_sends_prompt_cache_key_without_affinity_headers() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://api.openai.com/v1",
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="gpt-4.1",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+                session_id="chat-session",
+            )
+        )
+
+    assert loads(requests[0].content)["prompt_cache_key"] == "chat-session"
+    assert "session_id" not in requests[0].headers
+    assert "x-client-request-id" not in requests[0].headers
 
 
 @pytest.mark.anyio
@@ -620,6 +830,60 @@ async def test_openai_compatible_provider_streams_tool_calls() -> None:
         ToolCall(id="call-1", name="read", arguments={"path": "README.md"}),
     )
     assert events[-1].reason == "toolUse"
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_provider_reports_resolved_response_provider() -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(
+                503,
+                text="temporarily unavailable",
+                headers={"x-inference-provider": "provider-before-failover"},
+            )
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n'
+                "data: [DONE]\n\n"
+            ),
+            headers={
+                "content-type": "text/event-stream",
+                "x-inference-provider": "provider-after-failover",
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://router.huggingface.co/v1",
+                provider_name="huggingface",
+                response_provider_header="x-inference-provider",
+                max_retries=1,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="test-model",
+                system="You are Tau.",
+                messages=[UserMessage(content="hello")],
+                tools=[],
+            )
+        )
+
+    assert attempts == 2
+    assert isinstance(events[0], AssistantStartEvent)
+    assert events[0].partial.response_provider == "provider-after-failover"
+    assert isinstance(events[-1], AssistantDoneEvent)
+    assert events[-1].message.provider == "huggingface"
+    assert events[-1].message.response_provider == "provider-after-failover"
 
 
 @pytest.mark.anyio
@@ -1560,8 +1824,67 @@ async def test_anthropic_provider_formats_request_and_streams_text() -> None:
     payload = loads(request.content)
     assert payload["model"] == "claude-test"
     assert payload["stream"] is True
-    assert payload["system"] == "You are Tau."
-    assert payload["messages"] == [{"role": "user", "content": "Say hello"}]
+    assert payload["system"] == [
+        {
+            "type": "text",
+            "text": "You are Tau.",
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+    assert payload["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Say hello",
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+        }
+    ]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("configured_max_tokens", "expected_max_tokens"),
+    [(64_000, 64_000), (None, 4096)],
+)
+async def test_anthropic_provider_sends_configured_max_tokens(
+    configured_max_tokens: int | None,
+    expected_max_tokens: int,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"type":"message_stop"}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+                max_tokens=configured_max_tokens,
+            ),
+            client=client,
+        )
+
+        await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hello")],
+                tools=[],
+            )
+        )
+
+    payload = loads(requests[0].content)
+    assert payload["max_tokens"] == expected_max_tokens
 
 
 @pytest.mark.anyio
@@ -1783,6 +2106,240 @@ async def test_anthropic_provider_retries_overloaded_529() -> None:
         "text_end",
         "done",
     ]
+
+
+@pytest.mark.anyio
+async def test_anthropic_provider_retries_transient_stream_error() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(
+                200,
+                text=(
+                    'data: {"type":"error","error":{"type":"overloaded_error",'
+                    '"message":"Overloaded"}}\n\n'
+                ),
+                headers={"content-type": "text/event-stream"},
+            )
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"content_block_delta","index":0,'
+                '"delta":{"type":"text_delta","text":"ok"}}\n\n'
+                'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n'
+                'data: {"type":"message_stop"}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+                max_retries=1,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 2
+    assert [event.type for event in events] == [
+        "start",
+        "text_start",
+        "text_delta",
+        "text_end",
+        "done",
+    ]
+
+
+@pytest.mark.anyio
+async def test_anthropic_provider_surfaces_stream_error_after_retry_exhaustion() -> None:
+    requests: list[httpx.Request] = []
+    error_event = {
+        "type": "error",
+        "error": {"type": "overloaded_error", "message": "Overloaded"},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"error","error":{"type":"overloaded_error",'
+                '"message":"Overloaded"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+                max_retries=2,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 3
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.error_message == "Overloaded"
+    assert events[-1].error.diagnostics[0].details == {
+        "event": error_event,
+        "attempts": 3,
+    }
+
+
+@pytest.mark.anyio
+async def test_anthropic_provider_does_not_retry_non_transient_stream_error() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"error","error":{"type":"authentication_error",'
+                '"message":"Invalid API key"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+                max_retries=2,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 1
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.error_message == "Invalid API key"
+
+
+@pytest.mark.anyio
+async def test_anthropic_provider_does_not_retry_stream_error_after_content() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"content_block_delta","index":0,'
+                '"delta":{"type":"text_delta","text":"partial"}}\n\n'
+                'data: {"type":"error","error":{"type":"overloaded_error",'
+                '"message":"Overloaded"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+                max_retries=2,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 1
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.text == "partial"
+    assert events[-1].error.error_message == "Overloaded"
+
+
+@pytest.mark.anyio
+async def test_anthropic_provider_cancellation_stops_stream_error_retry_backoff() -> None:
+    requests: list[httpx.Request] = []
+
+    class CancelDuringBackoff(SimpleCancellationToken):
+        def __init__(self) -> None:
+            super().__init__()
+            self.checks = 0
+
+        def is_cancelled(self) -> bool:
+            self.checks += 1
+            return self.checks >= 2
+
+    signal = CancelDuringBackoff()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"error","error":{"type":"overloaded_error",'
+                '"message":"Overloaded"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+                max_retries=2,
+                max_retry_delay_seconds=1,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+                signal=signal,
+            )
+        )
+
+    assert len(requests) == 1
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.error_message == "Provider stream ended without a terminal event"
 
 
 @pytest.mark.anyio
@@ -2322,18 +2879,21 @@ async def test_openai_compatible_provider_reports_usage() -> None:
 
 
 @pytest.mark.anyio
-async def test_openai_codex_provider_reports_usage() -> None:
+async def test_openai_codex_provider_reports_usage_and_sends_cache_affinity() -> None:
+    requests: list[httpx.Request] = []
+
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(_request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
         return httpx.Response(
             200,
             text=(
                 'data: {"type":"response.output_text.delta","delta":"Hi"}\n\n'
                 'data: {"type":"response.completed","response":{"status":"completed",'
                 '"usage":{"input_tokens":50,"output_tokens":8,"total_tokens":58,'
-                '"input_tokens_details":{"cached_tokens":12},'
+                '"input_tokens_details":{"cached_tokens":12,"cache_write_tokens":8},'
                 '"output_tokens_details":{"reasoning_tokens":3}}}}\n\n'
             ),
             headers={"content-type": "text/event-stream"},
@@ -2354,31 +2914,39 @@ async def test_openai_codex_provider_reports_usage() -> None:
                 system="You are Tau.",
                 messages=[UserMessage(content="Say hi")],
                 tools=[],
+                session_id="c" * 70,
             )
         )
 
+    cache_key = "c" * 64
+    assert loads(requests[0].content)["prompt_cache_key"] == cache_key
+    assert requests[0].headers["session-id"] == cache_key
+    assert "x-client-request-id" not in requests[0].headers
     assert isinstance(events[-1], AssistantDoneEvent)
     usage = events[-1].message.usage
     assert usage is not None
-    assert usage.input == 38  # 50 input - 12 cached
+    assert usage.input == 30  # 50 input - 12 cached - 8 written
     assert usage.output == 8
     assert usage.cache_read == 12
-    assert usage.cache_write == 0
+    assert usage.cache_write == 8
     assert usage.reasoning == 3
     assert usage.total_tokens == 58
     assert usage.cost.total == 0
 
 
 @pytest.mark.anyio
-async def test_openai_compatible_responses_api_reports_usage() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
+async def test_openai_compatible_responses_reports_usage_and_sends_cache_affinity() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
         return httpx.Response(
             200,
             text=(
                 'data: {"type":"response.output_text.delta","delta":"Hi"}\n\n'
                 'data: {"type":"response.completed","response":{"status":"completed",'
                 '"usage":{"input_tokens":50,"output_tokens":8,"total_tokens":58,'
-                '"input_tokens_details":{"cached_tokens":12},'
+                '"input_tokens_details":{"cached_tokens":12,"cache_write_tokens":8},'
                 '"output_tokens_details":{"reasoning_tokens":3}}}}\n\n'
             ),
             headers={"content-type": "text/event-stream"},
@@ -2388,7 +2956,7 @@ async def test_openai_compatible_responses_api_reports_usage() -> None:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
-                base_url="https://example.test/v1",
+                base_url="https://api.openai.com/v1",
             ),
             client=client,
         )
@@ -2399,16 +2967,20 @@ async def test_openai_compatible_responses_api_reports_usage() -> None:
                 system="You are Tau.",
                 messages=[UserMessage(content="Say hi")],
                 tools=[],
+                session_id="responses-session",
             )
         )
 
+    assert loads(requests[0].content)["prompt_cache_key"] == "responses-session"
+    assert requests[0].headers["session_id"] == "responses-session"
+    assert "x-client-request-id" not in requests[0].headers
     assert isinstance(events[-1], AssistantDoneEvent)
     usage = events[-1].message.usage
     assert usage is not None
-    assert usage.input == 38  # 50 input - 12 cached
+    assert usage.input == 30  # 50 input - 12 cached - 8 written
     assert usage.output == 8
     assert usage.cache_read == 12
-    assert usage.cache_write == 0
+    assert usage.cache_write == 8
     assert usage.reasoning == 3
     assert usage.total_tokens == 58
     assert usage.cost.total == 0

@@ -50,12 +50,14 @@ from tau_coding.events import (
     CompactionEndEvent,
     CompactionStartEvent,
     QueueUpdateEvent,
+    SessionAgentEndEvent,
 )
 from tau_coding.paths import TauPaths
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_config import (
     OpenAICodexProviderConfig,
     OpenAICompatibleProviderConfig,
+    ProviderSelection,
     ProviderSettings,
     ScopedModelConfig,
     save_provider_settings,
@@ -120,6 +122,7 @@ from tau_coding.tui.terminal_title import TerminalTitleController
 from tau_coding.tui.widgets import (
     TRANSCRIPT_WINDOW_ITEMS,
     TRANSCRIPT_WINDOW_OVERSCAN_ITEMS,
+    CompactSessionInfo,
     LeftAlignedMarkdownHeading,
     StreamingTranscriptMessageWidget,
     TauMarkdownBlock,
@@ -186,6 +189,7 @@ class FakeSession:
             ProjectContextFile(path=str(self.cwd / "AGENTS.md"), content="Follow rules."),
         )
         self.context_token_estimate = 12034
+        self.has_provider_context_usage = True
         self.auto_compact_token_threshold = 200000
         self.context_window_tokens = 216384
         self.thinking_level = "medium"
@@ -198,6 +202,9 @@ class FakeSession:
             tool_call_count=23,
             input_tokens=1_200_000,
             output_tokens=48_000,
+            cached_input_tokens=1_140_000,
+            latest_prompt_tokens=1_200_000,
+            latest_cached_input_tokens=1_188_000,
             estimated_cost=1.24,
         )
         self.system_prompt = "You are Tau."
@@ -497,9 +504,10 @@ def test_session_sidebar_renders_session_metadata() -> None:
     assert "location" not in output
     assert "branch" not in output
     assert "14 turns, 23 tool calls" in output
-    assert "cumulative usage" in output
-    assert "1.2m in, 48k out" in output
+    assert "usage" in output
+    assert "cumulative usage" not in output
     assert "1.2m in, 48k out · ~$1.24" in output
+    assert "cache: 99% latest · 95% session" in output
     assert "auto at 200k" in output
     assert "read, write, edit, bash" in output
     assert "• review" in output
@@ -631,12 +639,41 @@ def test_session_sidebar_uses_na_when_cost_is_unavailable() -> None:
     assert "cost unavailable" not in output
 
 
+def test_session_sidebar_omits_cache_rate_for_providers_without_caching() -> None:
+    session = FakeSession()
+    session.session_stats = SessionStats(input_tokens=1200, output_tokens=300)
+    console = Console(record=True, width=80)
+
+    console.print(render_session_sidebar(session))
+
+    output = console.export_text()
+    assert "cached" not in output
+    assert "1.2k in, 300 out" in output
+
+
+def test_session_sidebar_shows_latest_cache_miss_with_session_rate() -> None:
+    session = FakeSession()
+    session.session_stats = SessionStats(
+        input_tokens=2_000,
+        output_tokens=300,
+        cached_input_tokens=500,
+        cache_write_tokens=500,
+        latest_prompt_tokens=1_000,
+    )
+    console = Console(record=True, width=80)
+
+    console.print(render_session_sidebar(session))
+
+    output = console.export_text()
+    assert "cache: 0% latest · 25% session" in output
+
+
 def test_session_sidebar_brand_includes_current_version() -> None:
     console = Console(record=True, width=80)
 
     console.print(_sidebar_brand(theme=TAU_DARK_THEME))
 
-    assert "τ = 2π  0.3.4" in console.export_text()
+    assert "τ = 2π  0.3.9" in console.export_text()
 
 
 def test_session_sidebar_uses_prominent_title_and_accented_section_headers() -> None:
@@ -708,6 +745,38 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
     assert "openai:fake-model" in lines[provider_line]
     assert "(medium)" in lines[provider_line]
     assert context_line == provider_line + 1
+
+
+def test_compact_session_info_shows_unknown_without_provider_usage() -> None:
+    console = Console(record=True, width=120)
+    session = FakeSession()
+    session.has_provider_context_usage = False
+
+    console.print(render_compact_session_info(session))
+
+    assert "?/200k" in console.export_text()
+
+
+def test_compact_session_info_redraws_when_provider_usage_becomes_available() -> None:
+    session = FakeSession()
+    session.has_provider_context_usage = False
+    widget = CompactSessionInfo()
+    updates: list[object] = []
+    widget.update = updates.append  # type: ignore[method-assign]
+
+    widget.update_from_session(session)
+    first_console = Console(record=True, width=120)
+    first_console.print(updates[-1])
+    assert "?/200k" in first_console.export_text()
+
+    session.has_provider_context_usage = True
+    widget.update_from_session(session)
+    assert len(updates) == 2
+    second_console = Console(record=True, width=120)
+    second_console.print(updates[-1])
+    second_output = second_console.export_text()
+    assert "12k/200k" in second_output
+    assert "?/200k" not in second_output
 
 
 def test_compact_session_info_styles_provider_as_metadata() -> None:
@@ -2832,6 +2901,42 @@ def test_tui_app_registers_and_applies_custom_theme() -> None:
         set_custom_tui_themes({})
 
 
+@pytest.mark.anyio
+async def test_tui_app_removes_source_project_themes_after_resume(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tau_coding.tui.themes import (
+        THEME_COLOR_FIELDS,
+        TRANSCRIPT_ROLES,
+        available_tui_theme_names,
+        parse_tui_theme_json,
+        set_custom_tui_themes,
+    )
+
+    theme_data = {
+        "name": "project-theme",
+        "colors": dict.fromkeys(THEME_COLOR_FIELDS, "#123456"),
+        "roles": {role: {"border": "#123456", "body": "#e0e0e0"} for role in TRANSCRIPT_ROLES},
+    }
+    project_theme = parse_tui_theme_json(theme_data)
+    set_custom_tui_themes({"project-theme": project_theme})
+    monkeypatch.setattr(tui_app, "load_custom_tui_themes", lambda _dirs: ({}, []))
+    session = FakeSession()
+    session.theme_dirs = ()
+    app = TauTuiApp(session, tui_settings=TuiSettings(theme="project-theme"))
+    try:
+        async with app.run_test() as pilot:
+            await app._resume_session("destination-session")
+            await pilot.pause()
+
+            assert app.theme == "tau-dark"
+            assert "project-theme" not in app.available_themes
+            assert "project-theme" not in available_tui_theme_names()
+            assert app.tui_settings.theme == "project-theme"
+    finally:
+        set_custom_tui_themes({})
+
+
 def test_tui_app_falls_back_to_tau_dark_when_theme_is_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2917,6 +3022,8 @@ def test_tau_light_theme_uses_light_chat_backgrounds() -> None:
     assert theme.screen_background == "#ffffff"
     assert theme.transcript_background == "#ffffff"
     assert theme.prompt_text == "#111827"
+    assert theme.markdown_heading == theme.accent
+    assert theme.markdown_bullet == theme.accent
     assert theme.syntax_theme == "ansi_light"
     assert theme.role_styles["user"].body == f"#111827 on {theme.prompt_background}"
     assert theme.role_styles["assistant"].body == "#111827"
@@ -4206,7 +4313,11 @@ async def test_tui_app_export_command_runs_session_export() -> None:
         await pilot.press("enter")
 
         assert session.export_calls == [(Path("out.jsonl"), "jsonl")]
-        assert notifications == ["Exported session to /workspace/project/session.html"]
+        assert notifications == []
+        assert app.state.items[-1] == ChatItem(
+            role="status",
+            text="/export\nExported session to /workspace/project/session.html",
+        )
         assert session.prompt_texts == []
 
 
@@ -6684,6 +6795,50 @@ async def test_tui_app_runs_terminal_command_without_context() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_app_terminal_command_does_not_cancel_active_agent() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    completed = asyncio.Event()
+
+    class RunningSession(FakeSession):
+        async def prompt(
+            self,
+            text: str,
+            **kwargs: object,
+        ) -> AsyncIterator[AgentEvent]:
+            del kwargs
+            self.prompt_texts.append(text)
+            yield AgentStartEvent()
+            started.set()
+            await release.wait()
+            yield AgentEndEvent()
+            yield AgentSettledEvent()
+            completed.set()
+
+    session = RunningSession()
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "keep working"
+        await pilot.press("enter")
+        await started.wait()
+
+        prompt.value = "!! code ."
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert session.terminal_commands == [("code .", False)]
+        assert not completed.is_set()
+
+        release.set()
+        await pilot.pause()
+
+        assert completed.is_set()
+        assert app.state.running is False
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("add_to_context", [True, False])
 async def test_tui_app_renders_terminal_command_while_running(add_to_context: bool) -> None:
     session = FakeSession()
@@ -7449,7 +7604,7 @@ async def test_tui_prompt_worker_shows_diagnostic_log_path_for_error_event(tmp_p
 
 
 @pytest.mark.anyio
-async def test_tui_prompt_worker_skips_retry_hint_for_context_overflow() -> None:
+async def test_tui_prompt_worker_shows_recovery_status_instead_of_overflow_error() -> None:
     class OverflowSession(FakeSession):
         def __init__(self) -> None:
             super().__init__(
@@ -7461,7 +7616,13 @@ async def test_tui_prompt_worker_skips_retry_hint_for_context_overflow() -> None
                             error_message="prompt is too long: context window exceeded",
                         )
                     ),
-                    AgentEndEvent(),
+                    SessionAgentEndEvent(will_retry=False),
+                    CompactionStartEvent(reason="overflow"),
+                    CompactionEndEvent(reason="overflow", will_retry=True),
+                    AgentStartEvent(),
+                    MessageEndEvent(message=AssistantMessage(content="Recovered answer")),
+                    SessionAgentEndEvent(will_retry=False),
+                    AgentSettledEvent(),
                 ]
             )
 
@@ -7471,9 +7632,42 @@ async def test_tui_prompt_worker_skips_retry_hint_for_context_overflow() -> None
 
     await app._run_prompt("break")
 
-    assert app.state.error == "prompt is too long: context window exceeded"
+    assert app.state.error is None
+    assert not any(item.role == "error" for item in app.state.items)
+    assert any(
+        item.role == "status" and "compacting and retrying" in item.text for item in app.state.items
+    )
+    assert app.state.items[-1].text == "Recovered answer"
+    assert app.state.running is False
+
+
+@pytest.mark.anyio
+async def test_tui_prompt_worker_surfaces_overflow_when_compaction_fails() -> None:
+    message = AssistantMessage(
+        stop_reason="error",
+        error_message="prompt is too long: context window exceeded",
+    )
+    session = FakeSession(
+        events=[
+            AgentStartEvent(),
+            MessageEndEvent(message=message),
+            SessionAgentEndEvent(will_retry=False),
+            CompactionStartEvent(reason="overflow"),
+            CompactionEndEvent(
+                reason="overflow",
+                error_message="Overflow compaction failed",
+            ),
+            AgentSettledEvent(),
+        ]
+    )
+    app = TauTuiApp(session)
+    app._refresh = lambda: None  # type: ignore[method-assign]
+
+    await app._run_prompt("break")
+
+    assert app.state.error is not None
+    assert "context window exceeded" in app.state.error
     assert app.state.items[-1].role == "error"
-    assert app.state.items[-1].text == "Error: prompt is too long: context window exceeded"
     assert app.state.running is False
 
 
@@ -7655,6 +7849,30 @@ async def test_tui_app_runs_initial_prompt() -> None:
     assert any(item.role == "user" and item.text == "explain this repo" for item in app.state.items)
 
 
+def test_huggingface_startup_route_prefers_resumed_session_pin(tmp_path: Path) -> None:
+    provider = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=("zai-org/GLM-5.2",),
+        default_model="zai-org/GLM-5.2",
+        inference_providers={"zai-org/GLM-5.2": "deepinfra"},
+    )
+    selection = ProviderSelection(provider=provider, model="zai-org/GLM-5.2")
+    record = CodingSessionRecord(
+        id="session-id",
+        path=tmp_path / "session.jsonl",
+        cwd=tmp_path,
+        model="zai-org/GLM-5.2",
+        title=None,
+        created_at=1.0,
+        updated_at=1.0,
+        provider_name="huggingface",
+        inference_provider="fireworks-ai",
+    )
+
+    assert tui_app._startup_inference_provider(selection, record) == "fireworks-ai"
+    assert tui_app._startup_inference_provider(selection, None) == "deepinfra"
+
+
 @pytest.mark.anyio
 async def test_run_tui_app_falls_back_to_first_credentialed_provider(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -7754,6 +7972,79 @@ async def test_run_tui_app_falls_back_to_first_credentialed_provider(
         "run",
         "provider_closed",
     ]
+
+
+@pytest.mark.anyio
+async def test_run_tui_app_exits_when_startup_trust_is_cancelled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    calls: list[str] = []
+    record = CodingSessionRecord(
+        id="new-session",
+        path=tmp_path / "new-session.jsonl",
+        cwd=tmp_path,
+        model="gpt-5",
+        title=None,
+        created_at=1.0,
+        updated_at=1.0,
+        provider_name="openai",
+    )
+
+    class FakeProvider:
+        async def aclose(self) -> None:
+            calls.append("provider_closed")
+
+    class FakeManager:
+        def prepare_session(
+            self,
+            *,
+            cwd: Path,
+            model: str,
+            provider_name: str | None = None,
+        ) -> CodingSessionRecord:
+            calls.append("prepare")
+            return record
+
+        def get_session(self, session_id: str) -> CodingSessionRecord | None:
+            return None
+
+    class CancelledSession:
+        project_trust_resolution = SimpleNamespace(cancelled=True)
+
+        async def aclose(self) -> None:
+            calls.append("session_closed")
+
+    class FakeCodingSession:
+        @classmethod
+        async def load(cls, config: object) -> CancelledSession:
+            calls.append("load")
+            return CancelledSession()
+
+    class UnexpectedApp:
+        def __init__(self, session: object, **kwargs: object) -> None:
+            raise AssertionError("main TUI must not open after startup trust cancellation")
+
+    settings = ProviderSettings(
+        default_provider="openai",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="openai",
+                models=("gpt-5",),
+                default_model="gpt-5",
+            ),
+        ),
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "stored-key")
+    monkeypatch.setattr(tui_app, "load_provider_settings", lambda: settings)
+    monkeypatch.setattr(tui_app, "create_model_provider", lambda *args, **kwargs: FakeProvider())
+    monkeypatch.setattr(tui_app, "CodingSession", FakeCodingSession)
+    monkeypatch.setattr(tui_app, "TauTuiApp", UnexpectedApp)
+
+    result = await tui_app.run_tui_app(cwd=tmp_path, model=None, session_manager=FakeManager())
+
+    assert result is None
+    assert calls == ["prepare", "load", "session_closed", "provider_closed"]
 
 
 @pytest.mark.anyio
@@ -8098,6 +8389,9 @@ async def test_run_tui_app_creates_new_session_by_default(
             assert config.provider_name == "local"  # type: ignore[attr-defined]
             assert config.auto_compact_token_threshold == 1000  # type: ignore[attr-defined]
             assert config.index_on_first_persist is True  # type: ignore[attr-defined]
+            assert config.system is None  # type: ignore[attr-defined]
+            assert config.custom_system_prompt == "Custom base"  # type: ignore[attr-defined]
+            assert config.append_system_prompt == "First\n\nSecond"  # type: ignore[attr-defined]
             calls.append("load")
             return "session"
 
@@ -8139,6 +8433,8 @@ async def test_run_tui_app_creates_new_session_by_default(
         auto_compact_token_threshold=1000,
         initial_prompt="explain this repo",
         session_manager=FakeManager(),
+        custom_system_prompt="Custom base",
+        append_system_prompt="First\n\nSecond",
     )
 
     assert calls == [
@@ -8360,6 +8656,9 @@ async def test_run_tui_app_resumes_explicit_session(
         async def load(cls, config: object) -> str:
             assert config.provider_name == "local"  # type: ignore[attr-defined]
             assert config.model == "fake-model"  # type: ignore[attr-defined]
+            assert config.system is None  # type: ignore[attr-defined]
+            assert config.custom_system_prompt == "Resume base"  # type: ignore[attr-defined]
+            assert config.append_system_prompt == "Resume append"  # type: ignore[attr-defined]
             calls.append("load")
             return "session"
 
@@ -8405,6 +8704,8 @@ async def test_run_tui_app_resumes_explicit_session(
         cwd=tmp_path,
         session_id="session-1",
         session_manager=FakeManager(),
+        custom_system_prompt="Resume base",
+        append_system_prompt="Resume append",
     )
 
     assert calls == [

@@ -14,10 +14,14 @@ Installed examples are under `examples/extensions/` next to these docs. Read the
 ## Locations
 
 - `~/.tau/extensions/`: discovered by default.
-- `<project>/.tau/extensions/`: enabled explicitly with `--project-extensions`.
+- `<project>/.tau/extensions/`: requires project approval and `--project-extensions`.
 - `tau -e PATH`: explicitly load a file or directory.
 
-An extension defines `setup(tau)`. Project extensions execute arbitrary Python and are disabled by default; enable only trusted repositories.
+An extension defines `setup(tau)`. Built-in, user, and explicit extensions may
+handle `project_trust` before protected loading; first decisive result wins.
+Project extensions cannot approve themselves. They execute arbitrary Python and
+remain disabled without both approval and the explicit code opt-in. Trust is not
+a process/filesystem/network/tool/model sandbox.
 
 ## Development checklist
 

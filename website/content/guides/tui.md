@@ -78,7 +78,7 @@ prefix becomes a matching `$`, so you can tell at a glance that submitting will
 execute a shell command instead of messaging the model.
 
 While typing a path after `!`/`!!`, press **Tab** to complete filenames from the
-working directory.
+working directory. Dot-prefixed paths such as `.env` and `.agents/` are included.
 
 {{% note title="Aliases" %}}
 These commands (and the agent's `bash` tool) run in a non-interactive shell, so
@@ -90,8 +90,9 @@ aliases, set a `shellCommandPrefix` — see
 ## Referencing files with `@`
 
 Type `@` in the prompt to open file suggestions from the project tree, and insert
-a path like `@src/app.py`. Tau skips hidden and generated directories (`.git`,
-`.venv`, `node_modules`, `__pycache__`, `build`, `dist`).
+a path like `@src/app.py`. Dot-prefixed project content such as `.env` and
+`.agents/` is included. Tau still skips known metadata and generated directories
+such as `.git`, `.venv`, `node_modules`, `__pycache__`, `build`, and `dist`.
 
 ## Dropping files into the prompt
 
@@ -140,16 +141,18 @@ when you want to reduce what is sent to the model.
   any custom themes you have installed. Each theme uses one shared selection
   palette for prompt autocomplete and modal lists such as `/resume`. In
   `tau-dark`, the aqua selection color is also the global accent used for
-  headings, prompt activity, and other emphasized UI. See
+  headings, prompt activity, and other emphasized UI. `tau-light` uses a deep
+  teal accent for headings and list markers against its white background. See
   [Themes]({{< relref "./themes.md" >}}).
 
 ## The sidebar
 
 On wide-enough terminals Tau shows the session name prominently without a
 redundant section label, followed by active-branch
-turn and tool-call totals, provider-reported token usage under **cumulative usage**,
-estimated cost, automatic-compaction threshold, and loaded tools, skills, prompt
-templates, extensions, and context files such as `AGENTS.md`. Tool, prompt, and extension
+turn and tool-call totals, provider-reported token usage, latest-request and
+session prompt-cache hit rates, estimated cost, automatic-compaction threshold,
+and loaded tools, skills, prompt templates, extensions, and context files such as
+`AGENTS.md`. Tool, prompt, and extension
 names use compact comma-separated lists limited to three rendered lines. Skills
 and context files use bullet lists, with one item or path per line, limited to
 five entries. Truncated sections end with `...(X more)` showing how many entries
@@ -171,9 +174,21 @@ provider request, so it can be much larger than the context used by the next
 request. Cost is an estimate based on provider-reported usage and configured
 catalog rates; the sidebar shows `$N/A` when Tau lacks complete pricing data.
 
+The cache line separates the latest model request from the cumulative session.
+Both rates are the share of prompt tokens the provider served from its cache
+instead of processing again. The latest rate makes a cache miss immediately visible and,
+after tool use, describes the most recent model continuation. The session rate
+includes every request on the active branch, including the initial cold request.
+A low latest rate usually means something early in the request changed, such as
+a reloaded tool list or thinking level, or that a pause outlived the provider's
+cache.
+Tau hides both figures for providers that do not report cache usage.
+
 The compact status block below the prompt puts `provider:model (thinking)` on its
-first line and the approximate active context as `used/limit` on the second.
-Unlike cumulative usage, this estimate describes the system prompt, tools,
+first line and provider-anchored active context as `used/limit` on the second. When
+no valid provider usage exists yet, such as immediately after compaction, it shows
+`?/limit` until a fresh response reports usage. Unlike cumulative usage, this
+active count describes the system prompt, tools,
 and active messages Tau expects to send on the next request. It can decrease
 after compaction while cumulative usage continues to increase. The
 working-directory name and model are emphasized while the parent path, Git
