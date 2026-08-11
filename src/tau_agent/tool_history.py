@@ -45,65 +45,115 @@ def repair_tool_history(messages: tuple[AgentMessage, ...]) -> ToolHistoryRepair
     a missing call's arguments cannot be reconstructed safely. When duplicate
     results exist, a real result is preferred over Tau's synthetic interruption.
     """
-    calls: dict[str, ToolCall] = {}
-    expected_result_positions: dict[str, int] = {}
+    call_occurrences: list[tuple[tuple[int, int], ToolCall, int]] = []
     for message_index, message in enumerate(messages):
         if not isinstance(message, AssistantMessage):
             continue
         for call_offset, call in enumerate(message.tool_calls, start=1):
-            calls.setdefault(call.id, call)
-            expected_result_positions.setdefault(call.id, message_index + call_offset)
-
-    results_by_id: dict[str, list[ToolResultMessage]] = defaultdict(list)
-    for message in messages:
-        if isinstance(message, ToolResultMessage):
-            results_by_id[message.tool_call_id].append(message)
-
-    selected_results: dict[str, ToolResultMessage] = {}
-    synthesized_results = 0
-    dropped_duplicate_results = 0
-    for call_id, call in calls.items():
-        candidates = results_by_id.get(call_id, [])
-        if candidates:
-            selected_results[call_id] = next(
-                (result for result in candidates if not _is_interruption_result(result)),
-                candidates[0],
+            call_occurrences.append(
+                ((message_index, call_offset), call, message_index + call_offset)
             )
-            dropped_duplicate_results += len(candidates) - 1
+
+    results_by_id: dict[str, list[tuple[int, ToolResultMessage]]] = defaultdict(list)
+    for message_index, message in enumerate(messages):
+        if isinstance(message, ToolResultMessage):
+            results_by_id[message.tool_call_id].append((message_index, message))
+
+    selected_results: dict[tuple[int, int], tuple[int | None, ToolResultMessage]] = {}
+    used_result_positions: set[int] = set()
+
+    # Reserve already-adjacent pairs first. This keeps valid repeated IDs paired
+    # with their own turn rather than letting an earlier occurrence consume them.
+    for occurrence, call, expected_position in call_occurrences:
+        if expected_position >= len(messages):
             continue
-        selected_results[call_id] = ToolResultMessage(
-            tool_call_id=call.id,
-            tool_name=call.name,
-            content=[TextContent(text=_INTERRUPTED_TOOL_RESULT)],
-            is_error=True,
+        candidate = messages[expected_position]
+        if (
+            isinstance(candidate, ToolResultMessage)
+            and candidate.tool_call_id == call.id
+            and expected_position not in used_result_positions
+        ):
+            selected_results[occurrence] = (expected_position, candidate)
+            used_result_positions.add(expected_position)
+
+    synthesized_results = 0
+    for occurrence, call, _expected_position in call_occurrences:
+        if occurrence in selected_results:
+            continue
+        candidates = [
+            candidate
+            for candidate in results_by_id.get(call.id, [])
+            if candidate[0] not in used_result_positions
+        ]
+        if candidates:
+            after_call = [candidate for candidate in candidates if candidate[0] > occurrence[0]]
+            candidate_pool = after_call or candidates
+            selected = next(
+                (
+                    candidate
+                    for candidate in candidate_pool
+                    if not _is_interruption_result(candidate[1])
+                ),
+                candidate_pool[0],
+            )
+            selected_results[occurrence] = selected
+            used_result_positions.add(selected[0])
+            continue
+        selected_results[occurrence] = (
+            None,
+            ToolResultMessage(
+                tool_call_id=call.id,
+                tool_name=call.name,
+                content=[TextContent(text=_INTERRUPTED_TOOL_RESULT)],
+                is_error=True,
+            ),
         )
         synthesized_results += 1
 
-    original_positions = {id(message): index for index, message in enumerate(messages)}
+    # If every call occurrence is already paired and a real extra result remains,
+    # prefer it over a selected synthetic interruption for the same ID.
+    for occurrence, call, _expected_position in call_occurrences:
+        selected_position, selected_result = selected_results[occurrence]
+        if selected_position is None or not _is_interruption_result(selected_result):
+            continue
+        replacement = next(
+            (
+                candidate
+                for candidate in results_by_id.get(call.id, [])
+                if candidate[0] not in used_result_positions
+                and not _is_interruption_result(candidate[1])
+            ),
+            None,
+        )
+        if replacement is None:
+            continue
+        used_result_positions.remove(selected_position)
+        used_result_positions.add(replacement[0])
+        selected_results[occurrence] = replacement
+
     repaired: list[AgentMessage] = []
-    emitted_call_ids: set[str] = set()
     reordered_results = 0
-    for message in messages:
+    for message_index, message in enumerate(messages):
         if isinstance(message, ToolResultMessage):
             continue
         repaired.append(message)
         if not isinstance(message, AssistantMessage):
             continue
-        for call in message.tool_calls:
-            if call.id in emitted_call_ids:
-                continue
-            emitted_call_ids.add(call.id)
-            result = selected_results[call.id]
+        for call_offset, _call in enumerate(message.tool_calls, start=1):
+            result_position, result = selected_results[(message_index, call_offset)]
             repaired.append(result)
-            original_position = original_positions.get(id(result))
-            if original_position is not None and original_position != expected_result_positions.get(
-                call.id
-            ):
+            if result_position is not None and result_position != message_index + call_offset:
                 reordered_results += 1
 
-    orphan_results = sum(
-        len(results) for call_id, results in results_by_id.items() if call_id not in calls
-    )
+    call_ids = {call.id for _occurrence, call, _expected in call_occurrences}
+    unused_results = [
+        result
+        for results in results_by_id.values()
+        for position, result in results
+        if position not in used_result_positions
+    ]
+    orphan_results = sum(result.tool_call_id not in call_ids for result in unused_results)
+    dropped_duplicate_results = sum(result.tool_call_id in call_ids for result in unused_results)
     repaired_messages = tuple(repaired)
     return ToolHistoryRepair(
         messages=repaired_messages,

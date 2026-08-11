@@ -94,6 +94,37 @@ def test_duplicate_results_prefer_real_output_over_interruption() -> None:
     assert repair.dropped_duplicate_results == 1
 
 
+def test_repeated_call_ids_keep_one_result_per_turn() -> None:
+    first_call = _call("same")
+    first_assistant = AssistantMessage(content=[first_call])
+    first_result = _result("same", text="first")
+    second_call = _call("same")
+    second_assistant = AssistantMessage(content=[second_call])
+    second_result = _result("same", text="second")
+    messages = (first_assistant, first_result, second_assistant, second_result)
+
+    repair = repair_tool_history(messages)
+
+    assert repair.changed is False
+    assert repair.messages == messages
+    assert repair.dropped_duplicate_results == 0
+
+
+def test_repeated_call_id_reserves_later_adjacent_result() -> None:
+    first_assistant = AssistantMessage(content=[_call("same")])
+    user = UserMessage(content="continue")
+    second_assistant = AssistantMessage(content=[_call("same")])
+    second_result = _result("same", text="second")
+
+    repair = repair_tool_history((first_assistant, user, second_assistant, second_result))
+
+    first_result = repair.messages[1]
+    assert isinstance(first_result, ToolResultMessage)
+    assert first_result.text == "Tool call interrupted by user"
+    assert repair.messages == (first_assistant, first_result, user, second_assistant, second_result)
+    assert repair.synthesized_results == 1
+
+
 def test_parallel_results_follow_tool_call_order() -> None:
     first = _call("call-1", "read")
     second = _call("call-2", "bash")
