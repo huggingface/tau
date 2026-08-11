@@ -65,12 +65,11 @@ change moves persistence to the same side of the event stream.
   and flushed before the next prompt, continuation, compaction, or contextual
   terminal command.
 
-A deliberate non-goal: repairing files that older builds already damaged. A
-branch-time heal was prototyped (PR #525) and closed — re-parenting the branch
-suffix changes the request prefix, which breaks prompt caching, and silent
-healing would hide future faults of this class. Old files still 400 on `/tree`;
-branch to the entry after the dangling call, or reload so the load-time repair
-heals the active path.
+Older files are repaired by the compatibility layer described in
+`dev-notes/tool-history-recovery.md`. It validates active history on load and
+`/tree`, writes a provider-safe append-only branch with a durable diagnostic,
+and leaves the original entries intact. The agent loop applies the same repair
+in memory as a final provider-request backstop.
 
 ## How to test
 

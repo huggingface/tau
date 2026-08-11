@@ -28,6 +28,7 @@ from tau_agent.messages import AssistantMessageDiagnostic, assistant_content
 from tau_agent.provider_events import AssistantErrorEvent
 from tau_agent.session import (
     CompactionEntry,
+    CustomEntry,
     JsonlSessionStorage,
     LeafEntry,
     MessageEntry,
@@ -727,6 +728,90 @@ async def test_load_persists_repair_for_session_with_interrupted_tail_tool_call(
 
 
 @pytest.mark.anyio
+async def test_load_persists_branch_without_orphaned_tool_result(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    user_entry = MessageEntry(message=UserMessage(content="what remains?"))
+    await storage.append(user_entry)
+    orphan_entry = MessageEntry(
+        parent_id=user_entry.id,
+        message=ToolResultMessage(
+            tool_call_id="call-missing",
+            tool_name="bash",
+            content="Tool call interrupted by user",
+            is_error=True,
+        ),
+    )
+    await storage.append(orphan_entry)
+    custom_entry = CustomEntry(
+        parent_id=orphan_entry.id,
+        namespace="example.state",
+        data={"kept": True},
+    )
+    await storage.append(custom_entry)
+    model_entry = ModelChangeEntry(
+        parent_id=custom_entry.id,
+        model="recovered-model",
+    )
+    await storage.append(model_entry)
+    continued_entry = MessageEntry(
+        parent_id=model_entry.id,
+        message=UserMessage(content="continue"),
+    )
+    await storage.append(continued_entry)
+    await storage.append(LeafEntry(parent_id=continued_entry.id, entry_id=continued_entry.id))
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    _assert_messages(
+        session.messages,
+        [UserMessage(content="what remains?"), UserMessage(content="continue")],
+    )
+    assert session.state.model == "recovered-model"
+    assert any(
+        entry.namespace == "example.state" and entry.data == {"kept": True}
+        for entry in session.state.custom_entries
+    )
+    diagnostics = [
+        entry
+        for entry in (await storage.read_all())
+        if isinstance(entry, CustomEntry) and entry.namespace == "tau.session-history-repair"
+    ]
+    assert len(diagnostics) == 1
+    assert diagnostics[0].data == {
+        "version": 1,
+        "synthesizedResults": 0,
+        "droppedOrphanResults": 1,
+        "droppedDuplicateResults": 0,
+        "reorderedResults": 0,
+    }
+
+    restored = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+    _assert_messages(restored.messages, session.messages)
+    diagnostics = [
+        entry
+        for entry in (await storage.read_all())
+        if isinstance(entry, CustomEntry) and entry.namespace == "tau.session-history-repair"
+    ]
+    assert len(diagnostics) == 1
+
+
+@pytest.mark.anyio
 async def test_load_persists_repair_for_historical_interrupted_tool_call(
     tmp_path: Path,
 ) -> None:
@@ -1109,6 +1194,47 @@ def test_ordered_tree_entries_terminates_on_parent_cycle() -> None:
 
     assert sorted(entry.id for entry in ordered) == ["a", "b"]
     assert len(ordered) == 2
+
+
+@pytest.mark.anyio
+async def test_branch_to_entry_repairs_orphaned_tool_result(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    root = MessageEntry(id="root", message=UserMessage(content="start"))
+    orphan = MessageEntry(
+        id="orphan",
+        parent_id=root.id,
+        message=ToolResultMessage(tool_call_id="call-missing", tool_name="bash", content="orphan"),
+    )
+    answer = MessageEntry(
+        id="answer",
+        parent_id=orphan.id,
+        message=AssistantMessage(content="answer"),
+    )
+    for entry in (root, orphan, answer, LeafEntry(parent_id=root.id, entry_id=root.id)):
+        await storage.append(entry)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    result = await session.branch_to_entry(answer.id)
+
+    assert result.message.endswith("and repaired malformed tool history.")
+    _assert_messages(
+        session.messages,
+        [UserMessage(content="start"), AssistantMessage(content="answer")],
+    )
+    diagnostics = [
+        entry
+        for entry in (await storage.read_all())
+        if isinstance(entry, CustomEntry) and entry.namespace == "tau.session-history-repair"
+    ]
+    assert len(diagnostics) == 1
 
 
 @pytest.mark.anyio

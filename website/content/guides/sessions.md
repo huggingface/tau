@@ -58,6 +58,18 @@ Run `/tree` to open the session tree, then select an earlier entry:
 
 If a summary request fails, Tau falls back to a deterministic summary.
 
+## Recovering older sessions
+
+Older Tau versions could leave malformed tool-call history when a run was
+interrupted. Providers reject that history, so every prompt in the resumed
+session could fail with a 400 error about a missing tool call or tool output.
+
+Tau validates the active branch during resume and after `/tree` navigation. It
+repairs missing, misplaced, duplicate, or orphaned tool results by appending a
+provider-safe branch while preserving the original JSONL entries. A durable
+session diagnostic records what changed. Repeating resume is idempotent and does
+not append another repair when history is already valid.
+
 ## Renaming
 
 New sessions are automatically given a short name from the first message when

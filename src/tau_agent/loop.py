@@ -32,6 +32,7 @@ from tau_agent.provider_events import (
     AssistantMessageEvent,
     AssistantStartEvent,
 )
+from tau_agent.tool_history import repair_tool_history
 from tau_agent.tools import AgentTool, AgentToolResult
 
 BeforeToolCall = Callable[[ToolCall], Awaitable[tuple[bool, str | None]]]
@@ -181,7 +182,7 @@ def _provider_context(messages: list[AgentMessage]) -> list[AgentMessage]:
     persists terminal failures for diagnostics, but an empty failed or aborted
     turn is not model context and must not poison the next request.
     """
-    return [
+    replayable = tuple(
         message
         for message in messages
         if not (
@@ -189,7 +190,8 @@ def _provider_context(messages: list[AgentMessage]) -> list[AgentMessage]:
             and message.stop_reason in {"error", "aborted"}
             and not message.content
         )
-    ]
+    )
+    return list(repair_tool_history(replayable).messages)
 
 
 async def _assistant_events(

@@ -15,8 +15,6 @@ from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
     CustomMessage,
-    TextContent,
-    ToolResultMessage,
     UserMessage,
     message_text,
 )
@@ -27,6 +25,7 @@ from tau_agent.session import (
     CompactionEntry,
     CustomEntry,
     JsonlSessionStorage,
+    LabelEntry,
     LeafEntry,
     MessageEntry,
     ModelChangeEntry,
@@ -38,6 +37,7 @@ from tau_agent.session import (
 from tau_agent.session.entries import SessionEntry
 from tau_agent.session.jsonl import entry_to_json_line
 from tau_agent.session.tree import SessionTreeError, path_to_entry
+from tau_agent.tool_history import ToolHistoryRepair, repair_tool_history
 from tau_agent.tools import AgentTool
 from tau_agent.types import JSONValue
 from tau_ai.model_limits import ModelLimitsProvider, RuntimeModelLimits
@@ -513,14 +513,14 @@ class CodingSession:
             image_support=image_support,
             project_trust_resolution=trust_resolution,
         )
-        await session._persist_loaded_interrupted_tool_repairs()
+        await session._persist_active_tool_history_repairs()
         session._sync_thinking_level_to_active_model()
         session._refresh_runtime_provider()
         await session._refresh_runtime_model_limits()
         extension_runtime.bind(session)
         # Attach to session._harness, not the local `harness`:
-        # _persist_loaded_interrupted_tool_repairs() above may have replaced the
-        # harness, and listeners on the discarded one would never see an event.
+        # Tool-history repair above updates the active harness before extension
+        # listeners attach.
         extension_runtime.attach_harness_listener(session._harness.subscribe)
         # session_start is deferred: hosts emit it via emit_pending_session_start()
         # after installing their UI bridge.
@@ -680,7 +680,9 @@ class CodingSession:
         self._last_parent_id = target_id
 
         await self._refresh_persisted_state(leaf_id=target_id)
-        self._harness.replace_messages(self._state.messages)
+        history_repair = await self._persist_active_tool_history_repairs()
+        if history_repair is None:
+            self._harness.replace_messages(self._state.messages)
         self._invalidate_context_usage_cache()
         self._thinking_level = _state_thinking_level(
             self._state,
@@ -689,9 +691,11 @@ class CodingSession:
         self._sync_thinking_level_to_active_model()
         self._refresh_runtime_provider()
         suffix = " with branch summary" if summary_entry is not None else ""
+        if history_repair is not None:
+            suffix += " and repaired malformed tool history"
         if input_prefill is not None:
             return SessionTreeBranchResult(
-                message=f"Branched session before {entry_id}.",
+                message=f"Branched session before {entry_id}{suffix}.",
                 input_prefill=input_prefill,
             )
         return SessionTreeBranchResult(message=f"Branched session at {target_id}{suffix}.")
@@ -2124,44 +2128,70 @@ class CodingSession:
             run_id=new_agent_call_run_id(),
         )
 
-    async def _persist_loaded_interrupted_tool_repairs(self) -> None:
-        """Persist repairs for loaded sessions with dangling tool calls.
-
-        Older Tau builds repaired interrupted tool-call transcripts only in the
-        in-memory harness. If the app was later resumed from JSONL, the synthetic
-        tool result was absent and providers rejected the whole transcript. Repair
-        the active branch on load so resume/tree branches are durable and
-        provider-safe.
-        """
-        repair = _interrupted_tool_repair_plan(
+    async def _persist_active_tool_history_repairs(self) -> ToolHistoryRepair | None:
+        """Rewrite malformed active tool history as a valid append-only branch."""
+        plan = _tool_history_repair_plan(
             self._state.messages,
             context_entry_ids=self._state.context_entry_ids,
+            entries=self._state.entries,
         )
-        if repair is None:
-            return
+        if plan is None:
+            return None
 
-        parent_id, suffix = repair
+        parent_id, suffix, repair = plan
+        active_model = self._state.model
+        active_thinking_level = self._state.thinking_level
+        active_label = self._state.label
+        active_entries = self._state.entries
+        parent_index = next(
+            (index for index, entry in enumerate(active_entries) if entry.id == parent_id),
+            -1,
+        )
+        custom_entries = [
+            entry
+            for entry in active_entries[parent_index + 1 :]
+            if isinstance(entry, CustomEntry) and entry.namespace != "tau.session-history-repair"
+        ]
+        diagnostic = CustomEntry(
+            parent_id=parent_id,
+            namespace="tau.session-history-repair",
+            data={"version": 1, **repair.diagnostic_data()},
+        )
+        await self._append_session_entry(diagnostic)
+        parent_id = diagnostic.id
         for message in suffix:
             entry = MessageEntry(parent_id=parent_id, message=message)
             await self._append_session_entry(entry)
             parent_id = entry.id
+        if active_model is not None:
+            model_entry = ModelChangeEntry(parent_id=parent_id, model=active_model)
+            await self._append_session_entry(model_entry)
+            parent_id = model_entry.id
+        thinking_entry = ThinkingLevelChangeEntry(
+            parent_id=parent_id,
+            thinking_level=active_thinking_level,
+        )
+        await self._append_session_entry(thinking_entry)
+        parent_id = thinking_entry.id
+        if active_label is not None:
+            label_entry = LabelEntry(parent_id=parent_id, label=active_label)
+            await self._append_session_entry(label_entry)
+            parent_id = label_entry.id
+        for custom_entry in custom_entries:
+            copied_entry = CustomEntry(
+                parent_id=parent_id,
+                namespace=custom_entry.namespace,
+                data=custom_entry.data,
+            )
+            await self._append_session_entry(copied_entry)
+            parent_id = copied_entry.id
         leaf = LeafEntry(parent_id=parent_id, entry_id=parent_id)
         await self._append_session_entry(leaf)
         self._last_parent_id = parent_id
         await self._refresh_persisted_state(leaf_id=parent_id)
-        self._harness = AgentHarness(
-            AgentHarnessConfig(
-                provider=self._harness.config.provider,
-                model=self._harness.config.model,
-                system=self._harness.config.system,
-                tools=self._harness.config.tools,
-                max_turns=self._harness.config.max_turns,
-                queue_mode=self._harness.config.queue_mode,
-                session_id=self._config.session_id,
-            ),
-            messages=self._state.messages,
-        )
-        self._attach_persistence_listener()
+        self._harness.replace_messages(self._state.messages)
+        self._invalidate_context_usage_cache()
+        return repair
 
     def _attach_persistence_listener(self) -> None:
         """(Re-)attach push persistence to the current harness.
@@ -3192,44 +3222,32 @@ def _merge_context_files(
     return tuple(merged)
 
 
-def _interrupted_tool_repair_plan(
+def _tool_history_repair_plan(
     messages: tuple[AgentMessage, ...],
     *,
     context_entry_ids: tuple[str, ...],
-) -> tuple[str, tuple[AgentMessage, ...]] | None:
-    repaired: list[AgentMessage] = []
-    returned_ids = {
-        message.tool_call_id for message in messages if isinstance(message, ToolResultMessage)
-    }
-    for message in messages:
-        repaired.append(message)
-        if not isinstance(message, AssistantMessage):
-            continue
-        for tool_call in message.tool_calls:
-            if tool_call.id in returned_ids:
-                continue
-            returned_ids.add(tool_call.id)
-            content = "Tool call interrupted by user"
-            repaired.append(
-                ToolResultMessage(
-                    tool_call_id=tool_call.id,
-                    tool_name=tool_call.name,
-                    content=[TextContent(text=content)],
-                    is_error=True,
-                )
-            )
-
-    if tuple(repaired) == messages:
+    entries: tuple[SessionEntry, ...],
+) -> tuple[str | None, tuple[AgentMessage, ...], ToolHistoryRepair] | None:
+    repair = repair_tool_history(messages)
+    if not repair.changed:
         return None
 
     common_prefix_length = 0
-    for old_message, repaired_message in zip(messages, repaired, strict=False):
+    for old_message, repaired_message in zip(messages, repair.messages, strict=False):
         if old_message != repaired_message:
             break
         common_prefix_length += 1
-    if common_prefix_length == 0:
-        return None
-    return context_entry_ids[common_prefix_length - 1], tuple(repaired[common_prefix_length:])
+
+    if common_prefix_length > 0:
+        parent_id: str | None = context_entry_ids[common_prefix_length - 1]
+    elif context_entry_ids:
+        entries_by_id = {entry.id: entry for entry in entries}
+        first_entry = entries_by_id.get(context_entry_ids[0])
+        parent_id = first_entry.parent_id if first_entry is not None else None
+    else:
+        parent_id = None
+
+    return parent_id, repair.messages[common_prefix_length:], repair
 
 
 def default_session_path(cwd: Path) -> Path:
