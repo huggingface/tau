@@ -254,6 +254,34 @@ def test_copilot_model_metadata_compat_can_enable_cache_breakpoints(tmp_path) ->
     assert provider._config.cache_retention == "long"
 
 
+def test_create_model_provider_uses_model_max_tokens_for_anthropic_protocol_model(
+    tmp_path,
+) -> None:
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_oauth(
+        "github-copilot",
+        OAuthCredential(
+            access="tid=1",
+            refresh="github-token",
+            expires=9999999999999,
+        ),
+    )
+    catalog_config = provider_config_from_catalog_entry("github-copilot")
+    assert isinstance(catalog_config, OpenAICompatibleProviderConfig)
+    metadata = dict(catalog_config.model_metadata)
+    metadata["claude-haiku-4.5"] = replace(metadata["claude-haiku-4.5"], max_tokens=64_000)
+    provider_config = replace(catalog_config, model_metadata=metadata)
+
+    provider = create_model_provider(
+        provider_config,
+        credential_store=store,
+        model="claude-haiku-4.5",
+    )
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider._config.max_tokens == 64_000
+
+
 def test_create_model_provider_uses_copilot_token_base_url(tmp_path) -> None:
     store = FileCredentialStore(tmp_path / "credentials.json")
     store.set_oauth(
