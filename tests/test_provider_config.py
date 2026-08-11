@@ -990,6 +990,33 @@ def test_kimi_k3_maps_thinking_levels_to_reasoning_effort(
     assert config.reasoning_effort == expected_effort
 
 
+@pytest.mark.parametrize(
+    ("level", "expected_effort"),
+    [("low", "low"), ("high", "high"), ("xhigh", "max")],
+)
+def test_huggingface_kimi_k3_maps_thinking_levels_to_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+    level: ThinkingLevel,
+    expected_effort: str,
+) -> None:
+    monkeypatch.setenv("HF_TOKEN", "test-key")
+    settings = load_provider_settings(TauPaths(home=Path("/missing")))
+    provider = settings.get_provider("huggingface")
+
+    config = openai_compatible_config_from_provider(
+        provider,
+        model="moonshotai/Kimi-K3",
+        thinking_level=level,
+    )
+
+    assert provider_thinking_levels(provider, model="moonshotai/Kimi-K3") == (
+        "low",
+        "high",
+        "xhigh",
+    )
+    assert config.reasoning_effort == expected_effort
+
+
 def test_openai_compatible_config_from_provider_rejects_unsupported_thinking_level(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

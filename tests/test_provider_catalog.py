@@ -367,6 +367,7 @@ def test_builtin_catalog_huggingface_model_expansion() -> None:
         "google/gemma-4-31B-it",
         "meta-llama/Llama-3.3-70B-Instruct",
         "moonshotai/Kimi-K2.7-Code",
+        "moonshotai/Kimi-K3",
         "openai/gpt-oss-120b",
         "openai/gpt-oss-20b",
         "stepfun-ai/Step-3.5-Flash",
@@ -378,7 +379,7 @@ def test_builtin_catalog_huggingface_model_expansion() -> None:
         "zai-org/GLM-5.2",
     }
 
-    assert len(entry.models) == 46
+    assert len(entry.models) == 47
     assert added_models <= set(entry.models)
     assert set(entry.context_windows or {}) == set(entry.models)
     assert set(entry.model_metadata) == set(entry.models)
@@ -392,6 +393,21 @@ def test_builtin_catalog_huggingface_model_expansion() -> None:
     llama = entry.model_metadata["meta-llama/Llama-3.3-70B-Instruct"]
     assert llama.reasoning is False
     assert llama.context_window == 131_072
+
+    kimi_k3 = entry.model_metadata["moonshotai/Kimi-K3"]
+    assert kimi_k3.name == "Kimi K3"
+    assert kimi_k3.reasoning is True
+    assert kimi_k3.input == ("text", "image")
+    assert kimi_k3.context_window == 1_048_576
+    assert kimi_k3.cost == {"input": 3, "output": 15, "cacheRead": 0, "cacheWrite": 0}
+    assert kimi_k3.thinking_level_map == {
+        "off": None,
+        "minimal": None,
+        "low": "low",
+        "medium": None,
+        "high": "high",
+        "xhigh": "max",
+    }
 
 
 def test_builtin_catalog_golden_kimi_entries() -> None:
