@@ -141,11 +141,14 @@ needed. Available models and plan limits change over time; consult the
 ### Hugging Face Inference Providers
 
 Log in with `/login huggingface` or set `HF_TOKEN`. Tau's built-in Hugging Face
-catalog includes 46 coding-capable models routed through
+catalog includes 47 coding-capable models routed through
 `https://router.huggingface.co/v1`, including DeepSeek, Gemma, GLM, GPT OSS,
-Kimi, Llama, MiniMax, MiMo, Qwen, and Step families. Use `/model` to search the
-full list; model availability and the inference provider selected by Hugging
-Face can vary over time and by account.
+Kimi, Llama, MiniMax, MiMo, Qwen, and Step families. This includes
+`moonshotai/Kimi-K3`, with text and image input, a 1,048,576-token context
+window, and `low`, `high`, and `max` reasoning effort. Tau exposes `max` as its
+`xhigh` thinking level. Use `/model` to search the full list; model availability
+and the inference provider selected by Hugging Face can vary over time and by
+account.
 
 For a new session without an explicit preference, Hugging Face initially routes
 the model automatically. After the first successful response, Tau reads Hugging
