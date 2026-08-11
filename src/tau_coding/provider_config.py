@@ -1666,6 +1666,7 @@ def openai_compatible_config_from_provider(
         timeout_seconds=provider.timeout_seconds,
         max_retries=provider.max_retries,
         max_retry_delay_seconds=provider.max_retry_delay_seconds,
+        max_tokens=provider_model_max_tokens(provider, selected_model),
         supports_images=provider_model_supports_images(provider, selected_model),
         reasoning_effort=reasoning_effort,
         reasoning_effort_parameter=provider.thinking_parameter or "reasoning_effort",

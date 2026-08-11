@@ -38,6 +38,9 @@ jobs:
       - name: Run tests
         run: uv run pytest
 
+      - name: Validate generated model catalog
+        run: uv run python scripts/generate_catalog.py --check
+
       - name: Run Ruff lint
         run: uv run ruff check .
 
