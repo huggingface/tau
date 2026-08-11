@@ -58,9 +58,10 @@ change moves persistence to the same side of the event stream.
   write failed. It is keyed on message identity, never counts: the loop emits
   an assistant's `message_end` before appending it to the transcript, so
   count-based sweeps can double-write. Each pending write retains stable
-  message and leaf entry ids; reconciliation reads durable ids and appends only
-  the missing pieces, so a failure between the two appends cannot duplicate the
-  message. Repeated failures are logged without masking cancellation, retained,
+  message and leaf entry ids; a retry reads durable ids and appends only the
+  missing pieces, so a failure between the two appends cannot duplicate the
+  message. Only retries pay that read — a first attempt mints ids that cannot
+  already be on disk, so the streaming path keeps one storage read per message. Repeated failures are logged without masking cancellation, retained,
   and flushed before the next prompt, continuation, compaction, or contextual
   terminal command.
 

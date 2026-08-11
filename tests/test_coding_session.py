@@ -400,6 +400,19 @@ async def test_prompt_logs_safe_provider_stream_error_details(tmp_path: Path) ->
     assert "Hello" not in log_path.read_text(encoding="utf-8")
 
 
+class _CountingStorage:
+    def __init__(self) -> None:
+        self.entries: list[SessionEntry] = []
+        self.reads = 0
+
+    async def append(self, entry: SessionEntry) -> None:
+        self.entries.append(entry)
+
+    async def read_all(self) -> list[SessionEntry]:
+        self.reads += 1
+        return list(self.entries)
+
+
 class _FaultInjectingStorage:
     def __init__(self, phase: str) -> None:
         self.entries: list[SessionEntry] = []
@@ -500,6 +513,31 @@ async def test_next_prompt_flushes_a_repair_that_failed_twice(tmp_path: Path) ->
     assert persisted_texts == ["go", "continue", "Recovered."]
     _model, _system, sent, _tools = provider.calls[-1]
     assert [message.text for message in sent] == ["go", "continue"]
+
+
+@pytest.mark.anyio
+async def test_clean_persist_reads_storage_once_per_message(tmp_path: Path) -> None:
+    storage = _CountingStorage()
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider(
+                [[assistant_start(), assistant_done(AssistantMessage(content="Hi."))]]
+            ),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    reads_before = storage.reads
+    await _collect_session_events(session.prompt("go"))
+
+    persisted = [entry for entry in storage.entries if isinstance(entry, MessageEntry)]
+    assert len(persisted) == 2
+    # One deferred-metadata read plus one state refresh per message. A first
+    # attempt must not also read to check ids it just minted.
+    assert storage.reads - reads_before == len(persisted) + 1
 
 
 @pytest.mark.anyio

@@ -2188,9 +2188,14 @@ class CodingSession:
         Message lifecycle events are the durable-message boundary. Stable entry
         ids let a retry finish a partially completed message/leaf pair without
         appending the message a second time.
+
+        Only a retry reads durable ids: a first attempt mints ids that cannot
+        already be on disk, so the extra full-file read is skipped on the hot
+        path.
         """
         message_id = id(message)
         pending = self._pending_message_writes.get(message_id)
+        is_retry = pending is not None
         if pending is None:
             entry = MessageEntry(parent_id=self._last_parent_id, message=message)
             pending = _PendingMessageWrite(
@@ -2200,7 +2205,9 @@ class CodingSession:
             )
             self._pending_message_writes[message_id] = pending
 
-        durable_ids = {entry.id for entry in await self._read_session_entries()}
+        durable_ids = (
+            {entry.id for entry in await self._read_session_entries()} if is_retry else frozenset()
+        )
         if pending.message_entry.id not in durable_ids:
             await self._append_session_entry(pending.message_entry)
         self._last_parent_id = pending.message_entry.id
