@@ -90,9 +90,12 @@ aliases, set a `shellCommandPrefix` — see
 ## Referencing files with `@`
 
 Type `@` in the prompt to open file suggestions from the project tree, and insert
-a path like `@src/app.py`. Dot-prefixed project content such as `.env` and
-`.agents/` is included. Tau still skips known metadata and generated directories
-such as `.git`, `.venv`, `node_modules`, `__pycache__`, `build`, and `dist`.
+a path like `@src/app.py`. Use an explicit parent-relative path such as `@../` to
+complete files and directories outside the project root. External completion
+follows only the path you type instead of scanning the surrounding filesystem.
+Dot-prefixed content such as `.env` and `.agents/` is included. Tau still skips
+known metadata and generated directories such as `.git`, `.venv`, `node_modules`,
+`__pycache__`, `build`, and `dist`.
 
 ## Dropping files into the prompt
 

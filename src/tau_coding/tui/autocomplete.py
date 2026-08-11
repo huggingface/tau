@@ -160,12 +160,77 @@ def _file_reference_completions(*, text: str, cwd: Path) -> tuple[CompletionItem
         return ()
     start, end = token
     prefix = text[start + 1 : end]
+    external_completions = _external_file_reference_completions(
+        prefix=prefix,
+        start=start,
+        end=end,
+        cwd=cwd,
+    )
+    if external_completions is not None:
+        return external_completions
+
     suggestions: list[CompletionItem] = []
     for path in _iter_file_reference_paths(cwd):
         relative = path.relative_to(cwd).as_posix()
         if prefix.lower() not in relative.lower():
             continue
         display = f"@{relative}{'/' if path.is_dir() else ''}"
+        suggestions.append(
+            CompletionItem(
+                display=display,
+                replacement=display,
+                start=start,
+                end=end,
+                description="File reference",
+            )
+        )
+        if len(suggestions) >= MAX_FILE_COMPLETIONS:
+            break
+    return tuple(suggestions)
+
+
+def _external_file_reference_completions(
+    *, prefix: str, start: int, end: int, cwd: Path
+) -> tuple[CompletionItem, ...] | None:
+    if prefix == ".." or prefix.endswith("/.."):
+        target = cwd / prefix
+        if not target.is_dir():
+            return ()
+        display = f"@{prefix}/"
+        return (
+            CompletionItem(
+                display=display,
+                replacement=display,
+                start=start,
+                end=end,
+                description="File reference",
+            ),
+        )
+
+    if not prefix.startswith("../"):
+        return None
+
+    parent_text, name_prefix = prefix.rsplit("/", 1)
+    if any(part in IGNORED_FILE_COMPLETION_DIRS for part in Path(parent_text).parts):
+        return ()
+    parent_dir = cwd / parent_text
+    if not parent_dir.is_dir():
+        return ()
+
+    try:
+        children = sorted(parent_dir.iterdir(), key=lambda path: path.name.lower())
+    except OSError:
+        return ()
+
+    suggestions: list[CompletionItem] = []
+    for child in children:
+        if child.name in IGNORED_FILE_COMPLETION_DIRS:
+            continue
+        if not child.name.lower().startswith(name_prefix.lower()):
+            continue
+        display = f"@{parent_text}/{child.name}{'/' if child.is_dir() else ''}"
+        if display == f"@{prefix}":
+            continue
         suggestions.append(
             CompletionItem(
                 display=display,

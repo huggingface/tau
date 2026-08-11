@@ -493,6 +493,63 @@ def test_file_reference_completion_includes_dotfiles_and_dot_directories(
     }
 
 
+def test_file_reference_completion_reaches_outside_workspace_with_parent_path(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    sibling = tmp_path / "shared"
+    sibling.mkdir()
+    (sibling / "notes.md").write_text("shared notes\n", encoding="utf-8")
+
+    parent_state = build_completion_state(
+        "read @..",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=project,
+    )
+    sibling_state = build_completion_state(
+        "read @../sha",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=project,
+    )
+    file_state = build_completion_state(
+        "read @../shared/no",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=project,
+    )
+
+    assert [item.display for item in parent_state.items] == ["@../"]
+    assert [item.display for item in sibling_state.items] == ["@../shared/"]
+    assert [item.display for item in file_state.items] == ["@../shared/notes.md"]
+    assert file_state.selected is not None
+    assert file_state.selected.apply("read @../shared/no") == "read @../shared/notes.md"
+
+
+def test_external_file_reference_completion_skips_generated_directories(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "notes.md").write_text("notes\n", encoding="utf-8")
+
+    state = build_completion_state(
+        "read @../no",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=project,
+    )
+
+    assert [item.display for item in state.items] == ["@../notes.md"]
+
+
 def test_file_reference_completion_works_in_custom_prompt_arguments(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
