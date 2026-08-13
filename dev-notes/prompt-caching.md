@@ -147,6 +147,57 @@ user's initial request. Both rates are omitted when no provider in the branch ha
 reported cache activity, so backends without prompt caching are not shown a
 permanent misleading `0%`.
 
+## Comparison with Pi
+
+Tau's Anthropic caching is intentionally more defensive than Pi's default
+placement, while Pi remains ahead on the OpenAI-family providers.
+
+### Where Tau does better: long, tool-heavy Anthropic turns
+
+Both implementations cache the stable prefix: system instructions and the tool
+schema. Pi then marks the final conversation message. Tau instead reserves its
+remaining two markers for both the current request tail **and** the previous
+request boundary.
+
+That extra marker matters because Anthropic searches only a bounded number of
+content blocks backwards from a marker. A single agent turn with many parallel
+tool calls appends an assistant text block, one `tool_use` block per call, and one
+`tool_result` block per result. By the next request, the previously reusable
+prefix can be outside the lookup window of a marker placed only at the current
+tail. Tau's boundary marker provides a second, closer lookup position, preserving
+a cache read in cases where Pi's one message-tail marker may miss.
+
+Tau also makes retention depend on the auth economics: subscription OAuth gets
+Anthropic's one-hour cache lifetime, while API-key calls retain the cheaper short
+default. Capability flags can disable cache control entirely, suppress only the
+tools marker, or fall back from one hour to the short lifetime for incompatible
+gateways. These choices are described in [Retention](#retention).
+
+### Where Pi does better: OpenAI-compatible cache affinity
+
+Pi carries the stable session ID into provider requests and translates it into
+provider-specific cache controls. Depending on the endpoint, that includes an
+OpenAI prompt-cache key, retention hint, and session-affinity headers; Mistral's
+prompt-cache key and affinity header; and Anthropic-style cache markers for
+compatible OpenRouter routes.
+
+Tau currently has a durable session ID, but its OpenAI-compatible and Codex
+payload builders do not use it for prompt-cache keys or affinity headers. The
+full transcript is therefore still eligible for providers' automatic prefix
+caching, but Tau does not give those providers the additional stable-routing hint
+that Pi does. This is not a cross-provider cache: caches remain isolated per
+provider and model. The improvement is to retain cache affinity across successive
+calls in one Tau session.
+
+### Follow-up direction
+
+Port Pi's provider-specific affinity behavior behind Tau catalog compatibility
+flags. Start with direct OpenAI Responses, Chat Completions, and Codex routes;
+then add Mistral and eligible OpenRouter routes. Keep Tau's Anthropic placement
+and retention policy unchanged. Extend `SessionStats` with provider/model-level
+cache-read share and estimated savings so a reported cache read can be
+distinguished from a high sustained hit rate.
+
 ## Validate
 
 ```bash

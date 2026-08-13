@@ -141,11 +141,50 @@ needed. Available models and plan limits change over time; consult the
 ### Hugging Face Inference Providers
 
 Log in with `/login huggingface` or set `HF_TOKEN`. Tau's built-in Hugging Face
-catalog includes 46 coding-capable models routed through
+catalog includes 47 coding-capable models routed through
 `https://router.huggingface.co/v1`, including DeepSeek, Gemma, GLM, GPT OSS,
-Kimi, Llama, MiniMax, MiMo, Qwen, and Step families. Use `/model` to search the
-full list; model availability and the inference provider selected by Hugging
-Face can vary over time and by account.
+Kimi, Llama, MiniMax, MiMo, Qwen, and Step families. This includes
+`moonshotai/Kimi-K3`, with text and image input, a 1,048,576-token context
+window, and `low`, `high`, and `max` reasoning effort. Tau exposes `max` as its
+`xhigh` thinking level. Use `/model` to search the full list; model availability
+and the inference provider selected by Hugging Face can vary over time and by
+account.
+
+For a new session without an explicit preference, Hugging Face initially routes
+the model automatically. After the first successful response, Tau reads Hugging
+Face's `x-inference-provider` response header and pins that backing provider for
+the rest of the session. To choose the initial provider instead, add a per-model
+`inference_providers` preference to `~/.tau/providers.json`:
+
+```json
+{
+  "schema_version": 2,
+  "default_provider": "huggingface",
+  "provider_preferences": {
+    "huggingface": {
+      "default_model": "zai-org/GLM-5.2",
+      "inference_providers": { "zai-org/GLM-5.2": "deepinfra" }
+    }
+  },
+  "scoped_models": []
+}
+```
+
+Use the exact provider suffix advertised for that model by Hugging Face. Tau
+sends `zai-org/GLM-5.2:deepinfra` on the wire and continues to display and store
+the logical `zai-org/GLM-5.2` model. The pin survives resume; changing the
+preference does not rewrite existing sessions. `/session` and `/route` show the
+active pin. Use `/route <provider>` to reselect it or `/route automatic` to reset
+it; automatic routing pins again after the next successful response. Switching
+models uses that model's configured pin or starts automatic resolution again.
+
+Transient failures retry on the same wire model, and stream failures are not
+retried after model output has started. Pinning can reduce cold prefix-cache
+misses caused by cross-provider routing, but cannot prevent eviction, TTL expiry,
+or load balancing among workers within the chosen provider. Tau does not yet
+fall back automatically from an unavailable pinned route: doing so also requires
+a user-visible reroute event and durable reroute telemetry. Reset with `/route
+automatic` to resolve another route. See [Configuration]({{< relref "../reference/configuration.md#provider-preferences" >}}).
 
 ### Moonshot AI API vs. Kimi Code
 
@@ -159,10 +198,12 @@ different endpoints, and charge against different billing plans:
 | `kimi-code` | Subscription key from the [Kimi Code console](https://www.kimi.com/code/console) | `k3` or rolling `kimi-for-coding` alias | `https://api.kimi.com/coding/v1` | `KIMI_CODE_API_KEY` |
 
 Kimi K3 uses the `k3` model ID, accepts text and image input, and supports up to
-a 1,048,576-token context window on eligible plans. Its reasoning effort is
-currently fixed at `max`,
-which Tau exposes as the `xhigh` thinking level. Start a new session when
-switching to K3 so the previous model's context cache is not re-prefilled. See
+a 1,048,576-token context window on eligible plans. It supports three
+reasoning-effort levels via the `reasoning_effort` field: `low`, `high`, and
+`max` (default). Tau exposes these as the `low`, `high`, and `xhigh` thinking
+levels respectively, and starts new K3 sessions at `xhigh` unless a remembered
+per-model choice exists. Start a new session when switching to K3 so the
+previous model's context cache is not re-prefilled. See
 [Kimi's model documentation](https://www.kimi.com/code/docs/en/kimi-code/models)
 for current plan availability and context limits.
 
@@ -224,6 +265,13 @@ Tau validates the selected model against the active provider's configured model
 list before creating or refreshing a runtime provider. This prevents accidental
 provider/model mismatches, such as trying to send an API-only OpenAI model to the
 separate `openai-codex` subscription provider.
+
+When a switch crosses provider APIs, Tau compiles existing tool history for the
+target provider. Provider-specific tool-call IDs are deterministically translated
+to a portable format, with the same translated ID used for each call and result.
+When compiling history for Anthropic, Tau also omits opaque reasoning signatures
+created by other APIs. This lets a session continue after tools have run without
+exposing users to provider validation errors or rewriting the saved JSONL history.
 
 ### Claude Opus 5
 

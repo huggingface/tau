@@ -35,6 +35,7 @@ class RuntimeProviderAuth:
 
 
 type RuntimeProviderAuthResolver = Callable[[], Awaitable[RuntimeProviderAuth]]
+type RuntimeResponseHeadersObserver = Callable[[Mapping[str, str]], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,10 +55,13 @@ class OpenAICompatibleConfig:
     reasoning_effort_parameter: str = "reasoning_effort"
     thinking_format: str = "openai"
     compat: Mapping[str, JSONValue] = field(default_factory=dict)
+    model_aliases: Mapping[str, str] = field(default_factory=dict)
     include_reasoning_effort_none: bool = False
     provider_name: str = "OpenAI-compatible provider"
+    response_provider_header: str | None = None
     omit_authorization_header: bool = False
     credential_resolver: RuntimeProviderAuthResolver | None = None
+    response_headers_observer: RuntimeResponseHeadersObserver | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -173,3 +173,53 @@ def test_calculate_session_stats_marks_cost_unavailable_when_pricing_is_missing(
     assert stats.input_tokens == 100
     assert stats.output_tokens == 20
     assert stats.estimated_cost is None
+
+
+def test_calculate_session_stats_prices_one_hour_cache_writes() -> None:
+    """Anthropic's cache_write total includes 1h writes, billed at cacheWrite1h."""
+    entry = MessageEntry(
+        message=AssistantMessage(
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            usage=Usage(input=1_000, output=100, cache_write=800, cache_write_1h=400),
+        )
+    )
+
+    stats = calculate_session_stats(
+        [entry],
+        pricing=lambda _provider, _model, _input: {
+            "input": 3.0,
+            "output": 15.0,
+            "cacheRead": 0.3,
+            "cacheWrite": 3.75,
+            "cacheWrite1h": 6.0,
+        },
+    )
+
+    assert stats.cache_write_tokens == 800
+    # 1000*3 + 100*15 + 400*3.75 (5m writes) + 400*6 (1h writes) = 8400 per 1M
+    assert stats.estimated_cost == 0.0084
+
+
+def test_calculate_session_stats_falls_back_to_cache_write_rate_without_1h_rate() -> None:
+    """Catalogs without cacheWrite1h keep billing all writes at the 5m rate."""
+    entry = MessageEntry(
+        message=AssistantMessage(
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            usage=Usage(input=1_000, output=100, cache_write=800, cache_write_1h=400),
+        )
+    )
+
+    stats = calculate_session_stats(
+        [entry],
+        pricing=lambda _provider, _model, _input: {
+            "input": 3.0,
+            "output": 15.0,
+            "cacheRead": 0.3,
+            "cacheWrite": 3.75,
+        },
+    )
+
+    # 1000*3 + 100*15 + 800*3.75 = 7500 per 1M
+    assert stats.estimated_cost == 0.0075

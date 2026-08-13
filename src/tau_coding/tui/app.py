@@ -3888,7 +3888,10 @@ class TauTuiApp(App[None]):
                         command.export_destination,
                         format=command.export_format,
                     )
-                    self._notify(f"Exported session to {exported_path}")
+                    self._append_command_message(
+                        text,
+                        f"Exported session to {exported_path}",
+                    )
                 except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
                     self._notify(f"Could not export session: {exc}", severity="error")
             if command.resume_session_id is not None:
@@ -6644,15 +6647,27 @@ def _create_startup_session_record(
     *,
     cwd: Path,
     selection: ProviderSelection,
+    inference_provider: str | None = None,
 ) -> CodingSessionRecord:
-    try:
+    if inference_provider is None:
         return manager.prepare_session(
             cwd=cwd,
             model=selection.model,
             provider_name=selection.provider.name,
         )
+    try:
+        return manager.prepare_session(
+            cwd=cwd,
+            model=selection.model,
+            provider_name=selection.provider.name,
+            inference_provider=inference_provider,
+        )
     except TypeError:
-        return manager.prepare_session(cwd=cwd, model=selection.model)
+        return manager.prepare_session(
+            cwd=cwd,
+            model=selection.model,
+            provider_name=selection.provider.name,
+        )
 
 
 def _resolve_tui_startup_selection(
@@ -6742,6 +6757,18 @@ def _usable_scoped_startup_choices(settings: Any) -> tuple[ModelChoice, ...]:
     return tuple(choices)
 
 
+def _startup_inference_provider(
+    selection: ProviderSelection,
+    record: CodingSessionRecord | None,
+) -> str | None:
+    provider = selection.provider
+    if not isinstance(provider, OpenAICompatibleProviderConfig) or provider.name != "huggingface":
+        return None
+    if record is not None and record.model == selection.model:
+        return record.inference_provider
+    return provider.inference_providers.get(selection.model)
+
+
 async def run_tui_app(
     *,
     model: str | None,
@@ -6783,10 +6810,12 @@ async def run_tui_app(
     startup_message: str | None = None
     startup_error_notice: str | None = None
     runtime_provider_config: ProviderConfig | None = selection.provider
+    inference_provider = _startup_inference_provider(selection, record)
     try:
         provider = create_model_provider(
             selection.provider,
             model=selection.model,
+            inference_provider=inference_provider,
             thinking_level=resolve_startup_thinking_level(
                 selection.provider,
                 selection.model,
@@ -6814,6 +6843,7 @@ async def run_tui_app(
                 manager,
                 cwd=cwd,
                 selection=selection,
+                inference_provider=inference_provider,
             )
             index_on_first_persist = manager.get_session(record.id) is None
 
@@ -6826,6 +6856,7 @@ async def run_tui_app(
                 session_id=record.id,
                 session_manager=manager,
                 provider_name=selection.provider.name,
+                inference_provider=inference_provider,
                 provider_settings=provider_settings,
                 runtime_provider_config=runtime_provider_config,
                 auto_compact_token_threshold=auto_compact_token_threshold,

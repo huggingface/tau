@@ -21,6 +21,7 @@ from tau_coding.provider_config import (
     openai_compatible_config_from_provider,
     provider_default_thinking_level,
     provider_has_usable_credentials,
+    provider_model_max_tokens,
     provider_model_supports_images,
     provider_settings_from_json,
     provider_thinking_levels,
@@ -32,6 +33,7 @@ from tau_coding.provider_config import (
     set_provider_thinking_level,
     upsert_openai_compatible_provider,
 )
+from tau_coding.thinking import ThinkingLevel
 
 
 def test_stale_preferences_cannot_restore_removed_codex_alias(tmp_path: Path) -> None:
@@ -59,6 +61,33 @@ def test_stale_preferences_cannot_restore_removed_codex_alias(tmp_path: Path) ->
     assert codex.default_model == "gpt-5.5"
     assert "gpt-5.6" not in codex.models
     assert "gpt-5.6" not in codex.thinking_defaults
+
+
+def test_load_provider_settings_accepts_huggingface_inference_provider_preferences(
+    tmp_path: Path,
+) -> None:
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    (tau_home / "providers.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "default_provider": "huggingface",
+                "provider_preferences": {
+                    "huggingface": {
+                        "default_model": "zai-org/GLM-5.2",
+                        "inference_providers": {"zai-org/GLM-5.2": "deepinfra"},
+                    }
+                },
+                "scoped_models": [],
+            }
+        )
+    )
+
+    provider = load_provider_settings(TauPaths(home=tau_home)).get_provider("huggingface")
+
+    assert isinstance(provider, OpenAICompatibleProviderConfig)
+    assert provider.inference_providers == {"zai-org/GLM-5.2": "deepinfra"}
 
 
 def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path) -> None:
@@ -421,6 +450,55 @@ def test_legacy_provider_model_cost_tiers_round_trip() -> None:
     )
 
 
+def test_legacy_provider_cost_tier_accepts_one_hour_cache_write_rate() -> None:
+    raw = {
+        "default_provider": "local",
+        "providers": [
+            {
+                "type": "openai-compatible",
+                "name": "local",
+                "base_url": "http://localhost:11434/v1",
+                "api_key_env": "LOCAL_API_KEY",
+                "models": ["qwen"],
+                "default_model": "qwen",
+                "model_metadata": {
+                    "qwen": {
+                        "cost_tiers": [
+                            {
+                                "max_input_tokens": 512000,
+                                "input": 0.3,
+                                "output": 1.2,
+                                "cacheRead": 0.06,
+                                "cacheWrite": 0.375,
+                                "cacheWrite1h": 0.6,
+                            },
+                            {
+                                "input": 0.6,
+                                "output": 2.4,
+                                "cacheRead": 0.12,
+                                "cacheWrite": 0.75,
+                            },
+                        ],
+                    }
+                },
+            }
+        ],
+        "scoped_models": [],
+    }
+
+    settings = provider_settings_from_json(raw)
+    provider = settings.get_provider("local")
+    assert isinstance(provider, OpenAICompatibleProviderConfig)
+    tiers = provider.model_metadata["qwen"].cost_tiers
+    assert tiers[0].cost["cacheWrite1h"] == 0.6
+    # Tiers without the key omit it, so billing can fall back to cacheWrite.
+    assert "cacheWrite1h" not in tiers[1].cost
+    assert (
+        provider.model_metadata["qwen"].to_json()["cost_tiers"]
+        == raw["providers"][0]["model_metadata"]["qwen"]["cost_tiers"]
+    )
+
+
 @pytest.mark.parametrize(
     ("cost_tiers", "match"),
     [
@@ -621,14 +699,14 @@ def test_resolve_provider_selection_rejects_unknown_provider() -> None:
 
 
 def _kimi_code_like_provider() -> OpenAICompatibleProviderConfig:
-    # Mirrors the catalog kimi-code entry: k3 only supports xhigh (mapped to
-    # "max"); every other level is marked unsupported (None) in the map.
+    # Mirrors the catalog kimi-code entry: k3 supports low, high, and xhigh
+    # mapped to "low", "high", "max" respectively.
     return OpenAICompatibleProviderConfig(
         name="kimi-code",
         models=("k3", "kimi-for-coding"),
         default_model="k3",
-        thinking_levels=("medium", "xhigh"),
-        thinking_default="medium",
+        thinking_levels=("low", "medium", "high", "xhigh"),
+        thinking_default="xhigh",
         thinking_parameter="reasoning_effort",
         model_metadata={
             "k3": ProviderModelMetadata(
@@ -636,21 +714,31 @@ def _kimi_code_like_provider() -> OpenAICompatibleProviderConfig:
                 thinking_level_map={
                     "off": None,
                     "minimal": None,
-                    "low": None,
+                    "low": "low",
                     "medium": None,
-                    "high": None,
+                    "high": "high",
                     "xhigh": "max",
+                },
+            ),
+            "kimi-for-coding": ProviderModelMetadata(
+                reasoning=True,
+                thinking_level_map={
+                    "off": None,
+                    "minimal": None,
+                    "low": None,
+                    "high": None,
+                    "xhigh": None,
                 },
             ),
         },
     )
 
 
-def test_resolve_startup_thinking_level_falls_back_when_default_unsupported() -> None:
+def test_resolve_startup_thinking_level_uses_k3_max_default() -> None:
     provider = _kimi_code_like_provider()
 
-    # k3 only supports xhigh, so the global "medium" default must be coerced
-    # instead of crashing startup.
+    # K3 does not support the global "medium" default, so startup uses its
+    # catalog default (xhigh, sent as "max") instead of the first level.
     assert resolve_startup_thinking_level(provider, "k3") == "xhigh"
 
 
@@ -673,7 +761,8 @@ def test_resolve_startup_thinking_level_prefers_remembered_model_default() -> No
 def test_resolve_startup_thinking_level_keeps_supported_default() -> None:
     provider = _kimi_code_like_provider()
 
-    # kimi-for-coding supports the provider default (medium).
+    # kimi-for-coding supports global medium but not K3's xhigh default.
+    assert provider_thinking_levels(provider, model="kimi-for-coding") == ("medium",)
     assert resolve_startup_thinking_level(provider, "kimi-for-coding") == "medium"
 
 
@@ -769,6 +858,24 @@ def test_openai_compatible_config_from_provider_uses_configured_env_var(
     assert config.timeout_seconds == 60.0
     assert config.max_retries == 2
     assert config.max_retry_delay_seconds == 1.0
+    assert config.response_provider_header is None
+
+
+def test_huggingface_runtime_config_captures_inference_provider_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HF_TEST_TOKEN", "test-key")
+    provider = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        base_url="https://router.huggingface.co/v1",
+        api_key_env="HF_TEST_TOKEN",
+        models=("test-model",),
+        default_model="test-model",
+    )
+
+    config = openai_compatible_config_from_provider(provider)
+
+    assert config.response_provider_header == "x-inference-provider"
 
 
 def test_openai_compatible_config_from_provider_preserves_openai_base_url_env(
@@ -860,7 +967,15 @@ def test_openai_compatible_config_from_provider_sets_reasoning_effort(
     assert plain.reasoning_effort is None
 
 
-def test_kimi_k3_maps_xhigh_thinking_to_max(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("level", "expected_effort"),
+    [("low", "low"), ("high", "high"), ("xhigh", "max")],
+)
+def test_kimi_k3_maps_thinking_levels_to_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+    level: ThinkingLevel,
+    expected_effort: str,
+) -> None:
     monkeypatch.setenv("KIMI_CODE_API_KEY", "test-key")
     settings = load_provider_settings(TauPaths(home=Path("/missing")))
     provider = settings.get_provider("kimi-code")
@@ -868,11 +983,38 @@ def test_kimi_k3_maps_xhigh_thinking_to_max(monkeypatch: pytest.MonkeyPatch) -> 
     config = openai_compatible_config_from_provider(
         provider,
         model="k3",
-        thinking_level="xhigh",
+        thinking_level=level,
     )
 
-    assert provider_thinking_levels(provider, model="k3") == ("xhigh",)
-    assert config.reasoning_effort == "max"
+    assert provider_thinking_levels(provider, model="k3") == ("low", "high", "xhigh")
+    assert config.reasoning_effort == expected_effort
+
+
+@pytest.mark.parametrize(
+    ("level", "expected_effort"),
+    [("low", "low"), ("high", "high"), ("xhigh", "max")],
+)
+def test_huggingface_kimi_k3_maps_thinking_levels_to_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+    level: ThinkingLevel,
+    expected_effort: str,
+) -> None:
+    monkeypatch.setenv("HF_TOKEN", "test-key")
+    settings = load_provider_settings(TauPaths(home=Path("/missing")))
+    provider = settings.get_provider("huggingface")
+
+    config = openai_compatible_config_from_provider(
+        provider,
+        model="moonshotai/Kimi-K3",
+        thinking_level=level,
+    )
+
+    assert provider_thinking_levels(provider, model="moonshotai/Kimi-K3") == (
+        "low",
+        "high",
+        "xhigh",
+    )
+    assert config.reasoning_effort == expected_effort
 
 
 def test_openai_compatible_config_from_provider_rejects_unsupported_thinking_level(
@@ -1026,6 +1168,46 @@ def test_anthropic_config_from_provider_maps_opus_5_adaptive_thinking(
     assert medium_config.thinking_effort == "medium"
     assert xhigh_config.thinking_mode == "adaptive"
     assert xhigh_config.thinking_effort == "max"
+
+
+def test_anthropic_config_from_provider_sets_model_max_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    provider = ProviderSettings().get_provider("anthropic")
+    assert isinstance(provider, AnthropicProviderConfig)
+
+    opus_config = anthropic_config_from_provider(provider, model="claude-opus-5")
+    haiku_config = anthropic_config_from_provider(provider, model="claude-haiku-4-5")
+
+    assert opus_config.max_tokens == 128_000
+    assert haiku_config.max_tokens == 64_000
+
+
+def test_anthropic_config_from_provider_omits_unknown_model_max_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    provider = AnthropicProviderConfig()
+
+    config = anthropic_config_from_provider(provider)
+
+    assert config.max_tokens is None
+
+
+def test_provider_model_max_tokens_reads_model_metadata() -> None:
+    provider = AnthropicProviderConfig(
+        models=("capped", "uncapped"),
+        default_model="capped",
+        model_metadata={
+            "capped": ProviderModelMetadata(context_window=200_000, max_tokens=64_000),
+            "uncapped": ProviderModelMetadata(context_window=256_000),
+        },
+    )
+
+    assert provider_model_max_tokens(provider, "capped") == 64_000
+    assert provider_model_max_tokens(provider, "uncapped") is None
+    assert provider_model_max_tokens(provider) == 64_000
 
 
 @pytest.mark.parametrize(

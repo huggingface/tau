@@ -771,9 +771,16 @@ async def run_openai_print_mode(
     settings = load_provider_settings()
     shell_settings = load_shell_settings()
     selection = resolve_provider_selection(settings, provider_name=provider_name, model=model)
+    inference_provider = (
+        selection.provider.inference_providers.get(selection.model)
+        if isinstance(selection.provider, OpenAICompatibleProviderConfig)
+        and selection.provider.name == "huggingface"
+        else None
+    )
     provider = create_model_provider(
         selection.provider,
         model=selection.model,
+        inference_provider=inference_provider,
         thinking_level=resolve_startup_thinking_level(selection.provider, selection.model),
     )
     try:
@@ -782,6 +789,8 @@ async def run_openai_print_mode(
             manager,
             cwd=cwd,
             model=selection.model,
+            provider_name=selection.provider.name,
+            inference_provider=inference_provider,
             session_id=session_id,
         )
         return await run_print_mode(
@@ -794,6 +803,7 @@ async def run_openai_print_mode(
             session_id=record.id,
             session_manager=manager,
             provider_name=selection.provider.name,
+            inference_provider=inference_provider,
             provider_settings=settings,
             runtime_provider_config=selection.provider,
             shell_command_prefix=shell_settings.shell_command_prefix,
@@ -814,10 +824,18 @@ def _create_print_session(
     *,
     cwd: Path,
     model: str,
-    session_id: str | None,
+    provider_name: str | None = None,
+    inference_provider: str | None = None,
+    session_id: str | None = None,
 ) -> CodingSessionRecord:
     """Create an isolated print-mode session, refusing transcript collisions."""
-    return manager.create_session_exclusive(cwd=cwd, model=model, session_id=session_id)
+    return manager.create_session_exclusive(
+        cwd=cwd,
+        model=model,
+        provider_name=provider_name,
+        inference_provider=inference_provider,
+        session_id=session_id,
+    )
 
 
 async def run_print_mode(
@@ -832,6 +850,7 @@ async def run_print_mode(
     session_id: str | None = None,
     session_manager: SessionManager | None = None,
     provider_name: str = DEFAULT_PROVIDER_NAME,
+    inference_provider: str | None = None,
     provider_settings: ProviderSettings | None = None,
     runtime_provider_config: ProviderConfig | None = None,
     shell_command_prefix: str | None = None,
@@ -858,6 +877,7 @@ async def run_print_mode(
             session_id=session_id,
             session_manager=session_manager,
             provider_name=provider_name,
+            inference_provider=inference_provider,
             provider_settings=provider_settings,
             runtime_provider_config=runtime_provider_config,
             shell_command_prefix=shell_command_prefix,

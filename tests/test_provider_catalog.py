@@ -133,6 +133,8 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
     assert opus_5.cost is not None
     assert opus_5.cost["input"] == 5
     assert opus_5.cost["output"] == 25
+    assert opus_5.cost["cacheWrite"] == 6.25
+    assert opus_5.cost["cacheWrite1h"] == 10
     assert opus_5.compat == {"forceAdaptiveThinking": True}
     assert opus_5.thinking_level_map == {"minimal": None, "xhigh": "max"}
     assert entry.thinking_levels == ("off", "minimal", "low", "medium", "high", "xhigh")
@@ -270,6 +272,28 @@ def test_builtin_catalog_oauth_and_opencode_auth_methods() -> None:
     assert opencode.api_key_env == "OPENCODE_API_KEY"
 
 
+def test_builtin_catalog_copilot_claude_max_tokens() -> None:
+    entry = builtin_provider_entry("github-copilot")
+    assert entry is not None
+
+    expected = {
+        "claude-haiku-4.5": 64_000,
+        "claude-opus-4.5": 32_000,
+        "claude-opus-4.6": 32_000,
+        "claude-opus-4.7": 32_000,
+        "claude-opus-4.8": 64_000,
+        "claude-sonnet-4": 16_000,
+        "claude-sonnet-4.5": 32_000,
+        "claude-sonnet-4.6": 32_000,
+        "claude-sonnet-5": 128_000,
+    }
+
+    for model, max_tokens in expected.items():
+        metadata = entry.model_metadata[model]
+        assert metadata.api == "anthropic-messages"
+        assert metadata.max_tokens == max_tokens
+
+
 def test_builtin_catalog_golden_nvidia_entry() -> None:
     entry = builtin_provider_entry("nvidia")
     assert entry is not None
@@ -343,6 +367,7 @@ def test_builtin_catalog_huggingface_model_expansion() -> None:
         "google/gemma-4-31B-it",
         "meta-llama/Llama-3.3-70B-Instruct",
         "moonshotai/Kimi-K2.7-Code",
+        "moonshotai/Kimi-K3",
         "openai/gpt-oss-120b",
         "openai/gpt-oss-20b",
         "stepfun-ai/Step-3.5-Flash",
@@ -354,7 +379,7 @@ def test_builtin_catalog_huggingface_model_expansion() -> None:
         "zai-org/GLM-5.2",
     }
 
-    assert len(entry.models) == 46
+    assert len(entry.models) == 47
     assert added_models <= set(entry.models)
     assert set(entry.context_windows or {}) == set(entry.models)
     assert set(entry.model_metadata) == set(entry.models)
@@ -368,6 +393,21 @@ def test_builtin_catalog_huggingface_model_expansion() -> None:
     llama = entry.model_metadata["meta-llama/Llama-3.3-70B-Instruct"]
     assert llama.reasoning is False
     assert llama.context_window == 131_072
+
+    kimi_k3 = entry.model_metadata["moonshotai/Kimi-K3"]
+    assert kimi_k3.name == "Kimi K3"
+    assert kimi_k3.reasoning is True
+    assert kimi_k3.input == ("text", "image")
+    assert kimi_k3.context_window == 1_048_576
+    assert kimi_k3.cost == {"input": 3, "output": 15, "cacheRead": 0, "cacheWrite": 0}
+    assert kimi_k3.thinking_level_map == {
+        "off": None,
+        "minimal": None,
+        "low": "low",
+        "medium": None,
+        "high": "high",
+        "xhigh": "max",
+    }
 
 
 def test_builtin_catalog_golden_kimi_entries() -> None:
@@ -407,6 +447,7 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
     assert coding.credential_name == "kimi-code"
     assert coding.models == ("k3", "kimi-for-coding")
     assert coding.default_model == "kimi-for-coding"
+    assert coding.thinking_default == "xhigh"
     assert coding.context_windows == {"k3": 1_048_576, "kimi-for-coding": 262_144}
 
     k3 = coding.model_metadata["k3"]
@@ -417,9 +458,9 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
     assert k3.thinking_level_map == {
         "off": None,
         "minimal": None,
-        "low": None,
+        "low": "low",
         "medium": None,
-        "high": None,
+        "high": "high",
         "xhigh": "max",
     }
 
@@ -427,6 +468,13 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
     assert latest.name == "Kimi for Coding (latest)"
     assert latest.reasoning is True
     assert latest.context_window == 262_144
+    assert latest.thinking_level_map == {
+        "off": None,
+        "minimal": None,
+        "low": None,
+        "high": None,
+        "xhigh": None,
+    }
 
 
 def test_builtin_minimax_m3_has_tiered_pricing() -> None:
@@ -595,6 +643,38 @@ cost_tiers = [
         model_cost_for_input_tokens(reloaded.model_metadata["MiniMax-M3"], 400_001)
         == long_context_cost
     )
+
+
+def test_user_catalog_cost_tier_accepts_one_hour_cache_write_rate(tmp_path: Path) -> None:
+    paths = _write_user_catalog(
+        tmp_path / ".tau",
+        """
+[[providers]]
+name = "minimax"
+
+[providers.model_metadata."MiniMax-M3"]
+cost_tiers = [
+  { max_input_tokens = 400000, input = 0.2, output = 1.0, cacheRead = 0.04, cacheWrite = 0.25 },
+  { input = 0.5, output = 2.0, cacheRead = 0.1, cacheWrite = 0.6, cacheWrite1h = 1.0 },
+]
+""",
+    )
+    entry = next(e for e in effective_catalog(paths) if e.name == "minimax")
+    metadata = entry.model_metadata["MiniMax-M3"]
+    assert model_cost_for_input_tokens(metadata, 400_001) == {
+        "input": 0.5,
+        "output": 2.0,
+        "cacheRead": 0.1,
+        "cacheWrite": 0.6,
+        "cacheWrite1h": 1.0,
+    }
+    # Tiers without the key omit it, so billing can fall back to cacheWrite.
+    assert model_cost_for_input_tokens(metadata, 400_000) == {
+        "input": 0.2,
+        "output": 1.0,
+        "cacheRead": 0.04,
+        "cacheWrite": 0.25,
+    }
 
 
 def test_user_catalog_rejects_bounded_final_cost_tier(tmp_path: Path) -> None:

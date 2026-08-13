@@ -50,6 +50,7 @@ from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 from tau_ai.stream import canonicalize_provider_stream
+from tau_ai.tool_call_ids import portable_tool_call_id
 
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_MAX_TOKENS = 4096
@@ -208,6 +209,7 @@ class AnthropicProvider:
                             return
 
                         yield ProviderResponseStartEvent(model=model)
+                        stream_error: dict[str, JSONValue] | None = None
                         content_parts: list[str] = []
                         thinking_parts: list[str] = []
                         thinking_signature: str | None = None
@@ -284,12 +286,37 @@ class AnthropicProvider:
                                     )
                                 usage = _apply_message_delta_usage(usage, chunk.get("usage"))
                             elif event_type == "error":
-                                error = chunk.get("error")
-                                message = "Provider returned an error"
-                                if isinstance(error, Mapping):
-                                    message = _string_or_empty(error.get("message")) or message
-                                yield ProviderErrorEvent(message=message, data=chunk)
+                                error_type, message = _anthropic_stream_error_details(chunk)
+                                if (
+                                    not emitted_content
+                                    and self._should_retry(attempt)
+                                    and _retryable_anthropic_stream_error(error_type)
+                                ):
+                                    stream_error = chunk
+                                    break
+                                yield ProviderErrorEvent(
+                                    message=message,
+                                    data={"event": chunk, "attempts": attempt + 1},
+                                )
                                 return
+
+                        if stream_error is not None:
+                            error_type, _message = _anthropic_stream_error_details(stream_error)
+                            delay = retry_delay_seconds(
+                                attempt,
+                                max_delay_seconds=self._config.max_retry_delay_seconds,
+                            )
+                            yield provider_retry_event(
+                                attempt=attempt,
+                                max_retries=self._config.max_retries,
+                                delay_seconds=delay,
+                                reason=f"stream error ({error_type or 'unknown'})",
+                                data={"event": stream_error},
+                            )
+                            attempt += 1
+                            if not await wait_for_retry(delay, signal=signal):
+                                return
+                            continue
 
                         tool_calls = [
                             builder.build(index) for index, builder in sorted(tool_builders.items())
@@ -353,6 +380,30 @@ class AnthropicProvider:
         return status_code is None or status_code in {408, 409, 425, 429} or status_code >= 500
 
 
+_TRANSIENT_ANTHROPIC_STREAM_ERROR_TYPES = frozenset(
+    {
+        "api_error",
+        "overloaded_error",
+        "rate_limit_error",
+    }
+)
+
+
+def _anthropic_stream_error_details(event: Mapping[str, JSONValue]) -> tuple[str, str]:
+    """Return the provider classification and message from an Anthropic SSE error."""
+    error = event.get("error")
+    if not isinstance(error, Mapping):
+        return "", "Provider returned an error"
+    error_type = _string_or_empty(error.get("type"))
+    message = _string_or_empty(error.get("message")) or "Provider returned an error"
+    return error_type, message
+
+
+def _retryable_anthropic_stream_error(error_type: str) -> bool:
+    """Return whether an Anthropic SSE error is transient and safe to retry."""
+    return error_type.lower() in _TRANSIENT_ANTHROPIC_STREAM_ERROR_TYPES
+
+
 class _AnthropicToolBuilder:
     def __init__(self) -> None:
         self.id = ""
@@ -390,9 +441,14 @@ def _build_messages_payload(
     if thinking_budget_tokens is not None:
         resolved_max_tokens = max(resolved_max_tokens, thinking_budget_tokens + 1024)
     cache_control = _cache_control(cache_retention)
-    payload_messages = [
-        _anthropic_message(message, supports_images=supports_images) for message in messages
-    ]
+    payload_messages = []
+    for message in messages:
+        converted = _anthropic_message(message, supports_images=supports_images)
+        # Dropping foreign provider reasoning can empty a reasoning-only turn.
+        # Anthropic rejects empty assistant content, so omit that inert turn too.
+        if converted.get("role") == "assistant" and not converted.get("content"):
+            continue
+        payload_messages.append(converted)
     _apply_message_cache_breakpoints(payload_messages, cache_control)
     payload: dict[str, JSONValue] = {
         "model": model,
@@ -571,6 +627,11 @@ def _anthropic_message(message: AgentMessage, *, supports_images: bool) -> dict[
             if isinstance(block, TextContent):
                 content.append({"type": "text", "text": block.text})
             elif isinstance(block, ThinkingContent):
+                # Thinking signatures are provider-owned opaque state. Replaying
+                # an OpenAI/Google signature as an Anthropic thinking block makes
+                # an otherwise portable model switch fail validation.
+                if message.api != "anthropic-messages":
+                    continue
                 thinking: dict[str, JSONValue] = {
                     "type": "thinking",
                     "thinking": block.thinking,
@@ -582,7 +643,7 @@ def _anthropic_message(message: AgentMessage, *, supports_images: bool) -> dict[
                 content.append(
                     {
                         "type": "tool_use",
-                        "id": block.id,
+                        "id": portable_tool_call_id(block.id),
                         "name": block.name,
                         "input": block.arguments,
                     }
@@ -603,7 +664,7 @@ def _anthropic_message(message: AgentMessage, *, supports_images: bool) -> dict[
             "content": [
                 {
                     "type": "tool_result",
-                    "tool_use_id": message.tool_call_id,
+                    "tool_use_id": portable_tool_call_id(message.tool_call_id),
                     "content": result_content,
                     "is_error": bool(message.is_error),
                 }

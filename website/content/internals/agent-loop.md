@@ -59,6 +59,10 @@ payload table.
 The final `AssistantMessage` is authoritative: it persists text, thinking, and tool
 calls as ordered content blocks. Nested update events provide responsive rendering,
 while saved sessions and provider history replay use the finalized structured message.
+Its `provider` field names Tau's configured provider. When a gateway reports a
+more specific backend, `response_provider` records the backend that served that
+request. For example, Hugging Face responses expose the selected Inference
+Provider there while `provider` remains `huggingface`.
 
 Because the contract is *events*, a frontend's job is reduced to: send a prompt,
 consume the stream, draw what you see.

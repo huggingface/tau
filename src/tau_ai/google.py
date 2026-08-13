@@ -41,6 +41,7 @@ from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 from tau_ai.stream import canonicalize_provider_stream
+from tau_ai.tool_call_ids import portable_tool_call_id
 
 
 class GoogleGenerativeAIProvider:
@@ -389,7 +390,7 @@ def _messages_to_google(
             elif isinstance(block, ToolCall):
                 part = {
                     "functionCall": {
-                        "id": block.id,
+                        "id": portable_tool_call_id(block.id),
                         "name": block.name,
                         "args": dict(block.arguments),
                     }
@@ -409,7 +410,7 @@ def _messages_to_google(
             "response": {"output" if not message.is_error else "error": text},
         }
         if message.tool_call_id:
-            response["id"] = message.tool_call_id
+            response["id"] = portable_tool_call_id(message.tool_call_id)
         image_parts: list[JSONValue] = [_google_image(image) for image in images]
         if image_parts and _supports_multimodal_function_response(model):
             response["parts"] = image_parts

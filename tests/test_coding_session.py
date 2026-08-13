@@ -13,6 +13,7 @@ from pi_event_helpers import assistant_done, assistant_error, assistant_start
 from tau_agent import (
     AgentMessage,
     AgentTool,
+    AgentToolResult,
     AssistantMessage,
     ImageContent,
     MessageEndEvent,
@@ -27,10 +28,12 @@ from tau_agent.messages import AssistantMessageDiagnostic, assistant_content
 from tau_agent.provider_events import AssistantErrorEvent
 from tau_agent.session import (
     CompactionEntry,
+    CustomEntry,
     JsonlSessionStorage,
     LeafEntry,
     MessageEntry,
     ModelChangeEntry,
+    SessionEntry,
     SessionInfoEntry,
     ThinkingLevelChangeEntry,
 )
@@ -398,6 +401,271 @@ async def test_prompt_logs_safe_provider_stream_error_details(tmp_path: Path) ->
     assert "Hello" not in log_path.read_text(encoding="utf-8")
 
 
+class _CountingStorage:
+    def __init__(self) -> None:
+        self.entries: list[SessionEntry] = []
+        self.reads = 0
+
+    async def append(self, entry: SessionEntry) -> None:
+        self.entries.append(entry)
+
+    async def read_all(self) -> list[SessionEntry]:
+        self.reads += 1
+        return list(self.entries)
+
+
+class _FaultInjectingStorage:
+    def __init__(self, phase: str) -> None:
+        self.entries: list[SessionEntry] = []
+        self.phase = phase
+        self.failed = False
+        self.failures_remaining = 2 if phase == "message_twice" else 1
+
+    async def append(self, entry: SessionEntry) -> None:
+        target = (
+            self.phase.startswith("message")
+            and isinstance(entry, MessageEntry)
+            or self.phase.startswith("leaf")
+            and isinstance(entry, LeafEntry)
+        )
+        if target and (self.failures_remaining > 0 or self.phase == "message_always"):
+            self.failed = True
+            self.failures_remaining -= 1
+            if self.phase.endswith("after"):
+                self.entries.append(entry)
+            raise OSError(f"simulated {self.phase} failure")
+        self.entries.append(entry)
+
+    async def read_all(self) -> list[SessionEntry]:
+        if (
+            self.phase == "refresh"
+            and not self.failed
+            and any(isinstance(entry, LeafEntry) for entry in self.entries)
+        ):
+            self.failed = True
+            raise OSError("simulated refresh failure")
+        return list(self.entries)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "phase",
+    ["message_before", "message_after", "leaf_before", "leaf_after", "refresh"],
+)
+async def test_message_persistence_retry_is_idempotent(tmp_path: Path, phase: str) -> None:
+    storage = _FaultInjectingStorage(phase)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    with pytest.raises(OSError, match="simulated"):
+        await _collect_session_events(session.prompt("go"))
+
+    messages = [entry for entry in storage.entries if isinstance(entry, MessageEntry)]
+    assert len(messages) == 1
+    assert messages[0].message.text == "go"
+    leaves = [
+        entry
+        for entry in storage.entries
+        if isinstance(entry, LeafEntry) and entry.entry_id == messages[0].id
+    ]
+    assert len(leaves) == 1
+    restored = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+    _assert_messages(restored.messages, [UserMessage(content="go")])
+
+
+@pytest.mark.anyio
+async def test_next_prompt_flushes_a_repair_that_failed_twice(tmp_path: Path) -> None:
+    storage = _FaultInjectingStorage("message_twice")
+    provider = FakeProvider(
+        [[assistant_start(), assistant_done(AssistantMessage(content="Recovered."))]]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    with pytest.raises(OSError, match="simulated message_twice failure"):
+        await _collect_session_events(session.prompt("go"))
+    await _collect_session_events(session.prompt("continue"))
+
+    persisted_texts = [
+        entry.message.text for entry in storage.entries if isinstance(entry, MessageEntry)
+    ]
+    assert persisted_texts == ["go", "continue", "Recovered."]
+    _model, _system, sent, _tools = provider.calls[-1]
+    assert [message.text for message in sent] == ["go", "continue"]
+
+
+@pytest.mark.anyio
+async def test_clean_persist_reads_storage_once_per_message(tmp_path: Path) -> None:
+    storage = _CountingStorage()
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider(
+                [[assistant_start(), assistant_done(AssistantMessage(content="Hi."))]]
+            ),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    reads_before = storage.reads
+    await _collect_session_events(session.prompt("go"))
+
+    persisted = [entry for entry in storage.entries if isinstance(entry, MessageEntry)]
+    assert len(persisted) == 2
+    # One deferred-metadata read plus one state refresh per message. A first
+    # attempt must not also read to check ids it just minted.
+    assert storage.reads - reads_before == len(persisted) + 1
+
+
+@pytest.mark.anyio
+async def test_reconcile_persistence_failure_is_logged(tmp_path: Path) -> None:
+    storage = _FaultInjectingStorage("message_always")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    with pytest.raises(OSError, match="simulated message_always failure"):
+        await _collect_session_events(session.prompt("go"))
+
+    assert session.last_diagnostic_log_path is not None
+    diagnostics = [
+        json.loads(line)
+        for line in session.last_diagnostic_log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert diagnostics[-1]["phase"] == "session_persistence_reconcile"
+    assert diagnostics[-1]["exception"]["message"] == "simulated message_always failure"
+
+
+def _hang_tool(tool_started: asyncio.Event, release: asyncio.Event) -> AgentTool:
+    async def hang(
+        tool_call_id: object,
+        arguments: object,
+        signal: object = None,
+        on_update: object = None,
+    ) -> AgentToolResult:
+        tool_started.set()
+        await release.wait()
+        return AgentToolResult(content=[TextContent(text="done")])
+
+    return AgentTool(
+        name="hang",
+        label="Hang",
+        description="Block until released.",
+        parameters={"type": "object"},
+        execute_fn=hang,
+    )
+
+
+@pytest.mark.anyio
+async def test_cancelled_prompt_teardown_persists_interrupted_tool_result(
+    tmp_path: Path,
+) -> None:
+    # Regression: Esc mid-tool-call cancels the consumer, and the synthetic
+    # interrupted tool result never reached the session file, leaving a
+    # dangling tool_use that providers reject with a 400 on later replays.
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    tool_started = asyncio.Event()
+    release = asyncio.Event()
+    tool_call = ToolCall(id="call-1", name="hang", arguments={})
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(
+                    message=AssistantMessage(
+                        content=assistant_content("Running.", [tool_call]),
+                        stop_reason="toolUse",
+                    )
+                ),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Recovered.")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            tools=[_hang_tool(tool_started, release)],
+        )
+    )
+
+    async def consume() -> None:
+        async for _event in session.prompt("go"):
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(tool_started.wait(), timeout=5)
+    # Mirror the TUI interrupt: cancel the session, then the worker, with no
+    # await in between.
+    session.cancel()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    expected_repair = ToolResultMessage(
+        tool_call_id="call-1",
+        tool_name="hang",
+        content=[TextContent(text="Tool call interrupted by user")],
+        is_error=True,
+    )
+    entries = await storage.read_all()
+    message_entries = [entry for entry in entries if entry.type == "message"]
+    by_id = {entry.id: entry for entry in message_entries}
+    repairs = [entry for entry in message_entries if isinstance(entry.message, ToolResultMessage)]
+    assert len(repairs) == 1
+    _assert_messages([repairs[0].message], [expected_repair])
+    parent = by_id[repairs[0].parent_id]
+    assert isinstance(parent.message, AssistantMessage)
+    assert parent.message.tool_calls
+
+    _ = await _collect_session_events(session.prompt("continue"))
+
+    _model, _system, sent, _tools = provider.calls[-1]
+    call_index = next(
+        index
+        for index, message in enumerate(sent)
+        if isinstance(message, AssistantMessage) and message.tool_calls
+    )
+    _assert_messages([sent[call_index + 1]], [expected_repair])
+    assert sum(isinstance(message, ToolResultMessage) for message in sent) == 1
+
+
 @pytest.mark.anyio
 async def test_load_persists_repair_for_session_with_interrupted_tail_tool_call(
     tmp_path: Path,
@@ -457,6 +725,90 @@ async def test_load_persists_repair_for_session_with_interrupted_tail_tool_call(
             expected_repair,
         ],
     )
+
+
+@pytest.mark.anyio
+async def test_load_persists_branch_without_orphaned_tool_result(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    user_entry = MessageEntry(message=UserMessage(content="what remains?"))
+    await storage.append(user_entry)
+    orphan_entry = MessageEntry(
+        parent_id=user_entry.id,
+        message=ToolResultMessage(
+            tool_call_id="call-missing",
+            tool_name="bash",
+            content="Tool call interrupted by user",
+            is_error=True,
+        ),
+    )
+    await storage.append(orphan_entry)
+    custom_entry = CustomEntry(
+        parent_id=orphan_entry.id,
+        namespace="example.state",
+        data={"kept": True},
+    )
+    await storage.append(custom_entry)
+    model_entry = ModelChangeEntry(
+        parent_id=custom_entry.id,
+        model="recovered-model",
+    )
+    await storage.append(model_entry)
+    continued_entry = MessageEntry(
+        parent_id=model_entry.id,
+        message=UserMessage(content="continue"),
+    )
+    await storage.append(continued_entry)
+    await storage.append(LeafEntry(parent_id=continued_entry.id, entry_id=continued_entry.id))
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    _assert_messages(
+        session.messages,
+        [UserMessage(content="what remains?"), UserMessage(content="continue")],
+    )
+    assert session.state.model == "recovered-model"
+    assert any(
+        entry.namespace == "example.state" and entry.data == {"kept": True}
+        for entry in session.state.custom_entries
+    )
+    diagnostics = [
+        entry
+        for entry in (await storage.read_all())
+        if isinstance(entry, CustomEntry) and entry.namespace == "tau.session-history-repair"
+    ]
+    assert len(diagnostics) == 1
+    assert diagnostics[0].data == {
+        "version": 1,
+        "synthesizedResults": 0,
+        "droppedOrphanResults": 1,
+        "droppedDuplicateResults": 0,
+        "reorderedResults": 0,
+    }
+
+    restored = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+    _assert_messages(restored.messages, session.messages)
+    diagnostics = [
+        entry
+        for entry in (await storage.read_all())
+        if isinstance(entry, CustomEntry) and entry.namespace == "tau.session-history-repair"
+    ]
+    assert len(diagnostics) == 1
 
 
 @pytest.mark.anyio
@@ -842,6 +1194,47 @@ def test_ordered_tree_entries_terminates_on_parent_cycle() -> None:
 
     assert sorted(entry.id for entry in ordered) == ["a", "b"]
     assert len(ordered) == 2
+
+
+@pytest.mark.anyio
+async def test_branch_to_entry_repairs_orphaned_tool_result(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    root = MessageEntry(id="root", message=UserMessage(content="start"))
+    orphan = MessageEntry(
+        id="orphan",
+        parent_id=root.id,
+        message=ToolResultMessage(tool_call_id="call-missing", tool_name="bash", content="orphan"),
+    )
+    answer = MessageEntry(
+        id="answer",
+        parent_id=orphan.id,
+        message=AssistantMessage(content="answer"),
+    )
+    for entry in (root, orphan, answer, LeafEntry(parent_id=root.id, entry_id=root.id)):
+        await storage.append(entry)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    result = await session.branch_to_entry(answer.id)
+
+    assert result.message.endswith("and repaired malformed tool history.")
+    _assert_messages(
+        session.messages,
+        [UserMessage(content="start"), AssistantMessage(content="answer")],
+    )
+    diagnostics = [
+        entry
+        for entry in (await storage.read_all())
+        if isinstance(entry, CustomEntry) and entry.namespace == "tau.session-history-repair"
+    ]
+    assert len(diagnostics) == 1
 
 
 @pytest.mark.anyio
@@ -3148,6 +3541,143 @@ async def test_session_compacts_and_retries_once_after_context_overflow(
 
 
 @pytest.mark.anyio
+async def test_huggingface_session_pins_successful_automatic_route(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    created: list[tuple[str | None, object | None]] = []
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+        inference_provider: str | None = None,
+        response_headers_observer: object | None = None,
+    ) -> SwitchableFakeProvider:
+        del credential_store, thinking_level
+        created.append((inference_provider, response_headers_observer))
+        return SwitchableFakeProvider(provider_config)
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    provider_config = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=("zai-org/GLM-5.2",),
+        default_model="zai-org/GLM-5.2",
+    )
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(
+        cwd=tmp_path,
+        model="zai-org/GLM-5.2",
+        provider_name="huggingface",
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="zai-org/GLM-5.2",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(record.path),
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+            provider_name="huggingface",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            runtime_provider_config=provider_config,
+        )
+    )
+
+    observer = created[0][1]
+    assert callable(observer)
+    original_touch_session = manager.touch_session
+    active_provider = session._harness.config.provider
+
+    def fail_touch_session(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise PermissionError("session index is read-only")
+
+    monkeypatch.setattr(manager, "touch_session", fail_touch_session)
+    with pytest.raises(PermissionError, match="session index is read-only"):
+        observer({"X-Inference-Provider": "deepinfra"})
+
+    assert session.inference_provider is None
+    assert session._harness.config.provider is active_provider
+
+    monkeypatch.setattr(manager, "touch_session", original_touch_session)
+    observer({"X-Inference-Provider": "deepinfra"})
+
+    assert session.inference_provider == "deepinfra"
+    assert created[-1][0] == "deepinfra"
+    assert manager.get_session(record.id).inference_provider == "deepinfra"  # type: ignore[union-attr]
+
+
+@pytest.mark.anyio
+async def test_huggingface_session_re_resolves_pin_on_model_switch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    created: list[tuple[str | None, str | None]] = []
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+        inference_provider: str | None = None,
+        response_headers_observer: object | None = None,
+    ) -> SwitchableFakeProvider:
+        del credential_store, thinking_level, response_headers_observer
+        created.append((model, inference_provider))
+        return SwitchableFakeProvider(provider_config)
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    provider_config = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=("zai-org/GLM-5.2", "deepseek-ai/DeepSeek-V4-Flash"),
+        default_model="zai-org/GLM-5.2",
+        inference_providers={
+            "zai-org/GLM-5.2": "deepinfra",
+            "deepseek-ai/DeepSeek-V4-Flash": "fireworks-ai",
+        },
+    )
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(
+        cwd=tmp_path,
+        model="zai-org/GLM-5.2",
+        provider_name="huggingface",
+        inference_provider="deepinfra",
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="zai-org/GLM-5.2",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(record.path),
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+            provider_name="huggingface",
+            inference_provider="deepinfra",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            runtime_provider_config=provider_config,
+            resource_paths=TauResourcePaths(
+                root=tmp_path / ".tau",
+                paths=TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"),
+            ),
+        )
+    )
+
+    session.set_model("deepseek-ai/DeepSeek-V4-Flash")
+
+    assert created == [
+        ("zai-org/GLM-5.2", "deepinfra"),
+        ("deepseek-ai/DeepSeek-V4-Flash", "fireworks-ai"),
+    ]
+    assert session.model == "deepseek-ai/DeepSeek-V4-Flash"
+    assert session.inference_provider == "fireworks-ai"
+    assert manager.get_session(record.id).inference_provider == "fireworks-ai"  # type: ignore[union-attr]
+
+
+@pytest.mark.anyio
 async def test_session_switches_configured_provider(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -3474,6 +4004,11 @@ async def test_session_resumes_indexed_session(tmp_path: Path) -> None:
             UserMessage(content="Continue."),
         ],
     )
+    # The replacement session's persistence listener must be detached on
+    # adoption, or every message after resume is persisted twice.
+    entries = await second_storage.read_all()
+    persisted_texts = [entry.message.text for entry in entries if entry.type == "message"]
+    assert persisted_texts == ["Earlier", "Restored", "Continue.", "Second answer"]
 
 
 @pytest.mark.anyio

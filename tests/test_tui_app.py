@@ -57,6 +57,7 @@ from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_config import (
     OpenAICodexProviderConfig,
     OpenAICompatibleProviderConfig,
+    ProviderSelection,
     ProviderSettings,
     ScopedModelConfig,
     save_provider_settings,
@@ -672,7 +673,7 @@ def test_session_sidebar_brand_includes_current_version() -> None:
 
     console.print(_sidebar_brand(theme=TAU_DARK_THEME))
 
-    assert "τ = 2π  0.3.6" in console.export_text()
+    assert "τ = 2π  0.3.9" in console.export_text()
 
 
 def test_session_sidebar_uses_prominent_title_and_accented_section_headers() -> None:
@@ -3021,6 +3022,8 @@ def test_tau_light_theme_uses_light_chat_backgrounds() -> None:
     assert theme.screen_background == "#ffffff"
     assert theme.transcript_background == "#ffffff"
     assert theme.prompt_text == "#111827"
+    assert theme.markdown_heading == theme.accent
+    assert theme.markdown_bullet == theme.accent
     assert theme.syntax_theme == "ansi_light"
     assert theme.role_styles["user"].body == f"#111827 on {theme.prompt_background}"
     assert theme.role_styles["assistant"].body == "#111827"
@@ -4310,7 +4313,11 @@ async def test_tui_app_export_command_runs_session_export() -> None:
         await pilot.press("enter")
 
         assert session.export_calls == [(Path("out.jsonl"), "jsonl")]
-        assert notifications == ["Exported session to /workspace/project/session.html"]
+        assert notifications == []
+        assert app.state.items[-1] == ChatItem(
+            role="status",
+            text="/export\nExported session to /workspace/project/session.html",
+        )
         assert session.prompt_texts == []
 
 
@@ -7840,6 +7847,30 @@ async def test_tui_app_runs_initial_prompt() -> None:
 
     assert session.prompt_texts == ["explain this repo"]
     assert any(item.role == "user" and item.text == "explain this repo" for item in app.state.items)
+
+
+def test_huggingface_startup_route_prefers_resumed_session_pin(tmp_path: Path) -> None:
+    provider = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=("zai-org/GLM-5.2",),
+        default_model="zai-org/GLM-5.2",
+        inference_providers={"zai-org/GLM-5.2": "deepinfra"},
+    )
+    selection = ProviderSelection(provider=provider, model="zai-org/GLM-5.2")
+    record = CodingSessionRecord(
+        id="session-id",
+        path=tmp_path / "session.jsonl",
+        cwd=tmp_path,
+        model="zai-org/GLM-5.2",
+        title=None,
+        created_at=1.0,
+        updated_at=1.0,
+        provider_name="huggingface",
+        inference_provider="fireworks-ai",
+    )
+
+    assert tui_app._startup_inference_provider(selection, record) == "fireworks-ai"
+    assert tui_app._startup_inference_provider(selection, None) == "deepinfra"
 
 
 @pytest.mark.anyio

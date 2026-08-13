@@ -18,6 +18,7 @@ class ProviderResponseStartEvent(BaseModel):
 
     type: Literal["response_start"] = "response_start"
     model: str
+    response_provider: str | None = None
 
 
 class ProviderRetryEvent(BaseModel):
@@ -78,6 +79,7 @@ class ProviderErrorEvent(BaseModel):
     type: Literal["error"] = "error"
     message: str
     data: dict[str, JSONValue] | None = None
+    response_provider: str | None = None
 
 
 type ProviderEvent = (

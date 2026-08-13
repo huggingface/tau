@@ -219,6 +219,11 @@ Limits are inclusive, must increase strictly, and the final tier must omit
 tiers should select the first tier whose limit includes the input-token count;
 older callers continue to see `cost` as the base rate.
 
+All rates are per million tokens. `cacheWrite` is the 5-minute cache-write
+rate; entries may add an optional `cacheWrite1h` rate for Anthropic's 1-hour
+TTL cache writes, which Anthropic bills higher. When `cacheWrite1h` is absent,
+1-hour writes fall back to the `cacheWrite` rate.
+
 ### Provider preferences
 
 Provider preferences live in `~/.tau/providers.json`:
@@ -249,12 +254,24 @@ Provider preferences live in `~/.tau/providers.json`:
   billing can be configured with `"headers": { "X-HF-Bill-To": "my-org" }` on
   the `huggingface` provider preference. `thinking_defaults` remembers the
   preferred thinking level per model for new sessions; resumed sessions still use
-  their session history. `timeout_seconds` defaults to `60` (> 0); `max_retries`
+  their session history. The built-in `huggingface` preference also accepts
+  `"inference_providers": { "zai-org/GLM-5.2": "deepinfra" }`. Each key must be
+  a configured model and each value an explicit provider suffix advertised by
+  Hugging Face—not the `fastest`, `cheapest`, or `preferred` routing policies.
+  Tau snapshots the selected suffix into new session metadata, retains it on
+  resume, and sends only the suffixed wire model; ordinary model identity and
+  catalog metadata remain unsuffixed. Without a preference, Tau starts with
+  automatic routing and pins the `x-inference-provider` reported by the first
+  successful response. `/session` reports the route; `/route <provider>` selects
+  one and `/route automatic` resets automatic resolution for the active session.
+  `timeout_seconds` defaults to `60` (> 0); `max_retries`
   defaults to `2`; `max_retry_delay_seconds` defaults to `1` (both ≥ 0).
   Retries cover transient HTTP statuses (`408`, `409`, `425`, `429`, `5xx`),
-  transport errors, and — for the OpenAI Codex provider — transient in-stream
-  SSE error events such as `server_is_overloaded` that arrive on an otherwise
-  successful HTTP 200 response.
+  transport errors, and transient in-stream SSE errors that arrive on an
+  otherwise successful HTTP 200 response. Anthropic retries `api_error`,
+  `overloaded_error`, and `rate_limit_error`; OpenAI Codex retries transient
+  events such as `server_is_overloaded`. In-stream errors remain terminal after
+  partial content to prevent duplicate output or tool calls.
 - API keys and OAuth credentials are **not** stored here — they live in
   `~/.tau/credentials.json` (private but not encrypted). OAuth objects may contain
   provider metadata such as a GitHub Enterprise domain and are refreshed

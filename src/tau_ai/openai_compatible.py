@@ -11,6 +11,7 @@ the original chat-completions path unchanged.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import suppress
 from json import JSONDecodeError, dumps, loads
 from typing import Any, Protocol
 
@@ -19,6 +20,7 @@ import httpx
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    AssistantMessageDiagnostic,
     ImageContent,
     ThinkingContent,
     ToolResultMessage,
@@ -52,6 +54,7 @@ from tau_ai.openai_cache import is_direct_openai_url, openai_prompt_cache_key
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 from tau_ai.stream import canonicalize_provider_stream
+from tau_ai.tool_call_ids import portable_tool_call_id
 
 # Models that reject function tools + reasoning_effort on /chat/completions and
 # must use the /v1/responses endpoint instead.
@@ -157,7 +160,7 @@ class OpenAICompatibleProvider:
         affinity_id = openai_prompt_cache_key(session_id)
         cache_key = self._prompt_cache_key(affinity_id)
         payload = _build_chat_payload(
-            model=model,
+            model=self._config.model_aliases.get(model, model),
             system=system,
             messages=messages,
             tools=tools,
@@ -195,7 +198,7 @@ class OpenAICompatibleProvider:
         affinity_id = openai_prompt_cache_key(session_id)
         cache_key = self._prompt_cache_key(affinity_id)
         payload = _build_responses_payload(
-            model=model,
+            model=self._config.model_aliases.get(model, model),
             system=system,
             messages=messages,
             tools=tools,
@@ -266,6 +269,10 @@ class OpenAICompatibleProvider:
                     async with client.stream(
                         "POST", request_url, json=payload, headers=headers
                     ) as response:
+                        response_provider = _response_header_value(
+                            response,
+                            self._config.response_provider_header,
+                        )
                         if response.status_code >= 400:
                             body = await response.aread()
                             body_text = body.decode(errors="replace")
@@ -300,10 +307,14 @@ class OpenAICompatibleProvider:
                                     "body": body_text,
                                     "attempts": attempt + 1,
                                 },
+                                response_provider=response_provider,
                             )
                             return
 
-                        yield ProviderResponseStartEvent(model=model)
+                        yield ProviderResponseStartEvent(
+                            model=model,
+                            response_provider=response_provider,
+                        )
 
                         async for line in response.aiter_lines():
                             if signal is not None and signal.is_cancelled():
@@ -321,7 +332,17 @@ class OpenAICompatibleProvider:
 
                         if parser.fatal:
                             return
-                        for parser_event in parser.finalize():
+                        final_events = parser.finalize()
+                        observer = self._config.response_headers_observer
+                        if observer is not None:
+                            try:
+                                observer(dict(response.headers))
+                            except Exception as exc:
+                                # Observer reporting is also best-effort; response
+                                # completion must never depend on metadata hooks.
+                                with suppress(Exception):
+                                    _append_response_observer_diagnostic(final_events, exc)
+                        for parser_event in final_events:
                             yield parser_event
                         return
                 except httpx.HTTPError as exc:
@@ -380,6 +401,17 @@ class OpenAICompatibleProvider:
         return status_code is None or _is_transient_status(status_code)
 
 
+def _response_header_value(response: httpx.Response, header_name: str | None) -> str | None:
+    """Return one normalized response metadata header when configured."""
+    if header_name is None:
+        return None
+    value = response.headers.get(header_name)
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
 def _apply_session_affinity_headers(
     headers: dict[str, str],
     session_id: str | None,
@@ -392,6 +424,26 @@ def _apply_session_affinity_headers(
         return
     if affinity_format == "openai":
         headers["session_id"] = session_id
+
+
+def _append_response_observer_diagnostic(
+    events: list[ProviderEvent],
+    exc: Exception,
+) -> None:
+    for event in events:
+        if isinstance(event, ProviderResponseEndEvent):
+            diagnostic = AssistantMessageDiagnostic(
+                type="response_headers_observer_error",
+                details={
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
+            )
+            event.message.diagnostics = [
+                *(event.message.diagnostics or []),
+                diagnostic,
+            ]
+            return
 
 
 class _StreamParser(Protocol):
@@ -903,7 +955,7 @@ def _messages_to_responses_input(
                 items.append(
                     {
                         "type": "function_call",
-                        "call_id": tool_call.id,
+                        "call_id": portable_tool_call_id(tool_call.id),
                         "name": tool_call.name,
                         "arguments": dumps(tool_call.arguments),
                     }
@@ -926,7 +978,7 @@ def _messages_to_responses_input(
             items.append(
                 {
                     "type": "function_call_output",
-                    "call_id": message.tool_call_id,
+                    "call_id": portable_tool_call_id(message.tool_call_id),
                     "output": output,
                 }
             )
@@ -1099,7 +1151,7 @@ def _messages_to_openai_chat(
             converted.append(
                 {
                     "role": "tool",
-                    "tool_call_id": message.tool_call_id,
+                    "tool_call_id": portable_tool_call_id(message.tool_call_id),
                     "name": message.tool_name,
                     "content": text or ("(see attached image)" if images else "(no tool output)"),
                 }
@@ -1144,7 +1196,7 @@ def _message_to_openai(message: AgentMessage) -> dict[str, JSONValue]:
     if isinstance(message, ToolResultMessage):
         return {
             "role": "tool",
-            "tool_call_id": message.tool_call_id,
+            "tool_call_id": portable_tool_call_id(message.tool_call_id),
             "name": message.tool_name,
             "content": message.text,
         }
@@ -1164,7 +1216,7 @@ def _tool_to_openai(tool: AgentTool) -> dict[str, JSONValue]:
 
 def _tool_call_to_openai(tool_call: ToolCall) -> dict[str, JSONValue]:
     return {
-        "id": tool_call.id,
+        "id": portable_tool_call_id(tool_call.id),
         "type": "function",
         "function": {
             "name": tool_call.name,
