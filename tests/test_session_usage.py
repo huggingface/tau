@@ -9,7 +9,7 @@ from tau_agent import (
     UserMessage,
 )
 from tau_agent.messages import Usage, UsageCost, assistant_content
-from tau_coding.session_usage import collect_session_usage, render_usage_dashboard
+from tau_coding.session_usage import USAGE_SCRIPT, collect_session_usage, render_usage_dashboard
 
 
 def _assistant(
@@ -149,6 +149,9 @@ def test_render_usage_dashboard_marks_events_on_prompt_input_chart() -> None:
     assert 'class="usage-event usage-event-compaction"' in markup
     assert "Model changed to claude-sonnet-4-5 before request 1" in markup
     assert "Compaction before request 2" in markup
+    assert 'data-request="1"' in markup
+    assert 'data-event-info="Model changed to claude-sonnet-4-5 before request 1' in markup
+    assert 'tooltipLines.push("Event  " + sessionEvent.dataset.eventInfo)' in USAGE_SCRIPT
     assert markup.count('class="event-line"') == 2
 
 

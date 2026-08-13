@@ -340,6 +340,8 @@ def _line_chart(
         description = f"{event.label} before request {event.request_number} at {event.timestamp}"
         parts.append(
             f'<g class="usage-event usage-event-{html.escape(event.kind, quote=True)}" '
+            f'data-request="{event.request_number}" '
+            f'data-event-info="{html.escape(description, quote=True)}" '
             f'role="img" aria-label="{html.escape(description, quote=True)}">'
             f"<title>{html.escape(description)}</title>"
             f'<line class="event-line" data-dark="{event_dark}" data-light="{event_light}" '
@@ -767,6 +769,10 @@ USAGE_SCRIPT = """
             var labels = (series.dataset.labels || "").split("|");
             tooltipLines.push(series.dataset.name + "  " + labels[index]);
           });
+          chart.querySelectorAll('.usage-event[data-request="' + (index + 1) + '"]')
+            .forEach(function (sessionEvent) {
+              tooltipLines.push("Event  " + sessionEvent.dataset.eventInfo);
+            });
           var x = activeSeries[0].querySelector(".hover-point").getAttribute("cx");
           var line = chart.querySelector(".hover-line");
           line.setAttribute("x1", x);
