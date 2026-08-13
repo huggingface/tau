@@ -34,6 +34,9 @@ command palette with **Ctrl+K**.
 creates HTML. Review it before sharing because it may expose project
 instructions or other local context. JSONL exports do not include the prompt.
 Offline `tau export` from stored JSONL cannot recover it and omits the section.
+The HTML export's **Usage** view charts token and cache activity. Its prompt-input
+chart marks compactions, model and thinking-level changes, and branch summaries
+against the next model request so cache changes have session context.
 {{% /note %}}
 
 {{% note title="`/skill:` is special" %}}

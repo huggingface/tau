@@ -803,13 +803,13 @@ def render_session_html(
       <button
         type="button"
         class="tab"
-        id="tab-cache"
+        id="tab-usage"
         role="tab"
-        aria-controls="panel-cache"
+        aria-controls="panel-usage"
         aria-selected="false"
         tabindex="-1"
       >
-        Cache
+        Usage
       </button>
     </nav>
     <div class="filter-bar" id="filterBar" aria-label="Transcript filters">
@@ -858,9 +858,9 @@ def render_session_html(
   </main>
   <section
     class="usage-shell"
-    id="panel-cache"
+    id="panel-usage"
     role="tabpanel"
-    aria-labelledby="tab-cache"
+    aria-labelledby="tab-usage"
     hidden
   >
     {usage_html}
@@ -1012,11 +1012,11 @@ def render_session_html(
 
       var tabs = [
         document.getElementById("tab-transcript"),
-        document.getElementById("tab-cache")
+        document.getElementById("tab-usage")
       ];
       var panels = [
         document.getElementById("panel-transcript"),
-        document.getElementById("panel-cache")
+        document.getElementById("panel-usage")
       ];
       function selectTab(index, updateHash) {{
         tabs.forEach(function (tab, tabIndex) {{
@@ -1027,10 +1027,11 @@ def render_session_html(
         }});
         document.getElementById("filterBar").hidden = index !== 0;
         var currentHash = window.location.hash;
-        var tabHash = !currentHash || currentHash === "#transcript" || currentHash === "#cache";
+        var tabHash = !currentHash || currentHash === "#transcript"
+          || currentHash === "#usage" || currentHash === "#cache";
         if (updateHash && tabHash) {{
           try {{
-            window.history.replaceState(null, "", index === 1 ? "#cache" : "#transcript");
+            window.history.replaceState(null, "", index === 1 ? "#usage" : "#transcript");
           }} catch (err) {{ /* file:// pages may restrict history APIs. */ }}
         }}
       }}
@@ -1048,7 +1049,10 @@ def render_session_html(
         }});
       }});
       // Preserve transcript entry deep links. Only tab hashes select a panel.
-      selectTab(window.location.hash === "#cache" ? 1 : 0, false);
+      selectTab(
+        window.location.hash === "#usage" || window.location.hash === "#cache" ? 1 : 0,
+        false
+      );
     }})();
   </script>
   <script>{USAGE_SCRIPT}</script>
