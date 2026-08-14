@@ -100,8 +100,9 @@ inline or multiline request into your prompt, then runs it as a normal turn.
 
 A prompt template is a saved prompt you trigger by its filename. For example,
 `~/.agents/prompts/wt.md` is invoked with `/wt`. Run `/prompts` in the TUI to
-search every loaded template and insert its invocation for editing; selection
-does not submit the prompt. The filenames `prompts.md` and `tools.md` are
+search every loaded template. Press **Enter** to insert its invocation without
+submitting it, or **Ctrl+E** to edit its Markdown directly. Save with **Ctrl+S**;
+Tau reloads resources automatically. The filenames `prompts.md` and `tools.md` are
 reserved for built-in commands; Tau ignores templates with those names and
 reports a resource diagnostic. Templates can include variables with `{{ name }}`:
 
