@@ -173,18 +173,19 @@ the rest of the session. To choose the initial provider instead, add a per-model
 Use the exact provider suffix advertised for that model by Hugging Face. Tau
 sends `zai-org/GLM-5.2:deepinfra` on the wire and continues to display and store
 the logical `zai-org/GLM-5.2` model. The pin survives resume; changing the
-preference does not rewrite existing sessions. `/session` and `/route` show the
-active pin. Use `/route <provider>` to reselect it or `/route automatic` to reset
-it; automatic routing pins again after the next successful response. Switching
-models uses that model's configured pin or starts automatic resolution again.
+preference does not rewrite existing sessions. `/session` shows the active pin.
+Route selection is available through the external Hugging Face extension rather
+than a built-in command. Switching models uses that model's configured pin or
+starts automatic resolution again.
 
 Transient failures retry on the same wire model, and stream failures are not
 retried after model output has started. Pinning can reduce cold prefix-cache
 misses caused by cross-provider routing, but cannot prevent eviction, TTL expiry,
 or load balancing among workers within the chosen provider. Tau does not yet
 fall back automatically from an unavailable pinned route: doing so also requires
-a user-visible reroute event and durable reroute telemetry. Reset with `/route
-automatic` to resolve another route. See [Configuration]({{< relref "../reference/configuration.md#provider-preferences" >}}).
+a user-visible reroute event and durable reroute telemetry. Use the Hugging Face
+extension or start a new automatic session to resolve another route. See
+[Configuration]({{< relref "../reference/configuration.md#provider-preferences" >}}).
 
 ### Moonshot AI API vs. Kimi Code
 

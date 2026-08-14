@@ -114,9 +114,11 @@ def setup(tau):
     tau.send_custom_message("text", custom_type="my-ext:status", details={...})
     await tau.append_entry("my-ext:records", {"key": "value"})
     tau.notify("message", "info")            # "info" | "warning" | "error"
+    tau.set_inference_provider("deepinfra")   # Hugging Face route; None resets
 
     # read-only context
     tau.context.cwd, tau.context.model, tau.context.provider_name
+    tau.context.inference_provider             # Hugging Face route, or None
     tau.context.session_id, tau.context.system_prompt
     tau.context.is_running, tau.context.has_ui
     tau.context.transcript   # parent conversation, deep-copied AgentMessages
@@ -127,6 +129,11 @@ def setup(tau):
     await tau.context.ui.input("Title", "placeholder") # -> str | None
     tau.context.ui.notify("message", "info")           # same as tau.notify
 ```
+
+`set_inference_provider(route)` lets provider-specific extensions select a
+Hugging Face inference-provider route for the active session; pass `None` to
+return to automatic routing. Other providers reject the operation. The current
+pin is available as `context.inference_provider`.
 
 `setup` must be a plain `def` (not `async def`). Event handlers may be sync
 or async and always receive `(event, context)`; the context is freshly created

@@ -262,8 +262,8 @@ Provider preferences live in `~/.tau/providers.json`:
   resume, and sends only the suffixed wire model; ordinary model identity and
   catalog metadata remain unsuffixed. Without a preference, Tau starts with
   automatic routing and pins the `x-inference-provider` reported by the first
-  successful response. `/session` reports the route; `/route <provider>` selects
-  one and `/route automatic` resets automatic resolution for the active session.
+  successful response. `/session` reports the route; changing the active session
+  route is available through the external Hugging Face extension.
   `timeout_seconds` defaults to `60` (> 0); `max_retries`
   defaults to `2`; `max_retry_delay_seconds` defaults to `1` (both ≥ 0).
   Retries cover transient HTTP statuses (`408`, `409`, `425`, `429`, `5xx`),
