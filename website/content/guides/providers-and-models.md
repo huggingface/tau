@@ -174,9 +174,19 @@ Use the exact provider suffix advertised for that model by Hugging Face. Tau
 sends `zai-org/GLM-5.2:deepinfra` on the wire and continues to display and store
 the logical `zai-org/GLM-5.2` model. The pin survives resume; changing the
 preference does not rewrite existing sessions. `/session` shows the active pin.
-Route selection is available through the external Hugging Face extension rather
-than a built-in command. Switching models uses that model's configured pin or
-starts automatic resolution again.
+Route selection is available through the external
+[`alejandro-ao/tau-huggingface`](https://github.com/alejandro-ao/tau-huggingface)
+extension rather than a built-in command. It requires Tau 0.3.10 or newer. Clone
+and load it explicitly:
+
+```bash
+git clone https://github.com/alejandro-ao/tau-huggingface.git
+tau -e ./tau-huggingface
+```
+
+Then use `/route <provider>` to select a route or `/route automatic` to reset
+it. Switching models uses that model's configured pin or starts automatic
+resolution again.
 
 Transient failures retry on the same wire model, and stream failures are not
 retried after model output has started. Pinning can reduce cold prefix-cache
