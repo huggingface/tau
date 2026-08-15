@@ -90,6 +90,7 @@ from tau_coding.tui.app import (
     ModelPickerScreen,
     OAuthLoginScreen,
     PromptInput,
+    PromptTemplateEditorScreen,
     PromptTemplatePickerScreen,
     SessionPickerScreen,
     SkillPickerScreen,
@@ -4704,6 +4705,60 @@ async def test_tui_app_prompts_picker_filters_and_inserts_without_submitting() -
         assert prompt.value == "/test"
         assert prompt.has_focus
         assert app.state.items == []
+
+
+@pytest.mark.anyio
+async def test_tui_app_prompts_picker_edits_template_and_reloads(tmp_path: Path) -> None:
+    template_path = tmp_path / "review.md"
+    template_path.write_text("Original prompt.\n", encoding="utf-8")
+    session = FakeSession()
+    session.prompt_templates = (
+        PromptTemplate(
+            name="review",
+            path=template_path,
+            content="Original prompt.",
+            description="Inspect changes",
+        ),
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/prompts"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        picker = app.screen
+        assert isinstance(picker, PromptTemplatePickerScreen)
+        assert "Ctrl+E edits" in str(
+            picker.query_one("#prompt-template-picker-help", Static).content
+        )
+        await pilot.press("ctrl+e")
+        await pilot.pause()
+
+        editor = app.screen
+        assert isinstance(editor, PromptTemplateEditorScreen)
+        editor_input = editor.query_one("#prompt-template-editor-input", TextArea)
+        assert editor_input.text == "Original prompt.\n"
+        editor_input.text = "first\nsecond"
+        editor_input.move_cursor((0, 0))
+        await pilot.press("right")
+        assert editor_input.cursor_location == (0, 1)
+        await pilot.press("down")
+        assert editor_input.cursor_location == (1, 1)
+        await pilot.press("left")
+        assert editor_input.cursor_location == (1, 0)
+        await pilot.press("up")
+        assert editor_input.cursor_location == (0, 0)
+
+        editor_input.text = "Updated prompt.\n"
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+
+        assert template_path.read_text(encoding="utf-8") == "Updated prompt.\n"
+        assert session.reload_count == 1
+        assert isinstance(app.screen, PromptTemplatePickerScreen)
+        assert prompt.value == ""
 
 
 @pytest.mark.anyio

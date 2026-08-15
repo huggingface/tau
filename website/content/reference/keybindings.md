@@ -26,6 +26,8 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 | `Ctrl+R` | Open the session picker |
 | `Tab` | Accept the highlighted completion |
 | `Down` / `Up` | Move through completions |
+| `Ctrl+E` (in `/prompts`) | Edit the selected prompt template |
+| `Ctrl+S` (while editing a prompt template) | Save and reload resources |
 
 ## Models & thinking
 

@@ -59,7 +59,7 @@ to search and run them. Common ones:
 - `/tools` — search active tools by origin and open their full descriptions
 - `/compact` — summarize and shrink the context
 - `/resume`, `/tree` — open previous sessions or branch from history
-- `/prompts` — search prompt templates and insert one for editing
+- `/prompts` — search prompt templates, insert an invocation, or edit the template file with **Ctrl+E**
 - `/hotkeys` — show the keyboard shortcuts
 
 The full list is in the [Slash commands reference]({{< relref "../reference/slash-commands.md" >}}).
