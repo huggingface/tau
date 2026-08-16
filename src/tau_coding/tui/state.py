@@ -33,7 +33,6 @@ TERMINAL_COMMAND_OUTPUT_PREVIEW_LINES = 120
 # Show live elapsed time on an executing tool row once it stops being instant;
 # quick reads/edits never flash a "(0s)".
 TOOL_TIMER_MIN_SECONDS = 1.0
-BASH_DESCRIPTION_PREVIEW_CHARS = 56
 BATCHABLE_TOOL_NAMES = frozenset({"bash", "edit", "read", "write"})
 
 
@@ -708,18 +707,15 @@ def _format_bash_tool_call_invocation(
     if compact:
         description = _string_argument(arguments, "description")
         if description is not None:
-            displayed_description = _compact_bash_description(description)
+            displayed_description = _normalize_bash_description(description)
             if displayed_description:
                 return f"→ {displayed_description}{suffix}"
         return f"→ Running shell command{suffix}"
     return f"$ {command}{suffix}"
 
 
-def _compact_bash_description(description: str) -> str:
-    normalized = " ".join(description.split())
-    if len(normalized) <= BASH_DESCRIPTION_PREVIEW_CHARS:
-        return normalized
-    return normalized[: BASH_DESCRIPTION_PREVIEW_CHARS - 1].rstrip() + "…"
+def _normalize_bash_description(description: str) -> str:
+    return " ".join(description.split())
 
 
 def _read_line_suffix(arguments: dict[str, JSONValue]) -> str:

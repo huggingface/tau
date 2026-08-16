@@ -582,7 +582,7 @@ def test_bash_tool_formatter_hides_long_command_behind_description() -> None:
     assert format_tool_call_invocation(call, expanded=True) == f"$ {command} (timeout 120s)"
 
 
-def test_bash_tool_formatter_truncates_description_without_command_hint() -> None:
+def test_bash_tool_formatter_shows_complete_description_without_command_hint() -> None:
     command = "python - <<'PY'\nprint('hello')\nPY"
     description = "Describing a deliberately overlong inline script operation " * 2
     call = ToolCall(
@@ -592,8 +592,7 @@ def test_bash_tool_formatter_truncates_description_without_command_hint() -> Non
     )
 
     collapsed = format_tool_call_block(call)
-    assert collapsed.startswith("→ Describing a deliberately overlong inline script")
-    assert collapsed.endswith("…")
+    assert collapsed == f"→ {description.strip()}"
     assert "$" not in collapsed
     assert "\n" not in collapsed
 

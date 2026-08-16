@@ -7,8 +7,8 @@ that embed source code directly in `python -c`, `node -e`, or similar arguments.
 ## What changed
 
 The bash tool requires the model to provide a brief present-participle
-`description` in the same tool call. The TUI normalizes that summary, limits it
-to 56 characters, and shows no command text while collapsed. `Ctrl+O` keeps the
+`description` in the same tool call. The TUI normalizes whitespace but shows the
+complete summary and no command text while collapsed. `Ctrl+O` keeps the
 description as the first line and reveals the exact command and result beneath it.
 The running/success/failure color applies to the description. This
 adds no second provider request. Calls that still omit the field because of
@@ -43,7 +43,7 @@ display formatters and retains the complete `command`. No TUI concerns enter
 - `tests/test_coding_tools.py` and `tests/test_system_prompt.py` cover the required
   schema field, omission-tolerant execution, and model instruction.
 - `tests/test_tui_adapter.py` covers semantic descriptions, generic omission
-  fallback, command-shape privacy, description truncation, and exact expansion.
+  fallback, command-shape privacy, complete descriptions, and exact expansion.
 - `tests/test_tui_app.py` uses a Textual pilot to confirm `Ctrl+O` replaces a
   compact heredoc row with the exact command and full result.
 - `tests/test_rendering.py` confirms print-mode transcripts always show the exact
