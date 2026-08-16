@@ -188,11 +188,15 @@ redundant section label, followed by active-branch
 turn and tool-call totals, provider-reported token usage, latest-request and
 session prompt-cache hit rates, estimated cost, automatic-compaction threshold,
 and loaded tools, skills, prompt templates, extensions, and context files such as
-`AGENTS.md`. Tool, prompt, and extension
-names use compact comma-separated lists limited to three rendered lines. Skills
-and context files use bullet lists, with one item or path per line, limited to
-five entries. Truncated sections end with `...(X more)` showing how many entries
-are hidden. Project context paths are relative to the working directory; context
+`AGENTS.md`. Tool and extension names use compact comma-separated lists limited
+to three rendered lines. Skills and prompt templates are grouped under their
+resource origins (for example, `./.tau/skills`, `~/.agents/skills`, or
+`./.tau/prompts`), and every loaded skill and prompt is shown. If the sidebar
+content is taller than the available space, scroll it to see the remaining
+resource groups; the Tau version mark stays pinned at the bottom. Context files
+use a bullet list with one path per line, limited to five entries. Truncated sections
+end with `...(X more)` showing how many context entries are hidden. Project
+context paths are relative to the working directory; context
 loaded from the home directory starts with `~/`, while other context loaded from
 outside the project uses its full path.
 

@@ -113,7 +113,8 @@ class SessionSidebar(Vertical):
     """Compact sidebar with session metadata and bottom-aligned branding."""
 
     def compose(self) -> Any:
-        yield Static("", id="sidebar-content")
+        with VerticalScroll(id="sidebar-scroll"):
+            yield Static("", id="sidebar-content")
         yield Static("", id="sidebar-brand")
 
     _summary_fingerprint: tuple[object, ...] | None = None
@@ -131,7 +132,6 @@ class SessionSidebar(Vertical):
         self._summary_fingerprint = fingerprint
         self.query_one("#sidebar-content", Static).update(
             render_session_sidebar(session, theme=theme),
-            layout=False,
         )
         self.query_one("#sidebar-brand", Static).update(
             _sidebar_brand(theme=theme),
@@ -177,8 +177,8 @@ def _session_summary_fingerprint(
         session.session_stats,
         tuple(session.extension_names),
         tuple(tool.name for tool in session.tools),
-        tuple(skill.name for skill in session.skills),
-        tuple(template.name for template in session.prompt_templates),
+        tuple((skill.name, skill.path) for skill in session.skills),
+        tuple((template.name, template.path) for template in session.prompt_templates),
         tuple(context.path for context in session.context_files),
     )
 
@@ -1373,7 +1373,12 @@ def _split_rich_style_colors(style: str) -> tuple[str | None, str | None]:
 
 def _use_plain_transcript_body(item: ChatItem) -> bool:
     """Return whether a transcript item can use fast selectable plain text."""
-    return item.highlight == "update" or item.role in {"user", "tool", "skill", "error"}
+    return item.highlight in {"alert", "update"} or item.role in {
+        "user",
+        "tool",
+        "skill",
+        "error",
+    }
 
 
 def _transcript_plain_body_text(
@@ -1542,16 +1547,8 @@ def render_session_sidebar(
         style=theme.completion_description,
     )
     tools = _comma_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
-    skills = _limited_bullet_list(
-        [skill.name for skill in session.skills],
-        empty="No skills loaded",
-        theme=theme,
-    )
-    prompts = _comma_list(
-        [template.name for template in session.prompt_templates],
-        empty="No prompt templates",
-        theme=theme,
-    )
+    skills = _grouped_skill_list(session.skills, cwd=session.cwd, theme=theme)
+    prompts = _grouped_prompt_list(session.prompt_templates, cwd=session.cwd, theme=theme)
     extensions = _comma_list(
         list(session.extension_names),
         empty="No extensions",
@@ -1672,6 +1669,8 @@ def render_chat_item(
 
 
 def _chat_item_role_style(item: ChatItem, theme: TuiTheme) -> TuiRoleStyle:
+    if item.highlight == "alert":
+        return TuiRoleStyle(border=theme.error, body=f"bold {theme.error}")
     if item.highlight == "update":
         return TuiRoleStyle(border="#ffff00", body="bold #ffff00")
     if item.role == "tool" and item.tool_result_text:
@@ -2382,6 +2381,86 @@ def _format_cost(value: float) -> str:
 
 def _plural(count: int, singular: str) -> str:
     return singular if count == 1 else f"{singular}s"
+
+
+def _grouped_skill_list(
+    skills: Sequence[Skill],
+    *,
+    cwd: Path,
+    theme: TuiTheme,
+) -> Text:
+    if not skills:
+        return Text("No skills loaded", style=theme.completion_description)
+
+    grouped: dict[str, list[str]] = {}
+    for skill in skills:
+        origin = skill.path.parent.parent if skill.path.name == "SKILL.md" else skill.path.parent
+        label = _resource_origin_label(origin, cwd=cwd)
+        grouped.setdefault(label, []).append(skill.name)
+    return _grouped_resource_names(grouped, directory="skills", theme=theme)
+
+
+def _grouped_prompt_list(
+    templates: Sequence[PromptTemplate],
+    *,
+    cwd: Path,
+    theme: TuiTheme,
+) -> Text:
+    if not templates:
+        return Text("No prompt templates", style=theme.completion_description)
+
+    grouped: dict[str, list[str]] = {}
+    for template in templates:
+        label = _resource_origin_label(template.path.parent, cwd=cwd)
+        grouped.setdefault(label, []).append(template.name)
+    return _grouped_resource_names(grouped, directory="prompts", theme=theme)
+
+
+def _grouped_resource_names(
+    grouped: dict[str, list[str]],
+    *,
+    directory: str,
+    theme: TuiTheme,
+) -> Text:
+    origin_precedence = {
+        f"~/.tau/{directory}": 0,
+        f"~/.agents/{directory}": 1,
+        f"./.tau/{directory}": 2,
+        f"./.agents/{directory}": 3,
+    }
+    ordered_origins = sorted(
+        grouped,
+        key=lambda origin: (origin_precedence.get(origin, len(origin_precedence)), origin),
+    )
+    text = Text()
+    for origin in ordered_origins:
+        if text:
+            text.append("\n")
+        text.append(origin, style=theme.completion_description)
+        for name in sorted(grouped[origin]):
+            text.append("\n  • ", style=theme.completion_description)
+            text.append(name, style=theme.completion_description)
+    return text
+
+
+def _resource_origin_label(origin: Path, *, cwd: Path) -> str:
+    expanded_origin = origin.expanduser()
+    if not expanded_origin.is_absolute():
+        expanded_origin = cwd / expanded_origin
+    absolute_origin = expanded_origin.absolute()
+    absolute_cwd = cwd.expanduser().absolute()
+    try:
+        relative = absolute_origin.relative_to(absolute_cwd)
+    except ValueError:
+        pass
+    else:
+        return f"./{relative.as_posix()}"
+
+    home = Path.home().absolute()
+    try:
+        return f"~/{absolute_origin.relative_to(home).as_posix()}"
+    except ValueError:
+        return str(absolute_origin)
 
 
 def _limited_bullet_list(

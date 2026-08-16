@@ -71,7 +71,7 @@ class ChatItem:
     always_show_tool_result: bool = False
     custom_type: str | None = None
     details: dict[str, JSONValue] | None = None
-    highlight: Literal["update"] | None = None
+    highlight: Literal["alert", "update"] | None = None
 
 
 @dataclass(slots=True)
@@ -120,7 +120,7 @@ class TuiState:
         always_show_tool_result: bool = False,
         custom_type: str | None = None,
         details: dict[str, JSONValue] | None = None,
-        highlight: Literal["update"] | None = None,
+        highlight: Literal["alert", "update"] | None = None,
     ) -> None:
         """Append a transcript item."""
         item = ChatItem(
