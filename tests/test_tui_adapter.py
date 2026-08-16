@@ -315,6 +315,22 @@ def test_bash_tool_formatter_keeps_short_commands_visible() -> None:
     )
 
 
+def test_bash_tool_formatter_prefers_description_until_expanded() -> None:
+    command = "git diff --check && git commit -m 'Finish work'"
+    call = ToolCall(
+        id="call-1",
+        name="bash",
+        arguments={
+            "command": command,
+            "description": "  Validating and\ncommitting changes  ",
+            "timeout": 120,
+        },
+    )
+
+    assert format_tool_call_block(call) == "→ Validating and committing changes (timeout 120s)"
+    assert format_tool_call_invocation(call, expanded=True) == f"$ {command} (timeout 120s)"
+
+
 def test_bash_tool_formatter_collapses_heredoc_and_expands_exact_command() -> None:
     command = "python - <<'PY'\nprint('one')\nprint('two')\nPY"
     call = ToolCall(id="call-1", name="bash", arguments={"command": command})

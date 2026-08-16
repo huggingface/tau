@@ -116,12 +116,15 @@ indicator provides the run-wide animation without adding a second spinner to eac
 tool row.
 
 Tool results (like long `read` or `bash` output) render as compact previews so
-the transcript stays readable. Long `bash` invocations are compact too: multiline
-commands and heredocs show their first line plus a line count, inline code shows
-its interpreter plus a character count, and other commands over 120 characters
-show a shortened preview. Short shell commands remain unchanged. Toggle the exact
-commands and full tool output with **Ctrl+O**. Command compaction affects only the
-TUI display; execution and session history retain the complete command. Markdown
+the transcript stays readable. Tau asks the model to give each `bash` call a brief
+description such as `Running tests`; when provided, that description replaces the
+command in the collapsed row. Calls without a description use a deterministic
+fallback: multiline commands and heredocs show their first line plus a line count,
+inline code shows its interpreter plus a character count, and other commands over
+120 characters show a shortened preview. Short shell commands remain unchanged.
+Toggle the exact commands and full tool output with **Ctrl+O**. Command compaction
+affects only the TUI display; execution and session history retain the complete
+command. Markdown
 link hover styling underlines only the linked text, never the rest of its row. User
 message blocks use the same theme background as the prompt field and sidebar,
 with light vertical padding so they read as blocks rather than highlighted lines.

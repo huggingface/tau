@@ -7072,7 +7072,16 @@ async def test_tool_result_toggle_expands_full_bash_command() -> None:
         FakeSession(
             messages=[
                 AssistantMessage(
-                    content=[ToolCall(id="call-1", name="bash", arguments={"command": command})]
+                    content=[
+                        ToolCall(
+                            id="call-1",
+                            name="bash",
+                            arguments={
+                                "command": command,
+                                "description": "Running inline script",
+                            },
+                        )
+                    ]
                 ),
                 ToolResultMessage(
                     tool_call_id="call-1",
@@ -7085,7 +7094,7 @@ async def test_tool_result_toggle_expands_full_bash_command() -> None:
 
     async with app.run_test() as pilot:
         widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool")
-        assert widget.selection_text == "$ python - <<'PY' … [inline script: 2 lines]"
+        assert widget.selection_text == "→ Running inline script"
 
         await pilot.press("ctrl+o")
         await pilot.pause()

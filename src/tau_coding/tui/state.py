@@ -35,6 +35,7 @@ TERMINAL_COMMAND_OUTPUT_PREVIEW_LINES = 120
 # quick reads/edits never flash a "(0s)".
 TOOL_TIMER_MIN_SECONDS = 1.0
 BASH_COMMAND_PREVIEW_CHARS = 120
+BASH_DESCRIPTION_PREVIEW_CHARS = 80
 _INLINE_CODE_PATTERN = re.compile(
     r"(?:^|[;&|]\s*|\s)(?:python(?:\d+(?:\.\d+)*)?|node|bash|sh|zsh)\s+-(?:c|e)\s+"
 )
@@ -445,8 +446,21 @@ def _format_bash_tool_call_invocation(
         return None
     timeout = _number_argument(arguments, "timeout")
     suffix = f" (timeout {timeout:g}s)" if timeout is not None else ""
+    if compact:
+        description = _string_argument(arguments, "description")
+        if description is not None:
+            displayed_description = _compact_bash_description(description)
+            if displayed_description:
+                return f"→ {displayed_description}{suffix}"
     displayed_command = _compact_bash_command(command) if compact else command
     return f"$ {displayed_command}{suffix}"
+
+
+def _compact_bash_description(description: str) -> str:
+    normalized = " ".join(description.split())
+    if len(normalized) <= BASH_DESCRIPTION_PREVIEW_CHARS:
+        return normalized
+    return normalized[: BASH_DESCRIPTION_PREVIEW_CHARS - 1].rstrip() + "…"
 
 
 def _compact_bash_command(command: str) -> str:

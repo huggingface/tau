@@ -6,8 +6,11 @@ that embed source code directly in `python -c`, `node -e`, or similar arguments.
 
 ## What changed
 
-The TUI now keeps short bash commands intact and compacts only commands that are
-likely to clutter the transcript:
+The bash tool now asks the model for an optional, brief present-participle
+`description` in the same tool call. The TUI uses that semantic summary when it
+is present, normalizing whitespace and limiting it to 80 characters. This adds
+no second provider request. Calls from models that omit the optional field keep
+a deterministic fallback:
 
 - multiline heredocs show the opening line and inline-script line count;
 - other multiline commands show the first line and total line count;
@@ -21,19 +24,24 @@ the full result. Collapsing restores the compact command preview.
 
 ## Architecture
 
-This is presentation-only behavior in `tau_coding.tui`. The canonical `ToolCall`
-and persisted session message are unchanged. `ChatItem` already retains raw tool
-arguments, so expanded rendering can recover the original command without adding
-TUI concerns to `tau_agent` or changing command execution.
+The provider-visible bash schema and tool prompt guideline live in
+`src/tau_coding/tools.py`. `description` remains optional so a model omission
+cannot prevent command execution. The executor ignores it; the value is display
+metadata carried inside the existing `ToolCall.arguments` mapping.
 
-Formatting lives in `src/tau_coding/tui/state.py`. The state creates the compact
-row once, then resolves the exact invocation lazily when tool results are
-expanded. Existing custom tool `render_call` output still takes precedence.
+Formatting lives in `src/tau_coding/tui/state.py`. The state prefers a supplied
+description, otherwise creates the deterministic compact row, then resolves the
+exact invocation lazily when tool results are expanded. Existing custom tool
+`render_call` output still takes precedence. No TUI concerns enter `tau_agent`,
+and command execution is unchanged.
 
 ## Tests
 
-- `tests/test_tui_adapter.py` covers short commands, heredocs, generic multiline
-  commands, long inline code, long ordinary commands, and exact expansion.
+- `tests/test_coding_tools.py` and `tests/test_system_prompt.py` cover the optional
+  schema field and model instruction.
+- `tests/test_tui_adapter.py` covers semantic descriptions, short commands,
+  heredocs, generic multiline commands, long inline code, long ordinary commands,
+  and exact expansion.
 - `tests/test_tui_app.py` uses a Textual pilot to confirm `Ctrl+O` replaces a
   compact heredoc row with the exact command and full result.
 
