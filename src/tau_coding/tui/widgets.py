@@ -1687,7 +1687,7 @@ def _tool_accent_style(item: ChatItem, *, theme: TuiTheme) -> str | None:
     # style, so it blends with any theme's transcript background.
     if item.role != "tool":
         return None
-    if item.tool_result_text is None:
+    if item.tool_result_text is None or item.tool_result_text.startswith("…"):
         return theme.role_styles["tool"].border
     if item.tool_result_text.startswith("✓"):
         return theme.tool_success_text

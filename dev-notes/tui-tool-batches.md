@@ -22,13 +22,14 @@ description. Commands, arguments, and paths remain neutral. Adjacent reads still
 collapse into one read row inside the larger batch.
 
 `Ctrl+O` expands every row using its tool-specific behavior. Bash rows retain
-their description and show the exact command and result beneath it. Grouped reads expand to individual read
-invocations without repeating file-content previews. Batch invocations and
+their description and show the exact command and result beneath it. Grouped reads
+expand to individual read invocations without repeating file-content previews. Batch invocations and
 results remain one selectable plain-text surface.
 
 Batches never cross assistant text, thinking blocks, model continuations, skill
-loads, or separate assistant responses. Calls with custom call-card rendering
-remain separate so an extension's layout is not flattened into a text row.
+loads, or separate assistant responses. Only the known `bash`, `read`, `edit`,
+and `write` tools are eligible; extension tools remain separate so custom call
+or result cards are never flattened into generic text rows.
 
 ## Architecture
 

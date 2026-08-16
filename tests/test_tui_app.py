@@ -1585,6 +1585,29 @@ def test_tool_batch_colors_each_description_by_its_own_status() -> None:
     assert "$ false" not in console.export_text()
 
 
+def test_partially_completed_read_group_keeps_running_color() -> None:
+    item = ChatItem(
+        role="tool",
+        text="→ Reading 2 files · 1/2 complete · a.py, b.py",
+        tool_name="read",
+        tool_result_text="… read group",
+        started_at=1.0,
+    )
+    console = Console(record=True, width=100, color_system="truecolor")
+    console.print(
+        _transcript_plain_body_text(
+            item,
+            text=item.text,
+            body_style=TAU_DARK_THEME.role_styles["tool"].body,
+            theme=TAU_DARK_THEME,
+        )
+    )
+
+    output = console.export_text(styles=True)
+    running_color = _style_color_escape(TAU_DARK_THEME.role_styles["tool"].border)
+    assert f"{running_color};48;2;0;0;0mReading 2 files" in output
+
+
 def test_tool_batch_body_stays_one_selectable_text_renderable() -> None:
     item = ChatItem(
         role="tool",

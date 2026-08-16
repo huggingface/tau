@@ -281,6 +281,31 @@ def test_tui_state_keeps_custom_rendered_calls_out_of_tool_batches() -> None:
     assert all(item.tool_batch_items is None for item in state.items)
 
 
+def test_tui_state_keeps_result_only_extension_tools_out_of_batches() -> None:
+    state = TuiState(
+        tool_result_renderer=lambda name, _result, _expanded: f"[bold]{name} card[/bold]"
+    )
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(id="custom-1", name="extension-tool", arguments={}),
+                    ToolCall(id="custom-2", name="extension-tool", arguments={}),
+                ]
+            ),
+            ToolResultMessage(tool_call_id="custom-1", tool_name="extension-tool", content="one"),
+            ToolResultMessage(tool_call_id="custom-2", tool_name="extension-tool", content="two"),
+        ]
+    )
+
+    assert len(state.items) == 2
+    assert all(item.tool_batch_items is None for item in state.items)
+    assert [state.resolve_tool_result(item, expanded=False) for item in state.items] == [
+        "[bold]extension-tool card[/bold]",
+        "[bold]extension-tool card[/bold]",
+    ]
+
+
 def test_tui_state_marks_group_failed_when_any_read_fails() -> None:
     state = TuiState()
     state.load_messages(

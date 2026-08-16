@@ -36,6 +36,7 @@ TOOL_TIMER_MIN_SECONDS = 1.0
 BASH_DESCRIPTION_PREVIEW_CHARS = 56
 TOOL_GROUP_PREVIEW_ITEMS = 3
 TOOL_GROUP_PATH_CHARS = 32
+BATCHABLE_TOOL_NAMES = frozenset({"bash", "edit", "read", "write"})
 
 
 @dataclass(slots=True)
@@ -253,7 +254,7 @@ class TuiState:
         )
 
     def _can_append_tool_batch(self, tool_call: ToolCall, *, batch_id: int | None) -> bool:
-        if batch_id is None or not self.items:
+        if batch_id is None or not self.items or tool_call.name not in BATCHABLE_TOOL_NAMES:
             return False
         previous = self.items[-1]
         if previous.role != "tool" or previous.tool_batch_id != batch_id:
@@ -263,6 +264,8 @@ class TuiState:
         previous_row = (
             previous.tool_batch_items[-1] if previous.tool_batch_items is not None else previous
         )
+        if previous_row.tool_name not in BATCHABLE_TOOL_NAMES:
+            return False
         return not self._has_custom_call_rendering(
             previous_row.tool_name,
             previous_row.tool_arguments or {},
