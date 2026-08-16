@@ -62,6 +62,7 @@ from tau_coding.provider_config import (
     ScopedModelConfig,
     save_provider_settings,
 )
+from tau_coding.resources import ResourceDiagnostic
 from tau_coding.session import (
     ModelChoice,
     SessionTreeBranchResult,
@@ -101,6 +102,7 @@ from tau_coding.tui.app import (
     _activity_prompt_border_color,
     _completion_selected_render_line,
     _render_activity_indicator,
+    _resource_conflict_alert,
     _terminal_command_prefix_span,
     _textual_theme_for_tau_theme,
     _theme_css_variables,
@@ -7912,6 +7914,7 @@ async def test_tui_app_shows_startup_update_notice_first_in_bright_yellow() -> N
     app = TauTuiApp(
         session,
         startup_update_notice="Tau 0.2.0 is available",
+        startup_alerts=("Conflicting skills/prompts detected",),
         startup_notices=("Tau updated to 0.2.0",),
     )
     notifications: list[tuple[str, str | None]] = []
@@ -7927,16 +7930,57 @@ async def test_tui_app_shows_startup_update_notice_first_in_bright_yellow() -> N
         transcript = app.query_one("#transcript", TranscriptView)
         assert [line.text for line in transcript.lines] == [
             "Tau 0.2.0 is available",
+            "Conflicting skills/prompts detected",
             "Tau updated to 0.2.0",
             "Earlier prompt",
         ]
-        update_widget = transcript.query(TranscriptMessageWidget).first()
+        widgets = list(transcript.query(TranscriptMessageWidget))
+        update_widget = widgets[0]
         assert update_widget.item.highlight == "update"
         assert update_widget._role_style.border == "#ffff00"
         assert update_widget._role_style.body == "bold #ffff00"
+        alert_widget = widgets[1]
+        assert alert_widget.item.highlight == "alert"
+        assert alert_widget._role_style.border == TAU_DARK_THEME.error
+        assert alert_widget._role_style.body == f"bold {TAU_DARK_THEME.error}"
 
     assert notifications == []
     assert [message.text for message in session.messages] == ["Earlier prompt"]
+
+
+def test_resource_conflict_alert_includes_skill_and_prompt_locations(tmp_path: Path) -> None:
+    diagnostics = (
+        ResourceDiagnostic(
+            kind="skill",
+            name="review",
+            path=tmp_path / "project" / ".agents" / "skills" / "review" / "SKILL.md",
+            message=(
+                "overrides lower-precedence resource at "
+                f"{tmp_path / 'home' / '.tau' / 'skills' / 'review' / 'SKILL.md'}"
+            ),
+        ),
+        ResourceDiagnostic(
+            kind="prompt",
+            name="ship",
+            path=tmp_path / "project" / ".tau" / "prompts" / "ship.md",
+            message=(
+                "overrides lower-precedence resource at "
+                f"{tmp_path / 'home' / '.agents' / 'prompts' / 'ship.md'}"
+            ),
+        ),
+        ResourceDiagnostic(kind="context", message="unrelated warning"),
+    )
+
+    alert = _resource_conflict_alert(diagnostics)
+
+    assert alert is not None
+    assert "Conflicting skills/prompts detected:" in alert
+    assert "skill 'review'" in alert
+    assert "prompt template 'ship'" in alert
+    assert str(diagnostics[0].path) in alert
+    assert str(diagnostics[1].path) in alert
+    assert "unrelated warning" not in alert
+    assert alert.endswith("Rename or remove duplicate resources to clear this alert.")
 
 
 @pytest.mark.anyio
@@ -8193,14 +8237,28 @@ async def test_run_tui_app_surfaces_startup_provider_error_in_login_message(
         def get_session(self, session_id: str) -> CodingSessionRecord | None:
             return None
 
+    class LoadedSession:
+        resource_diagnostics = (
+            ResourceDiagnostic(
+                kind="skill",
+                name="review",
+                path=tmp_path / ".agents" / "skills" / "review" / "SKILL.md",
+                message=(
+                    "overrides lower-precedence resource at "
+                    f"{tmp_path / '.tau' / 'skills' / 'review' / 'SKILL.md'}"
+                ),
+            ),
+        )
+
     class FakeCodingSession:
         @classmethod
-        async def load(cls, config: object) -> str:
-            return "session"
+        async def load(cls, config: object) -> LoadedSession:
+            return LoadedSession()
 
     class FakeApp:
-        def __init__(self, session: str, **kwargs: object) -> None:
+        def __init__(self, session: LoadedSession, **kwargs: object) -> None:
             captured["startup_message"] = kwargs["startup_message"]
+            captured["startup_alerts"] = kwargs["startup_alerts"]
             captured["startup_notices"] = kwargs["startup_notices"]
 
         async def run_async(self) -> None:
@@ -8235,6 +8293,9 @@ async def test_run_tui_app_surfaces_startup_provider_error_in_login_message(
     startup_message = captured["startup_message"]
     assert "Login required" in startup_message
     assert "connection to provider backend refused" in startup_message
+    alerts = captured["startup_alerts"]
+    assert len(alerts) == 1
+    assert "skill 'review'" in alerts[0]
     notices = captured["startup_notices"]
     assert any("connection to provider backend refused" in n for n in notices)
 

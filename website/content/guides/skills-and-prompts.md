@@ -30,7 +30,10 @@ Prompt templates load from:
 
 After adding or editing files while the TUI is open, run **`/reload`** to
 rediscover them. Duplicate/overridden resources are reported as diagnostics, not
-fatal errors.
+fatal errors. At TUI startup, Tau also shows a red transcript alert when skills or
+prompt templates in different locations share a name. The alert lists both paths
+so you can rename or remove the unintended duplicate; Tau still uses the
+higher-precedence resource.
 
 ## Skills
 
