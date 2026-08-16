@@ -1747,9 +1747,9 @@ async def test_batched_reads_share_one_live_transcript_row() -> None:
 
         await pilot.press("ctrl+o")
         await pilot.pause()
-        assert tool_widgets[0].selection_text == (
-            "→ read a.py\n→ read b.py\n\n✓ read group\n✓ read\none\n\n✓ read\ntwo"
-        )
+        assert tool_widgets[0].selection_text == "→ read a.py\n→ read b.py"
+        assert "one" not in tool_widgets[0].selection_text
+        assert "two" not in tool_widgets[0].selection_text
 
 
 @pytest.mark.anyio

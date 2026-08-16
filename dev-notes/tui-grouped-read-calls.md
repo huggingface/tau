@@ -18,10 +18,12 @@ Once all calls finish it changes to `Read 4 files`; if any call failed, the row
 also reports the failure count and uses the existing error styling. At most three
 paths are previewed, and long paths retain their filename-bearing suffix.
 
-`Ctrl+O` expands the group into every exact read invocation and its individual
-result. A single read keeps its existing row. Reads separated by another tool,
-text block, or assistant response are not grouped. Skill-file reads retain their
-special skill presentation.
+`Ctrl+O` expands the group into every exact read invocation without repeating
+previews of the file contents. The model already receives each complete result;
+the expanded TUI stays focused on which files were read. A single read keeps its
+existing row and result behavior. Reads separated by another tool, text block,
+or assistant response are not grouped. Skill-file reads retain their special
+skill presentation.
 
 ## Architecture
 
@@ -30,7 +32,8 @@ presentation batch identifier to tool calls from one completed assistant message
 `TuiState` keeps each grouped call's ID, arguments, progress, result, and timing,
 while exposing one aggregate `ChatItem`. Every call ID maps back to that item, so
 live updates continue to use O(1) lookup and refresh the existing Textual widget
-in place.
+in place. Results still determine aggregate progress and error styling, but the
+widget suppresses their content when rendering a grouped row.
 
 Restored canonical messages use the same assistant-message boundary to rebuild
 the group deterministically. Agent events, tool execution, provider payloads,

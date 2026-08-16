@@ -308,10 +308,7 @@ class TuiState:
             item.text = f"→ Read {len(members)} files{failure} · {labels}"
         if completed:
             status = "✗" if failures else ("✓" if all_complete else "…")
-            results = "\n\n".join(
-                member.tool_result_text for member in completed if member.tool_result_text
-            )
-            item.tool_result_text = f"{status} read group\n{results}"
+            item.tool_result_text = f"{status} read group"
         else:
             item.tool_result_text = None
         item.update_text = next(

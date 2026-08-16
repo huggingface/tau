@@ -1385,6 +1385,8 @@ def _transcript_plain_body_text(
         body_style=body_style,
         accent_style=_tool_accent_style(item, theme=theme),
     )
+    if item.grouped_tool_calls is not None:
+        return invocation_text
     if result_markup is not None:
         # The tool's `render_result` markup replaces the generic result block;
         # the invocation line keeps its usual status-accented rendering.
@@ -1686,7 +1688,7 @@ def _render_tool_chat_body(
     theme: TuiTheme,
 ) -> RenderableType:
     text = _render_tool_invocation(item.text, body_style=body_style, accent_style=accent_style)
-    if not show_tool_results or not item.tool_result_text:
+    if item.grouped_tool_calls is not None or not show_tool_results or not item.tool_result_text:
         return text
 
     result_body = _render_chat_body(
@@ -1737,6 +1739,8 @@ def _visible_chat_text(
     if item.role not in {"tool", "skill"}:
         return item.text
     text = invocation if item.role == "tool" and invocation else item.text
+    if item.grouped_tool_calls is not None:
+        return text
     if show_tool_results and item.tool_result_text:
         return f"{text}\n\n{item.tool_result_text}"
     if item.update_text and not item.tool_result_text:

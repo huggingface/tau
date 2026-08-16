@@ -198,7 +198,7 @@ def test_tui_state_groups_adjacent_reads_from_one_assistant_message() -> None:
     assert state.find_tool_item("call-1") is item
     assert state.find_tool_item("call-2") is item
     assert state.resolve_tool_invocation(item, expanded=True) == "→ read a.py\n→ read b.py"
-    assert item.tool_result_text == "✓ read group\n✓ read\none\n\n✓ read\ntwo"
+    assert item.tool_result_text == "✓ read group"
 
 
 def test_tui_state_marks_group_failed_when_any_read_fails() -> None:

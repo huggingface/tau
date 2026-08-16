@@ -131,9 +131,12 @@ The row previews up to three paths, reports progress as results arrive, and show
 an aggregate failure count when needed. Reads from different model responses are
 never combined, and shell or file-mutating tools always remain separate.
 
-Toggle the individual read calls, exact shell commands, and full tool output with
-**Ctrl+O**. Compaction and grouping affect only the TUI display; execution,
-session history, and print-mode transcripts retain every complete call.
+Toggle grouped reads into their individual call list with **Ctrl+O**. Grouped read
+rows omit file-content previews even when expanded, keeping the transcript focused
+on which files were read. The same toggle reveals exact shell commands and full
+output for other tools. Compaction and grouping affect only the TUI display;
+execution, session history, and print-mode transcripts retain every complete call
+and result.
 
 Markdown link hover styling underlines only the linked text, never the rest of its
 row. User message blocks use the same theme background as the prompt field and sidebar,
