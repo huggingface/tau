@@ -86,6 +86,7 @@ class TuiState:
         repr=False,
         compare=False,
     )
+    last_diff: str | None = None
 
     def add_item(
         self,
@@ -265,6 +266,13 @@ class TuiState:
             content=result.text,
             data=result.details if isinstance(result.details, dict) else None,
         )
+        patch = _result_patch(
+            name=tool_name,
+            ok=not is_error,
+            data=result.details if isinstance(result.details, dict) else None,
+        )
+        if patch:
+            self.last_diff = patch
         item = self.find_tool_item(tool_call_id)
         if item is not None:
             item.tool_result_text = result_text
