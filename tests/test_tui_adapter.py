@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from tau_agent import (
     AgentEndEvent,
     AgentStartEvent,
@@ -387,6 +389,85 @@ def test_tui_state_keeps_write_continuations_separate_across_assistant_text() ->
     assert state.items[1].role == "assistant"
     assert state.items[2].text == "→ write b.md"
     assert all(item.grouped_tool_calls is None for item in (state.items[0], state.items[2]))
+
+
+@pytest.mark.parametrize(
+    ("boundary", "boundary_before_call"),
+    [
+        (TextContent(text="boundary text"), True),
+        (TextContent(text="boundary text"), False),
+        (ThinkingContent(thinking="boundary thinking"), True),
+        (ThinkingContent(thinking="boundary thinking"), False),
+    ],
+)
+def test_file_mutation_continuation_boundaries_match_live_and_restored(
+    boundary: TextContent | ThinkingContent,
+    boundary_before_call: bool,
+) -> None:
+    first_call = ToolCall(
+        id="write-1",
+        name="write",
+        arguments={"path": "a.md", "content": "one"},
+    )
+    second_call = ToolCall(
+        id="write-2",
+        name="write",
+        arguments={"path": "b.md", "content": "two"},
+    )
+    first_content = [boundary, first_call] if boundary_before_call else [first_call, boundary]
+    messages = [
+        AssistantMessage(content=first_content),
+        ToolResultMessage(tool_call_id="write-1", tool_name="write", content="wrote a"),
+        AssistantMessage(content=[second_call]),
+        ToolResultMessage(tool_call_id="write-2", tool_name="write", content="wrote b"),
+    ]
+
+    restored = TuiState()
+    restored.load_messages(messages)
+
+    live = TuiState()
+    adapter = TuiEventAdapter(live)
+    adapter.apply(MessageEndEvent(message=messages[0]))
+    adapter.apply(
+        ToolExecutionStartEvent(
+            tool_call_id="write-1",
+            tool_name="write",
+            args={"path": "a.md", "content": "one"},
+        )
+    )
+    adapter.apply(
+        ToolExecutionEndEvent(
+            tool_call_id="write-1",
+            tool_name="write",
+            result=AgentToolResult(content="wrote a"),
+            is_error=False,
+        )
+    )
+    adapter.apply(MessageEndEvent(message=messages[2]))
+    adapter.apply(
+        ToolExecutionStartEvent(
+            tool_call_id="write-2",
+            tool_name="write",
+            args={"path": "b.md", "content": "two"},
+        )
+    )
+    adapter.apply(
+        ToolExecutionEndEvent(
+            tool_call_id="write-2",
+            tool_name="write",
+            result=AgentToolResult(content="wrote b"),
+            is_error=False,
+        )
+    )
+
+    for state in (restored, live):
+        first_item = state.find_tool_item("write-1")
+        second_item = state.find_tool_item("write-2")
+        assert first_item is not None
+        assert second_item is not None
+        assert first_item is not second_item
+        assert first_item.grouped_tool_calls is None
+        assert second_item.grouped_tool_calls is None
 
 
 def test_tui_state_batches_mixed_tools_and_clusters_adjacent_reads() -> None:

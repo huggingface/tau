@@ -21,7 +21,7 @@ from tau_coding.events import (
     SessionAgentEndEvent,
 )
 from tau_coding.session import is_context_overflow_error
-from tau_coding.tui.state import TuiState
+from tau_coding.tui.state import TuiState, _is_file_mutation_only_message
 
 
 class TuiEventAdapter:
@@ -30,6 +30,7 @@ class TuiEventAdapter:
         self._assistant_start_item_index: int | None = None
         self._pending_overflow_error: AssistantMessage | None = None
         self._tool_batch_ids: dict[str, int] = {}
+        self._file_mutation_continuation_calls: set[str] = set()
 
     def apply(self, event: CodingSessionEvent) -> None:
         if isinstance(event, AgentStartEvent):
@@ -99,12 +100,15 @@ class TuiEventAdapter:
                     self.state.add_assistant_message(message, include_tool_calls=False)
                     previous_was_tool = False
                     batch_id: int | None = None
+                    allows_mutation_continuation = _is_file_mutation_only_message(message)
                     for block in message.content:
                         if isinstance(block, ToolCall):
                             if not previous_was_tool:
                                 batch_id = self.state.new_tool_batch_id()
                             if batch_id is not None:
                                 self._tool_batch_ids[block.id] = batch_id
+                            if allows_mutation_continuation:
+                                self._file_mutation_continuation_calls.add(block.id)
                             previous_was_tool = True
                         else:
                             previous_was_tool = False
@@ -116,7 +120,11 @@ class TuiEventAdapter:
             self.state.add_tool_call(
                 ToolCall(id=event.tool_call_id, name=event.tool_name, arguments=event.args),
                 batch_id=self._tool_batch_ids.pop(event.tool_call_id, None),
+                allows_file_mutation_continuation=(
+                    event.tool_call_id in self._file_mutation_continuation_calls
+                ),
             )
+            self._file_mutation_continuation_calls.discard(event.tool_call_id)
             return
         if isinstance(event, ToolExecutionUpdateEvent):
             self.state.record_tool_update(event.tool_call_id, event.partial_result.text)

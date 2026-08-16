@@ -68,6 +68,7 @@ class ChatItem:
     tool_arguments: dict[str, JSONValue] | None = None
     started_at: float | None = None
     tool_batch_id: int | None = None
+    allows_file_mutation_continuation: bool = False
     grouped_tool_calls: list[GroupedToolCall] | None = None
     tool_batch_items: list[ChatItem] | None = None
     always_show_tool_result: bool = False
@@ -229,7 +230,13 @@ class TuiState:
         self._next_tool_batch_id += 1
         return self._next_tool_batch_id
 
-    def add_tool_call(self, tool_call: ToolCall, *, batch_id: int | None = None) -> ChatItem:
+    def add_tool_call(
+        self,
+        tool_call: ToolCall,
+        *,
+        batch_id: int | None = None,
+        allows_file_mutation_continuation: bool = False,
+    ) -> ChatItem:
         """Append a tool call, batching adjacent calls for compact presentation."""
         skill_name = self._read_skill_name(tool_call)
         if skill_name is not None:
@@ -239,7 +246,11 @@ class TuiState:
                 tool_call_id=tool_call.id,
             )
             return self.items[-1]
-        if self._can_append_file_mutation_continuation(tool_call, batch_id=batch_id):
+        if self._can_append_file_mutation_continuation(
+            tool_call,
+            batch_id=batch_id,
+            allowed=allows_file_mutation_continuation,
+        ):
             item = self.items[-1]
             item.tool_batch_id = batch_id
             self._append_batched_tool_call(item, tool_call)
@@ -248,12 +259,22 @@ class TuiState:
             item = self.items[-1]
             self._append_batched_tool_call(item, tool_call)
             return item
-        item = self._new_tool_item(tool_call, batch_id=batch_id)
+        item = self._new_tool_item(
+            tool_call,
+            batch_id=batch_id,
+            allows_file_mutation_continuation=allows_file_mutation_continuation,
+        )
         self.items.append(item)
         self._tool_items_by_call_id[tool_call.id] = item
         return item
 
-    def _new_tool_item(self, tool_call: ToolCall, *, batch_id: int | None) -> ChatItem:
+    def _new_tool_item(
+        self,
+        tool_call: ToolCall,
+        *,
+        batch_id: int | None,
+        allows_file_mutation_continuation: bool = False,
+    ) -> ChatItem:
         return ChatItem(
             role="tool",
             text=format_tool_call_block(tool_call),
@@ -262,6 +283,7 @@ class TuiState:
             tool_arguments=tool_call.arguments,
             started_at=time.monotonic(),
             tool_batch_id=batch_id,
+            allows_file_mutation_continuation=allows_file_mutation_continuation,
         )
 
     def _can_append_file_mutation_continuation(
@@ -269,13 +291,20 @@ class TuiState:
         tool_call: ToolCall,
         *,
         batch_id: int | None,
+        allowed: bool,
     ) -> bool:
         """Group completed edit/write-only continuations across response boundaries."""
-        if batch_id is None or tool_call.name not in RESULTFUL_FILE_GROUP_NAMES or not self.items:
+        if (
+            not allowed
+            or batch_id is None
+            or tool_call.name not in RESULTFUL_FILE_GROUP_NAMES
+            or not self.items
+        ):
             return False
         previous = self.items[-1]
         if (
             previous.role != "tool"
+            or not previous.allows_file_mutation_continuation
             or previous.tool_name != tool_call.name
             or previous.tool_batch_items is not None
             or previous.tool_result_text is None
@@ -335,6 +364,7 @@ class TuiState:
                 tool_arguments=item.tool_arguments,
                 started_at=item.started_at,
                 tool_batch_id=item.tool_batch_id,
+                allows_file_mutation_continuation=item.allows_file_mutation_continuation,
                 grouped_tool_calls=item.grouped_tool_calls,
             )
             item.tool_batch_items = [first]
@@ -639,6 +669,7 @@ class TuiState:
     ) -> None:
         """Project canonical assistant blocks into display state in order."""
         batch_id = self.new_tool_batch_id() if include_tool_calls and message.tool_calls else None
+        allows_mutation_continuation = _is_file_mutation_only_message(message)
         for block in message.content:
             if isinstance(block, ThinkingContent):
                 if block.thinking:
@@ -647,7 +678,11 @@ class TuiState:
                 if block.text:
                     self.add_item("assistant", block.text)
             elif include_tool_calls:
-                self.add_tool_call(block, batch_id=batch_id)
+                self.add_tool_call(
+                    block,
+                    batch_id=batch_id,
+                    allows_file_mutation_continuation=allows_mutation_continuation,
+                )
 
     def add_assistant_error(self, message: AssistantMessage) -> None:
         """Project any partial response followed by its terminal error."""
@@ -667,6 +702,17 @@ class TuiState:
             if _normalized_path(skill.path) == read_path:
                 return skill.name
         return None
+
+
+def _is_file_mutation_only_message(message: AssistantMessage) -> bool:
+    calls = [block for block in message.content if isinstance(block, ToolCall)]
+    return (
+        bool(calls)
+        and len(calls) == len(message.content)
+        and all(
+            call.name == calls[0].name and call.name in RESULTFUL_FILE_GROUP_NAMES for call in calls
+        )
+    )
 
 
 def _parse_branch_summary_message(content: str) -> str | None:

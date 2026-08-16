@@ -53,7 +53,9 @@ expansion.
 Restored canonical messages rebuild groups deterministically. Read groups retain
 assistant-message boundaries. Edit and write groups may additionally span
 consecutive same-tool model continuations when each preceding mutation completed;
-assistant text, thinking, or another tool ends the group. Agent events, tool
+assistant text, thinking, or another tool ends the group. Eligibility comes from
+the canonical assistant block sequence rather than transient display adjacency,
+so live and restored sessions make the same grouping decision. Agent events, tool
 execution, provider payloads, and session JSONL remain unchanged. Existing custom
 call renderers are applied to each invocation when a group is expanded.
 
