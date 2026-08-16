@@ -34,9 +34,9 @@ Adjacent built-in `edit` and `write` calls use the same presentation: `Editing N
 files` becomes `Edited N files`, while `Writing N files` becomes `Written N files`.
 Every affected path is listed below. Expanding edit and write groups preserves
 each invocation and result, unlike read groups whose file-content results stay
-suppressed. Consecutive write-only model continuations also join the same group;
-this covers providers that emit one write, wait for its result, then emit the next.
-Assistant text or thinking still ends the group.
+suppressed. Consecutive edit-only or write-only model continuations also join the
+same group; this covers providers that emit one mutation, wait for its result,
+then emit the next. Assistant text or thinking still ends the group.
 
 ## Architecture
 
@@ -50,9 +50,9 @@ place. Results still determine aggregate progress and error styling. Read-result
 contents stay suppressed, while edit and write results remain available on
 expansion.
 
-Restored canonical messages rebuild groups deterministically. Read and edit
-groups retain assistant-message boundaries. Write groups may additionally span
-consecutive tool-only model continuations when each preceding write completed;
+Restored canonical messages rebuild groups deterministically. Read groups retain
+assistant-message boundaries. Edit and write groups may additionally span
+consecutive same-tool model continuations when each preceding mutation completed;
 assistant text, thinking, or another tool ends the group. Agent events, tool
 execution, provider payloads, and session JSONL remain unchanged. Existing custom
 call renderers are applied to each invocation when a group is expanded.
@@ -62,8 +62,9 @@ and extension tools retain their own presentation semantics.
 
 ## Tests
 
-- `tests/test_tui_adapter.py` covers restored read/edit/write groups, write-only
-  continuations, text boundaries, path lists, call-ID lookup, and expansion.
+- `tests/test_tui_adapter.py` covers restored read/edit/write groups, serialized
+  edit/write continuations, text boundaries, path lists, call-ID lookup, and
+  expansion.
 - `tests/test_tui_app.py` covers live grouping, in-place progress updates,
   completion, and `Ctrl+O` expansion in Textual.
 

@@ -239,7 +239,7 @@ class TuiState:
                 tool_call_id=tool_call.id,
             )
             return self.items[-1]
-        if self._can_append_write_continuation(tool_call, batch_id=batch_id):
+        if self._can_append_file_mutation_continuation(tool_call, batch_id=batch_id):
             item = self.items[-1]
             item.tool_batch_id = batch_id
             self._append_batched_tool_call(item, tool_call)
@@ -264,19 +264,19 @@ class TuiState:
             tool_batch_id=batch_id,
         )
 
-    def _can_append_write_continuation(
+    def _can_append_file_mutation_continuation(
         self,
         tool_call: ToolCall,
         *,
         batch_id: int | None,
     ) -> bool:
-        """Group completed write-only model continuations across response boundaries."""
-        if batch_id is None or tool_call.name != "write" or not self.items:
+        """Group completed edit/write-only continuations across response boundaries."""
+        if batch_id is None or tool_call.name not in RESULTFUL_FILE_GROUP_NAMES or not self.items:
             return False
         previous = self.items[-1]
         if (
             previous.role != "tool"
-            or previous.tool_name != "write"
+            or previous.tool_name != tool_call.name
             or previous.tool_batch_items is not None
             or previous.tool_result_text is None
         ):

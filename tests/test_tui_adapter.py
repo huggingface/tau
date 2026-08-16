@@ -305,6 +305,55 @@ def test_tui_state_restores_write_only_model_continuations_as_one_group() -> Non
     assert all(state.find_tool_item(f"write-{index}") is item for index in range(1, 6))
 
 
+def test_tui_state_restores_edit_only_model_continuations_as_one_group() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(
+                        id="edit-1",
+                        name="edit",
+                        arguments={"path": "a.py", "edits": []},
+                    )
+                ]
+            ),
+            ToolResultMessage(tool_call_id="edit-1", tool_name="edit", content="edited a"),
+            AssistantMessage(
+                content=[
+                    ToolCall(
+                        id="edit-2",
+                        name="edit",
+                        arguments={"path": "b.py", "edits": []},
+                    )
+                ]
+            ),
+            ToolResultMessage(tool_call_id="edit-2", tool_name="edit", content="edited b"),
+            AssistantMessage(
+                content=[
+                    ToolCall(
+                        id="edit-3",
+                        name="edit",
+                        arguments={"path": "c.py", "edits": []},
+                    )
+                ]
+            ),
+            ToolResultMessage(tool_call_id="edit-3", tool_name="edit", content="edited c"),
+        ]
+    )
+
+    assert len(state.items) == 1
+    item = state.items[0]
+    assert item.text == "→ Edited 3 files\n  - a.py\n  - b.py\n  - c.py"
+    assert item.grouped_tool_calls is not None
+    assert [member.tool_call_id for member in item.grouped_tool_calls] == [
+        "edit-1",
+        "edit-2",
+        "edit-3",
+    ]
+    assert all(state.find_tool_item(f"edit-{index}") is item for index in range(1, 4))
+
+
 def test_tui_state_keeps_write_continuations_separate_across_assistant_text() -> None:
     state = TuiState()
     state.load_messages(

@@ -31,10 +31,11 @@ grouped edits and writes retain each invocation and result. Batch invocations an
 results remain one selectable plain-text surface.
 
 Batches never cross assistant text, thinking blocks, skill loads, or unrelated
-assistant responses. A narrow exception joins consecutive completed `write` calls
-from tool-only model continuations, matching providers that serialize writes one
-at a time. Only the known `bash`, `read`, `edit`, and `write` tools are eligible;
-extension tools remain separate so custom call or result cards are never
+assistant responses. A narrow exception joins consecutive completed `edit` or
+`write` calls from same-tool model continuations, matching providers that
+serialize file mutations one at a time. Only the known `bash`, `read`, `edit`,
+and `write` tools are eligible; extension tools remain separate so custom call or
+result cards are never
 flattened into generic text rows.
 
 ## Architecture
