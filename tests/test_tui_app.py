@@ -7062,7 +7062,7 @@ async def test_tui_app_toggles_tool_results_from_keybinding() -> None:
         await pilot.pause()
 
     assert app.state.show_tool_results is False
-    assert notifications == ["Tool results expanded.", "Tool results collapsed."]
+    assert notifications == []
 
 
 @pytest.mark.anyio

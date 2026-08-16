@@ -5275,9 +5275,8 @@ class TauTuiApp(App[None]):
 
     def action_toggle_tool_results(self) -> None:
         """Toggle inline tool result details without rebuilding unrelated history."""
-        expanded = self.state.toggle_tool_results()
+        self.state.toggle_tool_results()
         self.run_worker(self._update_tool_results_visibility(), exclusive=False)
-        self._notify("Tool results expanded." if expanded else "Tool results collapsed.")
 
     async def _update_tool_results_visibility(self) -> None:
         transcript = self.query_one("#transcript", TranscriptView)
