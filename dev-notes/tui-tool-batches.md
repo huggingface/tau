@@ -21,8 +21,8 @@ Each line keeps its own running, success, or failure color on the semantic
 description. Commands, arguments, and paths remain neutral. Adjacent reads still
 collapse into one read row inside the larger batch.
 
-`Ctrl+O` expands every row using its tool-specific behavior. Bash rows recover
-the exact command and show their result. Grouped reads expand to individual read
+`Ctrl+O` expands every row using its tool-specific behavior. Bash rows retain
+their description and show the exact command and result beneath it. Grouped reads expand to individual read
 invocations without repeating file-content previews. Batch invocations and
 results remain one selectable plain-text surface.
 

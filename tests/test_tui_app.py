@@ -1905,7 +1905,9 @@ async def test_mixed_tool_batch_uses_one_widget_and_expands_each_row() -> None:
         await pilot.pause()
 
         assert widget.selection_text == (
-            "$ echo one\n\n✓ bash\none\n\n→ read a.py\n→ read b.py\n\n$ echo two\n\n✓ bash\ntwo"
+            "→ Doing thing one\n$ echo one\n\n✓ bash\none\n\n"
+            "→ read a.py\n→ read b.py\n\n"
+            "→ Doing thing two\n$ echo two\n\n✓ bash\ntwo"
         )
         assert "alpha" not in widget.selection_text
         assert "beta" not in widget.selection_text
@@ -7336,7 +7338,9 @@ async def test_tool_result_toggle_expands_full_bash_command() -> None:
         await pilot.pause()
 
         widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool")
-        assert widget.selection_text == f"$ {command}\n\n✓ bash\nfinished"
+        assert widget.selection_text == (
+            f"→ Running inline script\n$ {command}\n\n✓ bash\nfinished"
+        )
 
 
 @pytest.mark.anyio

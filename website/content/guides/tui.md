@@ -129,7 +129,8 @@ custom rendered call cards and skill loads remain separate.
 Tool results (like long `read` or `bash` output) render as compact previews so
 the transcript stays readable. Tau requires the model to give each `bash` call a
 brief description such as `Running tests`. Collapsed rows never show command
-text; press **Ctrl+O** to reveal the exact command. Malformed provider output,
+text; press **Ctrl+O** to keep the description visible and reveal the exact command
+and result beneath it. Malformed provider output,
 custom integrations, and older sessions can still lack a description; those calls
 show the generic `Running shell command` label until expanded.
 

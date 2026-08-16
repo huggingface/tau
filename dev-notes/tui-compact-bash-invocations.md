@@ -8,14 +8,16 @@ that embed source code directly in `python -c`, `node -e`, or similar arguments.
 
 The bash tool requires the model to provide a brief present-participle
 `description` in the same tool call. The TUI normalizes that summary, limits it
-to 56 characters, and shows no command text while collapsed. `Ctrl+O` reveals the
-exact command. The running/success/failure color applies to the description. This
+to 56 characters, and shows no command text while collapsed. `Ctrl+O` keeps the
+description as the first line and reveals the exact command and result beneath it.
+The running/success/failure color applies to the description. This
 adds no second provider request. Calls that still omit the field because of
 malformed provider output, custom integrations, or older session history show the
 generic `Running shell command` label without exposing command text.
 
-`Ctrl+O` now expands both sides of a tool interaction: the exact bash command and
-the full result. Collapsing restores the compact command preview.
+`Ctrl+O` expands both sides of a tool interaction beneath the retained
+description: the exact bash command and the full result. Collapsing restores the
+description-only row.
 
 ## Architecture
 

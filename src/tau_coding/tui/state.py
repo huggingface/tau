@@ -182,7 +182,7 @@ class TuiState:
         if item.tool_name is not None and self.tool_call_renderer is not None:
             line = self.tool_call_renderer(item.tool_name, item.tool_arguments or {})
         if line is None and expanded and item.tool_name == "bash":
-            line = format_tool_call_invocation(
+            exact_command = format_tool_call_invocation(
                 ToolCall(
                     id=item.tool_call_id or "display-call",
                     name=item.tool_name,
@@ -190,6 +190,7 @@ class TuiState:
                 ),
                 expanded=True,
             )
+            line = f"{item.text}\n{exact_command}"
         if item.tool_result_text is None and item.started_at is not None:
             elapsed = time.monotonic() - item.started_at
             if elapsed >= TOOL_TIMER_MIN_SECONDS:

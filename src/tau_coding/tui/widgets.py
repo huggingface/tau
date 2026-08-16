@@ -1706,7 +1706,7 @@ def _tool_batch_row_invocation(row: ChatItem, *, expanded: bool) -> str:
             return "\n".join(member.text for member in row.grouped_tool_calls)
         return row.text
     if expanded and row.tool_name == "bash":
-        invocation = format_tool_call_invocation(
+        exact_command = format_tool_call_invocation(
             ToolCall(
                 id=row.tool_call_id or "display-call",
                 name=row.tool_name,
@@ -1714,6 +1714,7 @@ def _tool_batch_row_invocation(row: ChatItem, *, expanded: bool) -> str:
             ),
             expanded=True,
         )
+        invocation = f"{row.text}\n{exact_command}"
     else:
         invocation = row.text
     if row.tool_result_text is None and row.started_at is not None:

@@ -569,7 +569,9 @@ def test_tui_state_recovers_full_bash_command_when_tool_output_expands() -> None
 
     assert item.text == "→ Running shell command"
     assert state.resolve_tool_invocation(item) is None
-    assert state.resolve_tool_invocation(item, expanded=True) == f"$ {command}"
+    assert state.resolve_tool_invocation(item, expanded=True) == (
+        f"→ Running shell command\n$ {command}"
+    )
 
 
 def test_tui_adapter_uses_canonical_result_details_for_patch() -> None:
