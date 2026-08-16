@@ -510,7 +510,7 @@ def test_bash_tool_formatter_pairs_description_with_full_short_command() -> None
     assert format_tool_call_block(call) == f"→ Listing files · $ {command}"
 
 
-def test_bash_tool_formatter_pairs_description_with_real_command_hint() -> None:
+def test_bash_tool_formatter_hides_long_command_behind_description() -> None:
     command = "git diff --check && git commit -m 'Finish work' && " + "echo done " * 12
     call = ToolCall(
         id="call-1",
@@ -523,14 +523,14 @@ def test_bash_tool_formatter_pairs_description_with_real_command_hint() -> None:
     )
 
     collapsed = format_tool_call_block(call)
-    assert collapsed.startswith("→ Validating and committing changes · $ git diff --check")
-    assert collapsed.endswith("… (timeout 120s)")
+    assert collapsed == "→ Validating and committing changes (timeout 120s)"
+    assert "$" not in collapsed
     assert "\n" not in collapsed
     assert format_tool_call_block(call, compact=False) == f"$ {command} (timeout 120s)"
     assert format_tool_call_invocation(call, expanded=True) == f"$ {command} (timeout 120s)"
 
 
-def test_bash_tool_formatter_keeps_hint_after_long_description() -> None:
+def test_bash_tool_formatter_truncates_description_without_command_hint() -> None:
     command = "python - <<'PY'\nprint('hello')\nPY"
     description = "Describing a deliberately overlong inline script operation " * 2
     call = ToolCall(
@@ -540,7 +540,9 @@ def test_bash_tool_formatter_keeps_hint_after_long_description() -> None:
     )
 
     collapsed = format_tool_call_block(call)
-    assert collapsed.endswith("… · $ python - <<'PY'")
+    assert collapsed.startswith("→ Describing a deliberately overlong inline script")
+    assert collapsed.endswith("…")
+    assert "$" not in collapsed
     assert "\n" not in collapsed
 
 

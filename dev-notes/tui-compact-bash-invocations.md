@@ -8,14 +8,12 @@ that embed source code directly in `python -c`, `node -e`, or similar arguments.
 
 The bash tool requires the model to provide a brief present-participle
 `description` in the same tool call. The TUI normalizes that summary and limits
-it to 56 characters. Short commands pair it with the complete command; long or
-multiline commands pair it with a 32-character prefix derived from the real
-command. Every summary therefore retains deterministic command text. The
-running/success/failure color applies only to the semantic description; command
-text keeps the neutral tool-body color so description and evidence remain
-visually distinct. This adds no second provider request. Calls that still omit
-the field because of malformed
-provider output, custom integrations, or older session history keep a
+it to 56 characters. Short commands pair it with the complete command. Long or
+multiline commands show only the semantic description while collapsed; `Ctrl+O`
+reveals the exact command. The running/success/failure color applies only to the
+description, while visible short commands keep the neutral tool-body color. This
+adds no second provider request. Calls that still omit the field because of
+malformed provider output, custom integrations, or older session history keep a
 deterministic fallback:
 
 - multiline heredocs show the opening line and inline-script line count;
@@ -38,8 +36,8 @@ integrations, and older history cannot prevent command execution. The value is
 display metadata carried inside the existing `ToolCall.arguments` mapping.
 
 Formatting lives in `src/tau_coding/tui/state.py`. The state combines supplied
-descriptions with complete short commands or deterministic command hints for long
-calls, and creates an argument-only compact row when no description exists.
+descriptions with complete short commands, hides long commands behind their
+description, and creates an argument-only compact row when no description exists.
 It resolves the exact invocation lazily when tool results are expanded. Existing
 custom tool `render_call` output still takes precedence. The print-mode transcript renderer
 explicitly requests the unabridged invocation because it has no interactive
@@ -52,7 +50,7 @@ display formatters and retains the complete `command`. No TUI concerns enter
 - `tests/test_coding_tools.py` and `tests/test_system_prompt.py` cover the required
   schema field, omission-tolerant execution, and model instruction.
 - `tests/test_tui_adapter.py` covers semantic descriptions, complete short
-  commands, command hints, short-command safety, heredocs, generic multiline commands,
+  commands, description-only long calls, heredocs, generic multiline commands,
   whitespace-only input, interpreter flags, long inline code, long ordinary
   commands, and exact expansion.
 - `tests/test_tui_app.py` uses a Textual pilot to confirm `Ctrl+O` replaces a

@@ -36,7 +36,6 @@ TERMINAL_COMMAND_OUTPUT_PREVIEW_LINES = 120
 TOOL_TIMER_MIN_SECONDS = 1.0
 BASH_COMMAND_PREVIEW_CHARS = 120
 BASH_DESCRIPTION_PREVIEW_CHARS = 56
-BASH_COMMAND_HINT_CHARS = 32
 TOOL_GROUP_PREVIEW_ITEMS = 3
 TOOL_GROUP_PATH_CHARS = 32
 _INLINE_CODE_PATTERN = re.compile(
@@ -707,12 +706,9 @@ def _format_bash_tool_call_invocation(
         if description is not None:
             displayed_description = _compact_bash_description(description)
             if displayed_description:
-                hint = (
-                    command
-                    if _is_short_single_line_bash_command(command)
-                    else _bash_command_hint(command)
-                )
-                return f"→ {displayed_description} · $ {hint}{suffix}"
+                if _is_short_single_line_bash_command(command):
+                    return f"→ {displayed_description} · $ {command}{suffix}"
+                return f"→ {displayed_description}{suffix}"
     displayed_command = _compact_bash_command(command) if compact else command
     return f"$ {displayed_command}{suffix}"
 
@@ -721,14 +717,6 @@ def _is_short_single_line_bash_command(command: str) -> bool:
     return (
         "\n" not in command and "\r" not in command and len(command) <= BASH_COMMAND_PREVIEW_CHARS
     )
-
-
-def _bash_command_hint(command: str) -> str:
-    first_line = next((line.strip() for line in command.splitlines() if line.strip()), "")
-    normalized = " ".join(first_line.split()) or "[empty command]"
-    if len(normalized) <= BASH_COMMAND_HINT_CHARS:
-        return normalized
-    return normalized[: BASH_COMMAND_HINT_CHARS - 1].rstrip() + "…"
 
 
 def _compact_bash_description(description: str) -> str:

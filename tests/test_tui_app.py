@@ -1530,6 +1530,30 @@ def test_semantic_bash_and_grouped_read_details_stay_neutral() -> None:
         assert f"{green}{details}" not in output
 
 
+def test_long_bash_description_without_hint_keeps_full_status_color() -> None:
+    command = "echo " + "x" * 120
+    item = ChatItem(
+        role="tool",
+        text="→ Running long command",
+        tool_name="bash",
+        tool_arguments={"command": command, "description": "Running long command"},
+        tool_result_text="✓ bash",
+    )
+    console = Console(record=True, width=100, color_system="truecolor")
+    console.print(
+        _transcript_plain_body_text(
+            item,
+            text=item.text,
+            body_style=TAU_DARK_THEME.role_styles["tool"].body,
+            theme=TAU_DARK_THEME,
+        )
+    )
+
+    output = console.export_text(styles=True)
+    assert "38;2;156;255;177;48;2;0;0;0mRunning long command" in output
+    assert command not in console.export_text()
+
+
 def test_tool_batch_colors_each_description_by_its_own_status() -> None:
     item = ChatItem(
         role="tool",
@@ -7313,7 +7337,7 @@ async def test_tool_result_toggle_expands_full_bash_command() -> None:
 
     async with app.run_test() as pilot:
         widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool")
-        assert widget.selection_text == "→ Running inline script · $ python - <<'PY'"
+        assert widget.selection_text == "→ Running inline script"
 
         await pilot.press("ctrl+o")
         await pilot.pause()

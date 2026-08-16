@@ -128,10 +128,9 @@ custom rendered call cards and skill loads remain separate.
 
 Tool results (like long `read` or `bash` output) render as compact previews so
 the transcript stays readable. Tau requires the model to give each `bash` call a
-brief description such as `Running tests`. Long or multiline calls pair that
-description with a short prefix taken from the real command, so model-generated
-text is always accompanied by deterministic command text. Short shell commands
-show the description alongside the complete command. Malformed provider output,
+brief description such as `Running tests`. Long or multiline calls show only that
+description while collapsed; press **Ctrl+O** to reveal the exact command. Short
+shell commands show the description alongside the complete command. Malformed provider output,
 custom integrations, and older sessions can still lack a description; those calls use a
 deterministic fallback. Multiline commands and heredocs show their first line plus
 a line count, inline code shows its interpreter plus a character count, and other

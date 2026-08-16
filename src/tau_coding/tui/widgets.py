@@ -40,6 +40,7 @@ from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.tui.autocomplete import CompletionState
 from tau_coding.tui.config import TAU_DARK_THEME, TuiRoleStyle, TuiTheme
 from tau_coding.tui.state import (
+    BASH_COMMAND_PREVIEW_CHARS,
     TOOL_TIMER_MIN_SECONDS,
     ChatItem,
     TuiState,
@@ -1401,6 +1402,7 @@ def _transcript_plain_body_text(
         invocation if invocation else item.text,
         body_style=body_style,
         accent_style=_tool_accent_style(item, theme=theme),
+        description_only=_bash_row_hides_command(item),
     )
     if item.grouped_tool_calls is not None:
         return invocation_text
@@ -1441,12 +1443,14 @@ def _render_transcript_tool_invocation(
     *,
     body_style: str,
     accent_style: str | None,
+    description_only: bool = False,
 ) -> Text:
     """Render tool descriptions in status color and argument details in gray."""
     return _styled_tool_invocation(
         text,
         body_style=body_style,
         accent_style=accent_style,
+        description_only=description_only,
     )
 
 
@@ -1693,6 +1697,19 @@ def _tool_accent_style(item: ChatItem, *, theme: TuiTheme) -> str | None:
     return None
 
 
+def _bash_row_hides_command(item: ChatItem) -> bool:
+    if item.tool_name != "bash" or item.tool_arguments is None:
+        return False
+    command = item.tool_arguments.get("command")
+    description = item.tool_arguments.get("description")
+    return (
+        isinstance(command, str)
+        and isinstance(description, str)
+        and bool(description.strip())
+        and ("\n" in command or "\r" in command or len(command) > BASH_COMMAND_PREVIEW_CHARS)
+    )
+
+
 def _tool_batch_row_invocation(row: ChatItem, *, expanded: bool) -> str:
     if row.grouped_tool_calls is not None:
         if expanded:
@@ -1745,6 +1762,7 @@ def _render_transcript_tool_batch(
                 _tool_batch_row_invocation(row, expanded=expanded),
                 body_style=body_style,
                 accent_style=_tool_accent_style(row, theme=theme),
+                description_only=_bash_row_hides_command(row),
             )
         )
         if expanded and row.grouped_tool_calls is None and row.tool_result_text:
@@ -1771,7 +1789,12 @@ def _render_tool_chat_body(
             theme=theme,
             expanded=show_tool_results,
         )
-    text = _render_tool_invocation(item.text, body_style=body_style, accent_style=accent_style)
+    text = _render_tool_invocation(
+        item.text,
+        body_style=body_style,
+        accent_style=accent_style,
+        description_only=_bash_row_hides_command(item),
+    )
     if item.grouped_tool_calls is not None or not show_tool_results or not item.tool_result_text:
         return text
 
@@ -1785,11 +1808,18 @@ def _render_tool_chat_body(
     return Group(text, Text(""), result_body)
 
 
-def _render_tool_invocation(text: str, *, body_style: str, accent_style: str | None) -> Text:
+def _render_tool_invocation(
+    text: str,
+    *,
+    body_style: str,
+    accent_style: str | None,
+    description_only: bool = False,
+) -> Text:
     return _styled_tool_invocation(
         text,
         body_style=body_style,
         accent_style=accent_style,
+        description_only=description_only,
     )
 
 
@@ -1803,21 +1833,28 @@ def _styled_tool_invocation(
     *,
     body_style: str,
     accent_style: str | None,
+    description_only: bool = False,
 ) -> Text:
     rendered = Text(style=body_style, overflow="fold", no_wrap=False)
     accent_style = accent_style or body_style
     for index, line in enumerate(text.splitlines() or [""]):
         if index:
             rendered.append("\n", style=body_style)
-        prefix, description, details = _split_tool_invocation_sections(line)
+        prefix, description, details = _split_tool_invocation_sections(
+            line, description_only=description_only
+        )
         rendered.append(prefix, style=body_style)
         rendered.append(description, style=accent_style)
         rendered.append(details, style=body_style)
     return rendered
 
 
-def _split_tool_invocation_sections(text: str) -> tuple[str, str, str]:
+def _split_tool_invocation_sections(
+    text: str, *, description_only: bool = False
+) -> tuple[str, str, str]:
     """Split an invocation into neutral prefix, status description, and gray details."""
+    if description_only and text.startswith("→ "):
+        return "→ ", text[2:], ""
     group = _TOOL_GROUP_INVOCATION_PATTERN.fullmatch(text)
     if group is not None:
         return "→ ", group.group(1), f" · {group.group(2)}"
