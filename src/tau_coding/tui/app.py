@@ -4904,7 +4904,9 @@ class TauTuiApp(App[None]):
                 item,
                 theme=theme,
                 show_tool_results=self.state.show_tool_results,
-                invocation=self.state.resolve_tool_invocation(item),
+                invocation=self.state.resolve_tool_invocation(
+                    item, expanded=self.state.show_tool_results
+                ),
             )
             self._refresh_chrome()
             return
@@ -4917,7 +4919,7 @@ class TauTuiApp(App[None]):
                     updated_item,
                     theme=theme,
                     show_tool_results=expanded,
-                    invocation=self.state.resolve_tool_invocation(updated_item),
+                    invocation=self.state.resolve_tool_invocation(updated_item, expanded=expanded),
                     result_markup=self.state.resolve_tool_result(updated_item, expanded=expanded),
                 )
             self._refresh_chrome()
@@ -4948,7 +4950,7 @@ class TauTuiApp(App[None]):
                     updated_item,
                     theme=theme,
                     show_tool_results=expanded,
-                    invocation=self.state.resolve_tool_invocation(updated_item),
+                    invocation=self.state.resolve_tool_invocation(updated_item, expanded=expanded),
                     result_markup=self.state.resolve_tool_result(updated_item, expanded=expanded),
                 )
             self._refresh_chrome()
@@ -5940,7 +5942,7 @@ class TauTuiApp(App[None]):
             item,
             theme=self.tui_settings.resolved_theme,
             show_tool_results=expanded,
-            invocation=self.state.resolve_tool_invocation(item),
+            invocation=self.state.resolve_tool_invocation(item, expanded=expanded),
             result_markup=self.state.resolve_tool_result(item, expanded=expanded),
         )
 

@@ -41,9 +41,8 @@ class TranscriptRenderer:
             return
         if isinstance(event, ToolExecutionStartEvent):
             self._newline()
-            # Keep the established compact line while tool definitions migrate.
             call = ToolCall(id=event.tool_call_id, name=event.tool_name, arguments=event.args)
-            self._console.print(Text(format_tool_call_block(call), style="cyan"))
+            self._console.print(Text(format_tool_call_block(call, compact=False), style="cyan"))
             return
         if isinstance(event, ToolExecutionUpdateEvent):
             self._newline()

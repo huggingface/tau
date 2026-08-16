@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -33,6 +34,13 @@ TERMINAL_COMMAND_OUTPUT_PREVIEW_LINES = 120
 # Show live elapsed time on an executing tool row once it stops being instant;
 # quick reads/edits never flash a "(0s)".
 TOOL_TIMER_MIN_SECONDS = 1.0
+BASH_COMMAND_PREVIEW_CHARS = 120
+BASH_DESCRIPTION_PREVIEW_CHARS = 56
+BASH_COMMAND_HINT_CHARS = 32
+_INLINE_CODE_PATTERN = re.compile(
+    r"(?:^|[;&|]\s*|\s)(?:(?:python(?:\d+(?:\.\d+)*)?|bash|sh|zsh)\s+-c|node\s+-e)\s+"
+)
+_HEREDOC_PATTERN = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
 
 @dataclass(slots=True)
@@ -117,19 +125,29 @@ class TuiState:
             return None
         return self.custom_renderer(item.custom_type, item.text, item.details, expanded)
 
-    def resolve_tool_invocation(self, item: ChatItem) -> str | None:
+    def resolve_tool_invocation(self, item: ChatItem, *, expanded: bool = False) -> str | None:
         """Render a tool item's invocation via the installed resolver, or ``None``.
 
         Resolved lazily at render time (like custom markup) so tool calls
         restored before the extension runtime connects still pick up their
-        tool's `render_call` on the next redraw. ``None`` means "no renderer"
-        and the caller falls back to the generic ``item.text``.
+        tool's `render_call` on the next redraw. Expanded built-in bash calls
+        recover the exact command from their retained arguments. ``None`` means
+        "no renderer" and the caller falls back to the generic ``item.text``.
         """
         if item.role != "tool":
             return None
         line: str | None = None
         if item.tool_name is not None and self.tool_call_renderer is not None:
             line = self.tool_call_renderer(item.tool_name, item.tool_arguments or {})
+        if line is None and expanded and item.tool_name == "bash":
+            line = format_tool_call_invocation(
+                ToolCall(
+                    id=item.tool_call_id or "display-call",
+                    name=item.tool_name,
+                    arguments=item.tool_arguments or {},
+                ),
+                expanded=True,
+            )
         if item.tool_result_text is None and item.started_at is not None:
             elapsed = time.monotonic() - item.started_at
             if elapsed >= TOOL_TIMER_MIN_SECONDS:
@@ -396,15 +414,15 @@ def format_elapsed(seconds: float) -> str:
     return f"{hours}h {minutes}m"
 
 
-def format_tool_call_block(tool_call: ToolCall) -> str:
-    """Format a collapsed tool call for live and restored transcript blocks."""
-    invocation = format_tool_call_invocation(tool_call)
+def format_tool_call_block(tool_call: ToolCall, *, compact: bool = True) -> str:
+    """Format a tool call, optionally compacting long bash invocations."""
+    invocation = format_tool_call_invocation(tool_call, expanded=not compact)
     if tool_call.name == "bash":
         return invocation
     return f"→ {invocation}"
 
 
-def format_tool_call_invocation(tool_call: ToolCall) -> str:
+def format_tool_call_invocation(tool_call: ToolCall, *, expanded: bool = False) -> str:
     """Format a tool call as a terse human-readable invocation."""
     arguments = tool_call.arguments
     if tool_call.name == "read":
@@ -423,13 +441,98 @@ def format_tool_call_invocation(tool_call: ToolCall) -> str:
             return _fallback_tool_call_invocation(tool_call)
         return f"write {path}"
     if tool_call.name == "bash":
-        command = _string_argument(arguments, "command")
-        if command is None:
-            return _fallback_tool_call_invocation(tool_call)
-        timeout = _number_argument(arguments, "timeout")
-        suffix = f" (timeout {timeout:g}s)" if timeout is not None else ""
-        return f"$ {command}{suffix}"
+        invocation = _format_bash_tool_call_invocation(arguments, compact=not expanded)
+        return invocation if invocation is not None else _fallback_tool_call_invocation(tool_call)
     return _fallback_tool_call_invocation(tool_call)
+
+
+def _format_bash_tool_call_invocation(
+    arguments: dict[str, JSONValue], *, compact: bool
+) -> str | None:
+    command = _string_argument(arguments, "command")
+    if command is None:
+        return None
+    timeout = _number_argument(arguments, "timeout")
+    suffix = f" (timeout {timeout:g}s)" if timeout is not None else ""
+    if compact and _is_short_single_line_bash_command(command):
+        return f"$ {command}{suffix}"
+    if compact:
+        description = _string_argument(arguments, "description")
+        if description is not None:
+            displayed_description = _compact_bash_description(description)
+            if displayed_description:
+                hint = _bash_command_hint(command)
+                return f"→ {displayed_description} · $ {hint}{suffix}"
+    displayed_command = _compact_bash_command(command) if compact else command
+    return f"$ {displayed_command}{suffix}"
+
+
+def _is_short_single_line_bash_command(command: str) -> bool:
+    return (
+        "\n" not in command and "\r" not in command and len(command) <= BASH_COMMAND_PREVIEW_CHARS
+    )
+
+
+def _bash_command_hint(command: str) -> str:
+    first_line = next((line.strip() for line in command.splitlines() if line.strip()), "")
+    normalized = " ".join(first_line.split()) or "[empty command]"
+    if len(normalized) <= BASH_COMMAND_HINT_CHARS:
+        return normalized
+    return normalized[: BASH_COMMAND_HINT_CHARS - 1].rstrip() + "…"
+
+
+def _compact_bash_description(description: str) -> str:
+    normalized = " ".join(description.split())
+    if len(normalized) <= BASH_DESCRIPTION_PREVIEW_CHARS:
+        return normalized
+    return normalized[: BASH_DESCRIPTION_PREVIEW_CHARS - 1].rstrip() + "…"
+
+
+def _compact_bash_command(command: str) -> str:
+    lines = command.splitlines()
+    if len(lines) > 1:
+        meaningful_line = next(
+            ((index, line.strip()) for index, line in enumerate(lines) if line.strip()),
+            None,
+        )
+        if meaningful_line is None:
+            return f"[empty command: {len(lines)} lines]"
+        first_index, first_line = meaningful_line
+        preview = _truncate_bash_preview(first_line)
+        heredoc = _HEREDOC_PATTERN.search(first_line)
+        if heredoc is not None:
+            delimiter = heredoc.group(2)
+            closing_index = next(
+                (
+                    index
+                    for index in range(len(lines) - 1, first_index, -1)
+                    if lines[index].strip() == delimiter
+                ),
+                len(lines),
+            )
+            script_lines = max(0, closing_index - first_index - 1)
+            noun = "line" if script_lines == 1 else "lines"
+            return f"{preview} … [inline script: {script_lines} {noun}]"
+        return f"{preview} … [command: {len(lines)} lines]"
+
+    if len(command) <= BASH_COMMAND_PREVIEW_CHARS:
+        return command
+
+    inline_code = _INLINE_CODE_PATTERN.search(command)
+    if inline_code is not None:
+        prefix = command[: inline_code.end()].rstrip()
+        code_chars = len(command[inline_code.end() :].strip())
+        noun = "char" if code_chars == 1 else "chars"
+        return f"{prefix} … [inline code: {code_chars} {noun}]"
+
+    preview = _truncate_bash_preview(command)
+    return f"{preview}… [command: {len(command)} chars]"
+
+
+def _truncate_bash_preview(command: str) -> str:
+    if len(command) <= BASH_COMMAND_PREVIEW_CHARS:
+        return command
+    return command[:BASH_COMMAND_PREVIEW_CHARS].rstrip()
 
 
 def _read_line_suffix(arguments: dict[str, JSONValue]) -> str:
