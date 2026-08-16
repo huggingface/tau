@@ -170,8 +170,8 @@ def _session_summary_fingerprint(
         session.session_stats,
         tuple(session.extension_names),
         tuple(tool.name for tool in session.tools),
-        tuple(skill.name for skill in session.skills),
-        tuple(template.name for template in session.prompt_templates),
+        tuple((skill.name, skill.path) for skill in session.skills),
+        tuple((template.name, template.path) for template in session.prompt_templates),
         tuple(context.path for context in session.context_files),
     )
 
@@ -1529,11 +1529,7 @@ def render_session_sidebar(
     )
     tools = _comma_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
     skills = _grouped_skill_list(session.skills, cwd=session.cwd, theme=theme)
-    prompts = _comma_list(
-        [template.name for template in session.prompt_templates],
-        empty="No prompt templates",
-        theme=theme,
-    )
+    prompts = _grouped_prompt_list(session.prompt_templates, cwd=session.cwd, theme=theme)
     extensions = _comma_list(
         list(session.extension_names),
         empty="No extensions",
@@ -2248,14 +2244,39 @@ def _grouped_skill_list(
 
     grouped: dict[str, list[str]] = {}
     for skill in skills:
-        origin = _skill_origin_label(skill.path, cwd=cwd)
-        grouped.setdefault(origin, []).append(skill.name)
+        origin = skill.path.parent.parent if skill.path.name == "SKILL.md" else skill.path.parent
+        label = _resource_origin_label(origin, cwd=cwd)
+        grouped.setdefault(label, []).append(skill.name)
+    return _grouped_resource_names(grouped, directory="skills", theme=theme)
 
+
+def _grouped_prompt_list(
+    templates: Sequence[PromptTemplate],
+    *,
+    cwd: Path,
+    theme: TuiTheme,
+) -> Text:
+    if not templates:
+        return Text("No prompt templates", style=theme.completion_description)
+
+    grouped: dict[str, list[str]] = {}
+    for template in templates:
+        label = _resource_origin_label(template.path.parent, cwd=cwd)
+        grouped.setdefault(label, []).append(template.name)
+    return _grouped_resource_names(grouped, directory="prompts", theme=theme)
+
+
+def _grouped_resource_names(
+    grouped: dict[str, list[str]],
+    *,
+    directory: str,
+    theme: TuiTheme,
+) -> Text:
     origin_precedence = {
-        "~/.tau/skills": 0,
-        "~/.agents/skills": 1,
-        "./.tau/skills": 2,
-        "./.agents/skills": 3,
+        f"~/.tau/{directory}": 0,
+        f"~/.agents/{directory}": 1,
+        f"./.tau/{directory}": 2,
+        f"./.agents/{directory}": 3,
     }
     ordered_origins = sorted(
         grouped,
@@ -2272,8 +2293,7 @@ def _grouped_skill_list(
     return text
 
 
-def _skill_origin_label(path: Path, *, cwd: Path) -> str:
-    origin = path.parent.parent if path.name == "SKILL.md" else path.parent
+def _resource_origin_label(origin: Path, *, cwd: Path) -> str:
     expanded_origin = origin.expanduser()
     if not expanded_origin.is_absolute():
         expanded_origin = cwd / expanded_origin

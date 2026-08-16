@@ -575,6 +575,50 @@ def test_session_sidebar_groups_skills_by_origin(
     )
 
 
+def test_session_sidebar_groups_and_shows_all_prompts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    session = FakeSession()
+    session.cwd = tmp_path / "project"
+    session.prompt_templates = (
+        PromptTemplate("project-agents", session.cwd / ".agents/prompts/project-agents.md", ""),
+        PromptTemplate("user-tau", tmp_path / ".tau/prompts/user-tau.md", ""),
+        PromptTemplate("project-tau", session.cwd / ".tau/prompts/project-tau.md", ""),
+        PromptTemplate("user-agents", tmp_path / ".agents/prompts/user-agents.md", ""),
+        *tuple(
+            PromptTemplate(
+                f"extra-{index}",
+                session.cwd / f".tau/prompts/extra-{index}.md",
+                "",
+            )
+            for index in range(1, 5)
+        ),
+    )
+    console = Console(record=True, width=80)
+
+    console.print(render_session_sidebar(session))
+
+    output = console.export_text()
+    expected_groups = (
+        ("~/.tau/prompts", "user-tau"),
+        ("~/.agents/prompts", "user-agents"),
+        ("./.tau/prompts", "extra-1"),
+        ("./.agents/prompts", "project-agents"),
+    )
+    assert all(
+        re.search(rf"{re.escape(origin)}\s+• {name}", output) for origin, name in expected_groups
+    )
+    assert "• project-tau" in output
+    for index in range(1, 5):
+        assert f"• extra-{index}" in output
+    assert "more)" not in output
+    assert [output.index(origin) for origin, _name in expected_groups] == sorted(
+        output.index(origin) for origin, _name in expected_groups
+    )
+
+
 def test_session_sidebar_limits_context_files_to_five() -> None:
     session = FakeSession()
     session.context_files = tuple(
@@ -641,7 +685,7 @@ def test_comma_list_represents_an_oversized_first_item(
 
 @pytest.mark.parametrize(
     ("attribute", "prefix"),
-    [("tools", "tool"), ("prompt_templates", "prompt"), ("extension_names", "extension")],
+    [("tools", "tool"), ("extension_names", "extension")],
 )
 def test_session_sidebar_limits_comma_separated_sections_to_three_lines(
     attribute: str,
