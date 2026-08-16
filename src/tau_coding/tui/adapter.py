@@ -97,17 +97,17 @@ class TuiEventAdapter:
                 else:
                     self._pending_overflow_error = None
                     self.state.add_assistant_message(message, include_tool_calls=False)
-                    previous_was_read = False
+                    previous_was_tool = False
                     batch_id: int | None = None
                     for block in message.content:
-                        if isinstance(block, ToolCall) and block.name == "read":
-                            if not previous_was_read:
+                        if isinstance(block, ToolCall):
+                            if not previous_was_tool:
                                 batch_id = self.state.new_tool_batch_id()
                             if batch_id is not None:
                                 self._tool_batch_ids[block.id] = batch_id
-                            previous_was_read = True
+                            previous_was_tool = True
                         else:
-                            previous_was_read = False
+                            previous_was_tool = False
                 self.state.assistant_buffer = ""
                 self._assistant_start_item_index = None
             return

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,14 +32,20 @@ from textual.widgets import Markdown as TextualMarkdown
 from textual.widgets import Static
 from textual.widgets.markdown import MarkdownBlock, MarkdownStream
 
-from tau_agent.tools import AgentTool
+from tau_agent.tools import AgentTool, ToolCall
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.session_stats import SessionStats
 from tau_coding.skills import Skill
 from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.tui.autocomplete import CompletionState
 from tau_coding.tui.config import TAU_DARK_THEME, TuiRoleStyle, TuiTheme
-from tau_coding.tui.state import ChatItem, TuiState
+from tau_coding.tui.state import (
+    TOOL_TIMER_MIN_SECONDS,
+    ChatItem,
+    TuiState,
+    format_elapsed,
+    format_tool_call_invocation,
+)
 from tau_coding.version import current_version
 
 TAU_SIDEBAR_LOGO = "τ = 2π"
@@ -1316,6 +1323,8 @@ def transcript_item_selection_text(
     """Return the plain text represented by a selectable transcript item."""
     if item.role == "custom":
         return _custom_selection_text(custom_markup, item.text)
+    if item.role == "tool" and item.tool_batch_items is not None:
+        return _tool_batch_selection_text(item, expanded=show_tool_results)
     if item.role == "tool" and result_markup is not None:
         # A tool-rendered result replaces the generic block: invocation line
         # plus the markup-stripped card.
@@ -1380,6 +1389,13 @@ def _transcript_plain_body_text(
     """Return styled transcript text for selectable plain rows."""
     if item.role != "tool":
         return Text(text, style=body_style, overflow="fold", no_wrap=False)
+    if item.tool_batch_items is not None:
+        return _render_transcript_tool_batch(
+            item,
+            body_style=body_style,
+            theme=theme,
+            expanded=show_tool_results,
+        )
 
     invocation_text = _render_transcript_tool_invocation(
         invocation if invocation else item.text,
@@ -1677,6 +1693,82 @@ def _tool_accent_style(item: ChatItem, *, theme: TuiTheme) -> str | None:
     return None
 
 
+def _tool_batch_row_invocation(row: ChatItem, *, expanded: bool) -> str:
+    if row.grouped_tool_calls is not None:
+        if expanded:
+            return "\n".join(member.text for member in row.grouped_tool_calls)
+        return row.text
+    if expanded and row.tool_name == "bash":
+        invocation = format_tool_call_invocation(
+            ToolCall(
+                id=row.tool_call_id or "display-call",
+                name=row.tool_name,
+                arguments=row.tool_arguments or {},
+            ),
+            expanded=True,
+        )
+    else:
+        invocation = row.text
+    if row.tool_result_text is None and row.started_at is not None:
+        elapsed = time.monotonic() - row.started_at
+        if elapsed >= TOOL_TIMER_MIN_SECONDS:
+            return f"{invocation} ({format_elapsed(elapsed)})"
+    return invocation
+
+
+def _tool_batch_selection_text(item: ChatItem, *, expanded: bool) -> str:
+    rows: list[str] = []
+    for row in item.tool_batch_items or []:
+        text = _tool_batch_row_invocation(row, expanded=expanded)
+        if expanded and row.grouped_tool_calls is None and row.tool_result_text:
+            text = f"{text}\n\n{row.tool_result_text}"
+        elif row.update_text and not row.tool_result_text:
+            text = f"{text}\n… {row.update_text}"
+        rows.append(text)
+    return ("\n\n" if expanded else "\n").join(rows)
+
+
+def _render_transcript_tool_batch(
+    item: ChatItem,
+    *,
+    body_style: str,
+    theme: TuiTheme,
+    expanded: bool,
+) -> RenderableType:
+    rendered: list[RenderableType] = []
+    for index, row in enumerate(item.tool_batch_items or []):
+        if index and expanded:
+            rendered.append(Text("", style=body_style))
+        rendered.append(
+            _styled_tool_invocation(
+                _tool_batch_row_invocation(row, expanded=expanded),
+                body_style=body_style,
+                accent_style=_tool_accent_style(row, theme=theme),
+            )
+        )
+        if expanded and row.grouped_tool_calls is None and row.tool_result_text:
+            rendered.append(Text("", style=body_style))
+            result_body = _render_patch_body(
+                row.tool_result_text,
+                body_style=body_style,
+                syntax_theme=theme.syntax_theme,
+                code_block_background=theme.markdown_code_block_background,
+            )
+            rendered.append(
+                result_body
+                if result_body is not None
+                else Text(
+                    row.tool_result_text,
+                    style=body_style,
+                    overflow="fold",
+                    no_wrap=False,
+                )
+            )
+        elif row.update_text and not row.tool_result_text:
+            rendered.append(Text(f"… {row.update_text}", style=body_style))
+    return Group(*rendered)
+
+
 def _render_tool_chat_body(
     item: ChatItem,
     *,
@@ -1686,6 +1778,13 @@ def _render_tool_chat_body(
     syntax_theme: str,
     theme: TuiTheme,
 ) -> RenderableType:
+    if item.tool_batch_items is not None:
+        return _render_transcript_tool_batch(
+            item,
+            body_style=body_style,
+            theme=theme,
+            expanded=show_tool_results,
+        )
     text = _render_tool_invocation(item.text, body_style=body_style, accent_style=accent_style)
     if item.grouped_tool_calls is not None or not show_tool_results or not item.tool_result_text:
         return text
@@ -1762,6 +1861,8 @@ def _visible_chat_text(
         return item.text
     if item.role not in {"tool", "skill"}:
         return item.text
+    if item.role == "tool" and item.tool_batch_items is not None:
+        return _tool_batch_selection_text(item, expanded=show_tool_results)
     text = invocation if item.role == "tool" and invocation else item.text
     if item.grouped_tool_calls is not None:
         return text

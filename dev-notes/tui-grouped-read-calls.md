@@ -32,9 +32,10 @@ skill presentation.
 Grouping is display-only in `src/tau_coding/tui/`. `TuiEventAdapter` assigns a
 presentation batch identifier to tool calls from one completed assistant message.
 `TuiState` keeps each grouped call's ID, arguments, progress, result, and timing,
-while exposing one aggregate `ChatItem`. Every call ID maps back to that item, so
-live updates continue to use O(1) lookup and refresh the existing Textual widget
-in place. Results still determine aggregate progress and error styling, but the
+while exposing one aggregate read row. That row can stand alone or live inside a
+larger mixed-tool batch. Every call ID maps back to its top-level item, so live
+updates continue to use O(1) lookup and refresh the existing Textual widget in
+place. Results still determine aggregate progress and error styling, but the
 widget suppresses their content when rendering a grouped row.
 
 Restored canonical messages use the same assistant-message boundary to rebuild

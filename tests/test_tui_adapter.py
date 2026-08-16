@@ -201,6 +201,87 @@ def test_tui_state_groups_adjacent_reads_from_one_assistant_message() -> None:
     assert item.tool_result_text == "✓ read group"
 
 
+def test_tui_state_batches_mixed_tools_and_clusters_adjacent_reads() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(
+                        id="bash-1",
+                        name="bash",
+                        arguments={"command": "echo one", "description": "Doing thing one"},
+                    ),
+                    ToolCall(
+                        id="bash-2",
+                        name="bash",
+                        arguments={"command": "echo two", "description": "Doing thing two"},
+                    ),
+                    ToolCall(id="read-1", name="read", arguments={"path": "a.py"}),
+                    ToolCall(id="read-2", name="read", arguments={"path": "b.py"}),
+                    ToolCall(
+                        id="bash-3",
+                        name="bash",
+                        arguments={"command": "echo three", "description": "Doing thing three"},
+                    ),
+                ]
+            ),
+            ToolResultMessage(tool_call_id="bash-1", tool_name="bash", content="one"),
+            ToolResultMessage(tool_call_id="bash-2", tool_name="bash", content="two"),
+            ToolResultMessage(tool_call_id="read-1", tool_name="read", content="a"),
+            ToolResultMessage(tool_call_id="read-2", tool_name="read", content="b"),
+            ToolResultMessage(tool_call_id="bash-3", tool_name="bash", content="three"),
+        ]
+    )
+
+    assert len(state.items) == 1
+    item = state.items[0]
+    assert item.tool_batch_items is not None
+    assert len(item.tool_batch_items) == 4
+    assert item.tool_batch_items[2].grouped_tool_calls is not None
+    assert item.text.splitlines() == [
+        "→ Doing thing one · $ echo one",
+        "→ Doing thing two · $ echo two",
+        "→ Read 2 files · a.py, b.py",
+        "→ Doing thing three · $ echo three",
+    ]
+    assert all(
+        state.find_tool_item(call_id) is item
+        for call_id in (
+            "bash-1",
+            "bash-2",
+            "read-1",
+            "read-2",
+            "bash-3",
+        )
+    )
+
+
+def test_tui_state_keeps_custom_rendered_calls_out_of_tool_batches() -> None:
+    state = TuiState(
+        tool_call_renderer=lambda name, _arguments: (
+            "[bold]agent card[/bold]" if name == "agent" else None
+        )
+    )
+    batch_id = state.new_tool_batch_id()
+
+    state.add_tool_call(
+        ToolCall(id="custom", name="agent", arguments={"prompt": "explore"}),
+        batch_id=batch_id,
+    )
+    state.add_tool_call(
+        ToolCall(
+            id="bash",
+            name="bash",
+            arguments={"command": "pwd", "description": "Checking location"},
+        ),
+        batch_id=batch_id,
+    )
+
+    assert len(state.items) == 2
+    assert all(item.tool_batch_items is None for item in state.items)
+
+
 def test_tui_state_marks_group_failed_when_any_read_fails() -> None:
     state = TuiState()
     state.load_messages(

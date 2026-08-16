@@ -1529,6 +1529,42 @@ def test_semantic_bash_and_grouped_read_details_stay_neutral() -> None:
         assert f"{green}{details}" not in output
 
 
+def test_tool_batch_colors_each_description_by_its_own_status() -> None:
+    item = ChatItem(
+        role="tool",
+        text="batch",
+        tool_result_text="✗ tool batch",
+        tool_batch_items=[
+            ChatItem(
+                role="tool",
+                text="→ Finished action · $ true",
+                tool_result_text="✓ bash",
+            ),
+            ChatItem(
+                role="tool",
+                text="→ Failed action · $ false",
+                tool_result_text="✗ bash",
+            ),
+            ChatItem(role="tool", text="→ Running action · $ sleep 1", started_at=1.0),
+        ],
+    )
+    console = Console(record=True, width=100, color_system="truecolor")
+    console.print(
+        _transcript_plain_body_text(
+            item,
+            text=item.text,
+            body_style=TAU_DARK_THEME.role_styles["tool"].body,
+            theme=TAU_DARK_THEME,
+        )
+    )
+    output = console.export_text(styles=True)
+
+    assert "38;2;156;255;177;48;2;0;0;0mFinished action" in output
+    assert "38;2;255;79;79;48;2;0;0;0mFailed action" in output
+    assert "38;2;138;122;82;48;2;0;0;0mRunning action" in output
+    assert "38;2;203;213;225;48;2;0;0;0m · $ false" in output
+
+
 def test_assistant_chat_items_render_markdown_lists() -> None:
     console = Console(record=True, width=60)
     item = ChatItem(role="assistant", text="Plan:\n\n- inspect\n- patch")
@@ -1786,6 +1822,54 @@ async def test_batched_reads_share_one_live_transcript_row() -> None:
         assert tool_widgets[0].selection_text == "→ read a.py\n→ read b.py"
         assert "one" not in tool_widgets[0].selection_text
         assert "two" not in tool_widgets[0].selection_text
+
+
+@pytest.mark.anyio
+async def test_mixed_tool_batch_uses_one_widget_and_expands_each_row() -> None:
+    app = TauTuiApp(
+        FakeSession(
+            messages=[
+                AssistantMessage(
+                    content=[
+                        ToolCall(
+                            id="bash-1",
+                            name="bash",
+                            arguments={"command": "echo one", "description": "Doing thing one"},
+                        ),
+                        ToolCall(id="read-1", name="read", arguments={"path": "a.py"}),
+                        ToolCall(id="read-2", name="read", arguments={"path": "b.py"}),
+                        ToolCall(
+                            id="bash-2",
+                            name="bash",
+                            arguments={"command": "echo two", "description": "Doing thing two"},
+                        ),
+                    ]
+                ),
+                ToolResultMessage(tool_call_id="bash-1", tool_name="bash", content="one"),
+                ToolResultMessage(tool_call_id="read-1", tool_name="read", content="alpha"),
+                ToolResultMessage(tool_call_id="read-2", tool_name="read", content="beta"),
+                ToolResultMessage(tool_call_id="bash-2", tool_name="bash", content="two"),
+            ]
+        )
+    )
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool")
+        assert len([w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool"]) == 1
+        assert widget.selection_text == (
+            "→ Doing thing one · $ echo one\n"
+            "→ Read 2 files · a.py, b.py\n"
+            "→ Doing thing two · $ echo two"
+        )
+
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+
+        assert widget.selection_text == (
+            "$ echo one\n\n✓ bash\none\n\n→ read a.py\n→ read b.py\n\n$ echo two\n\n✓ bash\ntwo"
+        )
+        assert "alpha" not in widget.selection_text
+        assert "beta" not in widget.selection_text
 
 
 @pytest.mark.anyio

@@ -76,6 +76,7 @@ class ChatItem:
     started_at: float | None = None
     tool_batch_id: int | None = None
     grouped_tool_calls: list[GroupedToolCall] | None = None
+    tool_batch_items: list[ChatItem] | None = None
     always_show_tool_result: bool = False
     custom_type: str | None = None
     details: dict[str, JSONValue] | None = None
@@ -105,6 +106,12 @@ class TuiState:
         compare=False,
     )
     _grouped_calls_by_call_id: dict[str, GroupedToolCall] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _batched_items_by_call_id: dict[str, ChatItem] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -161,6 +168,13 @@ class TuiState:
         """
         if item.role != "tool":
             return None
+        if item.tool_batch_items is not None:
+            if not expanded:
+                return None
+            return "\n".join(
+                self.resolve_tool_invocation(row, expanded=True) or row.text
+                for row in item.tool_batch_items
+            )
         if item.grouped_tool_calls is not None:
             if not expanded:
                 return None
@@ -199,6 +213,7 @@ class TuiState:
         """
         if (
             item.role != "tool"
+            or item.tool_batch_items is not None
             or item.grouped_tool_calls is not None
             or item.tool_result is None
             or self.tool_result_renderer is None
@@ -214,7 +229,7 @@ class TuiState:
         return self._next_tool_batch_id
 
     def add_tool_call(self, tool_call: ToolCall, *, batch_id: int | None = None) -> ChatItem:
-        """Append a collapsed tool call, grouping adjacent reads from one response."""
+        """Append a tool call, batching adjacent calls from one assistant response."""
         skill_name = self._read_skill_name(tool_call)
         if skill_name is not None:
             self.add_item(
@@ -223,11 +238,17 @@ class TuiState:
                 tool_call_id=tool_call.id,
             )
             return self.items[-1]
-        if self._can_group_read_call(tool_call, batch_id=batch_id):
+        if self._can_append_tool_batch(tool_call, batch_id=batch_id):
             item = self.items[-1]
-            self._append_grouped_read_call(item, tool_call)
+            self._append_batched_tool_call(item, tool_call)
             return item
-        item = ChatItem(
+        item = self._new_tool_item(tool_call, batch_id=batch_id)
+        self.items.append(item)
+        self._tool_items_by_call_id[tool_call.id] = item
+        return item
+
+    def _new_tool_item(self, tool_call: ToolCall, *, batch_id: int | None) -> ChatItem:
+        return ChatItem(
             role="tool",
             text=format_tool_call_block(tool_call),
             tool_call_id=tool_call.id,
@@ -236,19 +257,70 @@ class TuiState:
             started_at=time.monotonic(),
             tool_batch_id=batch_id,
         )
-        self.items.append(item)
-        self._tool_items_by_call_id[tool_call.id] = item
-        return item
 
-    def _can_group_read_call(self, tool_call: ToolCall, *, batch_id: int | None) -> bool:
-        if tool_call.name != "read" or batch_id is None or not self.items:
+    def _can_append_tool_batch(self, tool_call: ToolCall, *, batch_id: int | None) -> bool:
+        if batch_id is None or not self.items:
             return False
         previous = self.items[-1]
-        return (
-            previous.role == "tool"
-            and previous.tool_name == "read"
-            and previous.tool_batch_id == batch_id
+        if previous.role != "tool" or previous.tool_batch_id != batch_id:
+            return False
+        if self._has_custom_call_rendering(tool_call.name, tool_call.arguments):
+            return False
+        previous_row = (
+            previous.tool_batch_items[-1] if previous.tool_batch_items is not None else previous
         )
+        return not self._has_custom_call_rendering(
+            previous_row.tool_name,
+            previous_row.tool_arguments or {},
+        )
+
+    def _has_custom_call_rendering(
+        self,
+        tool_name: str | None,
+        arguments: dict[str, JSONValue],
+    ) -> bool:
+        if tool_name is None or self.tool_call_renderer is None:
+            return False
+        return self.tool_call_renderer(tool_name, arguments) is not None
+
+    def _append_batched_tool_call(self, item: ChatItem, tool_call: ToolCall) -> None:
+        if item.tool_batch_items is None and item.tool_name == "read" and tool_call.name == "read":
+            self._append_grouped_read_call(item, tool_call)
+            return
+        if item.tool_batch_items is None:
+            first = ChatItem(
+                role="tool",
+                text=item.text,
+                tool_call_id=item.tool_call_id,
+                tool_result_text=item.tool_result_text,
+                tool_result=item.tool_result,
+                update_text=item.update_text,
+                tool_name=item.tool_name,
+                tool_arguments=item.tool_arguments,
+                started_at=item.started_at,
+                tool_batch_id=item.tool_batch_id,
+                grouped_tool_calls=item.grouped_tool_calls,
+            )
+            item.tool_batch_items = [first]
+            item.grouped_tool_calls = None
+            item.tool_result = None
+            for call_id in self._tool_call_ids(first):
+                self._batched_items_by_call_id[call_id] = first
+        last = item.tool_batch_items[-1]
+        if last.tool_name == "read" and tool_call.name == "read":
+            self._append_grouped_read_call(last, tool_call)
+            row = last
+        else:
+            row = self._new_tool_item(tool_call, batch_id=item.tool_batch_id)
+            item.tool_batch_items.append(row)
+        self._tool_items_by_call_id[tool_call.id] = item
+        self._batched_items_by_call_id[tool_call.id] = row
+        self._refresh_tool_batch(item)
+
+    def _tool_call_ids(self, item: ChatItem) -> list[str]:
+        if item.grouped_tool_calls is not None:
+            return [member.tool_call_id for member in item.grouped_tool_calls]
+        return [item.tool_call_id] if item.tool_call_id is not None else []
 
     def _append_grouped_read_call(self, item: ChatItem, tool_call: ToolCall) -> None:
         if item.grouped_tool_calls is None:
@@ -281,6 +353,24 @@ class TuiState:
         self._tool_items_by_call_id[tool_call.id] = item
         self._grouped_calls_by_call_id[tool_call.id] = member
         self._refresh_tool_group(item)
+
+    def _refresh_tool_batch(self, item: ChatItem) -> None:
+        rows = item.tool_batch_items or []
+        item.text = "\n".join(row.text for row in rows)
+        pending = [row for row in rows if row.started_at is not None]
+        failures = [
+            row
+            for row in rows
+            if row.tool_result_text is not None and row.tool_result_text.startswith("✗")
+        ]
+        if failures:
+            item.tool_result_text = "✗ tool batch"
+        elif not pending:
+            item.tool_result_text = "✓ tool batch"
+        else:
+            item.tool_result_text = None
+        item.update_text = None
+        item.started_at = next((row.started_at for row in pending), None)
 
     def _refresh_tool_group(self, item: ChatItem) -> None:
         members = item.grouped_tool_calls or []
@@ -379,16 +469,19 @@ class TuiState:
         item = self.find_tool_item(tool_call_id)
         if item is None:
             return None
+        row = self._batched_items_by_call_id.get(tool_call_id, item)
         member = self._grouped_calls_by_call_id.get(tool_call_id)
         if member is not None:
             if member.tool_result_text is not None:
                 return None
             member.update_text = message
-            self._refresh_tool_group(item)
-            return item
-        if item.tool_result_text is not None:
-            return None
-        item.update_text = message
+            self._refresh_tool_group(row)
+        else:
+            if row.tool_result_text is not None:
+                return None
+            row.update_text = message
+        if item.tool_batch_items is not None:
+            self._refresh_tool_batch(item)
         return item
 
     def record_tool_result(
@@ -407,17 +500,21 @@ class TuiState:
         )
         item = self.find_tool_item(tool_call_id)
         if item is not None:
+            row = self._batched_items_by_call_id.get(tool_call_id, item)
             member = self._grouped_calls_by_call_id.get(tool_call_id)
             if member is not None:
                 member.tool_result_text = result_text
                 member.tool_result = result
                 member.update_text = None
                 member.started_at = None
-                self._refresh_tool_group(item)
-                return
-            item.tool_result_text = result_text
-            item.tool_result = result
-            item.update_text = None
+                self._refresh_tool_group(row)
+            else:
+                row.tool_result_text = result_text
+                row.tool_result = result
+                row.update_text = None
+                row.started_at = None
+            if item.tool_batch_items is not None:
+                self._refresh_tool_batch(item)
             return
         item = ChatItem(
             role="tool",
@@ -454,6 +551,7 @@ class TuiState:
         self.items.clear()
         self._tool_items_by_call_id.clear()
         self._grouped_calls_by_call_id.clear()
+        self._batched_items_by_call_id.clear()
         self.assistant_buffer = ""
         self.error = None
 
