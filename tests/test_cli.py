@@ -1149,6 +1149,76 @@ def test_print_session_record_rejects_unknown_session(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.anyio
+async def test_print_resume_does_not_apply_hf_route_to_explicit_non_hf_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model = "shared-model"
+    settings = ProviderSettings(
+        default_provider="huggingface",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="huggingface",
+                models=(model,),
+                default_model=model,
+                inference_providers={model: "together"},
+            ),
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                models=(model,),
+                default_model=model,
+            ),
+        ),
+    )
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager.create_session(
+        cwd=tmp_path,
+        model=model,
+        provider_name="huggingface",
+        inference_provider="together",
+        session_id="session-123",
+    )
+
+    class ClosableFakeProvider(FakeProvider):
+        async def aclose(self) -> None:
+            return None
+
+    provider = ClosableFakeProvider([])
+    create_calls: list[tuple[str, str | None]] = []
+
+    def fake_create_model_provider(
+        provider_config: OpenAICompatibleProviderConfig,
+        *,
+        model: str,
+        inference_provider: str | None,
+        **kwargs: object,
+    ) -> ClosableFakeProvider:
+        del model, kwargs
+        create_calls.append((provider_config.name, inference_provider))
+        return provider
+
+    async def fake_run_print_mode(**kwargs: object) -> bool:
+        return True
+
+    monkeypatch.setattr(cli, "load_provider_settings", lambda: settings)
+    monkeypatch.setattr(cli, "create_model_provider", fake_create_model_provider)
+    monkeypatch.setattr(cli, "run_print_mode", fake_run_print_mode)
+
+    ok = await cli.run_openai_print_mode(
+        "Follow up",
+        model,
+        tmp_path,
+        provider_name="local",
+        session_manager=manager,
+        resume_session_id="session-123",
+    )
+
+    assert ok is True
+    assert create_calls == [("local", None)]
+
+
 def test_create_print_session_uses_requested_id_and_rejects_collision(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
 

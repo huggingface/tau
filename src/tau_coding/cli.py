@@ -794,7 +794,10 @@ async def run_openai_print_mode(
     )
     inference_provider = (
         record.inference_provider
-        if resume_session_id is not None and record.model == selection.model
+        if resume_session_id is not None
+        and record.provider_name == "huggingface"
+        and selection.provider.name == "huggingface"
+        and record.model == selection.model
         else selection.provider.inference_providers.get(selection.model)
         if isinstance(selection.provider, OpenAICompatibleProviderConfig)
         and selection.provider.name == "huggingface"
