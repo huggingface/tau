@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 from conftest import isolate_home
 from pi_event_helpers import assistant_done, assistant_error, assistant_start, text_delta
 from tau_agent import AssistantMessage, UserMessage
-from tau_agent.session import JsonlSessionStorage, MessageEntry
+from tau_agent.session import JsonlSessionStorage, MessageEntry, ModelChangeEntry
 from tau_ai import (
     FakeProvider,
 )
@@ -797,21 +797,29 @@ async def test_run_print_mode_resumes_persisted_conversation(
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     await storage.append(MessageEntry(message=UserMessage(content="First question")))
     await storage.append(MessageEntry(message=AssistantMessage(content="First answer")))
+    await storage.append(ModelChangeEntry(model="model-a"))
     provider = FakeProvider(
-        [[assistant_start(model="fake"), assistant_done(message=AssistantMessage(content="Done"))]]
+        [
+            [
+                assistant_start(model="model-b"),
+                assistant_done(message=AssistantMessage(content="Done")),
+            ]
+        ]
     )
 
     ok = await run_print_mode(
         prompt="Follow-up message",
-        model="fake",
+        model="model-b",
         cwd=tmp_path,
         provider=provider,
         storage=storage,
         session_id="session-123",
+        startup_model_override=True,
     )
 
     assert ok is True
     assert capsys.readouterr().out == "Done\n"
+    assert provider.calls[0][0] == "model-b"
     messages = provider.calls[0][2]
     assert [(message.role, message.text) for message in messages] == [
         ("user", "First question"),

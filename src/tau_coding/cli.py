@@ -828,6 +828,7 @@ async def run_openai_print_mode(
             append_system_prompt=append_system_prompt,
             trust_override=trust_override,
             trust_default=shell_settings.default_project_trust,
+            startup_model_override=provider_name is not None or model is not None,
         )
     finally:
         await provider.aclose()
@@ -909,6 +910,7 @@ async def run_print_mode(
     append_system_prompt: str | None = None,
     trust_override: TrustOverride | None = None,
     trust_default: TrustDefault = "ask",
+    startup_model_override: bool = False,
 ) -> bool:
     """Run one non-interactive prompt and print streamed events.
 
@@ -938,6 +940,8 @@ async def run_print_mode(
             trust_default=trust_default,
         )
     )
+    if startup_model_override:
+        await session.apply_startup_model_override(model)
     session.extension_runtime.set_ui_bridge(StderrUiBridge())
     for diagnostic in session.resource_diagnostics:
         if diagnostic.kind == "project-trust":

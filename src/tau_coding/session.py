@@ -1069,6 +1069,25 @@ class CodingSession:
                 preserve_inference_provider=False,
             )
 
+    async def apply_startup_model_override(self, model: str) -> None:
+        """Activate and persist an explicit startup model before the next turn."""
+        provider = self._active_provider_config()
+        if provider is not None:
+            validate_provider_model(provider, model)
+        if self.model == model:
+            return
+
+        self._harness.config.model = model
+        self._inference_provider = _configured_inference_provider(provider, model)
+        self._sync_thinking_level_to_active_model()
+        self._sync_image_support()
+        entry = ModelChangeEntry(parent_id=self._last_parent_id, model=model)
+        await self._append_session_entry(entry)
+        leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
+        await self._append_session_entry(leaf)
+        self._last_parent_id = entry.id
+        await self._refresh_persisted_state(leaf_id=entry.id)
+
     def set_inference_provider(self, route: str | None) -> str:
         """Select or reset the active Hugging Face session route."""
         if self.provider_name != "huggingface":
