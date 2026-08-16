@@ -11,6 +11,7 @@ from typing import Literal
 
 from tau_agent.events import AgentEndEvent, AgentEvent, MessageEndEvent, ToolExecutionEndEvent
 from tau_agent.harness import AgentHarness, AgentHarnessConfig, QueuedMessages
+from tau_agent.loop import MID_TURN_OVERFLOW_MESSAGE
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
@@ -245,6 +246,10 @@ class CodingSessionConfig:
     runtime_provider_config: ProviderConfig | None = None
     auto_compact_token_threshold: int | None = None
     auto_compact_enabled: bool = True
+    mid_turn_overflow_guard: bool = True
+    """Pause a turn between tool calls once context estimate exceeds the auto compact threshold.
+    Only applies when auto_compact_enabled is also true.
+    """
     thinking_level: ThinkingLevel = DEFAULT_THINKING_LEVEL
     index_on_first_persist: bool = False
     shell_command_prefix: str | None = None
@@ -325,6 +330,7 @@ class CodingSession:
         self._resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
         self._auto_compact_token_threshold = config.auto_compact_token_threshold
         self._auto_compact_enabled = config.auto_compact_enabled
+        self._mid_turn_overflow_guard = config.mid_turn_overflow_guard
         self._thinking_level = _state_thinking_level(
             state,
             default=_default_thinking_level_for_active_model(self),
@@ -517,6 +523,7 @@ class CodingSession:
         session._sync_thinking_level_to_active_model()
         session._refresh_runtime_provider()
         await session._refresh_runtime_model_limits()
+        session._harness.config.check_overflow = session._check_mid_turn_overflow
         extension_runtime.bind(session)
         # Attach to session._harness, not the local `harness`:
         # Tool-history repair above updates the active harness before extension
@@ -810,6 +817,15 @@ class CodingSession:
             if limits is not None:
                 return limits.effective_auto_compact_token_limit
         return auto_compaction_threshold_for_context_window(self.context_window_tokens)
+
+    def _check_mid_turn_overflow(self) -> bool:
+        """Return whether the harness should pause the turn between tool calls."""
+        if not self._mid_turn_overflow_guard:
+            return False
+        threshold = self.auto_compact_token_threshold
+        if threshold is None:
+            return False
+        return self.context_token_estimate > threshold
 
     @property
     def context_window_tokens(self) -> int:
@@ -1814,6 +1830,7 @@ class CodingSession:
         self._resource_paths = replacement._resource_paths
         self._auto_compact_token_threshold = replacement._auto_compact_token_threshold
         self._auto_compact_enabled = replacement._auto_compact_enabled
+        self._mid_turn_overflow_guard = replacement._mid_turn_overflow_guard
         self._thinking_level = replacement._thinking_level
         self._pending_initial_entries = replacement._pending_initial_entries
         self._pending_message_writes = replacement._pending_message_writes
@@ -1822,6 +1839,7 @@ class CodingSession:
         self._project_trust_resolution = replacement._project_trust_resolution
         self._project_trust_commit_pending = False
         self._session_start_pending = False
+        self._harness.config.check_overflow = self._check_mid_turn_overflow
         self._extension_runtime.bind(self)
         self._extension_runtime.attach_harness_listener(self._harness.subscribe)
 
@@ -2512,11 +2530,25 @@ class CodingSession:
         if self.context_token_estimate <= threshold:
             return False
         plan = self._recent_preserving_compaction_plan()
+        if plan is None and self._last_turn_was_overflow_paused():
+            # Guard paused for this exact reason. Compact everything instead.
+            plan = self._full_compaction_plan()
         if plan is None:
             return False
         summary = await self._generate_compaction_summary(plan.messages_to_summarize)
         await self._append_compaction(summary, replace_entry_ids=plan.replace_entry_ids)
         return True
+
+    def _last_turn_was_overflow_paused(self) -> bool:
+        messages = self._harness.messages
+        if not messages:
+            return False
+        last = messages[-1]
+        return (
+            isinstance(last, AssistantMessage)
+            and last.stop_reason == "error"
+            and last.error_message == MID_TURN_OVERFLOW_MESSAGE
+        )
 
     async def _generate_compaction_summary(
         self,
@@ -2571,9 +2603,15 @@ class CodingSession:
         return summary or summarize_messages_for_compaction(messages)
 
     def _manual_compaction_plan(self) -> CompactionPlan:
+        plan = self._full_compaction_plan()
+        if plan is None:
+            raise ValueError("No active context messages to compact")
+        return plan
+
+    def _full_compaction_plan(self) -> CompactionPlan | None:
         rows = self._active_context_rows()
         if not rows:
-            raise ValueError("No active context messages to compact")
+            return None
         return CompactionPlan(
             replace_entry_ids=tuple(entry_id for entry_id, _message in rows),
             messages_to_summarize=tuple(message for _entry_id, message in rows),

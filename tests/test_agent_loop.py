@@ -421,3 +421,105 @@ async def test_agent_loop_stops_with_assistant_error_after_max_turns() -> None:
     assert error.stop_reason == "error"
     assert error.error_message == "Agent stopped after max_turns=1"
     assert len(provider.calls) == 1
+
+
+@pytest.mark.anyio
+async def test_agent_loop_pauses_between_tool_calls_when_check_overflow_returns_true() -> None:
+    tool_call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
+    first = AssistantMessage(content=[TextContent(text="Reading."), tool_call], model="fake")
+    final = AssistantMessage(content="Done.", model="fake")
+    provider = FakeProvider(
+        [
+            [assistant_start(), tool_call_end(tool_call), assistant_done(first, "toolUse")],
+            [assistant_start(), text_delta("Done."), assistant_done(final)],
+        ]
+    )
+    messages: list[AgentMessage] = [UserMessage(content="Read README.md")]
+
+    async def execute(
+        tool_call_id: str,
+        arguments: Mapping[str, JSONValue],
+        signal: CancellationToken | None = None,
+        on_update=None,  # noqa: ANN001
+    ) -> AgentToolResult:
+        del tool_call_id, signal, on_update
+        return AgentToolResult(content=[TextContent(text=f"contents of {arguments['path']}")])
+
+    events = await _collect(
+        run_agent_loop(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            messages=messages,
+            tools=[_tool("read", execute)],
+            check_overflow=lambda: True,
+        )
+    )
+
+    # The tool result still lands. Only the next request is blocked.
+    tool_result = next(m for m in messages if isinstance(m, ToolResultMessage))
+    assert tool_result.text == "contents of README.md"
+    error = messages[-1]
+    assert isinstance(error, AssistantMessage)
+    assert error.stop_reason == "error"
+    assert error.error_message == "Turn paused: context token budget exceeded mid-turn"
+    assert len(provider.calls) == 1
+    assert [event.type for event in events][-2:] == ["turn_end", "agent_end"]
+
+
+@pytest.mark.anyio
+async def test_agent_loop_continues_when_check_overflow_returns_false() -> None:
+    tool_call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
+    first = AssistantMessage(content=[tool_call], model="fake")
+    final = AssistantMessage(content="Done.", model="fake")
+    provider = FakeProvider(
+        [
+            [assistant_start(), tool_call_end(tool_call), assistant_done(first, "toolUse")],
+            [assistant_start(), assistant_done(final)],
+        ]
+    )
+    messages: list[AgentMessage] = [UserMessage(content="Read README.md")]
+
+    async def execute(
+        tool_call_id: str,
+        arguments: Mapping[str, JSONValue],
+        signal: CancellationToken | None = None,
+        on_update=None,  # noqa: ANN001
+    ) -> AgentToolResult:
+        del tool_call_id, arguments, signal, on_update
+        return AgentToolResult(content="ok")
+
+    await _collect(
+        run_agent_loop(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            messages=messages,
+            tools=[_tool("read", execute)],
+            check_overflow=lambda: False,
+        )
+    )
+
+    assert len(provider.calls) == 2
+    assert messages[-1] is final
+
+
+@pytest.mark.anyio
+async def test_agent_loop_never_checks_overflow_before_the_first_request() -> None:
+    final = AssistantMessage(content="Done.", model="fake")
+    provider = FakeProvider([[assistant_start(), assistant_done(final)]])
+    messages: list[AgentMessage] = [UserMessage(content="Hi")]
+
+    await _collect(
+        run_agent_loop(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            messages=messages,
+            tools=[],
+            check_overflow=lambda: True,
+        )
+    )
+
+    assert len(provider.calls) == 1
+    assert messages[-1] is final

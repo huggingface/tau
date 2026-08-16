@@ -22,7 +22,7 @@ from tau_agent.harness import (
     QueuedMessages,
     SimpleCancellationToken,
 )
-from tau_agent.loop import run_agent_loop
+from tau_agent.loop import MID_TURN_OVERFLOW_MESSAGE, run_agent_loop
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
