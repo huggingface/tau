@@ -10,8 +10,11 @@ The bash tool requires the model to provide a brief present-participle
 `description` in the same tool call. The TUI normalizes that summary and limits
 it to 56 characters. Short commands pair it with the complete command; long or
 multiline commands pair it with a 32-character prefix derived from the real
-command. Every summary therefore retains deterministic command text. This adds
-no second provider request. Calls that still omit the field because of malformed
+command. Every summary therefore retains deterministic command text. The
+running/success/failure color applies only to the semantic description; command
+text keeps the neutral tool-body color so description and evidence remain
+visually distinct. This adds no second provider request. Calls that still omit
+the field because of malformed
 provider output, custom integrations, or older session history keep a
 deterministic fallback:
 

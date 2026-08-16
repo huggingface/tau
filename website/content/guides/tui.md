@@ -111,7 +111,9 @@ first, such as the macOS Dock's Downloads stack.
 ## Tool output
 
 Tool calls keep a static marker in the transcript while they run: orange means
-in progress, green means success, and red means failure. The prompt-area activity
+in progress, green means success, and red means failure. That status color applies
+to the semantic description, such as `Running tests` or `Read 5 files`; command
+snippets, arguments, and file lists stay neutral gray. The prompt-area activity
 indicator provides the run-wide animation without adding a second spinner to each
 tool row.
 

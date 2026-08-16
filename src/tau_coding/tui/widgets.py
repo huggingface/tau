@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -1425,14 +1426,12 @@ def _render_transcript_tool_invocation(
     body_style: str,
     accent_style: str | None,
 ) -> Text:
-    """Render a selectable tool invocation with status color after the prefix."""
-    rendered = Text(style=body_style, overflow="fold", no_wrap=False)
-    accent_style = accent_style or body_style
-    prefix, name, remainder = _split_tool_invocation(text)
-    rendered.append(prefix, style=body_style)
-    rendered.append(name, style=accent_style)
-    rendered.append(remainder, style=accent_style)
-    return rendered
+    """Render tool descriptions in status color and argument details in gray."""
+    return _styled_tool_invocation(
+        text,
+        body_style=body_style,
+        accent_style=accent_style,
+    )
 
 
 def _transcript_item_markdown(
@@ -1702,24 +1701,49 @@ def _render_tool_chat_body(
 
 
 def _render_tool_invocation(text: str, *, body_style: str, accent_style: str | None) -> Text:
+    return _styled_tool_invocation(
+        text,
+        body_style=body_style,
+        accent_style=accent_style,
+    )
+
+
+_TOOL_GROUP_INVOCATION_PATTERN = re.compile(
+    r"^→ ((?:Reading|Read) \d+ files(?: · (?:\d+/\d+ complete|\d+ failed))?) · (.+)$"
+)
+
+
+def _styled_tool_invocation(
+    text: str,
+    *,
+    body_style: str,
+    accent_style: str | None,
+) -> Text:
     rendered = Text(style=body_style, overflow="fold", no_wrap=False)
     accent_style = accent_style or body_style
-    prefix, name, remainder = _split_tool_invocation(text)
-    rendered.append(prefix, style=body_style)
-    rendered.append(name, style=body_style)
-    rendered.append(remainder, style=accent_style)
+    for index, line in enumerate(text.splitlines() or [""]):
+        if index:
+            rendered.append("\n", style=body_style)
+        prefix, description, details = _split_tool_invocation_sections(line)
+        rendered.append(prefix, style=body_style)
+        rendered.append(description, style=accent_style)
+        rendered.append(details, style=body_style)
     return rendered
 
 
-def _split_tool_invocation(text: str) -> tuple[str, str, str]:
+def _split_tool_invocation_sections(text: str) -> tuple[str, str, str]:
+    """Split an invocation into neutral prefix, status description, and gray details."""
+    group = _TOOL_GROUP_INVOCATION_PATTERN.fullmatch(text)
+    if group is not None:
+        return "→ ", group.group(1), f" · {group.group(2)}"
     if text.startswith("→ "):
         rest = text[2:]
-        name, separator, remainder = rest.partition(" ")
-        return "→ ", name, f"{separator}{remainder}" if separator else ""
-    if text.startswith("$ "):
-        return "$", "", text[1:]
-    name, separator, remainder = text.partition(" ")
-    return "", name, f"{separator}{remainder}" if separator else ""
+        description, separator, command = rest.rpartition(" · $ ")
+        if separator:
+            return "→ ", description, f"{separator}{command}"
+        name, space, arguments = rest.partition(" ")
+        return "→ ", name, f"{space}{arguments}" if space else ""
+    return "", "", text
 
 
 def _visible_chat_text(

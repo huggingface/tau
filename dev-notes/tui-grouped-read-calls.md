@@ -15,8 +15,10 @@ one presentation row:
 
 As results arrive, the row reports aggregate progress such as `2/4 complete`.
 Once all calls finish it changes to `Read 4 files`; if any call failed, the row
-also reports the failure count and uses the existing error styling. At most three
-paths are previewed, and long paths retain their filename-bearing suffix.
+also reports the failure count and uses the existing error styling. The aggregate
+description and progress carry the running/success/failure color, while file paths
+stay in the neutral tool-body color. At most three paths are previewed, and long
+paths retain their filename-bearing suffix.
 
 `Ctrl+O` expands the group into every exact read invocation without repeating
 previews of the file contents. The model already receives each complete result;
