@@ -230,7 +230,7 @@ class TuiState:
         return self._next_tool_batch_id
 
     def add_tool_call(self, tool_call: ToolCall, *, batch_id: int | None = None) -> ChatItem:
-        """Append a tool call, batching adjacent calls from one assistant response."""
+        """Append a tool call, batching adjacent calls for compact presentation."""
         skill_name = self._read_skill_name(tool_call)
         if skill_name is not None:
             self.add_item(
@@ -239,6 +239,11 @@ class TuiState:
                 tool_call_id=tool_call.id,
             )
             return self.items[-1]
+        if self._can_append_write_continuation(tool_call, batch_id=batch_id):
+            item = self.items[-1]
+            item.tool_batch_id = batch_id
+            self._append_batched_tool_call(item, tool_call)
+            return item
         if self._can_append_tool_batch(tool_call, batch_id=batch_id):
             item = self.items[-1]
             self._append_batched_tool_call(item, tool_call)
@@ -257,6 +262,30 @@ class TuiState:
             tool_arguments=tool_call.arguments,
             started_at=time.monotonic(),
             tool_batch_id=batch_id,
+        )
+
+    def _can_append_write_continuation(
+        self,
+        tool_call: ToolCall,
+        *,
+        batch_id: int | None,
+    ) -> bool:
+        """Group completed write-only model continuations across response boundaries."""
+        if batch_id is None or tool_call.name != "write" or not self.items:
+            return False
+        previous = self.items[-1]
+        if (
+            previous.role != "tool"
+            or previous.tool_name != "write"
+            or previous.tool_batch_items is not None
+            or previous.tool_result_text is None
+        ):
+            return False
+        if self._has_custom_call_rendering(tool_call.name, tool_call.arguments):
+            return False
+        return not self._has_custom_call_rendering(
+            previous.tool_name,
+            previous.tool_arguments or {},
         )
 
     def _can_append_tool_batch(self, tool_call: ToolCall, *, batch_id: int | None) -> bool:

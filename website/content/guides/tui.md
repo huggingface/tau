@@ -126,8 +126,10 @@ every file path listed beneath it. Expanded edit and write groups retain each
 invocation and result; expanded read groups omit repeated file contents. The
 complete block remains one selectable text surface,
 including across line boundaries.
-Batches never cross assistant text, model continuations, or separate responses;
-extension tools, custom rendered call cards, and skill loads remain separate.
+Batches never cross assistant text, thinking, or unrelated responses. Consecutive write-only
+model continuations are grouped so providers that serialize writes one at a time
+still produce one file list. Extension tools, custom rendered call cards, and
+skill loads remain separate.
 
 Tool results (like long `read` or `bash` output) render as compact previews so
 the transcript stays readable. Tau requires the model to give each `bash` call a

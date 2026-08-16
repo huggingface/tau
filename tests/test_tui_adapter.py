@@ -260,6 +260,86 @@ def test_tui_state_clusters_writes_and_lists_every_path() -> None:
     assert "→ write b.py\n\n✓ write\nwrote b" in expanded
 
 
+def test_tui_state_restores_write_only_model_continuations_as_one_group() -> None:
+    messages = []
+    for index in range(1, 6):
+        messages.extend(
+            [
+                AssistantMessage(
+                    content=[
+                        ToolCall(
+                            id=f"write-{index}",
+                            name="write",
+                            arguments={"path": f"file-{index}.md", "content": str(index)},
+                        )
+                    ]
+                ),
+                ToolResultMessage(
+                    tool_call_id=f"write-{index}",
+                    tool_name="write",
+                    content=f"wrote {index}",
+                ),
+            ]
+        )
+    state = TuiState()
+    state.load_messages(messages)
+
+    assert len(state.items) == 1
+    item = state.items[0]
+    assert item.text == (
+        "→ Written 5 files\n"
+        "  - file-1.md\n"
+        "  - file-2.md\n"
+        "  - file-3.md\n"
+        "  - file-4.md\n"
+        "  - file-5.md"
+    )
+    assert item.grouped_tool_calls is not None
+    assert [member.tool_call_id for member in item.grouped_tool_calls] == [
+        "write-1",
+        "write-2",
+        "write-3",
+        "write-4",
+        "write-5",
+    ]
+    assert all(state.find_tool_item(f"write-{index}") is item for index in range(1, 6))
+
+
+def test_tui_state_keeps_write_continuations_separate_across_assistant_text() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(
+                        id="write-1",
+                        name="write",
+                        arguments={"path": "a.md", "content": "one"},
+                    )
+                ]
+            ),
+            ToolResultMessage(tool_call_id="write-1", tool_name="write", content="wrote a"),
+            AssistantMessage(
+                content=[
+                    TextContent(text="Now writing the next file."),
+                    ToolCall(
+                        id="write-2",
+                        name="write",
+                        arguments={"path": "b.md", "content": "two"},
+                    ),
+                ]
+            ),
+            ToolResultMessage(tool_call_id="write-2", tool_name="write", content="wrote b"),
+        ]
+    )
+
+    assert len(state.items) == 3
+    assert state.items[0].text == "→ write a.md"
+    assert state.items[1].role == "assistant"
+    assert state.items[2].text == "→ write b.md"
+    assert all(item.grouped_tool_calls is None for item in (state.items[0], state.items[2]))
+
+
 def test_tui_state_batches_mixed_tools_and_clusters_adjacent_reads() -> None:
     state = TuiState()
     state.load_messages(
