@@ -791,6 +791,36 @@ async def test_run_print_mode_persists_session_entries(
 
 
 @pytest.mark.anyio
+async def test_run_print_mode_resumes_persisted_conversation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    await storage.append(MessageEntry(message=UserMessage(content="First question")))
+    await storage.append(MessageEntry(message=AssistantMessage(content="First answer")))
+    provider = FakeProvider(
+        [[assistant_start(model="fake"), assistant_done(message=AssistantMessage(content="Done"))]]
+    )
+
+    ok = await run_print_mode(
+        prompt="Follow-up message",
+        model="fake",
+        cwd=tmp_path,
+        provider=provider,
+        storage=storage,
+        session_id="session-123",
+    )
+
+    assert ok is True
+    assert capsys.readouterr().out == "Done\n"
+    messages = provider.calls[0][2]
+    assert [(message.role, message.text) for message in messages] == [
+        ("user", "First question"),
+        ("assistant", "First answer"),
+        ("user", "Follow-up message"),
+    ]
+
+
+@pytest.mark.anyio
 async def test_run_print_mode_terminal_command_adds_context(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -986,6 +1016,70 @@ def test_print_mode_passes_exact_session_id_without_changing_output(
     assert calls == ["worker-499"]
 
 
+def test_print_mode_passes_session_id_for_resume(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str | None]] = []
+
+    async def fake_run_openai_print_mode(
+        prompt: str,
+        model: str | None,
+        cwd: Path,
+        output: PrintOutputMode,
+        provider_name: str | None,
+        session_manager: SessionManager | None,
+        extension_paths: tuple[Path, ...],
+        extensions_enabled: bool,
+        project_extensions_enabled: bool,
+        session_id: str | None,
+        custom_system_prompt: str | None,
+        append_system_prompt: str | None,
+        trust_override: object | None,
+        resume_session_id: str | None,
+    ) -> bool:
+        del (
+            model,
+            cwd,
+            output,
+            provider_name,
+            session_manager,
+            extension_paths,
+            extensions_enabled,
+            project_extensions_enabled,
+            session_id,
+            custom_system_prompt,
+            append_system_prompt,
+            trust_override,
+        )
+        calls.append((prompt, resume_session_id))
+        return True
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(app, ["--print", "--session", "session-123", "follow up"])
+
+    assert result.exit_code == 0
+    assert calls == [("follow up", "session-123")]
+
+
+def test_print_mode_rejects_session_and_new_session() -> None:
+    result = CliRunner().invoke(
+        app, ["--print", "--session", "session-123", "--new-session", "follow up"]
+    )
+
+    assert result.exit_code == 2
+    assert "--session and --new-session cannot be used together" in _strip_ansi(result.output)
+
+
+def test_print_mode_rejects_session_and_session_id() -> None:
+    result = CliRunner().invoke(
+        app,
+        ["--print", "--session", "session-123", "--session-id", "new-id", "follow up"],
+    )
+
+    assert result.exit_code == 2
+    assert "--session and --session-id cannot be used together" in _strip_ansi(result.output)
+
+
 @pytest.mark.parametrize(
     ("session_id", "error"),
     [
@@ -1009,6 +1103,42 @@ def test_session_id_is_print_mode_only() -> None:
 
     assert result.exit_code == 2
     assert "--session-id is only supported in print mode" in _strip_ansi(result.output)
+
+
+def test_print_session_record_resumes_existing_session(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(
+        cwd=tmp_path,
+        model="fake",
+        session_id="session-123",
+    )
+
+    resumed = cli._print_session_record(
+        manager,
+        resume_session_id="session-123",
+        cwd=tmp_path / "other",
+        settings=_constrained_provider_settings(),
+        provider_name=None,
+        model=None,
+        session_id=None,
+    )
+
+    assert resumed == record
+
+
+def test_print_session_record_rejects_unknown_session(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+
+    with pytest.raises(ValueError, match="Unknown session: missing"):
+        cli._print_session_record(
+            manager,
+            resume_session_id="missing",
+            cwd=tmp_path,
+            settings=_constrained_provider_settings(),
+            provider_name=None,
+            model=None,
+            session_id=None,
+        )
 
 
 def test_create_print_session_uses_requested_id_and_rejects_collision(tmp_path: Path) -> None:
