@@ -32,8 +32,11 @@ metadata carried inside the existing `ToolCall.arguments` mapping.
 Formatting lives in `src/tau_coding/tui/state.py`. The state prefers a supplied
 description, otherwise creates the deterministic compact row, then resolves the
 exact invocation lazily when tool results are expanded. Existing custom tool
-`render_call` output still takes precedence. No TUI concerns enter `tau_agent`,
-and command execution is unchanged.
+`render_call` output still takes precedence. The print-mode transcript renderer
+explicitly requests the unabridged invocation because it has no interactive
+expansion control. Session JSONL serialization remains independent of these
+display formatters and retains the complete `command`. No TUI concerns enter
+`tau_agent`, and command execution is unchanged.
 
 ## Tests
 
@@ -44,6 +47,8 @@ and command execution is unchanged.
   and exact expansion.
 - `tests/test_tui_app.py` uses a Textual pilot to confirm `Ctrl+O` replaces a
   compact heredoc row with the exact command and full result.
+- `tests/test_rendering.py` confirms print-mode transcripts always show the exact
+  command instead of the optional description.
 
 Run:
 

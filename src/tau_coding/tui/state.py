@@ -406,9 +406,9 @@ def format_elapsed(seconds: float) -> str:
     return f"{hours}h {minutes}m"
 
 
-def format_tool_call_block(tool_call: ToolCall) -> str:
-    """Format a collapsed tool call for live and restored transcript blocks."""
-    invocation = format_tool_call_invocation(tool_call)
+def format_tool_call_block(tool_call: ToolCall, *, compact: bool = True) -> str:
+    """Format a tool call, optionally compacting long bash invocations."""
+    invocation = format_tool_call_invocation(tool_call, expanded=not compact)
     if tool_call.name == "bash":
         return invocation
     return f"→ {invocation}"

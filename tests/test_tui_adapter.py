@@ -328,6 +328,7 @@ def test_bash_tool_formatter_prefers_description_until_expanded() -> None:
     )
 
     assert format_tool_call_block(call) == "→ Validating and committing changes (timeout 120s)"
+    assert format_tool_call_block(call, compact=False) == f"$ {command} (timeout 120s)"
     assert format_tool_call_invocation(call, expanded=True) == f"$ {command} (timeout 120s)"
 
 
