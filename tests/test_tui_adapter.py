@@ -14,6 +14,7 @@ from tau_agent import (
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
+    ToolResultMessage,
     UserMessage,
 )
 from tau_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
@@ -164,6 +165,108 @@ def test_tui_state_restores_persisted_assistant_blocks_in_order() -> None:
         "thinking",
         "assistant",
     ]
+
+
+def test_tui_state_groups_adjacent_reads_from_one_assistant_message() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(id="call-1", name="read", arguments={"path": "a.py"}),
+                    ToolCall(id="call-2", name="read", arguments={"path": "b.py"}),
+                ]
+            ),
+            ToolResultMessage(
+                tool_call_id="call-1",
+                tool_name="read",
+                content="one",
+            ),
+            ToolResultMessage(
+                tool_call_id="call-2",
+                tool_name="read",
+                content="two",
+            ),
+        ]
+    )
+
+    assert len(state.items) == 1
+    item = state.items[0]
+    assert item.text == "→ Read 2 files · a.py, b.py"
+    assert item.grouped_tool_calls is not None
+    assert [member.tool_call_id for member in item.grouped_tool_calls] == ["call-1", "call-2"]
+    assert state.find_tool_item("call-1") is item
+    assert state.find_tool_item("call-2") is item
+    assert state.resolve_tool_invocation(item, expanded=True) == "→ read a.py\n→ read b.py"
+    assert item.tool_result_text == "✓ read group\n✓ read\none\n\n✓ read\ntwo"
+
+
+def test_tui_state_marks_group_failed_when_any_read_fails() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(id="call-1", name="read", arguments={"path": "a.py"}),
+                    ToolCall(id="call-2", name="read", arguments={"path": "missing.py"}),
+                ]
+            ),
+            ToolResultMessage(tool_call_id="call-1", tool_name="read", content="one"),
+            ToolResultMessage(
+                tool_call_id="call-2",
+                tool_name="read",
+                content="not found",
+                is_error=True,
+            ),
+        ]
+    )
+
+    item = state.items[0]
+    assert item.text == "→ Read 2 files · 1 failed · a.py, missing.py"
+    assert item.tool_result_text is not None
+    assert item.tool_result_text.startswith("✗ read group")
+
+
+def test_tui_adapter_does_not_group_reads_separated_by_assistant_text() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+    adapter.apply(
+        MessageEndEvent(
+            message=AssistantMessage(
+                content=[
+                    ToolCall(id="call-1", name="read", arguments={"path": "a.py"}),
+                    TextContent(text="then"),
+                    ToolCall(id="call-2", name="read", arguments={"path": "b.py"}),
+                ]
+            )
+        )
+    )
+    adapter.apply(
+        ToolExecutionStartEvent(tool_call_id="call-1", tool_name="read", args={"path": "a.py"})
+    )
+    adapter.apply(
+        ToolExecutionStartEvent(tool_call_id="call-2", tool_name="read", args={"path": "b.py"})
+    )
+
+    assert [item.text for item in state.items] == ["then", "→ read a.py", "→ read b.py"]
+
+
+def test_tui_state_does_not_group_reads_from_different_assistant_messages() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[ToolCall(id="call-1", name="read", arguments={"path": "a.py"})]
+            ),
+            ToolResultMessage(tool_call_id="call-1", tool_name="read", content="one"),
+            AssistantMessage(
+                content=[ToolCall(id="call-2", name="read", arguments={"path": "b.py"})]
+            ),
+            ToolResultMessage(tool_call_id="call-2", tool_name="read", content="two"),
+        ]
+    )
+
+    assert [item.text for item in state.items] == ["→ read a.py", "→ read b.py"]
 
 
 def test_tui_adapter_records_tool_progress_and_result() -> None:

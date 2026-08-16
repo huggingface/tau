@@ -1692,6 +1692,67 @@ async def test_tool_execution_updates_render_in_place() -> None:
 
 
 @pytest.mark.anyio
+async def test_batched_reads_share_one_live_transcript_row() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async def stream(event: AgentEvent) -> None:
+        app.adapter.apply(event)
+        await app._apply_streaming_transcript_event(event)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await stream(
+            MessageEndEvent(
+                message=AssistantMessage(
+                    content=[
+                        ToolCall(id="call-1", name="read", arguments={"path": "a.py"}),
+                        ToolCall(id="call-2", name="read", arguments={"path": "b.py"}),
+                    ]
+                )
+            )
+        )
+        await stream(
+            ToolExecutionStartEvent(tool_call_id="call-1", tool_name="read", args={"path": "a.py"})
+        )
+        await stream(
+            ToolExecutionStartEvent(tool_call_id="call-2", tool_name="read", args={"path": "b.py"})
+        )
+        await pilot.pause()
+
+        tool_widgets = [w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool"]
+        assert len(tool_widgets) == 1
+        assert tool_widgets[0].selection_text == "→ Reading 2 files · a.py, b.py"
+
+        await stream(
+            ToolExecutionEndEvent(
+                tool_call_id="call-1",
+                tool_name="read",
+                result=AgentToolResult(content="one"),
+                is_error=False,
+            )
+        )
+        await pilot.pause()
+        assert tool_widgets[0].selection_text == "→ Reading 2 files · 1/2 complete · a.py, b.py"
+
+        await stream(
+            ToolExecutionEndEvent(
+                tool_call_id="call-2",
+                tool_name="read",
+                result=AgentToolResult(content="two"),
+                is_error=False,
+            )
+        )
+        await pilot.pause()
+        assert tool_widgets[0].selection_text == "→ Read 2 files · a.py, b.py"
+
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        assert tool_widgets[0].selection_text == (
+            "→ read a.py\n→ read b.py\n\n✓ read group\n✓ read\none\n\n✓ read\ntwo"
+        )
+
+
+@pytest.mark.anyio
 async def test_tool_completion_updates_row_without_redrawing_history() -> None:
     app = TauTuiApp(FakeSession(messages=[UserMessage(content="earlier")]))
 

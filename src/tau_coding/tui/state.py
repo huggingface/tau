@@ -37,10 +37,26 @@ TOOL_TIMER_MIN_SECONDS = 1.0
 BASH_COMMAND_PREVIEW_CHARS = 120
 BASH_DESCRIPTION_PREVIEW_CHARS = 56
 BASH_COMMAND_HINT_CHARS = 32
+TOOL_GROUP_PREVIEW_ITEMS = 3
+TOOL_GROUP_PATH_CHARS = 32
 _INLINE_CODE_PATTERN = re.compile(
     r"(?:^|[;&|]\s*|\s)(?:(?:python(?:\d+(?:\.\d+)*)?|bash|sh|zsh)\s+-c|node\s+-e)\s+"
 )
 _HEREDOC_PATTERN = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+
+@dataclass(slots=True)
+class GroupedToolCall:
+    """One underlying call represented by a grouped transcript row."""
+
+    tool_call_id: str
+    tool_name: str
+    tool_arguments: dict[str, JSONValue]
+    text: str
+    tool_result_text: str | None = None
+    tool_result: AgentToolResult | None = None
+    update_text: str | None = None
+    started_at: float | None = None
 
 
 @dataclass(slots=True)
@@ -58,6 +74,8 @@ class ChatItem:
     tool_name: str | None = None
     tool_arguments: dict[str, JSONValue] | None = None
     started_at: float | None = None
+    tool_batch_id: int | None = None
+    grouped_tool_calls: list[GroupedToolCall] | None = None
     always_show_tool_result: bool = False
     custom_type: str | None = None
     details: dict[str, JSONValue] | None = None
@@ -86,6 +104,13 @@ class TuiState:
         repr=False,
         compare=False,
     )
+    _grouped_calls_by_call_id: dict[str, GroupedToolCall] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _next_tool_batch_id: int = field(default=0, init=False, repr=False, compare=False)
 
     def add_item(
         self,
@@ -136,6 +161,16 @@ class TuiState:
         """
         if item.role != "tool":
             return None
+        if item.grouped_tool_calls is not None:
+            if not expanded:
+                return None
+            lines: list[str] = []
+            for member in item.grouped_tool_calls:
+                rendered_line = None
+                if self.tool_call_renderer is not None:
+                    rendered_line = self.tool_call_renderer(member.tool_name, member.tool_arguments)
+                lines.append(rendered_line if rendered_line is not None else member.text)
+            return "\n".join(lines)
         line: str | None = None
         if item.tool_name is not None and self.tool_call_renderer is not None:
             line = self.tool_call_renderer(item.tool_name, item.tool_arguments or {})
@@ -162,14 +197,24 @@ class TuiState:
         their tool's `render_result` on the next redraw. ``None`` means "no
         renderer" and the caller falls back to the generic result block.
         """
-        if item.role != "tool" or item.tool_result is None or self.tool_result_renderer is None:
+        if (
+            item.role != "tool"
+            or item.grouped_tool_calls is not None
+            or item.tool_result is None
+            or self.tool_result_renderer is None
+        ):
             return None
         if item.tool_name is None:
             return None
         return self.tool_result_renderer(item.tool_name, item.tool_result, expanded)
 
-    def add_tool_call(self, tool_call: ToolCall) -> None:
-        """Append a collapsed tool-call item."""
+    def new_tool_batch_id(self) -> int:
+        """Return a presentation-only id for calls from one assistant message."""
+        self._next_tool_batch_id += 1
+        return self._next_tool_batch_id
+
+    def add_tool_call(self, tool_call: ToolCall, *, batch_id: int | None = None) -> ChatItem:
+        """Append a collapsed tool call, grouping adjacent reads from one response."""
         skill_name = self._read_skill_name(tool_call)
         if skill_name is not None:
             self.add_item(
@@ -177,7 +222,11 @@ class TuiState:
                 f"Loading skill: {skill_name}",
                 tool_call_id=tool_call.id,
             )
-            return
+            return self.items[-1]
+        if self._can_group_read_call(tool_call, batch_id=batch_id):
+            item = self.items[-1]
+            self._append_grouped_read_call(item, tool_call)
+            return item
         item = ChatItem(
             role="tool",
             text=format_tool_call_block(tool_call),
@@ -185,9 +234,94 @@ class TuiState:
             tool_name=tool_call.name,
             tool_arguments=tool_call.arguments,
             started_at=time.monotonic(),
+            tool_batch_id=batch_id,
         )
         self.items.append(item)
         self._tool_items_by_call_id[tool_call.id] = item
+        return item
+
+    def _can_group_read_call(self, tool_call: ToolCall, *, batch_id: int | None) -> bool:
+        if tool_call.name != "read" or batch_id is None or not self.items:
+            return False
+        previous = self.items[-1]
+        return (
+            previous.role == "tool"
+            and previous.tool_name == "read"
+            and previous.tool_batch_id == batch_id
+        )
+
+    def _append_grouped_read_call(self, item: ChatItem, tool_call: ToolCall) -> None:
+        if item.grouped_tool_calls is None:
+            first = GroupedToolCall(
+                tool_call_id=item.tool_call_id or "display-call",
+                tool_name=item.tool_name or "read",
+                tool_arguments=item.tool_arguments or {},
+                text=format_tool_call_block(
+                    ToolCall(
+                        id=item.tool_call_id or "display-call",
+                        name=item.tool_name or "read",
+                        arguments=item.tool_arguments or {},
+                    )
+                ),
+                tool_result_text=item.tool_result_text,
+                tool_result=item.tool_result,
+                update_text=item.update_text,
+                started_at=item.started_at,
+            )
+            item.grouped_tool_calls = [first]
+            self._grouped_calls_by_call_id[first.tool_call_id] = first
+        member = GroupedToolCall(
+            tool_call_id=tool_call.id,
+            tool_name=tool_call.name,
+            tool_arguments=tool_call.arguments,
+            text=format_tool_call_block(tool_call),
+            started_at=time.monotonic(),
+        )
+        item.grouped_tool_calls.append(member)
+        self._tool_items_by_call_id[tool_call.id] = item
+        self._grouped_calls_by_call_id[tool_call.id] = member
+        self._refresh_tool_group(item)
+
+    def _refresh_tool_group(self, item: ChatItem) -> None:
+        members = item.grouped_tool_calls or []
+        completed = [member for member in members if member.tool_result_text is not None]
+        failures = [
+            member
+            for member in completed
+            if member.tool_result_text is not None and member.tool_result_text.startswith("✗")
+        ]
+        paths = [
+            _string_argument(member.tool_arguments, "path") or "[unknown path]"
+            for member in members
+        ]
+        labels = ", ".join(
+            _compact_tool_group_path(path) for path in paths[:TOOL_GROUP_PREVIEW_ITEMS]
+        )
+        if len(paths) > TOOL_GROUP_PREVIEW_ITEMS:
+            labels += f", +{len(paths) - TOOL_GROUP_PREVIEW_ITEMS}"
+        all_complete = len(completed) == len(members)
+        if not all_complete:
+            progress = f" · {len(completed)}/{len(members)} complete" if completed else ""
+            item.text = f"→ Reading {len(members)} files{progress} · {labels}"
+        else:
+            failure = f" · {len(failures)} failed" if failures else ""
+            item.text = f"→ Read {len(members)} files{failure} · {labels}"
+        if completed:
+            status = "✗" if failures else ("✓" if all_complete else "…")
+            results = "\n\n".join(
+                member.tool_result_text for member in completed if member.tool_result_text
+            )
+            item.tool_result_text = f"{status} read group\n{results}"
+        else:
+            item.tool_result_text = None
+        item.update_text = next(
+            (member.update_text for member in members if member.update_text),
+            None,
+        )
+        item.started_at = next(
+            (member.started_at for member in members if member.tool_result_text is None),
+            None,
+        )
 
     def add_user_message(
         self,
@@ -246,7 +380,16 @@ class TuiState:
     def record_tool_update(self, tool_call_id: str, message: str) -> ChatItem | None:
         """Attach live progress to its pending tool call; drop orphan updates."""
         item = self.find_tool_item(tool_call_id)
-        if item is None or item.tool_result_text is not None:
+        if item is None:
+            return None
+        member = self._grouped_calls_by_call_id.get(tool_call_id)
+        if member is not None:
+            if member.tool_result_text is not None:
+                return None
+            member.update_text = message
+            self._refresh_tool_group(item)
+            return item
+        if item.tool_result_text is not None:
             return None
         item.update_text = message
         return item
@@ -267,6 +410,14 @@ class TuiState:
         )
         item = self.find_tool_item(tool_call_id)
         if item is not None:
+            member = self._grouped_calls_by_call_id.get(tool_call_id)
+            if member is not None:
+                member.tool_result_text = result_text
+                member.tool_result = result
+                member.update_text = None
+                member.started_at = None
+                self._refresh_tool_group(item)
+                return
             item.tool_result_text = result_text
             item.tool_result = result
             item.update_text = None
@@ -305,6 +456,7 @@ class TuiState:
         """Clear visible transcript state without modifying durable session history."""
         self.items.clear()
         self._tool_items_by_call_id.clear()
+        self._grouped_calls_by_call_id.clear()
         self.assistant_buffer = ""
         self.error = None
 
@@ -355,6 +507,7 @@ class TuiState:
         include_tool_calls: bool = True,
     ) -> None:
         """Project canonical assistant blocks into display state in order."""
+        batch_id = self.new_tool_batch_id() if include_tool_calls and message.tool_calls else None
         for block in message.content:
             if isinstance(block, ThinkingContent):
                 if block.thinking:
@@ -363,7 +516,7 @@ class TuiState:
                 if block.text:
                     self.add_item("assistant", block.text)
             elif include_tool_calls:
-                self.add_tool_call(block)
+                self.add_tool_call(block, batch_id=batch_id)
 
     def add_assistant_error(self, message: AssistantMessage) -> None:
         """Project any partial response followed by its terminal error."""
@@ -561,6 +714,13 @@ def _fallback_tool_call_invocation(tool_call: ToolCall) -> str:
 def _string_argument(arguments: dict[str, JSONValue], key: str) -> str | None:
     value = arguments.get(key)
     return value if isinstance(value, str) else None
+
+
+def _compact_tool_group_path(path: str) -> str:
+    normalized = " ".join(path.split())
+    if len(normalized) <= TOOL_GROUP_PATH_CHARS:
+        return normalized
+    return "…" + normalized[-(TOOL_GROUP_PATH_CHARS - 1) :]
 
 
 def _normalized_path(path: str | Path) -> Path:

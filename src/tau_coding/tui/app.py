@@ -4899,15 +4899,23 @@ class TauTuiApp(App[None]):
             return
         if isinstance(event, ToolExecutionStartEvent):
             await transcript.finish_assistant_message()
-            item = self.state.items[-1]
-            await transcript.append_item(
-                item,
-                theme=theme,
-                show_tool_results=self.state.show_tool_results,
-                invocation=self.state.resolve_tool_invocation(
-                    item, expanded=self.state.show_tool_results
-                ),
-            )
+            item = self.state.find_tool_item(event.tool_call_id)
+            if item is not None:
+                expanded = self.state.show_tool_results or item.always_show_tool_result
+                updated = await transcript.update_item(
+                    item,
+                    theme=theme,
+                    show_tool_results=expanded,
+                    invocation=self.state.resolve_tool_invocation(item, expanded=expanded),
+                    result_markup=self.state.resolve_tool_result(item, expanded=expanded),
+                )
+                if not updated:
+                    await transcript.append_item(
+                        item,
+                        theme=theme,
+                        show_tool_results=expanded,
+                        invocation=self.state.resolve_tool_invocation(item, expanded=expanded),
+                    )
             self._refresh_chrome()
             return
         if isinstance(event, ToolExecutionUpdateEvent):

@@ -126,9 +126,14 @@ deterministic fallback. Multiline commands and heredocs show their first line pl
 a line count, inline code shows its interpreter plus a character count, and other
 commands over 120 characters show a shortened preview.
 
-Toggle the exact commands and full tool output with **Ctrl+O**. Command compaction
-affects only the TUI display; execution, session history, and print-mode
-transcripts retain the complete command.
+When one model response reads several files, adjacent `read` calls share one row.
+The row previews up to three paths, reports progress as results arrive, and shows
+an aggregate failure count when needed. Reads from different model responses are
+never combined, and shell or file-mutating tools always remain separate.
+
+Toggle the individual read calls, exact shell commands, and full tool output with
+**Ctrl+O**. Compaction and grouping affect only the TUI display; execution,
+session history, and print-mode transcripts retain every complete call.
 
 Markdown link hover styling underlines only the linked text, never the rest of its
 row. User message blocks use the same theme background as the prompt field and sidebar,
