@@ -1703,7 +1703,13 @@ def _bash_row_is_description_only(item: ChatItem) -> bool:
 def _tool_batch_row_invocation(row: ChatItem, *, expanded: bool) -> str:
     if row.grouped_tool_calls is not None:
         if expanded:
-            return "\n".join(member.text for member in row.grouped_tool_calls)
+            blocks = []
+            for member in row.grouped_tool_calls:
+                block = member.text
+                if row.tool_name == "edit" and member.tool_result_text is not None:
+                    block = f"{block}\n\n{member.tool_result_text}"
+                blocks.append(block)
+            return ("\n\n" if row.tool_name == "edit" else "\n").join(blocks)
         return row.text
     if expanded and row.tool_name == "bash":
         exact_command = format_tool_call_invocation(
@@ -1815,8 +1821,8 @@ def _render_tool_invocation(
 
 
 _TOOL_GROUP_INVOCATION_PATTERN = re.compile(
-    r"^→ ((?:Reading|Read) \d+ files(?: · (?:\d+/\d+ complete|\d+ failed))?)"
-    r"(?: · (.+))?$"
+    r"^→ ((?:Reading|Read|Editing|Edited) \d+ files"
+    r"(?: · (?:\d+/\d+ complete|\d+ failed))?)(?: · (.+))?$"
 )
 
 

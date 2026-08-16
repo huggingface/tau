@@ -21,11 +21,12 @@ Doing something else
 
 Each line keeps its own running, success, or failure color on the semantic
 description. Commands, arguments, and paths remain neutral. Adjacent reads still
-collapse into one read row inside the larger batch.
+collapse into file-list rows inside the larger batch, as do adjacent edits.
 
 `Ctrl+O` expands every row using its tool-specific behavior. Bash rows retain
 their description and show the exact command and result beneath it. Grouped reads
-expand to individual read invocations without repeating file-content previews. Batch invocations and
+expand to individual read invocations without repeating file-content previews;
+grouped edits retain each invocation and result. Batch invocations and
 results remain one selectable plain-text surface.
 
 Batches never cross assistant text, thinking blocks, model continuations, skill

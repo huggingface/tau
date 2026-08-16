@@ -30,6 +30,11 @@ existing row and result behavior. Reads separated by another tool, text block,
 or assistant response are not grouped. Skill-file reads retain their special
 skill presentation.
 
+Adjacent built-in `edit` calls use the same presentation: `Editing N files`
+becomes `Edited N files`, with every edited path listed below. Expanding an edit
+group preserves each invocation and result, unlike read groups whose file-content
+results stay suppressed.
+
 ## Architecture
 
 Grouping is display-only in `src/tau_coding/tui/`. `TuiEventAdapter` assigns a
@@ -46,15 +51,13 @@ the group deterministically. Agent events, tool execution, provider payloads,
 and session JSONL remain unchanged. Existing custom call renderers are applied
 to each invocation when a group is expanded.
 
-The first version intentionally groups only built-in `read` calls. Mutating tools
-and shell commands remain separate so consequential actions are never hidden in
-an aggregate row. Other read-only tools can adopt the same presentation model
-later once their argument previews and extension behavior are defined.
+Only built-in `read` and `edit` calls use file grouping. Shell commands and
+extension tools retain their own presentation semantics.
 
 ## Tests
 
-- `tests/test_tui_adapter.py` covers restored groups, call-ID lookup, expanded
-  invocations/results, and assistant-message boundaries.
+- `tests/test_tui_adapter.py` covers restored read/edit groups, path lists,
+  call-ID lookup, expanded invocations/results, and assistant-message boundaries.
 - `tests/test_tui_app.py` covers live grouping, in-place progress updates,
   completion, and `Ctrl+O` expansion in Textual.
 

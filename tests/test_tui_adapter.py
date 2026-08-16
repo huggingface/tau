@@ -200,6 +200,32 @@ def test_tui_state_groups_adjacent_reads_from_one_assistant_message() -> None:
     assert item.tool_result_text == "✓ read group"
 
 
+def test_tui_state_clusters_edits_and_lists_every_path() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(id="edit-1", name="edit", arguments={"path": "a.py", "edits": []}),
+                    ToolCall(id="edit-2", name="edit", arguments={"path": "b.py", "edits": []}),
+                ]
+            ),
+            ToolResultMessage(tool_call_id="edit-1", tool_name="edit", content="changed a"),
+            ToolResultMessage(tool_call_id="edit-2", tool_name="edit", content="changed b"),
+        ]
+    )
+
+    assert len(state.items) == 1
+    item = state.items[0]
+    assert item.text == "→ Edited 2 files\n  - a.py\n  - b.py"
+    assert item.grouped_tool_calls is not None
+    assert item.tool_result_text == "✓ edit group"
+    expanded = state.resolve_tool_invocation(item, expanded=True)
+    assert expanded is not None
+    assert "→ edit a.py\n\n✓ edit\nchanged a" in expanded
+    assert "→ edit b.py\n\n✓ edit\nchanged b" in expanded
+
+
 def test_tui_state_batches_mixed_tools_and_clusters_adjacent_reads() -> None:
     state = TuiState()
     state.load_messages(

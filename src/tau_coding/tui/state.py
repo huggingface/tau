@@ -170,13 +170,17 @@ class TuiState:
         if item.grouped_tool_calls is not None:
             if not expanded:
                 return None
-            lines: list[str] = []
+            blocks: list[str] = []
             for member in item.grouped_tool_calls:
                 rendered_line = None
                 if self.tool_call_renderer is not None:
                     rendered_line = self.tool_call_renderer(member.tool_name, member.tool_arguments)
-                lines.append(rendered_line if rendered_line is not None else member.text)
-            return "\n".join(lines)
+                block = rendered_line if rendered_line is not None else member.text
+                if item.tool_name == "edit" and member.tool_result_text is not None:
+                    block = f"{block}\n\n{member.tool_result_text}"
+                blocks.append(block)
+            separator = "\n\n" if item.tool_name == "edit" else "\n"
+            return separator.join(blocks)
         line: str | None = None
         if item.tool_name is not None and self.tool_call_renderer is not None:
             line = self.tool_call_renderer(item.tool_name, item.tool_arguments or {})
@@ -279,8 +283,12 @@ class TuiState:
         return self.tool_call_renderer(tool_name, arguments) is not None
 
     def _append_batched_tool_call(self, item: ChatItem, tool_call: ToolCall) -> None:
-        if item.tool_batch_items is None and item.tool_name == "read" and tool_call.name == "read":
-            self._append_grouped_read_call(item, tool_call)
+        if (
+            item.tool_batch_items is None
+            and item.tool_name in {"edit", "read"}
+            and tool_call.name == item.tool_name
+        ):
+            self._append_grouped_file_call(item, tool_call)
             return
         if item.tool_batch_items is None:
             first = ChatItem(
@@ -302,8 +310,8 @@ class TuiState:
             for call_id in self._tool_call_ids(first):
                 self._batched_items_by_call_id[call_id] = first
         last = item.tool_batch_items[-1]
-        if last.tool_name == "read" and tool_call.name == "read":
-            self._append_grouped_read_call(last, tool_call)
+        if last.tool_name in {"edit", "read"} and tool_call.name == last.tool_name:
+            self._append_grouped_file_call(last, tool_call)
             row = last
         else:
             row = self._new_tool_item(tool_call, batch_id=item.tool_batch_id)
@@ -317,7 +325,7 @@ class TuiState:
             return [member.tool_call_id for member in item.grouped_tool_calls]
         return [item.tool_call_id] if item.tool_call_id is not None else []
 
-    def _append_grouped_read_call(self, item: ChatItem, tool_call: ToolCall) -> None:
+    def _append_grouped_file_call(self, item: ChatItem, tool_call: ToolCall) -> None:
         if item.grouped_tool_calls is None:
             first = GroupedToolCall(
                 tool_call_id=item.tool_call_id or "display-call",
@@ -381,16 +389,19 @@ class TuiState:
         ]
         path_list = "\n".join(f"  - {path}" for path in paths)
         all_complete = len(completed) == len(members)
+        action = "edit" if item.tool_name == "edit" else "read"
         if not all_complete:
             progress = f" · {len(completed)}/{len(members)} complete" if completed else ""
-            headline = f"→ Reading {len(members)} files{progress}"
+            verb = "Editing" if action == "edit" else "Reading"
+            headline = f"→ {verb} {len(members)} files{progress}"
         else:
             failure = f" · {len(failures)} failed" if failures else ""
-            headline = f"→ Read {len(members)} files{failure}"
+            verb = "Edited" if action == "edit" else "Read"
+            headline = f"→ {verb} {len(members)} files{failure}"
         item.text = f"{headline}\n{path_list}"
         if completed:
             status = "✗" if failures else ("✓" if all_complete else "…")
-            item.tool_result_text = f"{status} read group"
+            item.tool_result_text = f"{status} {action} group"
         else:
             item.tool_result_text = None
         item.update_text = next(
