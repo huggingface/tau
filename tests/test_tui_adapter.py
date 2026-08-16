@@ -418,7 +418,7 @@ def test_bash_tool_formatter_keeps_short_commands_visible() -> None:
     )
 
 
-def test_bash_tool_formatter_keeps_short_command_instead_of_description() -> None:
+def test_bash_tool_formatter_pairs_description_with_full_short_command() -> None:
     command = "rm -rf /tmp/x"
     call = ToolCall(
         id="call-1",
@@ -426,7 +426,7 @@ def test_bash_tool_formatter_keeps_short_command_instead_of_description() -> Non
         arguments={"command": command, "description": "Listing files"},
     )
 
-    assert format_tool_call_block(call) == f"$ {command}"
+    assert format_tool_call_block(call) == f"→ Listing files · $ {command}"
 
 
 def test_bash_tool_formatter_pairs_description_with_real_command_hint() -> None:

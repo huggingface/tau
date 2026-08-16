@@ -604,14 +604,16 @@ def _format_bash_tool_call_invocation(
         return None
     timeout = _number_argument(arguments, "timeout")
     suffix = f" (timeout {timeout:g}s)" if timeout is not None else ""
-    if compact and _is_short_single_line_bash_command(command):
-        return f"$ {command}{suffix}"
     if compact:
         description = _string_argument(arguments, "description")
         if description is not None:
             displayed_description = _compact_bash_description(description)
             if displayed_description:
-                hint = _bash_command_hint(command)
+                hint = (
+                    command
+                    if _is_short_single_line_bash_command(command)
+                    else _bash_command_hint(command)
+                )
                 return f"→ {displayed_description} · $ {hint}{suffix}"
     displayed_command = _compact_bash_command(command) if compact else command
     return f"$ {displayed_command}{suffix}"
