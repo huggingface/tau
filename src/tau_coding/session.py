@@ -1080,6 +1080,7 @@ class CodingSession:
         self._harness.config.model = model
         self._inference_provider = _configured_inference_provider(provider, model)
         self._sync_thinking_level_to_active_model()
+        self._refresh_runtime_provider()
         self._sync_image_support()
         entry = ModelChangeEntry(parent_id=self._last_parent_id, model=model)
         await self._append_session_entry(entry)

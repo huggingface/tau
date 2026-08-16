@@ -3678,6 +3678,65 @@ async def test_huggingface_session_re_resolves_pin_on_model_switch(
 
 
 @pytest.mark.anyio
+async def test_startup_model_override_rebuilds_model_dependent_runtime_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    created: list[tuple[str | None, str | None]] = []
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+        inference_provider: str | None = None,
+        response_headers_observer: object | None = None,
+    ) -> SwitchableFakeProvider:
+        del credential_store, thinking_level, response_headers_observer
+        created.append((model, inference_provider))
+        return SwitchableFakeProvider(provider_config)
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    old_model = "zai-org/GLM-5.2"
+    override_model = "deepseek-ai/DeepSeek-V4-Flash"
+    provider_config = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=(old_model, override_model),
+        default_model=old_model,
+        inference_providers={old_model: "deepinfra", override_model: "fireworks-ai"},
+    )
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    await storage.append(ModelChangeEntry(model=old_model))
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model=override_model,
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            provider_name="huggingface",
+            inference_provider="fireworks-ai",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            runtime_provider_config=provider_config,
+            resource_paths=TauResourcePaths(
+                root=tmp_path / ".tau",
+                paths=TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"),
+            ),
+        )
+    )
+
+    await session.apply_startup_model_override(override_model)
+
+    assert session.model == override_model
+    assert session.inference_provider == "fireworks-ai"
+    assert created == [
+        (old_model, "fireworks-ai"),
+        (override_model, "fireworks-ai"),
+    ]
+    assert session._harness.config.provider is session._owned_providers[-1]
+
+
+@pytest.mark.anyio
 async def test_session_switches_configured_provider(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
