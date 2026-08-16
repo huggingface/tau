@@ -1527,11 +1527,7 @@ def render_session_sidebar(
         style=theme.completion_description,
     )
     tools = _comma_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
-    skills = _limited_bullet_list(
-        [skill.name for skill in session.skills],
-        empty="No skills loaded",
-        theme=theme,
-    )
+    skills = _grouped_skill_list(session.skills, cwd=session.cwd, theme=theme)
     prompts = _comma_list(
         [template.name for template in session.prompt_templates],
         empty="No prompt templates",
@@ -2238,6 +2234,71 @@ def _format_cost(value: float) -> str:
 
 def _plural(count: int, singular: str) -> str:
     return singular if count == 1 else f"{singular}s"
+
+
+def _grouped_skill_list(
+    skills: Sequence[Skill],
+    *,
+    cwd: Path,
+    theme: TuiTheme,
+) -> Text:
+    if not skills:
+        return Text("No skills loaded", style=theme.completion_description)
+
+    grouped: dict[str, list[str]] = {}
+    for skill in skills:
+        origin = _skill_origin_label(skill.path, cwd=cwd)
+        grouped.setdefault(origin, []).append(skill.name)
+
+    origin_precedence = {
+        "~/.tau/skills": 0,
+        "~/.agents/skills": 1,
+        "./.tau/skills": 2,
+        "./.agents/skills": 3,
+    }
+    ordered_origins = sorted(
+        grouped,
+        key=lambda origin: (origin_precedence.get(origin, len(origin_precedence)), origin),
+    )
+    remaining = SIDEBAR_BULLET_LIST_LIMIT
+    text = Text()
+    for origin in ordered_origins:
+        visible_names = sorted(grouped[origin])[:remaining]
+        if not visible_names:
+            continue
+        if text:
+            text.append("\n")
+        text.append(origin, style=theme.completion_description)
+        for name in visible_names:
+            text.append("\n  • ", style=theme.completion_description)
+            text.append(name, style=theme.completion_description)
+        remaining -= len(visible_names)
+
+    hidden_count = len(skills) - SIDEBAR_BULLET_LIST_LIMIT
+    if hidden_count > 0:
+        text.append(f"\n...({hidden_count} more)", style=theme.completion_description)
+    return text
+
+
+def _skill_origin_label(path: Path, *, cwd: Path) -> str:
+    origin = path.parent.parent if path.name == "SKILL.md" else path.parent
+    expanded_origin = origin.expanduser()
+    if not expanded_origin.is_absolute():
+        expanded_origin = cwd / expanded_origin
+    absolute_origin = expanded_origin.absolute()
+    absolute_cwd = cwd.expanduser().absolute()
+    try:
+        relative = absolute_origin.relative_to(absolute_cwd)
+    except ValueError:
+        pass
+    else:
+        return f"./{relative.as_posix()}"
+
+    home = Path.home().absolute()
+    try:
+        return f"~/{absolute_origin.relative_to(home).as_posix()}"
+    except ValueError:
+        return str(absolute_origin)
 
 
 def _limited_bullet_list(

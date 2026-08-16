@@ -186,7 +186,13 @@ class FakeSession:
         self.available_providers = ("openai",)
         self.tools = tuple(create_coding_tools(cwd=self.cwd))
         self.extension_tool_sources: dict[str, str] = {}
-        self.skills = (Skill(name="review", path=self.cwd / "review.md", content="Review code"),)
+        self.skills = (
+            Skill(
+                name="review",
+                path=self.cwd / ".tau" / "skills" / "review" / "SKILL.md",
+                content="Review code",
+            ),
+        )
         self.prompt_templates = ()
         self.context_files = (
             ProjectContextFile(path=str(self.cwd / "AGENTS.md"), content="Follow rules."),
@@ -513,7 +519,7 @@ def test_session_sidebar_renders_session_metadata() -> None:
     assert "cache: 99% latest · 95% session" in output
     assert "auto at 200k" in output
     assert "read, write, edit, bash" in output
-    assert "• review" in output
+    assert re.search(r"\./\.tau/skills\s+• review", output)
     assert "permission-gate, subagents" in output
 
 
@@ -524,7 +530,11 @@ def test_session_sidebar_limits_skills_to_five(
 ) -> None:
     session = FakeSession()
     session.skills = tuple(
-        Skill(name=f"skill-{index}", path=session.cwd / f"skill-{index}.md", content="Skill")
+        Skill(
+            name=f"skill-{index}",
+            path=session.cwd / ".tau" / "skills" / f"skill-{index}" / "SKILL.md",
+            content="Skill",
+        )
         for index in range(1, skill_count + 1)
     )
     console = Console(record=True, width=80)
@@ -540,6 +550,38 @@ def test_session_sidebar_limits_skills_to_five(
         assert "more)" not in output
     else:
         assert hidden_label in output
+
+
+def test_session_sidebar_groups_skills_by_origin(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    session = FakeSession()
+    session.cwd = tmp_path / "project"
+    session.skills = (
+        Skill("project-agents", session.cwd / ".agents/skills/project-agents/SKILL.md", ""),
+        Skill("user-tau", tmp_path / ".tau/skills/user-tau/SKILL.md", ""),
+        Skill("project-tau", session.cwd / ".tau/skills/project-tau/SKILL.md", ""),
+        Skill("user-agents", tmp_path / ".agents/skills/user-agents/SKILL.md", ""),
+    )
+    console = Console(record=True, width=80)
+
+    console.print(render_session_sidebar(session))
+
+    output = console.export_text()
+    expected_groups = (
+        ("~/.tau/skills", "user-tau"),
+        ("~/.agents/skills", "user-agents"),
+        ("./.tau/skills", "project-tau"),
+        ("./.agents/skills", "project-agents"),
+    )
+    assert all(
+        re.search(rf"{re.escape(origin)}\s+• {name}", output) for origin, name in expected_groups
+    )
+    assert [output.index(origin) for origin, _name in expected_groups] == sorted(
+        output.index(origin) for origin, _name in expected_groups
+    )
 
 
 def test_session_sidebar_limits_context_files_to_five() -> None:
