@@ -911,7 +911,7 @@ class TranscriptView(VerticalScroll):
                     if item.role == "custom"
                     else None
                 ),
-                invocation=state.resolve_tool_invocation(item),
+                invocation=state.resolve_tool_invocation(item, expanded=expanded),
                 result_markup=state.resolve_tool_result(item, expanded=expanded),
             )
             self._item_widgets[id(item)] = widget
@@ -1026,7 +1026,7 @@ class TranscriptView(VerticalScroll):
                 item,
                 theme=theme,
                 show_tool_results=expanded,
-                invocation=state.resolve_tool_invocation(item),
+                invocation=state.resolve_tool_invocation(item, expanded=expanded),
                 result_markup=state.resolve_tool_result(item, expanded=expanded),
             )
 

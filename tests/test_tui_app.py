@@ -7066,6 +7066,35 @@ async def test_tui_app_toggles_tool_results_from_keybinding() -> None:
 
 
 @pytest.mark.anyio
+async def test_tool_result_toggle_expands_full_bash_command() -> None:
+    command = "python - <<'PY'\nprint('one')\nprint('two')\nPY"
+    app = TauTuiApp(
+        FakeSession(
+            messages=[
+                AssistantMessage(
+                    content=[ToolCall(id="call-1", name="bash", arguments={"command": command})]
+                ),
+                ToolResultMessage(
+                    tool_call_id="call-1",
+                    tool_name="bash",
+                    content="finished",
+                ),
+            ]
+        )
+    )
+
+    async with app.run_test() as pilot:
+        widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool")
+        assert widget.selection_text == "$ python - <<'PY' … [inline script: 2 lines]"
+
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+
+        widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool")
+        assert widget.selection_text == f"$ {command}\n\n✓ bash\nfinished"
+
+
+@pytest.mark.anyio
 async def test_tool_result_toggle_preserves_unrelated_message_widgets() -> None:
     app = TauTuiApp(
         FakeSession(

@@ -41,7 +41,7 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 
 | Key | Action |
 | --- | --- |
-| `Ctrl+O` | Toggle full tool output (vs. compact preview) |
+| `Ctrl+O` | Toggle exact tool commands and full output (vs. compact previews) |
 | `Ctrl+C` | Clear the prompt input |
 | `Ctrl+D` | Quit |
 
