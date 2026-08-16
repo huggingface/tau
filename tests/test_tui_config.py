@@ -40,6 +40,7 @@ def test_load_tui_settings_reads_keybindings(tmp_path: Path) -> None:
             "command_palette": "ctrl+j",
             "session_picker": "ctrl+y",
             "queue_follow_up": "f5",
+            "insert_newline": "f7",
             "accept_completion": "f2",
             "thinking_cycle": "f3",
             "model_cycle": "f6",
@@ -57,6 +58,7 @@ def test_load_tui_settings_reads_keybindings(tmp_path: Path) -> None:
     assert settings.keybindings.command_palette == "ctrl+j"
     assert settings.keybindings.session_picker == "ctrl+y"
     assert settings.keybindings.queue_follow_up == "f5"
+    assert settings.keybindings.insert_newline == "f7"
     assert settings.keybindings.toggle_tool_results == "ctrl+o"
     assert settings.keybindings.toggle_thinking == "f4"
     assert settings.keybindings.accept_completion == "f2"
@@ -166,6 +168,7 @@ def test_tui_keybindings_serialize_to_json() -> None:
             command_palette="ctrl+j",
             session_picker="ctrl+y",
             queue_follow_up="f5",
+            insert_newline="f7",
             accept_completion="f2",
             thinking_cycle="f3",
             model_cycle="f6",
@@ -178,6 +181,7 @@ def test_tui_keybindings_serialize_to_json() -> None:
     assert settings.to_json()["keybindings"]["command_palette"] == "ctrl+j"
     assert settings.to_json()["keybindings"]["session_picker"] == "ctrl+y"
     assert settings.to_json()["keybindings"]["queue_follow_up"] == "f5"
+    assert settings.to_json()["keybindings"]["insert_newline"] == "f7"
     assert settings.to_json()["keybindings"]["toggle_tool_results"] == "ctrl+o"
     assert settings.to_json()["keybindings"]["toggle_thinking"] == "f4"
     assert settings.to_json()["keybindings"]["accept_completion"] == "f2"
