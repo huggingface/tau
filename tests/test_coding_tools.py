@@ -59,14 +59,14 @@ async def test_create_coding_tools_returns_initial_tool_set(tmp_path: Path) -> N
     assert "present-participle description" in tools[3].prompt_guidelines[0]
 
 
-def test_bash_tool_schema_requests_optional_display_description(tmp_path: Path) -> None:
+def test_bash_tool_schema_requires_display_description(tmp_path: Path) -> None:
     definition = create_bash_tool_definition(cwd=tmp_path)
     properties = definition.input_schema["properties"]
 
     assert isinstance(properties, dict)
     assert properties["description"]["type"] == "string"
     assert "present-participle summary" in properties["description"]["description"]
-    assert definition.input_schema["required"] == ["command"]
+    assert definition.input_schema["required"] == ["command", "description"]
 
 
 def test_tool_definitions_expose_pi_style_prompt_metadata(tmp_path: Path) -> None:
@@ -357,7 +357,7 @@ async def test_edit_tool_requires_unique_matches(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_bash_tool_captures_stdout_and_exit_code(tmp_path: Path) -> None:
+async def test_bash_tool_tolerates_missing_required_display_description(tmp_path: Path) -> None:
     tool = create_bash_tool(cwd=tmp_path)
 
     result = await tool.execute("test-call", {"command": "printf hello"})

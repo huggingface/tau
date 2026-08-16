@@ -725,7 +725,7 @@ def create_bash_tool_definition(
                     "description": "Timeout in seconds (optional, no default timeout)",
                 },
             },
-            "required": ["command"],
+            "required": ["command", "description"],
         },
         executor=execute,
     )
