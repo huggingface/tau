@@ -105,7 +105,8 @@ class SessionSidebar(Vertical):
     """Compact sidebar with session metadata and bottom-aligned branding."""
 
     def compose(self) -> Any:
-        yield Static("", id="sidebar-content")
+        with VerticalScroll(id="sidebar-scroll"):
+            yield Static("", id="sidebar-content")
         yield Static("", id="sidebar-brand")
 
     _summary_fingerprint: tuple[object, ...] | None = None
@@ -2260,23 +2261,14 @@ def _grouped_skill_list(
         grouped,
         key=lambda origin: (origin_precedence.get(origin, len(origin_precedence)), origin),
     )
-    remaining = SIDEBAR_BULLET_LIST_LIMIT
     text = Text()
     for origin in ordered_origins:
-        visible_names = sorted(grouped[origin])[:remaining]
-        if not visible_names:
-            continue
         if text:
             text.append("\n")
         text.append(origin, style=theme.completion_description)
-        for name in visible_names:
+        for name in sorted(grouped[origin]):
             text.append("\n  • ", style=theme.completion_description)
             text.append(name, style=theme.completion_description)
-        remaining -= len(visible_names)
-
-    hidden_count = len(skills) - SIDEBAR_BULLET_LIST_LIMIT
-    if hidden_count > 0:
-        text.append(f"\n...({hidden_count} more)", style=theme.completion_description)
     return text
 
 

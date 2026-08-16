@@ -2974,8 +2974,13 @@ class TauTuiApp(App[None]):
         border: none;
     }
 
-    #sidebar-content {
+    #sidebar-scroll {
         height: 1fr;
+        scrollbar-size-vertical: 1;
+    }
+
+    #sidebar-content {
+        height: auto;
     }
 
     #sidebar-brand {

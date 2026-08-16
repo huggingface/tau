@@ -523,11 +523,7 @@ def test_session_sidebar_renders_session_metadata() -> None:
     assert "permission-gate, subagents" in output
 
 
-@pytest.mark.parametrize(("skill_count", "hidden_label"), [(5, None), (7, "...(2 more)")])
-def test_session_sidebar_limits_skills_to_five(
-    skill_count: int,
-    hidden_label: str | None,
-) -> None:
+def test_session_sidebar_shows_all_skills() -> None:
     session = FakeSession()
     session.skills = tuple(
         Skill(
@@ -535,21 +531,16 @@ def test_session_sidebar_limits_skills_to_five(
             path=session.cwd / ".tau" / "skills" / f"skill-{index}" / "SKILL.md",
             content="Skill",
         )
-        for index in range(1, skill_count + 1)
+        for index in range(1, 8)
     )
     console = Console(record=True, width=80)
 
     console.print(render_session_sidebar(session))
 
     output = console.export_text()
-    for index in range(1, 6):
+    for index in range(1, 8):
         assert f"• skill-{index}" in output
-    assert "skill-6" not in output
-    assert "skill-7" not in output
-    if hidden_label is None:
-        assert "more)" not in output
-    else:
-        assert hidden_label in output
+    assert "more)" not in output
 
 
 def test_session_sidebar_groups_skills_by_origin(
@@ -2711,6 +2702,31 @@ async def test_tui_sidebar_is_visible_on_medium_windows() -> None:
         assert sidebar.styles.background == Color.parse(TAU_DARK_THEME.prompt_background)
         assert compact_info.display is True
         assert not app.has_class("-hide-sidebar")
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_scrolls_when_all_skills_overflow() -> None:
+    session = FakeSession()
+    session.skills = tuple(
+        Skill(
+            name=f"skill-{index}",
+            path=session.cwd / ".tau" / "skills" / f"skill-{index}" / "SKILL.md",
+            content="Skill",
+        )
+        for index in range(1, 31)
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        scroll = app.query_one("#sidebar-scroll", VerticalScroll)
+        brand = app.query_one("#sidebar-brand", Static)
+        await pilot.pause()
+
+        assert scroll.max_scroll_y > 0
+        assert brand.region.bottom == app.query_one("#sidebar").content_region.bottom
+        scroll.scroll_end(animate=False, immediate=True)
+        await pilot.pause()
+        assert scroll.scroll_y == scroll.max_scroll_y
 
 
 @pytest.mark.anyio

@@ -2,7 +2,7 @@
 
 ## What changed
 
-The TUI now turns existing skill and prompt-template override diagnostics into one red startup alert in the transcript. Each entry names the resource and shows the winning and shadowed paths. The sidebar also groups loaded skills by their user or project resource directory, making each skill's origin visible at a glance.
+The TUI now turns existing skill and prompt-template override diagnostics into one red startup alert in the transcript. Each entry names the resource and shows the winning and shadowed paths. The sidebar also groups loaded skills by their user or project resource directory, shows every loaded skill, and scrolls its content independently when the groups overflow while keeping the Tau brand pinned.
 
 ## Why
 
