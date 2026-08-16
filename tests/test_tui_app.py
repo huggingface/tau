@@ -1497,40 +1497,28 @@ def test_tool_chat_items_color_description_not_details_or_results() -> None:
     assert f"{red};48;2;0;0;0mfailed" not in error_output
 
 
-def test_semantic_bash_and_grouped_read_details_stay_neutral() -> None:
+def test_grouped_read_details_stay_neutral() -> None:
     green = "38;2;156;255;177;48;2;0;0;0m"
     body = "38;2;203;213;225;48;2;0;0;0m"
-
-    for text, description, details in (
-        (
-            "→ Listing documentation · $ find docs -type f",
-            "Listing documentation",
-            " · $ find docs -type f",
-        ),
-        (
-            "→ Read 5 files · a.py, b.py, c.py, +2",
-            "Read 5 files",
-            " · a.py, b.py, c.py, +2",
-        ),
-    ):
-        console = Console(record=True, width=100, color_system="truecolor")
-        item = ChatItem(role="tool", text=text, tool_result_text="✓ tool")
-        console.print(
-            _transcript_plain_body_text(
-                item,
-                text=text,
-                body_style=TAU_DARK_THEME.role_styles["tool"].body,
-                theme=TAU_DARK_THEME,
-            )
+    text = "→ Read 5 files · a.py, b.py, c.py, +2"
+    console = Console(record=True, width=100, color_system="truecolor")
+    item = ChatItem(role="tool", text=text, tool_result_text="✓ tool")
+    console.print(
+        _transcript_plain_body_text(
+            item,
+            text=text,
+            body_style=TAU_DARK_THEME.role_styles["tool"].body,
+            theme=TAU_DARK_THEME,
         )
-        output = console.export_text(styles=True)
+    )
+    output = console.export_text(styles=True)
 
-        assert f"{green}{description}" in output
-        assert f"{body}{details}" in output
-        assert f"{green}{details}" not in output
+    assert f"{green}Read 5 files" in output
+    assert f"{body} · a.py, b.py, c.py, +2" in output
+    assert f"{green} · a.py, b.py, c.py, +2" not in output
 
 
-def test_long_bash_description_without_hint_keeps_full_status_color() -> None:
+def test_bash_description_without_command_keeps_full_status_color() -> None:
     command = "echo " + "x" * 120
     item = ChatItem(
         role="tool",
@@ -1562,15 +1550,22 @@ def test_tool_batch_colors_each_description_by_its_own_status() -> None:
         tool_batch_items=[
             ChatItem(
                 role="tool",
-                text="→ Finished action · $ true",
+                text="→ Finished action",
+                tool_name="bash",
                 tool_result_text="✓ bash",
             ),
             ChatItem(
                 role="tool",
-                text="→ Failed action · $ false",
+                text="→ Failed action",
+                tool_name="bash",
                 tool_result_text="✗ bash",
             ),
-            ChatItem(role="tool", text="→ Running action · $ sleep 1", started_at=1.0),
+            ChatItem(
+                role="tool",
+                text="→ Running action",
+                tool_name="bash",
+                started_at=1.0,
+            ),
         ],
     )
     console = Console(record=True, width=100, color_system="truecolor")
@@ -1587,7 +1582,7 @@ def test_tool_batch_colors_each_description_by_its_own_status() -> None:
     assert "38;2;156;255;177;48;2;0;0;0mFinished action" in output
     assert "38;2;255;79;79;48;2;0;0;0mFailed action" in output
     assert "38;2;138;122;82;48;2;0;0;0mRunning action" in output
-    assert "38;2;203;213;225;48;2;0;0;0m · $ false" in output
+    assert "$ false" not in console.export_text()
 
 
 def test_tool_batch_body_stays_one_selectable_text_renderable() -> None:
@@ -1595,8 +1590,8 @@ def test_tool_batch_body_stays_one_selectable_text_renderable() -> None:
         role="tool",
         text="batch",
         tool_batch_items=[
-            ChatItem(role="tool", text="→ First action · $ true"),
-            ChatItem(role="tool", text="→ Second action · $ false"),
+            ChatItem(role="tool", text="→ First action", tool_name="bash"),
+            ChatItem(role="tool", text="→ Second action", tool_name="bash"),
         ],
     )
 
@@ -1608,7 +1603,7 @@ def test_tool_batch_body_stays_one_selectable_text_renderable() -> None:
     )
 
     assert isinstance(body, Text)
-    assert body.plain == "→ First action · $ true\n→ Second action · $ false"
+    assert body.plain == "→ First action\n→ Second action"
 
 
 def test_assistant_chat_items_render_markdown_lists() -> None:
@@ -1903,9 +1898,7 @@ async def test_mixed_tool_batch_uses_one_widget_and_expands_each_row() -> None:
         widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool")
         assert len([w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool"]) == 1
         assert widget.selection_text == (
-            "→ Doing thing one · $ echo one\n"
-            "→ Read 2 files · a.py, b.py\n"
-            "→ Doing thing two · $ echo two"
+            "→ Doing thing one\n→ Read 2 files · a.py, b.py\n→ Doing thing two"
         )
 
         await pilot.press("ctrl+o")

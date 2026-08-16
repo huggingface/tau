@@ -11,10 +11,10 @@ Adjacent built-in tool calls from one assistant response now share one transcrip
 message. Each logical action remains one line:
 
 ```text
-Doing thing one     · $ command one
-Doing thing two     · $ command two
-Read 5 files        · a.py, b.py, c.py, +2
-Doing something else · $ command three
+Doing thing one
+Doing thing two
+Read 5 files · a.py, b.py, c.py, +2
+Doing something else
 ```
 
 Each line keeps its own running, success, or failure color on the semantic

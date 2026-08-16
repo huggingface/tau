@@ -128,13 +128,10 @@ custom rendered call cards and skill loads remain separate.
 
 Tool results (like long `read` or `bash` output) render as compact previews so
 the transcript stays readable. Tau requires the model to give each `bash` call a
-brief description such as `Running tests`. Long or multiline calls show only that
-description while collapsed; press **Ctrl+O** to reveal the exact command. Short
-shell commands show the description alongside the complete command. Malformed provider output,
-custom integrations, and older sessions can still lack a description; those calls use a
-deterministic fallback. Multiline commands and heredocs show their first line plus
-a line count, inline code shows its interpreter plus a character count, and other
-commands over 120 characters show a shortened preview.
+brief description such as `Running tests`. Collapsed rows never show command
+text; press **Ctrl+O** to reveal the exact command. Malformed provider output,
+custom integrations, and older sessions can still lack a description; those calls
+show the generic `Running shell command` label until expanded.
 
 When one model response reads several files, adjacent `read` calls share one row.
 The row previews up to three paths, reports progress as results arrive, and shows

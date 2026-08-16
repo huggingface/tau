@@ -40,7 +40,6 @@ from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.tui.autocomplete import CompletionState
 from tau_coding.tui.config import TAU_DARK_THEME, TuiRoleStyle, TuiTheme
 from tau_coding.tui.state import (
-    BASH_COMMAND_PREVIEW_CHARS,
     TOOL_TIMER_MIN_SECONDS,
     ChatItem,
     TuiState,
@@ -1402,7 +1401,7 @@ def _transcript_plain_body_text(
         invocation if invocation else item.text,
         body_style=body_style,
         accent_style=_tool_accent_style(item, theme=theme),
-        description_only=_bash_row_hides_command(item),
+        description_only=_bash_row_is_description_only(item),
     )
     if item.grouped_tool_calls is not None:
         return invocation_text
@@ -1697,17 +1696,8 @@ def _tool_accent_style(item: ChatItem, *, theme: TuiTheme) -> str | None:
     return None
 
 
-def _bash_row_hides_command(item: ChatItem) -> bool:
-    if item.tool_name != "bash" or item.tool_arguments is None:
-        return False
-    command = item.tool_arguments.get("command")
-    description = item.tool_arguments.get("description")
-    return (
-        isinstance(command, str)
-        and isinstance(description, str)
-        and bool(description.strip())
-        and ("\n" in command or "\r" in command or len(command) > BASH_COMMAND_PREVIEW_CHARS)
-    )
+def _bash_row_is_description_only(item: ChatItem) -> bool:
+    return item.tool_name == "bash" and item.text.startswith("→ ")
 
 
 def _tool_batch_row_invocation(row: ChatItem, *, expanded: bool) -> str:
@@ -1762,7 +1752,7 @@ def _render_transcript_tool_batch(
                 _tool_batch_row_invocation(row, expanded=expanded),
                 body_style=body_style,
                 accent_style=_tool_accent_style(row, theme=theme),
-                description_only=_bash_row_hides_command(row),
+                description_only=_bash_row_is_description_only(row),
             )
         )
         if expanded and row.grouped_tool_calls is None and row.tool_result_text:
@@ -1793,7 +1783,7 @@ def _render_tool_chat_body(
         item.text,
         body_style=body_style,
         accent_style=accent_style,
-        description_only=_bash_row_hides_command(item),
+        description_only=_bash_row_is_description_only(item),
     )
     if item.grouped_tool_calls is not None or not show_tool_results or not item.tool_result_text:
         return text

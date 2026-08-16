@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -34,14 +33,9 @@ TERMINAL_COMMAND_OUTPUT_PREVIEW_LINES = 120
 # Show live elapsed time on an executing tool row once it stops being instant;
 # quick reads/edits never flash a "(0s)".
 TOOL_TIMER_MIN_SECONDS = 1.0
-BASH_COMMAND_PREVIEW_CHARS = 120
 BASH_DESCRIPTION_PREVIEW_CHARS = 56
 TOOL_GROUP_PREVIEW_ITEMS = 3
 TOOL_GROUP_PATH_CHARS = 32
-_INLINE_CODE_PATTERN = re.compile(
-    r"(?:^|[;&|]\s*|\s)(?:(?:python(?:\d+(?:\.\d+)*)?|bash|sh|zsh)\s+-c|node\s+-e)\s+"
-)
-_HEREDOC_PATTERN = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
 
 @dataclass(slots=True)
@@ -706,17 +700,9 @@ def _format_bash_tool_call_invocation(
         if description is not None:
             displayed_description = _compact_bash_description(description)
             if displayed_description:
-                if _is_short_single_line_bash_command(command):
-                    return f"→ {displayed_description} · $ {command}{suffix}"
                 return f"→ {displayed_description}{suffix}"
-    displayed_command = _compact_bash_command(command) if compact else command
-    return f"$ {displayed_command}{suffix}"
-
-
-def _is_short_single_line_bash_command(command: str) -> bool:
-    return (
-        "\n" not in command and "\r" not in command and len(command) <= BASH_COMMAND_PREVIEW_CHARS
-    )
+        return f"→ Running shell command{suffix}"
+    return f"$ {command}{suffix}"
 
 
 def _compact_bash_description(description: str) -> str:
@@ -724,53 +710,6 @@ def _compact_bash_description(description: str) -> str:
     if len(normalized) <= BASH_DESCRIPTION_PREVIEW_CHARS:
         return normalized
     return normalized[: BASH_DESCRIPTION_PREVIEW_CHARS - 1].rstrip() + "…"
-
-
-def _compact_bash_command(command: str) -> str:
-    lines = command.splitlines()
-    if len(lines) > 1:
-        meaningful_line = next(
-            ((index, line.strip()) for index, line in enumerate(lines) if line.strip()),
-            None,
-        )
-        if meaningful_line is None:
-            return f"[empty command: {len(lines)} lines]"
-        first_index, first_line = meaningful_line
-        preview = _truncate_bash_preview(first_line)
-        heredoc = _HEREDOC_PATTERN.search(first_line)
-        if heredoc is not None:
-            delimiter = heredoc.group(2)
-            closing_index = next(
-                (
-                    index
-                    for index in range(len(lines) - 1, first_index, -1)
-                    if lines[index].strip() == delimiter
-                ),
-                len(lines),
-            )
-            script_lines = max(0, closing_index - first_index - 1)
-            noun = "line" if script_lines == 1 else "lines"
-            return f"{preview} … [inline script: {script_lines} {noun}]"
-        return f"{preview} … [command: {len(lines)} lines]"
-
-    if len(command) <= BASH_COMMAND_PREVIEW_CHARS:
-        return command
-
-    inline_code = _INLINE_CODE_PATTERN.search(command)
-    if inline_code is not None:
-        prefix = command[: inline_code.end()].rstrip()
-        code_chars = len(command[inline_code.end() :].strip())
-        noun = "char" if code_chars == 1 else "chars"
-        return f"{prefix} … [inline code: {code_chars} {noun}]"
-
-    preview = _truncate_bash_preview(command)
-    return f"{preview}… [command: {len(command)} chars]"
-
-
-def _truncate_bash_preview(command: str) -> str:
-    if len(command) <= BASH_COMMAND_PREVIEW_CHARS:
-        return command
-    return command[:BASH_COMMAND_PREVIEW_CHARS].rstrip()
 
 
 def _read_line_suffix(arguments: dict[str, JSONValue]) -> str:

@@ -29,7 +29,6 @@ from tau_coding.events import (
 from tau_coding.skills import Skill, format_skill_invocation
 from tau_coding.tui import TuiEventAdapter, TuiState
 from tau_coding.tui.state import (
-    BASH_COMMAND_PREVIEW_CHARS,
     format_tool_call_block,
     format_tool_call_invocation,
     format_tool_result_block,
@@ -240,10 +239,10 @@ def test_tui_state_batches_mixed_tools_and_clusters_adjacent_reads() -> None:
     assert len(item.tool_batch_items) == 4
     assert item.tool_batch_items[2].grouped_tool_calls is not None
     assert item.text.splitlines() == [
-        "→ Doing thing one · $ echo one",
-        "→ Doing thing two · $ echo two",
+        "→ Doing thing one",
+        "→ Doing thing two",
         "→ Read 2 files · a.py, b.py",
-        "→ Doing thing three · $ echo three",
+        "→ Doing thing three",
     ]
     assert all(
         state.find_tool_item(call_id) is item
@@ -486,20 +485,19 @@ def test_tool_formatters_keep_human_readable_output() -> None:
     assert "3 more lines" in block
 
 
-def test_bash_tool_formatter_keeps_short_commands_visible() -> None:
+def test_bash_tool_formatter_hides_short_command_until_expanded() -> None:
+    command = 'rg -n "ToolCall" src'
     call = ToolCall(
         id="call-1",
         name="bash",
-        arguments={"command": 'rg -n "ToolCall" src', "timeout": 10},
+        arguments={"command": command, "timeout": 10},
     )
 
-    assert format_tool_call_block(call) == '$ rg -n "ToolCall" src (timeout 10s)'
-    assert format_tool_call_invocation(call, expanded=True) == (
-        '$ rg -n "ToolCall" src (timeout 10s)'
-    )
+    assert format_tool_call_block(call) == "→ Running shell command (timeout 10s)"
+    assert format_tool_call_invocation(call, expanded=True) == f"$ {command} (timeout 10s)"
 
 
-def test_bash_tool_formatter_pairs_description_with_full_short_command() -> None:
+def test_bash_tool_formatter_hides_described_short_command_until_expanded() -> None:
     command = "rm -rf /tmp/x"
     call = ToolCall(
         id="call-1",
@@ -507,7 +505,8 @@ def test_bash_tool_formatter_pairs_description_with_full_short_command() -> None
         arguments={"command": command, "description": "Listing files"},
     )
 
-    assert format_tool_call_block(call) == f"→ Listing files · $ {command}"
+    assert format_tool_call_block(call) == "→ Listing files"
+    assert format_tool_call_invocation(call, expanded=True) == f"$ {command}"
 
 
 def test_bash_tool_formatter_hides_long_command_behind_description() -> None:
@@ -546,52 +545,19 @@ def test_bash_tool_formatter_truncates_description_without_command_hint() -> Non
     assert "\n" not in collapsed
 
 
-def test_bash_tool_formatter_collapses_heredoc_and_expands_exact_command() -> None:
-    command = "python - <<'PY'\nprint('one')\nprint('two')\nPY"
-    call = ToolCall(id="call-1", name="bash", arguments={"command": command})
+def test_bash_tool_formatter_never_previews_undescribed_commands() -> None:
+    commands = [
+        "python - <<'PY'\nprint('one')\nPY",
+        "git status &&\ngit diff",
+        "echo " + "x" * 200,
+        'uv run python -c "print(1)"',
+        "\n\n",
+    ]
 
-    assert format_tool_call_block(call) == ("$ python - <<'PY' … [inline script: 2 lines]")
-    assert format_tool_call_invocation(call, expanded=True) == f"$ {command}"
-
-
-def test_bash_tool_formatter_collapses_multiline_and_long_commands() -> None:
-    multiline = ToolCall(
-        id="call-1",
-        name="bash",
-        arguments={"command": "git status &&\ngit diff"},
-    )
-    long_command = "echo " + "x" * BASH_COMMAND_PREVIEW_CHARS
-    long_call = ToolCall(id="call-2", name="bash", arguments={"command": long_command})
-
-    assert format_tool_call_block(multiline) == "$ git status && … [command: 2 lines]"
-    assert format_tool_call_block(long_call) == (
-        f"$ {long_command[:BASH_COMMAND_PREVIEW_CHARS]}… [command: {len(long_command)} chars]"
-    )
-
-
-def test_bash_tool_formatter_identifies_long_inline_code() -> None:
-    code = "print('x');" * 20
-    command = f'uv run python -c "{code}"'
-    call = ToolCall(id="call-1", name="bash", arguments={"command": command})
-
-    assert format_tool_call_block(call) == (
-        f"$ uv run python -c … [inline code: {len(code) + 2} chars]"
-    )
-
-
-def test_bash_tool_formatter_does_not_treat_shell_errexit_as_inline_code() -> None:
-    command = "sh -e ./deploy.sh " + "production " * 15
-    call = ToolCall(id="call-1", name="bash", arguments={"command": command})
-
-    collapsed = format_tool_call_block(call)
-    assert "inline code" not in collapsed
-    assert "sh -e ./deploy.sh" in collapsed
-
-
-def test_bash_tool_formatter_compacts_whitespace_only_multiline_command() -> None:
-    call = ToolCall(id="call-1", name="bash", arguments={"command": "\n\n"})
-
-    assert format_tool_call_block(call) == "$ [empty command: 2 lines]"
+    for index, command in enumerate(commands):
+        call = ToolCall(id=f"call-{index}", name="bash", arguments={"command": command})
+        assert format_tool_call_block(call) == "→ Running shell command"
+        assert format_tool_call_invocation(call, expanded=True) == f"$ {command}"
 
 
 def test_tui_state_recovers_full_bash_command_when_tool_output_expands() -> None:
@@ -601,7 +567,7 @@ def test_tui_state_recovers_full_bash_command_when_tool_output_expands() -> None
     item = state.items[0]
     item.started_at = None
 
-    assert item.text == "$ python - <<'PY' … [inline script: 1 line]"
+    assert item.text == "→ Running shell command"
     assert state.resolve_tool_invocation(item) is None
     assert state.resolve_tool_invocation(item, expanded=True) == f"$ {command}"
 
