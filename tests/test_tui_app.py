@@ -1068,6 +1068,7 @@ def test_transcript_plain_tool_body_renders_patch_as_colored_diff() -> None:
         text=transcript_item_selection_text(item, show_tool_results=True),
         body_style="#cbd5e1 on #000000",
         theme=TAU_DARK_THEME,
+        show_tool_results=True,
     )
 
     console = Console(record=True, width=100, color_system="truecolor")
@@ -1413,6 +1414,29 @@ def test_light_theme_markdown_code_uses_aqua_without_background() -> None:
 
     assert "38;2;15;118;110" in output
     assert "38;2;15;118;110;48;2" not in output
+
+
+def test_expanded_tool_invocation_blank_line_stays_separate_from_result() -> None:
+    invocation = "$ python <<'PY'\n\nPatch:\n-old\nPY"
+    item = ChatItem(
+        role="tool",
+        text="$ compact",
+        tool_result_text="✓ bash\nfinished",
+    )
+    body = _transcript_plain_body_text(
+        item,
+        text=f"{invocation}\n\n{item.tool_result_text}",
+        body_style=TAU_DARK_THEME.role_styles["tool"].body,
+        theme=TAU_DARK_THEME,
+        show_tool_results=True,
+        invocation=invocation,
+    )
+
+    console = Console(record=True, width=100, color_system="truecolor")
+    console.print(body)
+
+    assert console.export_text(clear=False) == f"{invocation}\n\n✓ bash\nfinished\n"
+    assert "\x1b[91" not in console.export_text(styles=True)
 
 
 def test_pending_tool_invocation_uses_tool_accent_color() -> None:
@@ -7094,7 +7118,7 @@ async def test_tool_result_toggle_expands_full_bash_command() -> None:
 
     async with app.run_test() as pilot:
         widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool")
-        assert widget.selection_text == "→ Running inline script"
+        assert widget.selection_text == "→ Running inline script · $ python - <<'PY'"
 
         await pilot.press("ctrl+o")
         await pilot.pause()

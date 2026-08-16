@@ -315,8 +315,19 @@ def test_bash_tool_formatter_keeps_short_commands_visible() -> None:
     )
 
 
-def test_bash_tool_formatter_prefers_description_until_expanded() -> None:
-    command = "git diff --check && git commit -m 'Finish work'"
+def test_bash_tool_formatter_keeps_short_command_instead_of_description() -> None:
+    command = "rm -rf /tmp/x"
+    call = ToolCall(
+        id="call-1",
+        name="bash",
+        arguments={"command": command, "description": "Listing files"},
+    )
+
+    assert format_tool_call_block(call) == f"$ {command}"
+
+
+def test_bash_tool_formatter_pairs_description_with_real_command_hint() -> None:
+    command = "git diff --check && git commit -m 'Finish work' && " + "echo done " * 12
     call = ToolCall(
         id="call-1",
         name="bash",
@@ -327,9 +338,26 @@ def test_bash_tool_formatter_prefers_description_until_expanded() -> None:
         },
     )
 
-    assert format_tool_call_block(call) == "→ Validating and committing changes (timeout 120s)"
+    collapsed = format_tool_call_block(call)
+    assert collapsed.startswith("→ Validating and committing changes · $ git diff --check")
+    assert collapsed.endswith("… (timeout 120s)")
+    assert "\n" not in collapsed
     assert format_tool_call_block(call, compact=False) == f"$ {command} (timeout 120s)"
     assert format_tool_call_invocation(call, expanded=True) == f"$ {command} (timeout 120s)"
+
+
+def test_bash_tool_formatter_keeps_hint_after_long_description() -> None:
+    command = "python - <<'PY'\nprint('hello')\nPY"
+    description = "Describing a deliberately overlong inline script operation " * 2
+    call = ToolCall(
+        id="call-1",
+        name="bash",
+        arguments={"command": command, "description": description},
+    )
+
+    collapsed = format_tool_call_block(call)
+    assert collapsed.endswith("… · $ python - <<'PY'")
+    assert "\n" not in collapsed
 
 
 def test_bash_tool_formatter_collapses_heredoc_and_expands_exact_command() -> None:
@@ -363,6 +391,21 @@ def test_bash_tool_formatter_identifies_long_inline_code() -> None:
     assert format_tool_call_block(call) == (
         f"$ uv run python -c … [inline code: {len(code) + 2} chars]"
     )
+
+
+def test_bash_tool_formatter_does_not_treat_shell_errexit_as_inline_code() -> None:
+    command = "sh -e ./deploy.sh " + "production " * 15
+    call = ToolCall(id="call-1", name="bash", arguments={"command": command})
+
+    collapsed = format_tool_call_block(call)
+    assert "inline code" not in collapsed
+    assert "sh -e ./deploy.sh" in collapsed
+
+
+def test_bash_tool_formatter_compacts_whitespace_only_multiline_command() -> None:
+    call = ToolCall(id="call-1", name="bash", arguments={"command": "\n\n"})
+
+    assert format_tool_call_block(call) == "$ [empty command: 2 lines]"
 
 
 def test_tui_state_recovers_full_bash_command_when_tool_output_expands() -> None:

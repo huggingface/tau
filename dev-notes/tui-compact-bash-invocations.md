@@ -7,8 +7,10 @@ that embed source code directly in `python -c`, `node -e`, or similar arguments.
 ## What changed
 
 The bash tool now asks the model for an optional, brief present-participle
-`description` in the same tool call. The TUI uses that semantic summary when it
-is present, normalizing whitespace and limiting it to 80 characters. This adds
+`description` in the same tool call. For long or multiline commands, the TUI
+normalizes that summary, limits it to 56 characters, and pairs it with a
+32-character prefix derived from the real command. Short commands always render
+verbatim, and summaries always retain deterministic command text. This adds
 no second provider request. Calls from models that omit the optional field keep
 a deterministic fallback:
 
@@ -29,10 +31,11 @@ The provider-visible bash schema and tool prompt guideline live in
 cannot prevent command execution. The executor ignores it; the value is display
 metadata carried inside the existing `ToolCall.arguments` mapping.
 
-Formatting lives in `src/tau_coding/tui/state.py`. The state prefers a supplied
-description, otherwise creates the deterministic compact row, then resolves the
-exact invocation lazily when tool results are expanded. Existing custom tool
-`render_call` output still takes precedence. The print-mode transcript renderer
+Formatting lives in `src/tau_coding/tui/state.py`. The state keeps short commands
+verbatim, combines supplied descriptions with deterministic command hints for
+long calls, or creates the argument-only compact row when no description exists.
+It resolves the exact invocation lazily when tool results are expanded. Existing
+custom tool `render_call` output still takes precedence. The print-mode transcript renderer
 explicitly requests the unabridged invocation because it has no interactive
 expansion control. Session JSONL serialization remains independent of these
 display formatters and retains the complete `command`. No TUI concerns enter
@@ -43,8 +46,9 @@ display formatters and retains the complete `command`. No TUI concerns enter
 - `tests/test_coding_tools.py` and `tests/test_system_prompt.py` cover the optional
   schema field and model instruction.
 - `tests/test_tui_adapter.py` covers semantic descriptions, short commands,
-  heredocs, generic multiline commands, long inline code, long ordinary commands,
-  and exact expansion.
+  command hints, short-command safety, heredocs, generic multiline commands,
+  whitespace-only input, interpreter flags, long inline code, long ordinary
+  commands, and exact expansion.
 - `tests/test_tui_app.py` uses a Textual pilot to confirm `Ctrl+O` replaces a
   compact heredoc row with the exact command and full result.
 - `tests/test_rendering.py` confirms print-mode transcripts always show the exact

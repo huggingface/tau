@@ -35,9 +35,10 @@ TERMINAL_COMMAND_OUTPUT_PREVIEW_LINES = 120
 # quick reads/edits never flash a "(0s)".
 TOOL_TIMER_MIN_SECONDS = 1.0
 BASH_COMMAND_PREVIEW_CHARS = 120
-BASH_DESCRIPTION_PREVIEW_CHARS = 80
+BASH_DESCRIPTION_PREVIEW_CHARS = 56
+BASH_COMMAND_HINT_CHARS = 32
 _INLINE_CODE_PATTERN = re.compile(
-    r"(?:^|[;&|]\s*|\s)(?:python(?:\d+(?:\.\d+)*)?|node|bash|sh|zsh)\s+-(?:c|e)\s+"
+    r"(?:^|[;&|]\s*|\s)(?:(?:python(?:\d+(?:\.\d+)*)?|bash|sh|zsh)\s+-c|node\s+-e)\s+"
 )
 _HEREDOC_PATTERN = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
@@ -139,7 +140,14 @@ class TuiState:
         if item.tool_name is not None and self.tool_call_renderer is not None:
             line = self.tool_call_renderer(item.tool_name, item.tool_arguments or {})
         if line is None and expanded and item.tool_name == "bash":
-            line = _format_bash_tool_call_invocation(item.tool_arguments or {}, compact=False)
+            line = format_tool_call_invocation(
+                ToolCall(
+                    id=item.tool_call_id or "display-call",
+                    name=item.tool_name,
+                    arguments=item.tool_arguments or {},
+                ),
+                expanded=True,
+            )
         if item.tool_result_text is None and item.started_at is not None:
             elapsed = time.monotonic() - item.started_at
             if elapsed >= TOOL_TIMER_MIN_SECONDS:
@@ -446,14 +454,31 @@ def _format_bash_tool_call_invocation(
         return None
     timeout = _number_argument(arguments, "timeout")
     suffix = f" (timeout {timeout:g}s)" if timeout is not None else ""
+    if compact and _is_short_single_line_bash_command(command):
+        return f"$ {command}{suffix}"
     if compact:
         description = _string_argument(arguments, "description")
         if description is not None:
             displayed_description = _compact_bash_description(description)
             if displayed_description:
-                return f"→ {displayed_description}{suffix}"
+                hint = _bash_command_hint(command)
+                return f"→ {displayed_description} · $ {hint}{suffix}"
     displayed_command = _compact_bash_command(command) if compact else command
     return f"$ {displayed_command}{suffix}"
+
+
+def _is_short_single_line_bash_command(command: str) -> bool:
+    return (
+        "\n" not in command and "\r" not in command and len(command) <= BASH_COMMAND_PREVIEW_CHARS
+    )
+
+
+def _bash_command_hint(command: str) -> str:
+    first_line = next((line.strip() for line in command.splitlines() if line.strip()), "")
+    normalized = " ".join(first_line.split()) or "[empty command]"
+    if len(normalized) <= BASH_COMMAND_HINT_CHARS:
+        return normalized
+    return normalized[: BASH_COMMAND_HINT_CHARS - 1].rstrip() + "…"
 
 
 def _compact_bash_description(description: str) -> str:
@@ -471,7 +496,7 @@ def _compact_bash_command(command: str) -> str:
             None,
         )
         if meaningful_line is None:
-            return command
+            return f"[empty command: {len(lines)} lines]"
         first_index, first_line = meaningful_line
         preview = _truncate_bash_preview(first_line)
         heredoc = _HEREDOC_PATTERN.search(first_line)
@@ -488,8 +513,7 @@ def _compact_bash_command(command: str) -> str:
             script_lines = max(0, closing_index - first_index - 1)
             noun = "line" if script_lines == 1 else "lines"
             return f"{preview} … [inline script: {script_lines} {noun}]"
-        noun = "line" if len(lines) == 1 else "lines"
-        return f"{preview} … [command: {len(lines)} {noun}]"
+        return f"{preview} … [command: {len(lines)} lines]"
 
     if len(command) <= BASH_COMMAND_PREVIEW_CHARS:
         return command
