@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 from rich.console import Console
 from rich.panel import Panel
+from rich.text import Text
 from textual import events
 from textual.color import Color
 from textual.containers import Container, VerticalScroll
@@ -1563,6 +1564,27 @@ def test_tool_batch_colors_each_description_by_its_own_status() -> None:
     assert "38;2;255;79;79;48;2;0;0;0mFailed action" in output
     assert "38;2;138;122;82;48;2;0;0;0mRunning action" in output
     assert "38;2;203;213;225;48;2;0;0;0m · $ false" in output
+
+
+def test_tool_batch_body_stays_one_selectable_text_renderable() -> None:
+    item = ChatItem(
+        role="tool",
+        text="batch",
+        tool_batch_items=[
+            ChatItem(role="tool", text="→ First action · $ true"),
+            ChatItem(role="tool", text="→ Second action · $ false"),
+        ],
+    )
+
+    body = _transcript_plain_body_text(
+        item,
+        text=item.text,
+        body_style=TAU_DARK_THEME.role_styles["tool"].body,
+        theme=TAU_DARK_THEME,
+    )
+
+    assert isinstance(body, Text)
+    assert body.plain == "→ First action · $ true\n→ Second action · $ false"
 
 
 def test_assistant_chat_items_render_markdown_lists() -> None:

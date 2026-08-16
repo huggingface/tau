@@ -1734,11 +1734,12 @@ def _render_transcript_tool_batch(
     body_style: str,
     theme: TuiTheme,
     expanded: bool,
-) -> RenderableType:
-    rendered: list[RenderableType] = []
+) -> Text:
+    """Render a batch as one selectable Text value with per-row style spans."""
+    rendered = Text(style=body_style, overflow="fold", no_wrap=False)
     for index, row in enumerate(item.tool_batch_items or []):
-        if index and expanded:
-            rendered.append(Text("", style=body_style))
+        if index:
+            rendered.append("\n\n" if expanded else "\n", style=body_style)
         rendered.append(
             _styled_tool_invocation(
                 _tool_batch_row_invocation(row, expanded=expanded),
@@ -1747,26 +1748,11 @@ def _render_transcript_tool_batch(
             )
         )
         if expanded and row.grouped_tool_calls is None and row.tool_result_text:
-            rendered.append(Text("", style=body_style))
-            result_body = _render_patch_body(
-                row.tool_result_text,
-                body_style=body_style,
-                syntax_theme=theme.syntax_theme,
-                code_block_background=theme.markdown_code_block_background,
-            )
-            rendered.append(
-                result_body
-                if result_body is not None
-                else Text(
-                    row.tool_result_text,
-                    style=body_style,
-                    overflow="fold",
-                    no_wrap=False,
-                )
-            )
+            rendered.append("\n\n", style=body_style)
+            rendered.append(row.tool_result_text, style=body_style)
         elif row.update_text and not row.tool_result_text:
-            rendered.append(Text(f"… {row.update_text}", style=body_style))
-    return Group(*rendered)
+            rendered.append(f"\n… {row.update_text}", style=body_style)
+    return rendered
 
 
 def _render_tool_chat_body(

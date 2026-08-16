@@ -23,8 +23,8 @@ collapse into one read row inside the larger batch.
 
 `Ctrl+O` expands every row using its tool-specific behavior. Bash rows recover
 the exact command and show their result. Grouped reads expand to individual read
-invocations without repeating file-content previews. Patch results retain their
-existing diff rendering.
+invocations without repeating file-content previews. Batch invocations and
+results remain one selectable plain-text surface.
 
 Batches never cross assistant text, thinking blocks, model continuations, skill
 loads, or separate assistant responses. Calls with custom call-card rendering
@@ -38,9 +38,11 @@ batch identifier to each contiguous tool-call run in an assistant message.
 underlying tool-call ID continues to map to the parent for O(1) live updates. A
 child row may itself own a grouped-read call list.
 
-The transcript widget renders child rows inside one message and computes status
-color per child rather than assigning one color to the container. Expansion and
-selection text are also derived from the structured children. Provider payloads,
+The transcript widget renders child rows as one Rich `Text` value with status
+spans per child rather than a `Group` of separate renderables. This preserves
+Textual's drag selection across lines while retaining independent colors.
+Expansion and selection text are derived from the same structured children.
+Provider payloads,
 agent events, execution order, canonical messages, and session JSONL are
 unchanged.
 

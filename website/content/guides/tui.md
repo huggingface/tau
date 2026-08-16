@@ -121,9 +121,10 @@ tool row.
 
 Adjacent built-in tool calls from one model response share one transcript block,
 with one compact line per logical action. Each line retains its own status color,
-and adjacent reads remain clustered as one line inside the block. Batches never
-cross assistant text, model continuations, or separate responses; custom rendered
-call cards and skill loads remain separate.
+and adjacent reads remain clustered as one line inside the block. The complete
+block remains one selectable text surface, including across line boundaries.
+Batches never cross assistant text, model continuations, or separate responses;
+custom rendered call cards and skill loads remain separate.
 
 Tool results (like long `read` or `bash` output) render as compact previews so
 the transcript stays readable. Tau requires the model to give each `bash` call a
