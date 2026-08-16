@@ -13,7 +13,9 @@ message. Each logical action remains one line:
 ```text
 Doing thing one
 Doing thing two
-Read 5 files · a.py, b.py, c.py, +2
+Read 2 files
+  - a.py
+  - b.py
 Doing something else
 ```
 

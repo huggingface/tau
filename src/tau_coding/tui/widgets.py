@@ -1815,7 +1815,8 @@ def _render_tool_invocation(
 
 
 _TOOL_GROUP_INVOCATION_PATTERN = re.compile(
-    r"^→ ((?:Reading|Read) \d+ files(?: · (?:\d+/\d+ complete|\d+ failed))?) · (.+)$"
+    r"^→ ((?:Reading|Read) \d+ files(?: · (?:\d+/\d+ complete|\d+ failed))?)"
+    r"(?: · (.+))?$"
 )
 
 
@@ -1848,7 +1849,8 @@ def _split_tool_invocation_sections(
         return "→ ", text[2:], ""
     group = _TOOL_GROUP_INVOCATION_PATTERN.fullmatch(text)
     if group is not None:
-        return "→ ", group.group(1), f" · {group.group(2)}"
+        details = f" · {group.group(2)}" if group.group(2) is not None else ""
+        return "→ ", group.group(1), details
     if text.startswith("→ "):
         rest = text[2:]
         description, separator, command = rest.rpartition(" · $ ")

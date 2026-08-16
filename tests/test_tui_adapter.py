@@ -191,7 +191,7 @@ def test_tui_state_groups_adjacent_reads_from_one_assistant_message() -> None:
 
     assert len(state.items) == 1
     item = state.items[0]
-    assert item.text == "→ Read 2 files · a.py, b.py"
+    assert item.text == "→ Read 2 files\n  - a.py\n  - b.py"
     assert item.grouped_tool_calls is not None
     assert [member.tool_call_id for member in item.grouped_tool_calls] == ["call-1", "call-2"]
     assert state.find_tool_item("call-1") is item
@@ -241,7 +241,9 @@ def test_tui_state_batches_mixed_tools_and_clusters_adjacent_reads() -> None:
     assert item.text.splitlines() == [
         "→ Doing thing one",
         "→ Doing thing two",
-        "→ Read 2 files · a.py, b.py",
+        "→ Read 2 files",
+        "  - a.py",
+        "  - b.py",
         "→ Doing thing three",
     ]
     assert all(
@@ -327,7 +329,7 @@ def test_tui_state_marks_group_failed_when_any_read_fails() -> None:
     )
 
     item = state.items[0]
-    assert item.text == "→ Read 2 files · 1 failed · a.py, missing.py"
+    assert item.text == "→ Read 2 files · 1 failed\n  - a.py\n  - missing.py"
     assert item.tool_result_text is not None
     assert item.tool_result_text.startswith("✗ read group")
 

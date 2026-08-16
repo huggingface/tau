@@ -34,8 +34,6 @@ TERMINAL_COMMAND_OUTPUT_PREVIEW_LINES = 120
 # quick reads/edits never flash a "(0s)".
 TOOL_TIMER_MIN_SECONDS = 1.0
 BASH_DESCRIPTION_PREVIEW_CHARS = 56
-TOOL_GROUP_PREVIEW_ITEMS = 3
-TOOL_GROUP_PATH_CHARS = 32
 BATCHABLE_TOOL_NAMES = frozenset({"bash", "edit", "read", "write"})
 
 
@@ -381,18 +379,15 @@ class TuiState:
             _string_argument(member.tool_arguments, "path") or "[unknown path]"
             for member in members
         ]
-        labels = ", ".join(
-            _compact_tool_group_path(path) for path in paths[:TOOL_GROUP_PREVIEW_ITEMS]
-        )
-        if len(paths) > TOOL_GROUP_PREVIEW_ITEMS:
-            labels += f", +{len(paths) - TOOL_GROUP_PREVIEW_ITEMS}"
+        path_list = "\n".join(f"  - {path}" for path in paths)
         all_complete = len(completed) == len(members)
         if not all_complete:
             progress = f" · {len(completed)}/{len(members)} complete" if completed else ""
-            item.text = f"→ Reading {len(members)} files{progress} · {labels}"
+            headline = f"→ Reading {len(members)} files{progress}"
         else:
             failure = f" · {len(failures)} failed" if failures else ""
-            item.text = f"→ Read {len(members)} files{failure} · {labels}"
+            headline = f"→ Read {len(members)} files{failure}"
+        item.text = f"{headline}\n{path_list}"
         if completed:
             status = "✗" if failures else ("✓" if all_complete else "…")
             item.tool_result_text = f"{status} read group"
@@ -742,13 +737,6 @@ def _fallback_tool_call_invocation(tool_call: ToolCall) -> str:
 def _string_argument(arguments: dict[str, JSONValue], key: str) -> str | None:
     value = arguments.get(key)
     return value if isinstance(value, str) else None
-
-
-def _compact_tool_group_path(path: str) -> str:
-    normalized = " ".join(path.split())
-    if len(normalized) <= TOOL_GROUP_PATH_CHARS:
-        return normalized
-    return "…" + normalized[-(TOOL_GROUP_PATH_CHARS - 1) :]
 
 
 def _normalized_path(path: str | Path) -> Path:

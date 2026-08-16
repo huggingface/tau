@@ -1500,7 +1500,7 @@ def test_tool_chat_items_color_description_not_details_or_results() -> None:
 def test_grouped_read_details_stay_neutral() -> None:
     green = "38;2;156;255;177;48;2;0;0;0m"
     body = "38;2;203;213;225;48;2;0;0;0m"
-    text = "→ Read 5 files · a.py, b.py, c.py, +2"
+    text = "→ Read 5 files\n  - a.py\n  - b.py\n  - c.py\n  - d.py\n  - e.py"
     console = Console(record=True, width=100, color_system="truecolor")
     item = ChatItem(role="tool", text=text, tool_result_text="✓ tool")
     console.print(
@@ -1514,8 +1514,9 @@ def test_grouped_read_details_stay_neutral() -> None:
     output = console.export_text(styles=True)
 
     assert f"{green}Read 5 files" in output
-    assert f"{body} · a.py, b.py, c.py, +2" in output
-    assert f"{green} · a.py, b.py, c.py, +2" not in output
+    assert f"{body}  - a.py" in output
+    assert f"{body}  - e.py" in output
+    assert f"{green}  - a.py" not in output
 
 
 def test_bash_description_without_command_keeps_full_status_color() -> None:
@@ -1588,7 +1589,7 @@ def test_tool_batch_colors_each_description_by_its_own_status() -> None:
 def test_partially_completed_read_group_keeps_running_color() -> None:
     item = ChatItem(
         role="tool",
-        text="→ Reading 2 files · 1/2 complete · a.py, b.py",
+        text="→ Reading 2 files · 1/2 complete\n  - a.py\n  - b.py",
         tool_name="read",
         tool_result_text="… read group",
         started_at=1.0,
@@ -1857,7 +1858,7 @@ async def test_batched_reads_share_one_live_transcript_row() -> None:
 
         tool_widgets = [w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool"]
         assert len(tool_widgets) == 1
-        assert tool_widgets[0].selection_text == "→ Reading 2 files · a.py, b.py"
+        assert tool_widgets[0].selection_text == "→ Reading 2 files\n  - a.py\n  - b.py"
 
         await stream(
             ToolExecutionEndEvent(
@@ -1868,7 +1869,9 @@ async def test_batched_reads_share_one_live_transcript_row() -> None:
             )
         )
         await pilot.pause()
-        assert tool_widgets[0].selection_text == "→ Reading 2 files · 1/2 complete · a.py, b.py"
+        assert tool_widgets[0].selection_text == (
+            "→ Reading 2 files · 1/2 complete\n  - a.py\n  - b.py"
+        )
 
         await stream(
             ToolExecutionEndEvent(
@@ -1879,7 +1882,7 @@ async def test_batched_reads_share_one_live_transcript_row() -> None:
             )
         )
         await pilot.pause()
-        assert tool_widgets[0].selection_text == "→ Read 2 files · a.py, b.py"
+        assert tool_widgets[0].selection_text == "→ Read 2 files\n  - a.py\n  - b.py"
 
         await pilot.press("ctrl+o")
         await pilot.pause()
@@ -1921,7 +1924,7 @@ async def test_mixed_tool_batch_uses_one_widget_and_expands_each_row() -> None:
         widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool")
         assert len([w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool"]) == 1
         assert widget.selection_text == (
-            "→ Doing thing one\n→ Read 2 files · a.py, b.py\n→ Doing thing two"
+            "→ Doing thing one\n→ Read 2 files\n  - a.py\n  - b.py\n→ Doing thing two"
         )
 
         await pilot.press("ctrl+o")

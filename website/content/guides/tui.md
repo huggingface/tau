@@ -121,8 +121,9 @@ tool row.
 
 Adjacent built-in tool calls from one model response share one transcript block,
 with one compact line per logical action. Each line retains its own status color,
-and adjacent reads remain clustered as one line inside the block. The complete
-block remains one selectable text surface, including across line boundaries.
+and adjacent reads remain clustered under one headline with every file path
+listed beneath it. The complete block remains one selectable text surface,
+including across line boundaries.
 Batches never cross assistant text, model continuations, or separate responses;
 extension tools, custom rendered call cards, and skill loads remain separate.
 
