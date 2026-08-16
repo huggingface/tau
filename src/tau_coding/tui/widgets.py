@@ -124,7 +124,6 @@ class SessionSidebar(Vertical):
         self._summary_fingerprint = fingerprint
         self.query_one("#sidebar-content", Static).update(
             render_session_sidebar(session, theme=theme),
-            layout=False,
         )
         self.query_one("#sidebar-brand", Static).update(
             _sidebar_brand(theme=theme),

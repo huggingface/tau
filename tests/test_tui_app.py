@@ -127,6 +127,7 @@ from tau_coding.tui.widgets import (
     TRANSCRIPT_WINDOW_OVERSCAN_ITEMS,
     CompactSessionInfo,
     LeftAlignedMarkdownHeading,
+    SessionSidebar,
     StreamingTranscriptMessageWidget,
     TauMarkdownBlock,
     ThemedMarkdownWidget,
@@ -2771,6 +2772,41 @@ async def test_tui_sidebar_scrolls_when_all_skills_overflow() -> None:
         scroll.scroll_end(animate=False, immediate=True)
         await pilot.pause()
         assert scroll.scroll_y == scroll.max_scroll_y
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_relayouts_when_reload_changes_resource_count() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        sidebar = app.query_one("#sidebar", SessionSidebar)
+        scroll = app.query_one("#sidebar-scroll", VerticalScroll)
+        await pilot.pause()
+        initial_virtual_height = scroll.virtual_size.height
+        assert scroll.max_scroll_y == 0
+
+        session.skills = tuple(
+            Skill(
+                name=f"skill-{index}",
+                path=session.cwd / ".tau" / "skills" / f"skill-{index}" / "SKILL.md",
+                content="Skill",
+            )
+            for index in range(1, 31)
+        )
+        sidebar.update_from_session(session)
+        await pilot.pause()
+
+        expanded_virtual_height = scroll.virtual_size.height
+        assert expanded_virtual_height > initial_virtual_height
+        assert scroll.max_scroll_y > 0
+
+        session.skills = session.skills[:1]
+        sidebar.update_from_session(session)
+        await pilot.pause()
+
+        assert scroll.virtual_size.height < expanded_virtual_height
+        assert scroll.max_scroll_y == 0
 
 
 @pytest.mark.anyio
