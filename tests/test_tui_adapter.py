@@ -226,6 +226,40 @@ def test_tui_state_clusters_edits_and_lists_every_path() -> None:
     assert "→ edit b.py\n\n✓ edit\nchanged b" in expanded
 
 
+def test_tui_state_clusters_writes_and_lists_every_path() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(
+                        id="write-1",
+                        name="write",
+                        arguments={"path": "a.py", "content": "one"},
+                    ),
+                    ToolCall(
+                        id="write-2",
+                        name="write",
+                        arguments={"path": "b.py", "content": "two"},
+                    ),
+                ]
+            ),
+            ToolResultMessage(tool_call_id="write-1", tool_name="write", content="wrote a"),
+            ToolResultMessage(tool_call_id="write-2", tool_name="write", content="wrote b"),
+        ]
+    )
+
+    assert len(state.items) == 1
+    item = state.items[0]
+    assert item.text == "→ Written 2 files\n  - a.py\n  - b.py"
+    assert item.grouped_tool_calls is not None
+    assert item.tool_result_text == "✓ write group"
+    expanded = state.resolve_tool_invocation(item, expanded=True)
+    assert expanded is not None
+    assert "→ write a.py\n\n✓ write\nwrote a" in expanded
+    assert "→ write b.py\n\n✓ write\nwrote b" in expanded
+
+
 def test_tui_state_batches_mixed_tools_and_clusters_adjacent_reads() -> None:
     state = TuiState()
     state.load_messages(

@@ -40,6 +40,7 @@ from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.tui.autocomplete import CompletionState
 from tau_coding.tui.config import TAU_DARK_THEME, TuiRoleStyle, TuiTheme
 from tau_coding.tui.state import (
+    RESULTFUL_FILE_GROUP_NAMES,
     TOOL_TIMER_MIN_SECONDS,
     ChatItem,
     TuiState,
@@ -1705,10 +1706,14 @@ def _tool_batch_row_invocation(row: ChatItem, *, expanded: bool) -> str:
             blocks = []
             for member in row.grouped_tool_calls:
                 block = member.text
-                if row.tool_name == "edit" and member.tool_result_text is not None:
+                if (
+                    row.tool_name in RESULTFUL_FILE_GROUP_NAMES
+                    and member.tool_result_text is not None
+                ):
                     block = f"{block}\n\n{member.tool_result_text}"
                 blocks.append(block)
-            return ("\n\n" if row.tool_name == "edit" else "\n").join(blocks)
+            separator = "\n\n" if row.tool_name in RESULTFUL_FILE_GROUP_NAMES else "\n"
+            return separator.join(blocks)
         return row.text
     if expanded and row.tool_name == "bash":
         exact_command = format_tool_call_invocation(
@@ -1820,7 +1825,7 @@ def _render_tool_invocation(
 
 
 _TOOL_GROUP_INVOCATION_PATTERN = re.compile(
-    r"^→ ((?:Reading|Read|Editing|Edited) \d+ files"
+    r"^→ ((?:Reading|Read|Editing|Edited|Writing|Written) \d+ files"
     r"(?: · (?:\d+/\d+ complete|\d+ failed))?)(?: · (.+))?$"
 )
 

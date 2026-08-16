@@ -1599,6 +1599,27 @@ def test_grouped_read_details_stay_neutral() -> None:
     assert f"{green}  - a.py" not in output
 
 
+def test_grouped_write_paths_stay_neutral() -> None:
+    green = "38;2;156;255;177;48;2;0;0;0m"
+    body = "38;2;203;213;225;48;2;0;0;0m"
+    text = "→ Written 2 files\n  - a.py\n  - b.py"
+    console = Console(record=True, width=100, color_system="truecolor")
+    item = ChatItem(role="tool", text=text, tool_name="write", tool_result_text="✓ write group")
+    console.print(
+        _transcript_plain_body_text(
+            item,
+            text=text,
+            body_style=TAU_DARK_THEME.role_styles["tool"].body,
+            theme=TAU_DARK_THEME,
+        )
+    )
+    output = console.export_text(styles=True)
+
+    assert f"{green}Written 2 files" in output
+    assert f"{body}  - a.py" in output
+    assert f"{green}  - a.py" not in output
+
+
 def test_bash_description_without_command_keeps_full_status_color() -> None:
     command = "echo " + "x" * 120
     item = ChatItem(

@@ -34,6 +34,8 @@ TERMINAL_COMMAND_OUTPUT_PREVIEW_LINES = 120
 # quick reads/edits never flash a "(0s)".
 TOOL_TIMER_MIN_SECONDS = 1.0
 BATCHABLE_TOOL_NAMES = frozenset({"bash", "edit", "read", "write"})
+GROUPABLE_FILE_TOOL_NAMES = frozenset({"edit", "read", "write"})
+RESULTFUL_FILE_GROUP_NAMES = frozenset({"edit", "write"})
 
 
 @dataclass(slots=True)
@@ -175,10 +177,13 @@ class TuiState:
                 if self.tool_call_renderer is not None:
                     rendered_line = self.tool_call_renderer(member.tool_name, member.tool_arguments)
                 block = rendered_line if rendered_line is not None else member.text
-                if item.tool_name == "edit" and member.tool_result_text is not None:
+                if (
+                    item.tool_name in RESULTFUL_FILE_GROUP_NAMES
+                    and member.tool_result_text is not None
+                ):
                     block = f"{block}\n\n{member.tool_result_text}"
                 blocks.append(block)
-            separator = "\n\n" if item.tool_name == "edit" else "\n"
+            separator = "\n\n" if item.tool_name in RESULTFUL_FILE_GROUP_NAMES else "\n"
             return separator.join(blocks)
         line: str | None = None
         if item.tool_name is not None and self.tool_call_renderer is not None:
@@ -284,7 +289,7 @@ class TuiState:
     def _append_batched_tool_call(self, item: ChatItem, tool_call: ToolCall) -> None:
         if (
             item.tool_batch_items is None
-            and item.tool_name in {"edit", "read"}
+            and item.tool_name in GROUPABLE_FILE_TOOL_NAMES
             and tool_call.name == item.tool_name
         ):
             self._append_grouped_file_call(item, tool_call)
@@ -309,7 +314,7 @@ class TuiState:
             for call_id in self._tool_call_ids(first):
                 self._batched_items_by_call_id[call_id] = first
         last = item.tool_batch_items[-1]
-        if last.tool_name in {"edit", "read"} and tool_call.name == last.tool_name:
+        if last.tool_name in GROUPABLE_FILE_TOOL_NAMES and tool_call.name == last.tool_name:
             self._append_grouped_file_call(last, tool_call)
             row = last
         else:
@@ -388,15 +393,15 @@ class TuiState:
         ]
         path_list = "\n".join(f"  - {path}" for path in paths)
         all_complete = len(completed) == len(members)
-        action = "edit" if item.tool_name == "edit" else "read"
+        action = item.tool_name if item.tool_name in GROUPABLE_FILE_TOOL_NAMES else "read"
+        running_verb = {"edit": "Editing", "read": "Reading", "write": "Writing"}[action]
+        completed_verb = {"edit": "Edited", "read": "Read", "write": "Written"}[action]
         if not all_complete:
             progress = f" · {len(completed)}/{len(members)} complete" if completed else ""
-            verb = "Editing" if action == "edit" else "Reading"
-            headline = f"→ {verb} {len(members)} files{progress}"
+            headline = f"→ {running_verb} {len(members)} files{progress}"
         else:
             failure = f" · {len(failures)} failed" if failures else ""
-            verb = "Edited" if action == "edit" else "Read"
-            headline = f"→ {verb} {len(members)} files{failure}"
+            headline = f"→ {completed_verb} {len(members)} files{failure}"
         item.text = f"{headline}\n{path_list}"
         if completed:
             status = "✗" if failures else ("✓" if all_complete else "…")

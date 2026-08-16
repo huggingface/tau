@@ -121,9 +121,10 @@ tool row.
 
 Adjacent built-in tool calls from one model response share one transcript block,
 with one compact line per logical action. Each line retains its own status color,
-and adjacent reads or edits remain clustered under one headline with every file
-path listed beneath it. Expanded edit groups retain each invocation and result;
-expanded read groups omit repeated file contents. The complete block remains one selectable text surface,
+and adjacent reads, edits, or writes remain clustered under one headline with
+every file path listed beneath it. Expanded edit and write groups retain each
+invocation and result; expanded read groups omit repeated file contents. The
+complete block remains one selectable text surface,
 including across line boundaries.
 Batches never cross assistant text, model continuations, or separate responses;
 extension tools, custom rendered call cards, and skill loads remain separate.
