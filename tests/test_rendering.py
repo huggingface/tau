@@ -83,6 +83,29 @@ def test_transcript_renderer_streams_text_and_tool_events(
     assert "done" in captured.err
 
 
+def test_transcript_renderer_keeps_full_bash_command(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    renderer = TranscriptRenderer()
+    command = "git diff --check && git commit -m 'Finish work'"
+
+    renderer.render(
+        ToolExecutionStartEvent(
+            tool_call_id="call-1",
+            tool_name="bash",
+            args={
+                "command": command,
+                "description": "Validating and committing changes",
+                "timeout": 120,
+            },
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert f"$ {command} (timeout 120s)" in captured.err
+    assert "Validating and committing changes" not in captured.err
+
+
 def test_transcript_renderer_uses_custom_message_renderer(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

@@ -343,6 +343,7 @@ class TranscriptMessageWidget(Horizontal):
     ) -> None:
         self.item = item
         self._custom_markup = custom_markup if item.role == "custom" else None
+        self._show_tool_results = show_tool_results
         self._invocation = invocation if item.role == "tool" else None
         self._result_markup = result_markup if item.role == "tool" else None
         self.selection_text = transcript_item_selection_text(
@@ -402,6 +403,7 @@ class TranscriptMessageWidget(Horizontal):
                     text=self.selection_text,
                     body_style=self._role_style.body,
                     theme=self._theme,
+                    show_tool_results=self._show_tool_results,
                     invocation=self._invocation,
                     result_markup=self._result_markup,
                 ),
@@ -443,6 +445,7 @@ class TranscriptMessageWidget(Horizontal):
         """
         if self.item.role == "custom" or not _use_plain_transcript_body(self.item):
             return False
+        self._show_tool_results = show_tool_results
         self._invocation = invocation if self.item.role == "tool" else None
         self._result_markup = result_markup if self.item.role == "tool" else None
         next_role_style = _chat_item_role_style(self.item, self._theme)
@@ -484,6 +487,7 @@ class TranscriptMessageWidget(Horizontal):
                 text=self.selection_text,
                 body_style=self._role_style.body,
                 theme=self._theme,
+                show_tool_results=show_tool_results,
                 invocation=self._invocation,
                 result_markup=self._result_markup,
             )
@@ -911,7 +915,7 @@ class TranscriptView(VerticalScroll):
                     if item.role == "custom"
                     else None
                 ),
-                invocation=state.resolve_tool_invocation(item),
+                invocation=state.resolve_tool_invocation(item, expanded=expanded),
                 result_markup=state.resolve_tool_result(item, expanded=expanded),
             )
             self._item_widgets[id(item)] = widget
@@ -1026,7 +1030,7 @@ class TranscriptView(VerticalScroll):
                 item,
                 theme=theme,
                 show_tool_results=expanded,
-                invocation=state.resolve_tool_invocation(item),
+                invocation=state.resolve_tool_invocation(item, expanded=expanded),
                 result_markup=state.resolve_tool_result(item, expanded=expanded),
             )
 
@@ -1368,6 +1372,7 @@ def _transcript_plain_body_text(
     text: str,
     body_style: str,
     theme: TuiTheme,
+    show_tool_results: bool = False,
     invocation: str | None = None,
     result_markup: str | None = None,
 ) -> RenderableType:
@@ -1375,26 +1380,25 @@ def _transcript_plain_body_text(
     if item.role != "tool":
         return Text(text, style=body_style, overflow="fold", no_wrap=False)
 
+    invocation_text = _render_transcript_tool_invocation(
+        invocation if invocation else item.text,
+        body_style=body_style,
+        accent_style=_tool_accent_style(item, theme=theme),
+    )
     if result_markup is not None:
         # The tool's `render_result` markup replaces the generic result block;
         # the invocation line keeps its usual status-accented rendering.
-        invocation_text = _render_transcript_tool_invocation(
-            invocation if invocation else item.text,
-            body_style=body_style,
-            accent_style=_tool_accent_style(item, theme=theme),
-        )
         markup_text = _custom_markup_to_text(result_markup)
         markup_text.overflow = "fold"
         markup_text.no_wrap = False
         return Group(invocation_text, markup_text)
 
-    invocation_line, separator, result_text = text.partition("\n\n")
-    invocation_text = _render_transcript_tool_invocation(
-        invocation_line,
-        body_style=body_style,
-        accent_style=_tool_accent_style(item, theme=theme),
-    )
-    if not separator:
+    result_text: str | None = None
+    if show_tool_results and item.tool_result_text:
+        result_text = item.tool_result_text
+    elif item.update_text and not item.tool_result_text:
+        result_text = f"… {item.update_text}"
+    if result_text is None:
         return invocation_text
 
     patch_body = _render_patch_body(
@@ -1408,7 +1412,7 @@ def _transcript_plain_body_text(
 
     rendered = Text(style=body_style, overflow="fold", no_wrap=False)
     rendered.append(invocation_text)
-    rendered.append(separator)
+    rendered.append("\n\n")
     rendered.append(result_text, style=body_style)
     return rendered
 
