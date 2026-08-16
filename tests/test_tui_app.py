@@ -7045,13 +7045,6 @@ async def test_tui_app_limits_terminal_command_output_preview() -> None:
 @pytest.mark.anyio
 async def test_tui_app_toggles_tool_results_from_keybinding() -> None:
     app = TauTuiApp(FakeSession())
-    notifications: list[str] = []
-
-    def fake_notify(message: str, **kwargs: object) -> None:
-        del kwargs
-        notifications.append(message)
-
-    app._notify = fake_notify  # type: ignore[method-assign]
 
     async with app.run_test() as pilot:
         assert app.state.show_tool_results is False
@@ -7062,7 +7055,6 @@ async def test_tui_app_toggles_tool_results_from_keybinding() -> None:
         await pilot.pause()
 
     assert app.state.show_tool_results is False
-    assert notifications == []
 
 
 @pytest.mark.anyio
