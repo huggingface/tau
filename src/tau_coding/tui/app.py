@@ -18,7 +18,7 @@ from rich.console import Console, Group
 from rich.style import Style
 from rich.text import Text
 from textual import events, on
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SuspendNotSupported
 from textual.binding import Binding, BindingsMap
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
@@ -149,6 +149,7 @@ from tau_coding.tui.config import (
     load_tui_settings,
     save_tui_settings,
 )
+from tau_coding.tui.external_editor import ExternalEditorError, edit_prompt_in_external_editor
 from tau_coding.tui.file_drop import normalize_dropped_paths
 from tau_coding.tui.project_trust import ProjectTrustScreen, prompt_project_trust
 from tau_coding.tui.state import TuiState, format_terminal_command_result_block
@@ -463,6 +464,8 @@ class CompletionActionTarget(Protocol):
 
     def action_edit_queued_message(self) -> bool: ...
 
+    async def action_external_editor(self) -> None: ...
+
     async def action_submit_prompt(self) -> None: ...
 
     async def action_submit_follow_up(self) -> None: ...
@@ -622,6 +625,10 @@ class PromptInput(TextArea):
         """Insert a newline in the prompt."""
         self.insert("\n")
 
+    async def action_external_editor(self) -> None:
+        """Edit the current prompt through the app's external editor action."""
+        await self._completion_target().action_external_editor()
+
     async def action_quit(self) -> None:
         """Quit the app through the app-level action."""
         await self.app.action_quit()
@@ -728,7 +735,11 @@ class PromptInput(TextArea):
         bindings), so there is no interceptor splice here.
         """
         keybindings = self.tui_keybindings
-        if event.key == keybindings.queue_follow_up:
+        if event.key == keybindings.external_editor:
+            event.stop()
+            event.prevent_default()
+            await self.action_external_editor()
+        elif event.key == keybindings.queue_follow_up:
             event.stop()
             event.prevent_default()
             await self._completion_target().action_submit_follow_up()
@@ -3867,6 +3878,25 @@ class TauTuiApp(App[None]):
         self._completion_state = self._build_completion_state(event.text_area.text)
         self._refresh_completions()
 
+    async def action_external_editor(self) -> None:
+        """Suspend Tau while an external editor modifies the current prompt."""
+        prompt = self.query_one("#prompt", PromptInput)
+        original = prompt.text_for_submission()
+        try:
+            with self.suspend():
+                edited = await asyncio.to_thread(edit_prompt_in_external_editor, original)
+        except (ExternalEditorError, SuspendNotSupported) as exc:
+            self._notify(str(exc), severity="warning")
+            prompt.focus()
+            return
+
+        prompt.text = edited
+        prompt._clear_pending_paste()
+        prompt.move_cursor(_text_end_location(edited))
+        self._completion_state = self._build_completion_state(edited)
+        self._refresh_completions()
+        prompt.focus()
+
     async def action_submit_prompt(self) -> None:
         """Submit the current prompt text or slash command."""
         await self._submit_prompt_from_editor(streaming_behavior="steer")
@@ -6613,6 +6643,7 @@ def _app_bindings(keybindings: TuiKeybindings) -> list[Binding]:
         ),
         Binding(keybindings.toggle_tool_results, "toggle_tool_results", "Tool results"),
         Binding(keybindings.toggle_thinking, "toggle_thinking", "Thinking tokens"),
+        Binding(keybindings.external_editor, "external_editor", "External editor", show=False),
         Binding(keybindings.copy_message, "clear_prompt", "Clear input"),
         Binding(keybindings.quit, "quit", "Quit"),
     ]
@@ -6696,6 +6727,7 @@ def _hidden_prompt_bindings(
         (keybindings.model_cycle, "cycle_model"),
         (keybindings.toggle_tool_results, "toggle_tool_results"),
         (keybindings.toggle_thinking, "toggle_thinking"),
+        (keybindings.external_editor, "external_editor"),
         (keybindings.copy_message, "clear_prompt"),
         (keybindings.accept_completion, "accept_completion"),
         (keybindings.completion_next, "completion_next"),

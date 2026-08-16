@@ -1,6 +1,7 @@
 import asyncio
 import re
 from collections.abc import AsyncIterator
+from contextlib import nullcontext
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
@@ -6145,6 +6146,58 @@ async def test_tui_app_uses_configured_command_palette_keybinding() -> None:
         assert prompt.value == "/"
         assert app._completion_state.items
         assert any(item.display == "/session" for item in app._completion_state.items)
+
+
+@pytest.mark.anyio
+async def test_tui_app_opens_current_prompt_in_external_editor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[str] = []
+
+    def fake_editor(text: str) -> str:
+        observed.append(text)
+        return "edited in external editor"
+
+    monkeypatch.setattr(tui_app, "edit_prompt_in_external_editor", fake_editor)
+    app = TauTuiApp(FakeSession())
+    app.suspend = nullcontext  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "current prompt"
+
+        await pilot.press("alt+e")
+        await pilot.pause()
+
+        assert observed == ["current prompt"]
+        assert prompt.value == "edited in external editor"
+        assert prompt.cursor_position == len(prompt.value)
+        assert prompt.has_focus
+
+
+@pytest.mark.anyio
+async def test_tui_app_uses_configured_external_editor_keybinding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        tui_app,
+        "edit_prompt_in_external_editor",
+        lambda text: f"{text} edited",
+    )
+    app = TauTuiApp(
+        FakeSession(),
+        tui_settings=TuiSettings(keybindings=TuiKeybindings(external_editor="f8")),
+    )
+    app.suspend = nullcontext  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "custom key"
+
+        await pilot.press("f8")
+        await pilot.pause()
+
+        assert prompt.value == "custom key edited"
 
 
 @pytest.mark.anyio
