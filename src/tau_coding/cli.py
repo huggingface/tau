@@ -217,7 +217,7 @@ def main(
     ] = None,
     session: Annotated[
         str | None,
-        typer.Option("--session", help="Resume a session id in TUI mode."),
+        typer.Option("--session", help="Resume a session id in TUI or print mode."),
     ] = None,
     resume: Annotated[
         str | None,
@@ -333,6 +333,8 @@ def main(
 
     if session is not None and new_session:
         raise typer.BadParameter("--session and --new-session cannot be used together")
+    if session is not None and session_id is not None:
+        raise typer.BadParameter("--session and --session-id cannot be used together")
 
     if prompt_option is not None:
         raise typer.BadParameter(
@@ -461,11 +463,14 @@ def main(
             custom_system_prompt,
             resolved_append_system_prompt,
         )
-        ok = (
-            anyio.run(run_openai_print_mode, *print_args)
-            if trust_override is None
-            else anyio.run(run_openai_print_mode, *print_args, trust_override)
-        )
+        if session is not None:
+            ok = anyio.run(run_openai_print_mode, *print_args, trust_override, session)
+        else:
+            ok = (
+                anyio.run(run_openai_print_mode, *print_args)
+                if trust_override is None
+                else anyio.run(run_openai_print_mode, *print_args, trust_override)
+            )
     except (RuntimeError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     if not ok:
@@ -766,13 +771,34 @@ async def run_openai_print_mode(
     custom_system_prompt: str | None = None,
     append_system_prompt: str | None = None,
     trust_override: TrustOverride | None = None,
+    resume_session_id: str | None = None,
 ) -> bool:
-    """Run print mode with the OpenAI-compatible provider configured from the environment."""
+    """Run a new or resumed print-mode turn using the configured provider."""
     settings = load_provider_settings()
     shell_settings = load_shell_settings()
-    selection = resolve_provider_selection(settings, provider_name=provider_name, model=model)
+    manager = session_manager or SessionManager()
+    record = _print_session_record(
+        manager,
+        resume_session_id=resume_session_id,
+        cwd=cwd,
+        settings=settings,
+        provider_name=provider_name,
+        model=model,
+        session_id=session_id,
+    )
+    explicit_selection = provider_name is not None or model is not None
+    selection = resolve_provider_selection(
+        settings,
+        provider_name=provider_name if explicit_selection else record.provider_name,
+        model=model if explicit_selection else record.model,
+    )
     inference_provider = (
-        selection.provider.inference_providers.get(selection.model)
+        record.inference_provider
+        if resume_session_id is not None
+        and record.provider_name == "huggingface"
+        and selection.provider.name == "huggingface"
+        and record.model == selection.model
+        else selection.provider.inference_providers.get(selection.model)
         if isinstance(selection.provider, OpenAICompatibleProviderConfig)
         and selection.provider.name == "huggingface"
         else None
@@ -784,15 +810,6 @@ async def run_openai_print_mode(
         thinking_level=resolve_startup_thinking_level(selection.provider, selection.model),
     )
     try:
-        manager = session_manager or SessionManager()
-        record = _create_print_session(
-            manager,
-            cwd=cwd,
-            model=selection.model,
-            provider_name=selection.provider.name,
-            inference_provider=inference_provider,
-            session_id=session_id,
-        )
         return await run_print_mode(
             prompt=prompt,
             model=selection.model,
@@ -814,9 +831,44 @@ async def run_openai_print_mode(
             append_system_prompt=append_system_prompt,
             trust_override=trust_override,
             trust_default=shell_settings.default_project_trust,
+            startup_model_override=provider_name is not None or model is not None,
         )
     finally:
         await provider.aclose()
+
+
+def _print_session_record(
+    manager: SessionManager,
+    *,
+    resume_session_id: str | None,
+    cwd: Path,
+    settings: ProviderSettings,
+    provider_name: str | None,
+    model: str | None,
+    session_id: str | None,
+) -> CodingSessionRecord:
+    """Resolve a resumed transcript or exclusively create a new one."""
+    if resume_session_id is not None:
+        record = manager.get_session(resume_session_id)
+        if record is None:
+            raise ValueError(f"Unknown session: {resume_session_id}")
+        return record
+
+    selection = resolve_provider_selection(settings, provider_name=provider_name, model=model)
+    inference_provider = (
+        selection.provider.inference_providers.get(selection.model)
+        if isinstance(selection.provider, OpenAICompatibleProviderConfig)
+        and selection.provider.name == "huggingface"
+        else None
+    )
+    return _create_print_session(
+        manager,
+        cwd=cwd,
+        model=selection.model,
+        provider_name=selection.provider.name,
+        inference_provider=inference_provider,
+        session_id=session_id,
+    )
 
 
 def _create_print_session(
@@ -861,6 +913,7 @@ async def run_print_mode(
     append_system_prompt: str | None = None,
     trust_override: TrustOverride | None = None,
     trust_default: TrustDefault = "ask",
+    startup_model_override: bool = False,
 ) -> bool:
     """Run one non-interactive prompt and print streamed events.
 
@@ -890,6 +943,8 @@ async def run_print_mode(
             trust_default=trust_default,
         )
     )
+    if startup_model_override:
+        await session.apply_startup_model_override(model)
     session.extension_runtime.set_ui_bridge(StderrUiBridge())
     for diagnostic in session.resource_diagnostics:
         if diagnostic.kind == "project-trust":

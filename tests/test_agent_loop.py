@@ -316,6 +316,37 @@ async def test_agent_loop_excludes_empty_failed_assistant_from_next_provider_cal
 
 
 @pytest.mark.anyio
+async def test_agent_loop_repairs_malformed_tool_history_before_provider_call() -> None:
+    call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
+    assistant = AssistantMessage(content=[call])
+    late_user = UserMessage(content="continue")
+    orphan = ToolResultMessage(tool_call_id="call-missing", tool_name="bash", content="orphan")
+    recovered = AssistantMessage(content="recovered", model="fake")
+    provider = FakeProvider([[assistant_start(), assistant_done(recovered)]])
+    messages: list[AgentMessage] = [assistant, late_user, orphan]
+
+    await _collect(
+        run_agent_loop(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            messages=messages,
+            tools=[],
+        )
+    )
+
+    replayed = provider.calls[0][2]
+    assert replayed[0] is assistant
+    repair = replayed[1]
+    assert isinstance(repair, ToolResultMessage)
+    assert repair.tool_call_id == "call-1"
+    assert repair.is_error is True
+    assert replayed[2] is late_user
+    assert orphan not in replayed
+    assert orphan in messages
+
+
+@pytest.mark.anyio
 async def test_agent_loop_injects_steering_and_follow_up_messages() -> None:
     call = ToolCall(id="call-1", name="work", arguments={})
 

@@ -118,7 +118,7 @@ from tau_coding.provider_config import (
     upsert_saved_provider,
 )
 from tau_coding.provider_runtime import create_model_provider
-from tau_coding.resources import TauResourcePaths
+from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
 from tau_coding.session import (
     TREE_RUNNING_MESSAGE,
     CodingSession,
@@ -1197,7 +1197,15 @@ class SessionPickerSearchInput(Input):
         self._picker().action_cancel()
 
 
-class PromptTemplatePickerScreen(ModalScreen[str | None]):
+@dataclass(frozen=True, slots=True)
+class PromptTemplatePickerResult:
+    """Action selected from the prompt-template picker."""
+
+    action: Literal["insert", "edit"]
+    template: PromptTemplate
+
+
+class PromptTemplatePickerScreen(ModalScreen[PromptTemplatePickerResult | None]):
     """Searchable picker for loaded prompt templates."""
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
@@ -1205,6 +1213,7 @@ class PromptTemplatePickerScreen(ModalScreen[str | None]):
         Binding("up", "cursor_up", "Up", show=False),
         Binding("down", "cursor_down", "Down", show=False),
         Binding("enter", "select_cursor", "Select", show=False),
+        Binding("ctrl+e", "edit_cursor", "Edit", show=False, priority=True),
     ]
 
     def __init__(self, templates: Sequence[PromptTemplate]) -> None:
@@ -1253,12 +1262,25 @@ class PromptTemplatePickerScreen(ModalScreen[str | None]):
         self.query_one("#prompt-template-picker-list", ListView).action_cursor_down()
 
     def action_select_cursor(self) -> None:
-        picker_list = self.query_one("#prompt-template-picker-list", ListView)
-        if self.visible_templates and picker_list.index is not None:
-            self.dismiss(self.visible_templates[picker_list.index].name)
+        template = self._selected_template()
+        if template is not None:
+            self.dismiss(PromptTemplatePickerResult(action="insert", template=template))
+
+    def action_edit_cursor(self) -> None:
+        """Open the selected template in Tau's prompt editor."""
+        template = self._selected_template()
+        if template is not None:
+            self.dismiss(PromptTemplatePickerResult(action="edit", template=template))
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+    def _selected_template(self) -> PromptTemplate | None:
+        picker_list = self.query_one("#prompt-template-picker-list", ListView)
+        index = picker_list.index
+        if index is None or index >= len(self.visible_templates):
+            return None
+        return self.visible_templates[index]
 
     def _refresh_list(self) -> None:
         picker_list = self.query_one("#prompt-template-picker-list", ListView)
@@ -1274,12 +1296,46 @@ class PromptTemplatePickerScreen(ModalScreen[str | None]):
         )
         picker_list.index = 0 if self.visible_templates else None
         if self.visible_templates:
-            help_text = "Enter selects - Escape closes"
+            help_text = "Enter inserts - Ctrl+E edits - Escape closes"
         elif self.templates:
             help_text = "No matching prompt templates - Escape closes"
         else:
             help_text = "No prompt templates loaded - Escape closes"
         self.query_one("#prompt-template-picker-help", Static).update(help_text)
+
+
+class PromptTemplateEditorScreen(ModalScreen[str | None]):
+    """Edit one prompt-template Markdown file inside the TUI."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("ctrl+s", "save", "Save", show=False, priority=True),
+    ]
+
+    def __init__(self, template: PromptTemplate, source: str) -> None:
+        super().__init__()
+        self.template = template
+        self.source = source
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="prompt-template-editor"):
+            yield Static(f"Edit /{self.template.name}", id="prompt-template-editor-title")
+            yield Static(str(self.template.path), id="prompt-template-editor-path")
+            yield TextArea(self.source, id="prompt-template-editor-input")
+            yield Static(
+                "Ctrl+S saves - Escape returns without saving",
+                id="prompt-template-editor-help",
+            )
+
+    def on_mount(self) -> None:
+        self.query_one("#prompt-template-editor-input", TextArea).focus()
+
+    def action_save(self) -> None:
+        source = self.query_one("#prompt-template-editor-input", TextArea).text
+        self.dismiss(source)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class SessionPickerScreen(ModalScreen[str | None]):
@@ -2918,8 +2974,13 @@ class TauTuiApp(App[None]):
         border: none;
     }
 
-    #sidebar-content {
+    #sidebar-scroll {
         height: 1fr;
+        scrollbar-size-vertical: 1;
+    }
+
+    #sidebar-content {
+        height: auto;
     }
 
     #sidebar-brand {
@@ -3047,6 +3108,7 @@ class TauTuiApp(App[None]):
 
     SessionPickerScreen,
     PromptTemplatePickerScreen,
+    PromptTemplateEditorScreen,
     SkillPickerScreen,
     TreePickerScreen,
     ToolsReferenceScreen,
@@ -3056,6 +3118,7 @@ class TauTuiApp(App[None]):
 
     #session-picker,
     #prompt-template-picker,
+    #prompt-template-editor,
     #skill-picker,
     #tree-picker,
     #tools-reference {
@@ -3070,6 +3133,7 @@ class TauTuiApp(App[None]):
 
     #session-picker-title,
     #prompt-template-picker-title,
+    #prompt-template-editor-title,
     #skill-picker-title,
     #tree-picker-title,
     #tools-reference-title {
@@ -3094,6 +3158,23 @@ class TauTuiApp(App[None]):
         height: 1;
         color: $tau-muted-text;
         text-style: bold;
+    }
+
+    #prompt-template-editor {
+        height: 80%;
+    }
+
+    #prompt-template-editor-path {
+        height: 1;
+        margin-bottom: 1;
+        color: $tau-muted-text;
+    }
+
+    #prompt-template-editor-input {
+        height: 1fr;
+        background: $tau-prompt-background;
+        color: $tau-prompt-text;
+        border: tall $tau-prompt-border;
     }
 
     #session-picker-list,
@@ -3137,6 +3218,7 @@ class TauTuiApp(App[None]):
 
     #session-picker-help,
     #prompt-template-picker-help,
+    #prompt-template-editor-help,
     #skill-picker-help,
     #tree-picker-help,
     #tools-reference-help {
@@ -3441,6 +3523,7 @@ class TauTuiApp(App[None]):
         startup_message: str | None = None,
         startup_notice: str | None = None,
         startup_update_notice: str | None = None,
+        startup_alerts: Sequence[str] = (),
         startup_notices: Sequence[str] = (),
         initial_prompt: str | None = None,
     ) -> None:
@@ -3463,6 +3546,8 @@ class TauTuiApp(App[None]):
         self.state = TuiState(skills=session.skills)
         if startup_update_notice is not None:
             self.state.add_item("status", startup_update_notice, highlight="update")
+        for alert in startup_alerts:
+            self.state.add_item("status", alert, highlight="alert")
         for notice in self.startup_notices:
             self.state.add_item("status", notice)
         if self.tui_settings.theme != self.tui_settings.resolved_theme.name:
@@ -4844,13 +4929,23 @@ class TauTuiApp(App[None]):
             return
         if isinstance(event, ToolExecutionStartEvent):
             await transcript.finish_assistant_message()
-            item = self.state.items[-1]
-            await transcript.append_item(
-                item,
-                theme=theme,
-                show_tool_results=self.state.show_tool_results,
-                invocation=self.state.resolve_tool_invocation(item),
-            )
+            item = self.state.find_tool_item(event.tool_call_id)
+            if item is not None:
+                expanded = self.state.show_tool_results or item.always_show_tool_result
+                updated = await transcript.update_item(
+                    item,
+                    theme=theme,
+                    show_tool_results=expanded,
+                    invocation=self.state.resolve_tool_invocation(item, expanded=expanded),
+                    result_markup=self.state.resolve_tool_result(item, expanded=expanded),
+                )
+                if not updated:
+                    await transcript.append_item(
+                        item,
+                        theme=theme,
+                        show_tool_results=expanded,
+                        invocation=self.state.resolve_tool_invocation(item, expanded=expanded),
+                    )
             self._refresh_chrome()
             return
         if isinstance(event, ToolExecutionUpdateEvent):
@@ -4862,7 +4957,7 @@ class TauTuiApp(App[None]):
                     updated_item,
                     theme=theme,
                     show_tool_results=expanded,
-                    invocation=self.state.resolve_tool_invocation(updated_item),
+                    invocation=self.state.resolve_tool_invocation(updated_item, expanded=expanded),
                     result_markup=self.state.resolve_tool_result(updated_item, expanded=expanded),
                 )
             self._refresh_chrome()
@@ -4893,7 +4988,7 @@ class TauTuiApp(App[None]):
                     updated_item,
                     theme=theme,
                     show_tool_results=expanded,
-                    invocation=self.state.resolve_tool_invocation(updated_item),
+                    invocation=self.state.resolve_tool_invocation(updated_item, expanded=expanded),
                     result_markup=self.state.resolve_tool_result(updated_item, expanded=expanded),
                 )
             self._refresh_chrome()
@@ -4986,6 +5081,9 @@ class TauTuiApp(App[None]):
 
     def action_completion_next(self) -> None:
         """Select the next prompt completion or move down in the prompt."""
+        if isinstance(self.screen, PromptTemplateEditorScreen):
+            self.screen.query_one("#prompt-template-editor-input", TextArea).action_cursor_down()
+            return
         if isinstance(self.screen, CommandOutputScreen):
             self.screen.action_scroll_down()
             return
@@ -5014,6 +5112,9 @@ class TauTuiApp(App[None]):
 
     def action_completion_previous(self) -> None:
         """Select the previous prompt completion or move up in the prompt."""
+        if isinstance(self.screen, PromptTemplateEditorScreen):
+            self.screen.query_one("#prompt-template-editor-input", TextArea).action_cursor_up()
+            return
         if isinstance(self.screen, CommandOutputScreen):
             self.screen.action_scroll_up()
             return
@@ -5125,16 +5226,60 @@ class TauTuiApp(App[None]):
             callback=self._handle_prompt_template_picker_result,
         )
 
-    def _handle_prompt_template_picker_result(self, name: str | None) -> None:
+    def _handle_prompt_template_picker_result(
+        self, result: PromptTemplatePickerResult | None
+    ) -> None:
         prompt = self.query_one("#prompt", PromptInput)
         prompt.focus()
-        if name is None:
+        if result is None:
             return
-        invocation = f"/{name}"
+        if result.action == "edit":
+            try:
+                source = result.template.path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                self._notify(f"Could not read /{result.template.name}: {exc}", severity="error")
+                self._open_prompt_template_picker()
+                return
+            self.push_screen(
+                PromptTemplateEditorScreen(result.template, source),
+                callback=lambda edited: self._handle_prompt_template_edit(result.template, edited),
+            )
+            return
+        invocation = f"/{result.template.name}"
         prompt.text = invocation
         prompt.move_cursor(_text_end_location(invocation))
         self._completion_state = self._build_completion_state(invocation)
         self._refresh_completions()
+
+    def _handle_prompt_template_edit(self, template: PromptTemplate, source: str | None) -> None:
+        if source is None:
+            self._open_prompt_template_picker()
+            return
+        self.run_worker(self._save_prompt_template_edit(template, source), exclusive=False)
+
+    async def _save_prompt_template_edit(self, template: PromptTemplate, source: str) -> None:
+        try:
+            template.path.write_text(source, encoding="utf-8")
+        except OSError as exc:
+            self._notify(f"Could not save /{template.name}: {exc}", severity="error")
+            self._open_prompt_template_picker()
+            return
+
+        try:
+            reload_result = self.session.reload()
+            if isawaitable(reload_result):
+                await reload_result
+        except Exception as exc:  # noqa: BLE001 - saved file remains valid; surface reload errors
+            self._notify(
+                f"Saved /{template.name}, but could not reload resources: {exc}",
+                severity="error",
+            )
+        else:
+            self.state.set_skills(self.session.skills)
+            self._completion_state = self._build_completion_state("")
+            self._refresh()
+            self._notify(f"Saved /{template.name} and reloaded resources.")
+        self._open_prompt_template_picker()
 
     def _open_skills_picker(self) -> None:
         """Open loaded-skill discovery."""
@@ -5172,9 +5317,8 @@ class TauTuiApp(App[None]):
 
     def action_toggle_tool_results(self) -> None:
         """Toggle inline tool result details without rebuilding unrelated history."""
-        expanded = self.state.toggle_tool_results()
+        self.state.toggle_tool_results()
         self.run_worker(self._update_tool_results_visibility(), exclusive=False)
-        self._notify("Tool results expanded." if expanded else "Tool results collapsed.")
 
     async def _update_tool_results_visibility(self) -> None:
         transcript = self.query_one("#transcript", TranscriptView)
@@ -5838,7 +5982,7 @@ class TauTuiApp(App[None]):
             item,
             theme=self.tui_settings.resolved_theme,
             show_tool_results=expanded,
-            invocation=self.state.resolve_tool_invocation(item),
+            invocation=self.state.resolve_tool_invocation(item, expanded=expanded),
             result_markup=self.state.resolve_tool_result(item, expanded=expanded),
         )
 
@@ -6782,6 +6926,33 @@ def _usable_scoped_startup_choices(settings: Any) -> tuple[ModelChoice, ...]:
     return tuple(choices)
 
 
+def _resource_conflict_alert(
+    diagnostics: Sequence[ResourceDiagnostic],
+) -> str | None:
+    """Format skill and prompt precedence conflicts as one startup alert."""
+    prefix = "overrides lower-precedence resource at "
+    conflicts = [
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic.kind in {"skill", "prompt"}
+        and diagnostic.name is not None
+        and diagnostic.path is not None
+        and diagnostic.message.startswith(prefix)
+    ]
+    if not conflicts:
+        return None
+
+    lines = ["Conflicting skills/prompts detected:"]
+    for diagnostic in conflicts:
+        resource_kind = "skill" if diagnostic.kind == "skill" else "prompt template"
+        shadowed_path = diagnostic.message.removeprefix(prefix)
+        lines.append(
+            f"- {resource_kind} '{diagnostic.name}': {diagnostic.path} overrides {shadowed_path}"
+        )
+    lines.append("Rename or remove duplicate resources to clear this alert.")
+    return "\n".join(lines)
+
+
 def _startup_inference_provider(
     selection: ProviderSelection,
     record: CodingSessionRecord | None,
@@ -6917,11 +7088,16 @@ async def run_tui_app(
         all_startup_notices = tuple(
             (*error_notices, *startup_notices, *legacy_notices, *theme_notices)
         )
+        resource_conflict_alert = _resource_conflict_alert(
+            getattr(session, "resource_diagnostics", ())
+        )
+        startup_alerts = (resource_conflict_alert,) if resource_conflict_alert is not None else ()
         app = TauTuiApp(
             session,
             tui_settings=load_tui_settings(),
             startup_message=startup_message,
             startup_update_notice=startup_update_notice,
+            startup_alerts=startup_alerts,
             startup_notices=all_startup_notices,
             initial_prompt=initial_prompt,
         )

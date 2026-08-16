@@ -21,6 +21,7 @@ from tau_coding.provider_config import (
     openai_compatible_config_from_provider,
     provider_default_thinking_level,
     provider_has_usable_credentials,
+    provider_model_max_tokens,
     provider_model_supports_images,
     provider_settings_from_json,
     provider_thinking_levels,
@@ -989,6 +990,33 @@ def test_kimi_k3_maps_thinking_levels_to_reasoning_effort(
     assert config.reasoning_effort == expected_effort
 
 
+@pytest.mark.parametrize(
+    ("level", "expected_effort"),
+    [("low", "low"), ("high", "high"), ("xhigh", "max")],
+)
+def test_huggingface_kimi_k3_maps_thinking_levels_to_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+    level: ThinkingLevel,
+    expected_effort: str,
+) -> None:
+    monkeypatch.setenv("HF_TOKEN", "test-key")
+    settings = load_provider_settings(TauPaths(home=Path("/missing")))
+    provider = settings.get_provider("huggingface")
+
+    config = openai_compatible_config_from_provider(
+        provider,
+        model="moonshotai/Kimi-K3",
+        thinking_level=level,
+    )
+
+    assert provider_thinking_levels(provider, model="moonshotai/Kimi-K3") == (
+        "low",
+        "high",
+        "xhigh",
+    )
+    assert config.reasoning_effort == expected_effort
+
+
 def test_openai_compatible_config_from_provider_rejects_unsupported_thinking_level(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1140,6 +1168,46 @@ def test_anthropic_config_from_provider_maps_opus_5_adaptive_thinking(
     assert medium_config.thinking_effort == "medium"
     assert xhigh_config.thinking_mode == "adaptive"
     assert xhigh_config.thinking_effort == "max"
+
+
+def test_anthropic_config_from_provider_sets_model_max_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    provider = ProviderSettings().get_provider("anthropic")
+    assert isinstance(provider, AnthropicProviderConfig)
+
+    opus_config = anthropic_config_from_provider(provider, model="claude-opus-5")
+    haiku_config = anthropic_config_from_provider(provider, model="claude-haiku-4-5")
+
+    assert opus_config.max_tokens == 128_000
+    assert haiku_config.max_tokens == 64_000
+
+
+def test_anthropic_config_from_provider_omits_unknown_model_max_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    provider = AnthropicProviderConfig()
+
+    config = anthropic_config_from_provider(provider)
+
+    assert config.max_tokens is None
+
+
+def test_provider_model_max_tokens_reads_model_metadata() -> None:
+    provider = AnthropicProviderConfig(
+        models=("capped", "uncapped"),
+        default_model="capped",
+        model_metadata={
+            "capped": ProviderModelMetadata(context_window=200_000, max_tokens=64_000),
+            "uncapped": ProviderModelMetadata(context_window=256_000),
+        },
+    )
+
+    assert provider_model_max_tokens(provider, "capped") == 64_000
+    assert provider_model_max_tokens(provider, "uncapped") is None
+    assert provider_model_max_tokens(provider) == 64_000
 
 
 @pytest.mark.parametrize(

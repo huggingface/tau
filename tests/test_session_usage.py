@@ -1,6 +1,15 @@
-from tau_agent import AssistantMessage, CompactionEntry, MessageEntry, ToolCall, UserMessage
+from tau_agent import (
+    AssistantMessage,
+    BranchSummaryEntry,
+    CompactionEntry,
+    MessageEntry,
+    ModelChangeEntry,
+    ThinkingLevelChangeEntry,
+    ToolCall,
+    UserMessage,
+)
 from tau_agent.messages import Usage, UsageCost, assistant_content
-from tau_coding.session_usage import collect_session_usage, render_usage_dashboard
+from tau_coding.session_usage import USAGE_SCRIPT, collect_session_usage, render_usage_dashboard
 
 
 def _assistant(
@@ -50,6 +59,31 @@ def test_collect_session_usage_aggregates_requests_tools_and_compactions() -> No
     assert usage.hit_rate == 2850 / 3050
 
 
+def test_collect_session_usage_positions_notable_events_at_next_request() -> None:
+    entries = [
+        ModelChangeEntry(id="model", timestamp=1, model="claude-sonnet-4-5"),
+        _assistant("a1", usage=Usage(input=10)),
+        CompactionEntry(
+            id="compact",
+            timestamp=2,
+            summary="summary",
+            replaces_entry_ids=["a1"],
+        ),
+        ThinkingLevelChangeEntry(id="thinking", timestamp=3, thinking_level="high"),
+        _assistant("a2", usage=Usage(input=20)),
+        BranchSummaryEntry(id="branch", timestamp=4, summary="abandoned path"),
+    ]
+
+    usage = collect_session_usage(entries)
+
+    assert [(event.request_number, event.kind, event.label) for event in usage.events] == [
+        (1, "model", "Model changed to claude-sonnet-4-5"),
+        (2, "compaction", "Compaction"),
+        (2, "thinking", "Thinking changed to high"),
+        (2, "branch", "Branch summary"),
+    ]
+
+
 def test_collect_session_usage_estimates_cost_from_catalog() -> None:
     known = collect_session_usage([_assistant("a1", usage=Usage(input=1_000_000, output=0))])
     unknown = collect_session_usage(
@@ -91,6 +125,34 @@ def test_render_usage_dashboard_renders_charts_and_table() -> None:
     assert "Prompt input by request" in markup
     assert "Cache hit rate" in markup
     assert "claude-sonnet-4-5" in markup
+
+
+def test_render_usage_dashboard_marks_events_on_prompt_input_chart() -> None:
+    usage = collect_session_usage(
+        [
+            ModelChangeEntry(id="model", timestamp=1, model="claude-sonnet-4-5"),
+            _assistant("a1", usage=Usage(input=10, cache_read=90)),
+            CompactionEntry(
+                id="compact",
+                timestamp=2,
+                summary="summary",
+                replaces_entry_ids=["a1"],
+            ),
+            _assistant("a2", usage=Usage(input=20, cache_read=80)),
+        ]
+    )
+
+    markup = render_usage_dashboard(usage)
+
+    assert markup.count('class="usage-event ') == 2
+    assert 'class="usage-event usage-event-model"' in markup
+    assert 'class="usage-event usage-event-compaction"' in markup
+    assert "Model changed to claude-sonnet-4-5 before request 1" in markup
+    assert "Compaction before request 2" in markup
+    assert 'data-request="1"' in markup
+    assert 'data-event-info="Model changed to claude-sonnet-4-5 before request 1' in markup
+    assert 'tooltipLines.push("Event  " + sessionEvent.dataset.eventInfo)' in USAGE_SCRIPT
+    assert markup.count('class="event-line"') == 2
 
 
 def test_render_usage_dashboard_without_cache_activity_shows_na() -> None:

@@ -13,8 +13,10 @@ Type into the prompt box at the bottom and press **Enter** to submit. The editor
 keeps its padded block size and background, while a single left border changes
 color to reflect focus, shell mode, and active runs without boxing it in.
 **Shift+Enter** inserts a newline for multi-line prompts. Tau streams the
-assistant's reply above the prompt, showing tool calls as they run. In supported
-terminal emulators, Tau also updates the tab title: named sessions show as
+assistant's reply above the prompt, showing tool calls as they run. When OpenAI
+returns several reasoning-summary parts, Tau keeps them as separate Markdown
+paragraphs rather than joining their headings together. In supported terminal
+emulators, Tau also updates the tab title: named sessions show as
 `τ | <name>`, and active runs add an animated running indicator so you can see
 work continuing from another tab. When a run fully settles while Tau's terminal
 surface is unfocused, Tau emits a desktop notification by default on supported
@@ -59,7 +61,7 @@ to search and run them. Common ones:
 - `/tools` — search active tools by origin and open their full descriptions
 - `/compact` — summarize and shrink the context
 - `/resume`, `/tree` — open previous sessions or branch from history
-- `/prompts` — search prompt templates and insert one for editing
+- `/prompts` — search prompt templates, insert an invocation, or edit the template file with **Ctrl+E**
 - `/hotkeys` — show the keyboard shortcuts
 
 The full list is in the [Slash commands reference]({{< relref "../reference/slash-commands.md" >}}).
@@ -90,9 +92,12 @@ aliases, set a `shellCommandPrefix` — see
 ## Referencing files with `@`
 
 Type `@` in the prompt to open file suggestions from the project tree, and insert
-a path like `@src/app.py`. Dot-prefixed project content such as `.env` and
-`.agents/` is included. Tau still skips known metadata and generated directories
-such as `.git`, `.venv`, `node_modules`, `__pycache__`, `build`, and `dist`.
+a path like `@src/app.py`. Use an explicit parent-relative path such as `@../` to
+complete files and directories outside the project root. External completion
+follows only the path you type instead of scanning the surrounding filesystem.
+Dot-prefixed content such as `.env` and `.agents/` is included. Tau still skips
+known metadata and generated directories such as `.git`, `.venv`, `node_modules`,
+`__pycache__`, `build`, and `dist`.
 
 ## Dropping files into the prompt
 
@@ -108,14 +113,46 @@ first, such as the macOS Dock's Downloads stack.
 ## Tool output
 
 Tool calls keep a static marker in the transcript while they run: orange means
-in progress, green means success, and red means failure. The prompt-area activity
+in progress, green means success, and red means failure. That status color applies
+to the semantic description, such as `Running tests` or `Read 5 files`; command
+snippets, arguments, and file lists stay neutral gray. The prompt-area activity
 indicator provides the run-wide animation without adding a second spinner to each
 tool row.
 
+Adjacent built-in tool calls from one model response share one transcript block,
+with one compact line per logical action. Each line retains its own status color,
+and adjacent reads, edits, or writes remain clustered under one headline with
+every file path listed beneath it. Expanded edit and write groups retain each
+invocation and result; expanded read groups omit repeated file contents. The
+complete block remains one selectable text surface,
+including across line boundaries.
+Batches never cross assistant text, model continuations, or separate responses;
+extension tools, custom rendered call cards, and skill loads remain separate.
+
 Tool results (like long `read` or `bash` output) render as compact previews so
-the transcript stays readable. Toggle full tool output with **Ctrl+O**. Markdown
-link hover styling underlines only the linked text, never the rest of its row. User
-message blocks use the same theme background as the prompt field and sidebar,
+the transcript stays readable. Tau requires the model to give each `bash` call a
+brief description such as `Running tests`. Tau shows that description in full;
+collapsed rows never show command text. Press **Ctrl+O** to keep the description
+visible and reveal the exact command
+and result beneath it. Malformed provider output,
+custom integrations, and older sessions can still lack a description; those calls
+show the generic `Running shell command` label until expanded.
+
+When one model response reads or edits several files, adjacent calls of the same
+type share one group. The group lists every path, reports progress as results
+arrive, and shows an aggregate failure count when needed. Calls from different
+model responses are never combined; shell calls and extension tools remain
+separate.
+
+Toggle grouped reads into their individual call list with **Ctrl+O**. Grouped read
+rows omit file-content previews even when expanded, keeping the transcript focused
+on which files were read. The same toggle reveals exact shell commands and full
+output for other tools. Compaction and grouping affect only the TUI display;
+execution, session history, and print-mode transcripts retain every complete call
+and result.
+
+Markdown link hover styling underlines only the linked text, never the rest of its
+row. User message blocks use the same theme background as the prompt field and sidebar,
 with light vertical padding so they read as blocks rather than highlighted lines.
 This visually ties submitted prompts to the composer.
 
@@ -152,11 +189,15 @@ redundant section label, followed by active-branch
 turn and tool-call totals, provider-reported token usage, latest-request and
 session prompt-cache hit rates, estimated cost, automatic-compaction threshold,
 and loaded tools, skills, prompt templates, extensions, and context files such as
-`AGENTS.md`. Tool, prompt, and extension
-names use compact comma-separated lists limited to three rendered lines. Skills
-and context files use bullet lists, with one item or path per line, limited to
-five entries. Truncated sections end with `...(X more)` showing how many entries
-are hidden. Project context paths are relative to the working directory; context
+`AGENTS.md`. Tool and extension names use compact comma-separated lists limited
+to three rendered lines. Skills and prompt templates are grouped under their
+resource origins (for example, `./.tau/skills`, `~/.agents/skills`, or
+`./.tau/prompts`), and every loaded skill and prompt is shown. If the sidebar
+content is taller than the available space, scroll it to see the remaining
+resource groups; the Tau version mark stays pinned at the bottom. Context files
+use a bullet list with one path per line, limited to five entries. Truncated sections
+end with `...(X more)` showing how many context entries are hidden. Project
+context paths are relative to the working directory; context
 loaded from the home directory starts with `~/`, while other context loaded from
 outside the project uses its full path.
 

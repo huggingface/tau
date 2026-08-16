@@ -170,13 +170,14 @@ class ExtensionAPI:
     ) -> None: ...
     async def append_entry(self, namespace: str, data: dict[str, JSONValue]) -> None: ...
     def notify(self, message: str, level: Literal["info", "warning", "error"] = "info") -> None: ...
+    def set_inference_provider(self, route: str | None) -> str: ...
 
-    # context (read-only)
+    # context (read-only; includes inference_provider)
     @property
     def context(self) -> ExtensionContext: ...
 ```
 
-`ExtensionContext` exposes `cwd`, `model`, `provider_name`, `session_id`,
+`ExtensionContext` exposes `cwd`, `model`, `provider_name`, `inference_provider`, `session_id`,
 `system_prompt`, `is_running`, `has_ui`, and `transcript`. It is a live view
 over the bound `CodingSession`; action methods raise `ExtensionError` if
 called before binding (Pi's throwing-stubs-then-`bindCore` model).

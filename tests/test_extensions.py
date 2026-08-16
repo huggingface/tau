@@ -101,6 +101,7 @@ class RecordingSession:
         self.cwd = tmp_path
         self.model = "fake"
         self.provider_name = "fake"
+        self.inference_provider: str | None = None
         self.session_id = "session-1"
         self.system_prompt = "You are Tau."
         self.is_running = running
@@ -132,6 +133,10 @@ class RecordingSession:
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         self.custom_entries.append((namespace, data))
+
+    def set_inference_provider(self, route: str | None) -> str:
+        self.inference_provider = route
+        return route or "automatic (will pin after the next successful response)"
 
 
 # -- discovery and loading ----------------------------------------------------
@@ -1858,6 +1863,21 @@ def test_reset_for_reload_invalidates_only_after_component_cleanup() -> None:
     assert observed_active == [True]
     with pytest.raises(ExtensionError, match="stale after reload"):
         _ = api.name
+
+
+def test_extension_can_read_and_change_inference_provider(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "huggingface"))
+    session = RecordingSession(tmp_path)
+    session.provider_name = "huggingface"
+    runtime.bind(session)
+
+    assert api.context.inference_provider is None
+    assert api.set_inference_provider("deepinfra") == "deepinfra"
+    assert api.context.inference_provider == "deepinfra"
+    assert api.set_inference_provider(None) == (
+        "automatic (will pin after the next successful response)"
+    )
 
 
 # -- reload staleness guard (Pi's assertActive/invalidate) ---------------------

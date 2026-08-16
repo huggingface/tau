@@ -45,7 +45,7 @@ features and fixes.
 | `--provider TEXT` | Configured provider name to use |
 | `--cwd PATH` | Working directory for the built-in tools |
 | `--mode [text\|json\|transcript]` | Output mode for print mode (default `text`); also triggers print mode on its own |
-| `--session TEXT` | Resume a session id in the TUI |
+| `--session TEXT` | Resume a session id in the TUI or print mode |
 | `--new-session` | Start a new session instead of resuming the default |
 | `--session-id TEXT` | Set the exact id for a newly created print-mode session; errors if it already exists |
 | `--system-prompt TEXT_OR_PATH` | Replace Tau's default system-prompt base with literal text or an existing UTF-8 file |
@@ -96,6 +96,20 @@ project files win over user files. Use `/reload` after changing a file. These ar
 Tau-specific configuration files, not `.agents` resources. See
 [Configuration & files]({{< relref "./configuration.md#system-prompt-files" >}})
 for paths, precedence, diagnostics, and the project-resource security warning.
+
+### Resume in print mode
+
+Use `--print` and `--session` together to append a non-interactive follow-up to
+an existing conversation. Tau loads the session's saved working directory,
+provider, model, and conversation history:
+
+```bash
+tau --print --session <session-id> "Follow-up message"
+```
+
+Explicit `--provider`, `--model`, and system-prompt options override the saved
+startup choices for this invocation. `--session` cannot be combined with
+`--new-session` or `--session-id`. An unknown session id exits with an error.
 
 `--resume`, `--prompt`, `-o/--output`, and `-x` are removed; each now exits
 with an error naming its replacement (`--session`, `--print`, `--mode`, and

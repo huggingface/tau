@@ -26,6 +26,8 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 | `Ctrl+R` | Open the session picker |
 | `Tab` | Accept the highlighted completion |
 | `Down` / `Up` | Move through completions |
+| `Ctrl+E` (in `/prompts`) | Edit the selected prompt template |
+| `Ctrl+S` (while editing a prompt template) | Save and reload resources |
 
 ## Models & thinking
 
@@ -39,7 +41,7 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 
 | Key | Action |
 | --- | --- |
-| `Ctrl+O` | Toggle full tool output (vs. compact preview) |
+| `Ctrl+O` | Toggle exact tool commands and full output (vs. compact previews) |
 | `Ctrl+C` | Clear the prompt input |
 | `Ctrl+D` | Quit |
 

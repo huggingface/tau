@@ -14,6 +14,7 @@ from tau_agent import (
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
+    ToolResultMessage,
     UserMessage,
 )
 from tau_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
@@ -27,7 +28,11 @@ from tau_coding.events import (
 )
 from tau_coding.skills import Skill, format_skill_invocation
 from tau_coding.tui import TuiEventAdapter, TuiState
-from tau_coding.tui.state import format_tool_call_block, format_tool_result_block
+from tau_coding.tui.state import (
+    format_tool_call_block,
+    format_tool_call_invocation,
+    format_tool_result_block,
+)
 
 
 def _update(event) -> MessageUpdateEvent:  # noqa: ANN001
@@ -159,6 +164,276 @@ def test_tui_state_restores_persisted_assistant_blocks_in_order() -> None:
         "thinking",
         "assistant",
     ]
+
+
+def test_tui_state_groups_adjacent_reads_from_one_assistant_message() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(id="call-1", name="read", arguments={"path": "a.py"}),
+                    ToolCall(id="call-2", name="read", arguments={"path": "b.py"}),
+                ]
+            ),
+            ToolResultMessage(
+                tool_call_id="call-1",
+                tool_name="read",
+                content="one",
+            ),
+            ToolResultMessage(
+                tool_call_id="call-2",
+                tool_name="read",
+                content="two",
+            ),
+        ]
+    )
+
+    assert len(state.items) == 1
+    item = state.items[0]
+    assert item.text == "→ Read 2 files\n  - a.py\n  - b.py"
+    assert item.grouped_tool_calls is not None
+    assert [member.tool_call_id for member in item.grouped_tool_calls] == ["call-1", "call-2"]
+    assert state.find_tool_item("call-1") is item
+    assert state.find_tool_item("call-2") is item
+    assert state.resolve_tool_invocation(item, expanded=True) == "→ read a.py\n→ read b.py"
+    assert item.tool_result_text == "✓ read group"
+
+
+def test_tui_state_clusters_edits_and_lists_every_path() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(id="edit-1", name="edit", arguments={"path": "a.py", "edits": []}),
+                    ToolCall(id="edit-2", name="edit", arguments={"path": "b.py", "edits": []}),
+                ]
+            ),
+            ToolResultMessage(tool_call_id="edit-1", tool_name="edit", content="changed a"),
+            ToolResultMessage(tool_call_id="edit-2", tool_name="edit", content="changed b"),
+        ]
+    )
+
+    assert len(state.items) == 1
+    item = state.items[0]
+    assert item.text == "→ Edited 2 files\n  - a.py\n  - b.py"
+    assert item.grouped_tool_calls is not None
+    assert item.tool_result_text == "✓ edit group"
+    expanded = state.resolve_tool_invocation(item, expanded=True)
+    assert expanded is not None
+    assert "→ edit a.py\n\n✓ edit\nchanged a" in expanded
+    assert "→ edit b.py\n\n✓ edit\nchanged b" in expanded
+
+
+def test_tui_state_clusters_writes_and_lists_every_path() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(
+                        id="write-1",
+                        name="write",
+                        arguments={"path": "a.py", "content": "one"},
+                    ),
+                    ToolCall(
+                        id="write-2",
+                        name="write",
+                        arguments={"path": "b.py", "content": "two"},
+                    ),
+                ]
+            ),
+            ToolResultMessage(tool_call_id="write-1", tool_name="write", content="wrote a"),
+            ToolResultMessage(tool_call_id="write-2", tool_name="write", content="wrote b"),
+        ]
+    )
+
+    assert len(state.items) == 1
+    item = state.items[0]
+    assert item.text == "→ Written 2 files\n  - a.py\n  - b.py"
+    assert item.grouped_tool_calls is not None
+    assert item.tool_result_text == "✓ write group"
+    expanded = state.resolve_tool_invocation(item, expanded=True)
+    assert expanded is not None
+    assert "→ write a.py\n\n✓ write\nwrote a" in expanded
+    assert "→ write b.py\n\n✓ write\nwrote b" in expanded
+
+
+def test_tui_state_batches_mixed_tools_and_clusters_adjacent_reads() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(
+                        id="bash-1",
+                        name="bash",
+                        arguments={"command": "echo one", "description": "Doing thing one"},
+                    ),
+                    ToolCall(
+                        id="bash-2",
+                        name="bash",
+                        arguments={"command": "echo two", "description": "Doing thing two"},
+                    ),
+                    ToolCall(id="read-1", name="read", arguments={"path": "a.py"}),
+                    ToolCall(id="read-2", name="read", arguments={"path": "b.py"}),
+                    ToolCall(
+                        id="bash-3",
+                        name="bash",
+                        arguments={"command": "echo three", "description": "Doing thing three"},
+                    ),
+                ]
+            ),
+            ToolResultMessage(tool_call_id="bash-1", tool_name="bash", content="one"),
+            ToolResultMessage(tool_call_id="bash-2", tool_name="bash", content="two"),
+            ToolResultMessage(tool_call_id="read-1", tool_name="read", content="a"),
+            ToolResultMessage(tool_call_id="read-2", tool_name="read", content="b"),
+            ToolResultMessage(tool_call_id="bash-3", tool_name="bash", content="three"),
+        ]
+    )
+
+    assert len(state.items) == 1
+    item = state.items[0]
+    assert item.tool_batch_items is not None
+    assert len(item.tool_batch_items) == 4
+    assert item.tool_batch_items[2].grouped_tool_calls is not None
+    assert item.text.splitlines() == [
+        "→ Doing thing one",
+        "→ Doing thing two",
+        "→ Read 2 files",
+        "  - a.py",
+        "  - b.py",
+        "→ Doing thing three",
+    ]
+    assert all(
+        state.find_tool_item(call_id) is item
+        for call_id in (
+            "bash-1",
+            "bash-2",
+            "read-1",
+            "read-2",
+            "bash-3",
+        )
+    )
+
+
+def test_tui_state_keeps_custom_rendered_calls_out_of_tool_batches() -> None:
+    state = TuiState(
+        tool_call_renderer=lambda name, _arguments: (
+            "[bold]agent card[/bold]" if name == "agent" else None
+        )
+    )
+    batch_id = state.new_tool_batch_id()
+
+    state.add_tool_call(
+        ToolCall(id="custom", name="agent", arguments={"prompt": "explore"}),
+        batch_id=batch_id,
+    )
+    state.add_tool_call(
+        ToolCall(
+            id="bash",
+            name="bash",
+            arguments={"command": "pwd", "description": "Checking location"},
+        ),
+        batch_id=batch_id,
+    )
+
+    assert len(state.items) == 2
+    assert all(item.tool_batch_items is None for item in state.items)
+
+
+def test_tui_state_keeps_result_only_extension_tools_out_of_batches() -> None:
+    state = TuiState(
+        tool_result_renderer=lambda name, _result, _expanded: f"[bold]{name} card[/bold]"
+    )
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(id="custom-1", name="extension-tool", arguments={}),
+                    ToolCall(id="custom-2", name="extension-tool", arguments={}),
+                ]
+            ),
+            ToolResultMessage(tool_call_id="custom-1", tool_name="extension-tool", content="one"),
+            ToolResultMessage(tool_call_id="custom-2", tool_name="extension-tool", content="two"),
+        ]
+    )
+
+    assert len(state.items) == 2
+    assert all(item.tool_batch_items is None for item in state.items)
+    assert [state.resolve_tool_result(item, expanded=False) for item in state.items] == [
+        "[bold]extension-tool card[/bold]",
+        "[bold]extension-tool card[/bold]",
+    ]
+
+
+def test_tui_state_marks_group_failed_when_any_read_fails() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(id="call-1", name="read", arguments={"path": "a.py"}),
+                    ToolCall(id="call-2", name="read", arguments={"path": "missing.py"}),
+                ]
+            ),
+            ToolResultMessage(tool_call_id="call-1", tool_name="read", content="one"),
+            ToolResultMessage(
+                tool_call_id="call-2",
+                tool_name="read",
+                content="not found",
+                is_error=True,
+            ),
+        ]
+    )
+
+    item = state.items[0]
+    assert item.text == "→ Read 2 files · 1 failed\n  - a.py\n  - missing.py"
+    assert item.tool_result_text is not None
+    assert item.tool_result_text.startswith("✗ read group")
+
+
+def test_tui_adapter_does_not_group_reads_separated_by_assistant_text() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+    adapter.apply(
+        MessageEndEvent(
+            message=AssistantMessage(
+                content=[
+                    ToolCall(id="call-1", name="read", arguments={"path": "a.py"}),
+                    TextContent(text="then"),
+                    ToolCall(id="call-2", name="read", arguments={"path": "b.py"}),
+                ]
+            )
+        )
+    )
+    adapter.apply(
+        ToolExecutionStartEvent(tool_call_id="call-1", tool_name="read", args={"path": "a.py"})
+    )
+    adapter.apply(
+        ToolExecutionStartEvent(tool_call_id="call-2", tool_name="read", args={"path": "b.py"})
+    )
+
+    assert [item.text for item in state.items] == ["then", "→ read a.py", "→ read b.py"]
+
+
+def test_tui_state_does_not_group_reads_from_different_assistant_messages() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[ToolCall(id="call-1", name="read", arguments={"path": "a.py"})]
+            ),
+            ToolResultMessage(tool_call_id="call-1", tool_name="read", content="one"),
+            AssistantMessage(
+                content=[ToolCall(id="call-2", name="read", arguments={"path": "b.py"})]
+            ),
+            ToolResultMessage(tool_call_id="call-2", tool_name="read", content="two"),
+        ]
+    )
+
+    assert [item.text for item in state.items] == ["→ read a.py", "→ read b.py"]
 
 
 def test_tui_adapter_records_tool_progress_and_result() -> None:
@@ -295,6 +570,94 @@ def test_tool_formatters_keep_human_readable_output() -> None:
     assert "line 8" in block
     assert "line 9" not in block
     assert "3 more lines" in block
+
+
+def test_bash_tool_formatter_hides_short_command_until_expanded() -> None:
+    command = 'rg -n "ToolCall" src'
+    call = ToolCall(
+        id="call-1",
+        name="bash",
+        arguments={"command": command, "timeout": 10},
+    )
+
+    assert format_tool_call_block(call) == "→ Running shell command (timeout 10s)"
+    assert format_tool_call_invocation(call, expanded=True) == f"$ {command} (timeout 10s)"
+
+
+def test_bash_tool_formatter_hides_described_short_command_until_expanded() -> None:
+    command = "rm -rf /tmp/x"
+    call = ToolCall(
+        id="call-1",
+        name="bash",
+        arguments={"command": command, "description": "Listing files"},
+    )
+
+    assert format_tool_call_block(call) == "→ Listing files"
+    assert format_tool_call_invocation(call, expanded=True) == f"$ {command}"
+
+
+def test_bash_tool_formatter_hides_long_command_behind_description() -> None:
+    command = "git diff --check && git commit -m 'Finish work' && " + "echo done " * 12
+    call = ToolCall(
+        id="call-1",
+        name="bash",
+        arguments={
+            "command": command,
+            "description": "  Validating and\ncommitting changes  ",
+            "timeout": 120,
+        },
+    )
+
+    collapsed = format_tool_call_block(call)
+    assert collapsed == "→ Validating and committing changes (timeout 120s)"
+    assert "$" not in collapsed
+    assert "\n" not in collapsed
+    assert format_tool_call_block(call, compact=False) == f"$ {command} (timeout 120s)"
+    assert format_tool_call_invocation(call, expanded=True) == f"$ {command} (timeout 120s)"
+
+
+def test_bash_tool_formatter_shows_complete_description_without_command_hint() -> None:
+    command = "python - <<'PY'\nprint('hello')\nPY"
+    description = "Describing a deliberately overlong inline script operation " * 2
+    call = ToolCall(
+        id="call-1",
+        name="bash",
+        arguments={"command": command, "description": description},
+    )
+
+    collapsed = format_tool_call_block(call)
+    assert collapsed == f"→ {description.strip()}"
+    assert "$" not in collapsed
+    assert "\n" not in collapsed
+
+
+def test_bash_tool_formatter_never_previews_undescribed_commands() -> None:
+    commands = [
+        "python - <<'PY'\nprint('one')\nPY",
+        "git status &&\ngit diff",
+        "echo " + "x" * 200,
+        'uv run python -c "print(1)"',
+        "\n\n",
+    ]
+
+    for index, command in enumerate(commands):
+        call = ToolCall(id=f"call-{index}", name="bash", arguments={"command": command})
+        assert format_tool_call_block(call) == "→ Running shell command"
+        assert format_tool_call_invocation(call, expanded=True) == f"$ {command}"
+
+
+def test_tui_state_recovers_full_bash_command_when_tool_output_expands() -> None:
+    command = "python - <<'PY'\nprint('hello')\nPY"
+    state = TuiState(tool_call_renderer=lambda _name, _arguments: None)
+    state.add_tool_call(ToolCall(id="call-1", name="bash", arguments={"command": command}))
+    item = state.items[0]
+    item.started_at = None
+
+    assert item.text == "→ Running shell command"
+    assert state.resolve_tool_invocation(item) is None
+    assert state.resolve_tool_invocation(item, expanded=True) == (
+        f"→ Running shell command\n$ {command}"
+    )
 
 
 def test_tui_adapter_uses_canonical_result_details_for_patch() -> None:

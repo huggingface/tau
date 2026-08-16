@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 from conftest import isolate_home
 from pi_event_helpers import assistant_done, assistant_error, assistant_start, text_delta
 from tau_agent import AssistantMessage, UserMessage
-from tau_agent.session import JsonlSessionStorage, MessageEntry
+from tau_agent.session import JsonlSessionStorage, MessageEntry, ModelChangeEntry
 from tau_ai import (
     FakeProvider,
 )
@@ -791,6 +791,44 @@ async def test_run_print_mode_persists_session_entries(
 
 
 @pytest.mark.anyio
+async def test_run_print_mode_resumes_persisted_conversation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    await storage.append(MessageEntry(message=UserMessage(content="First question")))
+    await storage.append(MessageEntry(message=AssistantMessage(content="First answer")))
+    await storage.append(ModelChangeEntry(model="model-a"))
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="model-b"),
+                assistant_done(message=AssistantMessage(content="Done")),
+            ]
+        ]
+    )
+
+    ok = await run_print_mode(
+        prompt="Follow-up message",
+        model="model-b",
+        cwd=tmp_path,
+        provider=provider,
+        storage=storage,
+        session_id="session-123",
+        startup_model_override=True,
+    )
+
+    assert ok is True
+    assert capsys.readouterr().out == "Done\n"
+    assert provider.calls[0][0] == "model-b"
+    messages = provider.calls[0][2]
+    assert [(message.role, message.text) for message in messages] == [
+        ("user", "First question"),
+        ("assistant", "First answer"),
+        ("user", "Follow-up message"),
+    ]
+
+
+@pytest.mark.anyio
 async def test_run_print_mode_terminal_command_adds_context(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -986,6 +1024,70 @@ def test_print_mode_passes_exact_session_id_without_changing_output(
     assert calls == ["worker-499"]
 
 
+def test_print_mode_passes_session_id_for_resume(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str | None]] = []
+
+    async def fake_run_openai_print_mode(
+        prompt: str,
+        model: str | None,
+        cwd: Path,
+        output: PrintOutputMode,
+        provider_name: str | None,
+        session_manager: SessionManager | None,
+        extension_paths: tuple[Path, ...],
+        extensions_enabled: bool,
+        project_extensions_enabled: bool,
+        session_id: str | None,
+        custom_system_prompt: str | None,
+        append_system_prompt: str | None,
+        trust_override: object | None,
+        resume_session_id: str | None,
+    ) -> bool:
+        del (
+            model,
+            cwd,
+            output,
+            provider_name,
+            session_manager,
+            extension_paths,
+            extensions_enabled,
+            project_extensions_enabled,
+            session_id,
+            custom_system_prompt,
+            append_system_prompt,
+            trust_override,
+        )
+        calls.append((prompt, resume_session_id))
+        return True
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(app, ["--print", "--session", "session-123", "follow up"])
+
+    assert result.exit_code == 0
+    assert calls == [("follow up", "session-123")]
+
+
+def test_print_mode_rejects_session_and_new_session() -> None:
+    result = CliRunner().invoke(
+        app, ["--print", "--session", "session-123", "--new-session", "follow up"]
+    )
+
+    assert result.exit_code == 2
+    assert "--session and --new-session cannot be used together" in _strip_ansi(result.output)
+
+
+def test_print_mode_rejects_session_and_session_id() -> None:
+    result = CliRunner().invoke(
+        app,
+        ["--print", "--session", "session-123", "--session-id", "new-id", "follow up"],
+    )
+
+    assert result.exit_code == 2
+    assert "--session and --session-id cannot be used together" in _strip_ansi(result.output)
+
+
 @pytest.mark.parametrize(
     ("session_id", "error"),
     [
@@ -1009,6 +1111,112 @@ def test_session_id_is_print_mode_only() -> None:
 
     assert result.exit_code == 2
     assert "--session-id is only supported in print mode" in _strip_ansi(result.output)
+
+
+def test_print_session_record_resumes_existing_session(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(
+        cwd=tmp_path,
+        model="fake",
+        session_id="session-123",
+    )
+
+    resumed = cli._print_session_record(
+        manager,
+        resume_session_id="session-123",
+        cwd=tmp_path / "other",
+        settings=_constrained_provider_settings(),
+        provider_name=None,
+        model=None,
+        session_id=None,
+    )
+
+    assert resumed == record
+
+
+def test_print_session_record_rejects_unknown_session(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+
+    with pytest.raises(ValueError, match="Unknown session: missing"):
+        cli._print_session_record(
+            manager,
+            resume_session_id="missing",
+            cwd=tmp_path,
+            settings=_constrained_provider_settings(),
+            provider_name=None,
+            model=None,
+            session_id=None,
+        )
+
+
+@pytest.mark.anyio
+async def test_print_resume_does_not_apply_hf_route_to_explicit_non_hf_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model = "shared-model"
+    settings = ProviderSettings(
+        default_provider="huggingface",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="huggingface",
+                models=(model,),
+                default_model=model,
+                inference_providers={model: "together"},
+            ),
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                models=(model,),
+                default_model=model,
+            ),
+        ),
+    )
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager.create_session(
+        cwd=tmp_path,
+        model=model,
+        provider_name="huggingface",
+        inference_provider="together",
+        session_id="session-123",
+    )
+
+    class ClosableFakeProvider(FakeProvider):
+        async def aclose(self) -> None:
+            return None
+
+    provider = ClosableFakeProvider([])
+    create_calls: list[tuple[str, str | None]] = []
+
+    def fake_create_model_provider(
+        provider_config: OpenAICompatibleProviderConfig,
+        *,
+        model: str,
+        inference_provider: str | None,
+        **kwargs: object,
+    ) -> ClosableFakeProvider:
+        del model, kwargs
+        create_calls.append((provider_config.name, inference_provider))
+        return provider
+
+    async def fake_run_print_mode(**kwargs: object) -> bool:
+        return True
+
+    monkeypatch.setattr(cli, "load_provider_settings", lambda: settings)
+    monkeypatch.setattr(cli, "create_model_provider", fake_create_model_provider)
+    monkeypatch.setattr(cli, "run_print_mode", fake_run_print_mode)
+
+    ok = await cli.run_openai_print_mode(
+        "Follow up",
+        model,
+        tmp_path,
+        provider_name="local",
+        session_manager=manager,
+        resume_session_id="session-123",
+    )
+
+    assert ok is True
+    assert create_calls == [("local", None)]
 
 
 def test_create_print_session_uses_requested_id_and_rejects_collision(tmp_path: Path) -> None:

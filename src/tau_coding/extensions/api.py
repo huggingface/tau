@@ -782,6 +782,12 @@ class ExtensionContext:
         return self._runtime.session_view.provider_name
 
     @property
+    def inference_provider(self) -> str | None:
+        """Return the active Hugging Face inference-provider pin, if any."""
+        self._generation.assert_active()
+        return self._runtime.session_view.inference_provider
+
+    @property
     def session_id(self) -> str | None:
         """Return the current session id, if the session is indexed."""
         self._generation.assert_active()
@@ -864,6 +870,11 @@ class ExtensionAPI:
         """Return read-only session context."""
         self._generation.assert_active()
         return self._context
+
+    def set_inference_provider(self, route: str | None) -> str:
+        """Select or reset the active Hugging Face session route."""
+        self._generation.assert_active()
+        return self._runtime.session_view.set_inference_provider(route)
 
     def register_tool(self, tool: AgentTool) -> None:
         """Register an agent tool (first registration per name wins)."""

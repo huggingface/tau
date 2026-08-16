@@ -1637,6 +1637,59 @@ async def test_openai_codex_provider_streams_reasoning_deltas() -> None:
 
 
 @pytest.mark.anyio
+async def test_openai_codex_provider_preserves_reasoning_summary_part_boundaries() -> None:
+    async def credentials() -> OpenAICodexCredentials:
+        return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.reasoning_summary_text.delta",'
+                '"delta":"**First step**"}\n\n'
+                'data: {"type":"response.reasoning_summary_part.done"}\n\n'
+                'data: {"type":"response.reasoning_summary_text.delta",'
+                '"delta":"**Second step**"}\n\n'
+                'data: {"type":"response.reasoning_summary_part.done"}\n\n'
+                'data: {"type":"response.output_text.delta","delta":"Done"}\n\n'
+                'data: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICodexProvider(
+            OpenAICodexConfig(
+                credential_resolver=credentials,
+                base_url="https://chatgpt.test/backend-api",
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say done")],
+                tools=[],
+            )
+        )
+
+    thinking_events = [event for event in events if isinstance(event, ThinkingDeltaEvent)]
+    assert [event.delta for event in thinking_events] == [
+        "**First step**",
+        "\n\n",
+        "**Second step**",
+        "\n\n",
+    ]
+    end = events[-1]
+    assert isinstance(end, AssistantDoneEvent)
+    thinking = end.message.content[0]
+    assert isinstance(thinking, ThinkingContent)
+    assert thinking.thinking == "**First step**\n\n**Second step**\n\n"
+
+
+@pytest.mark.anyio
 async def test_openai_codex_provider_streams_tool_calls() -> None:
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
@@ -1843,6 +1896,48 @@ async def test_anthropic_provider_formats_request_and_streams_text() -> None:
             ],
         }
     ]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("configured_max_tokens", "expected_max_tokens"),
+    [(64_000, 64_000), (None, 4096)],
+)
+async def test_anthropic_provider_sends_configured_max_tokens(
+    configured_max_tokens: int | None,
+    expected_max_tokens: int,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"type":"message_stop"}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+                max_tokens=configured_max_tokens,
+            ),
+            client=client,
+        )
+
+        await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hello")],
+                tools=[],
+            )
+        )
+
+    payload = loads(requests[0].content)
+    assert payload["max_tokens"] == expected_max_tokens
 
 
 @pytest.mark.anyio
@@ -2603,6 +2698,57 @@ async def test_responses_api_streams_reasoning_summary_as_thinking() -> None:
     ]
     thinking = next(e for e in events if isinstance(e, ThinkingDeltaEvent))
     assert thinking.delta == "Considering"
+
+
+@pytest.mark.anyio
+async def test_responses_api_preserves_reasoning_summary_part_boundaries() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.reasoning_summary_text.delta",'
+                '"delta":"**First step**"}\n\n'
+                'data: {"type":"response.reasoning_summary_part.done"}\n\n'
+                'data: {"type":"response.reasoning_summary_text.delta",'
+                '"delta":"**Second step**"}\n\n'
+                'data: {"type":"response.reasoning_summary_part.done"}\n\n'
+                'data: {"type":"response.output_text.delta","delta":"Answer"}\n\n'
+                'data: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+                reasoning_effort="high",
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="think")],
+                tools=[],
+            )
+        )
+
+    thinking_events = [event for event in events if isinstance(event, ThinkingDeltaEvent)]
+    assert [event.delta for event in thinking_events] == [
+        "**First step**",
+        "\n\n",
+        "**Second step**",
+        "\n\n",
+    ]
+    end = events[-1]
+    assert isinstance(end, AssistantDoneEvent)
+    thinking = end.message.content[0]
+    assert isinstance(thinking, ThinkingContent)
+    assert thinking.thinking == "**First step**\n\n**Second step**\n\n"
 
 
 @pytest.mark.anyio
