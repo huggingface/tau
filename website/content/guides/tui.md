@@ -137,10 +137,11 @@ and result beneath it. Malformed provider output,
 custom integrations, and older sessions can still lack a description; those calls
 show the generic `Running shell command` label until expanded.
 
-When one model response reads several files, adjacent `read` calls share one row.
-The row previews up to three paths, reports progress as results arrive, and shows
-an aggregate failure count when needed. Reads from different model responses are
-never combined, and shell or file-mutating tools always remain separate.
+When one model response reads or edits several files, adjacent calls of the same
+type share one group. The group lists every path, reports progress as results
+arrive, and shows an aggregate failure count when needed. Calls from different
+model responses are never combined; shell calls and extension tools remain
+separate.
 
 Toggle grouped reads into their individual call list with **Ctrl+O**. Grouped read
 rows omit file-content previews even when expanded, keeping the transcript focused
