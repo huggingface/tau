@@ -194,9 +194,12 @@ and loaded tools, skills, prompt templates, extensions, and context files such a
 `AGENTS.md`. Tool and extension names use compact comma-separated lists limited
 to three rendered lines. Skills and prompt templates are grouped under their
 resource origins (for example, `./.tau/skills`, `~/.agents/skills`, or
-`./.tau/prompts`), and every loaded skill and prompt is shown. If the sidebar
-content is taller than the available space, scroll it to see the remaining
-resource groups; the Tau version mark stays pinned at the bottom. Context files
+`./.tau/prompts`). These two sections start collapsed and show their loaded-item
+counts in the headings. Click a heading (or focus it and press **Enter**) to
+expand it; opening one collapses the other like an accordion. Every loaded skill
+or prompt is shown while its section is expanded. If the sidebar content is
+taller than the available space, scroll it to see the remaining resource groups;
+the Tau version mark stays pinned at the bottom. Context files
 use a bullet list with one path per line, limited to five entries. Truncated sections
 end with `...(X more)` showing how many context entries are hidden. Project
 context paths are relative to the working directory; context

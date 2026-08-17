@@ -2983,6 +2983,36 @@ class TauTuiApp(App[None]):
         height: auto;
     }
 
+    #sidebar .sidebar-separator {
+        height: auto;
+    }
+
+    #sidebar .sidebar-resource-section {
+        width: 1fr;
+        height: auto;
+        padding: 0;
+        background: transparent;
+        border: none;
+    }
+
+    #sidebar .sidebar-resource-section CollapsibleTitle {
+        width: 1fr;
+        padding: 0 0 0 1;
+        color: $tau-prompt-text;
+        text-style: bold;
+        background: transparent;
+    }
+
+    #sidebar .sidebar-resource-section CollapsibleTitle:hover,
+    #sidebar .sidebar-resource-section CollapsibleTitle:focus {
+        color: $tau-highlight-text;
+        background: $tau-highlight-background;
+    }
+
+    #sidebar .sidebar-resource-section Contents {
+        padding: 1 0 0 1;
+    }
+
     #sidebar-brand {
         height: auto;
         color: $tau-prompt-text;

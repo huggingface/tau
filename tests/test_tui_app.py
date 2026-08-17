@@ -16,7 +16,7 @@ from textual.containers import Container, VerticalScroll
 from textual.content import Style as TextualStyle
 from textual.geometry import Offset
 from textual.selection import SELECT_ALL, Selection
-from textual.widgets import Input, Label, ListItem, ListView, Static, TextArea
+from textual.widgets import Collapsible, Input, Label, ListItem, ListView, Static, TextArea
 from textual.widgets import Markdown as TextualMarkdown
 from textual.widgets.markdown import MarkdownStream
 
@@ -3019,6 +3019,33 @@ async def test_tui_sidebar_is_visible_on_medium_windows() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_sidebar_resource_sections_are_a_collapsed_accordion() -> None:
+    session = FakeSession()
+    session.prompt_templates = (
+        PromptTemplate("explain", session.cwd / ".tau/prompts/explain.md", "Explain"),
+        PromptTemplate("fix", session.cwd / ".tau/prompts/fix.md", "Fix"),
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        skills = app.query_one("#sidebar-skills", Collapsible)
+        prompts = app.query_one("#sidebar-prompts", Collapsible)
+
+        assert skills.title == "skills (1)"
+        assert prompts.title == "prompts (2)"
+        assert skills.collapsed is True
+        assert prompts.collapsed is True
+
+        await pilot.click("#sidebar-skills CollapsibleTitle")
+        assert skills.collapsed is False
+        assert prompts.collapsed is True
+
+        await pilot.click("#sidebar-prompts CollapsibleTitle")
+        assert skills.collapsed is True
+        assert prompts.collapsed is False
+
+
+@pytest.mark.anyio
 async def test_tui_sidebar_scrolls_when_all_skills_overflow() -> None:
     session = FakeSession()
     session.skills = tuple(
@@ -3034,6 +3061,7 @@ async def test_tui_sidebar_scrolls_when_all_skills_overflow() -> None:
     async with app.run_test(size=(120, 40)) as pilot:
         scroll = app.query_one("#sidebar-scroll", VerticalScroll)
         brand = app.query_one("#sidebar-brand", Static)
+        app.query_one("#sidebar-skills", Collapsible).collapsed = False
         await pilot.pause()
 
         assert scroll.max_scroll_y > 0
@@ -3064,9 +3092,11 @@ async def test_tui_sidebar_relayouts_when_reload_changes_resource_count() -> Non
             for index in range(1, 31)
         )
         sidebar.update_from_session(session)
+        app.query_one("#sidebar-skills", Collapsible).collapsed = False
         await pilot.pause()
 
         expanded_virtual_height = scroll.virtual_size.height
+        assert app.query_one("#sidebar-skills", Collapsible).title == "skills (30)"
         assert expanded_virtual_height > initial_virtual_height
         assert scroll.max_scroll_y > 0
 
@@ -3074,6 +3104,9 @@ async def test_tui_sidebar_relayouts_when_reload_changes_resource_count() -> Non
         sidebar.update_from_session(session)
         await pilot.pause()
 
+        skills = app.query_one("#sidebar-skills", Collapsible)
+        assert skills.title == "skills (1)"
+        assert skills.collapsed is False
         assert scroll.virtual_size.height < expanded_virtual_height
         assert scroll.max_scroll_y == 0
 
