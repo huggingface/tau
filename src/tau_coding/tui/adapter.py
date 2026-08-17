@@ -17,6 +17,7 @@ from tau_coding.events import (
     CodingSessionEvent,
     CompactionEndEvent,
     CompactionStartEvent,
+    HuggingFaceRouteEvent,
     QueueUpdateEvent,
     SessionAgentEndEvent,
 )
@@ -136,6 +137,9 @@ class TuiEventAdapter:
                 event.result,
                 event.is_error,
             )
+            return
+        if isinstance(event, HuggingFaceRouteEvent):
+            self.state.add_item("status", event.display_text)
             return
         if isinstance(event, CompactionStartEvent) and event.reason == "overflow":
             self.state.add_item("status", "… Context limit reached; compacting and retrying")

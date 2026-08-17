@@ -1286,6 +1286,7 @@ def _parse_chunk_usage(raw: Mapping[str, Any]) -> Usage:
     # 0 does not fall through.
     if cached_tokens is None:
         cached_tokens = _int_or_none(raw.get("prompt_cache_hit_tokens"))
+    cache_read_reported = cached_tokens is not None
     cache_read = cached_tokens or 0
     fresh_input = max(0, prompt_tokens - cache_read - cache_write)
     output = _int_or_zero(raw.get("completion_tokens"))
@@ -1297,6 +1298,7 @@ def _parse_chunk_usage(raw: Mapping[str, Any]) -> Usage:
         input=fresh_input,
         output=output,
         cache_read=cache_read,
+        cache_read_reported=cache_read_reported,
         cache_write=cache_write,
         reasoning=reasoning,
         total_tokens=fresh_input + output + cache_read + cache_write,
@@ -1322,6 +1324,11 @@ def _usage_from_responses_event(chunk: Mapping[str, Any]) -> Usage | None:
         if isinstance(input_details, Mapping)
         else 0
     )
+    cache_read_reported = (
+        _int_or_none(input_details.get("cached_tokens")) is not None
+        if isinstance(input_details, Mapping)
+        else False
+    )
     cache_write = (
         _int_or_zero(input_details.get("cache_write_tokens"))
         if isinstance(input_details, Mapping)
@@ -1339,6 +1346,7 @@ def _usage_from_responses_event(chunk: Mapping[str, Any]) -> Usage | None:
         input=max(0, _int_or_zero(raw.get("input_tokens")) - cache_read - cache_write),
         output=_int_or_zero(raw.get("output_tokens")),
         cache_read=cache_read,
+        cache_read_reported=cache_read_reported,
         cache_write=cache_write,
         reasoning=reasoning,
         total_tokens=_int_or_zero(raw.get("total_tokens")),

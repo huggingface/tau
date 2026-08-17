@@ -25,6 +25,7 @@ from tau_coding.events import (
     AutoRetryStartEvent,
     CompactionEndEvent,
     CompactionStartEvent,
+    HuggingFaceRouteEvent,
     QueueUpdateEvent,
     SessionAgentEndEvent,
 )
@@ -725,6 +726,28 @@ def test_tui_adapter_records_retry_and_queue_status() -> None:
     ]
     assert state.queued_steering == ("adjust",)
     assert state.queued_follow_up == ("after",)
+
+
+def test_tui_adapter_records_huggingface_route_status() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+
+    adapter.apply(
+        HuggingFaceRouteEvent(
+            status="exhausted",
+            previous_route="scaleway",
+            route="deepinfra",
+            reason="no untried live conversational routes were available",
+        )
+    )
+
+    assert [(item.role, item.text) for item in state.items] == [
+        (
+            "status",
+            "Hugging Face route evaluation stopped on deepinfra: "
+            "no untried live conversational routes were available",
+        )
+    ]
 
 
 def test_tui_adapter_records_assistant_error_and_aborted_message() -> None:

@@ -151,10 +151,19 @@ and the inference provider selected by Hugging Face can vary over time and by
 account.
 
 For a new session without an explicit preference, Hugging Face initially routes
-the model automatically. After the first successful response, Tau reads Hugging
-Face's `x-inference-provider` response header and pins that backing provider for
-the rest of the session. To choose the initial provider instead, add a per-model
-`inference_providers` preference to `~/.tau/providers.json`:
+the model automatically. After the first successful response, Tau pins the
+backing provider reported by Hugging Face. Tau then checks cache reuse only for
+append-only requests with at least 4,096 prompt tokens. The first eligible
+request warms the route. If two later comparable requests report either no cache
+telemetry or zero reused tokens, Tau tries another live conversational provider.
+Any positive cache read retains the current route. A replacement starts cold and
+may process or bill the full prompt, so evaluation stops after three routes or
+nine eligible requests. Absent or zero cache telemetry means Tau did not observe
+effective reported reuse; it does not prove that the provider has no internal
+cache.
+
+To choose the provider instead, add a per-model `inference_providers` preference
+to `~/.tau/providers.json`:
 
 ```json
 {
@@ -172,8 +181,10 @@ the rest of the session. To choose the initial provider instead, add a per-model
 
 Use the exact provider suffix advertised for that model by Hugging Face. Tau
 sends `zai-org/GLM-5.2:deepinfra` on the wire and continues to display and store
-the logical `zai-org/GLM-5.2` model. The pin survives resume; changing the
-preference does not rewrite existing sessions. `/session` shows the active pin.
+the logical `zai-org/GLM-5.2` model. The pin and automatic evaluation state
+survive resume; changing the preference does not rewrite existing sessions.
+Every automatic route change is shown in the transcript, and `/session` shows
+the active route and evaluation status.
 Route selection is available through the external
 [`alejandro-ao/tau-huggingface`](https://github.com/alejandro-ao/tau-huggingface)
 extension rather than a built-in command. It requires Tau 0.3.10 or newer. Clone
@@ -185,16 +196,17 @@ tau -e ./tau-huggingface
 ```
 
 Then use `/route <provider>` to select a route or `/route automatic` to reset
-it. Switching models uses that model's configured pin or starts automatic
-resolution again.
+it. An explicit configured or extension-selected route stays locked and is not
+evaluated automatically. Switching models uses that model's configured pin or
+starts automatic resolution again.
 
 Transient failures retry on the same wire model, and stream failures are not
 retried after model output has started. Pinning can reduce cold prefix-cache
 misses caused by cross-provider routing, but cannot prevent eviction, TTL expiry,
-or load balancing among workers within the chosen provider. Tau does not yet
-fall back automatically from an unavailable pinned route: doing so also requires
-a user-visible reroute event and durable reroute telemetry. Use the Hugging Face
-extension or start a new automatic session to resolve another route. See
+or load balancing among workers within the chosen provider. Short, failed,
+aborted, route-mismatched, compacted, and non-comparable requests do not count as
+cache-failure evidence. If no usable candidate remains, Tau keeps the current
+route and stops evaluation. See
 [Configuration]({{< relref "../reference/configuration.md#provider-preferences" >}}).
 
 ### Moonshot AI API vs. Kimi Code

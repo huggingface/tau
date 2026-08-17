@@ -19,11 +19,13 @@ def test_session_manager_creates_and_lists_sessions(tmp_path: Path) -> None:
         model="fake",
         provider_name="huggingface",
         inference_provider="deepinfra",
+        inference_provider_mode="automatic",
         title="Test session",
     )
 
     assert record.provider_name == "huggingface"
     assert record.inference_provider == "deepinfra"
+    assert record.inference_provider_mode == "automatic"
     assert record.path.parent.parent == tmp_path / ".tau" / "sessions"
     assert "project-" in record.path.parent.name
     assert len(record.path.parent.name.rsplit("-", maxsplit=1)[-1]) == 6
@@ -263,6 +265,9 @@ def test_session_manager_touch_updates_metadata(tmp_path: Path) -> None:
         record.id,
         model="new-model",
         provider_name="new-provider",
+        inference_provider="deepinfra",
+        inference_provider_mode="explicit",
+        preserve_inference_provider=False,
         title="Updated",
     )
 
@@ -270,6 +275,8 @@ def test_session_manager_touch_updates_metadata(tmp_path: Path) -> None:
     assert updated.id == record.id
     assert updated.model == "new-model"
     assert updated.provider_name == "new-provider"
+    assert updated.inference_provider == "deepinfra"
+    assert updated.inference_provider_mode == "explicit"
     assert updated.title == "Updated"
     assert updated.updated_at >= record.updated_at
     assert manager.get_session(record.id) == updated

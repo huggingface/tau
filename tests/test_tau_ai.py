@@ -2976,6 +2976,7 @@ async def test_openai_compatible_provider_reports_usage() -> None:
     assert usage.input == 20  # 30 prompt - 10 cached
     assert usage.output == 5
     assert usage.cache_read == 10
+    assert usage.cache_read_reported is True
     assert usage.cache_write == 0
     assert usage.reasoning == 2
     assert usage.total_tokens == 35
@@ -3084,6 +3085,7 @@ async def test_openai_compatible_responses_reports_usage_and_sends_cache_affinit
     assert usage.input == 30  # 50 input - 12 cached - 8 written
     assert usage.output == 8
     assert usage.cache_read == 12
+    assert usage.cache_read_reported is True
     assert usage.cache_write == 8
     assert usage.reasoning == 3
     assert usage.total_tokens == 58
@@ -3216,6 +3218,7 @@ async def test_openai_compatible_provider_reads_usage_from_choice_fallback() -> 
     assert usage.input == 15
     assert usage.output == 4
     assert usage.cache_read == 0
+    assert usage.cache_read_reported is False
     assert usage.total_tokens == 19
 
 
@@ -3302,6 +3305,7 @@ async def test_openai_compatible_provider_reported_zero_cached_tokens_wins() -> 
     usage = events[-1].message.usage
     assert usage is not None
     assert usage.cache_read == 0
+    assert usage.cache_read_reported is True
     assert usage.input == 40
 
 

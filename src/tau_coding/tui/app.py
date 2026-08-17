@@ -7016,6 +7016,13 @@ async def run_tui_app(
     startup_message: str | None = None
     startup_error_notice: str | None = None
     runtime_provider_config: ProviderConfig | None = selection.provider
+    inference_provider_mode = (
+        record.inference_provider_mode
+        if record is not None
+        and record.model == selection.model
+        and selection.provider.name == "huggingface"
+        else None
+    )
     inference_provider = _startup_inference_provider(selection, record)
     try:
         provider = create_model_provider(
@@ -7063,6 +7070,7 @@ async def run_tui_app(
                 session_manager=manager,
                 provider_name=selection.provider.name,
                 inference_provider=inference_provider,
+                inference_provider_mode=inference_provider_mode,
                 provider_settings=provider_settings,
                 runtime_provider_config=runtime_provider_config,
                 auto_compact_token_threshold=auto_compact_token_threshold,

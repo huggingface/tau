@@ -7,6 +7,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from time import time
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
@@ -21,6 +22,8 @@ _WINDOWS_RESERVED_FILE_STEMS = frozenset(
     | {f"lpt{index}" for index in range(1, 10)}
 )
 _SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+
+type HuggingFaceRouteMode = Literal["automatic", "explicit"]
 
 
 def validate_session_id(session_id: str) -> None:
@@ -50,6 +53,7 @@ class SessionRecordModel(BaseModel):
     model: str
     provider_name: str | None = None
     inference_provider: str | None = None
+    inference_provider_mode: HuggingFaceRouteMode | None = None
     title: str | None = None
     created_at: float
     updated_at: float
@@ -68,6 +72,7 @@ class CodingSessionRecord:
     updated_at: float
     provider_name: str | None = None
     inference_provider: str | None = None
+    inference_provider_mode: HuggingFaceRouteMode | None = None
 
     @classmethod
     def from_model(cls, model: SessionRecordModel) -> CodingSessionRecord:
@@ -82,6 +87,7 @@ class CodingSessionRecord:
             updated_at=model.updated_at,
             provider_name=model.provider_name,
             inference_provider=model.inference_provider,
+            inference_provider_mode=model.inference_provider_mode,
         )
 
     def to_model(self) -> SessionRecordModel:
@@ -96,6 +102,7 @@ class CodingSessionRecord:
             updated_at=self.updated_at,
             provider_name=self.provider_name,
             inference_provider=self.inference_provider,
+            inference_provider_mode=self.inference_provider_mode,
         )
 
 
@@ -143,6 +150,7 @@ class SessionManager:
         model: str,
         provider_name: str | None = None,
         inference_provider: str | None = None,
+        inference_provider_mode: HuggingFaceRouteMode | None = None,
         title: str | None = None,
         session_id: str | None = None,
     ) -> CodingSessionRecord:
@@ -152,6 +160,7 @@ class SessionManager:
             model=model,
             provider_name=provider_name,
             inference_provider=inference_provider,
+            inference_provider_mode=inference_provider_mode,
             title=title,
             session_id=session_id,
         )
@@ -165,6 +174,7 @@ class SessionManager:
         model: str,
         provider_name: str | None = None,
         inference_provider: str | None = None,
+        inference_provider_mode: HuggingFaceRouteMode | None = None,
         title: str | None = None,
         session_id: str | None = None,
     ) -> CodingSessionRecord:
@@ -174,6 +184,7 @@ class SessionManager:
             model=model,
             provider_name=provider_name,
             inference_provider=inference_provider,
+            inference_provider_mode=inference_provider_mode,
             title=title,
             session_id=session_id,
         )
@@ -204,6 +215,7 @@ class SessionManager:
         model: str,
         provider_name: str | None = None,
         inference_provider: str | None = None,
+        inference_provider_mode: HuggingFaceRouteMode | None = None,
         title: str | None = None,
         session_id: str | None = None,
     ) -> CodingSessionRecord:
@@ -225,6 +237,7 @@ class SessionManager:
             model=model,
             provider_name=provider_name,
             inference_provider=inference_provider,
+            inference_provider_mode=inference_provider_mode,
             title=title,
             created_at=now,
             updated_at=now,
@@ -268,6 +281,7 @@ class SessionManager:
         model: str | None = None,
         provider_name: str | None = None,
         inference_provider: str | None = None,
+        inference_provider_mode: HuggingFaceRouteMode | None = None,
         preserve_inference_provider: bool = True,
         title: str | None = None,
     ) -> CodingSessionRecord | None:
@@ -283,6 +297,11 @@ class SessionManager:
             provider_name=provider_name if provider_name is not None else existing.provider_name,
             inference_provider=(
                 existing.inference_provider if preserve_inference_provider else inference_provider
+            ),
+            inference_provider_mode=(
+                existing.inference_provider_mode
+                if preserve_inference_provider
+                else inference_provider_mode
             ),
             title=title if title is not None else existing.title,
             created_at=existing.created_at,

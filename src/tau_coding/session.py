@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import string
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -68,10 +68,24 @@ from tau_coding.events import (
     CodingSessionEvent,
     CompactionEndEvent,
     CompactionStartEvent,
+    HuggingFaceRouteEvent,
     QueueUpdateEvent,
     SessionAgentEndEvent,
 )
 from tau_coding.extensions.runtime import ExtensionRuntime
+from tau_coding.huggingface_routing import (
+    HF_CACHE_MAX_ELIGIBLE_REQUESTS,
+    HF_CACHE_PROBES_PER_ROUTE,
+    HF_CACHE_ROUTING_NAMESPACE,
+    HuggingFaceRoutingState,
+    discover_huggingface_routes,
+    exhaust_huggingface_routing,
+    mark_huggingface_route_unavailable,
+    next_huggingface_routes,
+    observe_huggingface_cache,
+    reroute_huggingface_state,
+    resolve_automatic_huggingface_route,
+)
 from tau_coding.paths import TauPaths
 from tau_coding.project_trust import (
     CanonicalProjectPath,
@@ -121,7 +135,7 @@ from tau_coding.session_export import (
     export_session_artifact,
     normalize_export_format,
 )
-from tau_coding.session_manager import SessionManager
+from tau_coding.session_manager import HuggingFaceRouteMode, SessionManager
 from tau_coding.session_stats import SessionStats, calculate_session_stats
 from tau_coding.skills import Skill, expand_skill_command, load_skills_with_diagnostics
 from tau_coding.system_prompt import (
@@ -241,6 +255,7 @@ class CodingSessionConfig:
     command_registry: CommandRegistry | None = None
     provider_name: str = "openai"
     inference_provider: str | None = None
+    inference_provider_mode: HuggingFaceRouteMode | None = None
     provider_settings: ProviderSettings | None = None
     runtime_provider_config: ProviderConfig | None = None
     auto_compact_token_threshold: int | None = None
@@ -320,6 +335,9 @@ class CodingSession:
         self._command_registry = command_registry or create_default_command_registry()
         self._provider_name = config.provider_name
         self._inference_provider = config.inference_provider
+        self._inference_provider_mode: HuggingFaceRouteMode | None = None
+        self._huggingface_routing_state: HuggingFaceRoutingState | None = None
+        self._restore_huggingface_routing(config, state)
         self._provider_settings = config.provider_settings
         self._runtime_provider_config = config.runtime_provider_config
         self._resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
@@ -547,6 +565,94 @@ class CodingSession:
     def inference_provider(self) -> str | None:
         """Return the pinned Hugging Face backing provider, if any."""
         return self._inference_provider
+
+    @property
+    def huggingface_routing_status(self) -> str | None:
+        """Return the concise adaptive-routing state shown by `/session`."""
+        if self._provider_name != "huggingface":
+            return None
+        if self._inference_provider_mode == "explicit":
+            return "explicit route lock"
+        state = self._huggingface_routing_state
+        if state is None:
+            return None
+        if state.phase == "retained":
+            return "automatic; retained after positive cache reuse"
+        if state.phase == "exhausted":
+            return f"automatic; evaluation stopped ({state.last_reason or 'budget exhausted'})"
+        if state.route is None:
+            return "automatic; waiting for route resolution"
+        if state.phase == "reroute":
+            return "automatic; replacement route pending"
+        failed_probes = state.absent_probes + state.zero_probes
+        return (
+            f"automatic; evaluating {state.route} "
+            f"({failed_probes}/{HF_CACHE_PROBES_PER_ROUTE} warmed misses, "
+            f"{state.eligible_requests}/{HF_CACHE_MAX_ELIGIBLE_REQUESTS} eligible requests)"
+        )
+
+    def _restore_huggingface_routing(
+        self,
+        config: CodingSessionConfig,
+        state: SessionState,
+    ) -> None:
+        if self._provider_name != "huggingface":
+            return
+        mode = config.inference_provider_mode
+        if mode is None:
+            mode = "explicit" if config.inference_provider is not None else "automatic"
+        if mode == "explicit":
+            routing_state = None
+        else:
+            # The index route is the active projection after resets and branch changes.
+            routing_state = next(
+                (
+                    restored
+                    for entry in reversed(state.custom_entries)
+                    if entry.namespace == HF_CACHE_ROUTING_NAMESPACE
+                    and (restored := HuggingFaceRoutingState.from_custom_data(entry.data))
+                    is not None
+                    and restored.model == self.model
+                    and restored.route == config.inference_provider
+                ),
+                None,
+            ) or HuggingFaceRoutingState.automatic(
+                self.model,
+                route=config.inference_provider,
+            )
+            self._inference_provider = routing_state.route
+        self._inference_provider_mode = mode
+        self._huggingface_routing_state = routing_state
+        self._config = replace(
+            config,
+            inference_provider=self._inference_provider,
+            inference_provider_mode=mode,
+        )
+
+    def _reset_huggingface_routing(
+        self,
+        route: str | None,
+        *,
+        mode: HuggingFaceRouteMode | None = None,
+    ) -> None:
+        if self._provider_name != "huggingface":
+            self._inference_provider = None
+            self._inference_provider_mode = None
+            self._huggingface_routing_state = None
+        else:
+            resolved_mode = mode or ("explicit" if route is not None else "automatic")
+            self._inference_provider = route
+            self._inference_provider_mode = resolved_mode
+            self._huggingface_routing_state = (
+                None
+                if resolved_mode == "explicit"
+                else HuggingFaceRoutingState.automatic(self.model, route=route)
+            )
+        self._config = replace(
+            self._config,
+            inference_provider=self._inference_provider,
+            inference_provider_mode=self._inference_provider_mode,
+        )
 
     @property
     def available_providers(self) -> tuple[str, ...]:
@@ -1055,7 +1161,7 @@ class CodingSession:
         if provider is not None:
             validate_provider_model(provider, model)
         self._harness.config.model = model
-        self._inference_provider = _configured_inference_provider(provider, model)
+        self._reset_huggingface_routing(_configured_inference_provider(provider, model))
         self._sync_thinking_level_to_active_model()
         self._refresh_runtime_provider()
         self._sync_image_support()
@@ -1066,6 +1172,7 @@ class CodingSession:
                 model=model,
                 provider_name=self.provider_name,
                 inference_provider=self._inference_provider,
+                inference_provider_mode=self._inference_provider_mode,
                 preserve_inference_provider=False,
             )
 
@@ -1078,7 +1185,7 @@ class CodingSession:
             return
 
         self._harness.config.model = model
-        self._inference_provider = _configured_inference_provider(provider, model)
+        self._reset_huggingface_routing(_configured_inference_provider(provider, model))
         self._sync_thinking_level_to_active_model()
         self._refresh_runtime_provider()
         self._sync_image_support()
@@ -1096,6 +1203,7 @@ class CodingSession:
                 "Inference-provider routing requires the huggingface provider"
             )
         normalized = validate_huggingface_inference_provider(route) if route is not None else None
+        mode: HuggingFaceRouteMode = "explicit" if normalized is not None else "automatic"
         provider, provider_config = self._build_runtime_provider(
             inference_provider=normalized,
         )
@@ -1106,10 +1214,10 @@ class CodingSession:
                 model=self.model,
                 provider_name=self.provider_name,
                 inference_provider=normalized,
+                inference_provider_mode=mode,
                 preserve_inference_provider=False,
             )
-        self._inference_provider = normalized
-        self._config = replace(self._config, inference_provider=normalized)
+        self._reset_huggingface_routing(normalized, mode=mode)
         self._activate_runtime_provider(provider, provider_config)
         return normalized or "automatic (will pin after the next successful response)"
 
@@ -1195,21 +1303,16 @@ class CodingSession:
                 model=model,
                 thinking_level=thinking_level,
                 inference_provider=_configured_inference_provider(provider_config, model),
-                response_headers_observer=(
-                    self._observe_response_headers
-                    if provider_config.name == "huggingface"
-                    else None
-                ),
             )
         except RuntimeError as exc:
             raise ProviderConfigError(str(exc)) from exc
         self._owned_providers.append(provider)
         self._harness.config.provider = provider
         self._provider_name = provider_config.name
-        self._inference_provider = _configured_inference_provider(provider_config, model)
         self._runtime_provider_config = provider_config
         self._invalidate_runtime_model_limits()
         self._harness.config.model = model
+        self._reset_huggingface_routing(_configured_inference_provider(provider_config, model))
         self._thinking_level = thinking_level
         self._sync_image_support()
         if persist_default:
@@ -1220,6 +1323,7 @@ class CodingSession:
                 model=model,
                 provider_name=self.provider_name,
                 inference_provider=self._inference_provider,
+                inference_provider_mode=self._inference_provider_mode,
                 preserve_inference_provider=False,
             )
 
@@ -1324,37 +1428,6 @@ class CodingSession:
         except ProviderConfigError:
             return
 
-    def _observe_response_headers(self, headers: Mapping[str, str]) -> None:
-        if self.provider_name != "huggingface" or self._inference_provider is not None:
-            return
-        route = next(
-            (value for key, value in headers.items() if key.casefold() == "x-inference-provider"),
-            None,
-        )
-        if route is None:
-            return
-        try:
-            route = validate_huggingface_inference_provider(route)
-        except ProviderConfigError:
-            return
-        provider, provider_config = self._build_runtime_provider(
-            inference_provider=route,
-        )
-        # Track staged providers immediately so a later index-write failure does
-        # not leak a provider-owned client. The active runtime remains unchanged.
-        self._owned_providers.append(provider)
-        if self._config.session_manager is not None and self._config.session_id is not None:
-            self._config.session_manager.touch_session(
-                self._config.session_id,
-                model=self.model,
-                provider_name=self.provider_name,
-                inference_provider=route,
-                preserve_inference_provider=False,
-            )
-        self._inference_provider = route
-        self._config = replace(self._config, inference_provider=route)
-        self._activate_runtime_provider(provider, provider_config)
-
     def _build_runtime_provider(
         self,
         *,
@@ -1371,11 +1444,6 @@ class CodingSession:
                 model=self.model,
                 thinking_level=self._thinking_level,
                 inference_provider=inference_provider,
-                response_headers_observer=(
-                    self._observe_response_headers
-                    if provider_config.name == "huggingface"
-                    else None
-                ),
             )
         except RuntimeError as exc:
             raise ProviderConfigError(str(exc)) from exc
@@ -1398,6 +1466,206 @@ class CodingSession:
         )
         self._owned_providers.append(provider)
         self._activate_runtime_provider(provider, provider_config)
+
+    async def _observe_huggingface_response(
+        self,
+        message: AssistantMessage,
+    ) -> HuggingFaceRouteEvent | None:
+        state = self._huggingface_routing_state
+        if (
+            state is None
+            or self._inference_provider_mode != "automatic"
+            or state.model != self.model
+            or message.stop_reason == "aborted"
+        ):
+            return None
+
+        response_route: str | None = None
+        if message.response_provider is not None:
+            try:
+                response_route = validate_huggingface_inference_provider(message.response_provider)
+            except ProviderConfigError:
+                return None
+        if state.route is not None and response_route not in {None, state.route}:
+            return None
+
+        if message.stop_reason == "error":
+            if (
+                len(state.attempted_routes) > 1
+                and state.route is not None
+                and not message.content
+                and not is_context_overflow_error(message)
+            ):
+                failed = mark_huggingface_route_unavailable(
+                    state,
+                    state.route,
+                    reason=f"{state.route} failed before producing output",
+                )
+                await self._persist_huggingface_routing_state(failed)
+            return None
+
+        if state.route is None:
+            if response_route is None:
+                return None
+            try:
+                provider, provider_config = self._build_runtime_provider(
+                    inference_provider=response_route,
+                )
+            except ProviderConfigError:
+                reason = f"{response_route} could not be pinned locally"
+                unavailable = mark_huggingface_route_unavailable(
+                    state,
+                    response_route,
+                    reason=reason,
+                )
+                exhausted = exhaust_huggingface_routing(unavailable, reason=reason)
+                await self._persist_huggingface_routing_state(exhausted)
+                return HuggingFaceRouteEvent(
+                    status="exhausted",
+                    previous_route=None,
+                    route=response_route,
+                    reason=reason,
+                )
+            self._owned_providers.append(provider)
+            state = resolve_automatic_huggingface_route(state, response_route)
+            state = observe_huggingface_cache(
+                state,
+                message.usage,
+                system=self._harness.config.system,
+                messages=self._harness.messages,
+                tools=self._harness.config.tools,
+            )
+            previous_route = self._inference_provider
+            self._set_automatic_huggingface_route(response_route)
+            try:
+                await self._persist_huggingface_routing_state(state)
+            except Exception:
+                self._set_automatic_huggingface_route(previous_route)
+                raise
+            self._activate_runtime_provider(provider, provider_config)
+            return HuggingFaceRouteEvent(
+                status="changed",
+                previous_route=None,
+                route=response_route,
+                reason="automatic route resolved",
+            )
+
+        observed = observe_huggingface_cache(
+            state,
+            message.usage,
+            system=self._harness.config.system,
+            messages=self._harness.messages,
+            tools=self._harness.config.tools,
+        )
+        if observed != state:
+            await self._persist_huggingface_routing_state(observed)
+        if state.phase != "exhausted" and observed.phase == "exhausted":
+            return HuggingFaceRouteEvent(
+                status="exhausted",
+                previous_route=None,
+                route=state.route,
+                reason=observed.last_reason or "eligible request budget exhausted",
+            )
+        return None
+
+    async def _reroute_huggingface_if_needed(self) -> HuggingFaceRouteEvent | None:
+        state = self._huggingface_routing_state
+        if (
+            state is None
+            or self._inference_provider_mode != "automatic"
+            or state.phase != "reroute"
+            or state.route is None
+        ):
+            return None
+
+        previous_route = state.route
+        try:
+            discovered = await discover_huggingface_routes(self.model)
+        except Exception as exc:  # noqa: BLE001 - current route remains usable
+            reason = f"route discovery failed: {type(exc).__name__}: {exc}"
+            exhausted = exhaust_huggingface_routing(state, reason=reason)
+            await self._persist_huggingface_routing_state(exhausted)
+            return HuggingFaceRouteEvent(
+                status="exhausted",
+                previous_route=None,
+                route=previous_route,
+                reason=reason,
+            )
+
+        failure_reason = state.last_reason or "warmed requests reported no cache reuse"
+        for route in next_huggingface_routes(state, discovered):
+            try:
+                provider, provider_config = self._build_runtime_provider(
+                    inference_provider=route,
+                )
+            except ProviderConfigError:
+                state = mark_huggingface_route_unavailable(state, route)
+                continue
+            self._owned_providers.append(provider)
+            rerouted = reroute_huggingface_state(state, route, reason=failure_reason)
+            self._set_automatic_huggingface_route(route)
+            try:
+                await self._persist_huggingface_routing_state(rerouted)
+            except Exception:
+                self._set_automatic_huggingface_route(previous_route)
+                raise
+            self._activate_runtime_provider(provider, provider_config)
+            return HuggingFaceRouteEvent(
+                status="changed",
+                previous_route=previous_route,
+                route=route,
+                reason=failure_reason,
+            )
+
+        reason = "no untried live conversational routes were available"
+        exhausted = exhaust_huggingface_routing(state, reason=reason)
+        await self._persist_huggingface_routing_state(exhausted)
+        return HuggingFaceRouteEvent(
+            status="exhausted",
+            previous_route=None,
+            route=previous_route,
+            reason=reason,
+        )
+
+    async def _persist_huggingface_routing_state(
+        self,
+        state: HuggingFaceRoutingState,
+    ) -> None:
+        await self.append_custom_entry(HF_CACHE_ROUTING_NAMESPACE, state.to_custom_data())
+        self._huggingface_routing_state = state
+
+    def _set_automatic_huggingface_route(self, route: str | None) -> None:
+        self._inference_provider = route
+        self._inference_provider_mode = "automatic"
+        self._config = replace(
+            self._config,
+            inference_provider=route,
+            inference_provider_mode="automatic",
+        )
+
+    async def _handle_huggingface_agent_event(
+        self,
+        event: AgentEvent,
+        *,
+        context: AgentCallDiagnosticContext,
+    ) -> HuggingFaceRouteEvent | None:
+        try:
+            route_event: HuggingFaceRouteEvent | None = None
+            if isinstance(event, MessageEndEvent) and isinstance(event.message, AssistantMessage):
+                route_event = await self._observe_huggingface_response(event.message)
+            elif isinstance(event, AgentEndEvent):
+                route_event = await self._reroute_huggingface_if_needed()
+        except Exception as exc:  # noqa: BLE001 - routing must not interrupt a completed turn
+            with suppress(Exception):
+                self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
+                    context=context,
+                    phase="huggingface_route_evaluation",
+                    exc=exc,
+                )
+            return None
+        if route_event is not None:
+            await self._extension_runtime.emit_event(route_event)
+        return route_event
 
     def _invalidate_runtime_model_limits(self) -> None:
         self._runtime_model_limits = None
@@ -1670,6 +1938,7 @@ class CodingSession:
                 command_registry=self._config.command_registry,
                 provider_name=provider_name,
                 inference_provider=record.inference_provider,
+                inference_provider_mode=record.inference_provider_mode,
                 provider_settings=self._provider_settings,
                 runtime_provider_config=runtime_provider_config,
                 auto_compact_token_threshold=self._auto_compact_token_threshold,
@@ -1723,12 +1992,20 @@ class CodingSession:
             )
 
         inference_provider = _configured_inference_provider(runtime_provider_config, model)
+        inference_provider_mode: HuggingFaceRouteMode | None = (
+            "explicit"
+            if provider_name == "huggingface" and inference_provider is not None
+            else "automatic"
+            if provider_name == "huggingface"
+            else None
+        )
         record = (
             manager.prepare_session(
                 cwd=self.cwd,
                 model=model,
                 provider_name=provider_name,
                 inference_provider=inference_provider,
+                inference_provider_mode=inference_provider_mode,
             )
             if inference_provider is not None
             else manager.prepare_session(
@@ -1747,6 +2024,7 @@ class CodingSession:
                 session_id=record.id,
                 provider_name=provider_name,
                 inference_provider=inference_provider,
+                inference_provider_mode=inference_provider_mode,
                 provider_settings=self._provider_settings,
                 runtime_provider_config=runtime_provider_config,
                 thinking_level=thinking_level,
@@ -1809,6 +2087,8 @@ class CodingSession:
         self._command_registry = replacement._command_registry
         self._provider_name = replacement._provider_name
         self._inference_provider = replacement._inference_provider
+        self._inference_provider_mode = replacement._inference_provider_mode
+        self._huggingface_routing_state = replacement._huggingface_routing_state
         self._provider_settings = replacement._provider_settings
         self._runtime_provider_config = replacement._runtime_provider_config
         self._resource_paths = replacement._resource_paths
@@ -1866,6 +2146,7 @@ class CodingSession:
                 model=self.model,
                 provider_name=self.provider_name,
                 inference_provider=self._inference_provider,
+                inference_provider_mode=self._inference_provider_mode,
                 session_id=self._config.session_id,
             )
         self._config = replace(self._config, index_on_first_persist=False)
@@ -1976,6 +2257,10 @@ class CodingSession:
             )
 
         await self._flush_pending_message_writes(context=context)
+        route_event = await self._reroute_huggingface_if_needed()
+        if route_event is not None:
+            await self._extension_runtime.emit_event(route_event)
+            yield route_event
         await self._refresh_runtime_model_limits()
         await self._try_auto_compact(context=context, phase="auto_compact_before_prompt")
         # id() values can be reused once earlier message objects are freed.
@@ -2024,6 +2309,9 @@ class CodingSession:
                     yield SessionAgentEndEvent(messages=event.messages, will_retry=False)
                 else:
                     yield event
+                route_event = await self._handle_huggingface_agent_event(event, context=context)
+                if route_event is not None:
+                    yield route_event
                 # Let frontends render the confirmed, expanded prompt before
                 # session naming performs its separate provider request.
                 if auto_name_message is not None:
@@ -2075,6 +2363,12 @@ class CodingSession:
                             )
                         else:
                             yield retry_event
+                        route_event = await self._handle_huggingface_agent_event(
+                            retry_event,
+                            context=context,
+                        )
+                        if route_event is not None:
+                            yield route_event
                     session_event_4 = AutoRetryEndEvent(success=True, attempt=1, final_error=None)
                     await self._extension_runtime.emit_event(session_event_4)
                     yield session_event_4
@@ -2100,6 +2394,10 @@ class CodingSession:
         """Continue the agent from restored state and persist new messages."""
         context = self._diagnostic_context()
         await self._flush_pending_message_writes(context=context)
+        route_event = await self._reroute_huggingface_if_needed()
+        if route_event is not None:
+            await self._extension_runtime.emit_event(route_event)
+            yield route_event
         await self._refresh_runtime_model_limits()
         # id() values can be reused once earlier message objects are freed.
         self._ended_message_ids.clear()
@@ -2125,6 +2423,9 @@ class CodingSession:
                     yield SessionAgentEndEvent(messages=event.messages, will_retry=False)
                 else:
                     yield event
+                route_event = await self._handle_huggingface_agent_event(event, context=context)
+                if route_event is not None:
+                    yield route_event
             await self._try_auto_compact(context=context, phase="auto_compact_after_continue")
             session_event_5 = AgentSettledEvent()
             await self._extension_runtime.emit_event(session_event_5)
@@ -2337,6 +2638,7 @@ class CodingSession:
                 model=self.model,
                 provider_name=self.provider_name,
                 inference_provider=self._inference_provider,
+                inference_provider_mode=self._inference_provider_mode,
                 preserve_inference_provider=False,
             )
 
@@ -2381,6 +2683,7 @@ class CodingSession:
             model=self.model,
             provider_name=self.provider_name,
             inference_provider=self._inference_provider,
+            inference_provider_mode=self._inference_provider_mode,
             session_id=self._config.session_id,
         )
 
@@ -2982,22 +3285,13 @@ def _create_runtime_provider(
     model: str,
     thinking_level: ThinkingLevel | None,
     inference_provider: str | None,
-    response_headers_observer: Callable[[Mapping[str, str]], None] | None = None,
 ) -> ClosableModelProvider:
-    if inference_provider is None and response_headers_observer is None:
-        return create_model_provider(
-            provider,
-            credential_store=credential_store,
-            model=model,
-            thinking_level=thinking_level,
-        )
     if inference_provider is None:
         return create_model_provider(
             provider,
             credential_store=credential_store,
             model=model,
             thinking_level=thinking_level,
-            response_headers_observer=response_headers_observer,
         )
     return create_model_provider(
         provider,
@@ -3005,7 +3299,6 @@ def _create_runtime_provider(
         model=model,
         thinking_level=thinking_level,
         inference_provider=inference_provider,
-        response_headers_observer=response_headers_observer,
     )
 
 

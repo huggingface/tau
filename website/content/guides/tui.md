@@ -38,6 +38,10 @@ another prompt without starting a new session; empty failed provider turns are
 retained for diagnostics but are not replayed to the model as invalid
 conversation history.
 
+For the built-in Hugging Face provider, an automatic route change or stopped
+cache evaluation appears as a status row. `/session` reports the active backing
+provider and its cache-routing state.
+
 ## Cancelling and steering a run
 
 While the agent is working you don't have to wait:
