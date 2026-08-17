@@ -171,6 +171,7 @@ def format_project_context(context_files: Sequence[ProjectContextFile]) -> str:
 
 def format_skills_for_prompt(skills: Sequence[Skill]) -> str:
     """Format skills for inclusion in a system prompt using Pi's XML style."""
+    skills = [skill for skill in skills if not skill.disable_model_invocation]
     if not skills:
         return ""
 
