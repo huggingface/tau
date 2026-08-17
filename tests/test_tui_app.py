@@ -3066,6 +3066,32 @@ async def test_tui_sidebar_resource_sections_expand_independently() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_sidebar_refreshes_skill_tokens_when_model_invocation_changes() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 40)):
+        sidebar = app.query_one("#sidebar", SessionSidebar)
+        skills = app.query_one("#sidebar-skills", Collapsible)
+        initial_title = Content.from_markup(skills.title).plain
+        assert initial_title != "skills (1 · ~0 tokens)"
+
+        skill = session.skills[0]
+        session.skills = (
+            Skill(
+                name=skill.name,
+                path=skill.path,
+                content=skill.content,
+                description=skill.description,
+                disable_model_invocation=True,
+            ),
+        )
+        sidebar.update_from_session(session)
+
+        assert Content.from_markup(skills.title).plain == "skills (1 · ~0 tokens)"
+
+
+@pytest.mark.anyio
 async def test_tui_sidebar_scrolls_when_all_skills_overflow() -> None:
     session = FakeSession()
     session.skills = tuple(

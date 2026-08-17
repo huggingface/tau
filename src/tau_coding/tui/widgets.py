@@ -237,7 +237,10 @@ def _session_summary_fingerprint(
         session.session_stats,
         tuple(session.extension_names),
         tuple(tool.name for tool in session.tools),
-        tuple((skill.name, skill.path, skill.description) for skill in session.skills),
+        tuple(
+            (skill.name, skill.path, skill.description, skill.disable_model_invocation)
+            for skill in session.skills
+        ),
         tuple((template.name, template.path) for template in session.prompt_templates),
         tuple(context.path for context in session.context_files),
     )
