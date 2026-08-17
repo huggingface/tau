@@ -2488,11 +2488,11 @@ def _grouped_skill_list(
     if not skills:
         return Text("No skills loaded", style=theme.completion_description)
 
-    grouped: dict[str, list[str]] = {}
+    grouped: dict[str, list[tuple[str, bool]]] = {}
     for skill in skills:
         origin = skill.path.parent.parent if skill.path.name == "SKILL.md" else skill.path.parent
         label = _resource_origin_label(origin, cwd=cwd)
-        grouped.setdefault(label, []).append(skill.name)
+        grouped.setdefault(label, []).append((skill.name, skill.disable_model_invocation))
     return _grouped_resource_names(grouped, directory="skills", theme=theme)
 
 
@@ -2505,15 +2505,15 @@ def _grouped_prompt_list(
     if not templates:
         return Text("No prompt templates", style=theme.completion_description)
 
-    grouped: dict[str, list[str]] = {}
+    grouped: dict[str, list[tuple[str, bool]]] = {}
     for template in templates:
         label = _resource_origin_label(template.path.parent, cwd=cwd)
-        grouped.setdefault(label, []).append(template.name)
+        grouped.setdefault(label, []).append((template.name, False))
     return _grouped_resource_names(grouped, directory="prompts", theme=theme)
 
 
 def _grouped_resource_names(
-    grouped: dict[str, list[str]],
+    grouped: dict[str, list[tuple[str, bool]]],
     *,
     directory: str,
     theme: TuiTheme,
@@ -2533,8 +2533,9 @@ def _grouped_resource_names(
         if text:
             text.append("\n")
         text.append(origin, style=theme.completion_description)
-        for name in sorted(grouped[origin]):
-            text.append("\n  • ", style=theme.completion_description)
+        for name, hollow_bullet in sorted(grouped[origin]):
+            bullet = "◦" if hollow_bullet else "•"
+            text.append(f"\n  {bullet} ", style=theme.completion_description)
             text.append(name, style=theme.completion_description)
     return text
 

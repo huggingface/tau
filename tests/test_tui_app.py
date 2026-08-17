@@ -546,6 +546,31 @@ def test_session_sidebar_shows_all_skills() -> None:
     assert "more)" not in output
 
 
+def test_session_sidebar_marks_user_only_skills_with_hollow_bullets() -> None:
+    session = FakeSession()
+    session.skills = (
+        Skill(
+            name="model-visible",
+            path=session.cwd / ".tau/skills/model-visible/SKILL.md",
+            content="Model-visible skill",
+        ),
+        Skill(
+            name="user-only",
+            path=session.cwd / ".tau/skills/user-only/SKILL.md",
+            content="User-only skill",
+            disable_model_invocation=True,
+        ),
+    )
+    console = Console(record=True, width=80)
+
+    console.print(render_session_sidebar(session))
+
+    output = console.export_text()
+    assert "• model-visible" in output
+    assert "◦ user-only" in output
+    assert "• user-only" not in output
+
+
 def test_session_sidebar_groups_skills_by_origin(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
