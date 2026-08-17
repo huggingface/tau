@@ -169,13 +169,6 @@ class SessionSidebar(Vertical):
             layout=False,
         )
 
-    def on_collapsible_expanded(self, event: Collapsible.Expanded) -> None:
-        """Keep skills and prompts mutually exclusive like an accordion."""
-        other_id = (
-            "#sidebar-prompts" if event.collapsible.id == "sidebar-skills" else "#sidebar-skills"
-        )
-        self.query_one(other_id, Collapsible).collapsed = True
-
 
 class CompactSessionInfo(Static):
     """Single-line session metadata for narrow TUI layouts."""

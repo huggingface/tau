@@ -3019,7 +3019,7 @@ async def test_tui_sidebar_is_visible_on_medium_windows() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_sidebar_resource_sections_are_a_collapsed_accordion() -> None:
+async def test_tui_sidebar_resource_sections_expand_independently() -> None:
     session = FakeSession()
     session.prompt_templates = (
         PromptTemplate("explain", session.cwd / ".tau/prompts/explain.md", "Explain"),
@@ -3041,6 +3041,10 @@ async def test_tui_sidebar_resource_sections_are_a_collapsed_accordion() -> None
         assert prompts.collapsed is True
 
         await pilot.click("#sidebar-prompts CollapsibleTitle")
+        assert skills.collapsed is False
+        assert prompts.collapsed is False
+
+        await pilot.click("#sidebar-skills CollapsibleTitle")
         assert skills.collapsed is True
         assert prompts.collapsed is False
 
