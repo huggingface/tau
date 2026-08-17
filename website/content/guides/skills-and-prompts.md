@@ -99,6 +99,25 @@ Pay special attention to authentication boundaries.
 `/skill:<name>` is a *prompt-expansion* path — Tau expands the skill and any
 inline or multiline request into your prompt, then runs it as a normal turn.
 
+### Hiding a skill from the model
+
+Set `disable-model-invocation: true` in the frontmatter to keep a skill out of
+the system prompt. The model will not see it or invoke it on its own, but you
+can still run it explicitly with `/skill:<name>` (and it still appears in the
+`/skills` picker and autocomplete):
+
+```md
+---
+description: Generate the weekly status report.
+disable-model-invocation: true
+---
+
+Steps to build the report...
+```
+
+This is useful for user-triggered workflows that would otherwise add noise to
+the skill list or tempt the model to fire them at the wrong time.
+
 ## Prompt templates
 
 A prompt template is a saved prompt you trigger by its filename. For example,
