@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from asyncio import Event, create_task
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
@@ -8,9 +9,10 @@ import httpx
 import pytest
 
 from pi_event_helpers import assistant_done, assistant_start
+from tau_agent.events import MessageEndEvent
 from tau_agent.messages import AgentMessage, AssistantMessage, Usage, UserMessage
 from tau_agent.provider_events import AssistantErrorEvent
-from tau_agent.session import CustomEntry, JsonlSessionStorage
+from tau_agent.session import CustomEntry, JsonlSessionStorage, LeafEntry, MessageEntry
 from tau_agent.tools import AgentTool
 from tau_ai import CancellationToken, FakeProvider
 from tau_ai.events import AssistantMessageEvent
@@ -100,23 +102,63 @@ def _observe(
     )
 
 
+async def _reroute_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> tuple[CodingSession, dict[str | None, _RouteAwareProvider]]:
+    model = "org/model"
+    provider_config = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=(model,),
+        default_model=model,
+    )
+    created: dict[str | None, _RouteAwareProvider] = {}
+
+    def create_provider(*_args: object, **kwargs: object) -> _RouteAwareProvider:
+        route = kwargs.get("inference_provider")
+        assert route is None or isinstance(route, str)
+        provider = _RouteAwareProvider(route, {}, [])
+        created[route] = provider
+        return provider
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model=model,
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="huggingface",
+            inference_provider="scaleway",
+            inference_provider_mode="automatic",
+            runtime_provider_config=provider_config,
+        )
+    )
+    assert session._huggingface_routing_state is not None
+    session._huggingface_routing_state = session._huggingface_routing_state.model_copy(
+        update={"phase": "reroute"}
+    )
+    return session, created
+
+
 def test_huggingface_cache_policy_warms_then_reroutes_on_absent_telemetry() -> None:
     state = HuggingFaceRoutingState.automatic("org/model", route="scaleway")
 
     cold = _observe(state, _usage(), "one")
     first_probe = _observe(cold, _usage(), "one", "two")
-    exhausted = _observe(first_probe, _usage(), "one", "two", "three")
+    reroute = _observe(first_probe, _usage(), "one", "two", "three")
 
     assert cold.phase == "evaluating"
     assert cold.absent_probes == 0
     assert first_probe.phase == "evaluating"
     assert first_probe.absent_probes == 1
-    assert exhausted.phase == "reroute"
-    assert exhausted.absent_probes == 2
-    assert exhausted.zero_probes == 0
-    assert exhausted.eligible_requests == 3
+    assert reroute.phase == "reroute"
+    assert reroute.absent_probes == 2
+    assert reroute.zero_probes == 0
+    assert reroute.eligible_requests == 3
 
-    assert _observe(exhausted, _usage(), "one", "two", "three", "four") == exhausted
+    assert _observe(reroute, _usage(), "one", "two", "three", "four") == reroute
 
 
 def test_huggingface_cache_policy_distinguishes_zero_and_retains_positive_reuse() -> None:
@@ -201,6 +243,14 @@ async def test_huggingface_session_surfaces_budget_exhaustion(tmp_path: Path) ->
             "eligible_requests": HF_CACHE_MAX_ELIGIBLE_REQUESTS - 2,
         }
     )
+    initial_state = session._huggingface_routing_state
+    assert (
+        await session._observe_huggingface_response(
+            AssistantMessage(stop_reason="aborted", usage=_usage())
+        )
+        is None
+    )
+    assert session._huggingface_routing_state is initial_state
 
     first_context = [UserMessage(content="one")]
     session._harness.replace_messages(first_context)
@@ -330,6 +380,108 @@ async def test_huggingface_route_observation_failure_keeps_completed_response(
     await session.aclose()
 
 
+@pytest.mark.anyio
+async def test_huggingface_pending_reroute_failure_does_not_block_next_turn(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider(
+                [
+                    [
+                        assistant_start(model="org/model"),
+                        assistant_done(AssistantMessage(content="completed response")),
+                    ]
+                ]
+            ),
+            model="org/model",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="huggingface",
+            inference_provider="scaleway",
+            inference_provider_mode="automatic",
+        )
+    )
+    assert session._huggingface_routing_state is not None
+    session._huggingface_routing_state = session._huggingface_routing_state.model_copy(
+        update={"phase": "reroute"}
+    )
+
+    async def fail_reroute() -> HuggingFaceRouteEvent | None:
+        raise PermissionError("session index is read-only")
+
+    monkeypatch.setattr(session, "_reroute_huggingface_if_needed", fail_reroute)
+
+    events = await _collect(session.prompt("hello"))
+
+    assert any(
+        isinstance(event, MessageEndEvent)
+        and isinstance(event.message, AssistantMessage)
+        and event.message.text == "completed response"
+        for event in events
+    )
+    assert isinstance(events[-1], AgentSettledEvent)
+    assert "evaluation stopped" in (session.huggingface_routing_status or "")
+    assert session._last_diagnostic_log_path is not None
+    await session.aclose()
+
+
+@pytest.mark.anyio
+async def test_huggingface_route_observation_precedes_consumer_teardown(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model = "org/model"
+    responses = {
+        None: [
+            AssistantMessage(
+                content="completed response",
+                response_provider="deepinfra",
+                usage=_usage(),
+            )
+        ]
+    }
+    calls: list[str | None] = []
+
+    def create_provider(*_args: object, **kwargs: object) -> _RouteAwareProvider:
+        route = kwargs.get("inference_provider")
+        assert route is None or isinstance(route, str)
+        return _RouteAwareProvider(route, responses, calls)
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    provider_config = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=(model,),
+        default_model=model,
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model=model,
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="huggingface",
+            inference_provider_mode="automatic",
+            runtime_provider_config=provider_config,
+        )
+    )
+
+    events = session.prompt("hello")
+    async for event in events:
+        if isinstance(event, MessageEndEvent) and isinstance(event.message, AssistantMessage):
+            break
+    await events.aclose()
+
+    assert calls == [None]
+    assert session.inference_provider == "deepinfra"
+    assert session._huggingface_routing_state is not None
+    assert session._huggingface_routing_state.route == "deepinfra"
+    await session.aclose()
+
+
 def test_huggingface_routing_state_round_trips_custom_entry_data() -> None:
     state = _observe(
         HuggingFaceRoutingState.automatic("org/model", route="deepinfra"),
@@ -341,6 +493,120 @@ def test_huggingface_routing_state_round_trips_custom_entry_data() -> None:
 
     assert restored == state
     assert HuggingFaceRoutingState.from_custom_data({"version": 999}) is None
+
+
+@pytest.mark.anyio
+async def test_huggingface_routing_state_survives_branch_then_resume(tmp_path: Path) -> None:
+    model = "org/model"
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    user_entry = MessageEntry(message=UserMessage(content="one"))
+    assistant_entry = MessageEntry(
+        parent_id=user_entry.id,
+        message=AssistantMessage(content="reply"),
+    )
+    await storage.append(user_entry)
+    await storage.append(assistant_entry)
+    await storage.append(LeafEntry(parent_id=assistant_entry.id, entry_id=assistant_entry.id))
+
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(
+        cwd=tmp_path,
+        model=model,
+        provider_name="huggingface",
+        inference_provider="deepinfra",
+        inference_provider_mode="automatic",
+        title="Branch routing test",
+    )
+    config = CodingSessionConfig(
+        provider=FakeProvider([]),
+        model=model,
+        system="You are Tau.",
+        storage=storage,
+        cwd=tmp_path,
+        session_id=record.id,
+        session_manager=manager,
+        provider_name="huggingface",
+        inference_provider="deepinfra",
+        inference_provider_mode="automatic",
+    )
+    session = await CodingSession.load(config)
+    retained = HuggingFaceRoutingState.automatic(model, route="deepinfra").model_copy(
+        update={
+            "phase": "retained",
+            "eligible_requests": 3,
+            "last_reason": "positive cache reuse reported",
+        }
+    )
+    await session._persist_huggingface_routing_state(retained)
+
+    await session.branch_to_entry(assistant_entry.id)
+    await session.aclose()
+
+    resumed = await CodingSession.load(replace(config, provider=FakeProvider([])))
+    assert resumed._huggingface_routing_state == retained
+    await resumed.aclose()
+
+
+@pytest.mark.anyio
+async def test_huggingface_automatic_reset_survives_immediate_resume(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model = "org/model"
+    provider_config = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=(model,),
+        default_model=model,
+    )
+
+    def create_provider(*_args: object, **kwargs: object) -> _RouteAwareProvider:
+        route = kwargs.get("inference_provider")
+        assert route is None or isinstance(route, str)
+        return _RouteAwareProvider(route, {}, [])
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(
+        cwd=tmp_path,
+        model=model,
+        provider_name="huggingface",
+    )
+    config = CodingSessionConfig(
+        provider=FakeProvider([]),
+        model=model,
+        system="You are Tau.",
+        storage=JsonlSessionStorage(record.path),
+        cwd=tmp_path,
+        session_id=record.id,
+        session_manager=manager,
+        provider_name="huggingface",
+        runtime_provider_config=provider_config,
+    )
+    session = await CodingSession.load(config)
+    exhausted = HuggingFaceRoutingState.automatic(model).model_copy(
+        update={"phase": "exhausted", "last_reason": "previous automatic cycle exhausted"}
+    )
+    await session._persist_huggingface_routing_state(exhausted)
+    exhausted_record = manager.get_session(record.id)
+    assert exhausted_record is not None
+    assert exhausted_record.inference_provider_mode == "automatic"
+
+    session.set_inference_provider(None)
+    await session.aclose()
+
+    reset_record = manager.get_session(record.id)
+    assert reset_record is not None
+    assert reset_record.inference_provider_mode is None
+    resumed = await CodingSession.load(
+        replace(
+            config,
+            provider=FakeProvider([]),
+            inference_provider=reset_record.inference_provider,
+            inference_provider_mode=reset_record.inference_provider_mode,
+        )
+    )
+    assert resumed.huggingface_routing_status == "automatic; waiting for route resolution"
+    await resumed.aclose()
 
 
 def test_next_huggingface_routes_is_deterministic_and_budgeted() -> None:
@@ -597,7 +863,7 @@ async def test_huggingface_explicit_route_stays_locked_until_reset(
     current = manager.get_session(record.id)
     assert current is not None
     assert current.inference_provider is None
-    assert current.inference_provider_mode == "automatic"
+    assert current.inference_provider_mode is None
     assert session.huggingface_routing_status == "automatic; waiting for route resolution"
 
     assert session.set_inference_provider("scaleway") == "scaleway"
@@ -605,6 +871,66 @@ async def test_huggingface_explicit_route_stays_locked_until_reset(
     assert current is not None
     assert current.inference_provider_mode == "explicit"
     assert session.huggingface_routing_status == "explicit route lock"
+    await session.aclose()
+
+
+@pytest.mark.anyio
+async def test_huggingface_explicit_route_wins_during_candidate_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    discovery_started = Event()
+    finish_discovery = Event()
+
+    async def discover_routes(*_args: object, **_kwargs: object) -> tuple[str, ...]:
+        discovery_started.set()
+        await finish_discovery.wait()
+        return ("candidate",)
+
+    monkeypatch.setattr(coding_session_module, "discover_huggingface_routes", discover_routes)
+    session, created = await _reroute_session(monkeypatch, tmp_path)
+
+    reroute = create_task(session._reroute_huggingface_if_needed())
+    await discovery_started.wait()
+    session.set_inference_provider("manual")
+    finish_discovery.set()
+
+    assert await reroute is None
+    assert session.inference_provider == "manual"
+    assert session.huggingface_routing_status == "explicit route lock"
+    assert session._harness.config.provider is created["manual"]
+    await session.aclose()
+
+
+@pytest.mark.anyio
+async def test_huggingface_explicit_route_wins_during_automatic_state_write(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    async def discover_routes(*_args: object, **_kwargs: object) -> tuple[str, ...]:
+        return ("candidate",)
+
+    monkeypatch.setattr(coding_session_module, "discover_huggingface_routes", discover_routes)
+    session, created = await _reroute_session(monkeypatch, tmp_path)
+    original_append = session.append_custom_entry
+    write_started = Event()
+    finish_write = Event()
+
+    async def blocked_append(namespace: str, data: dict[str, object]) -> None:
+        write_started.set()
+        await finish_write.wait()
+        await original_append(namespace, data)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(session, "append_custom_entry", blocked_append)
+    reroute = create_task(session._reroute_huggingface_if_needed())
+    await write_started.wait()
+    session.set_inference_provider("manual")
+    finish_write.set()
+
+    assert await reroute is None
+    assert session.inference_provider == "manual"
+    assert session.huggingface_routing_status == "explicit route lock"
+    assert session._harness.config.provider is created["manual"]
     await session.aclose()
 
 
