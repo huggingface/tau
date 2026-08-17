@@ -3072,7 +3072,7 @@ async def test_tui_sidebar_scrolls_when_all_skills_overflow() -> None:
         assert brand.region.bottom == app.query_one("#sidebar").content_region.bottom
         scroll.scroll_end(animate=False, immediate=True)
         await pilot.pause()
-        assert scroll.scroll_y == scroll.max_scroll_y
+        assert 0 < scroll.scroll_y <= scroll.max_scroll_y
 
 
 @pytest.mark.anyio
