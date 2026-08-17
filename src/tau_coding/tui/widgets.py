@@ -33,10 +33,11 @@ from textual.widgets import Markdown as TextualMarkdown
 from textual.widgets.markdown import MarkdownBlock, MarkdownStream
 
 from tau_agent.tools import AgentTool, ToolCall
+from tau_coding.context_window import estimate_text_tokens
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.session_stats import SessionStats
 from tau_coding.skills import Skill
-from tau_coding.system_prompt import ProjectContextFile
+from tau_coding.system_prompt import ProjectContextFile, format_skills_for_prompt
 from tau_coding.tui.autocomplete import CompletionState
 from tau_coding.tui.config import TAU_DARK_THEME, TuiRoleStyle, TuiTheme
 from tau_coding.tui.state import (
@@ -154,7 +155,7 @@ class SessionSidebar(Vertical):
             Group(*_separate_sidebar_sections(content.summary_sections, theme=theme)),
         )
         skills = self.query_one("#sidebar-skills", Collapsible)
-        skills.title = f"skills ({len(session.skills)})"
+        skills.title = _skill_section_title(session)
         self.query_one("#sidebar-skills-content", Static).update(content.skills)
         prompts = self.query_one("#sidebar-prompts", Collapsible)
         prompts.title = f"prompts ({len(session.prompt_templates)})"
@@ -189,6 +190,17 @@ class CompactSessionInfo(Static):
         self.update(render_compact_session_info(session, theme=theme))
 
 
+def _skill_section_title(session: SessionSummarySource) -> str:
+    """Summarize skill count and estimated system-prompt footprint."""
+    skill_prompt = (
+        format_skills_for_prompt(session.skills)
+        if any(tool.name == "read" for tool in session.tools)
+        else ""
+    )
+    estimated_tokens = estimate_text_tokens(skill_prompt)
+    return f"skills ({len(session.skills)} · ~{_compact_usage_count(estimated_tokens)} tokens)"
+
+
 def _session_summary_fingerprint(
     session: SessionSummarySource,
     *,
@@ -208,7 +220,7 @@ def _session_summary_fingerprint(
         session.session_stats,
         tuple(session.extension_names),
         tuple(tool.name for tool in session.tools),
-        tuple((skill.name, skill.path) for skill in session.skills),
+        tuple((skill.name, skill.path, skill.description) for skill in session.skills),
         tuple((template.name, template.path) for template in session.prompt_templates),
         tuple(context.path for context in session.context_files),
     )

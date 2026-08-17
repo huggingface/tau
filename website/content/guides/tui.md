@@ -195,9 +195,12 @@ and loaded tools, skills, prompt templates, extensions, and context files such a
 to three rendered lines. Skills and prompt templates are grouped under their
 resource origins (for example, `./.tau/skills`, `~/.agents/skills`, or
 `./.tau/prompts`). These two sections start collapsed and show their loaded-item
-counts in the headings. Click either heading (or focus it and press **Enter**) to
-expand or collapse that section independently, so both lists can remain open when
-needed. Every loaded skill or prompt is shown while its section is expanded. If
+counts in the headings. The skills heading also shows the estimated token cost of
+the loaded skill index in the system prompt; full skill instructions enter context
+only when that skill is invoked. Click either heading (or focus it and press
+**Enter**) to expand or collapse that section independently, so both lists can
+remain open when needed. Every loaded skill or prompt is shown while its section
+is expanded. If
 the sidebar content is
 taller than the available space, scroll it to see the remaining resource groups;
 the Tau version mark stays pinned at the bottom. Context files

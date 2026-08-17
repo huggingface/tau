@@ -3031,7 +3031,7 @@ async def test_tui_sidebar_resource_sections_expand_independently() -> None:
         skills = app.query_one("#sidebar-skills", Collapsible)
         prompts = app.query_one("#sidebar-prompts", Collapsible)
 
-        assert skills.title == "skills (1)"
+        assert re.fullmatch(r"skills \(1 · ~\d+(?:\.\d+)?k? tokens\)", skills.title)
         assert prompts.title == "prompts (2)"
         assert skills.collapsed is True
         assert prompts.collapsed is True
@@ -3066,7 +3066,7 @@ async def test_tui_sidebar_scrolls_when_all_skills_overflow() -> None:
         scroll = app.query_one("#sidebar-scroll", VerticalScroll)
         brand = app.query_one("#sidebar-brand", Static)
         app.query_one("#sidebar-skills", Collapsible).collapsed = False
-        await pilot.pause()
+        await pilot.wait_for_scheduled_animations()
 
         assert scroll.max_scroll_y > 0
         assert brand.region.bottom == app.query_one("#sidebar").content_region.bottom
@@ -3100,7 +3100,10 @@ async def test_tui_sidebar_relayouts_when_reload_changes_resource_count() -> Non
         await pilot.pause()
 
         expanded_virtual_height = scroll.virtual_size.height
-        assert app.query_one("#sidebar-skills", Collapsible).title == "skills (30)"
+        assert re.fullmatch(
+            r"skills \(30 · ~\d+(?:\.\d+)?k? tokens\)",
+            app.query_one("#sidebar-skills", Collapsible).title,
+        )
         assert expanded_virtual_height > initial_virtual_height
         assert scroll.max_scroll_y > 0
 
@@ -3109,7 +3112,7 @@ async def test_tui_sidebar_relayouts_when_reload_changes_resource_count() -> Non
         await pilot.pause()
 
         skills = app.query_one("#sidebar-skills", Collapsible)
-        assert skills.title == "skills (1)"
+        assert re.fullmatch(r"skills \(1 · ~\d+(?:\.\d+)?k? tokens\)", skills.title)
         assert skills.collapsed is False
         assert scroll.virtual_size.height < expanded_virtual_height
         assert scroll.max_scroll_y == 0
