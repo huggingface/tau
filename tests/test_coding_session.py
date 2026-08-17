@@ -58,7 +58,8 @@ from tau_coding import (
     save_provider_settings,
 )
 from tau_coding import session as coding_session_module
-from tau_coding.events import QueueUpdateEvent
+from tau_coding.events import AgentSettledEvent, QueueUpdateEvent
+from tau_coding.extensions.runtime import InputHookOutcome
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_config import ProviderModelMetadata
 from tau_coding.session import _ordered_tree_entries, parse_terminal_command
@@ -66,6 +67,21 @@ from tau_coding.session import _ordered_tree_entries, parse_terminal_command
 
 async def _collect_session_events(session_stream: object) -> list[object]:
     return [event async for event in session_stream]  # type: ignore[attr-defined]
+
+
+def _record_extension_events(
+    session: CodingSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[object]:
+    events: list[object] = []
+    emit_event = session.extension_runtime.emit_event
+
+    async def record(event: object) -> None:
+        events.append(event)
+        await emit_event(event)
+
+    monkeypatch.setattr(session.extension_runtime, "emit_event", record)
+    return events
 
 
 def _assert_messages(actual: object, expected: object) -> None:
@@ -588,6 +604,7 @@ def _hang_tool(tool_started: asyncio.Event, release: asyncio.Event) -> AgentTool
 
 @pytest.mark.anyio
 async def test_cancelled_prompt_teardown_persists_interrupted_tool_result(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     # Regression: Esc mid-tool-call cancels the consumer, and the synthetic
@@ -624,6 +641,7 @@ async def test_cancelled_prompt_teardown_persists_interrupted_tool_result(
             tools=[_hang_tool(tool_started, release)],
         )
     )
+    extension_events = _record_extension_events(session, monkeypatch)
 
     async def consume() -> None:
         async for _event in session.prompt("go"):
@@ -637,6 +655,17 @@ async def test_cancelled_prompt_teardown_persists_interrupted_tool_result(
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+    settled = [event for event in extension_events if isinstance(event, AgentSettledEvent)]
+    interrupted_result_index = next(
+        index
+        for index, event in enumerate(extension_events)
+        if isinstance(event, MessageEndEvent)
+        and isinstance(event.message, ToolResultMessage)
+        and event.message.is_error
+    )
+    assert len(settled) == 1
+    assert interrupted_result_index < extension_events.index(settled[0])
 
     expected_repair = ToolResultMessage(
         tool_call_id="call-1",
@@ -664,6 +693,131 @@ async def test_cancelled_prompt_teardown_persists_interrupted_tool_result(
     )
     _assert_messages([sent[call_index + 1]], [expected_repair])
     assert sum(isinstance(message, ToolResultMessage) for message in sent) == 1
+
+
+@pytest.mark.anyio
+async def test_completed_prompt_dispatches_and_yields_same_agent_settled_event(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done.")),
+            ]
+        ]
+    )
+    session = await CodingSession.load(
+        _config(tmp_path, provider, JsonlSessionStorage(tmp_path / "session.jsonl"))
+    )
+    extension_events = _record_extension_events(session, monkeypatch)
+
+    stream_events = await _collect_session_events(session.prompt("go"))
+
+    extension_settled = [
+        event for event in extension_events if isinstance(event, AgentSettledEvent)
+    ]
+    stream_settled = [event for event in stream_events if isinstance(event, AgentSettledEvent)]
+    assert len(extension_settled) == 1
+    assert len(stream_settled) == 1
+    assert extension_settled[0] is stream_settled[0]
+    assert isinstance(extension_events[-1], AgentSettledEvent)
+    assert isinstance(stream_events[-1], AgentSettledEvent)
+
+
+@pytest.mark.anyio
+async def test_cancellation_during_settled_dispatch_does_not_redispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done.")),
+            ]
+        ]
+    )
+    session = await CodingSession.load(
+        _config(tmp_path, provider, JsonlSessionStorage(tmp_path / "session.jsonl"))
+    )
+    extension_events: list[object] = []
+    emit_event = session.extension_runtime.emit_event
+
+    async def cancel_during_settled(event: object) -> None:
+        extension_events.append(event)
+        if isinstance(event, AgentSettledEvent):
+            raise asyncio.CancelledError
+        await emit_event(event)
+
+    monkeypatch.setattr(session.extension_runtime, "emit_event", cancel_during_settled)
+
+    with pytest.raises(asyncio.CancelledError):
+        await _collect_session_events(session.prompt("go"))
+
+    assert sum(isinstance(event, AgentSettledEvent) for event in extension_events) == 1
+    assert session.is_running is False
+
+
+@pytest.mark.anyio
+async def test_cancelled_continue_dispatches_agent_settled_after_teardown(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    provider = CancellableWaitingProvider()
+    session = await CodingSession.load(
+        _config(tmp_path, provider, JsonlSessionStorage(tmp_path / "session.jsonl"))
+    )
+    extension_events: list[object] = []
+    running_when_settled: list[bool] = []
+    emit_event = session.extension_runtime.emit_event
+
+    async def record_extension_event(event: object) -> None:
+        extension_events.append(event)
+        if isinstance(event, AgentSettledEvent):
+            running_when_settled.append(session.is_running)
+        await emit_event(event)
+
+    monkeypatch.setattr(session.extension_runtime, "emit_event", record_extension_event)
+
+    async def consume() -> None:
+        async for _event in session.continue_():
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(provider.started.wait(), timeout=5)
+    session.cancel()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert sum(isinstance(event, AgentSettledEvent) for event in extension_events) == 1
+    assert isinstance(extension_events[-1], AgentSettledEvent)
+    assert running_when_settled == [False]
+
+
+@pytest.mark.anyio
+async def test_handled_input_does_not_dispatch_agent_settled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    session = await CodingSession.load(
+        _config(tmp_path, FakeProvider([]), JsonlSessionStorage(tmp_path / "session.jsonl"))
+    )
+    extension_events = _record_extension_events(session, monkeypatch)
+
+    async def handle_input(*args: object, **kwargs: object) -> InputHookOutcome:
+        del args, kwargs
+        return InputHookOutcome(handled=True, text="handled")
+
+    monkeypatch.setattr(session.extension_runtime, "run_input_hooks", handle_input)
+
+    stream_events = await _collect_session_events(session.prompt("do not run"))
+
+    assert stream_events == []
+    assert not any(isinstance(event, AgentSettledEvent) for event in extension_events)
+    assert session.is_running is False
 
 
 @pytest.mark.anyio
@@ -3483,6 +3637,7 @@ async def test_session_falls_back_when_live_model_limit_discovery_fails(
 
 @pytest.mark.anyio
 async def test_session_compacts_and_retries_once_after_context_overflow(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
@@ -3509,8 +3664,10 @@ async def test_session_compacts_and_retries_once_after_context_overflow(
         ]
     )
     session = await CodingSession.load(_config(tmp_path, provider, storage))
+    extension_events = _record_extension_events(session, monkeypatch)
     _first_events = await _collect_session_events(session.prompt(large_prompt))
     _second_events = await _collect_session_events(session.prompt("Keep this recent turn."))
+    extension_events.clear()
 
     retry_events = await _collect_session_events(session.prompt("Trigger overflow."))
     entries = await storage.read_all()
@@ -3538,6 +3695,10 @@ async def test_session_compacts_and_retries_once_after_context_overflow(
         and entry.message.stop_reason == "error"
     ]
     assert len(overflow_errors) == 1
+    extension_event_types = [getattr(event, "type", None) for event in extension_events]
+    assert extension_event_types[-2:] == ["auto_retry_end", "agent_settled"]
+    assert extension_event_types.count("agent_settled") == 1
+    assert sum(isinstance(event, AgentSettledEvent) for event in retry_events) == 1
 
 
 @pytest.mark.anyio

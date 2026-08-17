@@ -315,7 +315,7 @@ Observation events mirror the canonical agent/session stream. Handlers receive
 |---|---|
 | `agent_start` | — |
 | `agent_end` | `messages`, `will_retry` on the session form |
-| `agent_settled` | —; no retry, compaction, or queued continuation remains |
+| `agent_settled` | —; the started run has finished teardown and has no automatic retry, compaction, or continuation remaining; dispatched to extensions after interruption even if the cancelling frontend can no longer consume the streamed event |
 | `turn_start` | `turn_index`, Unix-millisecond `timestamp` |
 | `turn_end` | matching `turn_index`, `message`, `tool_results` |
 | `message_start` / `message_end` | `message`; assistant usage is at `message.usage` |
