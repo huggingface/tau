@@ -2995,18 +2995,23 @@ class TauTuiApp(App[None]):
         border: none;
     }
 
+    #sidebar .sidebar-resource-section:focus-within {
+        background-tint: transparent;
+    }
+
     #sidebar .sidebar-resource-section CollapsibleTitle {
         width: 1fr;
         padding: 0 0 0 1;
         color: $tau-prompt-text;
-        text-style: bold;
+        text-style: none;
         background: transparent;
     }
 
     #sidebar .sidebar-resource-section CollapsibleTitle:hover,
     #sidebar .sidebar-resource-section CollapsibleTitle:focus {
-        color: $tau-highlight-text;
-        background: $tau-highlight-background;
+        color: $tau-prompt-text;
+        text-style: none;
+        background: transparent;
     }
 
     #sidebar .sidebar-resource-section Contents {

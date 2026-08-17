@@ -13,6 +13,7 @@ from rich.text import Text
 from textual import events
 from textual.color import Color
 from textual.containers import Container, VerticalScroll
+from textual.content import Content
 from textual.content import Style as TextualStyle
 from textual.geometry import Offset
 from textual.selection import SELECT_ALL, Selection
@@ -3031,10 +3032,25 @@ async def test_tui_sidebar_resource_sections_expand_independently() -> None:
         skills = app.query_one("#sidebar-skills", Collapsible)
         prompts = app.query_one("#sidebar-prompts", Collapsible)
 
-        assert re.fullmatch(r"skills \(1 · ~\d+(?:\.\d+)?k? tokens\)", skills.title)
-        assert prompts.title == "prompts (2)"
+        skills_heading = Content.from_markup(skills.title)
+        prompts_heading = Content.from_markup(prompts.title)
+        assert re.fullmatch(r"skills \(1 · ~\d+(?:\.\d+)?k? tokens\)", skills_heading.plain)
+        assert prompts_heading.plain == "prompts (2)"
+        assert str(skills_heading.spans[0].style) == f"bold {TAU_DARK_THEME.prompt_text}"
+        assert str(skills_heading.spans[1].style) == TAU_DARK_THEME.completion_description
+        assert str(prompts_heading.spans[0].style) == f"bold {TAU_DARK_THEME.prompt_text}"
+        assert str(prompts_heading.spans[1].style) == TAU_DARK_THEME.completion_description
         assert skills.collapsed is True
         assert prompts.collapsed is True
+
+        skill_title = app.query_one("#sidebar-skills CollapsibleTitle")
+        await pilot.hover("#sidebar-skills CollapsibleTitle")
+        assert skill_title.styles.background == Color.parse("transparent")
+
+        skill_title.focus()
+        await pilot.pause()
+        assert skill_title.styles.background == Color.parse("transparent")
+        assert skills.styles.background_tint == Color.parse("transparent")
 
         await pilot.click("#sidebar-skills CollapsibleTitle")
         assert skills.collapsed is False
@@ -3102,7 +3118,7 @@ async def test_tui_sidebar_relayouts_when_reload_changes_resource_count() -> Non
         expanded_virtual_height = scroll.virtual_size.height
         assert re.fullmatch(
             r"skills \(30 · ~\d+(?:\.\d+)?k? tokens\)",
-            app.query_one("#sidebar-skills", Collapsible).title,
+            Content.from_markup(app.query_one("#sidebar-skills", Collapsible).title).plain,
         )
         assert expanded_virtual_height > initial_virtual_height
         assert scroll.max_scroll_y > 0
@@ -3112,7 +3128,10 @@ async def test_tui_sidebar_relayouts_when_reload_changes_resource_count() -> Non
         await pilot.pause()
 
         skills = app.query_one("#sidebar-skills", Collapsible)
-        assert re.fullmatch(r"skills \(1 · ~\d+(?:\.\d+)?k? tokens\)", skills.title)
+        assert re.fullmatch(
+            r"skills \(1 · ~\d+(?:\.\d+)?k? tokens\)",
+            Content.from_markup(skills.title).plain,
+        )
         assert skills.collapsed is False
         assert scroll.virtual_size.height < expanded_virtual_height
         assert scroll.max_scroll_y == 0

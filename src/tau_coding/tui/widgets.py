@@ -120,7 +120,11 @@ class SessionSidebar(Vertical):
             yield Static(_sidebar_separator(theme=TAU_DARK_THEME), classes="sidebar-separator")
             yield Collapsible(
                 Static("", id="sidebar-skills-content"),
-                title="skills (0)",
+                title=_sidebar_resource_title(
+                    "skills",
+                    "0 · ~0 tokens",
+                    theme=TAU_DARK_THEME,
+                ),
                 collapsed=True,
                 id="sidebar-skills",
                 classes="sidebar-resource-section",
@@ -128,7 +132,7 @@ class SessionSidebar(Vertical):
             yield Static(_sidebar_separator(theme=TAU_DARK_THEME), classes="sidebar-separator")
             yield Collapsible(
                 Static("", id="sidebar-prompts-content"),
-                title="prompts (0)",
+                title=_sidebar_resource_title("prompts", "0", theme=TAU_DARK_THEME),
                 collapsed=True,
                 id="sidebar-prompts",
                 classes="sidebar-resource-section",
@@ -155,10 +159,14 @@ class SessionSidebar(Vertical):
             Group(*_separate_sidebar_sections(content.summary_sections, theme=theme)),
         )
         skills = self.query_one("#sidebar-skills", Collapsible)
-        skills.title = _skill_section_title(session)
+        skills.title = _skill_section_title(session, theme=theme)
         self.query_one("#sidebar-skills-content", Static).update(content.skills)
         prompts = self.query_one("#sidebar-prompts", Collapsible)
-        prompts.title = f"prompts ({len(session.prompt_templates)})"
+        prompts.title = _sidebar_resource_title(
+            "prompts",
+            str(len(session.prompt_templates)),
+            theme=theme,
+        )
         self.query_one("#sidebar-prompts-content", Static).update(content.prompts)
         self.query_one("#sidebar-extensions-content", Static).update(
             _sidebar_section("extensions", content.extensions, theme=theme),
@@ -190,7 +198,12 @@ class CompactSessionInfo(Static):
         self.update(render_compact_session_info(session, theme=theme))
 
 
-def _skill_section_title(session: SessionSummarySource) -> str:
+def _sidebar_resource_title(label: str, detail: str, *, theme: TuiTheme) -> str:
+    """Style a resource label separately from its quieter summary."""
+    return f"[bold {theme.prompt_text}]{label}[/] [{theme.completion_description}]({detail})[/]"
+
+
+def _skill_section_title(session: SessionSummarySource, *, theme: TuiTheme) -> str:
     """Summarize skill count and estimated system-prompt footprint."""
     skill_prompt = (
         format_skills_for_prompt(session.skills)
@@ -198,7 +211,11 @@ def _skill_section_title(session: SessionSummarySource) -> str:
         else ""
     )
     estimated_tokens = estimate_text_tokens(skill_prompt)
-    return f"skills ({len(session.skills)} · ~{_compact_usage_count(estimated_tokens)} tokens)"
+    return _sidebar_resource_title(
+        "skills",
+        f"{len(session.skills)} · ~{_compact_usage_count(estimated_tokens)} tokens",
+        theme=theme,
+    )
 
 
 def _session_summary_fingerprint(
