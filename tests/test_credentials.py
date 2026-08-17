@@ -46,3 +46,41 @@ def test_file_credential_store_round_trips_oauth_credentials(tmp_path) -> None:
     assert store.get("openai-codex") is None
     assert store.get_oauth("openai-codex") == credential
     assert '"type": "oauth"' in path.read_text(encoding="utf-8")
+
+
+def test_file_credential_store_round_trips_extensible_oauth_metadata(tmp_path) -> None:
+    path = tmp_path / "credentials.json"
+    store = FileCredentialStore(path)
+    credential = OAuthCredential(
+        access="copilot-access",
+        refresh="github-token",
+        expires=123456,
+        metadata={
+            "enterprise_domain": "ghe.example.com",
+            "available_model_ids": ["gpt-5.4", "claude-sonnet-4.6"],
+        },
+    )
+
+    store.set_oauth("github-copilot", credential)
+
+    assert store.get_oauth("github-copilot") == credential
+    assert '"account_id"' not in path.read_text(encoding="utf-8")
+    assert not list(tmp_path.glob(".credentials.json.*"))
+
+
+def test_file_credential_store_loads_legacy_codex_oauth_shape(tmp_path) -> None:
+    path = tmp_path / "credentials.json"
+    path.write_text(
+        '{"openai-codex":{"type":"oauth","access":"a","refresh":"r",'
+        '"expires":123,"account_id":"account"}}',
+        encoding="utf-8",
+    )
+
+    credential = FileCredentialStore(path).get_oauth("openai-codex")
+
+    assert credential == OAuthCredential(
+        access="a",
+        refresh="r",
+        expires=123,
+        account_id="account",
+    )

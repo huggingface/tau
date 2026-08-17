@@ -24,6 +24,10 @@
       path: /guides/context/
     - label: Print mode & scripting
       path: /guides/print-mode/
+    - label: Extensions
+      path: /guides/extensions/
+    - label: Themes
+      path: /guides/themes/
 - label: Reference
   items:
     - label: CLI
@@ -48,5 +52,7 @@
       path: /internals/custom-frontend/
 - label: Release notes
   link: /releases/
+- label: Roadmap
+  link: /roadmap/
 - label: Contributing
   path: /contributing/

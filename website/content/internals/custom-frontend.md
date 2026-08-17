@@ -34,10 +34,14 @@ async for event in session.prompt(user_text):
     render_event(event)
 ```
 
-The stream yields provider-neutral `AgentEvent` values from `tau_agent.events`
-(see [the agent loop]({{< relref "./agent-loop.md" >}}) for the list). Render from these, never
-from provider-specific chunks. Treat `AgentStartEvent`/`AgentEndEvent` and
-non-recoverable `ErrorEvent` as the source of truth for "is the agent working?".
+The stream yields provider-neutral `CodingSessionEvent` values: portable
+`AgentEvent` values from `tau_agent.events` plus session-level values from
+`tau_coding.events` (see [the agent loop]({{< relref "./agent-loop.md" >}})).
+Render from these, never from provider-specific chunks. Use `agent_start` to
+enter the running state and `agent_settled`—not merely `agent_end`—to leave it,
+because automatic compaction, retry, or queued continuation may follow an
+`agent_end`. Provider failures arrive as assistant messages whose
+`stop_reason` is `"error"`, followed by the normal turn/run lifecycle.
 
 ## Steering and follow-ups
 

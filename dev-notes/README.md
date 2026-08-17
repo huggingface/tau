@@ -4,8 +4,8 @@ These are the internal, phase-by-phase build journals and design records for Tau
 They are **not** published on the docs site — they live here for contributors who
 want to trace how the system was assembled.
 
-User-facing documentation lives in `website/src/content/docs/` and is published at
-<https://alejandro-ao.github.io/tau/>.
+User-facing documentation lives in `website/content/` and is published at
+<https://twotimespi.dev/>.
 
 ## Contents
 
@@ -16,11 +16,15 @@ User-facing documentation lives in `website/src/content/docs/` and is published 
   - `03-tools.md` — built-in tool design
   - `04-sessions.md` — session tree / persistence design
   - `05-core-types-and-events.md` — provider-neutral types and events
+  - `project-trust.md` — researched, implementation-ready project-trust design
+    (design only; enforcement is not implemented)
   - `agent-loop.md`, `harness.md` — harness/loop reference notes
 - `architecture/` — per-phase implementation notes (`phase-1` … `phase-24`, plus
   hardening and feature notes). Each answers: what was added, why it exists, how
   later phases use it.
 - `adr/` — architecture decision records.
 - `catalog-model-safety.md` — checklist for adding providers and models to the built-in catalog safely.
+- `startup-thinking-level-fallback.md` — why startup resolves a valid thinking
+  level per model instead of assuming the global `medium` default.
 
-The roadmap is tracked in [GitHub issue #1](https://github.com/alejandro-ao/tau/issues/1).
+The roadmap is tracked in [GitHub issue #1](https://github.com/huggingface/tau/issues/1).

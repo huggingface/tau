@@ -32,8 +32,19 @@ The export contains two coordinated views:
   results, compactions, labels, model changes, thinking changes, and custom
   entries
 
-The generated file is self-contained HTML and CSS, so it can be opened without
-running Tau or the Textual app.
+The generated file is self-contained HTML, CSS, and JavaScript, so it can be
+opened without running Tau or the Textual app. Transcript entries render as
+compact, collapsed accordion rows (icon, title, one-line preview, timestamp),
+with thinking blocks, tool-call arguments, and result details nested as inner
+accordions. Tool rows are titled `Tool: <name>`, and the session tree labels
+tool entries with just the tool name for readability. Chip-style header
+filters—with entry counts—can hide tool calls/results in both views or drop
+non-message session events for a user/assistant-focused transcript, and a
+single button expands or collapses every accordion at once. A download button
+reproduces the JSONL export from the entry data embedded (base64-encoded) in
+the page, so the HTML file alone round-trips the full session. The filters
+change only the exported view; the complete session remains embedded in the
+document.
 
 ## Why it exists
 

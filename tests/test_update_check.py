@@ -32,7 +32,7 @@ def test_startup_update_notice_reports_newer_stable_release(tmp_path) -> None:
     assert notice.current_version == "0.1.0"
     assert notice.latest_version == "0.2.0"
     assert "Tau 0.2.0 is available (installed: 0.1.0)" in notice.message
-    assert "uv tool upgrade tau-ai" in notice.message
+    assert "Run `tau update` to upgrade" in notice.message
     assert calls == [(PYPI_JSON_URL, UPDATE_CHECK_TIMEOUT_SECONDS)]
 
 
@@ -217,6 +217,42 @@ def test_startup_release_notes_notice_reports_upgrade_once(tmp_path) -> None:
         release_notes=release_notes,
     )
     assert second_notice is None
+
+
+def test_startup_release_notes_notice_survives_missing_release_notes_file(
+    tmp_path, monkeypatch
+) -> None:
+    # Regression test for issue #313: a wheel missing releases.json crashed
+    # startup with FileNotFoundError instead of skipping the notice.
+    import tau_coding.update_check as update_check_module
+
+    monkeypatch.setattr(
+        update_check_module, "RELEASE_NOTES_PATH", tmp_path / "missing" / "releases.json"
+    )
+    state_path = tmp_path / "release-notes-state.json"
+    state_path.write_text('{"last_seen_version":"0.1.1"}\n', encoding="utf-8")
+
+    notice = startup_release_notes_notice("0.1.2", state_path=state_path)
+
+    assert notice is not None
+    assert notice.entries == ()
+
+
+def test_startup_release_notes_notice_survives_malformed_release_notes_file(
+    tmp_path, monkeypatch
+) -> None:
+    import tau_coding.update_check as update_check_module
+
+    broken_path = tmp_path / "releases.json"
+    broken_path.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(update_check_module, "RELEASE_NOTES_PATH", broken_path)
+    state_path = tmp_path / "release-notes-state.json"
+    state_path.write_text('{"last_seen_version":"0.1.1"}\n', encoding="utf-8")
+
+    notice = startup_release_notes_notice("0.1.2", state_path=state_path)
+
+    assert notice is not None
+    assert notice.entries == ()
 
 
 def test_startup_release_notes_notice_combines_skipped_versions(tmp_path) -> None:

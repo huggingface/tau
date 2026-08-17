@@ -7,6 +7,11 @@ from zipfile import ZipFile
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_NOTES_SOURCE_PATH = ROOT / "src" / "tau_coding" / "data" / "release-notes" / "releases.json"
 RELEASE_NOTES_WHEEL_PATH = "tau_coding/data/release-notes/releases.json"
+BUILTIN_RESOURCE_WHEEL_PATHS = {
+    "tau_coding/data/docs/README.md",
+    "tau_coding/data/docs/extensions.md",
+    "tau_coding/data/examples/extensions/hello_tool.py",
+}
 
 
 def test_python_version_floor_matches_package_metadata() -> None:
@@ -47,3 +52,5 @@ def test_wheel_includes_release_notes_package_data(tmp_path: Path) -> None:
         wheel_files = set(wheel.namelist())
 
     assert RELEASE_NOTES_WHEEL_PATH in wheel_files
+    assert wheel_files >= BUILTIN_RESOURCE_WHEEL_PATHS
+    assert not any(path.startswith("tau_coding/data/skills/") for path in wheel_files)

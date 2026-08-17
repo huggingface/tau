@@ -83,7 +83,7 @@ def test_command_completion_suggests_registered_commands() -> None:
         prompt_templates=(),
     )
 
-    assert [item.display for item in state.items] == ["/session"]
+    assert [item.display for item in state.items] == ["/session", "/skills"]
     assert state.selected is not None
     assert state.selected.apply("/se") == "/session"
 
@@ -131,7 +131,7 @@ def test_skill_command_is_available_for_command_completion() -> None:
         prompt_templates=(),
     )
 
-    assert [item.display for item in state.items] == ["/skill:"]
+    assert [item.display for item in state.items] == ["/skill:", "/skills"]
     assert state.selected is not None
     assert state.selected.apply("/ski") == "/skill:"
 
@@ -186,6 +186,32 @@ def test_skill_name_completion_hides_after_completed_skill_command_space() -> No
 
     assert trailing_space_state.items == ()
     assert request_state.items == ()
+
+
+def test_file_reference_completion_works_in_skill_command_arguments(tmp_path: Path) -> None:
+    # Regression test for issue #316: @ file references stopped working in the
+    # argument text of a /skill invocation.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+
+    state = build_completion_state(
+        "/skill:review fix @app",
+        command_registry=create_default_command_registry(),
+        skills=(
+            Skill(
+                name="review",
+                path=Path("review.md"),
+                content="Review code",
+                description="Review code",
+            ),
+        ),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in state.items] == ["@src/app.py"]
+    assert state.selected is not None
+    assert state.selected.apply("/skill:review fix @app") == "/skill:review fix @src/app.py"
 
 
 def test_custom_prompt_completion_hides_after_completed_prompt_command_space() -> None:
@@ -337,6 +363,21 @@ def test_login_argument_completion_uses_available_providers() -> None:
     assert [item.display for item in state.items] == ["openai", "openrouter"]
 
 
+def test_login_argument_completion_includes_anthropic_auth_aliases() -> None:
+    state = build_completion_state(
+        "/login anthropic-",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        provider_names=("anthropic", "anthropic-api", "anthropic-subscription"),
+    )
+
+    assert [item.display for item in state.items] == [
+        "anthropic-api",
+        "anthropic-subscription",
+    ]
+
+
 def test_logout_argument_completion_uses_available_providers() -> None:
     state = build_completion_state(
         "/logout op",
@@ -429,6 +470,136 @@ def test_file_reference_completion_matches_workspace_files(tmp_path: Path) -> No
     assert state.selected.apply("please read @app") == "please read @src/app.py"
 
 
+def test_file_reference_completion_includes_dotfiles_and_dot_directories(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".env").write_text("TOKEN=value\n", encoding="utf-8")
+    (tmp_path / ".agents").mkdir()
+    (tmp_path / ".agents" / "rules.md").write_text("# Rules\n", encoding="utf-8")
+    (tmp_path / ".git").mkdir()
+
+    state = build_completion_state(
+        "please read @.",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert {item.display for item in state.items} == {
+        "@.agents/",
+        "@.agents/rules.md",
+        "@.env",
+    }
+
+
+def test_file_reference_completion_reaches_outside_workspace_with_parent_path(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    sibling = tmp_path / "shared"
+    sibling.mkdir()
+    (sibling / "notes.md").write_text("shared notes\n", encoding="utf-8")
+
+    parent_state = build_completion_state(
+        "read @..",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=project,
+    )
+    sibling_state = build_completion_state(
+        "read @../sha",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=project,
+    )
+    file_state = build_completion_state(
+        "read @../shared/no",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=project,
+    )
+
+    assert [item.display for item in parent_state.items] == ["@../"]
+    assert [item.display for item in sibling_state.items] == ["@../shared/"]
+    assert [item.display for item in file_state.items] == ["@../shared/notes.md"]
+    assert file_state.selected is not None
+    assert file_state.selected.apply("read @../shared/no") == "read @../shared/notes.md"
+
+
+def test_external_file_reference_completion_skips_generated_directories(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "notes.md").write_text("notes\n", encoding="utf-8")
+
+    state = build_completion_state(
+        "read @../no",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=project,
+    )
+
+    assert [item.display for item in state.items] == ["@../notes.md"]
+
+
+def test_file_reference_completion_works_in_custom_prompt_arguments(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    text = "/review inspect @app"
+
+    state = build_completion_state(
+        text,
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(
+            PromptTemplate(
+                name="review",
+                path=Path("review.md"),
+                content="Review:\n{{ arguments }}",
+            ),
+        ),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in state.items] == ["@src/app.py"]
+    assert state.selected is not None
+    assert state.selected.apply(text) == "/review inspect @src/app.py"
+
+
+def test_file_reference_completion_works_in_multiline_custom_prompt_arguments(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    text = "/review inspect\n@app"
+
+    state = build_completion_state(
+        text,
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(
+            PromptTemplate(
+                name="review",
+                path=Path("review.md"),
+                content="Review:\n{{ arguments }}",
+            ),
+        ),
+        cwd=tmp_path,
+    )
+
+    assert [item.display for item in state.items] == ["@src/app.py"]
+    assert state.selected is not None
+    assert state.selected.apply(text) == "/review inspect\n@src/app.py"
+
+
 def test_file_reference_completion_stays_off_for_slash_commands(tmp_path: Path) -> None:
     (tmp_path / "README.md").write_text("# Project\n", encoding="utf-8")
 
@@ -441,6 +612,33 @@ def test_file_reference_completion_stays_off_for_slash_commands(tmp_path: Path) 
     )
 
     assert state.items == ()
+
+
+def test_shell_path_completion_includes_dotfiles_and_dot_directories(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("TOKEN=value\n", encoding="utf-8")
+    (tmp_path / ".agents").mkdir()
+    (tmp_path / ".agents" / "rules.md").write_text("# Rules\n", encoding="utf-8")
+    (tmp_path / ".git").mkdir()
+
+    root_state = build_completion_state(
+        "!cat .",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+    child_state = build_completion_state(
+        "!!cat .agents/ru",
+        command_registry=create_default_command_registry(),
+        skills=(),
+        prompt_templates=(),
+        cwd=tmp_path,
+    )
+
+    assert {item.display for item in root_state.items} == {".agents/", ".env"}
+    assert [item.display for item in child_state.items] == [".agents/rules.md"]
+    assert child_state.selected is not None
+    assert child_state.selected.apply("!!cat .agents/ru") == "!!cat .agents/rules.md"
 
 
 def test_shell_path_completion_preserves_bang_prefix(tmp_path: Path) -> None:

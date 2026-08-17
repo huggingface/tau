@@ -17,7 +17,10 @@ from tau_coding.skills import Skill
 from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.thinking import normalize_thinking_level
 
-BUILTIN_TUI_THEME_NAMES = ("tau-dark", "tau-light", "high-contrast")
+LOGIN_PROVIDER_ALIASES = {
+    "anthropic-api": ("anthropic", "api-key"),
+    "anthropic-subscription": ("anthropic", "subscription"),
+}
 
 
 class CommandSession(Protocol):
@@ -84,8 +87,6 @@ class CommandSession(Protocol):
 
     def set_model(self, model: str) -> None: ...
 
-    def reload(self) -> CodingReloadSummary: ...
-
     def reload_provider_settings(self) -> None: ...
 
 
@@ -96,6 +97,7 @@ class CommandResult:
     handled: bool
     exit_requested: bool = False
     clear_requested: bool = False
+    reload_requested: bool = False
     new_session_requested: bool = False
     compact_summary: str | None = None
     export_requested: bool = False
@@ -103,14 +105,18 @@ class CommandResult:
     export_format: str | None = None
     resume_session_id: str | None = None
     resume_picker_requested: bool = False
+    prompts_picker_requested: bool = False
     tree_picker_requested: bool = False
     login_picker_requested: bool = False
     custom_provider_login_requested: bool = False
     login_provider: str | None = None
+    login_method: str | None = None
     logout_picker_requested: bool = False
     logout_provider: str | None = None
     model_picker_requested: bool = False
+    tools_picker_requested: bool = False
     scoped_models_picker_requested: bool = False
+    skills_picker_requested: bool = False
     theme_picker_requested: bool = False
     thinking_level: str | None = None
     theme: str | None = None
@@ -191,7 +197,7 @@ class CommandRegistry:
             name = "scoped-models"
             args = ""
         if command is None:
-            return CommandResult(handled=True, message=f"Unknown command: /{name}")
+            return CommandResult(handled=False)
 
         return command.handler(
             CommandContext(session=session, registry=self, text=stripped, name=name, args=args)
@@ -264,11 +270,29 @@ def create_default_command_registry() -> CommandRegistry:
     )
     registry.register(
         SlashCommand(
+            name="skills",
+            usage="/skills",
+            description="Browse and insert a loaded skill.",
+            handler=_skills_command,
+            search_terms=("skill", "picker", "search"),
+        )
+    )
+    registry.register(
+        SlashCommand(
             name="hotkeys",
             usage="/hotkeys",
             description="Show common keyboard shortcuts.",
             handler=_hotkeys_command,
             search_terms=("keys", "shortcuts", "bindings"),
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="prompts",
+            usage="/prompts",
+            description="Choose a loaded prompt template.",
+            handler=_prompts_command,
+            search_terms=("templates", "picker"),
         )
     )
     registry.register(
@@ -316,6 +340,15 @@ def create_default_command_registry() -> CommandRegistry:
     )
     registry.register(
         SlashCommand(
+            name="tools",
+            usage="/tools",
+            description="Browse tools available to the active session.",
+            handler=_tools_command,
+            search_terms=("capabilities", "reference"),
+        )
+    )
+    registry.register(
+        SlashCommand(
             name="scoped-models",
             usage="/scoped-models",
             description="Choose models available to quick-cycle with Ctrl+P.",
@@ -336,7 +369,7 @@ def create_default_command_registry() -> CommandRegistry:
         SlashCommand(
             name="login",
             usage="/login [provider]",
-            description="Save an API key for a built-in provider.",
+            description="Connect a provider with OAuth or an API key.",
             handler=_login_command,
         )
     )
@@ -391,6 +424,7 @@ def _status_command(context: CommandContext) -> CommandResult:
     context_usage = getattr(session, "context_usage", None)
     lines = [
         f"Model: {session.model}",
+        f"Provider: {session.provider_name}",
         f"CWD: {session.cwd}",
         f"Tools: {len(session.tools)}",
         f"Skills: {len(session.skills)}",
@@ -399,13 +433,29 @@ def _status_command(context: CommandContext) -> CommandResult:
         f"Estimated context tokens: {session.context_token_estimate}",
         f"Context window: {session.context_window_tokens}",
     ]
+    if session.provider_name == "huggingface":
+        route = getattr(session, "inference_provider", None) or "automatic"
+        lines.append(f"Hugging Face inference provider: {route}")
+    context_window_source = getattr(session, "context_window_source", None)
+    if context_window_source:
+        lines.append(f"Context window source: {context_window_source}")
+    discovery_error = getattr(session, "model_limits_discovery_error", None)
+    if discovery_error:
+        lines.append(f"Model limit discovery: unavailable ({discovery_error})")
     if context_usage is not None:
-        lines.append(
-            "Context token breakdown: "
-            f"system={context_usage.system_tokens}, "
-            f"messages={context_usage.message_tokens}, "
-            f"tools={context_usage.tool_tokens}",
-        )
+        if context_usage.uses_provider_usage:
+            lines.append(
+                "Context token basis: "
+                f"provider={context_usage.provider_tokens}, "
+                f"estimated trailing={context_usage.trailing_tokens}",
+            )
+        else:
+            lines.append(
+                "Context token breakdown: "
+                f"system={context_usage.system_tokens}, "
+                f"messages={context_usage.message_tokens}, "
+                f"tools={context_usage.tool_tokens}",
+            )
     lines.extend(_thinking_status_lines(session))
     lines.append(f"Resource diagnostics: {len(session.resource_diagnostics)}")
     if session.auto_compact_token_threshold is not None:
@@ -442,22 +492,9 @@ def _hotkeys_command(context: CommandContext) -> CommandResult:
 
 
 def _skills_command(context: CommandContext) -> CommandResult:
-    if not context.session.skills:
-        lines = ["No skills loaded."]
-        if context.session.resource_diagnostics:
-            lines.append("")
-            lines.extend(_format_diagnostics(context.session.resource_diagnostics, kind="skill"))
-        return CommandResult(handled=True, message="\n".join(lines))
-
-    lines = ["Available skills:"]
-    for skill in sorted(context.session.skills, key=lambda item: item.name):
-        description = skill.description or "No description"
-        lines.append(f"- {skill.name}: {description}")
-    lines.append("Use a skill with /skill:<name> [request].")
-    if context.session.resource_diagnostics:
-        lines.append("")
-        lines.extend(_format_diagnostics(context.session.resource_diagnostics, kind="skill"))
-    return CommandResult(handled=True, message="\n".join(lines))
+    if context.args:
+        return CommandResult(handled=True, message="Usage: /skills")
+    return CommandResult(handled=True, skills_picker_requested=True)
 
 
 def _resources_command(context: CommandContext) -> CommandResult:
@@ -476,15 +513,9 @@ def _resources_command(context: CommandContext) -> CommandResult:
 
 
 def _reload_command(context: CommandContext) -> CommandResult:
-    try:
-        summary = context.session.reload()
-    except ValueError as exc:
-        return CommandResult(handled=True, message=f"Could not reload: {exc}")
-
-    return CommandResult(
-        handled=True,
-        message=_format_reload_summary(summary),
-    )
+    # Reload owns async extension lifecycle hooks, so frontends execute it from
+    # their async command path rather than inside this synchronous registry.
+    return CommandResult(handled=True, reload_requested=True)
 
 
 def _context_command(context: CommandContext) -> CommandResult:
@@ -509,6 +540,12 @@ def _skill_command(context: CommandContext) -> CommandResult:
         handled=True,
         message="Use /skill:<name> [request] to expand a loaded skill into your prompt.",
     )
+
+
+def _prompts_command(context: CommandContext) -> CommandResult:
+    if context.args:
+        return CommandResult(handled=True, message="Usage: /prompts")
+    return CommandResult(handled=True, prompts_picker_requested=True)
 
 
 def _resume_command(context: CommandContext) -> CommandResult:
@@ -580,6 +617,10 @@ def _format_sessions(context: CommandContext) -> str:
     for record in records:
         lines.append(_format_session_record(record))
     return "\n".join(lines)
+
+
+def _tools_command(context: CommandContext) -> CommandResult:
+    return CommandResult(handled=True, tools_picker_requested=True)
 
 
 def _model_command(context: CommandContext) -> CommandResult:
@@ -669,9 +710,14 @@ def _theme_command(context: CommandContext) -> CommandResult:
     if not context.args:
         return CommandResult(handled=True, theme_picker_requested=True)
 
+    # Imported lazily so importing this module never pulls in `tau_coding.tui`
+    # (whose package __init__ imports Textual) until /theme actually executes.
+    from tau_coding.tui.themes import available_tui_theme_names
+
     theme_name = context.args.strip()
-    if theme_name not in BUILTIN_TUI_THEME_NAMES:
-        themes = ", ".join(BUILTIN_TUI_THEME_NAMES)
+    available = available_tui_theme_names()
+    if theme_name not in available:
+        themes = ", ".join(available)
         return CommandResult(
             handled=True,
             message=f"Unknown theme: {theme_name}\nAvailable themes: {themes}",
@@ -684,16 +730,30 @@ def _login_command(context: CommandContext) -> CommandResult:
     if provider_name in {"custom", "new", "add"}:
         return CommandResult(handled=True, custom_provider_login_requested=True)
     if provider_name:
+        aliased_provider = LOGIN_PROVIDER_ALIASES.get(provider_name)
+        if aliased_provider is not None:
+            provider_name, login_method = aliased_provider
+        else:
+            login_method = None
         entry = builtin_provider_entry(provider_name)
         if entry is None:
-            providers = ", ".join(entry.name for entry in BUILTIN_PROVIDER_CATALOG)
+            providers = ", ".join(
+                [
+                    *(entry.name for entry in BUILTIN_PROVIDER_CATALOG),
+                    *LOGIN_PROVIDER_ALIASES,
+                ]
+            )
             return CommandResult(
                 handled=True,
                 message=(
                     f"Unknown login provider: {provider_name}\nAvailable providers: {providers}"
                 ),
             )
-        return CommandResult(handled=True, login_provider=entry.name)
+        return CommandResult(
+            handled=True,
+            login_provider=entry.name,
+            login_method=login_method,
+        )
 
     return CommandResult(handled=True, login_picker_requested=True)
 
@@ -742,12 +802,13 @@ def _refresh_provider_settings(session: CommandSession) -> CommandResult | None:
     return None
 
 
-def _format_reload_summary(summary: CodingReloadSummary) -> str:
+def format_reload_summary(summary: CodingReloadSummary) -> str:
     lines = [
         "Reloaded local coding resources and project context.",
         "Resources:",
         f"- Skills: {_format_reload_category(summary.skills)}",
         f"- Prompt templates: {_format_reload_category(summary.prompt_templates)}",
+        f"- Extensions: {_format_reload_category(summary.extensions)}",
         "Context:",
         f"- Project context files: {_format_reload_category(summary.context_files)}",
         "- Next-turn system prompt: "

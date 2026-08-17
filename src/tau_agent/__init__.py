@@ -1,18 +1,14 @@
-"""Portable agent harness primitives for Tau."""
+"""Portable Pi-compatible agent harness primitives for Tau."""
 
-from __future__ import annotations
+# ruff: noqa: F401 - this module intentionally defines the public facade
 
 from tau_agent.events import (
     AgentEndEvent,
     AgentEvent,
     AgentStartEvent,
-    ErrorEvent,
-    MessageDeltaEvent,
     MessageEndEvent,
     MessageStartEvent,
-    QueueUpdateEvent,
-    RetryEvent,
-    ThinkingDeltaEvent,
+    MessageUpdateEvent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
@@ -27,7 +23,24 @@ from tau_agent.harness import (
     SimpleCancellationToken,
 )
 from tau_agent.loop import run_agent_loop
-from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    BashExecutionMessage,
+    BranchSummaryMessage,
+    CompactionSummaryMessage,
+    CustomMessage,
+    ImageContent,
+    TextContent,
+    ThinkingContent,
+    ToolCall,
+    ToolResultMessage,
+    Usage,
+    UsageCost,
+    UserMessage,
+    content_text,
+    message_text,
+)
 from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
@@ -42,52 +55,14 @@ from tau_agent.session import (
     SessionState,
     ThinkingLevelChangeEntry,
 )
-from tau_agent.tools import AgentTool, AgentToolResult, ToolCall, ToolExecutor
+from tau_agent.tools import (
+    AgentTool,
+    AgentToolResult,
+    ToolCancellationToken,
+    ToolExecutionMode,
+    ToolExecutor,
+    ToolUpdateCallback,
+)
 from tau_agent.types import JSONObject, JSONPrimitive, JSONValue
 
-__all__ = [
-    "AgentEndEvent",
-    "AgentEvent",
-    "AgentMessage",
-    "AgentStartEvent",
-    "AgentHarness",
-    "AgentHarnessConfig",
-    "AgentTool",
-    "AgentToolResult",
-    "AssistantMessage",
-    "BranchSummaryEntry",
-    "CompactionEntry",
-    "CustomEntry",
-    "ErrorEvent",
-    "EventListener",
-    "JSONObject",
-    "JSONPrimitive",
-    "JsonlSessionStorage",
-    "JSONValue",
-    "LabelEntry",
-    "LeafEntry",
-    "MessageDeltaEvent",
-    "MessageEndEvent",
-    "MessageEntry",
-    "MessageStartEvent",
-    "ModelChangeEntry",
-    "QueuedMessages",
-    "QueueUpdateEvent",
-    "RetryEvent",
-    "SessionEntry",
-    "SessionInfoEntry",
-    "SessionState",
-    "SimpleCancellationToken",
-    "ThinkingLevelChangeEntry",
-    "ThinkingDeltaEvent",
-    "ToolCall",
-    "ToolExecutionEndEvent",
-    "ToolExecutionStartEvent",
-    "ToolExecutionUpdateEvent",
-    "ToolExecutor",
-    "ToolResultMessage",
-    "TurnEndEvent",
-    "TurnStartEvent",
-    "UserMessage",
-    "run_agent_loop",
-]
+__all__ = [name for name in globals() if not name.startswith("_")]

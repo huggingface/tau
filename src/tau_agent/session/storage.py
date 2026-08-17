@@ -37,4 +37,6 @@ class JsonlSessionStorage:
         """Read all entries in file order. Missing files are empty sessions."""
         if not self.path.exists():
             return []
-        return entries_from_json_lines(self.path.read_text(encoding="utf-8").splitlines())
+        # Split on newlines only: str.splitlines() would also split on characters
+        # like U+2028 that appear unescaped inside JSON string values.
+        return entries_from_json_lines(self.path.read_text(encoding="utf-8").split("\n"))

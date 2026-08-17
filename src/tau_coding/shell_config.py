@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from tau_coding.paths import TauPaths
+from tau_coding.project_trust import TrustDefault
 
 
 class ShellConfigError(ValueError):
@@ -19,12 +20,16 @@ class ShellSettings:
     """Shell execution settings loaded from Tau home."""
 
     shell_command_prefix: str | None = None
+    default_project_trust: TrustDefault = "ask"
 
     def to_json(self) -> dict[str, str]:
         """Serialize these settings to JSON-compatible data."""
-        if self.shell_command_prefix is None:
-            return {}
-        return {"shellCommandPrefix": self.shell_command_prefix}
+        result: dict[str, str] = {}
+        if self.default_project_trust != "ask":
+            result["defaultProjectTrust"] = self.default_project_trust
+        if self.shell_command_prefix is not None:
+            result["shellCommandPrefix"] = self.shell_command_prefix
+        return result
 
 
 def shell_settings_path(paths: TauPaths | None = None) -> Path:
@@ -48,17 +53,22 @@ def load_shell_settings(paths: TauPaths | None = None) -> ShellSettings:
 
 def shell_settings_from_json(data: dict[str, Any]) -> ShellSettings:
     """Parse shell settings from JSON-compatible data."""
-    allowed_fields = {"shellCommandPrefix", "shell_command_prefix"}
-    unknown_fields = set(data) - allowed_fields
-    if unknown_fields:
-        raise ShellConfigError(f"Unknown shell settings field: {sorted(unknown_fields)[0]}")
+    # Read only settings this version understands so fields written by a newer
+    # Tau installation cannot prevent an older installation from starting.
     if "shellCommandPrefix" in data and "shell_command_prefix" in data:
         raise ShellConfigError("Use only one of shellCommandPrefix or shell_command_prefix")
 
+    raw_default = data.get("defaultProjectTrust", "ask")
+    if raw_default not in {"ask", "always", "never"}:
+        raise ShellConfigError("defaultProjectTrust must be ask, always, or never")
+
     raw_prefix = data.get("shellCommandPrefix", data.get("shell_command_prefix"))
     if raw_prefix is None:
-        return ShellSettings()
+        return ShellSettings(default_project_trust=raw_default)
     if not isinstance(raw_prefix, str):
         raise ShellConfigError("shellCommandPrefix must be a string")
     prefix = raw_prefix.strip()
-    return ShellSettings(shell_command_prefix=prefix or None)
+    return ShellSettings(
+        shell_command_prefix=prefix or None,
+        default_project_trust=raw_default,
+    )

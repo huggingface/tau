@@ -35,6 +35,10 @@
   <link rel="stylesheet" href="{{ $css.RelPermalink }}" />
 {{ end }}
 
+{{ if hugo.IsProduction }}
+  {{ template "_internal/google_analytics.html" . }}
+{{ end }}
+
 {{ if .Params.mathjax }}
 <script>
   window.MathJax = {

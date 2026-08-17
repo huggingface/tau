@@ -1,5 +1,326 @@
 [
   {
+    "version": "0.3.11",
+    "date": "2026-08-17",
+    "sections": {
+      "New": [
+        "Resume existing sessions in print mode with --session, restoring saved conversation history, working directory, provider, model, and Hugging Face route while allowing explicit provider and model overrides.",
+        "Show a startup transcript alert when a loaded skill or prompt template shadows a same-named resource from another location."
+      ],
+      "Changed": [
+        "Compact adjacent TUI tool activity into selectable batches, group related reads, edits, and writes with their file paths, and keep exact commands and results available through Ctrl+O.",
+        "Group sidebar skills and prompts by resource origin and make both sections independently collapsible with loaded counts and an estimated skill-index token footprint.",
+        "Toggle inline tool-result visibility without showing a redundant notification."
+      ],
+      "Fixed": [
+        "Preserve blank-line boundaries between streamed OpenAI reasoning-summary parts."
+      ]
+    }
+  },
+  {
+    "version": "0.3.10",
+    "date": "2026-08-15",
+    "sections": {
+      "New": [
+        "Edit custom prompt templates directly from the prompts picker with Ctrl+E, then save and reload them with Ctrl+S."
+      ],
+      "Changed": [
+        "Autocomplete explicit parent-relative file references while limiting external completion to the requested directory.",
+        "Rename the HTML session export Cache tab to Usage and annotate prompt-input charts with session events and tooltip details.",
+        "Move Hugging Face route controls out of Tau core and expose route inspection and selection through the public extension API."
+      ]
+    }
+  },
+  {
+    "version": "0.3.9",
+    "date": "2026-08-11",
+    "sections": {
+      "New": [
+        "Autocomplete dot-prefixed project files and directories in file references and shell commands while continuing to hide generated metadata paths.",
+        "Keep successful /export destinations visible and copyable in the TUI transcript without adding them to model context or session history.",
+        "Add Kimi K3 to the Hugging Face Inference Providers catalog with image input, a 1M-token context window, pricing, and reasoning effort controls."
+      ],
+      "Changed": [
+        "Improve Markdown heading and accent contrast in the built-in light theme.",
+        "Use model-specific output token limits for Anthropic-protocol requests, including explicit GitHub Copilot Claude limits."
+      ],
+      "Fixed": [
+        "Persist interrupted tool results during cancellation so newly interrupted sessions retain valid provider history.",
+        "Repair malformed tool-call history from older sessions before provider replay so affected sessions can resume normally."
+      ]
+    }
+  },
+  {
+    "version": "0.3.8",
+    "date": "2026-08-06",
+    "sections": {
+      "New": [
+        "Add a reactive cache analytics tab to live self-contained HTML session exports.",
+        "Pin a Hugging Face model to an explicit backing Inference Provider for the lifetime of a session.",
+        "Expose the resolved Hugging Face response provider in session metadata and diagnostics."
+      ],
+      "Changed": [
+        "Update Kimi K3 reasoning effort levels to low, high, and max.",
+        "Add request timestamps to the cache tab tooltip and cache statistics table.",
+        "Bill Anthropic 1-hour cache writes at their own independent rate instead of blending with input token rates."
+      ],
+      "Fixed": [
+        "Retry transient Anthropic stream errors instead of failing the entire turn.",
+        "Fix tool history reset across provider switches so the active provider sees the correct prior tool results."
+      ]
+    }
+  },
+  {
+    "version": "0.3.7",
+    "date": "2026-08-05",
+    "sections": {
+      "New": [
+        "Decide project-input trust before Tau reads ambient project instructions, skills, prompts, themes, system prompts, or opted-in extensions; save exact/parent decisions or choose run-only scopes.",
+        "Control automation with run-only `--approve`/`--no-approve` flags and user-global `defaultProjectTrust` ask/always/never policy.",
+        "Pin a Hugging Face model to an explicit backing Inference Provider for the lifetime of a session."
+      ],
+      "Changed": [
+        "Unresolved headless `ask` now skips protected project inputs; user/global and explicit CLI resources remain available, and project extensions still additionally require `--project-extensions`.",
+        "Project trust is explicitly an input-loading guard, not a filesystem, process, network, tool, model, credential, or prompt-injection sandbox.",
+        "Show latest-request and session prompt-cache hit rates in the sidebar, track OpenAI Responses cache writes, and improve OpenAI prompt-cache affinity."
+      ],
+      "Fixed": [
+        "Exit Tau when the initial project-trust prompt is cancelled instead of continuing untrusted."
+      ]
+    }
+  },
+  {
+    "version": "0.3.6",
+    "date": "2026-08-03",
+    "sections": {
+      "New": [
+        "Customize the generated system prompt in print or TUI sessions with `--system-prompt` and repeatable `--append-system-prompt` text-or-file inputs.",
+        "Load Tau-native `SYSTEM.md` and `APPEND_SYSTEM.md` files from user or project `.tau` directories, with CLI and project precedence plus `/reload` support."
+      ],
+      "Changed": [
+        "Rebuild provider configuration from the current catalog during upgrades while preserving preferences and custom providers, so stale metadata cannot hide new capabilities or restore withdrawn models.",
+        "Include the current system prompt in live HTML session exports as a separate collapsed section; review exports before sharing because project instructions may be exposed, while JSONL and offline exports remain prompt-free."
+      ],
+      "Fixed": [
+        "Anchor context estimates to provider-reported token usage, proactively compact large sessions, and present automatic overflow recovery without misleading terminal errors.",
+        "Keep `@` file-reference completion available in skill arguments and custom prompt text.",
+        "Prevent direct `!` and `!!` shell commands from cancelling an active agent run."
+      ]
+    }
+  },
+  {
+    "version": "0.3.5",
+    "date": "2026-07-31",
+    "sections": {
+      "New": [
+        "Let print-mode automation choose a safe, durable session ID with `--session-id`, while preserving isolated-session guarantees."
+      ],
+      "Changed": [
+        "Cache Anthropic prompt prefixes to reduce repeated input billing, with auth-aware retention, compatibility overrides, and a sidebar cache hit rate.",
+        "Redesign self-contained HTML session exports with compact accordions, entry filters and counts, expand/collapse controls, clearer tool labels, and offline JSONL download.",
+        "Show normal working indicators and unfocused completion notifications while manual `/compact` runs."
+      ],
+      "Fixed": [
+        "Fix Anthropic subscription login and serialize OAuth token refreshes so rotating refresh tokens are not spent concurrently.",
+        "Accept file drops when the terminal is unfocused without duplicating focused paste events.",
+        "Safely hand off `tau update` on Windows after the running process exits, preserving executable paths and arguments exactly."
+      ]
+    }
+  },
+  {
+    "version": "0.3.4",
+    "date": "2026-07-27",
+    "sections": {
+      "New": [
+        "Send images read from disk to vision-capable models across supported providers, while giving text-only models an explicit omission notice."
+      ],
+      "Changed": [
+        "Validate and safely process image reads, including BMP-to-PNG conversion and bounded resizing for oversized static images."
+      ],
+      "Fixed": [
+        "Allow multiline instructions after `/skill:<name>`, including instructions separated from the invocation by a blank line."
+      ]
+    }
+  },
+  {
+    "version": "0.3.3",
+    "date": "2026-07-25",
+    "sections": {
+      "New": [
+        "Add direct Anthropic support for Claude Opus 5, including its 1M-token context window and adaptive-thinking effort mappings."
+      ],
+      "Changed": [
+        "Highlight terminal-command prompt input, border, and prefix with the active theme's running-tool color."
+      ]
+    }
+  },
+  {
+    "version": "0.3.2",
+    "date": "2026-07-24",
+    "sections": {
+      "Fixed": [
+        "Hide the unsupported `gpt-5.6` API alias from the OpenAI Codex subscription catalog while retaining it for direct OpenAI API users."
+      ]
+    }
+  },
+  {
+    "version": "0.3.1",
+    "date": "2026-07-23",
+    "sections": {
+      "New": [
+        "Add one-line installers for macOS, Linux, and Windows that install Tau through uv and verify the resulting command.",
+        "Add configurable desktop or bell notifications when an agent run finishes while Tau is unfocused.",
+        "Add searchable TUI pickers for prompt templates and skills, plus a searchable tools reference with full descriptions."
+      ],
+      "Changed": [
+        "Keep dense TUI sidebar sections compact by limiting rendered skills, context files, tools, prompts, and extensions while showing hidden-item counts.",
+        "Make user settings forward-compatible by ignoring unknown fields while continuing to validate recognized settings."
+      ],
+      "Fixed": [
+        "Clear the prompt after cancelling the `/skills` picker instead of restoring the handled command."
+      ]
+    }
+  },
+  {
+    "version": "0.3.0",
+    "date": "2026-07-22",
+    "sections": {
+      "Changed": [
+        "Breaking: mirror Pi's non-interactive CLI flags. `--resume` is now `--session`, `-p`/`--prompt <text>` is now `-p`/`--print` with a positional prompt, `-o`/`--output` is now `--mode`, and `-x` is now `-e` for `--extension`; the old flags now error with a migration hint instead of running.",
+        "Add a top-level `--export <session-id> [out]` flag alongside the existing `tau export` subcommand, and add `-v` as a short flag for `--version`, both matching Pi's flag names.",
+        "Merge piped stdin into the print-mode prompt (e.g. `cat file | tau -p \"...\"`), matching Pi's behavior."
+      ]
+    }
+  },
+  {
+    "version": "0.2.4",
+    "date": "2026-07-21",
+    "sections": {
+      "New": [
+        "Add 28 live-routable Hugging Face Inference Providers models from Pi's built-in catalog.",
+        "Insert files dragged onto the terminal as normalized prompt paths while preserving existing text and quoting paths that contain spaces."
+      ],
+      "Changed": [
+        "Shorten TUI sidebar context paths under the home directory with ~/ and give provider metadata quieter styling.",
+        "Raise the minimum supported Pydantic version to 2.11 for explicit wire-model alias validation and serialization behavior."
+      ],
+      "Fixed": [
+        "Show expanded prompt-template text before automatic session naming starts, and avoid redundant naming attempts after provider retries are exhausted.",
+        "Fix the resume picker search to avoid matching workspace paths while retaining session-name and model matches."
+      ]
+    }
+  },
+  {
+    "version": "0.2.3",
+    "date": "2026-07-20",
+    "sections": {
+      "Changed": [
+        "Default the TUI sidebar to the right side while preserving explicit left, right, and off preferences.",
+        "Label TUI sidebar token totals as cumulative session usage and document why cumulative provider usage can exceed the active context estimate.",
+        "Keep Tau's internal extension and model-catalog maintenance guidance in packaged self-documentation so it no longer appears in or competes with user skills."
+      ],
+      "Fixed": [
+        "Fix session JSONL reads splitting records on Unicode line separators (U+2028, U+2029, U+0085), which made affected sessions and the session index fail to load; the read-side fix also repairs already-affected session files.",
+        "Fix picker highlight text contrast so focused labels use each theme's configured highlight foreground and background colors."
+      ]
+    }
+  },
+  {
+    "version": "0.2.2",
+    "date": "2026-07-18",
+    "sections": {
+      "New": [
+        "Add data-driven JSON themes with built-in palettes plus user and project theme discovery.",
+        "Add live search to the resume session picker across session titles, models, and working directories."
+      ],
+      "Changed": [
+        "Keep long TUI sessions responsive by mounting a bounded transcript window while preserving access to the complete conversation.",
+        "Redesign the TUI sidebar around session identity, lifetime activity, token usage, estimated cost, compaction status, and loaded capabilities."
+      ]
+    }
+  },
+  {
+    "version": "0.2.1",
+    "date": "2026-07-18",
+    "sections": {
+      "New": [
+        "Persist thinking/reasoning blocks and provider replay metadata across Tau's Pi-compatible event streams, session storage, exports, and TUI rendering.",
+        "Bundle Tau self-knowledge docs, examples, and skills so installed copies can answer Tau-specific questions without a source checkout."
+      ],
+      "Changed": [
+        "Discover Codex context and compaction limits at runtime from the authenticated model catalog, with conservative static fallbacks and a visible limit source in session diagnostics.",
+        "Remove the redundant animated tool-row spinner while keeping static status-colored markers and elapsed-time feedback."
+      ],
+      "Fixed": [
+        "Fix provider-error recovery so a failed or aborted assistant turn no longer poisons the next prompt, while keeping the error visible in the TUI and session history.",
+        "Fix tool-call labels in the session tree for assistant turns without visible text.",
+        "Fix light theme code block background in fenced code blocks.",
+        "Coerce the startup thinking level to a mode the remembered default model supports, preventing crashes on incompatible saved preferences.",
+        "Fix tests launching the real Anthropic OAuth browser during test runs."
+      ]
+    }
+  },
+  {
+    "version": "0.2.0",
+    "date": "2026-07-16",
+    "sections": {
+      "New": [
+        "Add Pi-compatible agent, provider, coding-session, and extension event streams with canonical lifecycle and settlement events.",
+        "Add OAuth login parity for Anthropic, GitHub Copilot, and OpenCode providers.",
+        "Add Kimi K3 model support."
+      ],
+      "Changed": [
+        "Replace the legacy runtime message, event, tool, session, and extension protocol with strict Pi-compatible contracts.",
+        "Enrich extension turn events with turn indexes and timestamps.",
+        "Keep tau_agent independent of tau_ai by moving portable provider contracts into the agent package."
+      ],
+      "Fixed": [
+        "Migrate legacy Tau v1 sessions, including null usage costs, at the persistence boundary.",
+        "Improve interactive OAuth login modal navigation."
+      ]
+    }
+  },
+  {
+    "version": "0.1.6",
+    "date": "2026-07-15",
+    "sections": {
+      "New": [
+        "Add Python extensions for custom tools, slash commands, lifecycle hooks, dialogs, and message rendering.",
+        "Add Kimi K2.7 Code, Kimi Code subscription, and MiniMax-M3 model catalog entries.",
+        "Add tiered model pricing metadata for models whose rates change with input size."
+      ],
+      "Changed": [
+        "Require Textual 8.2.8 or newer so CJK input methods work correctly.",
+        "Pass unknown slash-prefixed input through as prompts instead of rejecting it as an unknown command.",
+        "Retry Anthropic HTTP 425 and all 5xx responses consistently with other providers."
+      ],
+      "Fixed": [
+        "Fix extension reload lifecycle ordering.",
+        "Ignore saved provider preferences when their providers are no longer configured.",
+        "Prevent missing or malformed bundled release notes from crashing startup."
+      ]
+    }
+  },
+  {
+    "version": "0.1.5",
+    "date": "2026-07-09",
+    "sections": {
+      "New": [
+        "Add OpenAI GPT-5.6, GPT-5.6 Sol, GPT-5.6 Terra, and GPT-5.6 Luna model catalog entries for OpenAI and OpenAI Codex.",
+        "Add NVIDIA NIM as a built-in provider.",
+        "Redesign session HTML export with a cleaner, icon-based interface."
+      ],
+      "Changed": [
+        "Improve the documentation website with a roadmap page, clearer Pi links, and refreshed navigation and homepage polish."
+      ],
+      "Fixed": [
+        "Fix release-note packaging so installed wheels include the bundled release notes file.",
+        "Fix Windows test isolation by avoiding accidental writes to a real ~/.tau directory.",
+        "Fix TUI theme selection edge cases."
+      ]
+    }
+  },
+  {
     "version": "0.1.4",
     "date": "2026-07-08",
     "sections": {

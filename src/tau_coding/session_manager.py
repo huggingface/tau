@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from time import time
@@ -10,6 +12,31 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict
 
 from tau_coding.paths import TauPaths
+
+_MAX_SESSION_ID_BYTES = 128
+_RESERVED_SESSION_IDS = frozenset({"default", "index"})
+_WINDOWS_RESERVED_FILE_STEMS = frozenset(
+    {"aux", "con", "nul", "prn"}
+    | {f"com{index}" for index in range(1, 10)}
+    | {f"lpt{index}" for index in range(1, 10)}
+)
+_SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+
+
+def validate_session_id(session_id: str) -> None:
+    """Reject custom session ids that are unsafe as file names."""
+    if not _SESSION_ID_PATTERN.fullmatch(session_id):
+        raise ValueError(
+            "Session id must be non-empty, contain only alphanumeric characters, '-', '_', "
+            "and '.', and start and end with an alphanumeric character"
+        )
+    if len(session_id.encode("utf-8")) > _MAX_SESSION_ID_BYTES:
+        raise ValueError(f"Session id must be at most {_MAX_SESSION_ID_BYTES} bytes")
+    normalized_id = session_id.casefold()
+    if normalized_id in _RESERVED_SESSION_IDS:
+        raise ValueError(f"Session id is reserved: {session_id}")
+    if normalized_id.partition(".")[0] in _WINDOWS_RESERVED_FILE_STEMS:
+        raise ValueError(f"Session id is not a portable file name: {session_id}")
 
 
 class SessionRecordModel(BaseModel):
@@ -22,6 +49,7 @@ class SessionRecordModel(BaseModel):
     cwd: str
     model: str
     provider_name: str | None = None
+    inference_provider: str | None = None
     title: str | None = None
     created_at: float
     updated_at: float
@@ -39,6 +67,7 @@ class CodingSessionRecord:
     created_at: float
     updated_at: float
     provider_name: str | None = None
+    inference_provider: str | None = None
 
     @classmethod
     def from_model(cls, model: SessionRecordModel) -> CodingSessionRecord:
@@ -52,6 +81,7 @@ class CodingSessionRecord:
             created_at=model.created_at,
             updated_at=model.updated_at,
             provider_name=model.provider_name,
+            inference_provider=model.inference_provider,
         )
 
     def to_model(self) -> SessionRecordModel:
@@ -65,6 +95,7 @@ class CodingSessionRecord:
             created_at=self.created_at,
             updated_at=self.updated_at,
             provider_name=self.provider_name,
+            inference_provider=self.inference_provider,
         )
 
 
@@ -111,6 +142,7 @@ class SessionManager:
         cwd: Path,
         model: str,
         provider_name: str | None = None,
+        inference_provider: str | None = None,
         title: str | None = None,
         session_id: str | None = None,
     ) -> CodingSessionRecord:
@@ -119,11 +151,51 @@ class SessionManager:
             cwd=cwd,
             model=model,
             provider_name=provider_name,
+            inference_provider=inference_provider,
             title=title,
             session_id=session_id,
         )
         self.index_session(record)
         return record
+
+    def create_session_exclusive(
+        self,
+        *,
+        cwd: Path,
+        model: str,
+        provider_name: str | None = None,
+        inference_provider: str | None = None,
+        title: str | None = None,
+        session_id: str | None = None,
+    ) -> CodingSessionRecord:
+        """Atomically reserve and index a session transcript without overwriting."""
+        record = self.prepare_session(
+            cwd=cwd,
+            model=model,
+            provider_name=provider_name,
+            inference_provider=inference_provider,
+            title=title,
+            session_id=session_id,
+        )
+        if self.get_session(record.id) is not None:
+            raise RuntimeError(f"Session already exists with id '{record.id}'")
+        try:
+            with record.path.open("x", encoding="utf-8"):
+                pass
+        except FileExistsError as exc:
+            raise RuntimeError(f"Session already exists with id '{record.id}'") from exc
+        except Exception:
+            with suppress(OSError):
+                record.path.unlink(missing_ok=True)
+            raise
+        try:
+            return self.index_session(record)
+        except Exception:
+            with suppress(Exception):
+                self._remove(record)
+            with suppress(OSError):
+                record.path.unlink(missing_ok=True)
+            raise
 
     def prepare_session(
         self,
@@ -131,14 +203,20 @@ class SessionManager:
         cwd: Path,
         model: str,
         provider_name: str | None = None,
+        inference_provider: str | None = None,
         title: str | None = None,
         session_id: str | None = None,
     ) -> CodingSessionRecord:
         """Return metadata for a session without adding it to the resume index."""
         now = time()
         resolved_cwd = cwd.resolve()
-        record_id = session_id or uuid4().hex
-        path = self.paths.project_session_dir(resolved_cwd) / f"{record_id}.jsonl"
+        record_id = uuid4().hex if session_id is None else session_id
+        validate_session_id(record_id)
+        project_session_dir = self.paths.project_session_dir(resolved_cwd)
+        default_session_id = f"default-{project_session_dir.name}"
+        if record_id.casefold() == default_session_id.casefold():
+            raise ValueError(f"Session id is reserved: {record_id}")
+        path = project_session_dir / f"{record_id}.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         return CodingSessionRecord(
             id=record_id,
@@ -146,6 +224,7 @@ class SessionManager:
             cwd=resolved_cwd,
             model=model,
             provider_name=provider_name,
+            inference_provider=inference_provider,
             title=title,
             created_at=now,
             updated_at=now,
@@ -188,6 +267,8 @@ class SessionManager:
         *,
         model: str | None = None,
         provider_name: str | None = None,
+        inference_provider: str | None = None,
+        preserve_inference_provider: bool = True,
         title: str | None = None,
     ) -> CodingSessionRecord | None:
         """Update a session's last-used metadata."""
@@ -200,6 +281,9 @@ class SessionManager:
             cwd=existing.cwd,
             model=model or existing.model,
             provider_name=provider_name if provider_name is not None else existing.provider_name,
+            inference_provider=(
+                existing.inference_provider if preserve_inference_provider else inference_provider
+            ),
             title=title if title is not None else existing.title,
             created_at=existing.created_at,
             updated_at=time(),
@@ -212,7 +296,9 @@ class SessionManager:
             return []
 
         records: list[CodingSessionRecord] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
+        # Split on newlines only: str.splitlines() would also split on characters
+        # like U+2028 that appear unescaped inside JSON string values.
+        for line in path.read_text(encoding="utf-8").split("\n"):
             stripped = line.strip()
             if not stripped:
                 continue
@@ -245,6 +331,11 @@ class SessionManager:
         path = self.project_index_path(record.cwd)
         records = [item for item in self._read_index(path) if item.id != record.id]
         records.append(record)
+        self._write_index(path, records)
+
+    def _remove(self, record: CodingSessionRecord) -> None:
+        path = self.project_index_path(record.cwd)
+        records = [item for item in self._read_index(path) if item.id != record.id]
         self._write_index(path, records)
 
 

@@ -29,6 +29,8 @@ For the practical frontend contract, see [Building a Custom TUI](../custom-tui.m
 - [Phase 3: Pure Agent Loop](./phase-3-agent-loop.md)
 - [Phase 4: AgentHarness](./phase-4-agent-harness.md)
 - [Phase 5: Built-in Coding Tools](./phase-5-coding-tools.md)
+- [Multimodal read-tool results](./multimodal-read-results.md)
+- [Bounded read-image processing](./read-image-processing.md)
 - [Phase 6: Non-interactive Print-mode CLI](./phase-6-print-mode-cli.md)
 - [Phase 7: Session Tree and JSONL Persistence](./phase-7-session-tree.md)
 - [Phase 8: Coding Session Wrapper](./phase-8-coding-session.md)
@@ -44,6 +46,7 @@ For the practical frontend contract, see [Building a Custom TUI](../custom-tui.m
 - [Phase 17.5: TUI Transcript Wrapping](./phase-17-5-transcript-wrapping.md)
 - [Phase 18: Provider Configuration Foundation](./phase-18-provider-config-foundation.md)
 - [Config-driven Provider Catalog](./config-driven-provider-catalog.md)
+- [Codex Runtime Model Limits](./codex-runtime-model-limits.md)
 - [Provider Retry Events](./provider-retries.md)
 - [Provider/model safety and HTTP error details](./provider-model-safety.md)
 - [Phase 19: Project Context Discovery and Reload](./phase-19-context-discovery.md)
@@ -54,8 +57,11 @@ For the practical frontend contract, see [Building a Custom TUI](../custom-tui.m
 - [Phase 20.4: Session Export and Visualization](./phase-20-4-session-export.md)
 - [Queued Steering and Follow-ups](./queued-steering-follow-ups.md)
 - [Pre-extension Hardening Summary](./pre-extension-hardening.md)
+- [Phase 21: Extensions](./phase-21-extensions.md)
 - [Phase 22: Compaction Replay Foundation](./phase-22-compaction-foundation.md)
 - [Phase 23: Advanced TUI and Product Polish](./phase-23-tui-polish.md)
+- [Bounded TUI Transcript Rendering](./tui-long-transcript-performance.md)
 - [Phase 24: Session Tree Branching](./phase-24-session-tree-branching.md)
 
-Phase 21 extensions are intentionally deferred.
+Phase 21 extensions are implemented; see the phase note and the user guide at
+`website/content/guides/extensions.md`.

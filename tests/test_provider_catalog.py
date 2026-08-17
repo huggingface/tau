@@ -11,10 +11,15 @@ from tau_coding.catalog_loader import (
     builtin_catalog,
     builtin_catalog_resource_text,
     effective_catalog,
+    save_user_catalog_entries,
     user_catalog_path,
 )
 from tau_coding.paths import TauPaths
-from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG, builtin_provider_entry
+from tau_coding.provider_catalog import (
+    BUILTIN_PROVIDER_CATALOG,
+    builtin_provider_entry,
+    model_cost_for_input_tokens,
+)
 from tau_coding.provider_config import load_provider_settings
 
 VALID_PROVIDER = """
@@ -63,6 +68,7 @@ def test_builtin_catalog_matches_expected_providers() -> None:
         "minimax",
         "minimax-cn",
         "moonshotai",
+        "kimi-code",
         "moonshotai-cn",
         "huggingface",
         "fireworks",
@@ -72,6 +78,9 @@ def test_builtin_catalog_matches_expected_providers() -> None:
         "xiaomi-token-plan-cn",
         "xiaomi-token-plan-ams",
         "xiaomi-token-plan-sgp",
+        "opencode-go",
+        "opencode",
+        "github-copilot",
     ]
 
 
@@ -93,6 +102,7 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
         "claude-opus-4-5-20251101",
         "claude-opus-4-6",
         "claude-opus-4-7",
+        "claude-opus-5",
         "claude-sonnet-4-5",
         "claude-sonnet-4-5-20250929",
         "claude-sonnet-4-6",
@@ -110,15 +120,178 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
         "claude-opus-4-5-20251101": 200_000,
         "claude-opus-4-6": 1_000_000,
         "claude-opus-4-7": 1_000_000,
+        "claude-opus-5": 1_000_000,
         "claude-sonnet-4-5": 200_000,
         "claude-sonnet-4-5-20250929": 200_000,
         "claude-sonnet-4-6": 1_000_000,
         "claude-sonnet-5": 1_000_000,
     }
+    opus_5 = entry.model_metadata["claude-opus-5"]
+    assert opus_5.context_window == 1_000_000
+    assert opus_5.max_tokens == 128_000
+    assert opus_5.input == ("text", "image")
+    assert opus_5.cost is not None
+    assert opus_5.cost["input"] == 5
+    assert opus_5.cost["output"] == 25
+    assert opus_5.cost["cacheWrite"] == 6.25
+    assert opus_5.cost["cacheWrite1h"] == 10
+    assert opus_5.compat == {"forceAdaptiveThinking": True}
+    assert opus_5.thinking_level_map == {"minimal": None, "xhigh": "max"}
     assert entry.thinking_levels == ("off", "minimal", "low", "medium", "high", "xhigh")
     assert entry.thinking_models == ()
     assert entry.thinking_default == "medium"
     assert entry.thinking_parameter == "anthropic.thinking"
+    assert entry.auth_methods == ("api_key", "oauth")
+
+
+def test_builtin_catalog_separates_openai_api_and_codex_context_limits() -> None:
+    openai = builtin_provider_entry("openai")
+    codex = builtin_provider_entry("openai-codex")
+
+    assert openai is not None
+    assert codex is not None
+    assert openai.context_windows is not None
+    assert codex.context_windows is not None
+    assert "gpt-5.6" in openai.models
+    assert "gpt-5.6" not in codex.models
+    assert "gpt-5.6" not in codex.context_windows
+    assert "gpt-5.6" not in codex.model_metadata
+    assert codex.removed_models == ("gpt-5.6",)
+    assert openai.context_windows["gpt-5.6-sol"] == 1_050_000
+    assert codex.context_windows["gpt-5.6-sol"] == 272_000
+    assert codex.context_windows["gpt-5.6-terra"] == 272_000
+    assert codex.context_windows["gpt-5.6-luna"] == 272_000
+    assert codex.model_metadata["gpt-5.6-sol"].context_window == 272_000
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "vision_models"),
+    [
+        (
+            "openai-codex",
+            {
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "gpt-5.6-luna",
+                "gpt-5.5",
+                "gpt-5.4",
+                "gpt-5.4-mini",
+                "gpt-5.3-codex",
+                "gpt-5.2",
+            },
+        ),
+        (
+            "opencode-go",
+            {
+                "kimi-k2.6",
+                "kimi-k2.7-code",
+                "mimo-v2.5",
+                "minimax-m3",
+                "qwen3.6-plus",
+                "qwen3.7-plus",
+            },
+        ),
+        (
+            "opencode",
+            {
+                "gpt-5.4",
+                "gpt-5.4-mini",
+                "gpt-5.5",
+                "gpt-5.5-pro",
+                "gpt-5.6-luna",
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "grok-4.5",
+                "grok-build-0.1",
+                "kimi-k2.5",
+                "kimi-k2.6",
+                "kimi-k2.7-code",
+                "mimo-v2.5-free",
+                "minimax-m3",
+                "qwen3.5-plus",
+                "qwen3.6-plus",
+            },
+        ),
+        (
+            "github-copilot",
+            {
+                "claude-fable-5",
+                "claude-haiku-4.5",
+                "claude-opus-4.5",
+                "claude-opus-4.6",
+                "claude-opus-4.7",
+                "claude-opus-4.8",
+                "claude-sonnet-4",
+                "claude-sonnet-4.5",
+                "claude-sonnet-4.6",
+                "claude-sonnet-5",
+                "gemini-2.5-pro",
+                "gemini-3-flash-preview",
+                "gemini-3.1-pro-preview",
+                "gemini-3.5-flash",
+                "gpt-4.1",
+                "gpt-5-mini",
+                "gpt-5.2",
+                "gpt-5.2-codex",
+                "gpt-5.3-codex",
+                "gpt-5.4",
+                "gpt-5.4-mini",
+                "gpt-5.4-nano",
+                "gpt-5.5",
+                "gpt-5.6-luna",
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "kimi-k2.7-code",
+            },
+        ),
+    ],
+)
+def test_sparse_provider_catalogs_declare_model_input_modalities(
+    provider_name: str, vision_models: set[str]
+) -> None:
+    provider = builtin_provider_entry(provider_name)
+
+    assert provider is not None
+    assert set(provider.model_metadata) == set(provider.models)
+    assert {
+        model for model, metadata in provider.model_metadata.items() if "image" in metadata.input
+    } == vision_models
+
+
+def test_builtin_catalog_oauth_and_opencode_auth_methods() -> None:
+    codex = builtin_provider_entry("openai-codex")
+    copilot = builtin_provider_entry("github-copilot")
+    opencode_go = builtin_provider_entry("opencode-go")
+    opencode = builtin_provider_entry("opencode")
+
+    assert codex is not None and codex.auth_methods == ("oauth",)
+    assert copilot is not None and copilot.auth_methods == ("oauth",)
+    assert opencode_go is not None and opencode_go.auth_methods == ("api_key",)
+    assert opencode is not None and opencode.auth_methods == ("api_key",)
+    assert opencode_go.api_key_env == "OPENCODE_API_KEY"
+    assert opencode.api_key_env == "OPENCODE_API_KEY"
+
+
+def test_builtin_catalog_copilot_claude_max_tokens() -> None:
+    entry = builtin_provider_entry("github-copilot")
+    assert entry is not None
+
+    expected = {
+        "claude-haiku-4.5": 64_000,
+        "claude-opus-4.5": 32_000,
+        "claude-opus-4.6": 32_000,
+        "claude-opus-4.7": 32_000,
+        "claude-opus-4.8": 64_000,
+        "claude-sonnet-4": 16_000,
+        "claude-sonnet-4.5": 32_000,
+        "claude-sonnet-4.6": 32_000,
+        "claude-sonnet-5": 128_000,
+    }
+
+    for model, max_tokens in expected.items():
+        metadata = entry.model_metadata[model]
+        assert metadata.api == "anthropic-messages"
+        assert metadata.max_tokens == max_tokens
 
 
 def test_builtin_catalog_golden_nvidia_entry() -> None:
@@ -169,6 +342,168 @@ def test_builtin_catalog_golden_nvidia_entry() -> None:
     assert gpt_oss_metadata.reasoning is True
     assert gpt_oss_metadata.context_window == 131_072
     assert gpt_oss_metadata.max_tokens == 65_536
+
+
+def test_builtin_catalog_huggingface_model_expansion() -> None:
+    entry = builtin_provider_entry("huggingface")
+    assert entry is not None
+    added_models = {
+        "MiniMaxAI/MiniMax-M2",
+        "MiniMaxAI/MiniMax-M3",
+        "Qwen/Qwen3-235B-A22B",
+        "Qwen/Qwen3-32B",
+        "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+        "Qwen/Qwen3.5-122B-A10B",
+        "Qwen/Qwen3.5-27B",
+        "Qwen/Qwen3.5-35B-A3B",
+        "Qwen/Qwen3.5-9B",
+        "Qwen/Qwen3.6-27B",
+        "Qwen/Qwen3.6-35B-A3B",
+        "XiaomiMiMo/MiMo-V2.5-Pro",
+        "deepseek-ai/DeepSeek-R1",
+        "deepseek-ai/DeepSeek-V4-Flash",
+        "deepseek-ai/DeepSeek-V4-Pro",
+        "google/gemma-4-26B-A4B-it",
+        "google/gemma-4-31B-it",
+        "meta-llama/Llama-3.3-70B-Instruct",
+        "moonshotai/Kimi-K2.7-Code",
+        "moonshotai/Kimi-K3",
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "stepfun-ai/Step-3.5-Flash",
+        "stepfun-ai/Step-3.7-Flash",
+        "zai-org/GLM-4.5",
+        "zai-org/GLM-4.5-Air",
+        "zai-org/GLM-4.5V",
+        "zai-org/GLM-4.6",
+        "zai-org/GLM-5.2",
+    }
+
+    assert len(entry.models) == 47
+    assert added_models <= set(entry.models)
+    assert set(entry.context_windows or {}) == set(entry.models)
+    assert set(entry.model_metadata) == set(entry.models)
+    assert entry.default_model == "moonshotai/Kimi-K2.6"
+
+    minimax_m3 = entry.model_metadata["MiniMaxAI/MiniMax-M3"]
+    assert minimax_m3.input == ("text", "image")
+    assert minimax_m3.context_window == 524_288
+    assert minimax_m3.max_tokens == 128_000
+
+    llama = entry.model_metadata["meta-llama/Llama-3.3-70B-Instruct"]
+    assert llama.reasoning is False
+    assert llama.context_window == 131_072
+
+    kimi_k3 = entry.model_metadata["moonshotai/Kimi-K3"]
+    assert kimi_k3.name == "Kimi K3"
+    assert kimi_k3.reasoning is True
+    assert kimi_k3.input == ("text", "image")
+    assert kimi_k3.context_window == 1_048_576
+    assert kimi_k3.cost == {"input": 3, "output": 15, "cacheRead": 0, "cacheWrite": 0}
+    assert kimi_k3.thinking_level_map == {
+        "off": None,
+        "minimal": None,
+        "low": "low",
+        "medium": None,
+        "high": "high",
+        "xhigh": "max",
+    }
+
+
+def test_builtin_catalog_golden_kimi_entries() -> None:
+    moonshot = builtin_provider_entry("moonshotai")
+    assert moonshot is not None
+    assert moonshot.display_name == "Moonshot AI (Kimi)"
+    assert moonshot.default_model == "kimi-k2.7-code"
+    assert "kimi-k2.7-code" in moonshot.models
+    assert moonshot.context_windows is not None
+    assert moonshot.context_windows["kimi-k2.7-code"] == 262_144
+
+    moonshot_cn = builtin_provider_entry("moonshotai-cn")
+    assert moonshot_cn is not None
+    assert moonshot_cn.default_model == "kimi-k2.7-code"
+    assert "kimi-k2.7-code" in moonshot_cn.models
+    assert moonshot_cn.context_windows is not None
+    assert moonshot_cn.context_windows["kimi-k2.7-code"] == 262_144
+
+    k2_7 = moonshot.model_metadata["kimi-k2.7-code"]
+    assert k2_7.name == "Kimi K2.7 Code"
+    assert k2_7.reasoning is True
+    assert k2_7.input == ("text", "image")
+    assert k2_7.context_window == 262_144
+    assert k2_7.max_tokens == 32_768
+    assert k2_7.thinking_level_map == {
+        "off": None,
+        "minimal": None,
+        "low": None,
+        "high": None,
+    }
+
+    coding = builtin_provider_entry("kimi-code")
+    assert coding is not None
+    assert coding.display_name == "Kimi Code subscription"
+    assert coding.base_url == "https://api.kimi.com/coding/v1"
+    assert coding.api_key_env == "KIMI_CODE_API_KEY"
+    assert coding.credential_name == "kimi-code"
+    assert coding.models == ("k3", "kimi-for-coding")
+    assert coding.default_model == "kimi-for-coding"
+    assert coding.thinking_default == "xhigh"
+    assert coding.context_windows == {"k3": 1_048_576, "kimi-for-coding": 262_144}
+
+    k3 = coding.model_metadata["k3"]
+    assert k3.name == "Kimi K3"
+    assert k3.reasoning is True
+    assert k3.input == ("text", "image")
+    assert k3.context_window == 1_048_576
+    assert k3.thinking_level_map == {
+        "off": None,
+        "minimal": None,
+        "low": "low",
+        "medium": None,
+        "high": "high",
+        "xhigh": "max",
+    }
+
+    latest = coding.model_metadata["kimi-for-coding"]
+    assert latest.name == "Kimi for Coding (latest)"
+    assert latest.reasoning is True
+    assert latest.context_window == 262_144
+    assert latest.thinking_level_map == {
+        "off": None,
+        "minimal": None,
+        "low": None,
+        "high": None,
+        "xhigh": None,
+    }
+
+
+def test_builtin_minimax_m3_has_tiered_pricing() -> None:
+    base_cost = {"input": 0.3, "output": 1.2, "cacheRead": 0.06, "cacheWrite": 0}
+    long_context_cost = {
+        "input": 0.6,
+        "output": 2.4,
+        "cacheRead": 0.12,
+        "cacheWrite": 0,
+    }
+
+    for provider_name in ("minimax", "minimax-cn"):
+        entry = builtin_provider_entry(provider_name)
+        assert entry is not None
+        metadata = entry.model_metadata["MiniMax-M3"]
+        assert metadata.input == ("text", "image")
+        assert metadata.cost == base_cost
+        assert model_cost_for_input_tokens(metadata, 512_000) == base_cost
+        assert model_cost_for_input_tokens(metadata, 512_001) == long_context_cost
+
+
+@pytest.mark.parametrize("input_tokens", [-1, True])
+def test_model_cost_for_input_tokens_rejects_invalid_count(input_tokens: int) -> None:
+    entry = builtin_provider_entry("minimax")
+    assert entry is not None
+    metadata = entry.model_metadata["MiniMax-M3"]
+
+    with pytest.raises(ValueError, match="non-negative integer"):
+        model_cost_for_input_tokens(metadata, input_tokens)
 
 
 def test_builtin_catalog_entries_are_internally_consistent() -> None:
@@ -226,6 +561,35 @@ default_model = "claude-next-1"
     assert entry.thinking_parameter == "anthropic.thinking"
 
 
+def test_builtin_tombstone_removes_model_from_user_catalog_overlay(tmp_path: Path) -> None:
+    paths = _write_user_catalog(
+        tmp_path / ".tau",
+        """
+[[providers]]
+name = "openai-codex"
+models = ["gpt-5.6"]
+default_model = "gpt-5.6"
+thinking_models = ["gpt-5.6"]
+
+[providers.context_windows]
+"gpt-5.6" = 272000
+
+[providers.model_metadata."gpt-5.6"]
+name = "GPT-5.6"
+""",
+    )
+
+    entry = next(e for e in effective_catalog(paths) if e.name == "openai-codex")
+
+    assert entry.default_model == "gpt-5.5"
+    assert "gpt-5.6" not in entry.models
+    assert "gpt-5.6" not in entry.thinking_models
+    assert entry.context_windows is not None
+    assert "gpt-5.6" not in entry.context_windows
+    assert "gpt-5.6" not in entry.model_metadata
+    assert entry.removed_models == ("gpt-5.6",)
+
+
 def test_user_catalog_thinking_fields_replace_as_group(tmp_path: Path) -> None:
     paths = _write_user_catalog(
         tmp_path / ".tau",
@@ -241,6 +605,93 @@ thinking_default = "high"
     assert entry.thinking_default == "high"
     assert entry.thinking_models == ()
     assert entry.thinking_parameter is None
+
+
+def test_user_catalog_overlays_and_serializes_cost_tiers(tmp_path: Path) -> None:
+    paths = _write_user_catalog(
+        tmp_path / ".tau",
+        """
+[[providers]]
+name = "minimax"
+
+[providers.model_metadata."MiniMax-M3"]
+cost_tiers = [
+  { max_input_tokens = 400000, input = 0.2, output = 1.0, cacheRead = 0.04, cacheWrite = 0 },
+  { input = 0.5, output = 2.0, cacheRead = 0.1, cacheWrite = 0 },
+]
+""",
+    )
+    entry = next(e for e in effective_catalog(paths) if e.name == "minimax")
+    metadata = entry.model_metadata["MiniMax-M3"]
+    assert model_cost_for_input_tokens(metadata, 400_000) == {
+        "input": 0.2,
+        "output": 1.0,
+        "cacheRead": 0.04,
+        "cacheWrite": 0,
+    }
+    long_context_cost = {
+        "input": 0.5,
+        "output": 2.0,
+        "cacheRead": 0.1,
+        "cacheWrite": 0,
+    }
+    assert model_cost_for_input_tokens(metadata, 400_001) == long_context_cost
+
+    save_user_catalog_entries([entry], paths)
+    reloaded = next(e for e in effective_catalog(paths) if e.name == "minimax")
+    assert (
+        model_cost_for_input_tokens(reloaded.model_metadata["MiniMax-M3"], 400_001)
+        == long_context_cost
+    )
+
+
+def test_user_catalog_cost_tier_accepts_one_hour_cache_write_rate(tmp_path: Path) -> None:
+    paths = _write_user_catalog(
+        tmp_path / ".tau",
+        """
+[[providers]]
+name = "minimax"
+
+[providers.model_metadata."MiniMax-M3"]
+cost_tiers = [
+  { max_input_tokens = 400000, input = 0.2, output = 1.0, cacheRead = 0.04, cacheWrite = 0.25 },
+  { input = 0.5, output = 2.0, cacheRead = 0.1, cacheWrite = 0.6, cacheWrite1h = 1.0 },
+]
+""",
+    )
+    entry = next(e for e in effective_catalog(paths) if e.name == "minimax")
+    metadata = entry.model_metadata["MiniMax-M3"]
+    assert model_cost_for_input_tokens(metadata, 400_001) == {
+        "input": 0.5,
+        "output": 2.0,
+        "cacheRead": 0.1,
+        "cacheWrite": 0.6,
+        "cacheWrite1h": 1.0,
+    }
+    # Tiers without the key omit it, so billing can fall back to cacheWrite.
+    assert model_cost_for_input_tokens(metadata, 400_000) == {
+        "input": 0.2,
+        "output": 1.0,
+        "cacheRead": 0.04,
+        "cacheWrite": 0.25,
+    }
+
+
+def test_user_catalog_rejects_bounded_final_cost_tier(tmp_path: Path) -> None:
+    paths = _write_user_catalog(
+        tmp_path / ".tau",
+        """
+[[providers]]
+name = "minimax"
+
+[providers.model_metadata."MiniMax-M3"]
+cost_tiers = [
+  { max_input_tokens = 512000, input = 0.3, output = 1.2, cacheRead = 0.06, cacheWrite = 0 },
+]
+""",
+    )
+    with pytest.raises(CatalogError, match="final tier must omit max_input_tokens"):
+        effective_catalog(paths)
 
 
 def test_user_catalog_rejects_unknown_keys(tmp_path: Path) -> None:

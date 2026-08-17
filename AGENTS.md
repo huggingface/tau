@@ -6,7 +6,7 @@ Tau is a Python implementation of Pi's minimalist coding-agent harness architect
 
 The implementation roadmap is tracked in GitHub issue #1:
 
-- https://github.com/alejandro-ao/tau/issues/1
+- https://github.com/huggingface/tau/issues/1
 
 Use that issue as the primary reference for phase ordering and architectural intent.
 
@@ -77,5 +77,5 @@ Each substantial phase should leave behind beginner-friendly notes under `dev-no
 - how to test or use it
 
 When a phase adds or changes user-facing behavior, also update the published docs
-under `website/src/content/docs/` (the "Use Tau" guides and reference).
+under `website/content/` (the "Use Tau" guides and reference).
 

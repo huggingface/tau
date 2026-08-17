@@ -1,24 +1,24 @@
-"""JSON event stream renderer."""
-
-from __future__ import annotations
+"""Pi-compatible JSON event stream renderer."""
 
 import typer
 
-from tau_agent import AgentEvent, ErrorEvent
+from tau_agent.events import MessageEndEvent
+from tau_agent.messages import AssistantMessage
+from tau_coding.events import CodingSessionEvent
 
 
 class JsonEventRenderer:
-    """Render every agent event as one JSON object per line."""
-
     def __init__(self) -> None:
         self._failed = False
 
-    def render(self, event: AgentEvent) -> None:
-        """Write one event as JSONL."""
-        if isinstance(event, ErrorEvent) and not event.recoverable:
+    def render(self, event: CodingSessionEvent) -> None:
+        if (
+            isinstance(event, MessageEndEvent)
+            and isinstance(event.message, AssistantMessage)
+            and event.message.stop_reason == "error"
+        ):
             self._failed = True
-        typer.echo(event.model_dump_json())
+        typer.echo(event.model_dump_json(by_alias=True, exclude_none=True))
 
     def finish(self) -> bool:
-        """Return whether the rendered run succeeded."""
         return not self._failed

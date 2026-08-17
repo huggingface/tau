@@ -114,6 +114,9 @@ def build_completion_state(
     has_argument_text = token_end < len(text)
     if token.startswith("/skill:"):
         if has_argument_text and _matches_skill_command(token, skills):
+            # Skill arguments are prompt text, so @ file references stay available.
+            if cwd is not None:
+                return CompletionState(_file_reference_completions(text=text, cwd=cwd))
             return CompletionState()
         return CompletionState(_skill_completions(token=token, token_end=token_end, skills=skills))
 
@@ -133,10 +136,12 @@ def build_completion_state(
     if argument_completions is not None:
         return CompletionState(argument_completions)
 
-    if has_argument_text and (
-        _matches_prompt_template_command(token, prompt_templates)
-        or _matches_registered_command(token, command_registry)
-    ):
+    if has_argument_text and _matches_prompt_template_command(token, prompt_templates):
+        if cwd is not None:
+            return CompletionState(_file_reference_completions(text=text, cwd=cwd))
+        return CompletionState()
+
+    if has_argument_text and _matches_registered_command(token, command_registry):
         return CompletionState()
 
     return CompletionState(
@@ -155,12 +160,77 @@ def _file_reference_completions(*, text: str, cwd: Path) -> tuple[CompletionItem
         return ()
     start, end = token
     prefix = text[start + 1 : end]
+    external_completions = _external_file_reference_completions(
+        prefix=prefix,
+        start=start,
+        end=end,
+        cwd=cwd,
+    )
+    if external_completions is not None:
+        return external_completions
+
     suggestions: list[CompletionItem] = []
     for path in _iter_file_reference_paths(cwd):
         relative = path.relative_to(cwd).as_posix()
         if prefix.lower() not in relative.lower():
             continue
         display = f"@{relative}{'/' if path.is_dir() else ''}"
+        suggestions.append(
+            CompletionItem(
+                display=display,
+                replacement=display,
+                start=start,
+                end=end,
+                description="File reference",
+            )
+        )
+        if len(suggestions) >= MAX_FILE_COMPLETIONS:
+            break
+    return tuple(suggestions)
+
+
+def _external_file_reference_completions(
+    *, prefix: str, start: int, end: int, cwd: Path
+) -> tuple[CompletionItem, ...] | None:
+    if prefix == ".." or prefix.endswith("/.."):
+        target = cwd / prefix
+        if not target.is_dir():
+            return ()
+        display = f"@{prefix}/"
+        return (
+            CompletionItem(
+                display=display,
+                replacement=display,
+                start=start,
+                end=end,
+                description="File reference",
+            ),
+        )
+
+    if not prefix.startswith("../"):
+        return None
+
+    parent_text, name_prefix = prefix.rsplit("/", 1)
+    if any(part in IGNORED_FILE_COMPLETION_DIRS for part in Path(parent_text).parts):
+        return ()
+    parent_dir = cwd / parent_text
+    if not parent_dir.is_dir():
+        return ()
+
+    try:
+        children = sorted(parent_dir.iterdir(), key=lambda path: path.name.lower())
+    except OSError:
+        return ()
+
+    suggestions: list[CompletionItem] = []
+    for child in children:
+        if child.name in IGNORED_FILE_COMPLETION_DIRS:
+            continue
+        if not child.name.lower().startswith(name_prefix.lower()):
+            continue
+        display = f"@{parent_text}/{child.name}{'/' if child.is_dir() else ''}"
+        if display == f"@{prefix}":
+            continue
         suggestions.append(
             CompletionItem(
                 display=display,
@@ -209,9 +279,7 @@ def _is_ignored_file_completion_path(path: Path, *, cwd: Path) -> bool:
         relative_parts = path.relative_to(cwd).parts
     except ValueError:
         return True
-    return any(
-        part.startswith(".") or part in IGNORED_FILE_COMPLETION_DIRS for part in relative_parts
-    )
+    return any(part in IGNORED_FILE_COMPLETION_DIRS for part in relative_parts)
 
 
 def _shell_path_completions(*, text: str, cwd: Path) -> tuple[CompletionItem, ...] | None:

@@ -21,6 +21,13 @@ import httpx
 
 from tau_ai.http import create_async_client
 from tau_coding.credentials import OAuthCredential
+from tau_coding.oauth_types import (
+    OAuthAuthInfo,
+    OAuthFlowKind,
+    OAuthLoginCallbacks,
+    OAuthPrompt,
+    OAuthRuntimeAuth,
+)
 
 OPENAI_CODEX_OAUTH_PROVIDER = "openai-codex"
 OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -36,22 +43,6 @@ type AuthCallback = Callable[["OAuthAuthInfo"], None]
 type PromptCallback = Callable[["OAuthPrompt"], Awaitable[str]]
 type ManualCodeCallback = Callable[[], Awaitable[str]]
 type ProgressCallback = Callable[[str], None]
-
-
-@dataclass(frozen=True, slots=True)
-class OAuthAuthInfo:
-    """Authorization URL and optional user instructions."""
-
-    url: str
-    instructions: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class OAuthPrompt:
-    """Text prompt used for manual OAuth fallback input."""
-
-    message: str
-    placeholder: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +73,32 @@ class TokenResponse:
 
 class OAuthError(RuntimeError):
     """Raised when an OAuth flow cannot complete."""
+
+
+class OpenAICodexOAuthProvider:
+    """Registered OpenAI Codex subscription OAuth behavior."""
+
+    id = OPENAI_CODEX_OAUTH_PROVIDER
+    name = "OpenAI Codex (ChatGPT subscription)"
+    flow_kinds: tuple[OAuthFlowKind, ...] = ("browser",)
+
+    async def login(self, callbacks: OAuthLoginCallbacks) -> OAuthCredential:
+        if callbacks.method == "device_code":
+            raise OAuthError("OpenAI Codex device-code login is not implemented in Tau yet")
+        return await login_openai_codex(
+            on_auth=callbacks.on_auth,
+            on_prompt=callbacks.on_prompt,
+            on_manual_code_input=callbacks.on_manual_code_input,
+            on_progress=callbacks.on_progress,
+        )
+
+    async def refresh(self, credential: OAuthCredential) -> OAuthCredential:
+        if not oauth_credential_is_expired(credential):
+            return credential
+        return await refresh_openai_codex_token(credential.refresh)
+
+    def runtime_auth(self, credential: OAuthCredential) -> OAuthRuntimeAuth:
+        return OAuthRuntimeAuth(api_key=credential.access)
 
 
 class _LocalOAuthServer:
@@ -429,7 +446,13 @@ def _validate_state(state: str | None, expected_state: str) -> None:
         raise OAuthError("OAuth state mismatch")
 
 
-async def _start_local_oauth_server(state: str) -> _LocalOAuthServer | None:
+async def _start_local_oauth_server(
+    state: str,
+    *,
+    callback_port: int = OPENAI_CODEX_CALLBACK_PORT,
+    callback_path: str = "/auth/callback",
+    success_message: str = "OpenAI authentication completed. You can close this window.",
+) -> _LocalOAuthServer | None:
     host = environ.get("TAU_OAUTH_CALLBACK_HOST", "127.0.0.1")
     loop = asyncio.get_running_loop()
     future: asyncio.Future[str | None] = loop.create_future()
@@ -438,7 +461,7 @@ async def _start_local_oauth_server(state: str) -> _LocalOAuthServer | None:
         def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
             try:
                 parsed = urlparse(self.path)
-                if parsed.path != "/auth/callback":
+                if parsed.path != callback_path:
                     self._finish(404, _oauth_html("Callback route not found."))
                     return
                 params = parse_qs(parsed.query)
@@ -451,7 +474,7 @@ async def _start_local_oauth_server(state: str) -> _LocalOAuthServer | None:
                     return
                 self._finish(
                     200,
-                    _oauth_html("OpenAI authentication completed. You can close this window."),
+                    _oauth_html(success_message),
                 )
                 if not future.done():
                     loop.call_soon_threadsafe(future.set_result, code)
@@ -470,7 +493,7 @@ async def _start_local_oauth_server(state: str) -> _LocalOAuthServer | None:
             self.wfile.write(encoded)
 
     try:
-        server = ThreadingHTTPServer((host, OPENAI_CODEX_CALLBACK_PORT), CallbackHandler)
+        server = ThreadingHTTPServer((host, callback_port), CallbackHandler)
     except OSError:
         return None
     thread = threading.Thread(target=server.serve_forever, daemon=True)

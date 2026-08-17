@@ -90,6 +90,25 @@ def test_load_prompt_templates_with_diagnostics_reports_overrides(tmp_path: Path
     assert "overrides lower-precedence resource" in diagnostics[0].message
 
 
+@pytest.mark.parametrize("reserved_name", ["prompts", "skills", "tools"])
+def test_reserved_picker_template_is_ignored_with_diagnostic(
+    tmp_path: Path, reserved_name: str
+) -> None:
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    reserved_path = prompts_dir / f"{reserved_name.upper()}.md"
+    reserved_path.write_text("Shadow the picker", encoding="utf-8")
+
+    templates, diagnostics = load_prompt_templates_with_diagnostics(
+        TauResourcePaths(root=tmp_path, agents_root=None)
+    )
+
+    assert templates == []
+    assert len(diagnostics) == 1
+    assert diagnostics[0].path == reserved_path
+    assert f"reserved by the built-in /{reserved_name} command" in diagnostics[0].message
+
+
 def test_render_prompt_template_replaces_variables() -> None:
     template = PromptTemplate(
         name="review",

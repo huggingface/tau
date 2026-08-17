@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from json import dumps, loads
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any, Literal
 
+from tau_agent.types import JSONValue
 from tau_coding.paths import TauPaths
 
 
@@ -16,22 +18,32 @@ class CredentialStoreError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class OAuthCredential:
-    """Refreshable OAuth credential persisted under Tau home."""
+    """Refreshable OAuth credential persisted under Tau home.
+
+    ``account_id`` remains optional so legacy OpenAI Codex credentials load
+    unchanged while device-code providers can persist only the metadata they
+    actually receive. Provider-specific, non-secret values live in ``metadata``.
+    """
 
     access: str
     refresh: str
     expires: int
-    account_id: str
+    account_id: str | None = None
+    metadata: dict[str, JSONValue] = field(default_factory=dict)
 
-    def to_json(self) -> dict[str, str | int]:
+    def to_json(self) -> dict[str, JSONValue]:
         """Serialize this OAuth credential to JSON-compatible data."""
-        return {
+        result: dict[str, JSONValue] = {
             "type": "oauth",
             "access": self.access,
             "refresh": self.refresh,
             "expires": self.expires,
-            "account_id": self.account_id,
         }
+        if self.account_id is not None:
+            result["account_id"] = self.account_id
+        if self.metadata:
+            result["metadata"] = dict(self.metadata)
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,7 +52,7 @@ class ApiKeyCredential:
 
     key: str
 
-    def to_json(self) -> dict[str, str | int]:
+    def to_json(self) -> dict[str, JSONValue]:
         """Serialize this API key credential to JSON-compatible data."""
         return {"type": "api_key", "key": self.key}
 
@@ -115,8 +127,25 @@ class FileCredentialStore:
     def _save(self, data: dict[str, StoredCredential]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         raw = {key: _credential_to_json(value) for key, value in data.items()}
-        self.path.write_text(dumps(raw, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        self.path.chmod(0o600)
+        content = dumps(raw, indent=2, sort_keys=True) + "\n"
+        temporary_path: Path | None = None
+        try:
+            with NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=self.path.parent,
+                prefix=f".{self.path.name}.",
+                delete=False,
+            ) as handle:
+                temporary_path = Path(handle.name)
+                temporary_path.chmod(0o600)
+                handle.write(content)
+                handle.flush()
+            temporary_path.replace(self.path)
+            self.path.chmod(0o600)
+        finally:
+            if temporary_path is not None and temporary_path.exists():
+                temporary_path.unlink()
 
 
 def credentials_path(paths: TauPaths | None = None) -> Path:
@@ -136,10 +165,11 @@ def _validate_oauth_credential(credential: OAuthCredential) -> None:
         raise CredentialStoreError("OAuth access token must not be empty")
     if not credential.refresh.strip():
         raise CredentialStoreError("OAuth refresh token must not be empty")
-    if not credential.account_id.strip():
+    if credential.account_id is not None and not credential.account_id.strip():
         raise CredentialStoreError("OAuth account id must not be empty")
     if credential.expires <= 0:
         raise CredentialStoreError("OAuth expiry must be greater than 0")
+    _validate_oauth_metadata(credential.metadata)
 
 
 def _credential_from_json(value: object) -> StoredCredential:
@@ -158,18 +188,44 @@ def _credential_from_json(value: object) -> StoredCredential:
     expires = value.get("expires")
     if not isinstance(expires, int) or isinstance(expires, bool) or expires <= 0:
         raise CredentialStoreError("Tau oauth credential expires must be a positive integer")
+    account_id = value.get("account_id")
+    if account_id is not None and (not isinstance(account_id, str) or not account_id.strip()):
+        raise CredentialStoreError("Tau oauth credential account_id must be a non-empty string")
+    metadata = value.get("metadata", {})
+    if not isinstance(metadata, dict):
+        raise CredentialStoreError("Tau oauth credential metadata must be an object")
+    _validate_oauth_metadata(metadata)
     return OAuthCredential(
         access=_string_field(value, "access", credential_type),
         refresh=_string_field(value, "refresh", credential_type),
         expires=expires,
-        account_id=_string_field(value, "account_id", credential_type),
+        account_id=account_id,
+        metadata=dict(metadata),
     )
 
 
-def _credential_to_json(value: StoredCredential) -> str | dict[str, str | int]:
+def _credential_to_json(value: StoredCredential) -> str | dict[str, JSONValue]:
     if isinstance(value, str):
         return value
     return value.to_json()
+
+
+def _validate_oauth_metadata(metadata: dict[Any, Any]) -> None:
+    for key, value in metadata.items():
+        if not isinstance(key, str) or not key.strip():
+            raise CredentialStoreError("Tau oauth credential metadata keys must be strings")
+        if not _is_json_value(value):
+            raise CredentialStoreError("Tau oauth credential metadata values must be JSON values")
+
+
+def _is_json_value(value: object) -> bool:
+    if value is None or isinstance(value, str | bool | int | float):
+        return True
+    if isinstance(value, list):
+        return all(_is_json_value(item) for item in value)
+    if isinstance(value, dict):
+        return all(isinstance(key, str) and _is_json_value(item) for key, item in value.items())
+    return False
 
 
 def _string_field(

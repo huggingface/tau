@@ -40,9 +40,9 @@ rewriting the record. The format is plain enough to read by hand.
 
 ## Small product divergences are explicit
 
-Tau mostly follows Pi's minimalist separation of agent brain, coding session,
-and frontend. A few user-facing conveniences intentionally diverge from that
-baseline. One example is automatic session naming: Tau asks the active
+Tau mostly follows [Pi](https://pi.dev)'s minimalist separation of agent brain,
+coding session, and frontend. A few user-facing conveniences intentionally
+diverge from that baseline. One example is automatic session naming: Tau asks the active
 provider/model for a short title after the first user message is persisted, then
 stores that title as session metadata. This remains in `tau_coding`, not the
 portable `tau_agent` harness, because it is application workflow rather than

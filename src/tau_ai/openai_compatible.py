@@ -11,16 +11,27 @@ the original chat-completions path unchanged.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import suppress
 from json import JSONDecodeError, dumps, loads
 from typing import Any, Protocol
 
 import httpx
 
-from tau_agent.messages import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    AssistantMessageDiagnostic,
+    ImageContent,
+    ThinkingContent,
+    ToolResultMessage,
+    Usage,
+    UserMessage,
+    assistant_content,
+    message_to_user,
+)
 from tau_agent.tools import AgentTool, ToolCall
 from tau_agent.types import JSONValue
-from tau_ai.env import OpenAICompatibleConfig
-from tau_ai.events import (
+from tau_ai._provider_events import (
     ProviderErrorEvent,
     ProviderEvent,
     ProviderResponseEndEvent,
@@ -29,10 +40,21 @@ from tau_ai.events import (
     ProviderThinkingDeltaEvent,
     ProviderToolCallEvent,
 )
+from tau_ai.content import (
+    NON_VISION_TOOL_IMAGE_PLACEHOLDER,
+    NON_VISION_USER_IMAGE_PLACEHOLDER,
+    messages_have_images,
+    text_and_images,
+)
+from tau_ai.env import OpenAICompatibleConfig
+from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
+from tau_ai.openai_cache import is_direct_openai_url, openai_prompt_cache_key
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
+from tau_ai.stream import canonicalize_provider_stream
+from tau_ai.tool_call_ids import portable_tool_call_id
 
 # Models that reject function tools + reasoning_effort on /chat/completions and
 # must use the /v1/responses endpoint instead.
@@ -77,6 +99,33 @@ class OpenAICompatibleProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
+    ) -> AsyncIterator[AssistantMessageEvent]:
+        """Stream one response as Pi-compatible assistant message events."""
+        raw = self._stream_provider_events(
+            model=model,
+            system=system,
+            messages=messages,
+            tools=tools,
+            signal=signal,
+            session_id=session_id,
+        )
+        return canonicalize_provider_stream(
+            raw,
+            api=self._config.api,
+            provider=getattr(self._config, "provider_name", "openai-compatible"),
+            model=model,
+        )
+
+    def _stream_provider_events(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[AgentMessage],
+        tools: list[AgentTool],
+        signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Stream one model response as provider-neutral events."""
         if self._config.api == "openai-responses" or _use_responses_api(model):
@@ -86,6 +135,7 @@ class OpenAICompatibleProvider:
                 messages=messages,
                 tools=tools,
                 signal=signal,
+                session_id=session_id,
             )
         return self._stream_chat_completions(
             model=model,
@@ -93,6 +143,7 @@ class OpenAICompatibleProvider:
             messages=messages,
             tools=tools,
             signal=signal,
+            session_id=session_id,
         )
 
     def _stream_chat_completions(
@@ -103,10 +154,13 @@ class OpenAICompatibleProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Stream one chat completion response as provider-neutral events."""
+        affinity_id = openai_prompt_cache_key(session_id)
+        cache_key = self._prompt_cache_key(affinity_id)
         payload = _build_chat_payload(
-            model=model,
+            model=self._config.model_aliases.get(model, model),
             system=system,
             messages=messages,
             tools=tools,
@@ -116,12 +170,17 @@ class OpenAICompatibleProvider:
             compat=self._config.compat,
             max_tokens=self._config.max_tokens,
             include_reasoning_effort_none=self._config.include_reasoning_effort_none,
+            supports_images=self._config.supports_images,
+            prompt_cache_key=cache_key,
         )
         return self._stream(
             model=model,
             url=f"{self._config.base_url.rstrip('/')}/chat/completions",
             payload=payload,
             parser_factory=_ChatStreamParser,
+            session_id=affinity_id,
+            session_affinity_format=self._session_affinity_format(responses=False),
+            has_images=(self._config.supports_images and messages_have_images(messages)),
             signal=signal,
         )
 
@@ -133,21 +192,29 @@ class OpenAICompatibleProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Stream one `/v1/responses` response as provider-neutral events."""
+        affinity_id = openai_prompt_cache_key(session_id)
+        cache_key = self._prompt_cache_key(affinity_id)
         payload = _build_responses_payload(
-            model=model,
+            model=self._config.model_aliases.get(model, model),
             system=system,
             messages=messages,
             tools=tools,
             reasoning_effort=self._config.reasoning_effort,
             max_tokens=self._config.max_tokens,
+            supports_images=self._config.supports_images,
+            prompt_cache_key=cache_key,
         )
         return self._stream(
             model=model,
             url=f"{self._config.base_url.rstrip('/')}/responses",
             payload=payload,
             parser_factory=_ResponsesStreamParser,
+            session_id=affinity_id,
+            session_affinity_format=self._session_affinity_format(responses=True),
+            has_images=(self._config.supports_images and messages_have_images(messages)),
             signal=signal,
         )
 
@@ -158,6 +225,9 @@ class OpenAICompatibleProvider:
         url: str,
         payload: Mapping[str, JSONValue],
         parser_factory: Callable[[], _StreamParser],
+        session_id: str | None = None,
+        session_affinity_format: str | None = None,
+        has_images: bool = False,
         signal: CancellationToken | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Run the shared streaming POST + retry envelope for a given endpoint.
@@ -170,18 +240,39 @@ class OpenAICompatibleProvider:
 
         async def iterator() -> AsyncIterator[ProviderEvent]:
             client = self._get_client()
-            headers = {
-                **(dict(self._config.headers or {})),
-                "Authorization": f"Bearer {self._config.api_key}",
-            }
+            api_key = self._config.api_key
+            request_url = url
+            headers = dict(self._config.headers or {})
+            if self._config.provider_name == "github-copilot" and has_images:
+                headers["Copilot-Vision-Request"] = "true"
+            if self._config.credential_resolver is not None:
+                auth = await self._config.credential_resolver()
+                api_key = auth.api_key
+                headers.update(auth.headers or {})
+                if auth.base_url is not None:
+                    endpoint = (
+                        "/responses"
+                        if url.rstrip("/").endswith("/responses")
+                        else "/chat/completions"
+                    )
+                    request_url = f"{auth.base_url.rstrip('/')}{endpoint}"
+            if not self._config.omit_authorization_header:
+                has_authorization = any(key.casefold() == "authorization" for key in headers)
+                if not has_authorization:
+                    headers["Authorization"] = f"Bearer {api_key}"
+            _apply_session_affinity_headers(headers, session_id, session_affinity_format)
 
             attempt = 0
             while True:
                 parser = parser_factory()
                 try:
                     async with client.stream(
-                        "POST", url, json=payload, headers=headers
+                        "POST", request_url, json=payload, headers=headers
                     ) as response:
+                        response_provider = _response_header_value(
+                            response,
+                            self._config.response_provider_header,
+                        )
                         if response.status_code >= 400:
                             body = await response.aread()
                             body_text = body.decode(errors="replace")
@@ -216,10 +307,14 @@ class OpenAICompatibleProvider:
                                     "body": body_text,
                                     "attempts": attempt + 1,
                                 },
+                                response_provider=response_provider,
                             )
                             return
 
-                        yield ProviderResponseStartEvent(model=model)
+                        yield ProviderResponseStartEvent(
+                            model=model,
+                            response_provider=response_provider,
+                        )
 
                         async for line in response.aiter_lines():
                             if signal is not None and signal.is_cancelled():
@@ -237,7 +332,17 @@ class OpenAICompatibleProvider:
 
                         if parser.fatal:
                             return
-                        for parser_event in parser.finalize():
+                        final_events = parser.finalize()
+                        observer = self._config.response_headers_observer
+                        if observer is not None:
+                            try:
+                                observer(dict(response.headers))
+                            except Exception as exc:
+                                # Observer reporting is also best-effort; response
+                                # completion must never depend on metadata hooks.
+                                with suppress(Exception):
+                                    _append_response_observer_diagnostic(final_events, exc)
+                        for parser_event in final_events:
                             yield parser_event
                         return
                 except httpx.HTTPError as exc:
@@ -268,6 +373,23 @@ class OpenAICompatibleProvider:
 
         return iterator()
 
+    def _prompt_cache_key(self, affinity_id: str | None) -> str | None:
+        supports = self._config.compat.get("supportsPromptCacheKey")
+        if supports is not True and not (
+            supports is None and is_direct_openai_url(self._config.base_url)
+        ):
+            return None
+        return affinity_id
+
+    def _session_affinity_format(self, *, responses: bool) -> str | None:
+        sends_headers = self._config.compat.get("sendSessionAffinityHeaders")
+        if sends_headers is not True and not (
+            sends_headers is None and responses and is_direct_openai_url(self._config.base_url)
+        ):
+            return None
+        value = self._config.compat.get("sessionAffinityFormat")
+        return value if isinstance(value, str) else "openai"
+
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
             self._client = create_async_client(timeout=self._config.timeout_seconds)
@@ -277,6 +399,51 @@ class OpenAICompatibleProvider:
         if attempt >= self._config.max_retries:
             return False
         return status_code is None or _is_transient_status(status_code)
+
+
+def _response_header_value(response: httpx.Response, header_name: str | None) -> str | None:
+    """Return one normalized response metadata header when configured."""
+    if header_name is None:
+        return None
+    value = response.headers.get(header_name)
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _apply_session_affinity_headers(
+    headers: dict[str, str],
+    session_id: str | None,
+    affinity_format: str | None,
+) -> None:
+    if session_id is None or affinity_format is None:
+        return
+    if affinity_format == "openrouter":
+        headers["x-session-id"] = session_id
+        return
+    if affinity_format == "openai":
+        headers["session_id"] = session_id
+
+
+def _append_response_observer_diagnostic(
+    events: list[ProviderEvent],
+    exc: Exception,
+) -> None:
+    for event in events:
+        if isinstance(event, ProviderResponseEndEvent):
+            diagnostic = AssistantMessageDiagnostic(
+                type="response_headers_observer_error",
+                details={
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
+            )
+            event.message.diagnostics = [
+                *(event.message.diagnostics or []),
+                diagnostic,
+            ]
+            return
 
 
 class _StreamParser(Protocol):
@@ -305,8 +472,11 @@ class _ChatStreamParser:
         self.emitted_content = False
         self.fatal = False
         self._content_parts: list[str] = []
+        self._thinking_parts: list[str] = []
+        self._thinking_signature: str | None = None
         self._tool_call_builders: dict[int, _ToolCallBuilder] = {}
         self._finish_reason: str | None = None
+        self._usage: Usage | None = None
 
     def feed(self, event: str) -> tuple[list[ProviderEvent], bool]:
         if event == "[DONE]":
@@ -317,9 +487,22 @@ class _ChatStreamParser:
             self.fatal = True
             return [ProviderErrorEvent(message="Provider returned invalid JSON chunk")], True
 
+        # The final usage chunk (from stream_options) carries usage at the top
+        # level and often has empty choices.
+        chunk_usage = chunk.get("usage")
+        if isinstance(chunk_usage, Mapping):
+            self._usage = _parse_chunk_usage(chunk_usage)
+
         choice = _first_choice(chunk)
         if choice is None:
             return [], False
+
+        # Fallback: some providers (e.g. Moonshot) attach usage to the choice
+        # instead of the chunk. Matches Pi's per-chunk `!chunk.usage` guard: the
+        # fallback applies whenever this chunk lacks top-level usage.
+        choice_usage = choice.get("usage")
+        if not isinstance(chunk_usage, Mapping) and isinstance(choice_usage, Mapping):
+            self._usage = _parse_chunk_usage(choice_usage)
 
         self._finish_reason = choice.get("finish_reason") or self._finish_reason
         delta = choice.get("delta")
@@ -333,10 +516,13 @@ class _ChatStreamParser:
             self._content_parts.append(content)
             events.append(ProviderTextDeltaEvent(delta=content))
 
-        thinking = _thinking_delta_text(delta)
-        if thinking:
+        thinking = _thinking_delta(delta)
+        if thinking is not None:
+            field_name, text = thinking
             self.emitted_content = True
-            events.append(ProviderThinkingDeltaEvent(delta=thinking))
+            self._thinking_parts.append(text)
+            self._thinking_signature = self._thinking_signature or field_name
+            events.append(ProviderThinkingDeltaEvent(delta=text))
 
         for tool_call_delta in _tool_call_deltas(delta):
             self.emitted_content = True
@@ -353,10 +539,20 @@ class _ChatStreamParser:
         events: list[ProviderEvent] = [
             ProviderToolCallEvent(tool_call=tool_call) for tool_call in tool_calls
         ]
+        content = assistant_content("".join(self._content_parts), tool_calls)
+        if self._thinking_parts:
+            content.insert(
+                0,
+                ThinkingContent(
+                    thinking="".join(self._thinking_parts),
+                    thinking_signature=self._thinking_signature,
+                ),
+            )
         events.append(
             ProviderResponseEndEvent(
                 message=AssistantMessage(
-                    content="".join(self._content_parts), tool_calls=tool_calls
+                    content=content,
+                    usage=self._usage or Usage(),
                 ),
                 finish_reason=self._finish_reason,
             )
@@ -371,8 +567,11 @@ class _ResponsesStreamParser:
         self.emitted_content = False
         self.fatal = False
         self._content_parts: list[str] = []
+        self._thinking_parts: list[str] = []
+        self._reasoning_items: dict[str, dict[str, JSONValue]] = {}
         self._tool_call_builders: dict[str, _ResponsesToolCallBuilder] = {}
         self._status: str | None = None
+        self._usage: Usage | None = None
 
     def feed(self, event: str) -> tuple[list[ProviderEvent], bool]:
         # The Responses API has no [DONE] sentinel; it ends with a terminal
@@ -402,12 +601,21 @@ class _ResponsesStreamParser:
             delta = chunk.get("delta")
             if isinstance(delta, str) and delta:
                 self.emitted_content = True
+                self._thinking_parts.append(delta)
                 return [ProviderThinkingDeltaEvent(delta=delta)], False
 
+        elif chunk_type == "response.reasoning_summary_part.done":
+            if self._thinking_parts:
+                separator = "\n\n"
+                self._thinking_parts.append(separator)
+                return [ProviderThinkingDeltaEvent(delta=separator)], False
+
         elif chunk_type == "response.output_item.added":
+            item = chunk.get("item")
+            _register_reasoning_item(self._reasoning_items, item)
             _register_responses_item(
                 self._tool_call_builders,
-                chunk.get("item"),
+                item,
                 output_index=chunk.get("output_index"),
             )
 
@@ -425,14 +633,17 @@ class _ResponsesStreamParser:
                 builder.set_final(arguments=chunk.get("arguments"))
 
         elif chunk_type == "response.output_item.done":
+            item = chunk.get("item")
+            _register_reasoning_item(self._reasoning_items, item)
             _finalize_responses_item(
                 self._tool_call_builders,
-                chunk.get("item"),
+                item,
                 output_index=chunk.get("output_index"),
             )
 
         elif chunk_type in ("response.completed", "response.incomplete"):
             self._status = _responses_finish_reason(chunk)
+            self._usage = _usage_from_responses_event(chunk) or self._usage
             return [], True
 
         elif chunk_type == "response.failed":
@@ -456,10 +667,24 @@ class _ResponsesStreamParser:
             ProviderToolCallEvent(tool_call=tool_call) for tool_call in tool_calls
         ]
         finish_reason = _normalize_finish_reason(self._status, has_tool_calls=bool(tool_calls))
+        content = assistant_content("".join(self._content_parts), tool_calls)
+        if self._thinking_parts:
+            content.insert(
+                0,
+                ThinkingContent(
+                    thinking="".join(self._thinking_parts),
+                    thinking_signature=(
+                        dumps(next(iter(self._reasoning_items.values())))
+                        if self._reasoning_items
+                        else None
+                    ),
+                ),
+            )
         events.append(
             ProviderResponseEndEvent(
                 message=AssistantMessage(
-                    content="".join(self._content_parts), tool_calls=tool_calls
+                    content=content,
+                    usage=self._usage or Usage(),
                 ),
                 finish_reason=finish_reason,
             )
@@ -569,6 +794,8 @@ def _build_chat_payload(
     compat: Mapping[str, JSONValue] | None = None,
     max_tokens: int | None = None,
     include_reasoning_effort_none: bool = False,
+    supports_images: bool = False,
+    prompt_cache_key: str | None = None,
 ) -> dict[str, JSONValue]:
     resolved_compat = dict(compat or {})
     supports_store = bool(resolved_compat.get("supportsStore", True))
@@ -582,9 +809,11 @@ def _build_chat_payload(
         "stream": True,
         "messages": [
             _system_message(system),
-            *[_message_to_openai(message) for message in messages],
+            *_messages_to_openai_chat(messages, supports_images=supports_images),
         ],
     }
+    if prompt_cache_key is not None:
+        payload["prompt_cache_key"] = prompt_cache_key
     if supports_usage:
         payload["stream_options"] = {"include_usage": True}
     if supports_store:
@@ -660,6 +889,8 @@ def _build_responses_payload(
     tools: list[AgentTool],
     reasoning_effort: str | None = None,
     max_tokens: int | None = None,
+    supports_images: bool = False,
+    prompt_cache_key: str | None = None,
 ) -> dict[str, JSONValue]:
     payload: dict[str, JSONValue] = {
         "model": model,
@@ -669,8 +900,10 @@ def _build_responses_payload(
         # path usable for zero-data-retention orgs, which reject ``store: true``.
         "store": False,
         "instructions": system,
-        "input": _messages_to_responses_input(messages),
+        "input": _messages_to_responses_input(messages, supports_images=supports_images),
     }
+    if prompt_cache_key is not None:
+        payload["prompt_cache_key"] = prompt_cache_key
     if max_tokens is not None:
         payload["max_output_tokens"] = max_tokens
     effort = _normalize_responses_effort(reasoning_effort)
@@ -695,33 +928,75 @@ def _normalize_responses_effort(reasoning_effort: str | None) -> str | None:
 
 
 def _messages_to_responses_input(
-    messages: list[AgentMessage],
+    messages: list[AgentMessage], *, supports_images: bool = False
 ) -> list[JSONValue]:
     items: list[JSONValue] = []
     for message in messages:
         if isinstance(message, UserMessage):
-            items.append({"role": "user", "content": message.content})
+            text, images = text_and_images(
+                message.content,
+                supports_images=supports_images,
+                image_placeholder=NON_VISION_USER_IMAGE_PLACEHOLDER,
+            )
+            if images:
+                content: list[JSONValue] = []
+                if text:
+                    content.append({"type": "input_text", "text": text})
+                content.extend(_openai_input_image(image) for image in images)
+                items.append({"role": "user", "content": content})
+            else:
+                items.append({"role": "user", "content": text})
         elif isinstance(message, AssistantMessage):
-            if message.content:
-                items.append({"role": "assistant", "content": message.content})
+            for block in message.content:
+                if isinstance(block, ThinkingContent) and block.thinking_signature:
+                    try:
+                        reasoning_item = loads(block.thinking_signature)
+                    except (TypeError, ValueError):
+                        reasoning_item = None
+                    if isinstance(reasoning_item, dict):
+                        items.append(reasoning_item)
+            if message.text:
+                items.append({"role": "assistant", "content": message.text})
             for tool_call in message.tool_calls:
                 items.append(
                     {
                         "type": "function_call",
-                        "call_id": tool_call.id,
+                        "call_id": portable_tool_call_id(tool_call.id),
                         "name": tool_call.name,
                         "arguments": dumps(tool_call.arguments),
                     }
                 )
         elif isinstance(message, ToolResultMessage):
+            text, images = text_and_images(
+                message.content,
+                supports_images=supports_images,
+                image_placeholder=NON_VISION_TOOL_IMAGE_PLACEHOLDER,
+            )
+            output: JSONValue
+            if images:
+                output_parts: list[JSONValue] = []
+                if text:
+                    output_parts.append({"type": "input_text", "text": text})
+                output_parts.extend(_openai_input_image(image) for image in images)
+                output = output_parts
+            else:
+                output = text or "(no tool output)"
             items.append(
                 {
                     "type": "function_call_output",
-                    "call_id": message.tool_call_id,
-                    "output": message.content,
+                    "call_id": portable_tool_call_id(message.tool_call_id),
+                    "output": output,
                 }
             )
     return items
+
+
+def _openai_input_image(image: ImageContent) -> dict[str, JSONValue]:
+    return {
+        "type": "input_image",
+        "detail": "auto",
+        "image_url": f"data:{image.mime_type};base64,{image.data}",
+    }
 
 
 def _tool_to_responses(tool: AgentTool) -> dict[str, JSONValue]:
@@ -731,6 +1006,17 @@ def _tool_to_responses(tool: AgentTool) -> dict[str, JSONValue]:
         "description": tool.description,
         "parameters": dict(tool.input_schema),
     }
+
+
+def _register_reasoning_item(
+    items: dict[str, dict[str, JSONValue]],
+    item: object,
+) -> None:
+    if not isinstance(item, Mapping) or item.get("type") != "reasoning":
+        return
+    item_id = item.get("id")
+    if isinstance(item_id, str):
+        items[item_id] = dict(item)
 
 
 def _register_responses_item(
@@ -828,20 +1114,85 @@ def _str_or_none(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _int_or_none(value: object) -> int | None:
-    return value if isinstance(value, int) else None
-
-
 def _system_message(system: str) -> dict[str, JSONValue]:
     return {"role": "system", "content": system}
 
 
+def _messages_to_openai_chat(
+    messages: list[AgentMessage], *, supports_images: bool
+) -> list[dict[str, JSONValue]]:
+    converted: list[dict[str, JSONValue]] = []
+    pending_tool_images: list[ImageContent] = []
+    for message in messages:
+        if pending_tool_images and not isinstance(message, ToolResultMessage):
+            converted.append(_openai_tool_image_message(pending_tool_images))
+            pending_tool_images = []
+        if isinstance(message, UserMessage):
+            text, images = text_and_images(
+                message.content,
+                supports_images=supports_images,
+                image_placeholder=NON_VISION_USER_IMAGE_PLACEHOLDER,
+            )
+            if images:
+                content: list[JSONValue] = []
+                if text:
+                    content.append({"type": "text", "text": text})
+                content.extend(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{image.mime_type};base64,{image.data}"},
+                    }
+                    for image in images
+                )
+                converted.append({"role": "user", "content": content})
+            else:
+                converted.append({"role": "user", "content": text})
+            continue
+        if isinstance(message, ToolResultMessage):
+            text, images = text_and_images(
+                message.content,
+                supports_images=supports_images,
+                image_placeholder=NON_VISION_TOOL_IMAGE_PLACEHOLDER,
+            )
+            converted.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": portable_tool_call_id(message.tool_call_id),
+                    "name": message.tool_name,
+                    "content": text or ("(see attached image)" if images else "(no tool output)"),
+                }
+            )
+            pending_tool_images.extend(images)
+            continue
+        converted.append(_message_to_openai(message))
+    if pending_tool_images:
+        converted.append(_openai_tool_image_message(pending_tool_images))
+    return converted
+
+
+def _openai_tool_image_message(images: list[ImageContent]) -> dict[str, JSONValue]:
+    content: list[JSONValue] = [{"type": "text", "text": "Attached image(s) from tool result:"}]
+    content.extend(
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:{image.mime_type};base64,{image.data}"},
+        }
+        for image in images
+    )
+    return {"role": "user", "content": content}
+
+
 def _message_to_openai(message: AgentMessage) -> dict[str, JSONValue]:
     if isinstance(message, UserMessage):
-        return {"role": "user", "content": message.content}
+        return {"role": "user", "content": message.text}
 
     if isinstance(message, AssistantMessage):
-        item: dict[str, JSONValue] = {"role": "assistant", "content": message.content}
+        item: dict[str, JSONValue] = {"role": "assistant", "content": message.text}
+        thinking = [block for block in message.content if isinstance(block, ThinkingContent)]
+        if thinking:
+            signature = thinking[0].thinking_signature or "reasoning_content"
+            if signature in {"reasoning_content", "reasoning", "thinking"}:
+                item[signature] = "".join(block.thinking for block in thinking)
         if message.tool_calls:
             item["tool_calls"] = [
                 _tool_call_to_openai(tool_call) for tool_call in message.tool_calls
@@ -851,10 +1202,11 @@ def _message_to_openai(message: AgentMessage) -> dict[str, JSONValue]:
     if isinstance(message, ToolResultMessage):
         return {
             "role": "tool",
-            "tool_call_id": message.tool_call_id,
-            "name": message.name,
-            "content": message.content,
+            "tool_call_id": portable_tool_call_id(message.tool_call_id),
+            "name": message.tool_name,
+            "content": message.text,
         }
+    return _message_to_openai(message_to_user(message))
 
 
 def _tool_to_openai(tool: AgentTool) -> dict[str, JSONValue]:
@@ -870,7 +1222,7 @@ def _tool_to_openai(tool: AgentTool) -> dict[str, JSONValue]:
 
 def _tool_call_to_openai(tool_call: ToolCall) -> dict[str, JSONValue]:
     return {
-        "id": tool_call.id,
+        "id": portable_tool_call_id(tool_call.id),
         "type": "function",
         "function": {
             "name": tool_call.name,
@@ -906,6 +1258,93 @@ def _first_choice(chunk: Mapping[str, Any]) -> Mapping[str, Any] | None:
     return choice
 
 
+def _int_or_zero(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _int_or_none(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _parse_chunk_usage(raw: Mapping[str, Any]) -> Usage:
+    """Parse an OpenAI-compatible ``usage`` payload into a Usage.
+
+    Ports Pi's openai-completions.ts parseChunkUsage: ``cached_tokens`` are
+    cache reads, writes are subtracted from the prompt to leave the fresh input,
+    and ``completion_tokens`` already includes reasoning tokens. Cost is left
+    unset (None) because Tau has no per-model pricing table.
+    """
+    prompt_tokens = _int_or_zero(raw.get("prompt_tokens"))
+    prompt_details = raw.get("prompt_tokens_details")
+    cached_tokens: int | None = None
+    cache_write = 0
+    if isinstance(prompt_details, Mapping):
+        cached_tokens = _int_or_none(prompt_details.get("cached_tokens"))
+        cache_write = _int_or_zero(prompt_details.get("cache_write_tokens"))
+    # Nullish fallback, matching Pi's `cached_tokens ?? prompt_cache_hit_tokens
+    # ?? 0` (DeepSeek reports cache hits in prompt_cache_hit_tokens): a reported
+    # 0 does not fall through.
+    if cached_tokens is None:
+        cached_tokens = _int_or_none(raw.get("prompt_cache_hit_tokens"))
+    cache_read = cached_tokens or 0
+    fresh_input = max(0, prompt_tokens - cache_read - cache_write)
+    output = _int_or_zero(raw.get("completion_tokens"))
+    reasoning = None
+    completion_details = raw.get("completion_tokens_details")
+    if isinstance(completion_details, Mapping):
+        reasoning = _int_or_zero(completion_details.get("reasoning_tokens"))
+    return Usage(
+        input=fresh_input,
+        output=output,
+        cache_read=cache_read,
+        cache_write=cache_write,
+        reasoning=reasoning,
+        total_tokens=fresh_input + output + cache_read + cache_write,
+    )
+
+
+def _usage_from_responses_event(chunk: Mapping[str, Any]) -> Usage | None:
+    """Parse billed usage from a `/v1/responses` terminal event.
+
+    Mirrors the Codex adapter's ``_usage_from_response``: cache reads and
+    writes are subtracted from ``input_tokens`` to leave fresh input. Cost is
+    left unset because Tau has no per-model pricing table.
+    """
+    response = chunk.get("response")
+    if not isinstance(response, Mapping):
+        return None
+    raw = response.get("usage")
+    if not isinstance(raw, Mapping):
+        return None
+    input_details = raw.get("input_tokens_details")
+    cache_read = (
+        _int_or_zero(input_details.get("cached_tokens"))
+        if isinstance(input_details, Mapping)
+        else 0
+    )
+    cache_write = (
+        _int_or_zero(input_details.get("cache_write_tokens"))
+        if isinstance(input_details, Mapping)
+        else 0
+    )
+    output_details = raw.get("output_tokens_details")
+    # Leave reasoning None (not 0) when the provider reports no breakdown,
+    # honoring the "None = not reported" contract on Usage.
+    reasoning = (
+        _int_or_zero(output_details.get("reasoning_tokens"))
+        if isinstance(output_details, Mapping)
+        else None
+    )
+    return Usage(
+        input=max(0, _int_or_zero(raw.get("input_tokens")) - cache_read - cache_write),
+        output=_int_or_zero(raw.get("output_tokens")),
+        cache_read=cache_read,
+        cache_write=cache_write,
+        reasoning=reasoning,
+        total_tokens=_int_or_zero(raw.get("total_tokens")),
+    )
+
+
 def _tool_call_deltas(delta: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     tool_calls = delta.get("tool_calls")
     if not isinstance(tool_calls, list):
@@ -913,12 +1352,12 @@ def _tool_call_deltas(delta: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return [tool_call for tool_call in tool_calls if isinstance(tool_call, Mapping)]
 
 
-def _thinking_delta_text(delta: Mapping[str, Any]) -> str:
+def _thinking_delta(delta: Mapping[str, Any]) -> tuple[str, str] | None:
     for field_name in ("reasoning_content", "reasoning", "thinking"):
         value = delta.get(field_name)
         if isinstance(value, str) and value:
-            return value
-    return ""
+            return field_name, value
+    return None
 
 
 def _is_transient_status(status_code: int) -> bool:

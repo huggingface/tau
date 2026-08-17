@@ -60,4 +60,53 @@ document.addEventListener("DOMContentLoaded", function () {
       openSearch();
     }
   });
+
+  // ---- GitHub star count ----
+  var starsEl = document.getElementById("ghStars");
+  var starsCountEl = document.getElementById("ghStarsCount");
+  if (starsEl && starsCountEl) {
+    var repo = starsEl.getAttribute("data-repo");
+    var cacheKey = "tau-gh-stars:" + repo;
+    var cacheTtl = 1000 * 60 * 60; // 1 hour
+
+    function formatStars(n) {
+      if (n >= 1000) return (n / 1000).toFixed(n % 1000 >= 100 ? 1 : 0) + "k";
+      return String(n);
+    }
+
+    function show(n) {
+      starsCountEl.textContent = formatStars(n);
+      starsEl.hidden = false;
+    }
+
+    var cached = null;
+    try {
+      cached = JSON.parse(localStorage.getItem(cacheKey));
+    } catch (e) {
+      cached = null;
+    }
+
+    if (cached && typeof cached.count === "number" && Date.now() - cached.time < cacheTtl) {
+      show(cached.count);
+    } else if (repo) {
+      fetch("https://api.github.com/repos/" + repo)
+        .then(function (res) {
+          if (!res.ok) throw new Error("bad response");
+          return res.json();
+        })
+        .then(function (data) {
+          var count = data && typeof data.stargazers_count === "number" ? data.stargazers_count : null;
+          if (count === null) return;
+          show(count);
+          try {
+            localStorage.setItem(cacheKey, JSON.stringify({ count: count, time: Date.now() }));
+          } catch (e) {
+            /* ignore storage errors */
+          }
+        })
+        .catch(function () {
+          if (cached && typeof cached.count === "number") show(cached.count);
+        });
+    }
+  }
 });

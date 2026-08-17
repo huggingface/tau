@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tau_agent.messages import AgentMessage
+from tau_agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    ThinkingContent,
+    ToolResultMessage,
+    UserMessage,
+    message_text,
+)
 from tau_agent.tools import AgentTool
 
 CHARS_PER_TOKEN = 4
@@ -101,7 +108,7 @@ TURN_PREFIX_SUMMARIZATION_PROMPT = (
 
 @dataclass(frozen=True, slots=True)
 class ContextUsageEstimate:
-    """Deterministic context-size accounting for one provider request."""
+    """Best available context-size accounting for one provider request."""
 
     total_tokens: int
     system_tokens: int
@@ -109,6 +116,13 @@ class ContextUsageEstimate:
     tool_tokens: int
     message_count: int
     tool_count: int
+    provider_tokens: int = 0
+    trailing_tokens: int = 0
+
+    @property
+    def uses_provider_usage(self) -> bool:
+        """Return whether a provider-reported usage block anchors this estimate."""
+        return self.provider_tokens > 0
 
 
 def estimate_text_tokens(text: str) -> int:
@@ -120,23 +134,20 @@ def estimate_text_tokens(text: str) -> int:
 
 def estimate_message_tokens(message: AgentMessage) -> int:
     """Return a rough token estimate for one provider-neutral message."""
-    match message.role:
-        case "user":
-            return MESSAGE_OVERHEAD_TOKENS + estimate_text_tokens(message.content)
-        case "assistant":
-            tool_call_tokens = sum(
-                estimate_text_tokens(call.name) + estimate_text_tokens(str(call.arguments))
-                for call in message.tool_calls
-            )
-            return (
-                MESSAGE_OVERHEAD_TOKENS + estimate_text_tokens(message.content) + tool_call_tokens
-            )
-        case "tool":
-            return (
-                MESSAGE_OVERHEAD_TOKENS
-                + estimate_text_tokens(message.name)
-                + estimate_text_tokens(message.content)
-            )
+    tokens = MESSAGE_OVERHEAD_TOKENS + estimate_text_tokens(message_text(message))
+    if isinstance(message, AssistantMessage):
+        tokens += sum(
+            estimate_text_tokens(block.thinking)
+            for block in message.content
+            if isinstance(block, ThinkingContent)
+        )
+        tokens += sum(
+            estimate_text_tokens(call.name) + estimate_text_tokens(str(call.arguments))
+            for call in message.tool_calls
+        )
+    elif isinstance(message, ToolResultMessage):
+        tokens += estimate_text_tokens(message.tool_name)
+    return tokens
 
 
 def estimate_tool_tokens(tool: AgentTool) -> int:
@@ -166,13 +177,77 @@ def auto_compaction_threshold_for_context_window(context_window_tokens: int) -> 
     return max(1, context_window_tokens - DEFAULT_COMPACTION_RESERVE_TOKENS)
 
 
+def provider_context_tokens(message: AssistantMessage) -> int:
+    """Return the provider-reported context represented by an assistant response."""
+    usage = message.usage
+    return usage.total_tokens or (usage.input + usage.output + usage.cache_read + usage.cache_write)
+
+
+def _last_applicable_provider_usage(
+    messages: tuple[AgentMessage, ...],
+) -> tuple[int, int] | None:
+    """Find the latest valid usage block that still describes the active prefix.
+
+    A newer prefix message can be inserted by compaction or history rewriting. In that
+    case an older assistant's usage describes the pre-rewrite context and must not be
+    reused.
+    """
+    latest_prefix_timestamp = -1
+    usage_info: tuple[int, int] | None = None
+    for index, message in enumerate(messages):
+        if isinstance(message, AssistantMessage):
+            tokens = provider_context_tokens(message)
+            if (
+                message.timestamp >= latest_prefix_timestamp
+                and message.stop_reason not in {"aborted", "error"}
+                and tokens > 0
+            ):
+                usage_info = (index, tokens)
+        latest_prefix_timestamp = max(latest_prefix_timestamp, message.timestamp)
+    return usage_info
+
+
 def estimate_context_usage(
     *,
     system: str,
     messages: tuple[AgentMessage, ...],
     tools: tuple[AgentTool, ...],
 ) -> ContextUsageEstimate:
-    """Return deterministic context accounting for the active provider request."""
+    """Return provider-anchored context accounting with a deterministic fallback.
+
+    Provider usage is authoritative for the prefix represented by the latest successful
+    assistant response. Only messages and dynamically added tools after that response
+    are estimated. Without applicable usage, the whole request uses the character-based
+    fallback.
+    """
+    usage_info = _last_applicable_provider_usage(messages)
+    if usage_info is not None:
+        usage_index, provider_tokens = usage_info
+        trailing_messages = messages[usage_index + 1 :]
+        trailing_message_tokens = sum(
+            estimate_message_tokens(message) for message in trailing_messages
+        )
+        added_tool_names = {
+            name
+            for message in trailing_messages
+            if isinstance(message, ToolResultMessage) and message.added_tool_names
+            for name in message.added_tool_names
+        }
+        added_tool_tokens = sum(
+            estimate_tool_tokens(tool) for tool in tools if tool.name in added_tool_names
+        )
+        trailing_tokens = trailing_message_tokens + added_tool_tokens
+        return ContextUsageEstimate(
+            total_tokens=provider_tokens + trailing_tokens,
+            system_tokens=0,
+            message_tokens=trailing_message_tokens,
+            tool_tokens=added_tool_tokens,
+            message_count=len(messages),
+            tool_count=len(tools),
+            provider_tokens=provider_tokens,
+            trailing_tokens=trailing_tokens,
+        )
+
     system_tokens = estimate_text_tokens(system)
     message_tokens = sum(estimate_message_tokens(message) for message in messages)
     tool_tokens = sum(estimate_tool_tokens(tool) for tool in tools)
@@ -183,6 +258,7 @@ def estimate_context_usage(
         tool_tokens=tool_tokens,
         message_count=len(messages),
         tool_count=len(tools),
+        trailing_tokens=system_tokens + message_tokens + tool_tokens,
     )
 
 
@@ -192,7 +268,8 @@ def summarize_messages_for_compaction(messages: tuple[AgentMessage, ...]) -> str
         return "No prior messages."
     lines = [f"Automatically compacted {len(messages)} prior message(s)."]
     for index, message in enumerate(messages, start=1):
-        lines.append(f"{index}. {message.role}: {_message_text(message)}")
+        role = "tool" if isinstance(message, ToolResultMessage) else message.role
+        lines.append(f"{index}. {role}: {_message_text(message)}")
     return "\n".join(lines)
 
 
@@ -226,43 +303,31 @@ def serialize_messages_for_compaction(messages: tuple[AgentMessage, ...]) -> str
 
     lines: list[str] = []
     for index, message in enumerate(messages, start=1):
-        match message.role:
-            case "user":
-                lines.append(f"<message index={index} role=user>")
-                lines.append(message.content)
-                lines.append("</message>")
-            case "assistant":
-                lines.append(f"<message index={index} role=assistant>")
-                if message.content:
-                    lines.append(message.content)
-                if message.tool_calls:
-                    lines.append("<tool-calls>")
-                    for call in message.tool_calls:
-                        lines.append(f"- {call.name}: {call.arguments}")
-                    lines.append("</tool-calls>")
-                lines.append("</message>")
-            case "tool":
-                lines.append(
-                    f"<message index={index} role=tool name={message.name} ok={message.ok}>"
-                )
-                lines.append(message.content)
-                lines.append("</message>")
+        attributes = f"index={index} role={message.role}"
+        if isinstance(message, ToolResultMessage):
+            attributes += f" name={message.tool_name} error={str(message.is_error).lower()}"
+        lines.append(f"<message {attributes}>")
+        text = message_text(message)
+        if text:
+            lines.append(text)
+        if isinstance(message, AssistantMessage) and message.tool_calls:
+            lines.append("<tool-calls>")
+            for call in message.tool_calls:
+                lines.append(f"- {call.name}: {call.arguments}")
+            lines.append("</tool-calls>")
+        lines.append("</message>")
     return "\n".join(lines)
 
 
 def _message_text(message: AgentMessage) -> str:
-    match message.role:
-        case "user":
-            return _truncate_summary_text(message.content)
-        case "assistant":
-            suffix = ""
-            if message.tool_calls:
-                names = ", ".join(call.name for call in message.tool_calls)
-                suffix = f" [tool calls: {names}]"
-            return _truncate_summary_text(f"{message.content}{suffix}")
-        case "tool":
-            prefix = f"{message.name} {'ok' if message.ok else 'failed'}: "
-            return _truncate_summary_text(f"{prefix}{message.content}")
+    text = message_text(message)
+    if isinstance(message, AssistantMessage) and message.tool_calls:
+        names = ", ".join(call.name for call in message.tool_calls)
+        text = f"{text} [tool calls: {names}]"
+    elif isinstance(message, ToolResultMessage):
+        status = "failed" if message.is_error else "ok"
+        text = f"{message.tool_name} {status}: {text}"
+    return _truncate_summary_text(text)
 
 
 def _truncate_summary_text(text: str) -> str:
@@ -279,7 +344,10 @@ def _split_previous_compaction_summary(
         return None, messages
 
     first = messages[0]
-    if first.role != "user" or not first.content.startswith(COMPACTION_SUMMARY_PREFIX):
+    if not isinstance(first, UserMessage):
+        return None, messages
+    text = message_text(first)
+    if not text.startswith(COMPACTION_SUMMARY_PREFIX):
         return None, messages
 
-    return first.content.removeprefix(COMPACTION_SUMMARY_PREFIX), messages[1:]
+    return text.removeprefix(COMPACTION_SUMMARY_PREFIX), messages[1:]
