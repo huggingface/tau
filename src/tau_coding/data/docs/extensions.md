@@ -36,11 +36,13 @@ a runtime auth strategy so credentials never become registered definitions.
 Provider layers are process-local and never written to `catalog.toml`,
 `providers.json`, session files, or generic extension storage. Latest registration
 wins for a provider ID. The host derives stable source ownership from the canonical
-extension entry path, not its display name, so separately loaded same-name files
-shadow and restore independently. Repeating the exact entry source in one runtime
-is ignored with first-loaded precedence. Tools and commands keep their existing
-first-registration-wins behavior. Source replacement is atomic; source removal or
-generation retirement reveals the preceding complete dynamic layer or the exact
+extension entry path, not its display name. All IDs are frozen before any extension
+import and stored through setup, so symlink retargeting cannot alter duplicate
+detection, registration ownership, or complete failed-setup cleanup. Separately
+loaded same-name files shadow and restore independently. Repeating the exact entry
+source in one runtime is ignored with first-loaded precedence. Tools and commands
+keep their existing first-registration-wins behavior. Source replacement is atomic;
+source removal or generation retirement reveals the preceding complete dynamic layer or the exact
 durable `ProviderConfig` baseline.
 
 A `refresh_models` callback returns one complete `ProviderModelSnapshot`. Refreshes
@@ -50,9 +52,12 @@ from coalescing before returning, so an immediate retry starts fresh. Incompatib
 network policies run separately. Cancellation is generation-owned: Tau issues one
 task cancellation and waits up to 0.25 seconds from that request without
 re-cancelling a callback's `finally` cleanup. Reload, replacement, reset ownership,
-and final close await that cooperative drain. Work still running at the bound is
-reported as contained rather than drained; a process-owned supervisor retains its
-task and generation registry until actual completion, and it can never publish after replacement or
+and final close await that cooperative drain. Cancellation after reload/replacement
+publication is contained, and the adopted result returns only after outgoing
+cleanup. Final close propagates cancellation only after its registry is discharged
+and each owned runtime provider has closed exactly once. Work still running at the
+bound is reported as contained rather than drained; a process-owned supervisor retains its task and
+generation registry until actual completion, and it can never publish after replacement or
 retirement. Failures retain the current snapshot and emit one bounded, secret-free
 diagnostic. Nested compatibility data is deeply immutable while registered.
 Callbacks receive structured data, not Rich or Textual objects.

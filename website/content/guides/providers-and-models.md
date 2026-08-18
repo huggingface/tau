@@ -305,8 +305,10 @@ Unlike providers created by `/login custom` or `tau setup`, these definitions ar
 source/generation-owned overlays and are never copied into `catalog.toml`,
 `providers.json`, sessions, or generic disk storage. Source ownership is a stable
 host identity derived from the canonical extension entry path—not the display
-name—so separate same-name extension files cannot remove one another's providers.
-They support dormant model sets, deeply immutable compatibility metadata, atomic
+name. Tau freezes every discovered identity before importing extension code, so
+symlink retargeting cannot change registration or cleanup ownership; separate
+same-name extension files cannot remove one another's providers. They support
+dormant model sets, deeply immutable compatibility metadata, atomic
 model-snapshot refresh, per-caller refresh deadlines, retry-safe coalescing, and
 required/optional/no authentication without fake keys or exposed auth provenance.
 

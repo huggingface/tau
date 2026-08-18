@@ -166,20 +166,28 @@ alias. The last timeout and explicit cancellation leave the coalescing table bef
 returning, so an immediate retry invokes fresh discovery. Tau requests task
 cancellation once, then waits up to 0.25 seconds from that request without
 re-cancelling a callback's `finally` cleanup. Reload, session replacement, and final
-close await this cooperative drain. A callback still running at the bound is
-reported as contained—not drained—and a process-owned supervisor keeps its task
-and generation registry reachable until it actually finishes; it cannot publish after source replacement or
+close await this cooperative drain. Once reload/replacement publishes its new state,
+caller cancellation is contained until outgoing cleanup finishes and the operation
+returns the adopted result; it never reports cancellation as though publication
+rolled back. Final close uses one durable close task and propagates cancellation only
+after the extension registry and every session-owned runtime provider have each been
+closed once. A callback still running at the bound is reported as contained—not
+drained—and a process-owned supervisor keeps its task and generation registry
+reachable until it actually finishes; it cannot publish after source replacement or
 retirement. Timeout, malformed output, and other failures retain the current
 snapshot.
 
 Dynamic definitions are runtime overlays—not durable configuration. Tau never
 copies them into `catalog.toml`, `providers.json`, sessions, or generic extension
 storage. Provider source ownership comes from the canonical entry path assigned by
-the host, not the display name. Separately loaded same-name extensions therefore
-form independent provider layers; repeating the exact entry source in one runtime
-is ignored with first-loaded precedence. Tools and commands still use their
-first-registration-wins name registries. Removing a source reveals the preceding
-complete layer, including the exact durable provider baseline. The contracts are
+the host, not the display name. The loader freezes all discovered source IDs before
+importing any extension, so import/setup code cannot change ownership by retargeting
+an entry or parent symlink. The stored ID is used for duplicate checks, every API
+registration, and complete failed-setup cleanup. Separately loaded same-name
+extensions therefore form independent provider layers; repeating the exact entry
+source in one runtime is ignored with first-loaded precedence. Tools and commands
+still use their first-registration-wins name registries. Removing a source reveals
+the preceding complete layer, including the exact durable provider baseline. The contracts are
 frontend-free and callbacks must not return Rich/Textual values.
 
 This foundation is intentionally provisional until #602's second-backend

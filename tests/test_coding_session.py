@@ -3843,6 +3843,70 @@ async def test_session_switches_configured_provider(
 
 
 @pytest.mark.anyio
+async def test_new_session_adoption_transfers_all_runtime_provider_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "test-key")
+    tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    manager = SessionManager(tau_paths)
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    record = manager.create_session(cwd=cwd, model="qwen", provider_name="local")
+    provider_config = OpenAICompatibleProviderConfig(
+        name="local",
+        base_url="http://localhost:11434/v1",
+        api_key_env="LOCAL_API_KEY",
+        models=("qwen",),
+        default_model="qwen",
+    )
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(provider_config,),
+    )
+    created: list[SwitchableFakeProvider] = []
+
+    def create_provider(
+        config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+    ) -> SwitchableFakeProvider:
+        del credential_store, model, thinking_level
+        provider = SwitchableFakeProvider(config)
+        created.append(provider)
+        return provider
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="qwen",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(record.path),
+            cwd=cwd,
+            session_id=record.id,
+            session_manager=manager,
+            provider_name="local",
+            provider_settings=settings,
+            runtime_provider_config=provider_config,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    await session.new_session()
+
+    assert len(created) == 2
+    assert tuple(session._owned_providers) == tuple(created)
+
+    await session.aclose()
+    await session.aclose()
+
+    assert [provider.close_calls for provider in created] == [1, 1]
+
+
+@pytest.mark.anyio
 async def test_failed_cross_provider_switch_preserves_active_runtime(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

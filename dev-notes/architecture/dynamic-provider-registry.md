@@ -40,12 +40,16 @@ provider id + source id + runtime generation id + layer id
 
 Latest active registration wins. For loaded extensions the host derives a stable
 source ID from the canonical entry-file path; the extension display name is never
-used as provider ownership. Separate paths named `shared.py` therefore receive
-different layers even when loaded in separate trust stages. Repeating the same
-canonical entry within one runtime is ignored with first-loaded precedence; a fresh
-runtime generation can load that stable source again. Registering the same provider from the
-same source atomically replaces that source's old layer. Removing it reveals the
-previous complete dynamic layer; removing the final layer returns the exact original
+used as provider ownership. The loader freezes every discovered ID before importing
+any extension and stores it on `LoadedExtension`. Import/setup code can therefore
+retarget the entry symlink or an ancestor without changing duplicate detection, API
+registration, or failed-setup cleanup ownership. Separate paths named `shared.py`
+receive different layers even when loaded in separate trust stages. Repeating the
+same canonical entry within one runtime is ignored with first-loaded precedence; a
+fresh runtime generation can load that stable source again. Registering the same
+provider from the same source atomically replaces that source's old layer. Removing
+it reveals the previous complete dynamic layer; removing the final layer returns the
+exact original
 durable object, including headers, model metadata, compatibility, timeouts, retries,
 thinking configuration, and every other field. Tools and commands remain separate,
 first-registration-wins name registries.
@@ -171,36 +175,46 @@ endpoint when `api="openai-completions"`.
 ## ExtensionRuntime ownership
 
 Every `ExtensionRuntime` now creates one provider registry with the same explicit
-generation identity as its `ExtensionGeneration`. The loader assigns each loaded
-entry a source ID from `Path.resolve().as_uri()` and `register_provider` uses that
-host-owned ID. Display names remain user-facing labels only.
+generation identity as its `ExtensionGeneration`. The loader assigns each discovered
+entry a source ID from `Path.resolve().as_uri()` before it imports any extension,
+stores that value on
+`LoadedExtension`, and uses only the stored ID afterward. `register_provider` uses
+that host-owned ID. Display names remain user-facing labels only.
 
 If `setup()` raises, the runtime removes only registrations carrying that exact
-source ID. A failed second `shared.py` therefore cannot remove a successful first
-`shared.py` from another path; successful same-name providers shadow and restore as
-normal independent layers. Duplicate tools and commands are still ignored by name,
-so their first-registration semantics are unchanged.
+stored source ID, including providers, tools, commands, guidelines, renderers, and
+event handlers. A failed second `shared.py` therefore cannot remove a successful
+first `shared.py` from another path; successful same-name providers shadow and
+restore as normal independent layers. Duplicate tools and commands are still ignored
+by name, so their first-registration semantics are unchanged.
 
 Reload and retirement cancel registry work and remove layers before invalidating the
-outgoing API. `CodingSession.reload()`, destination replacement, and final
-`CodingSession.aclose()` all await outgoing runtime close even when synchronous
-retirement already made that runtime inactive. `reset_for_reload()` is synchronous,
-so it retains each retired registry for the runtime's later async close. Repeated
-close remains safe. A contained task stays process-supervised with its retired
-registry through its done callback; it is not mislabeled as drained. Reload then creates a
-fresh generation and empty registry over the same immutable durable baseline.
-Provider refresh diagnostics are projected into normal runtime resource diagnostics
+outgoing API. `CodingSession.reload()` and destination replacement synchronously
+publish the fresh state, then place outgoing runtime close in an independently owned
+task. Cancellation at that committed seam is contained until cleanup drains or
+reports bounded hostile work, and the operation returns the adopted result rather
+than claiming rollback. Final `CodingSession.aclose()` similarly owns one durable
+close task, but propagates observed caller cancellation only after the extension
+registry and every provider ledger entry have received their one close attempt.
+Repeated close observes the same task and cannot close a provider twice. Replacement
+also transfers the staged session's provider ledger to the surviving outer session.
+`reset_for_reload()` is synchronous, so it retains each retired registry for the
+runtime's later async close. A contained task stays process-supervised with its
+retired registry through its done callback; it is not mislabeled as drained. Reload
+then creates a fresh generation and empty registry over the same immutable durable
+baseline. Provider refresh diagnostics are projected into normal runtime diagnostics
 without exposing secrets.
 
 ## How to verify
 
 Focused tests cover dormant/invalid contracts, auth precedence and omission,
 secret-safe representations, exact durable restoration, multi-source precedence,
-same-source replacement, same-name/different-path isolation, setup cleanup,
-policy-safe and immediate-retry-safe refresh coalescing, per-waiter timeouts,
-single-cancel cooperative cleanup, explicit hostile-work containment, session
-lifecycle draining, malformed output, stale work, deep immutability, rejected
-runtime cleanup, auth redaction, no durable writes, retirement, HTTP auth headers,
+same-source replacement, same-name/different-path and symlink-retarget isolation,
+complete failed-setup cleanup, policy-safe and immediate-retry-safe refresh
+coalescing, per-waiter timeouts, single-cancel cooperative cleanup, explicit
+hostile-work containment, cancellation-at-publication lifecycle draining, final
+close/provider-ledger discharge, malformed output, stale work, deep immutability,
+rejected runtime cleanup, auth redaction, no durable writes, retirement, HTTP auth headers,
 and model-name routing:
 
 ```bash

@@ -297,7 +297,8 @@ class ExtensionRuntime:
         unload_extension_modules()
 
     def _setup_extension(self, extension: LoadedExtension) -> None:
-        if self._extension_by_source(extension.source_id) is not None:
+        source_id = extension.source_id
+        if self._extension_by_source(source_id) is not None:
             self._load_diagnostics.append(
                 ResourceDiagnostic(
                     kind="extension",
@@ -311,11 +312,11 @@ class ExtensionRuntime:
             self,
             extension.name,
             self._generation,
-            source_id=extension.source_id,
+            source_id=source_id,
         )
         registered = RegisteredExtension(
             name=extension.name,
-            source_id=extension.source_id,
+            source_id=source_id,
             path=extension.path,
             api=api,
         )
@@ -324,7 +325,7 @@ class ExtensionRuntime:
             extension.setup(api)
         except Exception as exc:  # noqa: BLE001 - extensions are an isolation boundary
             self._extensions.remove(registered)
-            self._remove_registrations(extension.source_id)
+            self._remove_registrations(source_id)
             self._load_diagnostics.append(
                 ResourceDiagnostic(
                     kind="extension",

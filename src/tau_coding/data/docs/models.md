@@ -11,9 +11,11 @@ Use `/login` and `/model` for built-in providers. The custom-provider flow suppo
 Catalog providers are durable user/application configuration. Extension providers
 are source- and generation-owned overlays held only by an `ExtensionRuntime`.
 The host identifies each source by its canonical entry path, independently of the
-extension's display name; same-name files from different paths therefore cannot
-replace or remove each other's layers. Their definitions and refresh snapshots must
-never be copied into `catalog.toml`, `providers.json`, session metadata, or a generic
+extension's display name. It freezes that identity before importing extension code,
+so later symlink mutation cannot change ownership or failed-setup cleanup; same-name
+files from different paths therefore cannot replace or remove each other's layers.
+Their definitions and refresh snapshots must never be copied into `catalog.toml`,
+`providers.json`, session metadata, or a generic
 disk cache. Removing the final dynamic layer restores the original complete durable
 provider object.
 

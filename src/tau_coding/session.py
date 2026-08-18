@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import string
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import suppress
@@ -144,6 +145,41 @@ SESSION_NAME_SYSTEM_PROMPT = (
     "maximum four words, no quotes, no punctuation-only output."
 )
 TREE_RUNNING_MESSAGE = "Tau is still working. Press Escape to interrupt before using /tree."
+
+
+async def _await_cleanup_completion[CleanupResult](
+    task: asyncio.Task[CleanupResult],
+) -> bool:
+    """Wait through caller cancellation without forwarding it into cleanup.
+
+    Returns whether cancellation was observed. Repeated requests remain
+    contained until the independently owned cleanup task reaches a terminal
+    state.
+    """
+    cancelled = False
+    while True:
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+            if not task.done():
+                continue
+        except BaseException:  # cleanup outcome is inspected by its owner
+            pass
+        return cancelled
+
+
+async def _finish_adopted_runtime_close(runtime: ExtensionRuntime) -> None:
+    """Finish outgoing cleanup after publication without failing adoption."""
+    task = asyncio.create_task(
+        runtime.aclose(),
+        name="tau-adopted-extension-runtime-close",
+    )
+    await _await_cleanup_completion(task)
+    # Publication is already committed. Cleanup cancellation/failure must not
+    # masquerade as rollback while the task's outcome still gets retrieved.
+    with suppress(BaseException):
+        task.result()
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,6 +367,7 @@ class CodingSession:
         )
         self._context_usage_cache: ContextUsageEstimate | None = None
         self._owned_providers: list[ClosableModelProvider] = []
+        self._close_task: asyncio.Task[None] | None = None
         self._diagnostic_logger = AgentCallDiagnosticLogger.from_paths(self._resource_paths.paths)
         self._credential_store = FileCredentialStore(
             credentials_path(self._resource_paths.paths) if self._resource_paths.paths else None
@@ -1594,7 +1631,9 @@ class CodingSession:
         # Retirement invalidates publication synchronously; async close then
         # waits for cooperative provider callback cleanup or reports bounded
         # containment while the outgoing runtime still owns every task handle.
-        await old_runtime.aclose()
+        # Caller cancellation at this committed seam is contained so reload
+        # cannot report failure after the fresh snapshot became active.
+        await _finish_adopted_runtime_close(old_runtime)
 
         return CodingReloadSummary(
             skills=_category_summary(before_skills, _skill_signatures(resources.skills)),
@@ -1822,13 +1861,18 @@ class CodingSession:
         self._pending_initial_entries = replacement._pending_initial_entries
         self._pending_message_writes = replacement._pending_message_writes
         self._extension_runtime = replacement._extension_runtime
+        self._owned_providers.extend(replacement._owned_providers)
+        replacement._owned_providers.clear()
         self._image_support = replacement._image_support
         self._project_trust_resolution = replacement._project_trust_resolution
         self._project_trust_commit_pending = False
         self._session_start_pending = False
         self._extension_runtime.bind(self)
         self._extension_runtime.attach_harness_listener(self._harness.subscribe)
-        await old_runtime.aclose()
+        # Adoption is already committed. Finish outgoing cleanup under a
+        # shielded owner and contain cancellation rather than reporting that
+        # the requested destination failed to replace the source session.
+        await _finish_adopted_runtime_close(old_runtime)
 
     async def compact(self, instructions: str | None = None) -> str:
         """Generate a manual compaction summary and rebuild active context."""
@@ -1845,15 +1889,61 @@ class CodingSession:
         return f"Compacted {len(compaction.replaces_entry_ids)} context entries."
 
     async def aclose(self) -> None:
-        """Close extension/provider resources owned by this coding session."""
-        if self._extension_runtime.active:
-            await self._extension_runtime.emit_session_shutdown("quit")
+        """Close every owned extension/provider resource exactly once.
+
+        Caller cancellation is remembered but cannot cancel the durable close
+        task. The first call propagates it only after all ownership ledgers are
+        discharged; later calls observe the same completed task idempotently.
+        """
+        close_task = self._close_task
+        if close_task is None:
+            close_task = asyncio.create_task(
+                self._close_owned_resources(),
+                name="tau-coding-session-close",
+            )
+            self._close_task = close_task
+
+        cancelled = await _await_cleanup_completion(close_task)
+        error: BaseException | None = None
+        try:
+            close_task.result()
+        except BaseException as exc:  # all resources were attempted before this outcome
+            error = exc
+        if cancelled:
+            raise asyncio.CancelledError
+        if error is not None:
+            raise error
+
+    async def _close_owned_resources(self) -> None:
+        """Run the sole close pass, continuing after individual failures."""
+        error: BaseException | None = None
+        try:
+            if self._extension_runtime.active:
+                await self._extension_runtime.emit_session_shutdown("quit")
+        except BaseException as exc:
+            error = exc
+
         # A runtime may already be synchronously retired by replacement. Close
         # still owns the async drain/containment step and must never skip it.
-        await self._extension_runtime.aclose()
-        for provider in self._owned_providers:
-            await provider.aclose()
+        try:
+            await self._extension_runtime.aclose()
+        except BaseException as exc:
+            if error is None:
+                error = exc
+
+        # Remove each provider from the ownership ledger before its only close
+        # attempt. One hostile provider cannot prevent later providers closing.
+        providers = tuple(self._owned_providers)
         self._owned_providers.clear()
+        for provider in providers:
+            try:
+                await provider.aclose()
+            except BaseException as exc:
+                if error is None:
+                    error = exc
+
+        if error is not None:
+            raise error
 
     def handle_command(self, text: str) -> CommandResult:
         """Handle coding-session slash commands.
