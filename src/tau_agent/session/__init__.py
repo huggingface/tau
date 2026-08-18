@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from tau_agent.session.conformance import (
+    SessionStorageConformanceError,
+    conformance_entries,
+    verify_session_storage,
+)
 from tau_agent.session.entries import (
     BaseSessionEntry,
     BranchSummaryEntry,
@@ -40,11 +45,14 @@ __all__ = [
     "SessionJsonlError",
     "SessionState",
     "SessionStorage",
+    "SessionStorageConformanceError",
     "SessionTreeError",
     "ThinkingLevelChangeEntry",
+    "conformance_entries",
     "entries_by_id",
     "entries_from_json_lines",
     "entry_from_json_line",
     "entry_to_json_line",
     "path_to_entry",
+    "verify_session_storage",
 ]
