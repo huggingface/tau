@@ -1181,9 +1181,11 @@ async def test_print_resume_does_not_apply_hf_route_to_explicit_non_hf_provider(
         session_id="session-123",
     )
 
+    lifecycle: list[str] = []
+
     class ClosableFakeProvider(FakeProvider):
         async def aclose(self) -> None:
-            return None
+            lifecycle.append("provider_closed")
 
     provider = ClosableFakeProvider([])
     create_calls: list[tuple[str, str | None]] = []
@@ -1196,10 +1198,19 @@ async def test_print_resume_does_not_apply_hf_route_to_explicit_non_hf_provider(
         **kwargs: object,
     ) -> ClosableFakeProvider:
         del model, kwargs
+        lifecycle.append("provider_created")
         create_calls.append((provider_config.name, inference_provider))
         return provider
 
     async def fake_run_print_mode(**kwargs: object) -> bool:
+        lifecycle.append("session_run")
+        resumed_record = manager.get_session("session-123")
+        storage = kwargs["storage"]
+        assert resumed_record is not None
+        assert isinstance(storage, JsonlSessionStorage)
+        assert kwargs["provider"] is provider
+        assert kwargs["provider_name"] == "local"
+        assert storage.path == resumed_record.path
         return True
 
     monkeypatch.setattr(cli, "load_provider_settings", lambda: settings)
@@ -1217,6 +1228,7 @@ async def test_print_resume_does_not_apply_hf_route_to_explicit_non_hf_provider(
 
     assert ok is True
     assert create_calls == [("local", None)]
+    assert lifecycle == ["provider_created", "session_run", "provider_closed"]
 
 
 def test_create_print_session_uses_requested_id_and_rejects_collision(tmp_path: Path) -> None:
