@@ -6,13 +6,14 @@ import asyncio
 from asyncio import AbstractEventLoop, get_running_loop
 from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import replace
+from inspect import isawaitable
 from os import environ
 from typing import Protocol
 from weakref import WeakKeyDictionary
 
 from tau_agent.provider import ModelProvider
 from tau_ai.anthropic import AnthropicProvider
-from tau_ai.env import AnthropicConfig, RuntimeProviderAuth
+from tau_ai.env import AnthropicConfig, OpenAICompatibleConfig, RuntimeProviderAuth
 from tau_ai.google import GoogleGenerativeAIProvider
 from tau_ai.mistral import MistralConversationsProvider
 from tau_ai.openai_codex import (
@@ -22,6 +23,14 @@ from tau_ai.openai_codex import (
 )
 from tau_ai.openai_compatible import OpenAICompatibleProvider
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
+from tau_coding.extensions.providers import (
+    CredentialReader,
+    DynamicProvider,
+    OpenAICompatibleTransport,
+    ProviderModel,
+    ProviderRuntimeContext,
+    resolve_provider_auth,
+)
 from tau_coding.oauth import (
     account_id_from_access_token,
     oauth_credential_is_expired,
@@ -53,6 +62,98 @@ class ClosableModelProvider(ModelProvider, Protocol):
     async def aclose(self) -> None:
         """Close any provider-owned resources."""
         ...
+
+
+async def create_dynamic_model_provider(
+    provider: DynamicProvider,
+    *,
+    model: str,
+    credential_store: CredentialReader | None = None,
+    environment: Mapping[str, str] | None = None,
+) -> ClosableModelProvider:
+    """Create a candidate runtime from a process-local provider definition.
+
+    Authentication is resolved only here, immediately before construction.
+    This path never converts or writes the dynamic definition to durable
+    ``ProviderConfig`` settings.
+    """
+    selected_model = _dynamic_model(provider, model)
+    auth = await resolve_provider_auth(
+        provider.auth,
+        credentials=(credential_store if credential_store is not None else FileCredentialStore()),
+        environment=environment if environment is not None else environ,
+    )
+    context = ProviderRuntimeContext(provider_id=provider.id, auth=auth)
+    if provider.runtime_factory is not None:
+        candidate = provider.runtime_factory(context, selected_model)
+        runtime = await candidate if isawaitable(candidate) else candidate
+        if not hasattr(runtime, "stream_response") or not hasattr(runtime, "aclose"):
+            raise ProviderConfigError(
+                f"Runtime factory for {provider.id} returned an unsupported provider"
+            )
+        return runtime
+
+    transport = provider.transport
+    assert isinstance(transport, OpenAICompatibleTransport)
+    selected_api = selected_model.api or transport.api
+    if selected_api not in {"openai-completions", "openai-responses"}:
+        raise ProviderConfigError(
+            f"OpenAI-compatible dynamic provider {provider.id} cannot use api {selected_api}"
+        )
+    headers = _merge_dynamic_headers(
+        transport.headers,
+        selected_model.headers,
+        auth.headers,
+    )
+    has_authorization = any(key.casefold() == "authorization" for key in headers)
+    if auth.api_key is not None and auth.omit_authorization_header and not has_authorization:
+        raise ProviderConfigError(
+            f"OpenAI-compatible dynamic provider {provider.id} resolved an API key "
+            "while requesting Authorization omission"
+        )
+    config = OpenAICompatibleConfig(
+        api_key=auth.api_key or "",
+        base_url=selected_model.base_url or transport.base_url,
+        headers=headers,
+        timeout_seconds=transport.timeout_seconds,
+        max_retries=transport.max_retries,
+        max_retry_delay_seconds=transport.max_retry_delay_seconds,
+        api=selected_api,
+        max_tokens=selected_model.max_tokens,
+        supports_images=(
+            selected_model.input_modalities is not None
+            and "image" in selected_model.input_modalities
+        ),
+        compat=selected_model.compat,
+        provider_name=provider.id,
+        omit_authorization_header=auth.omit_authorization_header,
+        # Dynamic providers explicitly own their API choice. A local model id
+        # resembling gpt-* or *codex* must not reroute to /responses.
+        infer_api_from_model=False,
+    )
+    return OpenAICompatibleProvider(config)
+
+
+def _dynamic_model(provider: DynamicProvider, model: str) -> ProviderModel:
+    for candidate in provider.models:
+        if candidate.id == model:
+            return candidate
+    raise ProviderConfigError(f"Model is not configured for provider {provider.id}: {model}")
+
+
+def _merge_dynamic_headers(*values: Mapping[str, str]) -> dict[str, str]:
+    """Merge transport/model/auth headers case-insensitively, latest value winning."""
+    merged: dict[str, str] = {}
+    names: dict[str, str] = {}
+    for value in values:
+        for key, item in value.items():
+            normalized = key.casefold()
+            previous = names.get(normalized)
+            if previous is not None:
+                merged.pop(previous)
+            names[normalized] = key
+            merged[key] = item
+    return merged
 
 
 def create_model_provider(

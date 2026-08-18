@@ -1840,8 +1840,10 @@ class CodingSession:
         return f"Compacted {len(compaction.replaces_entry_ids)} context entries."
 
     async def aclose(self) -> None:
-        """Close runtime providers created by this coding session."""
-        await self._extension_runtime.emit_session_shutdown("quit")
+        """Close extension/provider resources owned by this coding session."""
+        if self._extension_runtime.active:
+            await self._extension_runtime.emit_session_shutdown("quit")
+            await self._extension_runtime.aclose()
         for provider in self._owned_providers:
             await provider.aclose()
         self._owned_providers.clear()

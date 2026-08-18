@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
+from uuid import uuid4
 
 from tau_agent.messages import AgentMessage, ToolResultMessage
 from tau_agent.tools import AgentTool, AgentToolResult
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
     from textual import events
     from textual.widget import Widget
 
+    from tau_coding.extensions.providers import DynamicProvider
     from tau_coding.extensions.runtime import ExtensionRuntime
     from tau_coding.tui.config import TuiTheme
 
@@ -292,10 +294,16 @@ class ExtensionGeneration:
     the phase-21 lifecycle Ruling).
     """
 
-    __slots__ = ("_stale_message",)
+    __slots__ = ("_id", "_stale_message")
 
     def __init__(self) -> None:
+        self._id = uuid4().hex
         self._stale_message: str | None = None
+
+    @property
+    def id(self) -> str:
+        """Return this generation's stable process-local identity."""
+        return self._id
 
     @property
     def active(self) -> bool:
@@ -880,6 +888,11 @@ class ExtensionAPI:
         """Register an agent tool (first registration per name wins)."""
         self._generation.assert_active()
         self._runtime.register_tool(self._extension_name, tool)
+
+    def register_provider(self, provider: DynamicProvider) -> None:
+        """Register or atomically replace this source's dynamic provider layer."""
+        self._generation.assert_active()
+        self._runtime.register_provider(self._extension_name, provider)
 
     def register_command(
         self,

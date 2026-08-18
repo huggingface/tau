@@ -6,6 +6,20 @@ Tau separates provider/model streaming (`tau_ai`), the portable harness (`tau_ag
 
 Use `/login` and `/model` for built-in providers. The custom-provider flow supports OpenAI-compatible endpoints. Durable provider settings live under Tau's home directory; consult the published `website/content/guides/providers-and-models.md` in a Tau checkout for the current schema and authentication behavior.
 
+## Durable versus dynamic providers
+
+Catalog providers are durable user/application configuration. Extension providers
+are source- and generation-owned overlays held only by an `ExtensionRuntime`.
+Their definitions and refresh snapshots must never be copied into `catalog.toml`,
+`providers.json`, session metadata, or a generic disk cache. Removing the final
+dynamic layer restores the original complete durable provider object.
+
+Dynamic providers support required, optional, or absent authentication without
+fake keys. Secrets are resolved immediately before refresh/runtime creation and
+are excluded from representations and diagnostics. Phase 1 provides these
+contracts and registry mechanics only; startup/session selection and `/local` are
+not implemented yet.
+
 ## Changing the built-in catalog
 
 For changes to a first-party provider or model, use this workflow:

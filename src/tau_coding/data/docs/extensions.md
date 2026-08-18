@@ -1,6 +1,6 @@
 # Tau extensions
 
-Tau extensions are Python modules that can register custom tools and slash commands, observe lifecycle events, intercept tool calls and results, show UI dialogs, and customize message rendering.
+Tau extensions are Python modules that can register custom tools, slash commands, and process-local provider definitions; observe lifecycle events; intercept tool calls and results; show UI dialogs; and customize message rendering.
 
 ## Start here
 
@@ -22,6 +22,32 @@ handle `project_trust` before protected loading; first decisive result wins.
 Project extensions cannot approve themselves. They execute arbitrary Python and
 remain disabled without both approval and the explicit code opt-in. Trust is not
 a process/filesystem/network/tool/model sandbox.
+
+## Dynamic providers (provisional)
+
+`tau.register_provider(DynamicProvider(...))` adds a frontend-free provider layer
+to the current staged extension runtime. Definitions can be dormant (zero models)
+and may provide either `OpenAICompatibleTransport` or a custom runtime factory.
+Authentication uses `RequiredApiKey`, `OptionalApiKey`, or `NoAuth`; optional and
+absent auth omit the `Authorization` header instead of inventing a key. Static
+transport/model headers cannot contain `Authorization`; custom schemes belong in
+a runtime auth strategy so credentials never become registered definitions.
+
+Provider layers are process-local and never written to `catalog.toml`,
+`providers.json`, session files, or generic extension storage. Latest registration
+wins for a provider ID. Source replacement is atomic; source removal or generation
+retirement reveals the preceding complete dynamic layer or the exact durable
+`ProviderConfig` baseline.
+
+A `refresh_models` callback returns one complete `ProviderModelSnapshot`. Refreshes
+are coalesced per source/layer/generation, explicitly cancellable, timeout-bounded,
+and rejected after replacement or retirement. Failures retain the current snapshot
+and emit one bounded, secret-free diagnostic. Callbacks receive structured data,
+not Rich or Textual objects.
+
+This Phase 1 API is provisional pending second-backend validation. Registration and
+registry mechanics exist now; startup selection, built-in providers, `/local`, and
+llama.cpp behavior land in later #602 phases.
 
 ## Development checklist
 

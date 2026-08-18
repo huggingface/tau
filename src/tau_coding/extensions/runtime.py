@@ -61,7 +61,10 @@ from tau_coding.extensions.loader import (
     load_extensions,
     unload_extension_modules,
 )
+from tau_coding.extensions.provider_registry import DynamicProviderRegistry
+from tau_coding.extensions.providers import CredentialReader, DynamicProvider
 from tau_coding.project_trust import ExtensionTrustResult, ProjectTrustEvent
+from tau_coding.provider_config import ProviderConfig
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
 
 # Host callback that delivers a message through the frontend's serialized run
@@ -157,7 +160,24 @@ class ExtensionRuntime:
     registrations from crossing cwd trust boundaries.
     """
 
-    def __init__(self, *, ui: UiBridge | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        ui: UiBridge | None = None,
+        durable_providers: Sequence[ProviderConfig] = (),
+        credentials: CredentialReader | None = None,
+        environment: Mapping[str, str] | None = None,
+    ) -> None:
+        self._generation = ExtensionGeneration()
+        self._durable_providers = tuple(durable_providers)
+        self._provider_credentials = credentials
+        self._provider_environment = environment
+        self._provider_registry = DynamicProviderRegistry(
+            self._durable_providers,
+            generation_id=self._generation.id,
+            credentials=credentials,
+            environment=environment,
+        )
         self._extensions: list[RegisteredExtension] = []
         self._tools: dict[str, RegisteredExtensionTool] = {}
         self._commands: dict[str, ExtensionCommand] = {}
@@ -171,7 +191,6 @@ class ExtensionRuntime:
         self._turn_requested: TurnRequestedCallback | None = None
         self._harness_unsubscribe: Callable[[], None] | None = None
         self._extension_turn_index = 0
-        self._generation = ExtensionGeneration()
 
     # -- loading -----------------------------------------------------------
 
@@ -196,12 +215,32 @@ class ExtensionRuntime:
         for extension in result.extensions:
             self._setup_extension(extension)
 
+    @property
+    def active(self) -> bool:
+        """Return whether this runtime generation still owns live registrations."""
+        return self._generation.active
+
     def retire(self) -> None:
         """Invalidate a successfully replaced runtime without touching its successor."""
+        if not self._generation.active:
+            return
+        self._provider_registry.retire()
         self._generation.invalidate()
         if self._harness_unsubscribe is not None:
             self._harness_unsubscribe()
             self._harness_unsubscribe = None
+
+    async def aclose(self) -> None:
+        """Retire this generation and drain its cooperative provider refresh work."""
+        if not self._generation.active:
+            return
+        try:
+            await self._provider_registry.aclose()
+        finally:
+            self._generation.invalidate()
+            if self._harness_unsubscribe is not None:
+                self._harness_unsubscribe()
+                self._harness_unsubscribe = None
 
     def reset_for_reload(self) -> None:
         """Drop all registrations and imported modules ahead of a re-load.
@@ -218,8 +257,15 @@ class ExtensionRuntime:
         # is still active so host cleanup triggered by component disposal can
         # safely use its API; only then make every captured API/context stale.
         self.clear_ui_components()
+        self._provider_registry.retire()
         self._generation.invalidate()
         self._generation = ExtensionGeneration()
+        self._provider_registry = DynamicProviderRegistry(
+            self._durable_providers,
+            generation_id=self._generation.id,
+            credentials=self._provider_credentials,
+            environment=self._provider_environment,
+        )
         if self._harness_unsubscribe is not None:
             self._harness_unsubscribe()
             self._harness_unsubscribe = None
@@ -273,8 +319,13 @@ class ExtensionRuntime:
             for custom_type, registration in self._message_renderers.items()
             if registration[0] != extension_name
         }
+        self._provider_registry.unregister_source(extension_name)
 
     # -- registration (called through ExtensionAPI) -------------------------
+
+    def register_provider(self, extension_name: str, provider: DynamicProvider) -> None:
+        """Register or atomically replace one extension-owned provider layer."""
+        self._provider_registry.register(extension_name, provider)
 
     def register_tool(self, extension_name: str, tool: AgentTool) -> None:
         """Register an extension tool; first registration per name wins."""
@@ -549,14 +600,32 @@ class ExtensionRuntime:
         return self._session
 
     @property
+    def provider_registry(self) -> DynamicProviderRegistry:
+        """Return this staged runtime generation's process-local provider registry."""
+        return self._provider_registry
+
+    @property
     def extension_names(self) -> tuple[str, ...]:
         """Return loaded extension names in load order."""
         return tuple(extension.name for extension in self._extensions)
 
     @property
     def diagnostics(self) -> tuple[ResourceDiagnostic, ...]:
-        """Return load-time and runtime diagnostics."""
-        return tuple(self._load_diagnostics) + tuple(self._runtime_diagnostics)
+        """Return load-time, handler, and provider-refresh diagnostics."""
+        provider_diagnostics = tuple(
+            ResourceDiagnostic(
+                kind="provider",
+                name=diagnostic.token.source_id,
+                message=(
+                    f"{diagnostic.message} for provider "
+                    f"`{diagnostic.token.provider_id}` ({diagnostic.reason})"
+                ),
+            )
+            for diagnostic in self._provider_registry.diagnostics
+        )
+        return (
+            tuple(self._load_diagnostics) + tuple(self._runtime_diagnostics) + provider_diagnostics
+        )
 
     @property
     def extension_tools(self) -> tuple[AgentTool, ...]:
