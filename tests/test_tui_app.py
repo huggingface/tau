@@ -546,6 +546,31 @@ def test_session_sidebar_shows_all_skills() -> None:
     assert "more)" not in output
 
 
+def test_session_sidebar_marks_user_only_skills_with_hollow_bullets() -> None:
+    session = FakeSession()
+    session.skills = (
+        Skill(
+            name="model-visible",
+            path=session.cwd / ".tau/skills/model-visible/SKILL.md",
+            content="Model-visible skill",
+        ),
+        Skill(
+            name="user-only",
+            path=session.cwd / ".tau/skills/user-only/SKILL.md",
+            content="User-only skill",
+            disable_model_invocation=True,
+        ),
+    )
+    console = Console(record=True, width=80)
+
+    console.print(render_session_sidebar(session))
+
+    output = console.export_text()
+    assert "• model-visible" in output
+    assert "◦ user-only" in output
+    assert "• user-only" not in output
+
+
 def test_session_sidebar_groups_skills_by_origin(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -756,7 +781,7 @@ def test_session_sidebar_brand_includes_current_version() -> None:
 
     console.print(_sidebar_brand(theme=TAU_DARK_THEME))
 
-    assert "τ = 2π  0.3.11" in console.export_text()
+    assert "τ = 2π  0.3.12" in console.export_text()
 
 
 def test_session_sidebar_uses_prominent_title_and_accented_section_headers() -> None:
@@ -3063,6 +3088,32 @@ async def test_tui_sidebar_resource_sections_expand_independently() -> None:
         await pilot.click("#sidebar-skills CollapsibleTitle")
         assert skills.collapsed is True
         assert prompts.collapsed is False
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_refreshes_skill_tokens_when_model_invocation_changes() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 40)):
+        sidebar = app.query_one("#sidebar", SessionSidebar)
+        skills = app.query_one("#sidebar-skills", Collapsible)
+        initial_title = Content.from_markup(skills.title).plain
+        assert initial_title != "skills (1 · ~0 tokens)"
+
+        skill = session.skills[0]
+        session.skills = (
+            Skill(
+                name=skill.name,
+                path=skill.path,
+                content=skill.content,
+                description=skill.description,
+                disable_model_invocation=True,
+            ),
+        )
+        sidebar.update_from_session(session)
+
+        assert Content.from_markup(skills.title).plain == "skills (1 · ~0 tokens)"
 
 
 @pytest.mark.anyio

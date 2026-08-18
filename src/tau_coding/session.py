@@ -3138,7 +3138,14 @@ def _category_summary(
 
 def _skill_signatures(skills: tuple[Skill, ...]) -> tuple[tuple[object, ...], ...]:
     return tuple(
-        (skill.name, str(skill.path), skill.description, skill.content) for skill in skills
+        (
+            skill.name,
+            str(skill.path),
+            skill.description,
+            skill.content,
+            skill.disable_model_invocation,
+        )
+        for skill in skills
     )
 
 
@@ -3186,7 +3193,7 @@ def _system_prompt_resource_signatures(
     append_system_prompt_path: Path | None,
 ) -> tuple[object, ...]:
     prompt_skills = tuple(
-        (skill.name, str(skill.path), skill.description)
+        (skill.name, str(skill.path), skill.description, skill.disable_model_invocation)
         for skill in sorted(skills, key=lambda item: item.name)
     )
     return (

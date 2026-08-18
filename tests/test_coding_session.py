@@ -3140,6 +3140,41 @@ async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Pa
 
 
 @pytest.mark.anyio
+async def test_session_reload_detects_disable_model_invocation_change(tmp_path: Path) -> None:
+    resource_root = tmp_path / "resources"
+    skills_dir = resource_root / "skills" / "testing"
+    skills_dir.mkdir(parents=True)
+    skill_path = skills_dir / "SKILL.md"
+    skill_path.write_text(
+        "---\ndescription: Test code\n---\n# Testing\nRun pytest.",
+        encoding="utf-8",
+    )
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=storage,
+            cwd=tmp_path,
+            trust_default="always",
+            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        )
+    )
+    assert "<name>testing</name>" in session.system_prompt
+
+    skill_path.write_text(
+        "---\ndescription: Test code\ndisable-model-invocation: true\n---\n# Testing\nRun pytest.",
+        encoding="utf-8",
+    )
+    summary = await session.reload()
+
+    assert summary.system_prompt_rebuilt is True
+    assert "<name>testing</name>" not in session.system_prompt
+    # The skill stays loaded for explicit /skill:testing invocation.
+    assert {skill.name for skill in session.skills} == {"testing"}
+
+
+@pytest.mark.anyio
 async def test_session_reload_skips_provider_settings_refresh(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -170,8 +170,13 @@ def format_project_context(context_files: Sequence[ProjectContextFile]) -> str:
 
 
 def format_skills_for_prompt(skills: Sequence[Skill]) -> str:
-    """Format skills for inclusion in a system prompt using Pi's XML style."""
-    if not skills:
+    """Format skills for inclusion in a system prompt using Pi's XML style.
+
+    Skills with ``disable_model_invocation`` set are excluded from the prompt;
+    they remain invocable explicitly via ``/skill:<name>``.
+    """
+    visible_skills = [skill for skill in skills if not skill.disable_model_invocation]
+    if not visible_skills:
         return ""
 
     lines = [
@@ -182,7 +187,7 @@ def format_skills_for_prompt(skills: Sequence[Skill]) -> str:
         "",
         "<available_skills>",
     ]
-    for skill in sorted(skills, key=lambda item: item.name):
+    for skill in sorted(visible_skills, key=lambda item: item.name):
         description = skill.description or "No description"
         lines.extend(
             [

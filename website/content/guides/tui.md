@@ -200,7 +200,8 @@ the loaded skill index in the system prompt; full skill instructions enter conte
 only when that skill is invoked. Click either heading (or focus it and press
 **Enter**) to expand or collapse that section independently, so both lists can
 remain open when needed. Every loaded skill or prompt is shown while its section
-is expanded. If
+is expanded. Model-visible skills use a solid bullet (`•`), while user-only skills
+with `disable-model-invocation: true` use a hollow bullet (`◦`). If
 the sidebar content is
 taller than the available space, scroll it to see the remaining resource groups;
 the Tau version mark stays pinned at the bottom. Context files
