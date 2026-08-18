@@ -366,29 +366,48 @@ def main(
     command = positional_args[0] if positional_args else None
     initial_prompt = " ".join(positional_args) if positional_args else None
 
-    if not print_requested and not export and command == "update":
+    if rpc_requested and export:
+        raise typer.BadParameter("--export cannot be combined with --mode rpc")
+
+    if not rpc_requested and not print_requested and not export and command == "update":
         if len(positional_args) != 1:
             raise typer.BadParameter("Usage: tau update")
         update_command()
         raise typer.Exit()
 
-    if not print_requested and not export and command == "sessions" and len(positional_args) == 1:
+    if (
+        not rpc_requested
+        and not print_requested
+        and not export
+        and command == "sessions"
+        and len(positional_args) == 1
+    ):
         render_session_list(SessionManager().list_sessions())
         raise typer.Exit()
 
-    if not print_requested and not export and command == "export":
+    if not rpc_requested and not print_requested and not export and command == "export":
         _run_export_cli(positional_args[1:])
 
-    if export:
+    if export and not rpc_requested:
         if print_requested:
             raise typer.BadParameter("--export cannot be combined with --print/--mode.")
         _run_export_cli(positional_args)
 
-    if not print_requested and command == "providers" and len(positional_args) == 1:
+    if (
+        not rpc_requested
+        and not print_requested
+        and command == "providers"
+        and len(positional_args) == 1
+    ):
         providers_command()
         raise typer.Exit()
 
-    if not print_requested and command == "setup" and len(positional_args) == 1:
+    if (
+        not rpc_requested
+        and not print_requested
+        and command == "setup"
+        and len(positional_args) == 1
+    ):
         setup_command(
             provider_name=provider or DEFAULT_PROVIDER_NAME,
             base_url=setup_base_url,
@@ -812,7 +831,17 @@ async def run_openai_rpc_mode(
         provider_name=provider_name if explicit_selection else record.provider_name,
         model=model if explicit_selection else record.model,
     )
-    inference_provider = record.inference_provider if resume_session_id is not None else None
+    inference_provider = (
+        record.inference_provider
+        if resume_session_id is not None
+        and record.provider_name == "huggingface"
+        and selection.provider.name == "huggingface"
+        and record.model == selection.model
+        else selection.provider.inference_providers.get(selection.model)
+        if isinstance(selection.provider, OpenAICompatibleProviderConfig)
+        and selection.provider.name == "huggingface"
+        else None
+    )
     provider = create_model_provider(
         selection.provider,
         model=selection.model,

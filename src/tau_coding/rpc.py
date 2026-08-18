@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from tau_agent.types import JSONValue
 from tau_coding.commands import CommandRegistry
 from tau_coding.events import CodingSessionEvent
-from tau_coding.session import CodingSession
+from tau_coding.session import CodingSession, ModelChoice
 
 _MAX_RECORD_BYTES = 16 * 1024 * 1024
 
@@ -64,9 +64,7 @@ class RpcSession(Protocol):
 
     def cancel(self) -> None: ...
 
-    def set_provider(self, provider_name: str, *, persist_default: bool = True) -> None: ...
-
-    def set_model(self, model: str) -> None: ...
+    def set_model_choice(self, choice: ModelChoice) -> None: ...
 
     async def set_thinking_level(self, level: str) -> str: ...
 
@@ -154,9 +152,15 @@ class RpcServer:
                     raise ValueError(
                         "Agent is already streaming; set streamingBehavior to steer or followUp"
                     )
+                stream = self._session.prompt(message, streaming_behavior=behavior)
+                try:
+                    first_event = await anext(stream)
+                except StopAsyncIteration:
+                    await self._response(request_id, command_type)
+                    return
                 self._active_prompt_tasks += 1
                 await self._response(request_id, command_type)
-                tasks.start_soon(self._run_prompt, message, behavior)
+                tasks.start_soon(self._run_prompt, stream, first_event)
                 return
             if command_type == "abort":
                 self._session.cancel()
@@ -192,12 +196,15 @@ class RpcServer:
                 )
                 return
             if command_type == "set_model":
-                provider = command.get("provider")
-                if provider is not None:
-                    if not isinstance(provider, str):
-                        raise ValueError("provider must be a string")
-                    self._session.set_provider(provider, persist_default=False)
-                self._session.set_model(_required_string(command, "modelId"))
+                provider = command.get("provider", self._session.provider_name)
+                if not isinstance(provider, str):
+                    raise ValueError("provider must be a string")
+                self._session.set_model_choice(
+                    ModelChoice(
+                        provider_name=provider,
+                        model=_required_string(command, "modelId"),
+                    )
+                )
                 await self._response(
                     request_id,
                     command_type,
@@ -262,14 +269,16 @@ class RpcServer:
                 )
                 return
             raise ValueError(f"Unknown command: {command_type}")
-        except (RuntimeError, ValueError) as exc:
+        except Exception as exc:
             await self._error(request_id, command_type, str(exc))
 
     async def _run_prompt(
-        self, message: str, behavior: Literal["steer", "follow_up"] | None
+        self,
+        stream: AsyncIterator[CodingSessionEvent],
+        first_event: CodingSessionEvent,
     ) -> None:
         try:
-            stream = self._session.prompt(message, streaming_behavior=behavior)
+            await self._write(first_event)
             async for event in stream:
                 await self._write(event)
         except (RuntimeError, ValueError) as exc:
