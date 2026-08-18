@@ -2650,18 +2650,35 @@ def _first_recent_context_index(
     candidate_message = rows[candidate_index][1]
     if candidate_message.role == "user":
         if candidate_index > 0:
-            return candidate_index
-        next_user_index = _next_user_message_index(rows, start=1)
-        return next_user_index if next_user_index is not None else 0
+            boundary = candidate_index
+        else:
+            next_user_index = _next_user_message_index(rows, start=1)
+            boundary = next_user_index if next_user_index is not None else 0
+    else:
+        next_user_index = _next_user_message_index(rows, start=candidate_index + 1)
+        if next_user_index is not None:
+            boundary = next_user_index
+        else:
+            for index in range(candidate_index, len(rows)):
+                if rows[index][1].role != "toolResult":
+                    boundary = index
+                    break
+            else:
+                boundary = len(rows)
 
-    next_user_index = _next_user_message_index(rows, start=candidate_index + 1)
-    if next_user_index is not None:
-        return next_user_index
+    last_user_index = _last_user_message_index(rows)
+    if last_user_index is not None:
+        boundary = min(boundary, last_user_index)
+    return boundary
 
-    for index in range(candidate_index, len(rows)):
-        if rows[index][1].role != "toolResult":
+
+def _last_user_message_index(
+    rows: tuple[tuple[str, AgentMessage], ...],
+) -> int | None:
+    for index in range(len(rows) - 1, -1, -1):
+        if rows[index][1].role == "user":
             return index
-    return len(rows)
+    return None
 
 
 def _next_user_message_index(
