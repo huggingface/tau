@@ -58,10 +58,15 @@ from tau_coding import (
     save_provider_settings,
 )
 from tau_coding import session as coding_session_module
+from tau_coding.context_window import estimate_message_tokens
 from tau_coding.events import QueueUpdateEvent
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_config import ProviderModelMetadata
-from tau_coding.session import _ordered_tree_entries, parse_terminal_command
+from tau_coding.session import (
+    _first_recent_context_index,
+    _ordered_tree_entries,
+    parse_terminal_command,
+)
 
 
 async def _collect_session_events(session_stream: object) -> list[object]:
@@ -1023,6 +1028,52 @@ def test_parse_terminal_command_prefixes() -> None:
     assert hidden_request.command == "pwd"
     assert hidden_request.add_to_context is False
     assert parse_terminal_command("hello") is None
+
+
+def _recent_rows(*roles: str) -> tuple[tuple[str, AgentMessage], ...]:
+    def message(role: str) -> AgentMessage:
+        if role == "user":
+            return UserMessage(content=f"user-{role}")
+        if role == "assistant":
+            return AssistantMessage(content=f"assistant-{role}")
+        return ToolResultMessage(
+            content=f"result-{role}",
+            tool_call_id=f"call-{role}",
+            tool_name="tool",
+        )
+
+    return tuple((f"entry-{index}", message(role)) for index, role in enumerate(roles))
+
+
+def _total_tokens(rows: tuple[tuple[str, AgentMessage], ...]) -> int:
+    return sum(estimate_message_tokens(message) for _entry_id, message in rows)
+
+
+def test_first_recent_context_index_keeps_newest_user_turn_and_reply() -> None:
+    rows = _recent_rows("user", "assistant", "user", "assistant")
+    index = _first_recent_context_index(rows, keep_recent_tokens=_total_tokens(rows))
+    assert index == 2
+    assert [message.role for _entry_id, message in rows[index:]] == ["user", "assistant"]
+
+
+def test_first_recent_context_index_never_compacts_past_last_user() -> None:
+    rows = _recent_rows("user", "assistant", "toolResult", "toolResult")
+    index = _first_recent_context_index(rows, keep_recent_tokens=_total_tokens(rows))
+    assert index == 0
+
+
+def test_first_recent_context_index_keeps_pending_newest_user_prompt() -> None:
+    rows = _recent_rows("user", "assistant", "toolResult", "user")
+    index = _first_recent_context_index(rows, keep_recent_tokens=_total_tokens(rows))
+    assert index == 3
+    assert [message.role for _entry_id, message in rows[index:]] == ["user"]
+
+
+def test_first_recent_context_index_keeps_recent_suffix() -> None:
+    rows = _recent_rows("user", "assistant", "user", "assistant", "user", "assistant")
+    index = _first_recent_context_index(rows, keep_recent_tokens=1)
+    assert index == 4
+    assert [message.role for _entry_id, message in rows[index:]] == ["user", "assistant"]
 
 
 @pytest.mark.anyio
