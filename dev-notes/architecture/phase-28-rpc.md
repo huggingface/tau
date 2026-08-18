@@ -16,14 +16,16 @@ the session.
 | --- | --- |
 | prompt, steer, follow-up, abort | supported |
 | state/messages | supported |
-| models and thinking | supported |
-| manual compaction | supported |
-| new/switch session, stats, tree, fork | supported with Tau IDs/tree shape |
-| command discovery | supported |
-| direct bash and abort_bash | deferred; needs a cancellable public session API |
+| models and thinking | Pi-shaped models plus set/cycle/list supported |
+| manual compaction | supported; detailed usage remains approximate |
+| new/switch session, stats, tree, fork | Pi-shaped wire responses; Tau ID or indexed path accepted |
+| command discovery | supported with synthetic Tau source metadata |
+| direct bash | supported |
+| abort_bash | deferred; needs a cancellable public session API |
+| HTML export, session naming, entry cursor | supported |
+| auto-compaction toggle | supported |
 | extension UI RPC | deferred; Tau currently uses frontend bridge callbacks |
-| set auto-compaction, clone, export, session naming | deferred |
-| get_entries cursor | deferred |
+| queue/retry controls, clone, image prompts | deferred |
 
 The protocol intentionally maps only public `CodingSession` behavior. It does not read raw session
 JSONL, depend on Textual, or duplicate the agent loop.

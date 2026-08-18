@@ -20,10 +20,12 @@ carry request IDs.
 {"type":"agent_start"}
 ```
 
-The initial protocol supports Pi-compatible prompting (`prompt`, `steer`, `follow_up`, `abort`),
-state and message inspection, model and thinking controls, compaction, new/resumed sessions,
-session statistics and trees, forking, and command discovery. Unknown commands and invalid
-arguments return `success: false` without stopping the process.
+The protocol supports Pi-compatible prompting (`prompt`, `steer`, `follow_up`, `abort`), state
+and message inspection, complete Pi-shaped model references, model and thinking cycling,
+auto-compaction control, direct shell commands, HTML export, new/resumed sessions, entry cursors,
+session statistics and trees, forking, last-assistant lookup, session naming, and command
+discovery. Unknown commands and invalid arguments return `success: false` without stopping the
+process.
 
 Use `agent_settled`, not `agent_end`, to decide that a run is fully idle: retries, overflow
 compaction, or queued continuations can follow `agent_end`.
@@ -55,6 +57,8 @@ tau.stdout.on("data", chunk => {
 tau.stdin.write(JSON.stringify({ id: "1", type: "prompt", message: "Hello" }) + "\n");
 ```
 
-Tau mirrors Pi where its public `CodingSession` has equivalent behavior. This first version does
-not yet implement Pi's direct `bash`/`abort_bash`, extension UI request/response protocol,
-session naming, auto-compaction toggling, entry cursors, cloning, or export commands.
+Tau mirrors Pi where its public `CodingSession` has equivalent behavior. Direct `bash` is
+supported, but `abort_bash` requires a future cancellable session API. Queue delivery modes,
+retry controls, cloning, image prompts, and the extension UI request/response subprotocol remain
+staged compatibility work. See `dev-notes/design/rpc-runtime-interchangeability-plan.md` for the
+contract, completed frontend-critical phase, and remaining production phases.

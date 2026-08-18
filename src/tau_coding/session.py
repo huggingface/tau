@@ -614,6 +614,10 @@ class CodingSession:
         """Return the last replayed durable session state."""
         return self._state
 
+    async def session_entries(self) -> tuple[SessionEntry, ...]:
+        """Return append-only entries for frontend session inspection."""
+        return tuple(await self._read_session_entries())
+
     async def tree_choices(self) -> tuple[SessionTreeChoice, ...]:
         """Return branchable session entries for a tree picker."""
         entries = await self._read_session_entries()
@@ -811,6 +815,16 @@ class CodingSession:
                 return limits.effective_auto_compact_token_limit
         return auto_compaction_threshold_for_context_window(self.context_window_tokens)
 
+    def set_auto_compaction_enabled(self, enabled: bool) -> None:
+        """Enable or disable automatic compaction for future turns."""
+        self._auto_compact_enabled = enabled
+        self._config = replace(self._config, auto_compact_enabled=enabled)
+
+    @property
+    def auto_compaction_enabled(self) -> bool:
+        """Return whether automatic compaction is enabled."""
+        return self._auto_compact_enabled
+
     @property
     def context_window_tokens(self) -> int:
         """Return the active model's discovered or configured context window."""
@@ -995,6 +1009,11 @@ class CodingSession:
     def is_running(self) -> bool:
         """Return whether this session currently has an active agent run."""
         return self._harness.is_running
+
+    @property
+    def queued_message_count(self) -> int:
+        """Return the number of queued steering and follow-up messages."""
+        return self._harness.pending_message_count
 
     @property
     def queued_messages(self) -> QueuedMessages:
@@ -1699,6 +1718,18 @@ class CodingSession:
             replacement._sync_image_support()
         await self._adopt_replacement(replacement, reason="resume")
         return f"Resumed session: {record.id}"
+
+    def set_session_name(self, name: str) -> None:
+        """Set the indexed session's human-friendly name."""
+        normalized = name.strip()
+        if not normalized:
+            raise ValueError("Session name cannot be empty")
+        manager = self._config.session_manager
+        session_id = self._config.session_id
+        if manager is None or session_id is None:
+            raise ValueError("Session manager is not available")
+        if manager.touch_session(session_id, title=normalized) is None:
+            raise ValueError(f"Unknown session: {session_id}")
 
     async def new_session(self) -> str:
         """Replace this session's active state with a pending unindexed session."""

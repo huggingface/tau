@@ -8,8 +8,8 @@ import pytest
 from typer.testing import CliRunner
 
 from pi_event_helpers import assistant_done, assistant_start, text_delta
-from tau_agent import AssistantMessage
-from tau_agent.session import JsonlSessionStorage
+from tau_agent import AssistantMessage, UserMessage
+from tau_agent.session import JsonlSessionStorage, MessageEntry
 from tau_ai import FakeProvider
 from tau_coding import CodingSession, CodingSessionConfig, ModelChoice
 from tau_coding import cli as cli_module
@@ -57,6 +57,107 @@ async def test_rpc_streams_correlated_response_and_events(tmp_path: Path) -> Non
 
 
 @pytest.mark.anyio
+async def test_rpc_state_matches_pi_frontend_contract(tmp_path: Path) -> None:
+    session = await _session(tmp_path, FakeProvider([]))
+    stdin = StringIO(
+        '{"id":"state","type":"get_state"}\n'
+        '{"id":"models","type":"get_available_models"}\n'
+        '{"id":"cycle","type":"cycle_model"}\n'
+    )
+    stdout = StringIO()
+
+    await RpcServer(session, stdin=stdin, stdout=stdout).run()
+
+    state, models, cycle = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert set(state["data"]) == {
+        "model",
+        "thinkingLevel",
+        "isStreaming",
+        "isCompacting",
+        "steeringMode",
+        "followUpMode",
+        "sessionFile",
+        "sessionId",
+        "sessionName",
+        "autoCompactionEnabled",
+        "messageCount",
+        "pendingMessageCount",
+    }
+    assert state["data"]["model"]["id"] == "fake"
+    assert models["data"]["models"][0]["provider"] == "openai"
+    assert cycle["data"] is None
+
+
+@pytest.mark.anyio
+async def test_rpc_session_inspection_matches_pi_shapes(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    user = MessageEntry(message=UserMessage(content="question"))
+    assistant = MessageEntry(
+        parent_id=user.id,
+        message=AssistantMessage(content="answer", model="fake"),
+    )
+    await storage.append(user)
+    await storage.append(assistant)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+    stdin = StringIO(
+        '{"id":"entries","type":"get_entries"}\n'
+        '{"id":"tree","type":"get_tree"}\n'
+        '{"id":"last","type":"get_last_assistant_text"}\n'
+        '{"id":"forks","type":"get_fork_messages"}\n'
+    )
+    stdout = StringIO()
+
+    await RpcServer(session, stdin=stdin, stdout=stdout).run()
+
+    entries, tree, last, forks = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert entries["data"]["entries"][1]["parentId"] == user.id
+    assert tree["data"]["tree"][0]["children"][0]["entry"]["id"] == assistant.id
+    assert last["data"] == {"text": "answer"}
+    assert forks["data"] == {"messages": [{"entryId": user.id, "text": "question"}]}
+
+
+@pytest.mark.anyio
+async def test_rpc_auto_compaction_control_updates_pi_state(tmp_path: Path) -> None:
+    session = await _session(tmp_path, FakeProvider([]))
+    stdin = StringIO(
+        '{"id":"set","type":"set_auto_compaction","enabled":false}\n'
+        '{"id":"state","type":"get_state"}\n'
+    )
+    stdout = StringIO()
+
+    await RpcServer(session, stdin=stdin, stdout=stdout).run()
+
+    changed, state = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert changed["success"] is True
+    assert state["data"]["autoCompactionEnabled"] is False
+
+
+@pytest.mark.anyio
+async def test_rpc_direct_bash_matches_pi_result_shape(tmp_path: Path) -> None:
+    session = await _session(tmp_path, FakeProvider([]))
+    stdin = StringIO('{"id":"bash","type":"bash","command":"printf ok"}\n')
+    stdout = StringIO()
+
+    await RpcServer(session, stdin=stdin, stdout=stdout).run()
+
+    response = json.loads(stdout.getvalue())
+    assert response["data"] == {
+        "output": "ok",
+        "exitCode": 0,
+        "cancelled": False,
+        "truncated": False,
+    }
+
+
+@pytest.mark.anyio
 async def test_rpc_reports_bad_records_and_continues(tmp_path: Path) -> None:
     session = await _session(tmp_path, FakeProvider([]))
     stdin = StringIO('not-json\n{"id":2,"type":"get_state"}\n')
@@ -69,7 +170,8 @@ async def test_rpc_reports_bad_records_and_continues(tmp_path: Path) -> None:
     assert records[0]["command"] == "parse"
     assert records[1]["id"] == 2
     assert records[1]["success"] is True
-    assert records[1]["data"]["model"] == "fake"
+    assert records[1]["data"]["model"]["id"] == "fake"
+    assert records[1]["data"]["model"]["provider"] == "openai"
 
 
 @pytest.mark.anyio
