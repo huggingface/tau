@@ -168,3 +168,40 @@ def test_skills_are_included_only_when_read_tool_is_available(tmp_path: Path) ->
 
     assert "<available_skills>" not in without_read
     assert "<available_skills>" in with_read
+
+
+def test_model_identity_injected_when_all_fields_present(tmp_path: Path) -> None:
+    prompt = build_system_prompt(
+        BuildSystemPromptOptions(
+            cwd=tmp_path,
+            tools=create_coding_tools(cwd=tmp_path),
+            provider_name="openai",
+            model="gpt-5.5",
+            reasoning="high",
+            current_date=date(2026, 6, 17),
+        )
+    )
+    assert "You are running as: provider: openai, model: gpt-5.5, reasoning: high." in prompt
+
+
+def test_model_identity_injected_with_partial_fields(tmp_path: Path) -> None:
+    prompt = build_system_prompt(
+        BuildSystemPromptOptions(
+            cwd=tmp_path,
+            tools=create_coding_tools(cwd=tmp_path),
+            model="gpt-4o",
+            current_date=date(2026, 6, 17),
+        )
+    )
+    assert "You are running as: model: gpt-4o." in prompt
+
+
+def test_model_identity_not_injected_when_all_none(tmp_path: Path) -> None:
+    prompt = build_system_prompt(
+        BuildSystemPromptOptions(
+            cwd=tmp_path,
+            tools=create_coding_tools(cwd=tmp_path),
+            current_date=date(2026, 6, 17),
+        )
+    )
+    assert "You are running as:" not in prompt

@@ -135,6 +135,7 @@ from tau_coding.thinking import (
     ThinkingLevel,
     next_thinking_level,
     normalize_thinking_level,
+    reasoning_effort_for_level,
 )
 from tau_coding.tools import ImageSupportState, create_bash_tool, create_coding_tools
 
@@ -479,6 +480,9 @@ class CodingSession:
                     ),
                     context_files=resources.context_files,
                     extra_guidelines=extension_runtime.prompt_guidelines,
+                    provider_name=config.provider_name,
+                    model=config.model,
+                    reasoning=reasoning_effort_for_level(config.thinking_level),
                 )
             )
         )
@@ -1549,6 +1553,9 @@ class CodingSession:
                     ),
                     context_files=resources.context_files,
                     extra_guidelines=after_guidelines,
+                    provider_name=self._provider_name,
+                    model=self.model,
+                    reasoning=reasoning_effort_for_level(self._thinking_level),
                 )
             )
 
