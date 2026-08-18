@@ -15,10 +15,12 @@ Their definitions and refresh snapshots must never be copied into `catalog.toml`
 dynamic layer restores the original complete durable provider object.
 
 Dynamic providers support required, optional, or absent authentication without
-fake keys. Secrets are resolved immediately before refresh/runtime creation and
-are excluded from representations and diagnostics. Phase 1 provides these
-contracts and registry mechanics only; startup/session selection and `/local` are
-not implemented yet.
+fake keys. Secrets are resolved immediately before refresh/runtime creation;
+resolved keys, headers, and extension-provided auth provenance are excluded from
+representations and diagnostics. Nested compatibility metadata is deeply frozen
+inside registered definitions and copied back to ordinary JSON containers only at
+the transport boundary. Phase 1 provides these contracts and registry mechanics
+only; startup/session selection and `/local` are not implemented yet.
 
 ## Changing the built-in catalog
 

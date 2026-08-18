@@ -1,8 +1,10 @@
 """Tests for dynamic extension provider contracts and registry lifecycle."""
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -211,6 +213,35 @@ async def test_no_auth_never_reads_secret_sources() -> None:
     assert resolved.omit_authorization_header is True
 
 
+async def test_adversarial_custom_auth_is_absent_from_reprs_and_diagnostics() -> None:
+    secret = "auth-source-super-secret"
+    resolved = ResolvedProviderAuth(
+        api_key=secret,
+        headers={f"X-{secret}": secret},
+        source=secret,
+        omit_authorization_header=False,
+    )
+
+    async def refresh(context):
+        assert context.auth is resolved
+        raise RuntimeError(secret)
+
+    runtime = ExtensionRuntime()
+    registry = runtime.provider_registry
+    registry.register(
+        "extension",
+        provider(refresh_models=refresh, auth=FixedAuth(resolved)),
+    )
+
+    result = await registry.refresh("local")
+    projected = runtime.diagnostics
+
+    assert result.status == "failed"
+    assert secret not in repr(resolved)
+    assert secret not in repr(registry.diagnostics)
+    assert secret not in repr(projected)
+
+
 async def test_secret_values_are_absent_from_runtime_reprs() -> None:
     credentials = MemoryCredentials({"local:key": "stored-super-secret"})
     resolved = await resolve_provider_auth(
@@ -242,6 +273,69 @@ async def test_secret_values_are_absent_from_runtime_reprs() -> None:
     assert "model-super-secret" not in combined
     assert "transport-super-secret" not in combined
     await runtime.aclose()
+
+
+@pytest.mark.parametrize("async_factory", [False, True])
+@pytest.mark.parametrize("close_raises", [False, True])
+async def test_invalid_custom_runtime_is_closed_once_without_masking_error(
+    async_factory: bool,
+    close_raises: bool,
+) -> None:
+    class InvalidRuntime:
+        stream_response = None
+
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def aclose(self) -> None:
+            self.close_calls += 1
+            if close_raises:
+                raise RuntimeError("close-super-secret")
+
+    invalid = InvalidRuntime()
+
+    if async_factory:
+
+        async def factory(context, model):
+            return invalid
+
+    else:
+
+        def factory(context, model):
+            return invalid
+
+    dynamic = DynamicProvider(
+        id="factory",
+        display_name="Factory",
+        models=(ProviderModel("custom"),),
+        default_model="custom",
+        runtime_factory=factory,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ProviderConfigError, match="unsupported provider") as exc_info:
+        await create_dynamic_model_provider(dynamic, model="custom")
+
+    assert "close-super-secret" not in str(exc_info.value)
+    assert invalid.close_calls == 1
+
+
+async def test_custom_runtime_requires_callable_close_member() -> None:
+    class InvalidRuntime:
+        aclose = None
+
+        def stream_response(self, **kwargs):
+            raise AssertionError("must not be called")
+
+    dynamic = DynamicProvider(
+        id="factory",
+        display_name="Factory",
+        models=(ProviderModel("custom"),),
+        default_model="custom",
+        runtime_factory=lambda context, model: InvalidRuntime(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ProviderConfigError, match="unsupported provider"):
+        await create_dynamic_model_provider(dynamic, model="custom")
 
 
 async def test_custom_runtime_factory_receives_resolved_auth_and_model() -> None:
@@ -371,6 +465,66 @@ async def test_provider_inputs_are_defensively_copied() -> None:
     assert model.compat["nested"] == {"value": "original"}
 
 
+async def test_nested_compat_is_frozen_at_all_registry_exposure_boundaries() -> None:
+    cached: list[ProviderModel] = []
+
+    async def refresh(context):
+        cached.extend(context.cached_models)
+        return ProviderModelSnapshot(
+            (
+                ProviderModel(
+                    "fresh",
+                    compat={"nested": {"items": [{"value": "fresh"}]}},
+                ),
+            ),
+            "fresh",
+        )
+
+    initial = provider(
+        models=(
+            ProviderModel(
+                "model",
+                compat={"nested": {"items": [{"value": "initial"}]}},
+            ),
+        ),
+        refresh_models=refresh,
+    )
+    registry = DynamicProviderRegistry(generation_id="generation-1")
+    registry.register("source", initial)
+    effective = registry.effective("local")
+    layer = registry.layers("local")[0]
+
+    assert effective is not None
+    assert isinstance(effective.definition, DynamicProvider)
+    _assert_nested_compat_is_frozen(effective.definition.models[0], "initial")
+    _assert_nested_compat_is_frozen(layer.provider.models[0], "initial")
+
+    result = await registry.refresh("local")
+
+    assert result.status == "published"
+    assert result.provider is not None
+    _assert_nested_compat_is_frozen(cached[0], "initial")
+    _assert_nested_compat_is_frozen(result.provider.models[0], "fresh")
+    refreshed = registry.effective("local")
+    assert refreshed is not None
+    assert isinstance(refreshed.definition, DynamicProvider)
+    _assert_nested_compat_is_frozen(refreshed.definition.models[0], "fresh")
+
+
+def _assert_nested_compat_is_frozen(model: ProviderModel, expected: str) -> None:
+    nested = cast(Mapping[str, object], model.compat["nested"])
+    items = cast(tuple[object, ...], nested["items"])
+    item = cast(Mapping[str, str], items[0])
+
+    assert item["value"] == expected
+    with pytest.raises(TypeError):
+        cast(dict[str, object], nested)["mutated"] = True
+    with pytest.raises(AttributeError):
+        cast(list[object], items).append({"value": "mutated"})
+    with pytest.raises(TypeError):
+        cast(dict[str, str], item)["value"] = "mutated"
+
+
 async def test_successful_refresh_publishes_one_complete_snapshot() -> None:
     observed_cached: list[tuple[ProviderModel, ...]] = []
 
@@ -393,6 +547,71 @@ async def test_successful_refresh_publishes_one_complete_snapshot() -> None:
     assert isinstance(effective.definition, DynamicProvider)  # type: ignore[union-attr]
     assert [model.id for model in effective.definition.models] == ["new-a", "new-b"]  # type: ignore[union-attr]
     assert effective.definition.default_model == "new-b"  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize("short_first", [False, True])
+async def test_coalesced_refresh_applies_each_waiters_timeout(short_first: bool) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def refresh(context):
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await release.wait()
+        return ProviderModelSnapshot((ProviderModel("fresh"),), "fresh")
+
+    registry = DynamicProviderRegistry(generation_id="generation-1")
+    registry.register("source", provider(refresh_models=refresh))
+    first_timeout = 0.02 if short_first else 1.0
+    second_timeout = 1.0 if short_first else 0.02
+    first = asyncio.create_task(registry.refresh("local", timeout_seconds=first_timeout))
+    await entered.wait()
+    second = asyncio.create_task(registry.refresh("local", timeout_seconds=second_timeout))
+    short = first if short_first else second
+    long = second if short_first else first
+
+    short_result = await asyncio.wait_for(short, timeout=0.5)
+
+    assert short_result.status == "timed_out"
+    assert long.done() is False
+    assert calls == 1
+    release.set()
+    long_result = await asyncio.wait_for(long, timeout=0.5)
+    assert long_result.status == "published"
+
+
+@pytest.mark.parametrize("network_first", [False, True])
+async def test_incompatible_network_policies_never_coalesce(network_first: bool) -> None:
+    entered = {False: asyncio.Event(), True: asyncio.Event()}
+    release = {False: asyncio.Event(), True: asyncio.Event()}
+    observed: list[bool] = []
+
+    async def refresh(context):
+        policy = context.allow_network
+        observed.append(policy)
+        entered[policy].set()
+        await release[policy].wait()
+        model = "network" if policy else "cached"
+        return ProviderModelSnapshot((ProviderModel(model),), model)
+
+    registry = DynamicProviderRegistry(generation_id="generation-1")
+    registry.register("source", provider(refresh_models=refresh))
+    first = asyncio.create_task(
+        registry.refresh("local", allow_network=network_first, timeout_seconds=1.0)
+    )
+    await entered[network_first].wait()
+    second = asyncio.create_task(
+        registry.refresh("local", allow_network=not network_first, timeout_seconds=1.0)
+    )
+    await entered[not network_first].wait()
+
+    assert observed == [network_first, not network_first]
+    release[network_first].set()
+    release[not network_first].set()
+    results = await asyncio.gather(first, second)
+    assert {result.status for result in results} <= {"published", "stale"}
 
 
 async def test_concurrent_refresh_callers_share_one_task() -> None:
@@ -611,6 +830,141 @@ async def test_retire_cancels_tasks_removes_layers_and_rejects_registration() ->
         registry.register("source", provider())
 
 
+async def test_close_waits_for_discovery_callback_cleanup_after_retire() -> None:
+    entered = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+
+    async def refresh(context):
+        entered.set()
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cleanup_started.set()
+            await release_cleanup.wait()
+
+    runtime = ExtensionRuntime()
+    registry = runtime.provider_registry
+    registry.register("source", provider(refresh_models=refresh))
+    pending = asyncio.create_task(registry.refresh("local"))
+    await entered.wait()
+
+    runtime.retire()
+    await cleanup_started.wait()
+    close = asyncio.create_task(runtime.aclose())
+    await asyncio.sleep(0)
+
+    assert close.done() is False
+    release_cleanup.set()
+    await asyncio.wait_for(close, timeout=0.5)
+    assert (await pending).status == "cancelled"
+    assert not _live_discovery_tasks()
+
+
+async def test_close_boundedly_recancels_a_callback_that_suppresses_cancellation() -> None:
+    entered = asyncio.Event()
+    suppressed = asyncio.Event()
+
+    async def refresh(context):
+        entered.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            suppressed.set()
+            await asyncio.sleep(10)
+        raise AssertionError("unreachable")
+
+    runtime = ExtensionRuntime()
+    registry = runtime.provider_registry
+    registry.register("source", provider(refresh_models=refresh))
+    pending = asyncio.create_task(registry.refresh("local"))
+    await entered.wait()
+
+    await asyncio.wait_for(runtime.aclose(), timeout=0.5)
+
+    assert suppressed.is_set()
+    assert (await pending).status == "cancelled"
+    assert not _live_discovery_tasks()
+
+
+async def test_replaced_cancellation_hostile_discovery_cannot_publish_when_it_finishes() -> None:
+    entered = asyncio.Event()
+    ignored_cancellation = asyncio.Event()
+    release = asyncio.Event()
+
+    async def refresh(context):
+        while not release.is_set():
+            entered.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                ignored_cancellation.set()
+        return ProviderModelSnapshot((ProviderModel("stale"),), "stale")
+
+    registry = DynamicProviderRegistry(generation_id="generation-1")
+    registry.register("source", provider(refresh_models=refresh))
+    pending = asyncio.create_task(registry.refresh("local"))
+    await entered.wait()
+    replacement = provider(models=(ProviderModel("replacement"),), default_model="replacement")
+
+    registry.register("source", replacement)
+    assert (await asyncio.wait_for(pending, timeout=0.5)).status == "cancelled"
+    assert ignored_cancellation.is_set()
+    assert len(registry._discovery_tasks) == 1  # type: ignore[attr-defined]
+
+    release.set()
+    await asyncio.wait_for(next(iter(registry._discovery_tasks)), timeout=0.5)  # type: ignore[attr-defined]
+    await asyncio.sleep(0)
+    assert registry.effective("local").definition is replacement  # type: ignore[union-attr]
+    assert not registry._discovery_tasks  # type: ignore[attr-defined]
+
+
+async def test_cancellation_hostile_discovery_stays_tracked_until_actual_completion() -> None:
+    entered = asyncio.Event()
+    suppressed = asyncio.Event()
+    release = asyncio.Event()
+    cancellation_count = 0
+
+    async def refresh(context):
+        nonlocal cancellation_count
+        entered.set()
+        while not release.is_set():
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancellation_count += 1
+                suppressed.set()
+        return ProviderModelSnapshot((ProviderModel("stale"),), "stale")
+
+    runtime = ExtensionRuntime()
+    registry = runtime.provider_registry
+    registry.register("source", provider(refresh_models=refresh))
+    pending = asyncio.create_task(registry.refresh("local"))
+    await entered.wait()
+
+    await asyncio.wait_for(runtime.aclose(), timeout=1.0)
+
+    assert suppressed.is_set()
+    assert cancellation_count >= 2
+    assert (await pending).status == "cancelled"
+    assert len(registry._discovery_tasks) == 1  # type: ignore[attr-defined]
+    assert len(_live_discovery_tasks()) == 1
+
+    release.set()
+    await asyncio.wait_for(next(iter(registry._discovery_tasks)), timeout=0.5)  # type: ignore[attr-defined]
+    await asyncio.sleep(0)
+    assert not registry._discovery_tasks  # type: ignore[attr-defined]
+    assert registry.effective("local") is None
+
+
+def _live_discovery_tasks() -> list[asyncio.Task[object]]:
+    return [
+        task
+        for task in asyncio.all_tasks()
+        if not task.done() and task.get_name().startswith("tau-provider-discovery:")
+    ]
+
+
 async def test_runtime_close_drains_owned_refresh_and_is_idempotent() -> None:
     entered = asyncio.Event()
 
@@ -698,6 +1052,57 @@ def setup(tau):
     assert old_registry.effective("dynamic") is None
     assert runtime.provider_registry.generation_id != old_generation
     assert runtime.provider_registry.effective("dynamic") is None
+
+
+async def test_frozen_compat_is_copied_to_mutable_json_at_runtime_boundary() -> None:
+    model = ProviderModel(
+        "model",
+        compat={"nested": {"items": [{"value": "original"}]}},
+    )
+    dynamic = provider(models=(model,))
+
+    runtime = await create_dynamic_model_provider(
+        dynamic,
+        model="model",
+        credential_store=MemoryCredentials(),  # type: ignore[arg-type]
+        environment={},
+    )
+    runtime_compat = runtime._config.compat  # type: ignore[attr-defined]
+    nested = cast(dict[str, object], runtime_compat["nested"])
+    items = cast(list[dict[str, str]], nested["items"])
+    items[0]["value"] = "runtime-only"
+
+    assert items[0]["value"] == "runtime-only"
+    _assert_nested_compat_is_frozen(model, "original")
+    await runtime.aclose()
+
+
+async def test_dynamic_provider_operations_never_call_durable_write_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def reject_write(*args, **kwargs):
+        raise AssertionError(f"durable provider write attempted: {args!r} {kwargs!r}")
+
+    monkeypatch.setattr("tau_coding.provider_config._write_provider_settings", reject_write)
+    monkeypatch.setattr("tau_coding.provider_config.save_user_catalog_entries", reject_write)
+
+    async def refresh(context):
+        return ProviderModelSnapshot((ProviderModel("fresh"),), "fresh")
+
+    registry = DynamicProviderRegistry(generation_id="generation-1")
+    registry.register("extension", provider(refresh_models=refresh))
+    result = await registry.refresh("local")
+    assert result.status == "published"
+    assert result.provider is not None
+
+    runtime = await create_dynamic_model_provider(
+        result.provider,
+        model="fresh",
+        credential_store=MemoryCredentials(),  # type: ignore[arg-type]
+        environment={},
+    )
+    await runtime.aclose()
+    registry.unregister_source("extension")
 
 
 async def test_dynamic_transport_merges_headers_and_supports_custom_auth() -> None:

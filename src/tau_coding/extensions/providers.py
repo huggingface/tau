@@ -10,7 +10,7 @@ from types import MappingProxyType
 from typing import Protocol
 
 from tau_agent.provider import CancellationToken, ModelProvider
-from tau_agent.types import JSONValue
+from tau_agent.types import JSONPrimitive, JSONValue
 from tau_ai.env import (
     DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES,
     DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS,
@@ -32,6 +32,10 @@ _PROVIDER_APIS = frozenset(
 _THINKING_LEVELS = frozenset({"off", "minimal", "low", "medium", "high", "xhigh"})
 
 type ModelCost = Mapping[str, float]
+type ImmutableJSONValue = (
+    JSONPrimitive | tuple[ImmutableJSONValue, ...] | Mapping[str, ImmutableJSONValue]
+)
+type ModelCompat = Mapping[str, JSONValue | ImmutableJSONValue]
 
 
 class DynamicProviderError(ValueError):
@@ -66,7 +70,7 @@ class ResolvedProviderAuth:
 
     api_key: str | None = field(default=None, repr=False)
     headers: Mapping[str, str] = field(default_factory=dict, repr=False)
-    source: str = "none"
+    source: str = field(default="none", repr=False)
     omit_authorization_header: bool = True
 
     def __post_init__(self) -> None:
@@ -181,7 +185,7 @@ class ProviderModel:
     max_tokens: int | None = None
     cost: ModelCost | None = None
     headers: Mapping[str, str] = field(default_factory=dict, repr=False)
-    compat: Mapping[str, JSONValue] = field(default_factory=dict)
+    compat: ModelCompat = field(default_factory=dict)
     thinking_levels: tuple[ThinkingLevel, ...] | None = None
 
     def __post_init__(self) -> None:
@@ -456,8 +460,13 @@ def _cost_mapping(value: Mapping[str, float]) -> Mapping[str, float]:
     return MappingProxyType(copied)
 
 
-def _json_mapping(value: Mapping[str, JSONValue], label: str) -> Mapping[str, JSONValue]:
-    copied: dict[str, JSONValue] = {}
+def json_compatible_mapping(value: ModelCompat) -> dict[str, JSONValue]:
+    """Return a mutable JSON-compatible copy of deeply frozen metadata."""
+    return {key: _copy_mutable_json(item) for key, item in value.items()}
+
+
+def _json_mapping(value: ModelCompat, label: str) -> ModelCompat:
+    copied: dict[str, ImmutableJSONValue] = {}
     for key, item in value.items():
         if not isinstance(key, str) or not key.strip():
             raise DynamicProviderError(f"{label} keys must be non-empty strings")
@@ -465,20 +474,28 @@ def _json_mapping(value: Mapping[str, JSONValue], label: str) -> Mapping[str, JS
     return MappingProxyType(copied)
 
 
-def _copy_json(value: JSONValue, label: str) -> JSONValue:
+def _copy_json(value: JSONValue | ImmutableJSONValue, label: str) -> ImmutableJSONValue:
     if value is None or isinstance(value, str | bool | int):
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
             raise DynamicProviderError(f"{label} must contain finite JSON numbers")
         return value
-    if isinstance(value, list):
-        return [_copy_json(item, label) for item in value]
-    if isinstance(value, dict):
-        copied: dict[str, JSONValue] = {}
+    if isinstance(value, list | tuple):
+        return tuple(_copy_json(item, label) for item in value)
+    if isinstance(value, Mapping):
+        copied: dict[str, ImmutableJSONValue] = {}
         for key, item in value.items():
             if not isinstance(key, str):
                 raise DynamicProviderError(f"{label} object keys must be strings")
             copied[key] = _copy_json(item, label)
-        return copied
+        return MappingProxyType(copied)
     raise DynamicProviderError(f"{label} must contain only JSON values")
+
+
+def _copy_mutable_json(value: JSONValue | ImmutableJSONValue) -> JSONValue:
+    if value is None or isinstance(value, str | bool | int | float):
+        return value
+    if isinstance(value, list | tuple):
+        return [_copy_mutable_json(item) for item in value]
+    return {key: _copy_mutable_json(item) for key, item in value.items()}

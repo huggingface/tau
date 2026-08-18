@@ -153,14 +153,19 @@ Authentication is explicit: `RequiredApiKey`, `OptionalApiKey`, or `NoAuth`.
 Stored credentials win over the configured environment variable. Optional or
 absent keys omit `Authorization`; Tau never synthesizes a local key. Static
 transport/model headers cannot provide `Authorization`; custom schemes must be
-resolved by an auth strategy at runtime. Secret values stay out of provider
-representations, snapshots, and diagnostics.
+resolved by an auth strategy at runtime. Resolved keys, headers, and arbitrary
+auth provenance stay out of provider representations and diagnostics. Nested JSON
+compatibility metadata is deeply frozen while registered and copied to ordinary
+JSON containers only when a runtime transport is created.
 
 Discovery is snapshot-oriented. A `refresh_models` callback returns a complete
 `ProviderModelSnapshot`; the registry validates and publishes it atomically.
-Concurrent refresh callers share work. Timeout, cancellation, malformed output,
-source replacement, and generation retirement retain the current snapshot and
-cannot publish stale work.
+Concurrent callers share work only when their layer and `allow_network` policy
+match, and each caller keeps its own timeout. Opposite network policies never
+alias. Cancellation awaits cooperative callback cleanup; a callback that repeatedly
+suppresses cancellation is boundedly re-cancelled, remains owned until it actually
+finishes, and cannot publish after source replacement or generation retirement.
+Timeout, malformed output, and other failures retain the current snapshot.
 
 Dynamic definitions are runtime overlays—not durable configuration. Tau never
 copies them into `catalog.toml`, `providers.json`, sessions, or generic extension

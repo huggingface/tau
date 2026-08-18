@@ -40,10 +40,14 @@ retirement reveals the preceding complete dynamic layer or the exact durable
 `ProviderConfig` baseline.
 
 A `refresh_models` callback returns one complete `ProviderModelSnapshot`. Refreshes
-are coalesced per source/layer/generation, explicitly cancellable, timeout-bounded,
-and rejected after replacement or retirement. Failures retain the current snapshot
-and emit one bounded, secret-free diagnostic. Callbacks receive structured data,
-not Rich or Textual objects.
+are coalesced only when source/layer/generation and network policy match; every
+caller keeps its own timeout. Incompatible network policies run separately.
+Cancellation is generation-owned: cooperative cleanup is awaited, while a callback
+that repeatedly suppresses cancellation remains tracked until it actually exits and
+can never publish after replacement or retirement. Failures retain the current
+snapshot and emit one bounded, secret-free diagnostic. Nested compatibility data is
+deeply immutable while registered. Callbacks receive structured data, not Rich or
+Textual objects.
 
 This Phase 1 API is provisional pending second-backend validation. Registration and
 registry mechanics exist now; startup selection, built-in providers, `/local`, and

@@ -232,8 +232,6 @@ class ExtensionRuntime:
 
     async def aclose(self) -> None:
         """Retire this generation and drain its cooperative provider refresh work."""
-        if not self._generation.active:
-            return
         try:
             await self._provider_registry.aclose()
         finally:

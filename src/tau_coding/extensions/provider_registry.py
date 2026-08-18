@@ -25,6 +25,7 @@ from tau_coding.extensions.providers import (
 from tau_coding.provider_config import ProviderConfig
 
 DEFAULT_PROVIDER_REFRESH_TIMEOUT_SECONDS = 10.0
+PROVIDER_DISCOVERY_CANCELLATION_GRACE_SECONDS = 0.1
 MAX_PROVIDER_REFRESH_DIAGNOSTICS = 100
 
 
@@ -72,7 +73,7 @@ class ProviderRefreshDiagnostic:
 
 @dataclass(frozen=True, slots=True)
 class ProviderRefreshResult:
-    """Outcome from one shared refresh operation."""
+    """Outcome returned to one refresh caller."""
 
     status: Literal["published", "unavailable", "cancelled", "failed", "timed_out", "stale"]
     provider: DynamicProvider | None = field(repr=False)
@@ -113,8 +114,13 @@ class DynamicProviderRegistry:
         self._layers: dict[str, list[DynamicProviderLayer]] = {}
         self._order = count(1)
         self._layer_sequence = count(1)
-        self._refresh_tasks: dict[ProviderLayerToken, asyncio.Task[ProviderRefreshResult]] = {}
-        self._refresh_signals: dict[ProviderLayerToken, SimpleCancellationToken] = {}
+        self._refresh_tasks: dict[
+            tuple[ProviderLayerToken, bool], asyncio.Task[ProviderRefreshResult]
+        ] = {}
+        self._refresh_signals: dict[tuple[ProviderLayerToken, bool], SimpleCancellationToken] = {}
+        self._refresh_waiters: dict[tuple[ProviderLayerToken, bool], int] = {}
+        self._refresh_revisions: dict[ProviderLayerToken, int] = {}
+        self._discovery_tasks: set[asyncio.Task[ProviderModelSnapshot]] = set()
         self._diagnostics: dict[ProviderLayerToken, ProviderRefreshDiagnostic] = {}
         self._retired = False
 
@@ -219,11 +225,15 @@ class DynamicProviderRegistry:
         allow_network: bool = True,
         timeout_seconds: float = DEFAULT_PROVIDER_REFRESH_TIMEOUT_SECONDS,
     ) -> ProviderRefreshResult:
-        """Refresh the effective dynamic layer, coalescing concurrent callers.
+        """Refresh the effective dynamic layer under caller-specific policy.
 
-        Caller cancellation does not cancel shared work; generation retirement,
-        source removal, replacement, or :meth:`cancel_refresh` owns cancellation.
+        Callers coalesce only when their layer token and network policy match,
+        while each keeps its own timeout. Caller cancellation does not cancel
+        shared work; generation retirement, source removal, replacement, or
+        :meth:`cancel_refresh` owns cancellation.
         """
+        if not isinstance(allow_network, bool):
+            raise ValueError("Provider refresh network policy must be a boolean")
         if (
             not isinstance(timeout_seconds, int | float)
             or isinstance(timeout_seconds, bool)
@@ -251,23 +261,42 @@ class DynamicProviderRegistry:
             )
 
         token = effective.layer_token
-        task = self._refresh_tasks.get(token)
+        key = (token, allow_network)
+        task = self._refresh_tasks.get(key)
         if task is None:
             signal = SimpleCancellationToken()
-            self._refresh_signals[token] = signal
+            self._refresh_signals[key] = signal
+            revision = self._refresh_revisions.get(token, 0) + 1
+            self._refresh_revisions[token] = revision
             task = asyncio.create_task(
                 self._run_refresh(
                     token,
                     effective.definition,
                     signal,
                     allow_network=allow_network,
-                    timeout_seconds=timeout_seconds,
+                    revision=revision,
                 ),
                 name=f"tau-provider-refresh:{token.source_id}:{provider_id}",
             )
-            self._refresh_tasks[token] = task
-            task.add_done_callback(partial(self._finish_refresh, token))
-        return await asyncio.shield(task)
+            self._refresh_tasks[key] = task
+            task.add_done_callback(partial(self._finish_refresh, key))
+        self._refresh_waiters[key] = self._refresh_waiters.get(key, 0) + 1
+        timed_out = False
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                return await asyncio.shield(task)
+        except TimeoutError:
+            timed_out = True
+            self._record_diagnostic(token, "timed_out", "provider model refresh timed out")
+            return ProviderRefreshResult("timed_out", self._current_provider(token), token)
+        finally:
+            remaining = self._refresh_waiters.get(key, 1) - 1
+            if remaining > 0:
+                self._refresh_waiters[key] = remaining
+            else:
+                self._refresh_waiters.pop(key, None)
+                if timed_out:
+                    self._cancel_operation(key)
 
     def cancel_refresh(self, provider_id: str, source_id: str | None = None) -> bool:
         """Cancel refresh work for matching active provider layers."""
@@ -282,18 +311,24 @@ class DynamicProviderRegistry:
         if self._retired:
             return
         self._retired = True
-        for token in tuple(self._refresh_tasks):
-            self._cancel_token(token)
-        self._refresh_tasks.clear()
-        self._refresh_signals.clear()
         self._layers.clear()
+        for key in tuple(self._refresh_tasks):
+            self._cancel_operation(key)
+        for task in tuple(self._discovery_tasks):
+            task.cancel()
 
     async def aclose(self) -> None:
-        """Retire and await cancellation of all owned refresh tasks."""
-        tasks = tuple(self._refresh_tasks.values())
+        """Retire and boundedly drain all generation-owned discovery work."""
         self.retire()
+        tasks = tuple(self._refresh_tasks.values())
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        discovery_tasks = tuple(self._discovery_tasks)
+        if discovery_tasks:
+            await asyncio.gather(
+                *(self._cancel_and_drain_discovery(task) for task in discovery_tasks),
+                return_exceptions=True,
+            )
 
     async def _run_refresh(
         self,
@@ -302,7 +337,7 @@ class DynamicProviderRegistry:
         signal: SimpleCancellationToken,
         *,
         allow_network: bool,
-        timeout_seconds: float,
+        revision: int,
     ) -> ProviderRefreshResult:
         callback_task: asyncio.Task[ProviderModelSnapshot] | None = None
         try:
@@ -314,26 +349,16 @@ class DynamicProviderRegistry:
                 ),
                 name=f"tau-provider-discovery:{token.source_id}:{token.provider_id}",
             )
-            done, _ = await asyncio.wait((callback_task,), timeout=timeout_seconds)
-            if not done:
-                signal.cancel()
-                callback_task.cancel()
-                callback_task.add_done_callback(_consume_task_result)
-                self._record_diagnostic(
-                    token,
-                    "timed_out",
-                    "provider model refresh timed out",
-                )
-                return ProviderRefreshResult("timed_out", self._current_provider(token), token)
-            snapshot = callback_task.result()
+            self._discovery_tasks.add(callback_task)
+            callback_task.add_done_callback(self._finish_discovery)
+            snapshot = await asyncio.shield(callback_task)
             if not isinstance(snapshot, ProviderModelSnapshot):
                 raise TypeError("refresh must return ProviderModelSnapshot")
             candidate = provider.with_snapshot(snapshot)
         except asyncio.CancelledError:
             signal.cancel()
-            if callback_task is not None and not callback_task.done():
-                callback_task.cancel()
-                callback_task.add_done_callback(_consume_task_result)
+            if callback_task is not None:
+                await self._cancel_and_drain_discovery(callback_task)
             self._record_diagnostic(token, "cancelled", "provider model refresh was cancelled")
             return ProviderRefreshResult("cancelled", self._current_provider(token), token)
         except Exception:
@@ -342,7 +367,11 @@ class DynamicProviderRegistry:
             self._record_diagnostic(token, "failed", "provider model refresh failed")
             return ProviderRefreshResult("failed", self._current_provider(token), token)
 
-        if signal.is_cancelled() or not self._token_is_current(token):
+        if (
+            signal.is_cancelled()
+            or not self._token_is_current(token)
+            or self._refresh_revisions.get(token) != revision
+        ):
             return ProviderRefreshResult("stale", self._current_provider(token), token)
         layers = self._layers[token.provider_id]
         self._layers[token.provider_id] = [
@@ -391,8 +420,16 @@ class DynamicProviderRegistry:
         return None
 
     def _cancel_token(self, token: ProviderLayerToken) -> bool:
-        signal = self._refresh_signals.pop(token, None)
-        task = self._refresh_tasks.pop(token, None)
+        cancelled = False
+        keys = {key for key in (*self._refresh_tasks, *self._refresh_signals) if key[0] == token}
+        for key in keys:
+            cancelled = self._cancel_operation(key) or cancelled
+        self._refresh_revisions.pop(token, None)
+        return cancelled
+
+    def _cancel_operation(self, key: tuple[ProviderLayerToken, bool]) -> bool:
+        signal = self._refresh_signals.get(key)
+        task = self._refresh_tasks.get(key)
         if signal is not None:
             signal.cancel()
         if task is not None and not task.done():
@@ -402,12 +439,42 @@ class DynamicProviderRegistry:
 
     def _finish_refresh(
         self,
-        token: ProviderLayerToken,
+        key: tuple[ProviderLayerToken, bool],
         task: asyncio.Task[ProviderRefreshResult],
     ) -> None:
-        if self._refresh_tasks.get(token) is task:
-            self._refresh_tasks.pop(token, None)
-            self._refresh_signals.pop(token, None)
+        if self._refresh_tasks.get(key) is task:
+            self._refresh_tasks.pop(key, None)
+            self._refresh_signals.pop(key, None)
+
+    def _finish_discovery(self, task: asyncio.Task[ProviderModelSnapshot]) -> None:
+        self._discovery_tasks.discard(task)
+        _consume_task_result(task)
+
+    async def _cancel_and_drain_discovery(
+        self,
+        task: asyncio.Task[ProviderModelSnapshot],
+    ) -> None:
+        for _ in range(2):
+            if task.done():
+                return
+            task.cancel()
+            try:
+                async with asyncio.timeout(PROVIDER_DISCOVERY_CANCELLATION_GRACE_SECONDS):
+                    await asyncio.shield(task)
+            except TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                if task.done():
+                    return
+                # Repeated owner cancellation must not abandon the still-live
+                # discovery handle or prevent this outer task returning its
+                # categorical cancellation result.
+                continue
+            except Exception:
+                return
+        # A hostile callback can suppress cancellation indefinitely. Keep its
+        # handle in _discovery_tasks until the done callback observes actual
+        # completion; stale token/generation checks still prevent publication.
 
     def _record_diagnostic(
         self,

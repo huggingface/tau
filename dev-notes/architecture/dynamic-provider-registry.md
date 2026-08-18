@@ -59,8 +59,13 @@ snapshot, and exactly one runtime mechanism:
 
 Zero models is valid: it represents a dormant provider without inventing a fake
 model. Unknown model metadata remains `None`; empty tuples mean “known none.”
-Compatibility data is copied and JSON-validated. Runtime headers are copied but
-excluded from representations and have no persistence helper.
+Compatibility data is copied, JSON-validated, and deeply frozen: nested objects
+become read-only mappings and arrays become tuples. Registry views, refresh results,
+and callback `cached_models` can therefore share one validated model value without
+letting consumers mutate active state. Runtime construction converts compatibility
+data back to fresh ordinary JSON dictionaries/lists at the transport boundary.
+Runtime headers are copied but excluded from representations and have no persistence
+helper.
 
 Construction validates the whole candidate before registry mutation. An invalid
 same-source replacement or refresh therefore leaves the prior layer/snapshot
@@ -82,14 +87,14 @@ NoAuth
 
 Required auth fails with setup guidance. Missing optional auth and `NoAuth`
 produce `omit_authorization_header=True`; no fake `Bearer local` value is used.
-Resolved keys and auth headers are runtime-only fields excluded from `repr`.
-Transport/model headers are excluded too. Static transport/model headers cannot
-supply `Authorization`; bearer or custom authorization must come from the auth
-strategy at resolution time. This prevents credentials from becoming part of a
-registered definition while still allowing non-Bearer schemes through resolved
-auth headers. Refresh diagnostics never include an extension exception string
-because arbitrary errors may contain request data or a secret; diagnostics
-report only a bounded category and source token.
+Resolved keys, auth headers, and extension-provided auth provenance are runtime-only
+fields excluded from `repr`. Transport/model headers are excluded too. Static
+transport/model headers cannot supply `Authorization`; bearer or custom authorization
+must come from the auth strategy at resolution time. This prevents credentials from
+becoming part of a registered definition while still allowing non-Bearer schemes
+through resolved auth headers. Refresh diagnostics never include an extension
+exception string or resolved auth data because either may contain request data or a
+secret; diagnostics report only a bounded category and source token.
 
 ## Refresh lifecycle
 
@@ -103,18 +108,27 @@ A refresh callback receives:
 It returns one complete `ProviderModelSnapshot`. The coordinator:
 
 1. identifies the exact effective source/layer/generation token;
-2. shares one task among concurrent callers for that token;
-3. runs discovery under a named timeout;
+2. shares one task only among callers whose token and `allow_network` policy match;
+3. applies each caller's own timeout while shielding compatible shared work;
 4. validates the whole returned snapshot;
-5. rechecks source, layer, and generation synchronously;
+5. rechecks source, layer, generation, and operation revision synchronously;
 6. publishes only when all ownership still matches.
 
-Timeout, explicit cancellation, source replacement, unregister, reload, and
-runtime retirement signal and cancel owned work. Caller cancellation is shielded
-so one waiter cannot destroy work shared by another waiter. A callback that
-finishes after cancellation cannot publish because publication requires the old
-token still to be current. Failed work retains the current snapshot and records
-at most one diagnostic per layer token; the registry also applies a global bound.
+Opposite network policies use separate discovery tasks, so a no-network caller never
+consumes network-enabled discovery and a later network-enabled caller can still do
+network work. A short waiter can time out without ending work for a compatible longer
+waiter; when the final waiter times out, it cancels the shared operation.
+
+Timeout, explicit cancellation, source replacement, unregister, reload, and runtime
+retirement signal and cancel owned work. Caller cancellation is shielded so one
+waiter cannot destroy work shared by another waiter. The outer refresh awaits a
+cooperative discovery callback's cleanup. It reissues cancellation after a bounded
+grace period when a callback suppresses cancellation; a callback hostile to every
+cancellation may outlive close, but its task handle stays generation-owned until its
+done callback observes actual completion. It has no publication path after the outer
+operation ends, and source/layer/generation/revision guards remain in force. Failed
+work retains the current snapshot and records at most one diagnostic per layer token;
+the registry also applies a global bound.
 
 ## Runtime creation and transport routing
 
@@ -123,6 +137,11 @@ Transport headers, model headers, and resolved auth headers are merged only in
 memory. Missing optional auth passes an empty internal key plus
 `omit_authorization_header=True`, so the HTTP adapter sends no Authorization
 header.
+
+Custom runtime factories are accepted only when both `stream_response` and `aclose`
+are callable. A constructed candidate rejected by validation is closed exactly once
+when possible; close errors are contained so they cannot replace the categorical
+configuration error.
 
 The existing adapter historically inferred `/responses` for some OpenAI/Codex-
 shaped model IDs. That remains the compatibility default for durable providers.
@@ -141,18 +160,20 @@ If `setup()` raises, the runtime removes all provider layers from that extension
 alongside its tools, commands, guidelines, and renderers. Reload and retirement
 cancel registry work and remove layers before invalidating the outgoing API.
 Final `CodingSession.aclose()` also awaits the runtime registry's cooperative
-refresh cancellation before closing model providers; repeated close remains a
-no-op. Reload then creates a fresh generation and empty registry over the same
-immutable durable baseline. Provider refresh diagnostics are projected into
-normal runtime resource diagnostics without exposing secrets.
+refresh cancellation before closing model providers. Calling async close after an
+earlier synchronous retirement still drains tracked work; repeated close remains
+safe. Reload then creates a fresh generation and empty registry over the same
+immutable durable baseline. Provider refresh diagnostics are projected into normal
+runtime resource diagnostics without exposing secrets.
 
 ## How to verify
 
 Focused tests cover dormant/invalid contracts, auth precedence and omission,
 secret-safe representations, exact durable restoration, multi-source precedence,
-same-source replacement, setup cleanup, refresh coalescing, timeout,
-cancellation, malformed output, stale work, retirement, HTTP auth headers, and
-model-name routing:
+same-source replacement, setup cleanup, policy-safe refresh coalescing, per-waiter
+timeouts, cooperative and cancellation-hostile cleanup, malformed output, stale
+work, deep immutability, rejected runtime cleanup, auth redaction, no durable writes,
+retirement, HTTP auth headers, and model-name routing:
 
 ```bash
 uv run pytest tests/test_extension_providers.py tests/test_extensions.py \

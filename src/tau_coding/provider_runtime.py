@@ -29,6 +29,7 @@ from tau_coding.extensions.providers import (
     OpenAICompatibleTransport,
     ProviderModel,
     ProviderRuntimeContext,
+    json_compatible_mapping,
     resolve_provider_auth,
 )
 from tau_coding.oauth import (
@@ -87,10 +88,26 @@ async def create_dynamic_model_provider(
     if provider.runtime_factory is not None:
         candidate = provider.runtime_factory(context, selected_model)
         runtime = await candidate if isawaitable(candidate) else candidate
-        if not hasattr(runtime, "stream_response") or not hasattr(runtime, "aclose"):
-            raise ProviderConfigError(
+        try:
+            stream_response = getattr(runtime, "stream_response", None)
+        except BaseException:  # noqa: BLE001 - extension object validation boundary
+            stream_response = None
+        try:
+            close = getattr(runtime, "aclose", None)
+        except BaseException:  # noqa: BLE001 - extension object validation boundary
+            close = None
+        if not callable(stream_response) or not callable(close):
+            error = ProviderConfigError(
                 f"Runtime factory for {provider.id} returned an unsupported provider"
             )
+            if callable(close):
+                try:
+                    close_result = close()
+                    if isawaitable(close_result):
+                        await close_result
+                except BaseException:  # noqa: BLE001 - preserve the validation error
+                    pass
+            raise error
         return runtime
 
     transport = provider.transport
@@ -124,7 +141,7 @@ async def create_dynamic_model_provider(
             selected_model.input_modalities is not None
             and "image" in selected_model.input_modalities
         ),
-        compat=selected_model.compat,
+        compat=json_compatible_mapping(selected_model.compat),
         provider_name=provider.id,
         omit_authorization_header=auth.omit_authorization_header,
         # Dynamic providers explicitly own their API choice. A local model id
