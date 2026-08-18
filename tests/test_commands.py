@@ -289,6 +289,7 @@ def test_hotkeys_command_lists_common_tui_shortcuts(tmp_path: Path) -> None:
     assert "Ctrl+K: open slash-command completions" in result.message
     assert "Ctrl+R: open session picker" in result.message
     assert "Shift+Tab: cycle thinking mode" in result.message
+    assert "Ctrl+V: paste clipboard image or text" in result.message
 
 
 def test_model_command_requests_picker_and_switches_models(tmp_path: Path) -> None:
