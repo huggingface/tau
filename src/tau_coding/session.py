@@ -228,6 +228,17 @@ class CompactionPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class ManualCompactionResult:
+    """Structured result from one manual compaction."""
+
+    summary: str
+    first_kept_entry_id: str
+    tokens_before: int
+    estimated_tokens_after: int
+    replaced_entry_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class _PendingMessageWrite:
     """Stable entries retained while a message persistence attempt is retried."""
 
@@ -376,6 +387,7 @@ class CodingSession:
             model = ModelChangeEntry(
                 parent_id=info.id,
                 model=initial_model,
+                provider=config.provider_name,
             )
             thinking = ThinkingLevelChangeEntry(
                 parent_id=model.id,
@@ -692,6 +704,15 @@ class CodingSession:
             return (self._provider_name,)
         return tuple(provider.name for provider in self._usable_provider_configs())
 
+    def provider_config(self, provider_name: str) -> ProviderConfig | None:
+        """Return configured metadata for a provider available to this session."""
+        if self._provider_settings is None:
+            return self._runtime_provider_config if provider_name == self.provider_name else None
+        try:
+            return self._provider_settings.get_provider(provider_name)
+        except ProviderConfigError:
+            return None
+
     @property
     def available_models(self) -> tuple[str, ...]:
         """Return model names for the active provider when it is usable."""
@@ -750,6 +771,10 @@ class CodingSession:
     def state(self) -> SessionState:
         """Return the last replayed durable session state."""
         return self._state
+
+    async def session_entries(self) -> tuple[SessionEntry, ...]:
+        """Return append-only entries for frontend session inspection."""
+        return tuple(await self._read_session_entries())
 
     async def tree_choices(self) -> tuple[SessionTreeChoice, ...]:
         """Return branchable session entries for a tree picker."""
@@ -950,6 +975,16 @@ class CodingSession:
                 return limits.effective_auto_compact_token_limit
         return auto_compaction_threshold_for_context_window(self.context_window_tokens)
 
+    def set_auto_compaction_enabled(self, enabled: bool) -> None:
+        """Enable or disable automatic compaction for future turns."""
+        self._auto_compact_enabled = enabled
+        self._config = replace(self._config, auto_compact_enabled=enabled)
+
+    @property
+    def auto_compaction_enabled(self) -> bool:
+        """Return whether automatic compaction is enabled."""
+        return self._auto_compact_enabled
+
     @property
     def context_window_tokens(self) -> int:
         """Return the active model's discovered or configured context window."""
@@ -1136,6 +1171,11 @@ class CodingSession:
         return self._harness.is_running
 
     @property
+    def queued_message_count(self) -> int:
+        """Return the number of queued steering and follow-up messages."""
+        return self._harness.pending_message_count
+
+    @property
     def queued_messages(self) -> QueuedMessages:
         """Return queued steering and follow-up messages."""
         return self._harness.queued_messages
@@ -1214,7 +1254,11 @@ class CodingSession:
         self._sync_thinking_level_to_active_model()
         self._refresh_runtime_provider()
         self._sync_image_support()
-        entry = ModelChangeEntry(parent_id=self._last_parent_id, model=model)
+        entry = ModelChangeEntry(
+            parent_id=self._last_parent_id,
+            model=model,
+            provider=self.provider_name,
+        )
         await self._append_session_entry(entry)
         leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
         await self._append_session_entry(leaf)
@@ -2051,6 +2095,18 @@ class CodingSession:
         await self._adopt_replacement(replacement, reason="resume")
         return f"Resumed session: {record.id}"
 
+    def set_session_name(self, name: str) -> None:
+        """Set the indexed session's human-friendly name."""
+        normalized = name.strip()
+        if not normalized:
+            raise ValueError("Session name cannot be empty")
+        manager = self._config.session_manager
+        session_id = self._config.session_id
+        if manager is None or session_id is None:
+            raise ValueError("Session manager is not available")
+        if manager.touch_session(session_id, title=normalized) is None:
+            raise ValueError(f"Unknown session: {session_id}")
+
     async def new_session(self) -> str:
         """Replace this session's active state with a pending unindexed session."""
         await self._flush_pending_message_writes(context=self._diagnostic_context())
@@ -2187,6 +2243,33 @@ class CodingSession:
         self._extension_runtime.bind(self)
         self._extension_runtime.attach_harness_listener(self._harness.subscribe)
 
+    async def compact_detailed(self, instructions: str | None = None) -> ManualCompactionResult:
+        """Compact older context while preserving a real recent-entry boundary."""
+        await self._flush_pending_message_writes(context=self._diagnostic_context())
+        rows = self._active_context_rows()
+        plan = self._recent_preserving_compaction_plan()
+        if plan is None:
+            raise ValueError("Not enough context to compact while preserving recent entries")
+        first_kept_entry_id = rows[len(plan.replace_entry_ids)][0]
+        tokens_before = self.context_token_estimate
+        summary = await self._generate_compaction_summary(
+            plan.messages_to_summarize,
+            custom_instructions=instructions,
+        )
+        compaction = await self._append_compaction(
+            summary,
+            replace_entry_ids=plan.replace_entry_ids,
+            first_kept_entry_id=first_kept_entry_id,
+            tokens_before=tokens_before,
+        )
+        return ManualCompactionResult(
+            summary=summary,
+            first_kept_entry_id=first_kept_entry_id,
+            tokens_before=tokens_before,
+            estimated_tokens_after=self.context_token_estimate,
+            replaced_entry_count=len(compaction.replaces_entry_ids),
+        )
+
     async def compact(self, instructions: str | None = None) -> str:
         """Generate a manual compaction summary and rebuild active context."""
         await self._flush_pending_message_writes(context=self._diagnostic_context())
@@ -2198,6 +2281,7 @@ class CodingSession:
         compaction = await self._append_compaction(
             summary,
             replace_entry_ids=plan.replace_entry_ids,
+            tokens_before=self.context_token_estimate,
         )
         return f"Compacted {len(compaction.replaces_entry_ids)} context entries."
 
@@ -2571,7 +2655,11 @@ class CodingSession:
             await self._append_session_entry(entry)
             parent_id = entry.id
         if active_model is not None:
-            model_entry = ModelChangeEntry(parent_id=parent_id, model=active_model)
+            model_entry = ModelChangeEntry(
+                parent_id=parent_id,
+                model=active_model,
+                provider=self.provider_name,
+            )
             await self._append_session_entry(model_entry)
             parent_id = model_entry.id
         thinking_entry = ThinkingLevelChangeEntry(
@@ -2988,6 +3076,8 @@ class CodingSession:
         summary: str,
         *,
         replace_entry_ids: tuple[str, ...],
+        first_kept_entry_id: str | None = None,
+        tokens_before: int | None = None,
     ) -> CompactionEntry:
         if not replace_entry_ids:
             raise ValueError("No active context messages to compact")
@@ -2996,6 +3086,8 @@ class CodingSession:
             parent_id=self._last_parent_id,
             summary=summary,
             replaces_entry_ids=list(replace_entry_ids),
+            first_kept_entry_id=first_kept_entry_id,
+            tokens_before=tokens_before,
         )
         await self._append_session_entry(compaction)
         leaf = LeafEntry(parent_id=compaction.id, entry_id=compaction.id)
