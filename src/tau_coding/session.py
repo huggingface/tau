@@ -369,6 +369,7 @@ class CodingSession:
             model = ModelChangeEntry(
                 parent_id=info.id,
                 model=initial_model,
+                provider=config.provider_name,
             )
             thinking = ThinkingLevelChangeEntry(
                 parent_id=model.id,
@@ -1121,7 +1122,11 @@ class CodingSession:
         self._sync_thinking_level_to_active_model()
         self._refresh_runtime_provider()
         self._sync_image_support()
-        entry = ModelChangeEntry(parent_id=self._last_parent_id, model=model)
+        entry = ModelChangeEntry(
+            parent_id=self._last_parent_id,
+            model=model,
+            provider=self.provider_name,
+        )
         await self._append_session_entry(entry)
         leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
         await self._append_session_entry(leaf)
@@ -2263,7 +2268,11 @@ class CodingSession:
             await self._append_session_entry(entry)
             parent_id = entry.id
         if active_model is not None:
-            model_entry = ModelChangeEntry(parent_id=parent_id, model=active_model)
+            model_entry = ModelChangeEntry(
+                parent_id=parent_id,
+                model=active_model,
+                provider=self.provider_name,
+            )
             await self._append_session_entry(model_entry)
             parent_id = model_entry.id
         thinking_entry = ThinkingLevelChangeEntry(

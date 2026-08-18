@@ -699,7 +699,11 @@ def _entry_wire(entry: SessionEntry, provider_name: str) -> dict[str, JSONValue]
             }
         return {**base, "message": _jsonable(entry.message)}
     if entry.type == "model_change":
-        return {**base, "provider": provider_name, "modelId": entry.model}
+        return {
+            **base,
+            "provider": entry.provider or provider_name,
+            "modelId": entry.model,
+        }
     if entry.type == "thinking_level_change":
         return {**base, "thinkingLevel": entry.thinking_level or "off"}
     if entry.type == "compaction":

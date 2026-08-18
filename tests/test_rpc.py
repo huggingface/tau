@@ -170,11 +170,20 @@ async def test_rpc_session_inspection_matches_pi_shapes(tmp_path: Path) -> None:
             usage=Usage(input=10, output=3, cache_read=20, cache_write=5),
         ),
     )
-    model_change = ModelChangeEntry(parent_id=assistant.id, model="fake-next")
-    leaf = LeafEntry(parent_id=model_change.id, entry_id=model_change.id)
+    model_change = ModelChangeEntry(
+        parent_id=assistant.id,
+        model="fake-next",
+        provider="historical-openai",
+    )
+    legacy_model_change = ModelChangeEntry(
+        parent_id=model_change.id,
+        model="legacy-model",
+    )
+    leaf = LeafEntry(parent_id=legacy_model_change.id, entry_id=legacy_model_change.id)
     await storage.append(user)
     await storage.append(assistant)
     await storage.append(model_change)
+    await storage.append(legacy_model_change)
     await storage.append(leaf)
     session = await CodingSession.load(
         CodingSessionConfig(
@@ -202,8 +211,10 @@ async def test_rpc_session_inspection_matches_pi_shapes(tmp_path: Path) -> None:
     projected_entries = entries["data"]["entries"]
     assert projected_entries[1]["parentId"] == user.id
     assert projected_entries[2]["type"] == "model_change"
-    assert projected_entries[2]["provider"] == "openai"
+    assert projected_entries[2]["provider"] == "historical-openai"
     assert projected_entries[2]["modelId"] == "fake-next"
+    assert projected_entries[3]["provider"] == "openai"
+    assert projected_entries[3]["modelId"] == "legacy-model"
     assert all(entry["type"] != "leaf" for entry in projected_entries)
     tree_root = tree["data"]["tree"][0]
     assert tree_root["children"][0]["entry"]["id"] == assistant.id

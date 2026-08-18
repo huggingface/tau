@@ -44,6 +44,7 @@ class ModelChangeEntry(BaseSessionEntry):
 
     type: Literal["model_change"] = "model_change"
     model: str
+    provider: str | None = None
 
 
 class ThinkingLevelChangeEntry(BaseSessionEntry):
