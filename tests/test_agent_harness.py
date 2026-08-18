@@ -189,6 +189,53 @@ async def test_harness_passes_canonical_tools_to_loop() -> None:
     assert provider.calls[0][3] == [tool]
 
 
+@pytest.mark.anyio
+async def test_harness_threads_check_overflow_to_pause_between_tool_calls() -> None:
+    async def execute(
+        tool_call_id: str,
+        arguments: Mapping[str, JSONValue],
+        signal=None,  # noqa: ANN001
+        on_update=None,  # noqa: ANN001
+    ) -> AgentToolResult:
+        del tool_call_id, arguments, signal, on_update
+        return AgentToolResult(content="done")
+
+    tool = AgentTool(
+        name="work",
+        label="Work",
+        description="Do work.",
+        parameters={"type": "object"},
+        execute_fn=execute,
+    )
+    call = ToolCall(id="call-1", name="work", arguments={})
+    first = AssistantMessage(content=[call])
+    final = AssistantMessage(content="Done")
+    provider = FakeProvider(
+        [
+            [assistant_start(), tool_call_end(call), assistant_done(first, "toolUse")],
+            [assistant_start(), assistant_done(final)],
+        ]
+    )
+    harness = AgentHarness(
+        AgentHarnessConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            tools=[tool],
+            check_overflow=lambda: True,
+        )
+    )
+
+    events = [event async for event in harness.prompt("Go")]
+
+    assert len(provider.calls) == 1
+    error = harness.messages[-1]
+    assert isinstance(error, AssistantMessage)
+    assert error.stop_reason == "error"
+    assert error.error_message == "Turn paused: context token budget exceeded mid-turn"
+    assert events[-1].type == "agent_end"
+
+
 def test_queue_mutators_return_canonical_snapshots() -> None:
     harness = AgentHarness(
         AgentHarnessConfig(provider=FakeProvider([]), model="fake", system="You are Tau.")

@@ -9,7 +9,7 @@ import pytest
 from PIL import Image
 
 from conftest import isolate_home
-from pi_event_helpers import assistant_done, assistant_error, assistant_start
+from pi_event_helpers import assistant_done, assistant_error, assistant_start, tool_call_end
 from tau_agent import (
     AgentMessage,
     AgentTool,
@@ -1330,6 +1330,105 @@ async def test_context_usage_recalculates_after_prompt_and_compaction(tmp_path: 
     assert after_compaction_usage.message_count == 1
     assert after_compaction_usage.total_tokens < after_prompt_usage.total_tokens
     assert session.context_token_estimate == after_compaction_usage.total_tokens
+
+
+@pytest.mark.anyio
+async def test_check_mid_turn_overflow_respects_guard_and_threshold(tmp_path: Path) -> None:
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "guard-on.jsonl"),
+            cwd=tmp_path,
+            auto_compact_token_threshold=1,
+        )
+    )
+    assert session._harness.config.check_overflow == session._check_mid_turn_overflow
+    assert session.context_token_estimate > 1
+    assert session._check_mid_turn_overflow() is True
+
+    guard_disabled = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "guard-off.jsonl"),
+            cwd=tmp_path,
+            auto_compact_token_threshold=1,
+            mid_turn_overflow_guard=False,
+        )
+    )
+    assert guard_disabled._check_mid_turn_overflow() is False
+
+    autocompact_disabled = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "autocompact-off.jsonl"),
+            cwd=tmp_path,
+            auto_compact_token_threshold=1,
+            auto_compact_enabled=False,
+        )
+    )
+    assert autocompact_disabled._check_mid_turn_overflow() is False
+
+
+@pytest.mark.anyio
+async def test_mid_turn_overflow_guard_pauses_turn_and_runs_auto_compact_boundary(
+    tmp_path: Path,
+) -> None:
+    call = ToolCall(id="call-1", name="work", arguments={})
+    first = AssistantMessage(content=[call], model="fake")
+    summary = AssistantMessage(content="Summary of the paused turn.", model="fake")
+    provider = FakeProvider(
+        [
+            [assistant_start(), tool_call_end(call), assistant_done(first, "toolUse")],
+            [assistant_start(), assistant_done(summary)],
+        ]
+    )
+
+    async def execute(
+        tool_call_id: str,
+        arguments: object,
+        signal: CancellationToken | None = None,
+        on_update=None,  # noqa: ANN001
+    ) -> AgentToolResult:
+        del tool_call_id, arguments, signal, on_update
+        # Pushes the real estimate past the threshold set below.
+        return AgentToolResult(content="x" * 20_000)
+
+    tool = AgentTool(
+        name="work",
+        label="Work",
+        description="Do work.",
+        parameters={"type": "object"},
+        execute_fn=execute,
+    )
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            tools=[tool],
+        )
+    )
+    # Above the pre-tool-call estimate but below what the tool result adds.
+    threshold = session.context_token_estimate + 500
+    session._auto_compact_token_threshold = threshold
+
+    await _collect_session_events(session.prompt("Do work."))
+
+    # One call for the paused turn, one for the fallback compaction summary.
+    assert len(provider.calls) == 2
+    compactions = [entry for entry in await storage.read_all() if entry.type == "compaction"]
+    assert len(compactions) == 1
+    assert compactions[0].summary == "Summary of the paused turn."
+    assert session.context_token_estimate <= threshold
 
 
 @pytest.mark.anyio
