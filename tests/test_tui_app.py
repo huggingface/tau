@@ -8588,16 +8588,20 @@ async def test_run_tui_app_falls_back_to_first_credentialed_provider(
         def get_session(self, session_id: str) -> CodingSessionRecord | None:
             return None
 
+    class LoadedSession:
+        async def aclose(self) -> None:
+            calls.append("session_closed")
+
     class FakeCodingSession:
         @classmethod
-        async def load(cls, config: object) -> str:
+        async def load(cls, config: object) -> LoadedSession:
             assert config.provider_name == "openai"  # type: ignore[attr-defined]
             calls.append("load")
-            return "session"
+            return LoadedSession()
 
     class FakeApp:
-        def __init__(self, session: str, **kwargs: object) -> None:
-            assert session == "session"
+        def __init__(self, session: LoadedSession, **kwargs: object) -> None:
+            assert isinstance(session, LoadedSession)
             assert kwargs["startup_message"] is None
 
         async def run_async(self) -> None:
@@ -8642,6 +8646,7 @@ async def test_run_tui_app_falls_back_to_first_credentialed_provider(
         f"prepare:{tmp_path}:gpt-5.5:openai",
         "load",
         "run",
+        "session_closed",
         "provider_closed",
     ]
 

@@ -94,9 +94,11 @@ class SwitchableFakeProvider:
     def __init__(self, config: object) -> None:
         self.config = config
         self.closed = False
+        self.close_calls = 0
 
     async def aclose(self) -> None:
         self.closed = True
+        self.close_calls += 1
 
 
 class ModelLimitsFakeProvider(FakeProvider):
@@ -3834,8 +3836,71 @@ async def test_session_switches_configured_provider(
     assert len(created_providers) == 2
 
     await session.aclose()
+    await session.aclose()
 
     assert [provider.closed for provider in created_providers] == [True, True]
+    assert [provider.close_calls for provider in created_providers] == [1, 1]
+
+
+@pytest.mark.anyio
+async def test_failed_cross_provider_switch_preserves_active_runtime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = ProviderSettings(
+        default_provider="openai",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="openai",
+                models=("gpt-5",),
+                default_model="gpt-5",
+            ),
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                models=("qwen",),
+                default_model="qwen",
+            ),
+        ),
+    )
+    initial_provider = FakeProvider([])
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=initial_provider,
+            model="gpt-5",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "failed-switch.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai",
+            provider_settings=settings,
+        )
+    )
+    before = (
+        session.provider_name,
+        session.model,
+        session.thinking_level,
+        session.inference_provider,
+        session._harness.config.provider,
+        tuple(session._owned_providers),
+    )
+
+    def fail_provider_creation(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise RuntimeError("candidate unavailable")
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", fail_provider_creation)
+
+    with pytest.raises(ProviderConfigError, match="candidate unavailable"):
+        session.set_model_choice(ModelChoice(provider_name="local", model="qwen"))
+
+    assert (
+        session.provider_name,
+        session.model,
+        session.thinking_level,
+        session.inference_provider,
+        session._harness.config.provider,
+        tuple(session._owned_providers),
+    ) == before
 
 
 @pytest.mark.anyio

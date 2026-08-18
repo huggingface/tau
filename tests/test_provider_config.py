@@ -328,6 +328,60 @@ def test_load_provider_settings_ignores_preference_without_catalog_entry(
     assert "llama-cpp" not in {provider.name for provider in settings.providers}
 
 
+def test_llama_dot_cpp_and_llama_dash_cpp_are_distinct_provider_ids(tmp_path: Path) -> None:
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    (tau_home / "catalog.toml").write_text(
+        """
+schema_version = 1
+
+[[providers]]
+name = "llama.cpp"
+display_name = "llama.cpp built-in-shaped override"
+kind = "openai-compatible"
+base_url = "http://127.0.0.1:8080/v1"
+api_key_env = "LLAMA_API_KEY"
+models = ["built-in-model"]
+default_model = "built-in-model"
+docs_url = "https://github.com/ggml-org/llama.cpp"
+
+[[providers]]
+name = "llama-cpp"
+display_name = "Existing custom llama.cpp"
+kind = "openai-compatible"
+base_url = "http://127.0.0.1:8081/v1"
+api_key_env = "LEGACY_LLAMA_API_KEY"
+models = ["legacy-model"]
+default_model = "legacy-model"
+docs_url = "https://example.test/legacy-llama-cpp"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    settings = load_provider_settings(TauPaths(home=tau_home))
+    dotted = resolve_provider_selection(
+        settings,
+        provider_name="llama.cpp",
+        model="built-in-model",
+    )
+    dashed = resolve_provider_selection(
+        settings,
+        provider_name="llama-cpp",
+        model="legacy-model",
+    )
+
+    assert isinstance(dotted.provider, OpenAICompatibleProviderConfig)
+    assert dotted.provider.name == "llama.cpp"
+    assert dotted.provider.base_url == "http://127.0.0.1:8080/v1"
+    assert isinstance(dashed.provider, OpenAICompatibleProviderConfig)
+    assert dashed.provider.name == "llama-cpp"
+    assert dashed.provider.base_url == "http://127.0.0.1:8081/v1"
+    assert ScopedModelConfig(provider="llama.cpp", model="model:Q4_K_M").to_json() == {
+        "provider": "llama.cpp",
+        "model": "model:Q4_K_M",
+    }
+
+
 def test_save_provider_settings_writes_backup_when_replacing(tmp_path: Path) -> None:
     paths = TauPaths(home=tmp_path / ".tau")
     initial = ProviderSettings(
