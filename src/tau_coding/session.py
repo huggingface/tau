@@ -1877,9 +1877,35 @@ class CodingSession:
         self._extension_runtime.attach_harness_listener(self._harness.subscribe)
 
     async def compact_detailed(self, instructions: str | None = None) -> ManualCompactionResult:
-        """Generate a manual compaction and return its canonical result."""
+        """Compact older context while preserving a real recent-entry boundary."""
         await self._flush_pending_message_writes(context=self._diagnostic_context())
+        rows = self._active_context_rows()
+        plan = self._recent_preserving_compaction_plan()
+        if plan is None:
+            raise ValueError("Not enough context to compact while preserving recent entries")
+        first_kept_entry_id = rows[len(plan.replace_entry_ids)][0]
         tokens_before = self.context_token_estimate
+        summary = await self._generate_compaction_summary(
+            plan.messages_to_summarize,
+            custom_instructions=instructions,
+        )
+        compaction = await self._append_compaction(
+            summary,
+            replace_entry_ids=plan.replace_entry_ids,
+            first_kept_entry_id=first_kept_entry_id,
+            tokens_before=tokens_before,
+        )
+        return ManualCompactionResult(
+            summary=summary,
+            first_kept_entry_id=first_kept_entry_id,
+            tokens_before=tokens_before,
+            estimated_tokens_after=self.context_token_estimate,
+            replaced_entry_count=len(compaction.replaces_entry_ids),
+        )
+
+    async def compact(self, instructions: str | None = None) -> str:
+        """Generate a manual compaction summary and rebuild active context."""
+        await self._flush_pending_message_writes(context=self._diagnostic_context())
         plan = self._manual_compaction_plan()
         summary = await self._generate_compaction_summary(
             plan.messages_to_summarize,
@@ -1888,19 +1914,9 @@ class CodingSession:
         compaction = await self._append_compaction(
             summary,
             replace_entry_ids=plan.replace_entry_ids,
+            tokens_before=self.context_token_estimate,
         )
-        return ManualCompactionResult(
-            summary=summary,
-            first_kept_entry_id=compaction.id,
-            tokens_before=tokens_before,
-            estimated_tokens_after=self.context_token_estimate,
-            replaced_entry_count=len(compaction.replaces_entry_ids),
-        )
-
-    async def compact(self, instructions: str | None = None) -> str:
-        """Generate a manual compaction summary and rebuild active context."""
-        result = await self.compact_detailed(instructions)
-        return f"Compacted {result.replaced_entry_count} context entries."
+        return f"Compacted {len(compaction.replaces_entry_ids)} context entries."
 
     async def aclose(self) -> None:
         """Close runtime providers created by this coding session."""
@@ -2670,6 +2686,8 @@ class CodingSession:
         summary: str,
         *,
         replace_entry_ids: tuple[str, ...],
+        first_kept_entry_id: str | None = None,
+        tokens_before: int | None = None,
     ) -> CompactionEntry:
         if not replace_entry_ids:
             raise ValueError("No active context messages to compact")
@@ -2678,6 +2696,8 @@ class CodingSession:
             parent_id=self._last_parent_id,
             summary=summary,
             replaces_entry_ids=list(replace_entry_ids),
+            first_kept_entry_id=first_kept_entry_id,
+            tokens_before=tokens_before,
         )
         await self._append_session_entry(compaction)
         leaf = LeafEntry(parent_id=compaction.id, entry_id=compaction.id)

@@ -57,6 +57,11 @@ tau.stdout.on("data", chunk => {
 tau.stdin.write(JSON.stringify({ id: "1", type: "prompt", message: "Hello" }) + "\n");
 ```
 
+RPC compaction preserves recent entries and returns the first pre-existing retained entry as
+`firstKeptEntryId`, matching Pi. Older Tau compaction records and TUI compactions that replaced
+all active context have no such boundary; session inspection exposes those honestly as
+`customType: "tau.compaction"` entries instead of fabricating Pi compaction metadata.
+
 Tau mirrors Pi where its public `CodingSession` has equivalent behavior. Direct `bash` is
 supported, but `abort_bash` requires a future cancellable session API. Queue delivery modes,
 retry controls, cloning, image prompts, and the extension UI request/response subprotocol remain

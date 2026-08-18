@@ -665,7 +665,7 @@ def _session_stats_wire(session: RpcSession) -> dict[str, JSONValue]:
                 + stats.cache_write_tokens
             ),
         },
-        "cost": stats.estimated_cost,
+        "cost": stats.estimated_cost if stats.estimated_cost is not None else 0.0,
         "contextUsage": {
             "tokens": session.context_token_estimate,
             "contextWindow": session.context_window_tokens,
@@ -703,11 +703,21 @@ def _entry_wire(entry: SessionEntry, provider_name: str) -> dict[str, JSONValue]
     if entry.type == "thinking_level_change":
         return {**base, "thinkingLevel": entry.thinking_level or "off"}
     if entry.type == "compaction":
+        if entry.first_kept_entry_id is None or entry.tokens_before is None:
+            return {
+                **base,
+                "type": "custom",
+                "customType": "tau.compaction",
+                "data": {
+                    "summary": entry.summary,
+                    "replacesEntryIds": list(entry.replaces_entry_ids),
+                },
+            }
         return {
             **base,
             "summary": entry.summary,
-            "firstKeptEntryId": entry.id,
-            "tokensBefore": 0,
+            "firstKeptEntryId": entry.first_kept_entry_id,
+            "tokensBefore": entry.tokens_before,
             "details": {"tauReplacedEntryIds": list(entry.replaces_entry_ids)},
         }
     if entry.type == "branch_summary":

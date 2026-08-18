@@ -217,37 +217,59 @@ async def test_rpc_session_inspection_matches_pi_shapes(tmp_path: Path) -> None:
         "cacheWrite": 5,
         "total": 38,
     }
-    assert stats["data"]["cost"] is None
+    assert stats["data"]["cost"] == 0.0
+    assert isinstance(stats["data"]["cost"], float)
 
 
 @pytest.mark.anyio
 async def test_rpc_compaction_returns_canonical_summary_and_boundary(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    parent_id: str | None = None
+    original_ids: list[str] = []
+    for index in range(6):
+        user = MessageEntry(
+            parent_id=parent_id,
+            message=UserMessage(content=f"question-{index}-" + "x" * 8_000),
+        )
+        assistant = MessageEntry(
+            parent_id=user.id,
+            message=AssistantMessage(content="y" * 8_000, model="fake"),
+        )
+        await storage.append(user)
+        await storage.append(assistant)
+        original_ids.extend((user.id, assistant.id))
+        parent_id = assistant.id
     provider = FakeProvider(
         [
             [
                 assistant_start(model="fake"),
-                assistant_done(AssistantMessage(content="answer", model="fake")),
-            ],
-            [
-                assistant_start(model="fake"),
                 assistant_done(AssistantMessage(content="real summary", model="fake")),
-            ],
+            ]
         ]
     )
-    session = await _session(tmp_path, provider)
-    _events = [event async for event in session.prompt("question")]
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
     stdin = StringIO('{"id":"compact","type":"compact"}\n')
     stdout = StringIO()
 
     await RpcServer(session, stdin=stdin, stdout=stdout).run()
 
     response = json.loads(stdout.getvalue())
-    compactions = [
-        entry for entry in await session.storage.read_all() if entry.type == "compaction"
-    ]
+    compaction = next(entry for entry in await storage.read_all() if entry.type == "compaction")
+    boundary = response["data"]["firstKeptEntryId"]
     assert response["data"]["summary"] == "real summary"
-    assert response["data"]["firstKeptEntryId"] == compactions[0].id
-    assert response["data"]["summary"] != "Compacted 2 context entries."
+    assert boundary in original_ids
+    assert boundary not in compaction.replaces_entry_ids
+    assert boundary != compaction.id
+    assert compaction.first_kept_entry_id == boundary
+    assert compaction.tokens_before == response["data"]["tokensBefore"]
 
 
 @pytest.mark.anyio
