@@ -41,6 +41,7 @@ from tau_coding.provider_config import (
 from tau_coding.provider_runtime import create_model_provider
 from tau_coding.rendering import PrintOutputMode, create_event_renderer
 from tau_coding.resources import TauResourcePaths
+from tau_coding.rpc import RpcServer
 from tau_coding.session import (
     CodingSession,
     CodingSessionConfig,
@@ -202,8 +203,7 @@ def main(
         PrintOutputMode | None,
         typer.Option(
             "--mode",
-            help="Run in non-interactive print mode with this output format "
-            "(text, json, or transcript).",
+            help="Run headlessly with this output format (text, json, transcript, or rpc).",
         ),
     ] = None,
     output: Annotated[
@@ -350,7 +350,8 @@ def main(
     if extension_legacy is not None:
         raise typer.BadParameter("-x was renamed to -e/--extension.")
 
-    print_requested = print_mode or mode is not None
+    rpc_requested = mode is PrintOutputMode.rpc
+    print_requested = print_mode or (mode is not None and not rpc_requested)
     effective_output = mode or PrintOutputMode.text
 
     if session_id is not None:
@@ -407,6 +408,29 @@ def main(
         else None
     )
     resolved_append_system_prompt = _resolve_append_system_prompts(append_system_prompt or ())
+
+    if rpc_requested:
+        if initial_prompt is not None:
+            raise typer.BadParameter(
+                "RPC mode reads commands from stdin and does not accept a prompt"
+            )
+        try:
+            anyio.run(
+                run_openai_rpc_mode,
+                model,
+                cwd or Path.cwd(),
+                provider,
+                session,
+                extension_paths,
+                not no_extensions,
+                project_extensions,
+                custom_system_prompt,
+                resolved_append_system_prompt,
+                trust_override,
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        raise typer.Exit()
 
     if not print_requested:
         notice = _startup_update_notice()
@@ -755,6 +779,73 @@ def _provider_credential_status(
     if environ.get(provider.api_key_env):
         return f"env:{provider.api_key_env}"
     return "missing"
+
+
+async def run_openai_rpc_mode(
+    model: str | None,
+    cwd: Path,
+    provider_name: str | None = None,
+    resume_session_id: str | None = None,
+    extension_paths: tuple[Path, ...] = (),
+    extensions_enabled: bool = True,
+    project_extensions_enabled: bool = False,
+    custom_system_prompt: str | None = None,
+    append_system_prompt: str | None = None,
+    trust_override: TrustOverride | None = None,
+) -> None:
+    """Run a persistent Pi-compatible JSONL RPC session."""
+    settings = load_provider_settings()
+    shell_settings = load_shell_settings()
+    manager = SessionManager()
+    record = _print_session_record(
+        manager,
+        resume_session_id=resume_session_id,
+        cwd=cwd,
+        settings=settings,
+        provider_name=provider_name,
+        model=model,
+        session_id=None,
+    )
+    explicit_selection = provider_name is not None or model is not None
+    selection = resolve_provider_selection(
+        settings,
+        provider_name=provider_name if explicit_selection else record.provider_name,
+        model=model if explicit_selection else record.model,
+    )
+    inference_provider = record.inference_provider if resume_session_id is not None else None
+    provider = create_model_provider(
+        selection.provider,
+        model=selection.model,
+        inference_provider=inference_provider,
+        thinking_level=resolve_startup_thinking_level(selection.provider, selection.model),
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model=selection.model,
+            cwd=record.cwd,
+            storage=jsonl_session_storage(record.path),
+            session_id=record.id,
+            session_manager=manager,
+            provider_name=selection.provider.name,
+            inference_provider=inference_provider,
+            provider_settings=settings,
+            runtime_provider_config=selection.provider,
+            shell_command_prefix=shell_settings.shell_command_prefix,
+            extension_paths=extension_paths,
+            extensions_enabled=extensions_enabled,
+            project_extensions_enabled=project_extensions_enabled,
+            custom_system_prompt=custom_system_prompt,
+            append_system_prompt=append_system_prompt,
+            trust_override=trust_override,
+            trust_default=shell_settings.default_project_trust,
+        )
+    )
+    session.extension_runtime.set_ui_bridge(StderrUiBridge())
+    try:
+        await RpcServer(session).run()
+    finally:
+        await provider.aclose()
 
 
 async def run_openai_print_mode(

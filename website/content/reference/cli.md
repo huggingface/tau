@@ -44,7 +44,7 @@ features and fixes.
 | `-m, --model TEXT` | Model to request from the provider |
 | `--provider TEXT` | Configured provider name to use |
 | `--cwd PATH` | Working directory for the built-in tools |
-| `--mode [text\|json\|transcript]` | Output mode for print mode (default `text`); also triggers print mode on its own |
+| `--mode [text\|json\|transcript\|rpc]` | Select headless output; `rpc` starts the JSONL subprocess protocol |
 | `--session TEXT` | Resume a session id in the TUI or print mode |
 | `--new-session` | Start a new session instead of resuming the default |
 | `--session-id TEXT` | Set the exact id for a newly created print-mode session; errors if it already exists |
@@ -140,5 +140,5 @@ tau --provider local \
   setup
 ```
 
-See also: [Slash commands]({{< relref "./slash-commands.md" >}}) (in-session) and
+See also: [RPC protocol]({{< relref "./rpc.md" >}}), [Slash commands]({{< relref "./slash-commands.md" >}}) (in-session), and
 [Keyboard shortcuts]({{< relref "./keybindings.md" >}}).
