@@ -19,11 +19,16 @@ Keep `tau_agent` independent of Typer, Rich, Textual, application resource locat
 Dynamic provider contracts and composition belong to `tau_coding.extensions`.
 Every staged `ExtensionRuntime` owns a fresh source/generation/layer-aware
 `DynamicProviderRegistry`; durable `ProviderConfig` objects are immutable baseline
-inputs. The registry is frontend-free and process-local. Retirement atomically
-invalidates dynamic layers, cancels owned refresh/discovery work, and retains inner
-task handles until actual completion; async close drains cooperative cleanup with a
-bounded cancellation-suppression policy. OpenAI-compatible dynamic runtimes reuse
-`tau_ai.OpenAICompatibleProvider` through an explicit transport choice, so model
-names cannot silently select another endpoint API.
+inputs. Dynamic source identity is host-owned and canonical-entry-path-based, not an
+extension display name. The registry is frontend-free and process-local. Retirement
+atomically invalidates dynamic layers and removes cancelled operations from
+coalescing. Discovery receives one task cancellation; async close waits at most
+0.25 seconds from that request without cancelling `finally` cleanup again. A task
+still running is explicitly contained, not drained, and a process-owned supervisor
+keeps its task and registry reachable until completion under stale-publication guards.
+Reload, session replacement,
+and final close await this drain/containment step. OpenAI-compatible dynamic
+runtimes reuse `tau_ai.OpenAICompatibleProvider` through an explicit transport
+choice, so model names cannot silently select another endpoint API.
 
 In a Tau checkout, read `AGENTS.md`, `website/content/internals/architecture.md`, and relevant `dev-notes/architecture/` documents before broad architectural changes.

@@ -46,12 +46,14 @@ from tau_coding.extensions.loader import (
 )
 from tau_coding.extensions.provider_registry import (
     DEFAULT_PROVIDER_REFRESH_TIMEOUT_SECONDS,
+    PROVIDER_DISCOVERY_CANCELLATION_TIMEOUT_SECONDS,
     DynamicProviderLayer,
     DynamicProviderRegistry,
     EffectiveProvider,
     ProviderLayerToken,
     ProviderRefreshDiagnostic,
     ProviderRefreshResult,
+    ProviderRegistryCloseResult,
 )
 from tau_coding.extensions.providers import (
     ClosableModelProvider,
@@ -90,6 +92,7 @@ __all__ = [
     "CustomMessageMarkup",
     "CustomMessageView",
     "DEFAULT_PROVIDER_REFRESH_TIMEOUT_SECONDS",
+    "PROVIDER_DISCOVERY_CANCELLATION_TIMEOUT_SECONDS",
     "DiscoveredExtension",
     "DynamicProvider",
     "DynamicProviderError",
@@ -129,6 +132,7 @@ __all__ = [
     "ProviderRefreshContext",
     "ProviderRefreshDiagnostic",
     "ProviderRefreshResult",
+    "ProviderRegistryCloseResult",
     "ProviderRuntimeContext",
     "RefreshModels",
     "SlotWidgetContent",

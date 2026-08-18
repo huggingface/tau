@@ -162,16 +162,25 @@ Discovery is snapshot-oriented. A `refresh_models` callback returns a complete
 `ProviderModelSnapshot`; the registry validates and publishes it atomically.
 Concurrent callers share work only when their layer and `allow_network` policy
 match, and each caller keeps its own timeout. Opposite network policies never
-alias. Cancellation awaits cooperative callback cleanup; a callback that repeatedly
-suppresses cancellation is boundedly re-cancelled, remains owned until it actually
-finishes, and cannot publish after source replacement or generation retirement.
-Timeout, malformed output, and other failures retain the current snapshot.
+alias. The last timeout and explicit cancellation leave the coalescing table before
+returning, so an immediate retry invokes fresh discovery. Tau requests task
+cancellation once, then waits up to 0.25 seconds from that request without
+re-cancelling a callback's `finally` cleanup. Reload, session replacement, and final
+close await this cooperative drain. A callback still running at the bound is
+reported as contained—not drained—and a process-owned supervisor keeps its task
+and generation registry reachable until it actually finishes; it cannot publish after source replacement or
+retirement. Timeout, malformed output, and other failures retain the current
+snapshot.
 
 Dynamic definitions are runtime overlays—not durable configuration. Tau never
 copies them into `catalog.toml`, `providers.json`, sessions, or generic extension
-storage. Removing a source reveals the preceding complete layer, including the
-exact durable provider baseline. The contracts are frontend-free and callbacks
-must not return Rich/Textual values.
+storage. Provider source ownership comes from the canonical entry path assigned by
+the host, not the display name. Separately loaded same-name extensions therefore
+form independent provider layers; repeating the exact entry source in one runtime
+is ignored with first-loaded precedence. Tools and commands still use their
+first-registration-wins name registries. Removing a source reveals the preceding
+complete layer, including the exact durable provider baseline. The contracts are
+frontend-free and callbacks must not return Rich/Textual values.
 
 This foundation is intentionally provisional until #602's second-backend
 validation. Phase 1 does not yet add startup/session selection, built-in local

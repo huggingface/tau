@@ -35,6 +35,11 @@ class LoadedExtension:
     path: Path
     setup: Callable[..., object]
 
+    @property
+    def source_id(self) -> str:
+        """Return the stable host-owned identity for this exact entry path."""
+        return f"extension:{self.path.resolve().as_uri()}"
+
 
 @dataclass(frozen=True, slots=True)
 class ExtensionLoadResult:

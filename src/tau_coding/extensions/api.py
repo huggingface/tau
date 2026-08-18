@@ -861,9 +861,12 @@ class ExtensionAPI:
         runtime: ExtensionRuntime,
         extension_name: str,
         generation: ExtensionGeneration | None = None,
+        *,
+        source_id: str | None = None,
     ) -> None:
         self._runtime = runtime
         self._extension_name = extension_name
+        self._source_id = source_id or f"extension-name:{extension_name}"
         self._generation = generation if generation is not None else ExtensionGeneration()
         self._context = ExtensionContext(runtime, self._generation)
 
@@ -887,12 +890,12 @@ class ExtensionAPI:
     def register_tool(self, tool: AgentTool) -> None:
         """Register an agent tool (first registration per name wins)."""
         self._generation.assert_active()
-        self._runtime.register_tool(self._extension_name, tool)
+        self._runtime.register_tool(self._source_id, self._extension_name, tool)
 
     def register_provider(self, provider: DynamicProvider) -> None:
         """Register or atomically replace this source's dynamic provider layer."""
         self._generation.assert_active()
-        self._runtime.register_provider(self._extension_name, provider)
+        self._runtime.register_provider(self._source_id, provider)
 
     def register_command(
         self,
@@ -906,6 +909,7 @@ class ExtensionAPI:
         """Register a slash command backed by this extension."""
         self._generation.assert_active()
         self._runtime.register_command(
+            self._source_id,
             self._extension_name,
             name,
             handler,
@@ -922,7 +926,7 @@ class ExtensionAPI:
         any tool. Duplicate lines are de-duplicated at prompt build time.
         """
         self._generation.assert_active()
-        self._runtime.register_prompt_guideline(self._extension_name, guideline)
+        self._runtime.register_prompt_guideline(self._source_id, self._extension_name, guideline)
 
     def on(
         self,
@@ -932,12 +936,12 @@ class ExtensionAPI:
         """Subscribe to an event, directly or as a decorator."""
         self._generation.assert_active()
         if handler is not None:
-            self._runtime.subscribe(self._extension_name, event, handler)
+            self._runtime.subscribe(self._source_id, event, handler)
             return handler
 
         def decorator(decorated: ExtensionHandler) -> ExtensionHandler:
             self._generation.assert_active()
-            self._runtime.subscribe(self._extension_name, event, decorated)
+            self._runtime.subscribe(self._source_id, event, decorated)
             return decorated
 
         return decorator
@@ -965,7 +969,9 @@ class ExtensionAPI:
         must not return a Textual widget (that keeps extensions TUI-free).
         """
         self._generation.assert_active()
-        self._runtime.register_message_renderer(self._extension_name, custom_type, renderer)
+        self._runtime.register_message_renderer(
+            self._source_id, self._extension_name, custom_type, renderer
+        )
 
     def send_custom_message(
         self,
@@ -1009,6 +1015,7 @@ class RegisteredExtension:
     """Book-keeping for one loaded extension inside the runtime."""
 
     name: str
+    source_id: str
     path: Path
     api: ExtensionAPI
     handlers: dict[str, list[ExtensionHandler]] = field(default_factory=dict)

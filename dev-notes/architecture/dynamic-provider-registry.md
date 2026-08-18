@@ -38,11 +38,17 @@ immutable baseline and never serializes dynamic data. Each dynamic layer stores:
 provider id + source id + runtime generation id + layer id
 ```
 
-Latest active registration wins. Registering the same provider from the same
-source atomically replaces that source's old layer. Removing it reveals the
-previous complete dynamic layer; removing the final layer returns the exact
-original durable object, including headers, model metadata, compatibility,
-timeouts, retries, thinking configuration, and every other field.
+Latest active registration wins. For loaded extensions the host derives a stable
+source ID from the canonical entry-file path; the extension display name is never
+used as provider ownership. Separate paths named `shared.py` therefore receive
+different layers even when loaded in separate trust stages. Repeating the same
+canonical entry within one runtime is ignored with first-loaded precedence; a fresh
+runtime generation can load that stable source again. Registering the same provider from the
+same source atomically replaces that source's old layer. Removing it reveals the
+previous complete dynamic layer; removing the final layer returns the exact original
+durable object, including headers, model metadata, compatibility, timeouts, retries,
+thinking configuration, and every other field. Tools and commands remain separate,
+first-registration-wins name registries.
 
 There is intentionally no generic snapshot disk store in this phase. A future
 trusted built-in may own a versioned, allowlisted safe cache, but public extension
@@ -117,18 +123,30 @@ It returns one complete `ProviderModelSnapshot`. The coordinator:
 Opposite network policies use separate discovery tasks, so a no-network caller never
 consumes network-enabled discovery and a later network-enabled caller can still do
 network work. A short waiter can time out without ending work for a compatible longer
-waiter; when the final waiter times out, it cancels the shared operation.
+waiter. When the final waiter times out—or `cancel_refresh` cancels an operation—the
+coalescing entry is synchronously detached before that caller returns. An immediate
+retry therefore creates a new operation. Each done callback carries the old operation
+identity, so it cannot remove a successor created under the same key. Detached work
+remains in a separate owned-operation set until actual completion.
 
 Timeout, explicit cancellation, source replacement, unregister, reload, and runtime
 retirement signal and cancel owned work. Caller cancellation is shielded so one
-waiter cannot destroy work shared by another waiter. The outer refresh awaits a
-cooperative discovery callback's cleanup. It reissues cancellation after a bounded
-grace period when a callback suppresses cancellation; a callback hostile to every
-cancellation may outlive close, but its task handle stays generation-owned until its
-done callback observes actual completion. It has no publication path after the outer
-operation ends, and source/layer/generation/revision guards remain in force. Failed
-work retains the current snapshot and records at most one diagnostic per layer token;
-the registry also applies a global bound.
+waiter cannot destroy work shared by another waiter. Discovery receives at most one
+`Task.cancel()` request. Async close waits until the callback exits or until 0.25
+seconds have elapsed from that request; it never injects a second cancellation into
+an ordinary `finally` block merely because cleanup exceeded 0.1 seconds. Cleanup
+that completes within the containment interval is drained before reload,
+replacement, reset close, or final close returns.
+
+A callback still running at 0.25 seconds is classified as **contained**, not drained.
+`ProviderRegistryCloseResult(drained=False, contained_discovery_tasks=...)` reports
+that exact state. A process-owned supervisor strongly retains the discovery task, whose done callback
+retains its retired generation registry, until actual completion. This explicit root
+avoids relying on asyncio's weak task references after a session drops the outgoing
+runtime. The callback has no publication path after the outer operation ends, and
+source/layer/generation/revision guards remain in force.
+Failed work retains the current snapshot and records at most one diagnostic per
+layer token; the registry also applies a global bound.
 
 ## Runtime creation and transport routing
 
@@ -153,27 +171,37 @@ endpoint when `api="openai-completions"`.
 ## ExtensionRuntime ownership
 
 Every `ExtensionRuntime` now creates one provider registry with the same explicit
-generation identity as its `ExtensionGeneration`. `register_provider` stamps the
-calling extension name as source ownership.
+generation identity as its `ExtensionGeneration`. The loader assigns each loaded
+entry a source ID from `Path.resolve().as_uri()` and `register_provider` uses that
+host-owned ID. Display names remain user-facing labels only.
 
-If `setup()` raises, the runtime removes all provider layers from that extension
-alongside its tools, commands, guidelines, and renderers. Reload and retirement
-cancel registry work and remove layers before invalidating the outgoing API.
-Final `CodingSession.aclose()` also awaits the runtime registry's cooperative
-refresh cancellation before closing model providers. Calling async close after an
-earlier synchronous retirement still drains tracked work; repeated close remains
-safe. Reload then creates a fresh generation and empty registry over the same
-immutable durable baseline. Provider refresh diagnostics are projected into normal
-runtime resource diagnostics without exposing secrets.
+If `setup()` raises, the runtime removes only registrations carrying that exact
+source ID. A failed second `shared.py` therefore cannot remove a successful first
+`shared.py` from another path; successful same-name providers shadow and restore as
+normal independent layers. Duplicate tools and commands are still ignored by name,
+so their first-registration semantics are unchanged.
+
+Reload and retirement cancel registry work and remove layers before invalidating the
+outgoing API. `CodingSession.reload()`, destination replacement, and final
+`CodingSession.aclose()` all await outgoing runtime close even when synchronous
+retirement already made that runtime inactive. `reset_for_reload()` is synchronous,
+so it retains each retired registry for the runtime's later async close. Repeated
+close remains safe. A contained task stays process-supervised with its retired
+registry through its done callback; it is not mislabeled as drained. Reload then creates a
+fresh generation and empty registry over the same immutable durable baseline.
+Provider refresh diagnostics are projected into normal runtime resource diagnostics
+without exposing secrets.
 
 ## How to verify
 
 Focused tests cover dormant/invalid contracts, auth precedence and omission,
 secret-safe representations, exact durable restoration, multi-source precedence,
-same-source replacement, setup cleanup, policy-safe refresh coalescing, per-waiter
-timeouts, cooperative and cancellation-hostile cleanup, malformed output, stale
-work, deep immutability, rejected runtime cleanup, auth redaction, no durable writes,
-retirement, HTTP auth headers, and model-name routing:
+same-source replacement, same-name/different-path isolation, setup cleanup,
+policy-safe and immediate-retry-safe refresh coalescing, per-waiter timeouts,
+single-cancel cooperative cleanup, explicit hostile-work containment, session
+lifecycle draining, malformed output, stale work, deep immutability, rejected
+runtime cleanup, auth redaction, no durable writes, retirement, HTTP auth headers,
+and model-name routing:
 
 ```bash
 uv run pytest tests/test_extension_providers.py tests/test_extensions.py \

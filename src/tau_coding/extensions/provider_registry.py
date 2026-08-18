@@ -25,8 +25,13 @@ from tau_coding.extensions.providers import (
 from tau_coding.provider_config import ProviderConfig
 
 DEFAULT_PROVIDER_REFRESH_TIMEOUT_SECONDS = 10.0
-PROVIDER_DISCOVERY_CANCELLATION_GRACE_SECONDS = 0.1
+PROVIDER_DISCOVERY_CANCELLATION_TIMEOUT_SECONDS = 0.25
 MAX_PROVIDER_REFRESH_DIAGNOSTICS = 100
+
+# asyncio keeps only weak task references. This process-owned supervisor keeps
+# cancellation-requested discovery and its generation registry strongly
+# reachable through cooperative drain or bounded containment.
+_SUPERVISED_DISCOVERY_TASKS: set[asyncio.Task[ProviderModelSnapshot]] = set()
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +85,24 @@ class ProviderRefreshResult:
     token: ProviderLayerToken | None
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderRegistryCloseResult:
+    """Whether close drained callbacks or boundedly contained remaining work."""
+
+    drained: bool
+    contained_discovery_tasks: int = 0
+
+
+@dataclass(eq=False, slots=True)
+class _RefreshOperation:
+    """One owned refresh operation, independently of coalescing eligibility."""
+
+    signal: SimpleCancellationToken
+    task: asyncio.Task[ProviderRefreshResult]
+    waiters: int = 0
+    cancellation_requested: bool = False
+
+
 class _NoCredentials:
     def get(self, name: str) -> str | None:
         del name
@@ -114,13 +137,13 @@ class DynamicProviderRegistry:
         self._layers: dict[str, list[DynamicProviderLayer]] = {}
         self._order = count(1)
         self._layer_sequence = count(1)
-        self._refresh_tasks: dict[
-            tuple[ProviderLayerToken, bool], asyncio.Task[ProviderRefreshResult]
-        ] = {}
-        self._refresh_signals: dict[tuple[ProviderLayerToken, bool], SimpleCancellationToken] = {}
-        self._refresh_waiters: dict[tuple[ProviderLayerToken, bool], int] = {}
+        self._refresh_operations: dict[tuple[ProviderLayerToken, bool], _RefreshOperation] = {}
+        self._owned_refresh_operations: set[_RefreshOperation] = set()
         self._refresh_revisions: dict[ProviderLayerToken, int] = {}
         self._discovery_tasks: set[asyncio.Task[ProviderModelSnapshot]] = set()
+        self._discovery_cancellation_deadlines: dict[
+            asyncio.Task[ProviderModelSnapshot], float
+        ] = {}
         self._diagnostics: dict[ProviderLayerToken, ProviderRefreshDiagnostic] = {}
         self._retired = False
 
@@ -262,10 +285,12 @@ class DynamicProviderRegistry:
 
         token = effective.layer_token
         key = (token, allow_network)
-        task = self._refresh_tasks.get(key)
-        if task is None:
+        operation = self._refresh_operations.get(key)
+        if operation is not None and (operation.task.done() or operation.task.cancelling()):
+            self._detach_refresh_operation(key, operation)
+            operation = None
+        if operation is None:
             signal = SimpleCancellationToken()
-            self._refresh_signals[key] = signal
             revision = self._refresh_revisions.get(token, 0) + 1
             self._refresh_revisions[token] = revision
             task = asyncio.create_task(
@@ -278,25 +303,26 @@ class DynamicProviderRegistry:
                 ),
                 name=f"tau-provider-refresh:{token.source_id}:{provider_id}",
             )
-            self._refresh_tasks[key] = task
-            task.add_done_callback(partial(self._finish_refresh, key))
-        self._refresh_waiters[key] = self._refresh_waiters.get(key, 0) + 1
+            operation = _RefreshOperation(signal=signal, task=task)
+            self._refresh_operations[key] = operation
+            self._owned_refresh_operations.add(operation)
+            task.add_done_callback(partial(self._finish_refresh, key, operation))
+        operation.waiters += 1
         timed_out = False
         try:
             async with asyncio.timeout(timeout_seconds):
-                return await asyncio.shield(task)
+                return await asyncio.shield(operation.task)
         except TimeoutError:
             timed_out = True
             self._record_diagnostic(token, "timed_out", "provider model refresh timed out")
             return ProviderRefreshResult("timed_out", self._current_provider(token), token)
         finally:
-            remaining = self._refresh_waiters.get(key, 1) - 1
-            if remaining > 0:
-                self._refresh_waiters[key] = remaining
-            else:
-                self._refresh_waiters.pop(key, None)
-                if timed_out:
-                    self._cancel_operation(key)
+            operation.waiters -= 1
+            if timed_out and operation.waiters == 0:
+                # Detach before returning so an immediate retry cannot join an
+                # already-cancelling operation. The owned-operation set keeps
+                # the old task supervised until its actual completion.
+                self._cancel_operation(key, operation)
 
     def cancel_refresh(self, provider_id: str, source_id: str | None = None) -> bool:
         """Cancel refresh work for matching active provider layers."""
@@ -312,23 +338,37 @@ class DynamicProviderRegistry:
             return
         self._retired = True
         self._layers.clear()
-        for key in tuple(self._refresh_tasks):
-            self._cancel_operation(key)
+        for key, operation in tuple(self._refresh_operations.items()):
+            self._cancel_operation(key, operation)
+        for operation in tuple(self._owned_refresh_operations):
+            self._request_refresh_cancellation(operation)
         for task in tuple(self._discovery_tasks):
-            task.cancel()
+            self._request_discovery_cancellation(task)
 
-    async def aclose(self) -> None:
-        """Retire and boundedly drain all generation-owned discovery work."""
+    async def aclose(self) -> ProviderRegistryCloseResult:
+        """Retire, drain cooperative work, and report bounded containment.
+
+        Discovery receives at most one task cancellation. Close waits only for
+        the remainder of the fixed containment window measured from that first
+        request. A callback still running afterward is not reported as drained;
+        a process-owned supervisor retains its task and generation owner until
+        actual completion.
+        """
         self.retire()
-        tasks = tuple(self._refresh_tasks.values())
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        refresh_tasks = tuple(operation.task for operation in self._owned_refresh_operations)
+        if refresh_tasks:
+            await asyncio.gather(*refresh_tasks, return_exceptions=True)
         discovery_tasks = tuple(self._discovery_tasks)
         if discovery_tasks:
             await asyncio.gather(
                 *(self._cancel_and_drain_discovery(task) for task in discovery_tasks),
                 return_exceptions=True,
             )
+        contained = sum(not task.done() for task in self._discovery_tasks)
+        return ProviderRegistryCloseResult(
+            drained=contained == 0,
+            contained_discovery_tasks=contained,
+        )
 
     async def _run_refresh(
         self,
@@ -421,60 +461,104 @@ class DynamicProviderRegistry:
 
     def _cancel_token(self, token: ProviderLayerToken) -> bool:
         cancelled = False
-        keys = {key for key in (*self._refresh_tasks, *self._refresh_signals) if key[0] == token}
+        keys = {key for key in self._refresh_operations if key[0] == token}
         for key in keys:
             cancelled = self._cancel_operation(key) or cancelled
         self._refresh_revisions.pop(token, None)
         return cancelled
 
-    def _cancel_operation(self, key: tuple[ProviderLayerToken, bool]) -> bool:
-        signal = self._refresh_signals.get(key)
-        task = self._refresh_tasks.get(key)
-        if signal is not None:
-            signal.cancel()
-        if task is not None and not task.done():
-            task.cancel()
-            return True
-        return signal is not None
+    def _cancel_operation(
+        self,
+        key: tuple[ProviderLayerToken, bool],
+        expected: _RefreshOperation | None = None,
+    ) -> bool:
+        operation = self._refresh_operations.get(key)
+        if operation is None or (expected is not None and operation is not expected):
+            return False
+        # Coalescing eligibility ends synchronously, before cancellation can
+        # return to its caller. Identity checks keep an old done callback from
+        # detaching a successor created under the same key.
+        self._detach_refresh_operation(key, operation)
+        self._request_refresh_cancellation(operation)
+        return True
+
+    @staticmethod
+    def _request_refresh_cancellation(operation: _RefreshOperation) -> None:
+        operation.signal.cancel()
+        if operation.cancellation_requested:
+            return
+        operation.cancellation_requested = True
+        if not operation.task.done():
+            operation.task.cancel()
+
+    def _detach_refresh_operation(
+        self,
+        key: tuple[ProviderLayerToken, bool],
+        operation: _RefreshOperation,
+    ) -> None:
+        if self._refresh_operations.get(key) is operation:
+            self._refresh_operations.pop(key, None)
 
     def _finish_refresh(
         self,
         key: tuple[ProviderLayerToken, bool],
+        operation: _RefreshOperation,
         task: asyncio.Task[ProviderRefreshResult],
     ) -> None:
-        if self._refresh_tasks.get(key) is task:
-            self._refresh_tasks.pop(key, None)
-            self._refresh_signals.pop(key, None)
+        self._detach_refresh_operation(key, operation)
+        self._owned_refresh_operations.discard(operation)
+        _consume_refresh_task_result(task)
 
     def _finish_discovery(self, task: asyncio.Task[ProviderModelSnapshot]) -> None:
         self._discovery_tasks.discard(task)
+        self._discovery_cancellation_deadlines.pop(task, None)
         _consume_task_result(task)
+
+    def _request_discovery_cancellation(
+        self,
+        task: asyncio.Task[ProviderModelSnapshot],
+    ) -> float:
+        deadline = self._discovery_cancellation_deadlines.get(task)
+        if deadline is not None:
+            return deadline
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + PROVIDER_DISCOVERY_CANCELLATION_TIMEOUT_SECONDS
+        self._discovery_cancellation_deadlines[task] = deadline
+        # A callback may still be in ordinary finally cleanup when the bounded
+        # close interval ends. Give it a process-rooted supervisor before the
+        # cancellation request so dropping the outgoing runtime cannot let the
+        # still-pending task and its generation owner be garbage-collected.
+        _SUPERVISED_DISCOVERY_TASKS.add(task)
+        task.add_done_callback(_release_supervised_discovery)
+        task.cancel()
+        return deadline
 
     async def _cancel_and_drain_discovery(
         self,
         task: asyncio.Task[ProviderModelSnapshot],
-    ) -> None:
-        for _ in range(2):
+    ) -> bool:
+        """Request cancellation once and await only the containment remainder."""
+        if task.done():
+            return True
+        deadline = self._request_discovery_cancellation(task)
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            return task.done()
+        try:
+            async with asyncio.timeout(remaining):
+                await asyncio.shield(task)
+        except TimeoutError:
+            return task.done()
+        except asyncio.CancelledError:
             if task.done():
-                return
-            task.cancel()
-            try:
-                async with asyncio.timeout(PROVIDER_DISCOVERY_CANCELLATION_GRACE_SECONDS):
-                    await asyncio.shield(task)
-            except TimeoutError:
-                continue
-            except asyncio.CancelledError:
-                if task.done():
-                    return
-                # Repeated owner cancellation must not abandon the still-live
-                # discovery handle or prevent this outer task returning its
-                # categorical cancellation result.
-                continue
-            except Exception:
-                return
-        # A hostile callback can suppress cancellation indefinitely. Keep its
-        # handle in _discovery_tasks until the done callback observes actual
-        # completion; stale token/generation checks still prevent publication.
+                return True
+            # This owner was itself cancelled. Shielding keeps the callback
+            # supervised and avoids injecting a second cancellation into its
+            # potentially cooperative finally cleanup.
+            raise
+        except Exception:
+            return True
+        return True
 
     def _record_diagnostic(
         self,
@@ -498,6 +582,17 @@ async def _await_snapshot(
     value: Awaitable[ProviderModelSnapshot],
 ) -> ProviderModelSnapshot:
     return await value
+
+
+def _release_supervised_discovery(task: asyncio.Task[ProviderModelSnapshot]) -> None:
+    """Release the process-owned strong reference after actual completion."""
+    _SUPERVISED_DISCOVERY_TASKS.discard(task)
+
+
+def _consume_refresh_task_result(task: asyncio.Task[ProviderRefreshResult]) -> None:
+    """Retrieve an owned refresh result after all publication logic completed."""
+    with suppress(asyncio.CancelledError):
+        task.exception()
 
 
 def _consume_task_result(task: asyncio.Task[ProviderModelSnapshot]) -> None:

@@ -1591,6 +1591,10 @@ class CodingSession:
         if system_prompt_rebuilt:
             self._invalidate_context_usage_cache()
         staged_runtime.attach_harness_listener(self._harness.subscribe)
+        # Retirement invalidates publication synchronously; async close then
+        # waits for cooperative provider callback cleanup or reports bounded
+        # containment while the outgoing runtime still owns every task handle.
+        await old_runtime.aclose()
 
         return CodingReloadSummary(
             skills=_category_summary(before_skills, _skill_signatures(resources.skills)),
@@ -1824,6 +1828,7 @@ class CodingSession:
         self._session_start_pending = False
         self._extension_runtime.bind(self)
         self._extension_runtime.attach_harness_listener(self._harness.subscribe)
+        await old_runtime.aclose()
 
     async def compact(self, instructions: str | None = None) -> str:
         """Generate a manual compaction summary and rebuild active context."""
@@ -1843,7 +1848,9 @@ class CodingSession:
         """Close extension/provider resources owned by this coding session."""
         if self._extension_runtime.active:
             await self._extension_runtime.emit_session_shutdown("quit")
-            await self._extension_runtime.aclose()
+        # A runtime may already be synchronously retired by replacement. Close
+        # still owns the async drain/containment step and must never skip it.
+        await self._extension_runtime.aclose()
         for provider in self._owned_providers:
             await provider.aclose()
         self._owned_providers.clear()

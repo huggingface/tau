@@ -35,19 +35,27 @@ a runtime auth strategy so credentials never become registered definitions.
 
 Provider layers are process-local and never written to `catalog.toml`,
 `providers.json`, session files, or generic extension storage. Latest registration
-wins for a provider ID. Source replacement is atomic; source removal or generation
-retirement reveals the preceding complete dynamic layer or the exact durable
-`ProviderConfig` baseline.
+wins for a provider ID. The host derives stable source ownership from the canonical
+extension entry path, not its display name, so separately loaded same-name files
+shadow and restore independently. Repeating the exact entry source in one runtime
+is ignored with first-loaded precedence. Tools and commands keep their existing
+first-registration-wins behavior. Source replacement is atomic; source removal or
+generation retirement reveals the preceding complete dynamic layer or the exact
+durable `ProviderConfig` baseline.
 
 A `refresh_models` callback returns one complete `ProviderModelSnapshot`. Refreshes
 are coalesced only when source/layer/generation and network policy match; every
-caller keeps its own timeout. Incompatible network policies run separately.
-Cancellation is generation-owned: cooperative cleanup is awaited, while a callback
-that repeatedly suppresses cancellation remains tracked until it actually exits and
-can never publish after replacement or retirement. Failures retain the current
-snapshot and emit one bounded, secret-free diagnostic. Nested compatibility data is
-deeply immutable while registered. Callbacks receive structured data, not Rich or
-Textual objects.
+caller keeps its own timeout. A final timeout or explicit cancellation is removed
+from coalescing before returning, so an immediate retry starts fresh. Incompatible
+network policies run separately. Cancellation is generation-owned: Tau issues one
+task cancellation and waits up to 0.25 seconds from that request without
+re-cancelling a callback's `finally` cleanup. Reload, replacement, reset ownership,
+and final close await that cooperative drain. Work still running at the bound is
+reported as contained rather than drained; a process-owned supervisor retains its
+task and generation registry until actual completion, and it can never publish after replacement or
+retirement. Failures retain the current snapshot and emit one bounded, secret-free
+diagnostic. Nested compatibility data is deeply immutable while registered.
+Callbacks receive structured data, not Rich or Textual objects.
 
 This Phase 1 API is provisional pending second-backend validation. Registration and
 registry mechanics exist now; startup selection, built-in providers, `/local`, and

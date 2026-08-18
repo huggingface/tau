@@ -27,7 +27,11 @@ from tau_coding.extensions import (
     ResolvedProviderAuth,
     resolve_provider_auth,
 )
-from tau_coding.extensions.provider_registry import MAX_PROVIDER_REFRESH_DIAGNOSTICS
+from tau_coding.extensions.provider_registry import (
+    _SUPERVISED_DISCOVERY_TASKS,
+    MAX_PROVIDER_REFRESH_DIAGNOSTICS,
+    PROVIDER_DISCOVERY_CANCELLATION_TIMEOUT_SECONDS,
+)
 from tau_coding.provider_config import (
     OpenAICompatibleProviderConfig,
     ProviderConfigError,
@@ -86,6 +90,31 @@ def provider(
         ),
         refresh_models=refresh_models,
     )
+
+
+def _provider_extension_body(model_id: str, *, fail_setup: bool = False) -> str:
+    failure = "\n    raise RuntimeError('setup exploded')" if fail_setup else ""
+    return f"""
+from tau_coding.extensions import (
+    DynamicProvider,
+    NoAuth,
+    OpenAICompatibleTransport,
+    ProviderModel,
+)
+
+
+def setup(tau):
+    tau.register_provider(DynamicProvider(
+        id="local",
+        display_name="Local",
+        models=(ProviderModel("{model_id}"),),
+        default_model="{model_id}",
+        transport=OpenAICompatibleTransport(
+            base_url="http://example.test/v1",
+            auth=NoAuth(),
+        ),
+    )){failure}
+"""
 
 
 async def test_provider_contract_accepts_dormant_zero_model_provider() -> None:
@@ -733,6 +762,54 @@ async def test_cancelled_refresh_does_not_publish() -> None:
     assert registry.effective("local").definition is initial  # type: ignore[union-attr]
 
 
+async def test_timeout_then_immediate_retry_starts_fresh_and_publishes() -> None:
+    calls = 0
+
+    async def refresh(context):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await asyncio.sleep(10)
+        return ProviderModelSnapshot((ProviderModel("fresh"),), "fresh")
+
+    registry = DynamicProviderRegistry(generation_id="generation-1")
+    registry.register("source", provider(refresh_models=refresh))
+
+    timed_out = await registry.refresh("local", timeout_seconds=0.01)
+    retried = await registry.refresh("local", timeout_seconds=1.0)
+
+    assert timed_out.status == "timed_out"
+    assert retried.status == "published"
+    assert calls == 2
+    assert registry.effective("local").definition.models[0].id == "fresh"  # type: ignore[union-attr]
+
+
+async def test_cancel_then_immediate_retry_starts_fresh_and_publishes() -> None:
+    entered = asyncio.Event()
+    calls = 0
+
+    async def refresh(context):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            entered.set()
+            await asyncio.sleep(10)
+        return ProviderModelSnapshot((ProviderModel("fresh"),), "fresh")
+
+    registry = DynamicProviderRegistry(generation_id="generation-1")
+    registry.register("source", provider(refresh_models=refresh))
+    cancelled = asyncio.create_task(registry.refresh("local"))
+    await entered.wait()
+
+    assert registry.cancel_refresh("local", "source") is True
+    retried = await registry.refresh("local", timeout_seconds=1.0)
+
+    assert (await cancelled).status == "cancelled"
+    assert retried.status == "published"
+    assert calls == 2
+    assert registry.effective("local").definition.models[0].id == "fresh"  # type: ignore[union-attr]
+
+
 async def test_reregistration_prevents_old_refresh_publication() -> None:
     entered = asyncio.Event()
     cancelled = asyncio.Event()
@@ -830,18 +907,26 @@ async def test_retire_cancels_tasks_removes_layers_and_rejects_registration() ->
         registry.register("source", provider())
 
 
-async def test_close_waits_for_discovery_callback_cleanup_after_retire() -> None:
+async def test_close_waits_without_recancelling_long_finally_cleanup() -> None:
     entered = asyncio.Event()
     cleanup_started = asyncio.Event()
+    cleanup_completed = asyncio.Event()
+    cleanup_cancelled = False
     release_cleanup = asyncio.Event()
 
     async def refresh(context):
+        nonlocal cleanup_cancelled
         entered.set()
         try:
             await asyncio.sleep(10)
         finally:
             cleanup_started.set()
-            await release_cleanup.wait()
+            try:
+                await release_cleanup.wait()
+            except asyncio.CancelledError:
+                cleanup_cancelled = True
+                raise
+            cleanup_completed.set()
 
     runtime = ExtensionRuntime()
     registry = runtime.provider_registry
@@ -852,27 +937,39 @@ async def test_close_waits_for_discovery_callback_cleanup_after_retire() -> None
     runtime.retire()
     await cleanup_started.wait()
     close = asyncio.create_task(runtime.aclose())
-    await asyncio.sleep(0)
+    await asyncio.sleep(0.15)
 
+    assert PROVIDER_DISCOVERY_CANCELLATION_TIMEOUT_SECONDS > 0.1
     assert close.done() is False
+    assert cleanup_cancelled is False
+    assert cleanup_completed.is_set() is False
     release_cleanup.set()
-    await asyncio.wait_for(close, timeout=0.5)
+    close_result = await asyncio.wait_for(close, timeout=0.5)
+    assert close_result.drained is True
+    assert close_result.contained_discovery_tasks == 0
+    assert cleanup_completed.is_set()
     assert (await pending).status == "cancelled"
     assert not _live_discovery_tasks()
 
 
-async def test_close_boundedly_recancels_a_callback_that_suppresses_cancellation() -> None:
+async def test_close_reports_blocked_finally_as_contained_without_recancelling() -> None:
     entered = asyncio.Event()
-    suppressed = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    cleanup_cancelled = False
 
     async def refresh(context):
+        nonlocal cleanup_cancelled
         entered.set()
         try:
             await asyncio.sleep(10)
-        except asyncio.CancelledError:
-            suppressed.set()
-            await asyncio.sleep(10)
-        raise AssertionError("unreachable")
+        finally:
+            cleanup_started.set()
+            try:
+                await release_cleanup.wait()
+            except asyncio.CancelledError:
+                cleanup_cancelled = True
+                raise
 
     runtime = ExtensionRuntime()
     registry = runtime.provider_registry
@@ -880,11 +977,25 @@ async def test_close_boundedly_recancels_a_callback_that_suppresses_cancellation
     pending = asyncio.create_task(registry.refresh("local"))
     await entered.wait()
 
-    await asyncio.wait_for(runtime.aclose(), timeout=0.5)
+    close_result = await asyncio.wait_for(runtime.aclose(), timeout=0.75)
 
-    assert suppressed.is_set()
+    assert cleanup_started.is_set()
+    assert cleanup_cancelled is False
+    assert close_result.drained is False
+    assert close_result.contained_discovery_tasks == 1
+    discovery_task = next(iter(registry._discovery_tasks))  # type: ignore[attr-defined]
+    assert discovery_task in _SUPERVISED_DISCOVERY_TASKS
+
+    release_cleanup.set()
+    await asyncio.wait_for(
+        asyncio.gather(discovery_task, return_exceptions=True),
+        timeout=0.5,
+    )
+    await asyncio.sleep(0)
+    final_close_result = await runtime.aclose()
+    assert final_close_result.drained is True
+    assert discovery_task not in _SUPERVISED_DISCOVERY_TASKS
     assert (await pending).status == "cancelled"
-    assert not _live_discovery_tasks()
 
 
 async def test_replaced_cancellation_hostile_discovery_cannot_publish_when_it_finishes() -> None:
@@ -919,7 +1030,7 @@ async def test_replaced_cancellation_hostile_discovery_cannot_publish_when_it_fi
     assert not registry._discovery_tasks  # type: ignore[attr-defined]
 
 
-async def test_cancellation_hostile_discovery_stays_tracked_until_actual_completion() -> None:
+async def test_cancellation_hostile_discovery_is_boundedly_contained_and_owned() -> None:
     entered = asyncio.Event()
     suppressed = asyncio.Event()
     release = asyncio.Event()
@@ -942,17 +1053,24 @@ async def test_cancellation_hostile_discovery_stays_tracked_until_actual_complet
     pending = asyncio.create_task(registry.refresh("local"))
     await entered.wait()
 
-    await asyncio.wait_for(runtime.aclose(), timeout=1.0)
+    close_result = await asyncio.wait_for(runtime.aclose(), timeout=0.75)
 
+    assert close_result.drained is False
+    assert close_result.contained_discovery_tasks == 1
     assert suppressed.is_set()
-    assert cancellation_count >= 2
+    assert cancellation_count == 1
     assert (await pending).status == "cancelled"
     assert len(registry._discovery_tasks) == 1  # type: ignore[attr-defined]
     assert len(_live_discovery_tasks()) == 1
+    discovery_task = next(iter(registry._discovery_tasks))  # type: ignore[attr-defined]
+    assert discovery_task in _SUPERVISED_DISCOVERY_TASKS
 
     release.set()
-    await asyncio.wait_for(next(iter(registry._discovery_tasks)), timeout=0.5)  # type: ignore[attr-defined]
+    await asyncio.wait_for(discovery_task, timeout=0.5)
     await asyncio.sleep(0)
+    final_close_result = await runtime.aclose()
+    assert final_close_result.drained is True
+    assert discovery_task not in _SUPERVISED_DISCOVERY_TASKS
     assert not registry._discovery_tasks  # type: ignore[attr-defined]
     assert registry.effective("local") is None
 
@@ -963,6 +1081,38 @@ def _live_discovery_tasks() -> list[asyncio.Task[object]]:
         for task in asyncio.all_tasks()
         if not task.done() and task.get_name().startswith("tau-provider-discovery:")
     ]
+
+
+async def test_reset_retains_outgoing_registry_for_later_async_drain() -> None:
+    entered = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+
+    async def refresh(context):
+        entered.set()
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cleanup_started.set()
+            await release_cleanup.wait()
+
+    runtime = ExtensionRuntime()
+    old_registry = runtime.provider_registry
+    old_registry.register("source", provider(refresh_models=refresh))
+    pending = asyncio.create_task(old_registry.refresh("local"))
+    await entered.wait()
+
+    runtime.reset_for_reload()
+    await cleanup_started.wait()
+    close = asyncio.create_task(runtime.aclose())
+    await asyncio.sleep(0.15)
+
+    assert close.done() is False
+    release_cleanup.set()
+    close_result = await close
+    assert close_result.drained is True
+    assert (await pending).status == "cancelled"
+    assert not old_registry._discovery_tasks  # type: ignore[attr-defined]
 
 
 async def test_runtime_close_drains_owned_refresh_and_is_idempotent() -> None:
@@ -1016,6 +1166,105 @@ def setup(tau):
 
     assert runtime.provider_registry.effective("temporary") is None
     assert any("setup failed" in diagnostic.message for diagnostic in runtime.diagnostics)
+
+
+async def test_same_name_extension_paths_shadow_and_restore_exact_provider_layer(
+    tmp_path: Path,
+) -> None:
+    paths = TauResourcePaths(
+        root=tmp_path / "tau",
+        cwd=tmp_path / "project",
+        agents_root=tmp_path / "agents",
+    )
+    first_path = tmp_path / "first" / "shared.py"
+    second_path = tmp_path / "second" / "shared.py"
+    first_path.parent.mkdir()
+    second_path.parent.mkdir()
+    first_path.write_text(_provider_extension_body("first"), encoding="utf-8")
+    second_path.write_text(_provider_extension_body("second"), encoding="utf-8")
+    runtime = ExtensionRuntime()
+
+    runtime.load(paths, extra_paths=(first_path,), include_resource_dirs=False)
+    first_effective = runtime.provider_registry.effective("local")
+    assert first_effective is not None
+    first_definition = first_effective.definition
+
+    runtime.load(paths, extra_paths=(second_path,), include_resource_dirs=False)
+    layers = runtime.provider_registry.layers("local")
+
+    assert [layer.provider.models[0].id for layer in layers] == ["first", "second"]
+    assert layers[0].token.source_id == f"extension:{first_path.resolve().as_uri()}"
+    assert layers[1].token.source_id == f"extension:{second_path.resolve().as_uri()}"
+    assert layers[0].token.source_id != layers[1].token.source_id
+    assert runtime.provider_registry.effective("local").definition is layers[1].provider  # type: ignore[union-attr]
+
+    runtime.provider_registry.unregister_source(layers[1].token.source_id)
+
+    assert runtime.provider_registry.effective("local").definition is first_definition  # type: ignore[union-attr]
+
+
+async def test_same_name_failed_setup_preserves_first_exact_provider_layer(
+    tmp_path: Path,
+) -> None:
+    paths = TauResourcePaths(
+        root=tmp_path / "tau",
+        cwd=tmp_path / "project",
+        agents_root=tmp_path / "agents",
+    )
+    first_path = tmp_path / "first" / "shared.py"
+    second_path = tmp_path / "second" / "shared.py"
+    first_path.parent.mkdir()
+    second_path.parent.mkdir()
+    first_path.write_text(_provider_extension_body("first"), encoding="utf-8")
+    second_path.write_text(
+        _provider_extension_body("second", fail_setup=True),
+        encoding="utf-8",
+    )
+    runtime = ExtensionRuntime()
+
+    runtime.load(paths, extra_paths=(first_path,), include_resource_dirs=False)
+    first_effective = runtime.provider_registry.effective("local")
+    assert first_effective is not None
+    first_definition = first_effective.definition
+
+    runtime.load(paths, extra_paths=(second_path,), include_resource_dirs=False)
+
+    assert runtime.extension_names == ("shared",)
+    assert runtime.provider_registry.effective("local").definition is first_definition  # type: ignore[union-attr]
+    assert len(runtime.provider_registry.layers("local")) == 1
+    assert any("setup failed" in diagnostic.message for diagnostic in runtime.diagnostics)
+
+
+async def test_reloading_same_exact_extension_source_keeps_first_registration(
+    tmp_path: Path,
+) -> None:
+    paths = TauResourcePaths(
+        root=tmp_path / "tau",
+        cwd=tmp_path / "project",
+        agents_root=tmp_path / "agents",
+    )
+    extension_path = tmp_path / "shared.py"
+    extension_path.write_text(_provider_extension_body("first"), encoding="utf-8")
+    runtime = ExtensionRuntime()
+
+    runtime.load(paths, extra_paths=(extension_path,), include_resource_dirs=False)
+    first_effective = runtime.provider_registry.effective("local")
+    assert first_effective is not None
+    first_definition = first_effective.definition
+
+    extension_path.write_text(
+        _provider_extension_body("second", fail_setup=True),
+        encoding="utf-8",
+    )
+    runtime.load(paths, extra_paths=(extension_path,), include_resource_dirs=False)
+
+    assert runtime.extension_names == ("shared",)
+    assert runtime.provider_registry.effective("local").definition is first_definition  # type: ignore[union-attr]
+    assert len(runtime.provider_registry.layers("local")) == 1
+    assert any(
+        "duplicate extension source ignored" in diagnostic.message
+        for diagnostic in runtime.diagnostics
+    )
 
 
 async def test_extension_api_registers_provider_and_reload_retires_generation(

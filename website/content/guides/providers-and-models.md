@@ -303,9 +303,11 @@ for current behavior and availability.
 Tau's extension API has a provisional, process-local `DynamicProvider` contract.
 Unlike providers created by `/login custom` or `tau setup`, these definitions are
 source/generation-owned overlays and are never copied into `catalog.toml`,
-`providers.json`, sessions, or generic disk storage. They support dormant model
-sets, deeply immutable compatibility metadata, atomic model-snapshot refresh,
-per-caller refresh deadlines, network-policy-safe coalescing, and
+`providers.json`, sessions, or generic disk storage. Source ownership is a stable
+host identity derived from the canonical extension entry path—not the display
+name—so separate same-name extension files cannot remove one another's providers.
+They support dormant model sets, deeply immutable compatibility metadata, atomic
+model-snapshot refresh, per-caller refresh deadlines, retry-safe coalescing, and
 required/optional/no authentication without fake keys or exposed auth provenance.
 
 Phase 1 establishes contracts and registry mechanics only. Dynamic providers are

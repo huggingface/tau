@@ -18,12 +18,15 @@ from tau_ai import FakeProvider
 from tau_coding import CodingSession, CodingSessionConfig, ResourceError, TauResourcePaths
 from tau_coding.extensions import (
     CustomMessageView,
+    DynamicProvider,
     ExtensionAPI,
     ExtensionError,
     ExtensionRuntime,
     InputEvent,
     InputHookResult,
     MessageRenderOptions,
+    NoAuth,
+    OpenAICompatibleTransport,
     ToolCallHookResult,
     ToolResultHookResult,
     discover_extensions,
@@ -566,6 +569,60 @@ def test_duplicate_tool_registration_first_wins(tmp_path: Path) -> None:
     runtime = _runtime_with(paths)
 
     assert len(runtime.extension_tools) == 1
+    assert any("already registered" in diag.message for diag in runtime.diagnostics)
+
+
+@pytest.mark.parametrize("second_fails", [False, True])
+async def test_separately_loaded_same_name_sources_keep_first_tool_and_command(
+    tmp_path: Path,
+    second_fails: bool,
+) -> None:
+    paths = _paths(tmp_path)
+
+    def body(marker: str, *, fail: bool = False) -> str:
+        failure = "\n    raise RuntimeError('setup exploded')" if fail else ""
+        return f"""
+from tau_agent.tools import AgentTool, AgentToolResult
+
+
+async def _run(tool_call_id, arguments, signal=None, on_update=None):
+    return AgentToolResult(content="{marker}")
+
+
+def _command(args, context):
+    return "{marker}"
+
+
+def setup(tau):
+    tau.register_tool(AgentTool(
+        name="shared-tool",
+        label="Shared",
+        description="{marker}",
+        parameters={{}},
+        execute_fn=_run,
+    ))
+    tau.register_command("shared-command", _command){failure}
+"""
+
+    first_path = _write_extension(tmp_path / "first", "shared", body("first"))
+    second_path = _write_extension(
+        tmp_path / "second",
+        "shared",
+        body("second", fail=second_fails),
+    )
+    runtime = ExtensionRuntime()
+
+    runtime.load(paths, extra_paths=(first_path,), include_resource_dirs=False)
+    runtime.load(paths, extra_paths=(second_path,), include_resource_dirs=False)
+
+    tool = runtime.compose_tools([])[0]
+    assert tool.description == "first"
+    assert (await tool.execute("call-1", {})).text == "first"
+    registry = runtime.build_command_registry()
+    command = registry.get("shared-command")
+    assert command is not None
+    result = command.handler(_command_context(registry, "/shared-command", "shared-command", ""))
+    assert result.message == "first"
     assert any("already registered" in diag.message for diag in runtime.diagnostics)
 
 
@@ -1773,6 +1830,79 @@ async def test_reload_picks_up_new_extension(tmp_path: Path) -> None:
     assert summary.extensions.after == 1
     assert "hello" in [tool.name for tool in session.tools]
     assert "hello" in session.system_prompt
+
+
+@pytest.mark.parametrize("operation", ["reload", "replacement", "final_close"])
+async def test_session_lifecycle_awaits_outgoing_provider_cleanup(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    from tau_coding import SessionManager, TauPaths
+
+    manager = SessionManager(
+        TauPaths(home=tmp_path / "home-tau", agents_home=tmp_path / "home-agents")
+    )
+    config = _session_config(tmp_path, FakeProvider([]))
+    record = manager.create_session(cwd=config.cwd, model="fake")
+    config = dataclass_replace(config, session_manager=manager, session_id=record.id)
+    session = await CodingSession.load(config)
+    old_runtime = session.extension_runtime
+    old_registry = old_runtime.provider_registry
+    entered = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    cleanup_cancelled = False
+
+    async def refresh(context):
+        nonlocal cleanup_cancelled
+        entered.set()
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cleanup_started.set()
+            try:
+                await release_cleanup.wait()
+            except asyncio.CancelledError:
+                cleanup_cancelled = True
+                raise
+
+    old_registry.register(
+        "test-source",
+        DynamicProvider(
+            id="local",
+            display_name="Local",
+            transport=OpenAICompatibleTransport(
+                base_url="http://example.test/v1",
+                auth=NoAuth(),
+            ),
+            refresh_models=refresh,
+        ),
+    )
+    pending = asyncio.create_task(old_registry.refresh("local"))
+    await entered.wait()
+
+    if operation == "final_close":
+        old_runtime.retire()
+        lifecycle = asyncio.create_task(session.aclose())
+    elif operation == "replacement":
+        lifecycle = asyncio.create_task(session.new_session())
+    else:
+        lifecycle = asyncio.create_task(session.reload())
+
+    await asyncio.wait_for(cleanup_started.wait(), timeout=0.5)
+    await asyncio.sleep(0.15)
+
+    assert lifecycle.done() is False
+    assert cleanup_cancelled is False
+    release_cleanup.set()
+    await asyncio.wait_for(lifecycle, timeout=1.0)
+    assert (await pending).status == "cancelled"
+    assert not old_registry._discovery_tasks  # type: ignore[attr-defined]
+
+    if operation != "final_close":
+        await session.aclose()
 
 
 async def test_runtime_survives_new_session_swap(tmp_path: Path) -> None:
