@@ -2037,18 +2037,18 @@ class LoginProviderPickerScreen(ModalScreen[str | _LoginFlowAction | None]):
             )
             yield Static("Enter selects - Escape closes", id="login-provider-help")
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         """Focus the provider search field."""
         self.query_one("#login-provider-search", Input).focus()
-        self._refresh_provider_list()
+        await self._refresh_provider_list()
 
-    def on_input_changed(self, event: Input.Changed) -> None:
+    async def on_input_changed(self, event: Input.Changed) -> None:
         """Filter providers as the search value changes."""
         if event.input.id != "login-provider-search":
             return
         event.stop()
         self.visible_providers = _filter_login_providers(self.providers, event.value)
-        self._refresh_provider_list()
+        await self._refresh_provider_list()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Select the highlighted provider from the search field."""
@@ -2095,16 +2095,21 @@ class LoginProviderPickerScreen(ModalScreen[str | _LoginFlowAction | None]):
         self.dismiss(None)
 
     def _select_visible_provider(self) -> None:
-        provider_list = self.query_one("#login-provider-list", ListView)
-        index = provider_list.index
-        if index is None or not self.visible_providers:
+        if not self.visible_providers:
             return
-        self.dismiss(self.visible_providers[index].name)
-
-    def _refresh_provider_list(self) -> None:
         provider_list = self.query_one("#login-provider-list", ListView)
-        provider_list.clear()
-        provider_list.extend(
+        # Fall back to the first match: submitting from the search field can
+        # land here before the refreshed list has applied its highlight.
+        index = provider_list.index
+        self.dismiss(self.visible_providers[0 if index is None else index].name)
+
+    async def _refresh_provider_list(self) -> None:
+        provider_list = self.query_one("#login-provider-list", ListView)
+        # Await the mounts: assigning the index while the list is still empty
+        # validates it back to None, leaving the first provider unreachable
+        # with the down key (issue #494).
+        await provider_list.clear()
+        await provider_list.extend(
             [
                 ListItem(Label(_login_provider_label(provider), markup=False))
                 for provider in self.visible_providers
