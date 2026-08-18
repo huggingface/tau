@@ -214,6 +214,17 @@ class CompactionPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class ManualCompactionResult:
+    """Structured result from one manual compaction."""
+
+    summary: str
+    first_kept_entry_id: str
+    tokens_before: int
+    estimated_tokens_after: int
+    replaced_entry_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class _PendingMessageWrite:
     """Stable entries retained while a message persistence attempt is retried."""
 
@@ -554,6 +565,15 @@ class CodingSession:
         if self._provider_settings is None:
             return (self._provider_name,)
         return tuple(provider.name for provider in self._usable_provider_configs())
+
+    def provider_config(self, provider_name: str) -> ProviderConfig | None:
+        """Return configured metadata for a provider available to this session."""
+        if self._provider_settings is None:
+            return self._runtime_provider_config if provider_name == self.provider_name else None
+        try:
+            return self._provider_settings.get_provider(provider_name)
+        except ProviderConfigError:
+            return None
 
     @property
     def available_models(self) -> tuple[str, ...]:
@@ -1856,9 +1876,10 @@ class CodingSession:
         self._extension_runtime.bind(self)
         self._extension_runtime.attach_harness_listener(self._harness.subscribe)
 
-    async def compact(self, instructions: str | None = None) -> str:
-        """Generate a manual compaction summary and rebuild active context."""
+    async def compact_detailed(self, instructions: str | None = None) -> ManualCompactionResult:
+        """Generate a manual compaction and return its canonical result."""
         await self._flush_pending_message_writes(context=self._diagnostic_context())
+        tokens_before = self.context_token_estimate
         plan = self._manual_compaction_plan()
         summary = await self._generate_compaction_summary(
             plan.messages_to_summarize,
@@ -1868,7 +1889,18 @@ class CodingSession:
             summary,
             replace_entry_ids=plan.replace_entry_ids,
         )
-        return f"Compacted {len(compaction.replaces_entry_ids)} context entries."
+        return ManualCompactionResult(
+            summary=summary,
+            first_kept_entry_id=compaction.id,
+            tokens_before=tokens_before,
+            estimated_tokens_after=self.context_token_estimate,
+            replaced_entry_count=len(compaction.replaces_entry_ids),
+        )
+
+    async def compact(self, instructions: str | None = None) -> str:
+        """Generate a manual compaction summary and rebuild active context."""
+        result = await self.compact_detailed(instructions)
+        return f"Compacted {result.replaced_entry_count} context entries."
 
     async def aclose(self) -> None:
         """Close runtime providers created by this coding session."""

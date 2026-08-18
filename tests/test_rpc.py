@@ -8,11 +8,18 @@ import pytest
 from typer.testing import CliRunner
 
 from pi_event_helpers import assistant_done, assistant_start, text_delta
-from tau_agent import AssistantMessage, UserMessage
-from tau_agent.session import JsonlSessionStorage, MessageEntry
+from tau_agent import AssistantMessage, Usage, UserMessage
+from tau_agent.session import JsonlSessionStorage, LeafEntry, MessageEntry, ModelChangeEntry
 from tau_ai import FakeProvider
-from tau_coding import CodingSession, CodingSessionConfig, ModelChoice
+from tau_coding import (
+    CodingSession,
+    CodingSessionConfig,
+    ModelChoice,
+    OpenAICompatibleProviderConfig,
+    ProviderSettings,
+)
 from tau_coding import cli as cli_module
+from tau_coding.provider_config import ProviderModelMetadata
 from tau_coding.rpc import RpcServer
 
 
@@ -63,12 +70,13 @@ async def test_rpc_state_matches_pi_frontend_contract(tmp_path: Path) -> None:
         '{"id":"state","type":"get_state"}\n'
         '{"id":"models","type":"get_available_models"}\n'
         '{"id":"cycle","type":"cycle_model"}\n'
+        '{"id":"thinking","type":"set_thinking_level","level":"off"}\n'
     )
     stdout = StringIO()
 
     await RpcServer(session, stdin=stdin, stdout=stdout).run()
 
-    state, models, cycle = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    state, models, cycle, thinking = [json.loads(line) for line in stdout.getvalue().splitlines()]
     assert set(state["data"]) == {
         "model",
         "thinkingLevel",
@@ -86,6 +94,68 @@ async def test_rpc_state_matches_pi_frontend_contract(tmp_path: Path) -> None:
     assert state["data"]["model"]["id"] == "fake"
     assert models["data"]["models"][0]["provider"] == "openai"
     assert cycle["data"] is None
+    assert thinking == {
+        "type": "response",
+        "command": "set_thinking_level",
+        "success": True,
+        "id": "thinking",
+    }
+
+
+@pytest.mark.anyio
+async def test_rpc_model_shape_uses_catalog_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    provider_config = OpenAICompatibleProviderConfig(
+        name="local",
+        base_url="http://localhost:1234/v1",
+        models=("vision",),
+        default_model="vision",
+        model_metadata={
+            "vision": ProviderModelMetadata(
+                name="Vision Model",
+                api="openai-responses",
+                reasoning=True,
+                input=("text", "image"),
+                context_window=131_072,
+                max_tokens=32_768,
+                cost={"input": 1.0, "output": 2.0},
+            )
+        },
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="vision",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="local",
+            provider_settings=ProviderSettings(
+                default_provider="local", providers=(provider_config,)
+            ),
+            runtime_provider_config=provider_config,
+        )
+    )
+    stdin = StringIO('{"id":"state","type":"get_state"}\n')
+    stdout = StringIO()
+
+    await RpcServer(session, stdin=stdin, stdout=stdout).run()
+
+    model = json.loads(stdout.getvalue())["data"]["model"]
+    assert model == {
+        "id": "vision",
+        "name": "Vision Model",
+        "api": "openai-responses",
+        "provider": "local",
+        "baseUrl": "http://localhost:1234/v1",
+        "reasoning": True,
+        "input": ["text", "image"],
+        "contextWindow": 131072,
+        "maxTokens": 32768,
+        "cost": {"input": 1.0, "output": 2.0, "cacheRead": 0.0, "cacheWrite": 0.0},
+    }
 
 
 @pytest.mark.anyio
@@ -94,10 +164,18 @@ async def test_rpc_session_inspection_matches_pi_shapes(tmp_path: Path) -> None:
     user = MessageEntry(message=UserMessage(content="question"))
     assistant = MessageEntry(
         parent_id=user.id,
-        message=AssistantMessage(content="answer", model="fake"),
+        message=AssistantMessage(
+            content="answer",
+            model="fake",
+            usage=Usage(input=10, output=3, cache_read=20, cache_write=5),
+        ),
     )
+    model_change = ModelChangeEntry(parent_id=assistant.id, model="fake-next")
+    leaf = LeafEntry(parent_id=model_change.id, entry_id=model_change.id)
     await storage.append(user)
     await storage.append(assistant)
+    await storage.append(model_change)
+    await storage.append(leaf)
     session = await CodingSession.load(
         CodingSessionConfig(
             provider=FakeProvider([]),
@@ -112,16 +190,64 @@ async def test_rpc_session_inspection_matches_pi_shapes(tmp_path: Path) -> None:
         '{"id":"tree","type":"get_tree"}\n'
         '{"id":"last","type":"get_last_assistant_text"}\n'
         '{"id":"forks","type":"get_fork_messages"}\n'
+        '{"id":"stats","type":"get_session_stats"}\n'
     )
     stdout = StringIO()
 
     await RpcServer(session, stdin=stdin, stdout=stdout).run()
 
-    entries, tree, last, forks = [json.loads(line) for line in stdout.getvalue().splitlines()]
-    assert entries["data"]["entries"][1]["parentId"] == user.id
-    assert tree["data"]["tree"][0]["children"][0]["entry"]["id"] == assistant.id
+    entries, tree, last, forks, stats = [
+        json.loads(line) for line in stdout.getvalue().splitlines()
+    ]
+    projected_entries = entries["data"]["entries"]
+    assert projected_entries[1]["parentId"] == user.id
+    assert projected_entries[2]["type"] == "model_change"
+    assert projected_entries[2]["provider"] == "openai"
+    assert projected_entries[2]["modelId"] == "fake-next"
+    assert all(entry["type"] != "leaf" for entry in projected_entries)
+    tree_root = tree["data"]["tree"][0]
+    assert tree_root["children"][0]["entry"]["id"] == assistant.id
+    assert tree_root["children"][0]["children"][0]["entry"]["type"] == "model_change"
     assert last["data"] == {"text": "answer"}
     assert forks["data"] == {"messages": [{"entryId": user.id, "text": "question"}]}
+    assert stats["data"]["tokens"] == {
+        "input": 10,
+        "output": 3,
+        "cacheRead": 20,
+        "cacheWrite": 5,
+        "total": 38,
+    }
+    assert stats["data"]["cost"] is None
+
+
+@pytest.mark.anyio
+async def test_rpc_compaction_returns_canonical_summary_and_boundary(tmp_path: Path) -> None:
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(AssistantMessage(content="answer", model="fake")),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(AssistantMessage(content="real summary", model="fake")),
+            ],
+        ]
+    )
+    session = await _session(tmp_path, provider)
+    _events = [event async for event in session.prompt("question")]
+    stdin = StringIO('{"id":"compact","type":"compact"}\n')
+    stdout = StringIO()
+
+    await RpcServer(session, stdin=stdin, stdout=stdout).run()
+
+    response = json.loads(stdout.getvalue())
+    compactions = [
+        entry for entry in await session.storage.read_all() if entry.type == "compaction"
+    ]
+    assert response["data"]["summary"] == "real summary"
+    assert response["data"]["firstKeptEntryId"] == compactions[0].id
+    assert response["data"]["summary"] != "Compacted 2 context entries."
 
 
 @pytest.mark.anyio

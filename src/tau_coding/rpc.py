@@ -13,13 +13,24 @@ from typing import IO, Literal, Protocol, cast
 import anyio
 from pydantic import BaseModel
 
-from tau_agent.messages import AssistantMessage, UserMessage
+from tau_agent.messages import AssistantMessage, CustomMessage, UserMessage
 from tau_agent.session import JsonlSessionStorage
 from tau_agent.session.entries import SessionEntry
 from tau_agent.types import JSONValue
 from tau_coding.commands import CommandRegistry
 from tau_coding.events import CodingSessionEvent
-from tau_coding.session import CodingSession, ModelChoice, TerminalCommandResult
+from tau_coding.provider_config import (
+    AnthropicProviderConfig,
+    OpenAICompatibleProviderConfig,
+    ProviderConfig,
+    provider_thinking_levels,
+)
+from tau_coding.session import (
+    CodingSession,
+    ManualCompactionResult,
+    ModelChoice,
+    TerminalCommandResult,
+)
 from tau_coding.session_manager import SessionManager
 from tau_coding.session_stats import SessionStats
 
@@ -43,6 +54,8 @@ class RpcSession(Protocol):
 
     @property
     def available_model_choices(self) -> tuple[ModelChoice, ...]: ...
+
+    def provider_config(self, provider_name: str) -> ProviderConfig | None: ...
 
     @property
     def messages(self) -> tuple[object, ...]: ...
@@ -100,7 +113,7 @@ class RpcSession(Protocol):
 
     def set_auto_compaction_enabled(self, enabled: bool) -> None: ...
 
-    async def compact(self, instructions: str | None = None) -> str: ...
+    async def compact_detailed(self, instructions: str | None = None) -> ManualCompactionResult: ...
 
     async def new_session(self) -> str: ...
 
@@ -300,21 +313,20 @@ class RpcServer:
                 )
                 return
             if command_type == "set_thinking_level":
-                level = await self._session.set_thinking_level(_required_string(command, "level"))
-                await self._response(request_id, command_type, {"level": level})
+                await self._session.set_thinking_level(_required_string(command, "level"))
+                await self._response(request_id, command_type)
                 return
             if command_type == "compact":
                 instructions = _optional_string(command, "customInstructions")
-                tokens_before = self._session.context_token_estimate
-                message = await self._session.compact(instructions)
+                result = await self._session.compact_detailed(instructions)
                 await self._response(
                     request_id,
                     command_type,
                     {
-                        "summary": message,
-                        "firstKeptEntryId": _leaf_id(self._session.state),
-                        "tokensBefore": tokens_before,
-                        "estimatedTokensAfter": self._session.context_token_estimate,
+                        "summary": result.summary,
+                        "firstKeptEntryId": result.first_kept_entry_id,
+                        "tokensBefore": result.tokens_before,
+                        "estimatedTokensAfter": result.estimated_tokens_after,
                         "details": {},
                     },
                 )
@@ -324,7 +336,7 @@ class RpcServer:
                 await self._response(request_id, command_type)
                 return
             if command_type == "bash":
-                result = await self._session.run_terminal_command(
+                bash_result = await self._session.run_terminal_command(
                     _required_string(command, "command"),
                     add_to_context=not bool(command.get("excludeFromContext", False)),
                 )
@@ -332,8 +344,8 @@ class RpcServer:
                     request_id,
                     command_type,
                     {
-                        "output": result.output,
-                        "exitCode": result.exit_code,
+                        "output": bash_result.output,
+                        "exitCode": bash_result.exit_code,
                         "cancelled": False,
                         "truncated": False,
                     },
@@ -397,7 +409,12 @@ class RpcServer:
                     request_id,
                     command_type,
                     {
-                        "entries": [_entry_wire(entry) for entry in cursor_entries],
+                        "entries": [
+                            projected
+                            for entry in cursor_entries
+                            if (projected := _entry_wire(entry, self._session.provider_name))
+                            is not None
+                        ],
                         "leafId": _leaf_id(self._session.state),
                     },
                 )
@@ -408,7 +425,7 @@ class RpcServer:
                     request_id,
                     command_type,
                     {
-                        "tree": _tree_wire(entries),
+                        "tree": _tree_wire(entries, self._session.provider_name),
                         "leafId": _leaf_id(self._session.state),
                     },
                 )
@@ -555,28 +572,62 @@ def _leaf_id(state: object) -> object:
 
 def _model_wire(session: RpcSession, *, choice: ModelChoice | None = None) -> dict[str, JSONValue]:
     selected = choice or ModelChoice(provider_name=session.provider_name, model=session.model)
-    reasoning = (
-        bool(session.available_thinking_levels)
-        if selected.provider_name == session.provider_name and selected.model == session.model
-        else False
+    provider = session.provider_config(selected.provider_name)
+    metadata = provider.model_metadata.get(selected.model) if provider is not None else None
+    configured_api = (
+        provider.api
+        if isinstance(provider, OpenAICompatibleProviderConfig | AnthropicProviderConfig)
+        else None
     )
+    api = (
+        metadata.api
+        if metadata is not None and metadata.api is not None
+        else configured_api
+        if isinstance(configured_api, str)
+        else "openai-responses"
+        if selected.provider_name == "openai-codex"
+        else "openai-completions"
+    )
+    reasoning = (
+        metadata.reasoning
+        if metadata is not None and metadata.reasoning is not None
+        else bool(provider_thinking_levels(provider, model=selected.model))
+        if provider is not None
+        else bool(session.available_thinking_levels)
+    )
+    context_window = (
+        metadata.context_window
+        if metadata is not None and metadata.context_window is not None
+        else provider.context_windows.get(selected.model)
+        if provider is not None
+        else None
+    )
+    cost = metadata.cost if metadata is not None else {}
     return {
         "id": selected.model,
-        "name": selected.model,
-        "api": "anthropic-messages"
-        if selected.provider_name == "anthropic"
-        else "openai-completions",
+        "name": metadata.name if metadata is not None and metadata.name else selected.model,
+        "api": api,
         "provider": selected.provider_name,
-        "baseUrl": "",
+        "baseUrl": (
+            metadata.base_url
+            if metadata is not None and metadata.base_url is not None
+            else provider.base_url
+            if provider is not None
+            else ""
+        ),
         "reasoning": reasoning,
-        "input": ["text"],
-        "contextWindow": session.context_window_tokens,
-        "maxTokens": 16_384,
+        "input": list(metadata.input) if metadata is not None and metadata.input else ["text"],
+        "contextWindow": context_window or session.context_window_tokens,
+        "maxTokens": (
+            metadata.max_tokens
+            if metadata is not None and metadata.max_tokens is not None
+            else 16_384
+        ),
         "cost": {
-            "input": 0.0,
-            "output": 0.0,
-            "cacheRead": 0.0,
-            "cacheWrite": 0.0,
+            "input": cost.get("input", 0.0),
+            "output": cost.get("output", 0.0),
+            "cacheRead": cost.get("cacheRead", 0.0),
+            "cacheWrite": cost.get("cacheWrite", 0.0),
         },
     }
 
@@ -590,6 +641,10 @@ def _session_stats_wire(session: RpcSession) -> dict[str, JSONValue]:
     stats = session.session_stats
     user_messages = sum(isinstance(message, UserMessage) for message in session.messages)
     assistant_messages = sum(isinstance(message, AssistantMessage) for message in session.messages)
+    uncached_input = max(
+        0,
+        stats.input_tokens - stats.cached_input_tokens - stats.cache_write_tokens,
+    )
     return {
         "sessionFile": _session_file(session),
         "sessionId": session.session_id or "",
@@ -599,13 +654,18 @@ def _session_stats_wire(session: RpcSession) -> dict[str, JSONValue]:
         "toolResults": stats.tool_call_count,
         "totalMessages": len(session.messages),
         "tokens": {
-            "input": stats.input_tokens,
+            "input": uncached_input,
             "output": stats.output_tokens,
             "cacheRead": stats.cached_input_tokens,
             "cacheWrite": stats.cache_write_tokens,
-            "total": stats.input_tokens + stats.output_tokens,
+            "total": (
+                uncached_input
+                + stats.output_tokens
+                + stats.cached_input_tokens
+                + stats.cache_write_tokens
+            ),
         },
-        "cost": stats.estimated_cost or 0.0,
+        "cost": stats.estimated_cost,
         "contextUsage": {
             "tokens": session.context_token_estimate,
             "contextWindow": session.context_window_tokens,
@@ -617,34 +677,69 @@ def _session_stats_wire(session: RpcSession) -> dict[str, JSONValue]:
     }
 
 
-def _entry_wire(entry: SessionEntry) -> dict[str, JSONValue]:
-    data = cast(dict[str, JSONValue], entry.model_dump(mode="json"))
-    data["parentId"] = data.pop("parent_id", None)
+def _entry_wire(entry: SessionEntry, provider_name: str) -> dict[str, JSONValue] | None:
+    if entry.type == "leaf":
+        return None
     timestamp = datetime.fromtimestamp(entry.timestamp, tz=UTC)
-    data["timestamp"] = timestamp.isoformat().replace("+00:00", "Z")
-    if "thinking_level" in data:
-        data["thinkingLevel"] = data.pop("thinking_level")
-    if "replaces_entry_ids" in data:
-        data["replacesEntryIds"] = data.pop("replaces_entry_ids")
-    if "branch_root_id" in data:
-        data["branchRootId"] = data.pop("branch_root_id")
-    if "entry_id" in data:
-        data["entryId"] = data.pop("entry_id")
-    if "created_at" in data:
-        data["createdAt"] = data.pop("created_at")
-    return data
+    base: dict[str, JSONValue] = {
+        "type": entry.type,
+        "id": entry.id,
+        "parentId": entry.parent_id,
+        "timestamp": timestamp.isoformat().replace("+00:00", "Z"),
+    }
+    if entry.type == "message":
+        if isinstance(entry.message, CustomMessage):
+            return {
+                **base,
+                "type": "custom_message",
+                "customType": entry.message.custom_type,
+                "content": _jsonable(entry.message.content),
+                "details": entry.message.details,
+                "display": entry.message.display,
+            }
+        return {**base, "message": _jsonable(entry.message)}
+    if entry.type == "model_change":
+        return {**base, "provider": provider_name, "modelId": entry.model}
+    if entry.type == "thinking_level_change":
+        return {**base, "thinkingLevel": entry.thinking_level or "off"}
+    if entry.type == "compaction":
+        return {
+            **base,
+            "summary": entry.summary,
+            "firstKeptEntryId": entry.id,
+            "tokensBefore": 0,
+            "details": {"tauReplacedEntryIds": list(entry.replaces_entry_ids)},
+        }
+    if entry.type == "branch_summary":
+        return {
+            **base,
+            "fromId": entry.branch_root_id or entry.parent_id or entry.id,
+            "summary": entry.summary,
+            "details": {},
+        }
+    if entry.type == "custom":
+        return {**base, "customType": entry.namespace, "data": entry.data}
+    if entry.type == "label":
+        return {**base, "targetId": entry.parent_id or entry.id, "label": entry.label}
+    if entry.type == "session_info":
+        return {**base, "name": entry.title}
+    raise AssertionError(f"Unhandled Tau session entry: {entry.type}")
 
 
-def _tree_wire(entries: tuple[SessionEntry, ...]) -> list[JSONValue]:
+def _tree_wire(entries: tuple[SessionEntry, ...], provider_name: str) -> list[JSONValue]:
+    visible = tuple(entry for entry in entries if entry.type != "leaf")
     children: dict[str | None, list[SessionEntry]] = {}
-    ids = {entry.id for entry in entries}
-    for entry in entries:
+    ids = {entry.id for entry in visible}
+    for entry in visible:
         parent = entry.parent_id if entry.parent_id in ids else None
         children.setdefault(parent, []).append(entry)
 
     def build(entry: SessionEntry) -> dict[str, JSONValue]:
+        projected = _entry_wire(entry, provider_name)
+        if projected is None:
+            raise AssertionError("Leaf entries must be filtered before tree projection")
         return {
-            "entry": _entry_wire(entry),
+            "entry": projected,
             "children": [build(child) for child in children.get(entry.id, [])],
         }
 
