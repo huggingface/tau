@@ -126,7 +126,12 @@ search every loaded template. Press **Enter** to insert its invocation without
 submitting it, or **Ctrl+E** to edit its Markdown directly. Save with **Ctrl+S**;
 Tau reloads resources automatically. The filenames `prompts.md` and `tools.md` are
 reserved for built-in commands; Tau ignores templates with those names and
-reports a resource diagnostic. Templates can include variables with `{{ name }}`:
+reports a resource diagnostic. Templates use the same argument variables as Pi:
+
+- `$1`, `$2`, ... for positional arguments
+- `$@` or `$ARGUMENTS` for all arguments joined with spaces
+- `${1:-default}` and `${@:-default}` for defaults
+- `${@:N}` or `${@:N:L}` for simple argument slices
 
 ```md
 ---
@@ -134,12 +139,16 @@ description: Implement a feature in an isolated git worktree.
 ---
 
 Implement this feature safely in a new worktree:
-{{ feature }}
+Feature: $1
+Additional instructions: ${@:2}
 ```
 
-If a template has no placeholders, your arguments are appended after a blank
-line. Variables are filled from the arguments you pass after the invocation,
-for example `/wt add caching`.
+Invoke it with `/wt add caching`. Quoted arguments are preserved as one
+positional argument, for example `/wt add "shared caching"`. Legacy
+`{{ arguments }}` and `{{ args }}` placeholders remain supported.
+
+If a template has no argument placeholder, your arguments are appended after a
+blank line.
 
 The filenames `prompts.md` and `skills.md` are reserved for the built-in `/prompts`
 and `/skills` pickers. Tau ignores either template and reports a resource diagnostic;
