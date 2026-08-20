@@ -3843,6 +3843,235 @@ async def test_session_switches_configured_provider(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("operation", ["new", "resume", "replacement"])
+async def test_session_adoption_transfers_all_runtime_provider_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    monkeypatch.setenv("LOCAL_API_KEY", "test-key")
+    tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    manager = SessionManager(tau_paths)
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    record = manager.create_session(cwd=cwd, model="qwen", provider_name="local")
+    resume_record = manager.create_session(cwd=cwd, model="qwen", provider_name="local")
+    provider_config = OpenAICompatibleProviderConfig(
+        name="local",
+        base_url="http://localhost:11434/v1",
+        api_key_env="LOCAL_API_KEY",
+        models=("qwen",),
+        default_model="qwen",
+    )
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(provider_config,),
+    )
+    created: list[SwitchableFakeProvider] = []
+
+    def create_provider(
+        config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+    ) -> SwitchableFakeProvider:
+        del credential_store, model, thinking_level
+        provider = SwitchableFakeProvider(config)
+        created.append(provider)
+        return provider
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="qwen",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(record.path),
+            cwd=cwd,
+            session_id=record.id,
+            session_manager=manager,
+            provider_name="local",
+            provider_settings=settings,
+            runtime_provider_config=provider_config,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    if operation == "new":
+        await session.new_session()
+    elif operation == "resume":
+        await session.resume(resume_record.id)
+    else:
+        replacement = await CodingSession.load(
+            dataclass_replace(
+                session._config,  # noqa: SLF001 - direct adoption ownership seam
+                provider=session._harness.config.provider,  # noqa: SLF001
+                storage=JsonlSessionStorage(resume_record.path),
+                session_id=resume_record.id,
+                extension_runtime=session.extension_runtime,
+            )
+        )
+        await session._adopt_replacement(replacement, reason="branch")
+
+    assert len(created) == 2
+    assert tuple(session._owned_providers) == tuple(created)
+
+    await session.aclose()
+    await session.aclose()
+
+    assert [provider.close_calls for provider in created] == [1, 1]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("operation", ["new", "resume", "replacement"])
+@pytest.mark.parametrize("seam", ["outgoing_shutdown", "incoming_start"])
+@pytest.mark.parametrize("failure", ["cancel", "error"])
+async def test_aborted_replacement_closes_only_candidate_provider_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    operation: str,
+    seam: str,
+    failure: str,
+) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    from tau_coding.extensions.runtime import ExtensionRuntime
+
+    monkeypatch.setenv("LOCAL_API_KEY", "test-key")
+    tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    manager = SessionManager(tau_paths)
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    record = manager.create_session(cwd=cwd, model="qwen", provider_name="local")
+    resume_record = manager.create_session(cwd=cwd, model="qwen", provider_name="local")
+    provider_config = OpenAICompatibleProviderConfig(
+        name="local",
+        base_url="http://localhost:11434/v1",
+        api_key_env="LOCAL_API_KEY",
+        models=("qwen",),
+        default_model="qwen",
+    )
+    settings = ProviderSettings(default_provider="local", providers=(provider_config,))
+    candidate_close_started = asyncio.Event()
+    release_candidate_close = asyncio.Event()
+    created: list[SwitchableFakeProvider] = []
+
+    class ControlledProvider(SwitchableFakeProvider):
+        def __init__(self, config: object, *, block_on_close: bool) -> None:
+            super().__init__(config)
+            self.block_on_close = block_on_close
+
+        async def aclose(self) -> None:
+            self.closed = True
+            self.close_calls += 1
+            if self.block_on_close:
+                candidate_close_started.set()
+                await release_candidate_close.wait()
+
+    def create_provider(
+        config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+    ) -> ControlledProvider:
+        del credential_store, model, thinking_level
+        provider = ControlledProvider(config, block_on_close=bool(created))
+        created.append(provider)
+        return provider
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="qwen",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(record.path),
+            cwd=cwd,
+            session_id=record.id,
+            session_manager=manager,
+            provider_name="local",
+            provider_settings=settings,
+            runtime_provider_config=provider_config,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+    active_provider = created[0]
+    old_runtime = session.extension_runtime
+    replacement = None
+    reason = operation
+    if operation == "replacement":
+        reason = "branch"
+        replacement = await CodingSession.load(
+            dataclass_replace(
+                session._config,  # noqa: SLF001 - direct adoption ownership seam
+                provider=session._harness.config.provider,  # noqa: SLF001
+                storage=JsonlSessionStorage(resume_record.path),
+                session_id=resume_record.id,
+                extension_runtime=old_runtime,
+            )
+        )
+
+    seam_entered = asyncio.Event()
+    real_shutdown = old_runtime.emit_session_shutdown
+    real_start = ExtensionRuntime.emit_session_start
+
+    async def controlled_shutdown(event_reason: str) -> None:
+        if seam == "outgoing_shutdown" and event_reason == reason:
+            seam_entered.set()
+            if failure == "error":
+                raise RuntimeError("outgoing shutdown failed")
+            await asyncio.Future()
+        await real_shutdown(event_reason)  # type: ignore[arg-type]
+
+    async def controlled_start(runtime: ExtensionRuntime, event_reason: str) -> None:
+        if seam == "incoming_start" and runtime is not old_runtime and event_reason == reason:
+            seam_entered.set()
+            if failure == "error":
+                raise RuntimeError("incoming start failed")
+            await asyncio.Future()
+        await real_start(runtime, event_reason)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(old_runtime, "emit_session_shutdown", controlled_shutdown)
+    monkeypatch.setattr(ExtensionRuntime, "emit_session_start", controlled_start)
+
+    if operation == "new":
+        lifecycle = asyncio.create_task(session.new_session())
+    elif operation == "resume":
+        lifecycle = asyncio.create_task(session.resume(resume_record.id))
+    else:
+        assert replacement is not None
+        lifecycle = asyncio.create_task(session._adopt_replacement(replacement, reason="branch"))
+
+    await asyncio.wait_for(seam_entered.wait(), timeout=1.0)
+    assert len(created) == 2
+    candidate_provider = created[1]
+    if failure == "cancel":
+        assert lifecycle.cancel() is True
+    await asyncio.wait_for(candidate_close_started.wait(), timeout=1.0)
+
+    assert lifecycle.done() is False
+    assert active_provider.close_calls == 0
+    assert candidate_provider.close_calls == 1
+    assert session._harness.config.provider is active_provider  # noqa: SLF001
+    assert tuple(session._owned_providers) == (active_provider,)  # noqa: SLF001
+
+    release_candidate_close.set()
+    expected_error = asyncio.CancelledError if failure == "cancel" else RuntimeError
+    with pytest.raises(expected_error):
+        await asyncio.wait_for(lifecycle, timeout=1.0)
+
+    assert active_provider.close_calls == 0
+    assert candidate_provider.close_calls == 1
+    await session.aclose()
+    await session.aclose()
+    assert [provider.close_calls for provider in created] == [1, 1]
+
+
+@pytest.mark.anyio
 async def test_failed_cross_provider_switch_preserves_active_runtime(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

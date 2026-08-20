@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 import tomllib
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.util import module_from_spec, spec_from_file_location
 from inspect import iscoroutinefunction
 from pathlib import Path
@@ -25,6 +25,7 @@ class DiscoveredExtension:
     name: str
     path: Path
     package_dir: Path | None = None
+    source_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +34,7 @@ class LoadedExtension:
 
     name: str
     path: Path
+    source_id: str
     setup: Callable[..., object]
 
 
@@ -100,7 +102,7 @@ def discover_extensions(
             return
         seen_paths.add(resolved)
         seen_names.add(entry.name)
-        discovered.append(entry)
+        discovered.append(replace(entry, source_id=f"extension:{resolved.as_uri()}"))
 
     if include_resource_dirs:
         for directory in extension_dirs(
@@ -166,10 +168,16 @@ def load_extensions(
         include_project_dir=include_project_dir,
         include_user_dir=include_user_dir,
     )
+    # Discovery freezes every source before any import. Extension code may
+    # mutate entry or parent symlinks during import/setup, but ownership stays
+    # tied to the canonical source selected by the host.
     loaded: list[LoadedExtension] = []
     all_diagnostics = list(diagnostics)
     for entry in discovered:
-        extension, entry_diagnostics = _load_extension(entry)
+        source_id = entry.source_id
+        if source_id is None:  # defensive: discovery always assigns it
+            raise RuntimeError(f"extension source identity was not frozen: {entry.path}")
+        extension, entry_diagnostics = _load_extension(entry, source_id=source_id)
         all_diagnostics.extend(entry_diagnostics)
         if extension is not None:
             loaded.append(extension)
@@ -242,7 +250,7 @@ def _manifest_entries(
         return []
     entries: list[DiscoveredExtension] = []
     for item in declared:
-        entry_file = (directory / item).resolve()
+        entry_file = directory / item
         if not entry_file.is_file():
             diagnostics.append(
                 ResourceDiagnostic(
@@ -265,6 +273,8 @@ def _manifest_entries(
 
 def _load_extension(
     entry: DiscoveredExtension,
+    *,
+    source_id: str,
 ) -> tuple[LoadedExtension | None, list[ResourceDiagnostic]]:
     global _load_counter
     _load_counter += 1
@@ -309,7 +319,12 @@ def _load_extension(
             )
         ]
 
-    return LoadedExtension(name=entry.name, path=entry.path, setup=setup), []
+    return LoadedExtension(
+        name=entry.name,
+        path=entry.path,
+        source_id=source_id,
+        setup=setup,
+    ), []
 
 
 def unload_extension_modules() -> int:

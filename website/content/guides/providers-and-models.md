@@ -298,6 +298,28 @@ Use `/login anthropic-api` or `/login anthropic-subscription`, then select
 [Claude Opus 5 guide](https://platform.claude.com/docs/en/about-claude/models/whats-new-opus-5)
 for current behavior and availability.
 
+## Dynamic extension providers
+
+Tau's extension API has a provisional, process-local `DynamicProvider` contract.
+Unlike providers created by `/login custom` or `tau setup`, these definitions are
+source/generation-owned overlays and are never copied into `catalog.toml`,
+`providers.json`, sessions, or generic disk storage. Source ownership is a stable
+host identity derived from the canonical extension entry path—not the display
+name. Tau freezes every discovered identity before importing extension code, so
+symlink retargeting cannot change registration or cleanup ownership; separate
+same-name extension files cannot remove one another's providers. They support
+dormant model sets, deeply immutable compatibility metadata, atomic
+model-snapshot refresh, per-caller refresh deadlines, retry-safe coalescing, and
+required/optional/no authentication without fake keys or exposed auth provenance.
+Custom auth-resolution exceptions are reduced to a categorical host error during
+runtime creation; Tau's required-key guidance remains actionable.
+
+Phase 1 establishes contracts and registry mechanics only. Dynamic providers are
+not yet available to startup or session model selection, and this work does not
+add `/local`, a built-in provider, or llama.cpp-specific behavior. See
+[Extensions]({{< relref "./extensions.md#dynamic-providers-provisional" >}}) for
+the provisional author API.
+
 ## Adding a custom / local provider
 
 Any OpenAI-compatible endpoint works — including local servers like llama.cpp or

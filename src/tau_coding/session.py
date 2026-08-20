@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import string
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import suppress
@@ -144,6 +145,54 @@ SESSION_NAME_SYSTEM_PROMPT = (
     "maximum four words, no quotes, no punctuation-only output."
 )
 TREE_RUNNING_MESSAGE = "Tau is still working. Press Escape to interrupt before using /tree."
+
+
+async def _await_cleanup_completion[CleanupResult](
+    task: asyncio.Task[CleanupResult],
+) -> bool:
+    """Wait through caller cancellation without forwarding it into cleanup.
+
+    Returns whether cancellation was observed. Repeated requests remain
+    contained until the independently owned cleanup task reaches a terminal
+    state.
+    """
+    cancelled = False
+    while True:
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+            if not task.done():
+                continue
+        except BaseException:  # cleanup outcome is inspected by its owner
+            pass
+        return cancelled
+
+
+async def _finish_adopted_runtime_close(runtime: ExtensionRuntime) -> None:
+    """Finish outgoing cleanup after publication without failing adoption."""
+    task = asyncio.create_task(
+        runtime.aclose(),
+        name="tau-adopted-extension-runtime-close",
+    )
+    await _await_cleanup_completion(task)
+    # Publication is already committed. Cleanup cancellation/failure must not
+    # masquerade as rollback while the task's outcome still gets retrieved.
+    with suppress(BaseException):
+        task.result()
+
+
+async def _finish_aborted_session_close(session: CodingSession) -> None:
+    """Discharge an unpublished session's resources without masking its abort."""
+    task = asyncio.create_task(
+        session.aclose(),
+        name="tau-aborted-coding-session-close",
+    )
+    await _await_cleanup_completion(task)
+    # The pre-publication failure remains primary, but every owned provider was
+    # attempted by CodingSession's durable, idempotent close task.
+    with suppress(BaseException):
+        task.result()
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,6 +380,7 @@ class CodingSession:
         )
         self._context_usage_cache: ContextUsageEstimate | None = None
         self._owned_providers: list[ClosableModelProvider] = []
+        self._close_task: asyncio.Task[None] | None = None
         self._diagnostic_logger = AgentCallDiagnosticLogger.from_paths(self._resource_paths.paths)
         self._credential_store = FileCredentialStore(
             credentials_path(self._resource_paths.paths) if self._resource_paths.paths else None
@@ -515,17 +565,23 @@ class CodingSession:
         )
         await session._persist_active_tool_history_repairs()
         session._sync_thinking_level_to_active_model()
-        session._refresh_runtime_provider()
-        await session._refresh_runtime_model_limits()
-        extension_runtime.bind(session)
-        # Attach to session._harness, not the local `harness`:
-        # Tool-history repair above updates the active harness before extension
-        # listeners attach.
-        extension_runtime.attach_harness_listener(session._harness.subscribe)
-        # session_start is deferred: hosts emit it via emit_pending_session_start()
-        # after installing their UI bridge.
-        session._session_start_pending = True
-        session._project_trust_commit_pending = not trust_resolution.cancelled
+        try:
+            session._refresh_runtime_provider()
+            await session._refresh_runtime_model_limits()
+            extension_runtime.bind(session)
+            # Attach to session._harness, not the local `harness`:
+            # Tool-history repair above updates the active harness before extension
+            # listeners attach.
+            extension_runtime.attach_harness_listener(session._harness.subscribe)
+            # session_start is deferred: hosts emit it via emit_pending_session_start()
+            # after installing their UI bridge.
+            session._session_start_pending = True
+            session._project_trust_commit_pending = not trust_resolution.cancelled
+        except BaseException:
+            # Once constructed, this session explicitly owns every candidate
+            # provider until load returns it to the caller.
+            await _finish_aborted_session_close(session)
+            raise
         return session
 
     @property
@@ -1591,6 +1647,12 @@ class CodingSession:
         if system_prompt_rebuilt:
             self._invalidate_context_usage_cache()
         staged_runtime.attach_harness_listener(self._harness.subscribe)
+        # Retirement invalidates publication synchronously; async close then
+        # waits for cooperative provider callback cleanup or reports bounded
+        # containment while the outgoing runtime still owns every task handle.
+        # Caller cancellation at this committed seam is contained so reload
+        # cannot report failure after the fresh snapshot became active.
+        await _finish_adopted_runtime_close(old_runtime)
 
         return CodingReloadSummary(
             skills=_category_summary(before_skills, _skill_signatures(resources.skills)),
@@ -1688,15 +1750,22 @@ class CodingSession:
                 trust_prompt=self._config.trust_prompt,
             )
         )
-        if restore_record_model:
-            if runtime_provider_config is None:
-                raise ProviderConfigError(f"Session provider is not configured: {provider_name}")
-            validate_provider_model(runtime_provider_config, replacement.model)
-        else:
-            replacement._harness.config.model = self.model
-            replacement._sync_thinking_level_to_active_model()
-            replacement._refresh_runtime_provider()
-            replacement._sync_image_support()
+        try:
+            if restore_record_model:
+                if runtime_provider_config is None:
+                    raise ProviderConfigError(
+                        f"Session provider is not configured: {provider_name}"
+                    )
+                validate_provider_model(runtime_provider_config, replacement.model)
+            else:
+                replacement._harness.config.model = self.model
+                replacement._sync_thinking_level_to_active_model()
+                replacement._refresh_runtime_provider()
+                replacement._sync_image_support()
+        except BaseException:
+            # resume owns the loaded candidate until adoption takes ownership.
+            await _finish_aborted_session_close(replacement)
+            raise
         await self._adopt_replacement(replacement, reason="resume")
         return f"Resumed session: {record.id}"
 
@@ -1770,19 +1839,24 @@ class CodingSession:
         (transcript persistence, parent ids) mutates here, not on the discarded
         replacement instance.
         """
-        if (
-            replacement.project_trust_resolution is not None
-            and replacement.project_trust_resolution.cancelled
-        ):
-            await replacement.aclose()
-            raise ValueError("Project trust decision cancelled; current session unchanged")
-
         old_runtime = self._extension_runtime
-        await old_runtime.emit_session_shutdown(reason)
-        old_runtime.clear_ui_components()
-        await replacement._extension_runtime.emit_session_start(reason)
-        replacement._commit_project_trust_resolution()
-        replacement._session_start_pending = False
+        try:
+            if (
+                replacement.project_trust_resolution is not None
+                and replacement.project_trust_resolution.cancelled
+            ):
+                raise ValueError("Project trust decision cancelled; current session unchanged")
+
+            # The replacement remains the explicit owner of its providers
+            # through every cancellable/erroring pre-publication seam.
+            await old_runtime.emit_session_shutdown(reason)
+            old_runtime.clear_ui_components()
+            await replacement._extension_runtime.emit_session_start(reason)
+            replacement._commit_project_trust_resolution()
+            replacement._session_start_pending = False
+        except BaseException:
+            await _finish_aborted_session_close(replacement)
+            raise
 
         # Every cancellable boundary has completed. Adopt synchronously so a
         # reported cancellation cannot expose only part of the destination.
@@ -1818,12 +1892,18 @@ class CodingSession:
         self._pending_initial_entries = replacement._pending_initial_entries
         self._pending_message_writes = replacement._pending_message_writes
         self._extension_runtime = replacement._extension_runtime
+        self._owned_providers.extend(replacement._owned_providers)
+        replacement._owned_providers.clear()
         self._image_support = replacement._image_support
         self._project_trust_resolution = replacement._project_trust_resolution
         self._project_trust_commit_pending = False
         self._session_start_pending = False
         self._extension_runtime.bind(self)
         self._extension_runtime.attach_harness_listener(self._harness.subscribe)
+        # Adoption is already committed. Finish outgoing cleanup under a
+        # shielded owner and contain cancellation rather than reporting that
+        # the requested destination failed to replace the source session.
+        await _finish_adopted_runtime_close(old_runtime)
 
     async def compact(self, instructions: str | None = None) -> str:
         """Generate a manual compaction summary and rebuild active context."""
@@ -1840,11 +1920,61 @@ class CodingSession:
         return f"Compacted {len(compaction.replaces_entry_ids)} context entries."
 
     async def aclose(self) -> None:
-        """Close runtime providers created by this coding session."""
-        await self._extension_runtime.emit_session_shutdown("quit")
-        for provider in self._owned_providers:
-            await provider.aclose()
+        """Close every owned extension/provider resource exactly once.
+
+        Caller cancellation is remembered but cannot cancel the durable close
+        task. The first call propagates it only after all ownership ledgers are
+        discharged; later calls observe the same completed task idempotently.
+        """
+        close_task = self._close_task
+        if close_task is None:
+            close_task = asyncio.create_task(
+                self._close_owned_resources(),
+                name="tau-coding-session-close",
+            )
+            self._close_task = close_task
+
+        cancelled = await _await_cleanup_completion(close_task)
+        error: BaseException | None = None
+        try:
+            close_task.result()
+        except BaseException as exc:  # all resources were attempted before this outcome
+            error = exc
+        if cancelled:
+            raise asyncio.CancelledError
+        if error is not None:
+            raise error
+
+    async def _close_owned_resources(self) -> None:
+        """Run the sole close pass, continuing after individual failures."""
+        error: BaseException | None = None
+        try:
+            if self._extension_runtime.active:
+                await self._extension_runtime.emit_session_shutdown("quit")
+        except BaseException as exc:
+            error = exc
+
+        # A runtime may already be synchronously retired by replacement. Close
+        # still owns the async drain/containment step and must never skip it.
+        try:
+            await self._extension_runtime.aclose()
+        except BaseException as exc:
+            if error is None:
+                error = exc
+
+        # Remove each provider from the ownership ledger before its only close
+        # attempt. One hostile provider cannot prevent later providers closing.
+        providers = tuple(self._owned_providers)
         self._owned_providers.clear()
+        for provider in providers:
+            try:
+                await provider.aclose()
+            except BaseException as exc:
+                if error is None:
+                    error = exc
+
+        if error is not None:
+            raise error
 
     def handle_command(self, text: str) -> CommandResult:
         """Handle coding-session slash commands.

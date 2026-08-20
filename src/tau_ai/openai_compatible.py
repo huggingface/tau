@@ -128,7 +128,9 @@ class OpenAICompatibleProvider:
         session_id: str | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Stream one model response as provider-neutral events."""
-        if self._config.api == "openai-responses" or _use_responses_api(model):
+        if self._config.api == "openai-responses" or (
+            self._config.infer_api_from_model and _use_responses_api(model)
+        ):
             return self._stream_responses(
                 model=model,
                 system=system,
