@@ -40,10 +40,16 @@ class MessageEntry(BaseSessionEntry):
 
 
 class ModelChangeEntry(BaseSessionEntry):
-    """A model selection change entry."""
+    """A model selection change entry.
+
+    ``provider`` was added after Tau's first session format.  It remains
+    optional so older transcripts continue to load; new entries always carry
+    the provider selected by the host.
+    """
 
     type: Literal["model_change"] = "model_change"
     model: str
+    provider: str | None = None
 
 
 class ThinkingLevelChangeEntry(BaseSessionEntry):

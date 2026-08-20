@@ -105,8 +105,11 @@ from tau_coding.provider_catalog import (
     builtin_provider_entry,
 )
 from tau_coding.provider_config import (
+    DEFAULT_MODEL,
+    DEFAULT_PROVIDER_NAME,
     OpenAICompatibleProviderConfig,
     ProviderConfig,
+    ProviderConfigError,
     ProviderSelection,
     load_provider_settings,
     provider_config_from_catalog_entry,
@@ -117,7 +120,7 @@ from tau_coding.provider_config import (
     upsert_openai_compatible_provider,
     upsert_saved_provider,
 )
-from tau_coding.provider_runtime import create_model_provider
+from tau_coding.provider_runtime import ClosableModelProvider, create_model_provider
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
 from tau_coding.session import (
     TREE_RUNNING_MESSAGE,
@@ -131,6 +134,7 @@ from tau_coding.session import (
     parse_terminal_command,
 )
 from tau_coding.session_manager import CodingSessionRecord, SessionManager
+from tau_coding.session_preparation import prepare_coding_session
 from tau_coding.shell_config import load_shell_settings
 from tau_coding.skills import Skill
 from tau_coding.tui.adapter import TuiEventAdapter
@@ -4037,6 +4041,17 @@ class TauTuiApp(App[None]):
                 self._open_logout_picker()
             if command.logout_provider is not None:
                 self._logout(command.logout_provider)
+            if command.model_selection_model is not None:
+                self.run_worker(
+                    self._switch_model(
+                        ModelChoice(
+                            provider_name=command.model_selection_provider
+                            or self.session.provider_name,
+                            model=command.model_selection_model,
+                        )
+                    ),
+                    exclusive=False,
+                )
             if command.model_picker_requested:
                 self._open_model_picker()
             if command.tools_picker_requested:
@@ -5811,14 +5826,23 @@ class TauTuiApp(App[None]):
     def _handle_model_picker_result(self, choice: ModelChoice | None) -> None:
         if choice is None:
             return
+        self.run_worker(self._switch_model(choice), exclusive=False)
+
+    async def _switch_model(self, choice: ModelChoice) -> None:
         try:
-            set_model_choice = getattr(self.session, "set_model_choice", None)
-            if set_model_choice is None:
-                if choice.provider_name != self.session.provider_name:
-                    self.session.set_provider(choice.provider_name)
-                self.session.set_model(choice.model)
+            select = getattr(self.session, "select_provider_model", None)
+            if select is not None:
+                result = select(choice)
+                if isawaitable(result):
+                    await result
             else:
-                set_model_choice(choice)
+                set_model_choice = getattr(self.session, "set_model_choice", None)
+                if set_model_choice is None:
+                    if choice.provider_name != self.session.provider_name:
+                        self.session.set_provider(choice.provider_name)
+                    self.session.set_model(choice.model)
+                else:
+                    set_model_choice(choice)
         except Exception as exc:  # noqa: BLE001 - surface model switch failures in the TUI
             self._notify(f"Could not switch model: {exc}", severity="error")
             return
@@ -7006,63 +7030,115 @@ async def run_tui_app(
         manager,
         session_id=session_id,
     )
-    selection = _resolve_tui_startup_selection(
-        provider_settings,
-        record=record,
-        provider_name=provider_name,
-        model=model,
-        explicit_resume=session_id is not None,
-    )
+    selection: ProviderSelection | None = None
+    try:
+        selection = _resolve_tui_startup_selection(
+            provider_settings,
+            record=record,
+            provider_name=provider_name,
+            model=model,
+            explicit_resume=session_id is not None,
+        )
+    except ProviderConfigError:
+        # A resumed record may point at a process-local provider that is not in
+        # durable settings. Let the staged loader resolve it after trusted
+        # built-in/project extensions are loaded.
+        dynamic_resume = (
+            session_id is not None
+            and record is not None
+            and record.provider_name is not None
+            and provider_name is None
+            and model is None
+        )
+        if (provider_name is None or model is None) and not dynamic_resume:
+            raise
     startup_message: str | None = None
     startup_error_notice: str | None = None
-    runtime_provider_config: ProviderConfig | None = selection.provider
-    inference_provider = _startup_inference_provider(selection, record)
-    try:
-        provider = create_model_provider(
-            selection.provider,
-            model=selection.model,
-            inference_provider=inference_provider,
-            thinking_level=resolve_startup_thinking_level(
+    explicit_selection = provider_name is not None or model is not None
+    selected_provider_name: str = (
+        provider_name
+        if provider_name is not None
+        else (record.provider_name if record is not None else None)
+        or (selection.provider.name if selection is not None else DEFAULT_PROVIDER_NAME)
+    )
+    selected_model = (
+        model
+        if explicit_selection and model is not None
+        else (record.model if record is not None else None)
+        or (selection.model if selection is not None else DEFAULT_MODEL)
+    )
+    # Keep static-provider construction compatible with embedded TUI callers,
+    # while dynamic providers are deliberately left for CodingSession.load()
+    # after trusted extension setup. The provider passed below is owned by the
+    # prepared session when the real loader is used.
+    initial_provider: ClosableModelProvider | None = None
+    runtime_provider_config: ProviderConfig | None = selection.provider if selection else None
+    inference_provider = _startup_inference_provider(selection, record) if selection else None
+    if selection is not None:
+        try:
+            initial_provider = create_model_provider(
                 selection.provider,
-                selection.model,
-            ),
-        )
-    except RuntimeError as exc:
-        # Most startup RuntimeErrors are missing credentials, but surface the real
-        # cause so a non-auth failure is not silently misreported as "Login required".
-        login_required_message = (
+                model=selection.model,
+                inference_provider=inference_provider,
+                thinking_level=resolve_startup_thinking_level(
+                    selection.provider,
+                    selection.model,
+                ),
+            )
+        except RuntimeError as exc:
+            login_required_message = (
+                "Login required. Run /login to choose a provider, "
+                f"or /login {selected_provider_name} to continue with the current provider."
+            )
+            startup_message = f"{login_required_message}\n\nStartup error: {exc}"
+            startup_error_notice = (
+                f"Startup provider creation failed for "
+                f"{selection.provider.name}:{selection.model}: {exc}"
+            )
+            initial_provider = LoginRequiredProvider(startup_message)
+            runtime_provider_config = None
+    elif not explicit_selection:
+        startup_message = (
             "Login required. Run /login to choose a provider, "
-            f"or /login {selection.provider.name} to continue with the current provider."
+            f"or /login {selected_provider_name} to continue with the current provider."
         )
-        startup_message = f"{login_required_message}\n\nStartup error: {exc}"
-        startup_error_notice = (
-            f"Startup provider creation failed for "
-            f"{selection.provider.name}:{selection.model}: {exc}"
-        )
-        provider = LoginRequiredProvider(startup_message)
-        runtime_provider_config = None
+        initial_provider = LoginRequiredProvider(startup_message)
     session: CodingSession | None = None
     try:
         index_on_first_persist = False
         if record is None:
-            record = _create_startup_session_record(
-                manager,
-                cwd=cwd,
-                selection=selection,
-                inference_provider=inference_provider,
-            )
+            if selection is not None:
+                record = _create_startup_session_record(
+                    manager,
+                    cwd=cwd,
+                    selection=selection,
+                    inference_provider=inference_provider,
+                )
+            else:
+                if provider_name is None or model is None:
+                    raise ProviderConfigError(
+                        "An explicit provider and model are required for this startup."
+                    )
+                record = manager.prepare_session(
+                    cwd=cwd,
+                    model=model,
+                    provider_name=provider_name,
+                )
             index_on_first_persist = manager.get_session(record.id) is None
 
-        session = await CodingSession.load(
+        prepared = await prepare_coding_session(
             CodingSessionConfig(
-                provider=provider,
-                model=record.model or selection.model,
+                provider=initial_provider,
+                model=record.model or selected_model,
                 cwd=record.cwd,
                 storage=jsonl_session_storage(record.path),
                 session_id=record.id,
                 session_manager=manager,
-                provider_name=selection.provider.name,
+                provider_name=selected_provider_name,
                 inference_provider=inference_provider,
+                requested_provider=provider_name if explicit_selection else None,
+                requested_model=model if explicit_selection else None,
+                session_provider_name=record.provider_name,
                 provider_settings=provider_settings,
                 runtime_provider_config=runtime_provider_config,
                 auto_compact_token_threshold=auto_compact_token_threshold,
@@ -7077,8 +7153,22 @@ async def run_tui_app(
                 trust_default=shell_settings.default_project_trust,
                 trust_interactive=True,
                 trust_prompt=prompt_project_trust,
-            )
+                defer_authoritative_writes=True,
+                owns_initial_provider=initial_provider is not None,
+            ),
+            session_loader=CodingSession,
         )
+        try:
+            session = await prepared.adopt()
+        except ValueError:
+            candidate = prepared.session
+            trust_resolution = getattr(candidate, "project_trust_resolution", None)
+            if trust_resolution is None or not trust_resolution.cancelled:
+                raise
+            # The preparation object already closed the unpublished candidate.
+            # Do not close that candidate again from the outer finally block.
+            del candidate
+            return None
         trust_resolution = getattr(session, "project_trust_resolution", None)
         if trust_resolution is not None and trust_resolution.cancelled:
             return None
@@ -7113,14 +7203,24 @@ async def run_tui_app(
         )
         set_trust_prompt = getattr(session, "set_project_trust_prompt", None)
         if set_trust_prompt is not None:
-            set_trust_prompt(app.prompt_project_trust)
+            prompt_trust = getattr(app, "prompt_project_trust", None)
+            if prompt_trust is not None:
+                set_trust_prompt(prompt_trust)
         await app.run_async()
     finally:
         if session is not None:
             close_session = getattr(session, "aclose", None)
             if close_session is not None:
                 await close_session()
-        await provider.aclose()
+        # Compatibility for lightweight test/embedded session loaders that do
+        # not expose ownership. A real CodingSession owns the exact candidate,
+        # so this branch does not double-close it.
+        if (
+            initial_provider is not None
+            and getattr(session, "provider", None) is not initial_provider
+        ):
+            with suppress(Exception):
+                await initial_provider.aclose()
 
     active_session_id: str | None = getattr(session, "session_id", None)
     if active_session_id is None or manager.get_session(active_session_id) is None:
