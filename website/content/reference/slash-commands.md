@@ -22,7 +22,7 @@ command palette with **Ctrl+K**.
 | `/scoped-models` | Choose favorite models for the Ctrl+P quick-cycle |
 | `/theme [name]` | Show or set the TUI theme |
 | `/login [provider]` | Connect a built-in provider with OAuth or an API key; Anthropic uses `anthropic-subscription` or `anthropic-api` |
-| `/local` | Choose and manage a registered local backend; interactive-only |
+| `/local` | Choose and manage a registered local backend; interactive-only. The built-in `llama.cpp` backend supports setup, refresh, use, Doctor, and reset. |
 | `/logout [provider]` | Remove saved credentials for a provider |
 | `/reload` | Reload local skills, prompts, extensions, and project context |
 | `/prompts` | Search loaded prompt templates; press Enter to insert an invocation or Ctrl+E to edit the file |

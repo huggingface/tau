@@ -1,61 +1,54 @@
 # Tau CLI and commands
 
-`/local` is an interactive TUI command. Print mode does not execute its
-configuration flow; configure a backend in the TUI, then use explicit
-`--provider` and `--model` flags for headless requests. This avoids probing a
-local endpoint or selecting a model implicitly during non-interactive startup.
+`tau` opens the interactive TUI by default. Print mode is selected with
+`-p/--print` or `--mode` and uses the same staged session/provider preparation
+as the TUI.
 
-Tau supports print mode and a Textual interactive TUI. The CLI entry point is `tau_coding.cli:app`.
+## Local inference
 
-For current user-facing behavior in a Tau checkout, read:
+`/local` is interactive-only. It opens the provider-neutral local-backend host
+in the TUI; print mode never runs setup, probes endpoints, or picks a model
+implicitly. Configure llama.cpp through `/local`, then use its exact provider
+and model explicitly in headless mode:
 
-- `website/content/reference/cli.md`
-- `website/content/reference/slash-commands.md`
-- `src/tau_coding/commands.py`
+```bash
+tau --provider llama.cpp --model <server-reported-id> --print "summarize this project"
+```
 
-Keep command parsing and application-specific resource loading in `tau_coding`, not the reusable `tau_agent` harness. When changing behavior, test both command results and the relevant print/TUI integration, then update published reference documentation.
+The built-in provider is loaded before explicit provider/model validation, so
+both print and TUI startup work after setup. A saved safe snapshot can allow
+startup while the server is temporarily unavailable. A first-time explicit
+model still requires a successful discovery; an unavailable built-in backend
+never blocks unrelated ordinary-provider startup.
 
-## Project trust startup controls
+See `local-inference.md` for endpoint precedence, optional/no authentication,
+state and credential storage, Doctor, reset, and troubleshooting.
 
-`--approve`/`-a` and `--no-approve`/`-na` are mutually exclusive run-only
-overrides. They are parsed before protected resource loading and never persist.
-Headless modes never prompt; user-global `defaultProjectTrust` controls unresolved
-projects. Keep diagnostics on stderr for structured stdout modes. See
-`security.md` and `website/content/guides/project-trust.md`.
+## Common flags
 
-## System prompt startup controls
+```text
+tau [OPTIONS] [PROMPT]
+```
 
-`--system-prompt TEXT_OR_PATH` replaces the default base prompt.
-`--append-system-prompt TEXT_OR_PATH` is repeatable; values retain command-line
-order and are separated by exactly one blank line. Put recognized flags before
-the positional prompt.
+- `-p, --print`: run one prompt without the TUI.
+- `--mode text|json|transcript`: choose print output and imply print mode.
+- `--provider NAME`: select an explicit provider.
+- `-m, --model ID`: select an explicit model.
+- `--session ID`: resume a session in the TUI or print mode.
+- `--cwd PATH`: set the coding-session working directory.
+- `-e, --extension PATH`: load an explicit extension.
+- `--no-extensions`: disable discovered extension directories; trusted built-ins
+  remain available.
+- `--project-extensions`: opt in to trusted project extensions after approval.
+- `-a, --approve` / `-na, --no-approve`: run-only project-trust decisions.
 
-Each value is read as UTF-8 when it names an existing path (with `~` expanded),
-or used verbatim when the path does not exist. An existing directory, unreadable
-file, or invalid UTF-8 file stops startup with a diagnostic naming the option
-and path.
+Explicit `--provider` and `--model` overrides take precedence over a resumed
+provider-aware transcript entry. Print mode reports actionable errors instead of
+opening an interactive login or local setup flow.
 
-Both flags apply to print and interactive TUI startup, including the next request
-of a session resumed with `--session`. They are not persisted, so pass them on
-each later resume that needs them. A custom base still goes through
-`build_system_prompt`: configured append text, project context, eligible skills,
-the current date, and cwd remain included. Do not route this CLI option through
-the lower-level exact `CodingSessionConfig.system` override.
+## Safety boundary
 
-## System prompt files
-
-Tau discovers replacement `SYSTEM.md` and append-only `APPEND_SYSTEM.md` files
-from `<cwd>/.tau/` and `~/.tau/`. Explicit CLI prompt input wins over a project
-file, which wins over a user file. Project and user append files are alternatives,
-not cumulative layers. `.agents/SYSTEM.md` and `.agents/APPEND_SYSTEM.md` are not
-supported because these are Tau-specific configuration resources.
-
-The selected replacement still receives append text, project context, eligible
-skills, date, and cwd. Run `/reload` after changing files; the next-turn prompt is
-rebuilt without adding prompt contents to session history. Selected, shadowed,
-and CLI-overridden sources appear in resource diagnostics. Unreadable or invalid
-UTF-8 selected files stop startup/reload with an actionable error.
-
-Project files load only after the canonical cwd trust decision. Users should
-still inspect trusted `.tau/SYSTEM.md` and `.tau/APPEND_SYSTEM.md`: project trust
-is an input-loading guard, not a sandbox or prompt-safety guarantee.
+Project trust controls ambient project-resource loading; it is not a sandbox.
+Built-in local backends are trusted package code and do not create a project
+trust prompt. They probe only configured endpoints and never stop external
+servers or delete model files. See `security.md`.

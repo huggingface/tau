@@ -90,9 +90,10 @@ retirement. Failures retain the current snapshot and emit one bounded, secret-fr
 diagnostic. Nested compatibility data is deeply immutable while registered.
 Callbacks receive structured data, not Rich or Textual objects.
 
-This Phase 1 API is provisional pending second-backend validation. Registration and
-registry mechanics exist now; startup selection, built-in providers, `/local`, and
-llama.cpp behavior land in later #602 phases.
+This API remains provisional pending second-backend validation. The trusted
+built-in `llama.cpp` provider now uses these contracts; its connection, cache,
+and troubleshooting behavior are covered in `local-inference.md`. Router
+management and Hugging Face model mutations remain outside this phase.
 
 ## Local-backend registrations
 

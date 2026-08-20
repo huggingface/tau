@@ -14,6 +14,7 @@ those locations and file formats.
 ├── catalog.toml        # optional provider/model catalog overlay
 ├── providers.json      # provider/model preferences
 ├── credentials.json    # saved API keys / OAuth tokens (0600, atomic writes)
+├── state/extensions/    # built-in integration state, including llama.cpp
 ├── settings.json       # general settings (trust default, shell prefix)
 ├── trust.json          # versioned project-input trust decisions
 ├── tui.json            # TUI theme, keybindings, and layout
@@ -104,6 +105,13 @@ Tau separates provider metadata from runtime preferences:
 - `~/.tau/catalog.toml` optionally adds personal providers or overlays built-ins.
 - `~/.tau/providers.json` stores runtime preferences such as the default provider,
   default model, scoped models, headers, and timeout/retry settings.
+
+The built-in llama.cpp backend stores only its normalized endpoint and safe
+server-reported model snapshot at `~/.tau/state/extensions/llama.cpp.json`.
+Optional credentials remain in `credentials.json` or `LLAMA_API_KEY`; dynamic
+llama.cpp provider definitions are not written to `catalog.toml` or
+`providers.json`. See the [local inference guide]({{< relref
+"../guides/local-inference.md" >}}).
 
 Tau intentionally reads catalog overlays only from the user-level
 `~/.tau/catalog.toml`. There is no project-level `.tau/catalog.toml`, so cloning a

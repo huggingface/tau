@@ -2,37 +2,56 @@
 
 Tau resolves trust for the canonical destination cwd before reading ambient
 project Markdown/JSON or importing project extensions. Protected inputs include
-project skills, prompts, themes, system-prompt files, AGENTS.md context,
-extension candidates, and reserved future project settings/package metadata.
-User/global and explicit CLI resources remain eligible. Trusted built-in
-extensions are installed Tau package code, load before this decision even with
-`--no-extensions`, and are not ambient project candidates. Their presence alone
-never creates a project trust prompt. Hidden status affects ordinary listings,
-not execution or trust.
+project skills, prompts, themes, system-prompt files, `AGENTS.md` context,
+extension candidates, and reserved project settings.
 
 Interactive users can save exact or displayed-parent decisions or choose a
-run-only result. `~/.tau/trust.json` is a locked, atomically replaced version-1
-store. `defaultProjectTrust` in user `~/.tau/settings.json` is `ask`, `always`,
-or `never`; headless `ask`/`never` decline. `--approve` and `--no-approve` are
-run-only. Cancelling the interactive startup decision exits Tau; continuing
-without project inputs requires selecting a decline option. Trusted project
-extensions additionally require `--project-extensions`.
-
-Project trust is only an input-loading guard. It is not a filesystem, process,
-shell, network, tool, credential, provider, model, package-install,
-prompt-injection, or exfiltration sandbox. Use OS/container/VM isolation and
-restricted credentials/network when isolation is required.
+run-only result. Headless `ask`/`never` decisions decline project inputs;
+`--approve` and `--no-approve` are run-only overrides. Cancelling an interactive
+trust decision exits startup or preserves the current session during reload and
+replacement. Trust is committed only after the staged session is adopted.
 
 ## Built-in local-backend boundary
 
-Built-in local backends are trusted Tau package code and do not create a project
-trust prompt. Their provider/backend definitions live only in the active,
-generation-owned runtime. Endpoint settings and safe model snapshots, when a
-backend supports them, are user-level integration state—not project inputs.
+The bundled llama.cpp backend is trusted Tau package code. It loads before the
+project-trust decision, remains available with `--no-extensions`, and never
+creates a project trust prompt. Its provider/backend definitions are owned by
+the active extension-runtime generation. Endpoint settings and allowlisted model
+snapshots are user-level integration state, not project inputs; they live under
+`~/.tau/state/extensions/llama.cpp.json`.
 
-Configuration secrets are collected by the host as secret fields, passed only to
-the backend transaction, and kept out of reprs, snapshots, session metadata, and
-diagnostics. No API key is synthesized when authentication is optional or absent.
-A local backend never stops a server or deletes model files as part of reset.
+`/local` probes only the endpoint the user entered, saved, or supplied through
+`LLAMA_BASE_URL`. It does not scan processes, ports, or the local network. Tau
+does not install, start, stop, download, or delete llama.cpp servers or model
+files. The default localhost endpoint is an offered value, not an automatic
+probe.
 
-Published details: `website/content/guides/project-trust.md`.
+## Credentials and safe state
+
+API keys are collected through secret fields. A stored key is kept in Tau's
+private credential store and referenced by an opaque integration-owned name.
+`LLAMA_API_KEY` is an environment fallback. If neither is present, Tau omits
+`Authorization`; it never synthesizes a fake local key. Stored credentials win
+over the environment value.
+
+The llama.cpp state file contains only the normalized endpoint, exact
+server-reported model IDs, allowlisted display/context/modality metadata, the
+selected reference, and a timestamp. It does not contain keys, arbitrary
+headers, server PIDs, project-local overrides, or raw server payloads. Secrets
+are excluded from provider representations, diagnostics, sessions, and exports.
+State and credential writes are separate transactions: a failed state commit
+leaves the prior configuration active and an unreferenced credential is cleaned
+up or reported for recovery; old-credential cleanup failure does not invalidate
+the committed new configuration. Reset removes safe settings first and deletes a
+stored credential only after separate confirmation.
+
+## General boundary
+
+Project trust is an input-loading guard, not a filesystem, process, shell,
+network, tool, credential, provider, model, package-install, prompt-injection,
+or exfiltration sandbox. Extensions execute arbitrary Python. Use an OS
+sandbox, container, VM, remote environment, and restricted credentials/network
+when isolation is required.
+
+For endpoint, auth, cached-downtime, Doctor, and model-selection troubleshooting,
+see `local-inference.md`.

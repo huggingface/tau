@@ -242,9 +242,11 @@ still use their first-registration-wins name registries. Removing a source revea
 the preceding complete layer, including the exact durable provider baseline. The contracts are
 frontend-free and callbacks must not return Rich/Textual values.
 
-This foundation is intentionally provisional until #602's second-backend
-validation. Phase 1 does not yet add startup/session selection, built-in local
-providers, `/local`, or llama.cpp behavior.
+This foundation remains provisional until second-backend validation. The
+trusted built-in `llama.cpp` provider now exercises these contracts; its
+connection, cache, and troubleshooting behavior are covered in the [local
+inference guide]({{< relref "./local-inference.md" >}}). Router management and
+Hugging Face model mutations remain outside this phase.
 
 ### Tools
 

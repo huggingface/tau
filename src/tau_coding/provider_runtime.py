@@ -152,7 +152,7 @@ async def create_dynamic_model_provider(
         # resembling gpt-* or *codex* must not reroute to /responses.
         infer_api_from_model=False,
     )
-    return OpenAICompatibleProvider(config)
+    return OpenAICompatibleProvider(config, client=transport.client)
 
 
 async def _resolve_dynamic_runtime_auth(

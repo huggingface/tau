@@ -12,7 +12,7 @@ tau [OPTIONS] [PROMPT] [COMMAND] [ARGS]
 
 - With no arguments, `tau` opens the interactive [TUI]({{< relref "../guides/tui.md" >}}).
 - A positional `PROMPT` opens the TUI and submits it as the first turn.
-- `/local` is available in the TUI for registered local backends; print mode reports that it is interactive-only.
+- `/local` is available in the TUI for registered local backends; print mode reports that setup is interactive-only.
 - `-p/--print` (or `--mode`) runs that same positional prompt in [print mode]({{< relref "../guides/print-mode.md" >}}) instead of the TUI.
 - Put flags before the prompt — Tau treats everything after the last recognized flag as prompt text, including tokens that look like flags.
 
@@ -110,8 +110,16 @@ tau --print --session <session-id> "Follow-up message"
 
 Explicit `--provider`, `--model`, and system-prompt options override the saved
 startup choices for this invocation. After configuring a local backend in the
-TUI, pass its provider and exact discovered model explicitly in print mode; Tau
-does not run `/local` setup or probe local endpoints headlessly. `--session` cannot be combined with
+TUI, pass its provider and exact discovered model explicitly in print mode:
+
+```bash
+tau --provider llama.cpp --model <model-id> --print "summarize this project"
+```
+
+Tau does not run `/local` setup or select a model implicitly headlessly. An
+endpoint-keyed safe snapshot can let an explicit local startup continue while
+llama.cpp is temporarily down; a first-time explicit model still needs discovery.
+`--session` cannot be combined with
 `--new-session` or `--session-id`. An unknown session id exits with an error.
 
 `--resume`, `--prompt`, `-o/--output`, and `-x` are removed; each now exits

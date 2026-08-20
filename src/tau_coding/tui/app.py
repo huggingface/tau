@@ -7171,7 +7171,8 @@ async def run_tui_app(
             and provider_name is None
             and model is None
         )
-        if (provider_name is None or model is None) and not dynamic_resume:
+        explicit_dynamic = provider_name is not None and model is not None
+        if not dynamic_resume and not explicit_dynamic:
             raise
     startup_message: str | None = None
     startup_error_notice: str | None = None

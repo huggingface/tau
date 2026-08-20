@@ -898,6 +898,11 @@ class ExtensionAPI:
         self._generation.assert_active()
         self._runtime.register_provider(self._source_id, provider)
 
+    def update_provider(self, provider: DynamicProvider) -> bool:
+        """Update this source's provider snapshot while preserving its layer token."""
+        self._generation.assert_active()
+        return self._runtime.update_provider(self._source_id, provider)
+
     def register_local_backend(self, backend: LocalBackend) -> None:
         """Register a backend paired with this source's provider layer."""
         self._generation.assert_active()

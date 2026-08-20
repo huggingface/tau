@@ -45,6 +45,12 @@ its exact source-owned provider layer prevents a shadowing extension from using
 or resetting another source's integration. See the [local backends
 guide]({{< relref "../guides/local-inference.md" >}}).
 
+TUI and print startup share the same trust-aware preparation boundary: load the
+trusted built-ins and eligible extensions, restore safe dynamic snapshots,
+resolve an explicit provider/model, then construct the candidate runtime. A
+saved llama.cpp snapshot can therefore support explicit startup during server
+downtime without making the local backend an implicit fallback.
+
 ## Dependency direction
 
 Dependencies only point one way: `tau_coding → tau_agent → tau_ai`. UI code

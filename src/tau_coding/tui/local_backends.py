@@ -260,7 +260,8 @@ class LocalBackendScreen(ModalScreen[None]):
         self.app.push_screen(
             LocalConfirmScreen(
                 "Reset local backend?",
-                "Remove this backend's saved integration settings and credentials?",
+                "Remove this backend's saved integration settings? Stored credentials "
+                "require a separate confirmation.",
                 theme=self.theme,
             ),
             callback=self._handle_reset_confirmation,

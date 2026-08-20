@@ -461,16 +461,29 @@ class CodingSession:
         # Always stage a fresh eligible-only runtime for a destination snapshot;
         # never reuse source-project code across replacement trust boundaries.
         previous_runtime = config.extension_runtime
-        credential_store = FileCredentialStore(
-            credentials_path(unfiltered_resource_paths.paths)
-            if unfiltered_resource_paths.paths is not None
-            else None
+        runtime_paths = unfiltered_resource_paths.paths or TauPaths(
+            home=unfiltered_resource_paths.root,
+            agents_home=unfiltered_resource_paths.agents_root or Path.home() / ".agents",
+        )
+        credential_store = FileCredentialStore(credentials_path(runtime_paths))
+        injected_credentials = (
+            previous_runtime.provider_credentials if previous_runtime is not None else None
         )
         extension_runtime = ExtensionRuntime(
+            paths=runtime_paths,
+            credentials=injected_credentials or credential_store,
+            environment=(
+                previous_runtime.provider_environment if previous_runtime is not None else None
+            ),
+            built_in_credentials=(
+                previous_runtime.built_in_credentials if previous_runtime is not None else None
+            ),
+            built_in_http_client=(
+                previous_runtime.built_in_http_client if previous_runtime is not None else None
+            ),
             durable_providers=(
                 config.provider_settings.providers if config.provider_settings else ()
             ),
-            credentials=credential_store,
         )
         extension_runtime.load(
             unfiltered_resource_paths,
@@ -1754,7 +1767,17 @@ class CodingSession:
             durable_providers=(
                 self._provider_settings.providers if self._provider_settings else ()
             ),
-            credentials=self._credential_store,
+            credentials=self._extension_runtime.provider_credentials or self._credential_store,
+            environment=self._extension_runtime.provider_environment,
+            built_in_credentials=self._extension_runtime.built_in_credentials,
+            built_in_http_client=self._extension_runtime.built_in_http_client,
+            paths=(
+                self._resource_paths.paths
+                or TauPaths(
+                    home=self._resource_paths.root,
+                    agents_home=self._resource_paths.agents_root or Path.home() / ".agents",
+                )
+            ),
         )
         staged_runtime.load(
             unfiltered_paths,
@@ -3494,7 +3517,8 @@ async def _prepare_provider_selection(
                 runtime = await create_dynamic_model_provider(
                     dynamic,
                     model=model,
-                    credential_store=credential_store or FileCredentialStore(),
+                    credential_store=provider_registry.credentials,
+                    environment=provider_registry.environment,
                 )
             except (ProviderConfigError, RuntimeError) as exc:
                 raise ProviderConfigError(str(exc)) from exc

@@ -70,11 +70,19 @@ The full list is in the [Slash commands reference]({{< relref "../reference/slas
 ### Local backends
 
 `/local` first opens an explicit backend chooser. One backend is preselected but
-still requires confirmation; a recommended backend is only a marker. The host
-renders backend-declared text, secret, and choice fields and exposes only the
-optional actions the backend reports. Configure, refresh, status, doctor, reset,
-and model-management work asynchronously, show structured progress, and are
-cancelled when the screen closes. State-changing actions require an idle agent.
+still requires confirmation; a recommended backend is only a marker. Tau's
+built-in `llama.cpp` backend asks for an endpoint and optional secret key,
+discovers exact `/v1/models` IDs, and exposes status, refresh, use, Doctor, and
+reset. The host renders backend-declared text, secret, and choice fields and
+exposes only the optional actions the backend reports.
+
+Configure, refresh, status, Doctor, and reset work asynchronously, show
+structured progress/diagnostics, and are cancelled when the screen closes.
+Cached model snapshots remain visible as stale during server downtime.
+State-changing actions require an idle agent. Reset does not stop llama.cpp or
+delete model files; credential deletion is separately confirmed. For explicit
+startup and troubleshooting, see the [local inference guide]({{< relref
+"./local-inference.md" >}}).
 
 ## Running shell commands directly
 
