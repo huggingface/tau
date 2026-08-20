@@ -109,6 +109,7 @@ class CommandResult:
     tree_picker_requested: bool = False
     login_picker_requested: bool = False
     custom_provider_login_requested: bool = False
+    local_requested: bool = False
     login_provider: str | None = None
     login_method: str | None = None
     logout_picker_requested: bool = False
@@ -365,6 +366,15 @@ def create_default_command_registry() -> CommandRegistry:
             description="Show or set the TUI theme.",
             handler=_theme_command,
             search_terms=("light", "dark", "contrast"),
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="local",
+            usage="/local",
+            description="Configure and manage local backends.",
+            handler=_local_command,
+            search_terms=("backends", "inference"),
         )
     )
     registry.register(
@@ -731,6 +741,12 @@ def _theme_command(context: CommandContext) -> CommandResult:
             message=f"Unknown theme: {theme_name}\nAvailable themes: {themes}",
         )
     return CommandResult(handled=True, theme=theme_name)
+
+
+def _local_command(context: CommandContext) -> CommandResult:
+    if context.args:
+        return CommandResult(handled=True, message="Usage: /local")
+    return CommandResult(handled=True, local_requested=True)
 
 
 def _login_command(context: CommandContext) -> CommandResult:

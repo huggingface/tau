@@ -314,11 +314,12 @@ required/optional/no authentication without fake keys or exposed auth provenance
 Custom auth-resolution exceptions are reduced to a categorical host error during
 runtime creation; Tau's required-key guidance remains actionable.
 
-Phase 1 establishes contracts and registry mechanics only. Dynamic providers are
-not yet available to startup or session model selection, and this work does not
-add `/local`, a built-in provider, or llama.cpp-specific behavior. See
-[Extensions]({{< relref "./extensions.md#dynamic-providers-provisional" >}}) for
-the provisional author API.
+Phase 1 established the contracts and registry mechanics. The `/local` host now
+provides the generic TUI flow for registered dynamic local backends. Dynamic
+providers still do not become durable catalog entries or automatic startup
+fallbacks: configure a backend, then choose its provider/model explicitly. See
+the [local backends guide]({{< relref "./local-inference.md" >}}) and
+[Extensions]({{< relref "./extensions.md#dynamic-providers-provisional" >}}).
 
 ## Adding a custom / local provider
 

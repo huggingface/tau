@@ -13,6 +13,12 @@ saved parent decision is inherited.
 Tau gates project `.tau` and `.agents` skills and prompts, `.tau` themes,
 `SYSTEM.md` and `APPEND_SYSTEM.md`, plain and scoped `AGENTS.md`, project
 extension candidates, and project `settings.json` reserved for future support.
+
+Built-in local backends are trusted package code. They load independently of
+project trust and do not make an ambient endpoint, model snapshot, or credential
+into project input. Their provider/backend registrations remain owned by the
+active runtime generation; project extensions cannot reset them without the
+normal source and trust rules.
 Detection checks names and metadata only; Tau does not read, parse, or import a
 candidate before deciding.
 

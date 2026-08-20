@@ -154,6 +154,10 @@ from tau_coding.tui.config import (
     save_tui_settings,
 )
 from tau_coding.tui.file_drop import normalize_dropped_paths
+from tau_coding.tui.local_backends import (
+    LocalBackendPickerScreen,
+    LocalBackendScreen,
+)
 from tau_coding.tui.project_trust import ProjectTrustScreen, prompt_project_trust
 from tau_coding.tui.state import TuiState, format_terminal_command_result_block
 from tau_coding.tui.terminal_notification import TerminalNotificationController
@@ -3269,6 +3273,11 @@ class TauTuiApp(App[None]):
     ExtensionSelectScreen,
     ExtensionConfirmScreen,
     ExtensionInputScreen,
+    LocalBackendPickerScreen,
+    LocalBackendScreen,
+    LocalConfigureScreen,
+    LocalConfirmScreen,
+    LocalModelActionScreen,
     ProjectTrustScreen {
         align: center middle;
     }
@@ -3322,6 +3331,68 @@ class TauTuiApp(App[None]):
     #extension-input-help {
         height: 1;
         margin-top: 1;
+        color: $tau-muted-text;
+    }
+
+    #local-backend-picker,
+    #local-backend-screen,
+    #local-configure-screen,
+    #local-confirm-screen,
+    #local-model-action-screen {
+        width: 82;
+        max-width: 92%;
+        height: auto;
+        max-height: 82%;
+        padding: 1 2;
+        background: $tau-chrome-background;
+        border: tall $tau-border;
+    }
+
+    #local-backend-picker-title,
+    #local-backend-title,
+    #local-configure-title,
+    #local-confirm-title,
+    #local-model-action-title {
+        height: auto;
+        color: $tau-chrome-text;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #local-backend-picker-help,
+    #local-backend-help,
+    #local-configure-screen Label,
+    #local-confirm-message {
+        color: $tau-muted-text;
+    }
+
+    #local-backend-list,
+    #local-backend-status,
+    #local-backend-progress,
+    #local-configure-screen Input,
+    #local-configure-screen Select,
+    #local-model-action-input {
+        background: $tau-transcript-background;
+        border: tall $tau-border;
+        margin-top: 1;
+    }
+
+    #local-backend-list {
+        height: auto;
+        max-height: 16;
+    }
+
+    #local-backend-actions,
+    #local-backend-picker-buttons,
+    #local-configure-buttons,
+    #local-confirm-buttons,
+    #local-model-action-buttons {
+        height: auto;
+        margin-top: 1;
+    }
+
+    #local-backend-progress {
+        min-height: 1;
         color: $tau-muted-text;
     }
 
@@ -4035,6 +4106,8 @@ class TauTuiApp(App[None]):
                 self._open_login_picker()
             if command.custom_provider_login_requested:
                 self._open_custom_provider_login()
+            if command.local_requested:
+                self._open_local_backend_picker()
             if command.login_provider is not None:
                 self._open_login(command.login_provider, method=command.login_method)
             if command.logout_picker_requested:
@@ -5755,6 +5828,54 @@ class TauTuiApp(App[None]):
                 fallback_choices,
             )
         )
+
+    def _open_local_backend_picker(self) -> None:
+        """Open the generic local-backend chooser and require confirmation."""
+        runtime = getattr(self.session, "extension_runtime", None)
+        registry = getattr(runtime, "local_backend_registry", None)
+        if registry is None:
+            self._notify("Local backend controls are unavailable.", severity="warning")
+            return
+        self.push_screen(
+            LocalBackendPickerScreen(registry, theme=self.tui_settings.resolved_theme),
+            callback=self._handle_local_backend_picker_result,
+        )
+
+    def _handle_local_backend_picker_result(self, backend_id: str | None) -> None:
+        if backend_id is None:
+            return
+        runtime = getattr(self.session, "extension_runtime", None)
+        registry = getattr(runtime, "local_backend_registry", None)
+        if registry is None or registry.effective(backend_id) is None:
+            self._notify("The selected local backend is no longer available.", severity="warning")
+            return
+        self.push_screen(
+            LocalBackendScreen(
+                registry,
+                backend_id,
+                theme=self.tui_settings.resolved_theme,
+                on_use=self._use_local_model,
+                notify_callback=self._notify_local_backend,
+                is_idle=lambda: not self._is_agent_or_queue_active(),
+            )
+        )
+
+    def _notify_local_backend(self, message: str, level: str) -> None:
+        severity: Literal["information", "warning", "error"] = {
+            "info": "information",
+            "warning": "warning",
+            "error": "error",
+        }.get(level, "information")  # type: ignore[assignment]
+        self._notify(message, severity=severity)
+
+    async def _use_local_model(self, provider_id: str, model_id: str) -> None:
+        if self._is_agent_or_queue_active():
+            self._notify(
+                "Tau is still working. Press Escape to interrupt before switching models.",
+                severity="warning",
+            )
+            return
+        await self._switch_model(ModelChoice(provider_name=provider_id, model=model_id))
 
     def _open_tools_reference(self) -> None:
         """Open a read-only view of tools from the active session."""

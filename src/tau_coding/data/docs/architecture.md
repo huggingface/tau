@@ -38,4 +38,13 @@ runtimes reuse
 `tau_ai.OpenAICompatibleProvider` through an explicit transport
 choice, so model names cannot silently select another endpoint API.
 
+The local-backend contract is another `tau_coding` boundary. A staged runtime
+owns a `LocalBackendRegistry` beside its provider registry. Each backend is
+bound to the exact source-owned provider layer and generation that registered it;
+this prevents a shadowing source from using or resetting another source's
+integration. Backends return typed configuration, status, action, diagnostic,
+and progress values. The Textual adapter renders those values and owns
+cancellation, confirmation, and idle checks. No local-backend or Textual code
+belongs in `tau_agent` or `tau_ai`.
+
 In a Tau checkout, read `AGENTS.md`, `website/content/internals/architecture.md`, and relevant `dev-notes/architecture/` documents before broad architectural changes.

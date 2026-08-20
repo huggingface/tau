@@ -94,6 +94,30 @@ This Phase 1 API is provisional pending second-backend validation. Registration 
 registry mechanics exist now; startup selection, built-in providers, `/local`, and
 llama.cpp behavior land in later #602 phases.
 
+## Local-backend registrations
+
+Extensions can pair a provider layer with a provider-neutral local backend:
+
+```python
+def setup(tau):
+    tau.register_provider(provider)
+    tau.register_local_backend(backend)
+```
+
+`LocalBackend` supplies structured text, secret, and choice fields plus async
+configure, refresh, status, and optional doctor/reset/model-management actions.
+The host renders these values; backend code never receives Textual widgets.
+Configuration is submitted as one ephemeral transaction. Validation errors and
+failed safe-state/credential commits leave the previous configuration active;
+secret values are excluded from representations and host diagnostics.
+
+Backends are owned by the same extension source and runtime generation as their
+paired provider. If another source shadows that provider, inspection remains
+possible but use, reset, and model-management actions are unavailable. Retiring
+or reloading a generation cancels its backend operations and discards late
+results. The built-in `/local` command opens the generic TUI host; print mode
+reports that the command is interactive-only.
+
 ## Development checklist
 
 1. Read this document and the closest installed example under `examples/extensions/` completely before implementing.

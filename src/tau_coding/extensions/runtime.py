@@ -70,6 +70,7 @@ from tau_coding.extensions.provider_registry import (
     ProviderRegistryCloseResult,
 )
 from tau_coding.extensions.providers import CredentialReader, DynamicProvider
+from tau_coding.local_backends import LocalBackend, LocalBackendRegistry
 from tau_coding.project_trust import ExtensionTrustResult, ProjectTrustEvent
 from tau_coding.provider_config import ProviderConfig
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
@@ -194,7 +195,12 @@ class ExtensionRuntime:
             credentials=credentials,
             environment=environment,
         )
+        self._local_backend_registry = LocalBackendRegistry(
+            self._provider_registry,
+            generation_id=self._generation.id,
+        )
         self._retired_provider_registries: list[DynamicProviderRegistry] = []
+        self._retired_local_backend_registries: list[LocalBackendRegistry] = []
         self._extensions: list[RegisteredExtension] = []
         self._tools: dict[str, RegisteredExtensionTool] = {}
         self._commands: dict[str, ExtensionCommand] = {}
@@ -262,7 +268,8 @@ class ExtensionRuntime:
         # Replacement callers clear host UI before a successor uses the shared
         # bridge; clearing here could erase that successor's freshly mounted UI.
         # Provider retirement synchronously detaches every layer and requests
-        # cancellation of generation-owned refresh work.
+        # cancellation of generation-owned provider and backend work.
+        self._local_backend_registry.retire()
         self._provider_registry.retire()
         self._generation.invalidate()
         if self._harness_unsubscribe is not None:
@@ -280,15 +287,23 @@ class ExtensionRuntime:
     async def aclose(self) -> ProviderRegistryCloseResult:
         """Retire this generation and report drain or bounded containment."""
         self.retire()
-        registries = (*self._retired_provider_registries, self._provider_registry)
+        provider_registries = (*self._retired_provider_registries, self._provider_registry)
+        backend_registries = (
+            *self._retired_local_backend_registries,
+            self._local_backend_registry,
+        )
         try:
-            results = await asyncio.gather(*(registry.aclose() for registry in registries))
+            _, provider_results = await asyncio.gather(
+                asyncio.gather(*(registry.aclose() for registry in backend_registries)),
+                asyncio.gather(*(registry.aclose() for registry in provider_registries)),
+            )
             self._retired_provider_registries = [
                 registry
-                for registry, result in zip(registries, results, strict=True)
+                for registry, result in zip(provider_registries, provider_results, strict=True)
                 if not result.drained and registry is not self._provider_registry
             ]
-            contained = sum(result.contained_discovery_tasks for result in results)
+            self._retired_local_backend_registries = []
+            contained = sum(result.contained_discovery_tasks for result in provider_results)
             return ProviderRegistryCloseResult(
                 drained=contained == 0,
                 contained_discovery_tasks=contained,
@@ -314,6 +329,8 @@ class ExtensionRuntime:
         # is still active so host cleanup triggered by component disposal can
         # safely use its API; only then make every captured API/context stale.
         self.clear_ui_components()
+        self._local_backend_registry.retire()
+        self._retired_local_backend_registries.append(self._local_backend_registry)
         self._provider_registry.retire()
         self._retired_provider_registries.append(self._provider_registry)
         self._generation.invalidate()
@@ -324,6 +341,10 @@ class ExtensionRuntime:
             generation_id=self._generation.id,
             credentials=self._provider_credentials,
             environment=self._provider_environment,
+        )
+        self._local_backend_registry = LocalBackendRegistry(
+            self._provider_registry,
+            generation_id=self._generation.id,
         )
         if self._harness_unsubscribe is not None:
             self._harness_unsubscribe()
@@ -406,12 +427,17 @@ class ExtensionRuntime:
             if registration[0] != source_id
         }
         self._provider_registry.unregister_source(source_id)
+        self._local_backend_registry.unregister_source(source_id)
 
     # -- registration (called through ExtensionAPI) -------------------------
 
     def register_provider(self, source_id: str, provider: DynamicProvider) -> None:
         """Register or atomically replace one exact extension source layer."""
         self._provider_registry.register(source_id, provider)
+
+    def register_local_backend(self, source_id: str, backend: LocalBackend) -> None:
+        """Register a backend against its exact source-owned provider layer."""
+        self._local_backend_registry.register(source_id, backend)
 
     def register_tool(self, source_id: str, extension_name: str, tool: AgentTool) -> None:
         """Register an extension tool; first registration per name wins."""
@@ -698,6 +724,11 @@ class ExtensionRuntime:
     def provider_registry(self) -> DynamicProviderRegistry:
         """Return this staged runtime generation's process-local provider registry."""
         return self._provider_registry
+
+    @property
+    def local_backend_registry(self) -> LocalBackendRegistry:
+        """Return this staged runtime generation's local-backend registry."""
+        return self._local_backend_registry
 
     @property
     def extension_names(self) -> tuple[str, ...]:
