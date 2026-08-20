@@ -4,7 +4,11 @@ Tau resolves trust for the canonical destination cwd before reading ambient
 project Markdown/JSON or importing project extensions. Protected inputs include
 project skills, prompts, themes, system-prompt files, AGENTS.md context,
 extension candidates, and reserved future project settings/package metadata.
-User/global and explicit CLI resources remain eligible.
+User/global and explicit CLI resources remain eligible. Trusted built-in
+extensions are installed Tau package code, load before this decision even with
+`--no-extensions`, and are not ambient project candidates. Their presence alone
+never creates a project trust prompt. Hidden status affects ordinary listings,
+not execution or trust.
 
 Interactive users can save exact or displayed-parent decisions or choose a
 run-only result. `~/.tau/trust.json` is a locked, atomically replaced version-1

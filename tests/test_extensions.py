@@ -15,7 +15,13 @@ from tau_agent.session import CustomEntry, JsonlSessionStorage, LeafEntry, Messa
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
 from tau_ai import FakeProvider
-from tau_coding import CodingSession, CodingSessionConfig, ResourceError, TauResourcePaths
+from tau_coding import (
+    BuiltInExtension,
+    CodingSession,
+    CodingSessionConfig,
+    ResourceError,
+    TauResourcePaths,
+)
 from tau_coding.extensions import (
     CustomMessageView,
     DynamicProvider,
@@ -27,11 +33,15 @@ from tau_coding.extensions import (
     MessageRenderOptions,
     NoAuth,
     OpenAICompatibleTransport,
+    ProviderModelSnapshot,
+    ProviderRefreshContext,
+    RefreshModels,
     ToolCallHookResult,
     ToolResultHookResult,
     discover_extensions,
     load_extensions,
 )
+from tau_coding.project_trust import ProjectTrustRequest, TrustChoice
 
 pytestmark = pytest.mark.anyio
 
@@ -488,6 +498,246 @@ def test_underscore_files_are_skipped(tmp_path: Path) -> None:
     discovered, _ = discover_extensions(paths)
 
     assert discovered == ()
+
+
+def _fake_built_in(
+    setup_apis: list[ExtensionAPI],
+    *,
+    refresh_models: RefreshModels | None = None,
+) -> BuiltInExtension:
+    def command(args: str, context: object) -> str:
+        del context
+        return f"built-in: {args}"
+
+    async def execute(
+        tool_call_id: str,
+        arguments: object,
+        signal: object = None,
+        on_update: object = None,
+    ) -> AgentToolResult:
+        del tool_call_id, arguments, signal, on_update
+        return AgentToolResult(content="built-in tool")
+
+    def setup(tau: ExtensionAPI) -> None:
+        setup_apis.append(tau)
+        tau.register_tool(
+            AgentTool(
+                name="fake-built-in-tool",
+                label="Fake built-in",
+                description="Exercise built-in extension loading.",
+                parameters={},
+                execute_fn=execute,
+            )
+        )
+        tau.register_command("fake-built-in", command)
+        tau.register_provider(
+            DynamicProvider(
+                id="fake-built-in-provider",
+                display_name="Fake built-in provider",
+                transport=OpenAICompatibleTransport(
+                    base_url="http://example.test/v1",
+                    auth=NoAuth(),
+                ),
+                refresh_models=refresh_models,
+            )
+        )
+
+    return BuiltInExtension(name="fake-built-in", setup=setup)
+
+
+def test_built_in_declaration_validates_name_setup_and_hidden_flag() -> None:
+    def setup(tau: ExtensionAPI) -> None:
+        del tau
+
+    async def async_setup(tau: ExtensionAPI) -> None:
+        del tau
+
+    with pytest.raises(ValueError, match="non-empty"):
+        BuiltInExtension(name="", setup=setup)
+    with pytest.raises(ValueError, match="surrounding whitespace"):
+        BuiltInExtension(name=" spaced ", setup=setup)
+    with pytest.raises(ValueError, match="sync function"):
+        BuiltInExtension(name="async", setup=async_setup)
+    with pytest.raises(ValueError, match="hidden flag"):
+        BuiltInExtension(name="visible", setup=setup, hidden=cast(bool, "yes"))
+
+
+async def test_hidden_built_in_registers_real_runtime_surfaces_despite_no_extensions(
+    tmp_path: Path,
+) -> None:
+    setup_apis: list[ExtensionAPI] = []
+    runtime = ExtensionRuntime(built_in_extensions=(_fake_built_in(setup_apis),))
+
+    runtime.load(_paths(tmp_path), include_resource_dirs=False)
+
+    assert len(setup_apis) == 1
+    assert runtime.extension_names == ()
+    assert len(runtime.extension_metadata) == 1
+    metadata = runtime.extension_metadata[0]
+    assert metadata.name == "fake-built-in"
+    assert metadata.source_id == "built-in:fake-built-in"
+    assert metadata.source == "built-in"
+    assert metadata.hidden is True
+    assert metadata.path is None
+    tool = runtime.compose_tools([])[0]
+    assert tool.name == "fake-built-in-tool"
+    assert (await tool.execute("call-1", {})).text == "built-in tool"
+    registry = runtime.build_command_registry()
+    command = registry.get("fake-built-in")
+    assert command is not None
+    result = command.handler(_command_context(registry, "/fake-built-in ok", "fake-built-in", "ok"))
+    assert result.message == "built-in: ok"
+    provider = runtime.provider_registry.effective("fake-built-in-provider")
+    assert provider is not None
+    assert provider.source_id == "built-in:fake-built-in"
+
+
+def test_built_ins_load_once_before_user_explicit_and_project_sources(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    setup_apis: list[ExtensionAPI] = []
+    _write_extension(_user_extensions_dir(paths), "user_ext", "def setup(tau):\n    pass\n")
+    explicit = _write_extension(
+        tmp_path / "explicit", "explicit_ext", "def setup(tau):\n    pass\n"
+    )
+    _write_extension(_project_extensions_dir(paths), "project_ext", "def setup(tau):\n    pass\n")
+    runtime = ExtensionRuntime(built_in_extensions=(_fake_built_in(setup_apis),))
+
+    runtime.load(paths, extra_paths=(explicit,), include_project_dir=False)
+    runtime.load(paths, include_project_dir=True, include_user_dir=False)
+
+    assert len(setup_apis) == 1
+    assert [metadata.name for metadata in runtime.extension_metadata] == [
+        "fake-built-in",
+        "user_ext",
+        "explicit_ext",
+        "project_ext",
+    ]
+    assert [metadata.source for metadata in runtime.extension_metadata] == [
+        "built-in",
+        "user",
+        "explicit",
+        "project",
+    ]
+    assert runtime.extension_names == ("user_ext", "explicit_ext", "project_ext")
+
+
+async def test_built_in_order_preserves_tool_command_and_provider_precedence(
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    setup_apis: list[ExtensionAPI] = []
+    _write_extension(
+        _user_extensions_dir(paths),
+        "shadow",
+        """
+from tau_agent.tools import AgentTool, AgentToolResult
+from tau_coding.extensions import DynamicProvider, NoAuth, OpenAICompatibleTransport
+
+
+async def execute(tool_call_id, arguments, signal=None, on_update=None):
+    return AgentToolResult(content="user tool")
+
+
+def command(args, context):
+    return "user command"
+
+
+def setup(tau):
+    tau.register_tool(AgentTool(
+        name="fake-built-in-tool",
+        label="User",
+        description="User",
+        parameters={},
+        execute_fn=execute,
+    ))
+    tau.register_command("fake-built-in", command)
+    tau.register_provider(DynamicProvider(
+        id="fake-built-in-provider",
+        display_name="User provider",
+        transport=OpenAICompatibleTransport(
+            base_url="http://user.example.test/v1",
+            auth=NoAuth(),
+        ),
+    ))
+""",
+    )
+    runtime = ExtensionRuntime(built_in_extensions=(_fake_built_in(setup_apis),))
+
+    runtime.load(paths)
+
+    tool = runtime.compose_tools([])[0]
+    assert (await tool.execute("call-1", {})).text == "built-in tool"
+    registry = runtime.build_command_registry()
+    command = registry.get("fake-built-in")
+    assert command is not None
+    result = command.handler(_command_context(registry, "/fake-built-in", "fake-built-in", ""))
+    assert result.message == "built-in: "
+    provider = runtime.provider_registry.effective("fake-built-in-provider")
+    assert provider is not None
+    assert provider.source_id.startswith("extension:file:")
+    assert provider.definition.display_name == "User provider"
+
+
+def test_built_in_setup_failure_is_isolated_and_rolls_back_every_registration(
+    tmp_path: Path,
+) -> None:
+    setup_apis: list[ExtensionAPI] = []
+    working = BuiltInExtension(name="working", setup=lambda tau: None)
+    fake = _fake_built_in(setup_apis)
+
+    def broken_setup(tau: ExtensionAPI) -> None:
+        fake.setup(tau)
+        raise RuntimeError("broken declaration")
+
+    runtime = ExtensionRuntime(
+        built_in_extensions=(BuiltInExtension(name="broken", setup=broken_setup), working)
+    )
+
+    runtime.load(_paths(tmp_path), include_resource_dirs=False)
+
+    assert [metadata.name for metadata in runtime.extension_metadata] == ["working"]
+    assert runtime.extension_tools == ()
+    assert runtime.build_command_registry().get("fake-built-in") is None
+    assert runtime.provider_registry.effective("fake-built-in-provider") is None
+    assert any(
+        diagnostic.name == "broken"
+        and diagnostic.severity == "error"
+        and "built-in setup failed" in diagnostic.message
+        for diagnostic in runtime.diagnostics
+    )
+
+
+async def test_retiring_built_in_generation_cancels_provider_work_and_drops_registrations(
+    tmp_path: Path,
+) -> None:
+    setup_apis: list[ExtensionAPI] = []
+    entered = asyncio.Event()
+
+    async def refresh(context: ProviderRefreshContext) -> ProviderModelSnapshot:
+        del context
+        entered.set()
+        await asyncio.sleep(10)
+        return ProviderModelSnapshot()
+
+    runtime = ExtensionRuntime(
+        built_in_extensions=(_fake_built_in(setup_apis, refresh_models=refresh),)
+    )
+    runtime.load(_paths(tmp_path), include_resource_dirs=False)
+    registry = runtime.provider_registry
+    pending = asyncio.create_task(registry.refresh("fake-built-in-provider"))
+    await entered.wait()
+
+    runtime.retire()
+    close_result = await runtime.aclose()
+
+    assert close_result.drained is True
+    assert (await pending).status == "cancelled"
+    assert registry.effective("fake-built-in-provider") is None
+    assert runtime.extension_metadata == ()
+    assert runtime.extension_tools == ()
+    assert runtime.build_command_registry().get("fake-built-in") is None
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = setup_apis[0].name
 
 
 # -- runtime registration ------------------------------------------------------
@@ -1598,6 +1848,104 @@ def _session_config(
         cwd=paths.cwd,
         resource_paths=paths,
     )
+
+
+async def test_session_loads_built_in_without_extension_discovery_or_project_trust_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    import tau_coding.built_in_extensions as declarations
+
+    setup_apis: list[ExtensionAPI] = []
+    monkeypatch.setattr(
+        declarations,
+        "BUILT_IN_EXTENSIONS",
+        (_fake_built_in(setup_apis),),
+    )
+    prompt_calls = 0
+
+    async def prompt(request: ProjectTrustRequest) -> TrustChoice:
+        nonlocal prompt_calls
+        del request
+        prompt_calls += 1
+        return "decline_once"
+
+    config = dataclass_replace(
+        _session_config(
+            tmp_path,
+            FakeProvider([]),
+            extension_body=(
+                "def setup(tau):\n    tau.add_prompt_guideline('user should not load')\n"
+            ),
+        ),
+        extensions_enabled=False,
+        trust_interactive=True,
+        trust_prompt=prompt,
+    )
+
+    session = await CodingSession.load(config)
+
+    assert prompt_calls == 0
+    assert session.project_trust_resolution is not None
+    assert session.project_trust_resolution.source == "empty"
+    assert "fake-built-in-tool" in [tool.name for tool in session.tools]
+    assert "user should not load" not in session.extension_runtime.prompt_guidelines
+    assert session.extension_names == ()
+    assert session.extension_runtime.extension_metadata[0].source == "built-in"
+    await session.aclose()
+
+
+@pytest.mark.parametrize("operation", ["reload", "new", "resume"])
+async def test_session_lifecycle_recreates_built_in_in_a_fresh_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    import tau_coding.built_in_extensions as declarations
+    from tau_coding import SessionManager, TauPaths
+
+    setup_apis: list[ExtensionAPI] = []
+    monkeypatch.setattr(
+        declarations,
+        "BUILT_IN_EXTENSIONS",
+        (_fake_built_in(setup_apis),),
+    )
+    manager = SessionManager(
+        TauPaths(home=tmp_path / "home-tau", agents_home=tmp_path / "home-agents")
+    )
+    config = _session_config(tmp_path, FakeProvider([]))
+    initial = manager.create_session(cwd=config.cwd, model="fake")
+    destination = manager.create_session(cwd=config.cwd, model="fake")
+    config = dataclass_replace(
+        config,
+        extensions_enabled=False,
+        session_manager=manager,
+        session_id=initial.id,
+    )
+    session = await CodingSession.load(config)
+    old_runtime = session.extension_runtime
+    old_generation = old_runtime.provider_registry.generation_id
+    old_api = setup_apis[0]
+
+    if operation == "reload":
+        await session.reload()
+    elif operation == "resume":
+        await session.resume(destination.id)
+    else:
+        await session.new_session()
+
+    assert len(setup_apis) == 2
+    assert session.extension_runtime is not old_runtime
+    assert session.extension_runtime.provider_registry.generation_id != old_generation
+    assert old_runtime.active is False
+    assert session.extension_runtime.extension_metadata[0].source_id == "built-in:fake-built-in"
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = old_api.name
+    await session.aclose()
 
 
 async def test_session_exposes_extension_tools_and_commands(tmp_path: Path) -> None:

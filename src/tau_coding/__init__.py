@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from tau_coding.built_in_extensions import BuiltInExtension, BuiltInExtensionSetup
 from tau_coding.commands import (
     CommandRegistry,
     CommandResult,
@@ -176,6 +177,8 @@ __all__ = [
     "CodingSession",
     "CodingSessionConfig",
     "CodingSessionRecord",
+    "BuiltInExtension",
+    "BuiltInExtensionSetup",
     "CommandRegistry",
     "CommandResult",
     "DEFAULT_MODEL",
