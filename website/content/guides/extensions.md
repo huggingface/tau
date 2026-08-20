@@ -42,6 +42,42 @@ def setup(tau):
 Start `tau` and the model can call `greet`. Every extension is a module
 defining `setup(tau)`, which runs once at startup with the extension API.
 
+## Install an extension
+
+Install a trusted extension from Git with the same command shape as Pi:
+
+```bash
+tau install git:github.com/owner/repository
+tau install git:github.com/owner/repository@v1.2.0
+tau install https://github.com/owner/repository.git
+```
+
+Tau clones the repository into `~/.tau/extensions/<repository>` and loads it on
+the next Tau startup. A pinned ref may be a tag, branch, or commit. Replacing an
+existing install requires an explicit opt-in:
+
+```bash
+tau install git:github.com/owner/repository@v1.3.0 --force
+```
+
+Local files and package directories work too:
+
+```bash
+tau install ./my_extension.py
+tau install ./my-extension
+```
+
+A local file is copied into `~/.tau/extensions/`. A directory is copied and must
+contain `extension.py` or declare `[tool.tau].extensions` in `pyproject.toml`, so
+it remains discoverable without `-e`. Local virtual environments, VCS metadata,
+and Python cache directories are not copied.
+
+The installer validates discovery metadata without importing the extension.
+It does not install Python dependencies, maintain a package registry, or provide
+remove/update commands yet. Install dependencies into Tau's Python environment
+separately when an extension requires them. Extensions execute arbitrary Python
+with your user permissions, so review the source before installation.
+
 ## Where extensions live
 
 | Location | Loaded |
@@ -519,12 +555,9 @@ tau -e ./tau-subagents
 
 ## Not yet supported
 
-Compared to Pi's extension system, v1 does not yet include: package
-management (`pi install`-style), custom providers, extension-authored TUI
-widgets (custom *message* rendering via `register_message_renderer` *is*
-supported; the host-provided `context.ui` dialogs *are* supported), custom
-entry renderers (non-context cards), keyboard shortcuts, CLI flag
-registration, system-prompt replacement, context rewriting, or a project trust
-store. The
-architecture document
-(`dev-notes/architecture/phase-21-extensions.md`) tracks these.
+Compared to Pi's extension system, Tau does not yet include a complete package
+manager (the installer has no registry, dependency installation, remove, or
+package-update commands), custom providers, custom entry renderers (non-context
+cards), declarative keyboard-shortcut registration, CLI flag registration,
+system-prompt replacement, or context rewriting. The architecture document
+(`dev-notes/architecture/phase-21-extensions.md`) tracks the extension design.

@@ -58,6 +58,7 @@ For the practical frontend contract, see [Building a Custom TUI](../custom-tui.m
 - [Queued Steering and Follow-ups](./queued-steering-follow-ups.md)
 - [Pre-extension Hardening Summary](./pre-extension-hardening.md)
 - [Phase 21: Extensions](./phase-21-extensions.md)
+- [Extension Installer](./extension-installer.md)
 - [Phase 22: Compaction Replay Foundation](./phase-22-compaction-foundation.md)
 - [Phase 23: Advanced TUI and Product Polish](./phase-23-tui-polish.md)
 - [Bounded TUI Transcript Rendering](./tui-long-transcript-performance.md)

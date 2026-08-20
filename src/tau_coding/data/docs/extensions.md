@@ -17,6 +17,20 @@ Installed examples are under `examples/extensions/` next to these docs. Read the
 - `<project>/.tau/extensions/`: requires project approval and `--project-extensions`.
 - `tau -e PATH`: explicitly load a file or directory.
 
+Install a trusted local or Git extension for future runs with:
+
+```bash
+tau install git:github.com/owner/repository
+tau install git:github.com/owner/repository@v1.2.0
+tau install ./path/to/extension.py
+tau install ./path/to/extension-directory
+```
+
+Git repositories and local directories install under `~/.tau/extensions/` and
+must contain `extension.py` or a `[tool.tau].extensions` manifest. Use `--force`
+to replace an existing install. The installer does not install Python
+dependencies or provide package remove/update commands yet.
+
 An extension defines `setup(tau)`. Built-in, user, and explicit extensions may
 handle `project_trust` before protected loading; first decisive result wins.
 Project extensions cannot approve themselves. They execute arbitrary Python and

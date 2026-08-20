@@ -30,6 +30,7 @@ features and fixes.
 | `tau` | Open the interactive TUI |
 | `tau "<prompt>"` | Open the TUI with an initial prompt |
 | `tau update` | Upgrade Tau with the installer that owns its environment. Windows uv-tool updates are handed off and begin after Tau exits; follow the printed log path for the final result. |
+| `tau install <source> [--force]` | Install a trusted local or Git extension under `~/.tau/extensions/`; `--force` replaces an existing install. |
 | `tau sessions` | List indexed sessions (id, title, model, cwd) |
 | `tau export <ref> [dest] [--format html\|jsonl]` | Export a session id or JSONL path (HTML default) |
 | `tau --export <ref> [dest]` | Same as `tau export`, as a top-level flag |
@@ -57,6 +58,11 @@ features and fixes.
 | `-a, --approve` | Trust protected project inputs for this invocation only |
 | `-na, --no-approve` | Decline protected project inputs for this invocation only |
 | `-v, --version` | Print the version and exit |
+
+`tau install` accepts local Python files, local package directories, Pi-style
+`git:github.com/owner/repository[@ref]` sources, and normal HTTP/SSH Git URLs.
+See [Extensions]({{< relref "../guides/extensions.md#install-an-extension" >}})
+for package-layout, dependency, and security details.
 
 `--approve` and `--no-approve` are mutually exclusive and never write the
 trust store. See [Project trust]({{< relref "../guides/project-trust.md" >}})

@@ -50,6 +50,11 @@ class TauPaths:
         return self.home / "themes"
 
     @property
+    def user_extensions_dir(self) -> Path:
+        """Return Tau's user-level extension directory."""
+        return self.home / "extensions"
+
+    @property
     def user_agents_skills_dir(self) -> Path:
         """Return the user-level `.agents/skills` directory."""
         return self.agents_home / "skills"

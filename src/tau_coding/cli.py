@@ -22,6 +22,7 @@ from tau_ai.env import (
 from tau_coding.catalog_loader import user_catalog_path
 from tau_coding.commands import format_reload_summary
 from tau_coding.credentials import FileCredentialStore
+from tau_coding.extension_installer import ExtensionInstallError, install_extension
 from tau_coding.extensions import StderrUiBridge
 from tau_coding.project_trust import TrustDefault, TrustOverride
 from tau_coding.provider_config import (
@@ -100,6 +101,35 @@ app = typer.Typer(
 def providers_command() -> None:
     """List configured model providers."""
     render_provider_settings(load_provider_settings(), credential_reader=FileCredentialStore())
+
+
+def install_command(args: list[str]) -> None:
+    """Install an extension into Tau's user extension directory."""
+    source: str | None = None
+    force = False
+    for arg in args:
+        if arg == "--force":
+            force = True
+        elif arg.startswith("-"):
+            raise typer.BadParameter(f"Unknown option for `tau install`: {arg}")
+        elif source is None:
+            source = arg
+        else:
+            raise typer.BadParameter("Usage: tau install <source> [--force]")
+    if source is None:
+        raise typer.BadParameter("Usage: tau install <source> [--force]")
+
+    typer.echo(
+        "Warning: extensions execute arbitrary Python with your user permissions. "
+        "Only install sources you trust.",
+        err=True,
+    )
+    try:
+        destination = install_extension(source, force=force)
+    except ExtensionInstallError as exc:
+        typer.echo(f"Could not install extension: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"Installed {source} to {destination}")
 
 
 def setup_command(
@@ -373,6 +403,10 @@ def main(
         if len(positional_args) != 1:
             raise typer.BadParameter("Usage: tau update")
         update_command()
+        raise typer.Exit()
+
+    if not rpc_requested and not print_requested and not export and command == "install":
+        install_command(positional_args[1:])
         raise typer.Exit()
 
     if (
