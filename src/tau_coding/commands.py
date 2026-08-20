@@ -114,6 +114,8 @@ class CommandResult:
     logout_picker_requested: bool = False
     logout_provider: str | None = None
     model_picker_requested: bool = False
+    model_selection_provider: str | None = None
+    model_selection_model: str | None = None
     tools_picker_requested: bool = False
     scoped_models_picker_requested: bool = False
     skills_picker_requested: bool = False
@@ -637,6 +639,12 @@ def _model_command(context: CommandContext) -> CommandResult:
                 handled=True,
                 message=f"Unknown model for provider {context.session.provider_name}: {model}\n"
                 f"Available models: {models}",
+            )
+        if callable(getattr(context.session, "select_provider_model", None)):
+            return CommandResult(
+                handled=True,
+                model_selection_provider=context.session.provider_name,
+                model_selection_model=model,
             )
         context.session.set_model(model)
         return CommandResult(handled=True, message=f"Current model: {model}")
