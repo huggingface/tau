@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from json import dumps, loads
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from tau_agent.types import JSONValue
 from tau_coding.paths import TauPaths
@@ -61,6 +61,18 @@ type StoredCredential = str | ApiKeyCredential | OAuthCredential
 type StoredCredentialKind = Literal["api_key", "oauth"]
 
 
+class CredentialStore(Protocol):
+    """Mutable credential-store operations used by setup integrations."""
+
+    def get(self, name: str) -> str | None: ...
+
+    def set(self, name: str, value: str) -> None: ...
+
+    def delete(self, name: str) -> None: ...
+
+    def names(self, *, prefix: str | None = None) -> tuple[str, ...]: ...
+
+
 class FileCredentialStore:
     """Small JSON-backed provider credential store under Tau home."""
 
@@ -110,6 +122,13 @@ class FileCredentialStore:
         data = self._load()
         data.pop(name, None)
         self._save(data)
+
+    def names(self, *, prefix: str | None = None) -> tuple[str, ...]:
+        """Return credential names without exposing their values."""
+        names = tuple(sorted(self._load()))
+        if prefix is None:
+            return names
+        return tuple(name for name in names if name.startswith(prefix))
 
     def _load(self) -> dict[str, StoredCredential]:
         if not self.path.exists():

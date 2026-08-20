@@ -1,25 +1,32 @@
 # Tau TUI
 
-Tau's full interactive interface uses Textual behind an adapter boundary. `tau_agent` emits provider-neutral events; `tau_coding.tui` consumes and renders them.
+Tau's interactive interface uses Textual behind an adapter boundary. The
+portable `tau_agent` harness emits provider-neutral events; the TUI renders
+them and owns interaction.
 
-For current behavior in a Tau checkout, read:
-
-- `website/content/guides/tui.md`
-- `website/content/reference/keybindings.md`
-- `src/tau_coding/tui/`
-
-## Local backends
+## `/local`
 
 Type `/local` to open the generic local-backend host. It explicitly chooses a
-registered backend, including when only one is available; a recommended backend
-is merely preselected. Configure screens render backend-declared text, secret,
-and choice fields without exposing backend UI objects to extension code.
+registered backend even when only one is available; the recommended backend is
+preselected but still requires confirmation. Tau's built-in `llama.cpp` backend
+provides endpoint/API-key fields, status, refresh, use, Doctor, and reset.
 
-The host supports asynchronous configure, refresh, status, use, doctor, reset,
-and optional model actions. It displays structured status and progress, refuses
-state-changing actions while the agent is busy, and cancels owned work when the
-screen closes. Results from a replaced or retired extension generation are
-ignored. Backends that do not declare an optional capability do not show its
-control.
+Configuration fields are structured text, secret, or choice values. Secret input
+is not echoed into diagnostics or session history. Backends perform async
+validation and return typed status, model, diagnostic, and progress data; they
+do not construct Textual widgets.
 
-Do not introduce Textual dependencies into `tau_agent`. Keep reusable behavior in the harness/session layers and UI behavior in the adapter. Use Textual pilot tests and fake providers for deterministic interaction tests.
+Refresh may show a cached/stale model snapshot when the server is down. Use an
+exact discovered model with `--provider llama.cpp --model ...` for print or TUI
+startup. A missing active model is marked stale rather than silently replaced.
+State-changing local actions require an idle agent. Closing the screen cancels
+its owned work, and results from a retired or replaced extension generation are
+ignored.
+
+Reset removes only Tau's llama.cpp settings and safe snapshot. Stored credential
+deletion is separately confirmed. Tau never stops the external server or
+deletes model files. See `local-inference.md` and `security.md`.
+
+Do not introduce Textual dependencies into `tau_agent`. Keep reusable behavior
+in the harness/session layers and UI behavior in this adapter. Use Textual pilot
+tests and deterministic fake providers/backends for interaction tests.

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from inspect import isawaitable
 from pathlib import Path
 from time import time_ns
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
+
+import httpx
 
 import tau_coding.built_in_extensions as built_in_extension_registry
 from tau_agent.events import AgentEvent, AgentStartEvent
@@ -22,7 +25,7 @@ from tau_agent.tools import (
     ToolUpdateCallback,
 )
 from tau_agent.types import JSONValue
-from tau_coding.built_in_extensions import BuiltInExtension
+from tau_coding.built_in_extensions import BuiltInExtension, BuiltInExtensionContext
 from tau_coding.commands import (
     CommandContext,
     CommandRegistry,
@@ -30,6 +33,7 @@ from tau_coding.commands import (
     SlashCommand,
     create_default_command_registry,
 )
+from tau_coding.credentials import CredentialStore, FileCredentialStore, credentials_path
 from tau_coding.extensions.api import (
     AGENT_EVENT_TYPES,
     AGENT_EVENT_WILDCARD,
@@ -71,6 +75,7 @@ from tau_coding.extensions.provider_registry import (
 )
 from tau_coding.extensions.providers import CredentialReader, DynamicProvider
 from tau_coding.local_backends import LocalBackend, LocalBackendRegistry
+from tau_coding.paths import TauPaths
 from tau_coding.project_trust import ExtensionTrustResult, ProjectTrustEvent
 from tau_coding.provider_config import ProviderConfig
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
@@ -178,6 +183,9 @@ class ExtensionRuntime:
         credentials: CredentialReader | None = None,
         environment: Mapping[str, str] | None = None,
         built_in_extensions: Sequence[BuiltInExtension] | None = None,
+        paths: TauPaths | None = None,
+        built_in_credentials: CredentialStore | None = None,
+        built_in_http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._generation = ExtensionGeneration()
         self._built_in_extensions = tuple(
@@ -189,6 +197,26 @@ class ExtensionRuntime:
         self._durable_providers = tuple(durable_providers)
         self._provider_credentials = credentials
         self._provider_environment = environment
+        built_in_paths = paths or TauPaths()
+        resolved_built_in_credentials: CredentialStore = (
+            built_in_credentials
+            if built_in_credentials is not None
+            else (
+                cast(CredentialStore, credentials)
+                if credentials is not None
+                and all(
+                    callable(getattr(credentials, name, None))
+                    for name in ("set", "delete", "names")
+                )
+                else FileCredentialStore(credentials_path(built_in_paths))
+            )
+        )
+        self._built_in_context = BuiltInExtensionContext(
+            paths=built_in_paths,
+            credential_store=resolved_built_in_credentials,
+            environment=dict(environment) if environment is not None else dict(os.environ),
+            http_client=built_in_http_client,
+        )
         self._provider_registry = DynamicProviderRegistry(
             self._durable_providers,
             generation_id=self._generation.id,
@@ -245,12 +273,23 @@ class ExtensionRuntime:
             return
         self._built_ins_loaded = True
         for declaration in self._built_in_extensions:
+            setup = declaration.setup
+            if declaration.setup_with_context is not None:
+
+                def setup_with_runtime_context(
+                    api: ExtensionAPI,
+                    declaration: BuiltInExtension = declaration,
+                ) -> None:
+                    assert declaration.setup_with_context is not None
+                    declaration.setup_with_context(api, self._built_in_context)
+
+                setup = setup_with_runtime_context
             self._setup_extension(
                 LoadedExtension(
                     name=declaration.name,
                     path=None,
                     source_id=declaration.source_id,
-                    setup=declaration.setup,
+                    setup=setup,
                     source="built-in",
                     hidden=declaration.hidden,
                 )
@@ -434,6 +473,10 @@ class ExtensionRuntime:
     def register_provider(self, source_id: str, provider: DynamicProvider) -> None:
         """Register or atomically replace one exact extension source layer."""
         self._provider_registry.register(source_id, provider)
+
+    def update_provider(self, source_id: str, provider: DynamicProvider) -> bool:
+        """Publish a provider snapshot without invalidating paired backends."""
+        return self._provider_registry.update(source_id, provider)
 
     def register_local_backend(self, source_id: str, backend: LocalBackend) -> None:
         """Register a backend against its exact source-owned provider layer."""
@@ -680,6 +723,26 @@ class ExtensionRuntime:
         if self._harness_unsubscribe is not None:
             self._harness_unsubscribe()
         self._harness_unsubscribe = subscribe(self._on_agent_event)
+
+    @property
+    def provider_credentials(self) -> CredentialReader | None:
+        """Return the read-only credential reader used by dynamic runtimes."""
+        return self._provider_credentials
+
+    @property
+    def provider_environment(self) -> Mapping[str, str] | None:
+        """Return the environment snapshot used by dynamic provider auth."""
+        return self._provider_environment
+
+    @property
+    def built_in_credentials(self) -> CredentialStore:
+        """Return the injected mutable store used by trusted built-ins."""
+        return self._built_in_context.credential_store
+
+    @property
+    def built_in_http_client(self) -> httpx.AsyncClient | None:
+        """Return the externally owned HTTP client used by trusted built-ins."""
+        return self._built_in_context.http_client
 
     def set_ui_bridge(self, ui: UiBridge) -> None:
         """Install the frontend UI bridge (TUI, print-mode fallback, or test)."""

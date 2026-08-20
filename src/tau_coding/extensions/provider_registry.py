@@ -153,6 +153,16 @@ class DynamicProviderRegistry:
         return self._generation_id
 
     @property
+    def credentials(self) -> CredentialReader:
+        """Return the credential reader shared with runtime construction."""
+        return self._credentials
+
+    @property
+    def environment(self) -> Mapping[str, str]:
+        """Return the environment snapshot shared with runtime construction."""
+        return self._environment
+
+    @property
     def durable_providers(self) -> tuple[ProviderConfig, ...]:
         """Return the exact complete durable baseline objects."""
         return tuple(self._durable.values())
@@ -205,6 +215,29 @@ class DynamicProviderRegistry:
         for layer in removed:
             self._cancel_token(layer.token)
         return True
+
+    def update(self, source_id: str, provider: DynamicProvider) -> bool:
+        """Publish a new definition without invalidating paired local backends.
+
+        Snapshot updates are not source-layer replacements: preserving the
+        provider token lets a backend operation finish while its provider's
+        model list changes. Registration remains the API for adding or
+        replacing a source layer and retains its cancellation semantics.
+        """
+        self._assert_active()
+        normalized_source = _source_id(source_id)
+        layers = self._layers.get(provider.id)
+        if not layers:
+            return False
+        for index, layer in enumerate(layers):
+            if layer.token.source_id == normalized_source:
+                layers[index] = DynamicProviderLayer(
+                    token=layer.token,
+                    provider=provider,
+                    registration_order=layer.registration_order,
+                )
+                return True
+        return False
 
     def unregister_source(self, source_id: str) -> None:
         """Remove every layer and cancel every task owned by one source."""

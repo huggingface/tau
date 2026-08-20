@@ -333,43 +333,43 @@ Ollama. The easiest interactive path is:
 Tau prompts for the provider details, saves the API key, writes the provider
 metadata to `~/.tau/catalog.toml`, and makes the provider available immediately.
 
-### llama.cpp quickstart
+### Built-in llama.cpp backend
 
-Tau works with llama.cpp through its OpenAI-compatible server. Start a local
-server with a GGUF model from Hugging Face:
-
-```bash
-llama-server -hf ggml-org/Qwen3.6-35B-A3B-GGUF:Q8_0
-```
-
-Some installs expose the same server as `llama serve`:
+Tau's first-class llama.cpp integration is configured through the provider-neutral
+`/local` command. Start llama.cpp independently with a real GGUF model:
 
 ```bash
-llama serve -hf ggml-org/Qwen3.6-35B-A3B-GGUF:Q8_0
+llama-server -hf <tool-capable-gguf>
 ```
 
-Then register it with Tau:
+Then open Tau and run:
+
+```text
+/local
+```
+
+Choose and confirm the recommended `llama.cpp` backend, enter the endpoint, and
+optionally enter its API key. Tau discovers the exact model IDs returned by
+`/v1/models`; it does not use a fake key or fake model. No key means no
+`Authorization` header. A saved key takes precedence over `LLAMA_API_KEY`.
+
+Use the discovered ID explicitly from the TUI or print mode:
 
 ```bash
-export LLAMA_API_KEY=local # any non-empty value unless you started llama.cpp with --api-key
-
-tau --provider llama-cpp \
-  --base-url http://localhost:8080/v1 \
-  --api-key-env LLAMA_API_KEY \
-  --model local \
-  setup
+tau --provider llama.cpp --model <model-id>
+tau --provider llama.cpp --model <model-id> --print "summarize this project"
 ```
 
-Run Tau against the local model:
+The configured endpoint and safe model snapshot are stored under
+`~/.tau/state/extensions/llama.cpp.json`; secrets stay in the credential store.
+A cached snapshot allows explicit startup during temporary server downtime.
+`/local` never scans ports or processes, stops the external server, or deletes
+model files. See the [complete llama.cpp guide]({{< relref "./local-inference.md" >}})
+for endpoint precedence, Doctor, reset, and troubleshooting.
 
-```bash
-tau --provider llama-cpp
-tau --provider llama-cpp "summarize this project"    # TUI with an initial prompt
-tau --provider llama-cpp -p "summarize this project" # one-shot print mode
-```
-
-`llama-server` listens on port `8080` by default and only enforces the bearer
-token if you launch it with `--api-key`.
+An older manually configured provider named `llama-cpp` remains separate and is
+not migrated. Use the custom-provider flow below for other OpenAI-compatible
+servers.
 
 For scripted or one-off setup with another OpenAI-compatible server, use the
 same `tau setup` flow. For example, Ollama's OpenAI-compatible endpoint usually

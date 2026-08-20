@@ -75,6 +75,22 @@ state. Resource preparation is coherent: decline builds a global/explicit-only
 snapshot. Resume and replacement resolve the destination record's canonical cwd
 instead of reusing the source project's outcome.
 
+## Built-in local-backend security
+
+The bundled `llama.cpp` backend is trusted Tau package code. It loads before the
+project-trust decision, including with `--no-extensions`, and never creates a
+trust prompt. `/local` probes only its explicitly entered, saved, or
+`LLAMA_BASE_URL` endpoint; it does not scan ports, processes, or the local
+network. Tau never starts/stops the external server or deletes model files.
+
+The safe integration snapshot at `~/.tau/state/extensions/llama.cpp.json`
+contains only the normalized endpoint, exact model IDs, allowlisted metadata,
+and a timestamp. API keys are kept separately in `~/.tau/credentials.json` or
+read from `LLAMA_API_KEY`; no key means no `Authorization` header. Secrets do
+not enter snapshots, sessions, exports, or diagnostics. Resetting settings and
+deleting a stored credential are separate confirmations. See the [local
+inference guide]({{< relref "./local-inference.md" >}}) for troubleshooting.
+
 ## Security boundary
 
 **Project trust is an input-loading guard, not a sandbox.** It does not restrict

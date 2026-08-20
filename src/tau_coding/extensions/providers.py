@@ -9,6 +9,8 @@ from inspect import isawaitable
 from types import MappingProxyType
 from typing import Protocol
 
+import httpx
+
 from tau_agent.provider import CancellationToken, ModelProvider
 from tau_agent.types import JSONPrimitive, JSONValue
 from tau_ai.env import (
@@ -239,7 +241,12 @@ class ProviderModelSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class OpenAICompatibleTransport:
-    """Descriptor for Tau's existing OpenAI-compatible streaming transport."""
+    """Descriptor for Tau's existing OpenAI-compatible streaming transport.
+
+    ``client`` is an optional externally owned client seam for trusted adapters
+    and deterministic tests. Providers never close it; the caller owns its
+    lifetime. Normal transports leave it unset and use Tau's standard client.
+    """
 
     base_url: str
     api: ProviderApi = "openai-completions"
@@ -248,6 +255,7 @@ class OpenAICompatibleTransport:
     timeout_seconds: float = DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS
     max_retries: int = DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES
     max_retry_delay_seconds: float = DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS
+    client: httpx.AsyncClient | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _require_non_empty(self.base_url, "Transport base URL")
