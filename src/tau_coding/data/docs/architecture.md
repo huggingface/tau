@@ -29,9 +29,12 @@ coalescing. Discovery receives one task cancellation; async close waits at most
 still running is explicitly contained, not drained, and a process-owned supervisor
 keeps its task and registry reachable until completion under stale-publication guards.
 Reload and session replacement contain cancellation after publication until this
-outgoing drain/containment step finishes, then return the adopted result. Final close
-uses one durable task and propagates cancellation only after discharging its registry
-and every provider exactly once. OpenAI-compatible dynamic runtimes reuse
+outgoing drain/containment step finishes, then return the adopted result. Before
+publication, a replacement owns and closes its candidate providers on cancellation
+or failure without closing the active provider; successful adoption transfers that
+ledger once. Final close uses one durable task and propagates cancellation only after
+discharging its registry and every provider exactly once. OpenAI-compatible dynamic
+runtimes reuse
 `tau_ai.OpenAICompatibleProvider` through an explicit transport
 choice, so model names cannot silently select another endpoint API.
 

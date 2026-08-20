@@ -104,7 +104,10 @@ must come from the auth strategy at resolution time. This prevents credentials f
 becoming part of a registered definition while still allowing non-Bearer schemes
 through resolved auth headers. Refresh diagnostics never include an extension
 exception string or resolved auth data because either may contain request data or a
-secret; diagnostics report only a bounded category and source token.
+secret; diagnostics report only a bounded category and source token. Runtime creation
+likewise converts custom auth-resolution exceptions to a categorical host error.
+Only Tau's exact `RequiredApiKey` strategy preserves its host-authored missing-key
+setup guidance.
 
 ## Refresh lifecycle
 
@@ -196,9 +199,12 @@ reports bounded hostile work, and the operation returns the adopted result rathe
 than claiming rollback. Final `CodingSession.aclose()` similarly owns one durable
 close task, but propagates observed caller cancellation only after the extension
 registry and every provider ledger entry have received their one close attempt.
-Repeated close observes the same task and cannot close a provider twice. Replacement
-also transfers the staged session's provider ledger to the surviving outer session.
-`reset_for_reload()` is synchronous, so it retains each retired registry for the
+Repeated close observes the same task and cannot close a provider twice. A staged
+replacement explicitly owns its candidate provider ledger through outgoing shutdown,
+incoming start, and every other pre-publication seam. Cancellation or failure closes
+that candidate session before propagating while leaving the active provider open;
+success transfers the ledger once to the surviving outer session. `reset_for_reload()`
+is synchronous, so it retains each retired registry for the
 runtime's later async close. A contained task stays process-supervised with its
 retired registry through its done callback; it is not mislabeled as drained. Reload
 then creates a fresh generation and empty registry over the same immutable durable
@@ -212,9 +218,10 @@ secret-safe representations, exact durable restoration, multi-source precedence,
 same-source replacement, same-name/different-path and symlink-retarget isolation,
 complete failed-setup cleanup, policy-safe and immediate-retry-safe refresh
 coalescing, per-waiter timeouts, single-cancel cooperative cleanup, explicit
-hostile-work containment, cancellation-at-publication lifecycle draining, final
-close/provider-ledger discharge, malformed output, stale work, deep immutability,
-rejected runtime cleanup, auth redaction, no durable writes, retirement, HTTP auth headers,
+hostile-work containment, pre-publication candidate aborts, cancellation-at-publication
+lifecycle draining, final close/provider-ledger discharge, malformed output, stale work,
+deep immutability, rejected runtime cleanup, auth-exception redaction, no durable writes,
+retirement, HTTP auth headers,
 and model-name routing:
 
 ```bash

@@ -31,7 +31,9 @@ and may provide either `OpenAICompatibleTransport` or a custom runtime factory.
 Authentication uses `RequiredApiKey`, `OptionalApiKey`, or `NoAuth`; optional and
 absent auth omit the `Authorization` header instead of inventing a key. Static
 transport/model headers cannot contain `Authorization`; custom schemes belong in
-a runtime auth strategy so credentials never become registered definitions.
+a runtime auth strategy so credentials never become registered definitions. Custom
+auth-resolution failures become categorical host errors; required-key failures keep
+Tau's actionable missing-credential guidance.
 
 Provider layers are process-local and never written to `catalog.toml`,
 `providers.json`, session files, or generic extension storage. Latest registration
@@ -54,8 +56,11 @@ task cancellation and waits up to 0.25 seconds from that request without
 re-cancelling a callback's `finally` cleanup. Reload, replacement, reset ownership,
 and final close await that cooperative drain. Cancellation after reload/replacement
 publication is contained, and the adopted result returns only after outgoing
-cleanup. Final close propagates cancellation only after its registry is discharged
-and each owned runtime provider has closed exactly once. Work still running at the
+cleanup. Before publication, the replacement owns its candidate providers: shutdown
+or start cancellation/failure closes them exactly once without closing the active
+provider. Successful adoption transfers that ownership once. Final close propagates
+cancellation only after its registry is discharged and each owned runtime provider
+has closed exactly once. Work still running at the
 bound is reported as contained rather than drained; a process-owned supervisor retains its task and
 generation registry until actual completion, and it can never publish after replacement or
 retirement. Failures retain the current snapshot and emit one bounded, secret-free

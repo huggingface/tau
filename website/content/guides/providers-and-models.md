@@ -311,6 +311,8 @@ same-name extension files cannot remove one another's providers. They support
 dormant model sets, deeply immutable compatibility metadata, atomic
 model-snapshot refresh, per-caller refresh deadlines, retry-safe coalescing, and
 required/optional/no authentication without fake keys or exposed auth provenance.
+Custom auth-resolution exceptions are reduced to a categorical host error during
+runtime creation; Tau's required-key guidance remains actionable.
 
 Phase 1 establishes contracts and registry mechanics only. Dynamic providers are
 not yet available to startup or session model selection, and this work does not

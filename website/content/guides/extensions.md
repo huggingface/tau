@@ -154,8 +154,10 @@ Stored credentials win over the configured environment variable. Optional or
 absent keys omit `Authorization`; Tau never synthesizes a local key. Static
 transport/model headers cannot provide `Authorization`; custom schemes must be
 resolved by an auth strategy at runtime. Resolved keys, headers, and arbitrary
-auth provenance stay out of provider representations and diagnostics. Nested JSON
-compatibility metadata is deeply frozen while registered and copied to ordinary
+auth provenance stay out of provider representations and diagnostics. Runtime
+creation replaces custom auth exceptions with a categorical host error; Tau's exact
+required-key strategy still reports its actionable missing-credential guidance.
+Nested JSON compatibility metadata is deeply frozen while registered and copied to ordinary
 JSON containers only when a runtime transport is created.
 
 Discovery is snapshot-oriented. A `refresh_models` callback returns a complete
@@ -169,9 +171,12 @@ re-cancelling a callback's `finally` cleanup. Reload, session replacement, and f
 close await this cooperative drain. Once reload/replacement publishes its new state,
 caller cancellation is contained until outgoing cleanup finishes and the operation
 returns the adopted result; it never reports cancellation as though publication
-rolled back. Final close uses one durable close task and propagates cancellation only
-after the extension registry and every session-owned runtime provider have each been
-closed once. A callback still running at the bound is reported as contained—not
+rolled back. Before publication, the replacement remains the explicit owner of its
+candidate providers. Cancellation or failure during outgoing shutdown or incoming
+start closes those candidates exactly once without closing the active provider;
+success transfers ownership once. Final close uses one durable close task and
+propagates cancellation only after the extension registry and every session-owned
+runtime provider have each been closed once. A callback still running at the bound is reported as contained—not
 drained—and a process-owned supervisor keeps its task and generation registry
 reachable until it actually finishes; it cannot publish after source replacement or
 retirement. Timeout, malformed output, and other failures retain the current

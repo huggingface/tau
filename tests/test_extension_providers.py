@@ -1,6 +1,7 @@
 """Tests for dynamic extension provider contracts and registry lifecycle."""
 
 import asyncio
+import json
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -12,6 +13,7 @@ import pytest
 from tau_agent import UserMessage
 from tau_ai import OpenAICompatibleProvider
 from tau_coding import TauResourcePaths
+from tau_coding.diagnostics import AgentCallDiagnosticContext, AgentCallDiagnosticLogger
 from tau_coding.extensions import (
     DynamicProvider,
     DynamicProviderError,
@@ -269,6 +271,88 @@ async def test_adversarial_custom_auth_is_absent_from_reprs_and_diagnostics() ->
     assert secret not in repr(resolved)
     assert secret not in repr(registry.diagnostics)
     assert secret not in repr(projected)
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, ProviderAuthError])
+async def test_runtime_creation_sanitizes_custom_auth_exceptions_and_diagnostics(
+    tmp_path: Path,
+    error_type: type[BaseException],
+) -> None:
+    secret = "runtime-auth-super-secret"
+
+    class ExplodingAuth:
+        async def resolve(self, context):
+            del context
+            raise error_type(secret)
+
+    dynamic = provider(auth=ExplodingAuth())
+    with pytest.raises(
+        ProviderAuthError,
+        match="^Dynamic provider authentication resolution failed$",
+    ) as exc_info:
+        await create_dynamic_model_provider(
+            dynamic,
+            model="model",
+            credential_store=MemoryCredentials(),  # type: ignore[arg-type]
+            environment={},
+        )
+
+    error = exc_info.value
+    logger = AgentCallDiagnosticLogger(tmp_path / "diagnostics.jsonl")
+    logger.log_exception(
+        context=AgentCallDiagnosticContext(
+            provider_name="local",
+            model="model",
+            cwd=tmp_path,
+            session_id=None,
+            run_id="run-1",
+        ),
+        phase="runtime-creation",
+        exc=error,
+    )
+    diagnostic = json.loads(logger.path.read_text(encoding="utf-8"))
+
+    assert secret not in str(error)
+    assert secret not in repr(error)
+    assert secret not in repr(diagnostic)
+
+
+async def test_runtime_creation_preserves_required_auth_guidance() -> None:
+    dynamic = provider(auth=RequiredApiKey("local:key", "LOCAL_API_KEY"))
+
+    with pytest.raises(ProviderAuthError, match="Store credential `local:key`") as exc_info:
+        await create_dynamic_model_provider(
+            dynamic,
+            model="model",
+            credential_store=MemoryCredentials(),  # type: ignore[arg-type]
+            environment={},
+        )
+
+    assert "set LOCAL_API_KEY" in str(exc_info.value)
+
+
+async def test_runtime_creation_only_preserves_host_authored_required_guidance() -> None:
+    secret = "required-reader-super-secret"
+
+    class SecretBearingCredentials:
+        def get(self, name: str) -> str | None:
+            del name
+            raise ProviderAuthError(secret)
+
+    dynamic = provider(auth=RequiredApiKey("local:key", "LOCAL_API_KEY"))
+    with pytest.raises(
+        ProviderAuthError,
+        match="^Dynamic provider authentication resolution failed$",
+    ) as exc_info:
+        await create_dynamic_model_provider(
+            dynamic,
+            model="model",
+            credential_store=SecretBearingCredentials(),
+            environment={},
+        )
+
+    assert secret not in str(exc_info.value)
+    assert secret not in repr(exc_info.value)
 
 
 async def test_secret_values_are_absent_from_runtime_reprs() -> None:

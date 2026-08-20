@@ -46,6 +46,10 @@ class ProviderAuthError(RuntimeError):
     """Raised when required provider authentication cannot be resolved."""
 
 
+class _MissingRequiredApiKeyError(ProviderAuthError):
+    """Host-authored missing-key guidance safe to preserve at runtime boundaries."""
+
+
 class CredentialReader(Protocol):
     """Read-only credential lookup used by dynamic auth strategies."""
 
@@ -123,7 +127,7 @@ class RequiredApiKey:
                 source=f"environment variable {self.env_var}",
                 omit_authorization_header=False,
             )
-        raise ProviderAuthError(
+        raise _MissingRequiredApiKeyError(
             f"Missing required authentication. Store credential `{self.credential_name}` "
             f"or set {self.env_var}."
         )

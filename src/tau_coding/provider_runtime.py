@@ -27,8 +27,12 @@ from tau_coding.extensions.providers import (
     CredentialReader,
     DynamicProvider,
     OpenAICompatibleTransport,
+    ProviderAuthError,
     ProviderModel,
     ProviderRuntimeContext,
+    RequiredApiKey,
+    ResolvedProviderAuth,
+    _MissingRequiredApiKeyError,
     json_compatible_mapping,
     resolve_provider_auth,
 )
@@ -79,8 +83,8 @@ async def create_dynamic_model_provider(
     ``ProviderConfig`` settings.
     """
     selected_model = _dynamic_model(provider, model)
-    auth = await resolve_provider_auth(
-        provider.auth,
+    auth = await _resolve_dynamic_runtime_auth(
+        provider,
         credentials=(credential_store if credential_store is not None else FileCredentialStore()),
         environment=environment if environment is not None else environ,
     )
@@ -149,6 +153,36 @@ async def create_dynamic_model_provider(
         infer_api_from_model=False,
     )
     return OpenAICompatibleProvider(config)
+
+
+async def _resolve_dynamic_runtime_auth(
+    provider: DynamicProvider,
+    *,
+    credentials: CredentialReader,
+    environment: Mapping[str, str],
+) -> ResolvedProviderAuth:
+    """Resolve extension auth behind a categorical secret-safe boundary."""
+    try:
+        return await resolve_provider_auth(
+            provider.auth,
+            credentials=credentials,
+            environment=environment,
+        )
+    except asyncio.CancelledError:
+        # Keep cancellation semantics without retaining an extension-authored
+        # cancellation message that could contain credential material.
+        raise asyncio.CancelledError from None
+    except _MissingRequiredApiKeyError:
+        # Preserve only Tau's exact strategy and host-authored missing-key error.
+        if type(provider.auth) is RequiredApiKey:
+            raise
+        raise ProviderAuthError("Dynamic provider authentication resolution failed") from None
+    except ProviderAuthError:
+        # Custom strategies can raise ProviderAuthError too, so their arbitrary
+        # text crosses the same categorical boundary as any extension exception.
+        raise ProviderAuthError("Dynamic provider authentication resolution failed") from None
+    except BaseException:  # noqa: BLE001 - extension authentication boundary
+        raise ProviderAuthError("Dynamic provider authentication resolution failed") from None
 
 
 def _dynamic_model(provider: DynamicProvider, model: str) -> ProviderModel:

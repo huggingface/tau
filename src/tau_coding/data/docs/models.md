@@ -22,7 +22,9 @@ provider object.
 Dynamic providers support required, optional, or absent authentication without
 fake keys. Secrets are resolved immediately before refresh/runtime creation;
 resolved keys, headers, and extension-provided auth provenance are excluded from
-representations and diagnostics. Nested compatibility metadata is deeply frozen
+representations and diagnostics. Custom runtime-auth exceptions become categorical
+host errors, while Tau's required-key strategy retains missing-credential guidance.
+Nested compatibility metadata is deeply frozen
 inside registered definitions and copied back to ordinary JSON containers only at
 the transport boundary. Phase 1 provides these contracts and registry mechanics
 only; startup/session selection and `/local` are not implemented yet.
