@@ -119,6 +119,7 @@ def test_help_lists_system_prompt_options() -> None:
     assert result.exit_code == 0
     assert "--system-promptTEXT_OR_PATH" in output
     assert "--append-system-promptTEXT_OR_PATH" in output
+    assert "tauinstallSOURCE[--force]" in output
 
 
 def test_install_command_installs_extension(

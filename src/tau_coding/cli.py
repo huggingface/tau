@@ -93,6 +93,20 @@ _force_utf8_streams()
 app = typer.Typer(
     name="tau",
     help="Tau coding-agent harness.",
+    epilog="""Commands:
+
+  tau install SOURCE [--force] - Install a trusted local or Git extension.
+
+  tau update - Upgrade Tau.
+
+  tau sessions - List indexed sessions.
+
+  tau export REF [DEST] - Export a session as HTML or JSONL.
+
+  tau providers - List configured model providers.
+
+  tau setup - Configure an OpenAI-compatible provider.
+""",
     add_completion=False,
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
