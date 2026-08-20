@@ -19,8 +19,9 @@ The new pieces are:
 - an explicit OpenAI transport switch that prevents dynamic model names from
   selecting `/responses` heuristically.
 
-These APIs remain provisional until #602 Phase 6 validates them with a second
-backend.
+Phase 6 validates these APIs with a permanent second fake backend and a
+small test-only Ollama adapter. The adapter uses separate provider and local
+status endpoints without adding provider-specific concepts to the contract.
 
 ## Why dynamic providers are not durable settings
 

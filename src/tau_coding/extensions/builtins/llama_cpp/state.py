@@ -79,8 +79,14 @@ class LlamaCppIntegrationState:
     def __post_init__(self) -> None:
         if not isinstance(self.endpoint, str) or not self.endpoint.strip():
             raise LlamaCppStateError("Llama.cpp state endpoint must be non-empty")
-        if self.selected_model is not None and not isinstance(self.selected_model, str):
-            raise LlamaCppStateError("Selected llama.cpp model must be a string or None")
+        if self.selected_model is not None and (
+            not isinstance(self.selected_model, str)
+            or not self.selected_model.strip()
+            or self.selected_model != self.selected_model.strip()
+        ):
+            raise LlamaCppStateError(
+                "Selected llama.cpp model must be a non-empty exact string or None"
+            )
         if self.credential_ref is not None and not _valid_credential_ref(self.credential_ref):
             raise LlamaCppStateError("Credential reference is not owned by llama.cpp")
         if not isinstance(self.models, tuple) or any(
@@ -90,8 +96,11 @@ class LlamaCppIntegrationState:
         ids = [model.id for model in self.models]
         if len(ids) != len(set(ids)):
             raise LlamaCppStateError("Llama.cpp state model ids must be unique")
-        if self.selected_model is not None and self.selected_model not in ids:
-            raise LlamaCppStateError("Selected llama.cpp model is not in the safe snapshot")
+        # Keep a selected reference even when a later discovery no longer
+        # reports that model. The reference is not an availability claim: it
+        # lets a cached/offline resume recover the exact model if the server
+        # reports it again, while the provider layer keeps it unavailable until
+        # then.
         if self.checked_at is not None and not isinstance(self.checked_at, str):
             raise LlamaCppStateError("Checked timestamp must be a string or None")
 

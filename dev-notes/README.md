@@ -28,5 +28,7 @@ User-facing documentation lives in `website/content/` and is published at
   level per model instead of assuming the global `medium` default.
 - `llama-cpp-phase-5.md` — built-in llama.cpp connection, safe state, `/local`,
   failure handling, and Phase 5 validation.
+- `architecture/phase-6-local-inference-hardening.md` — second-backend contract
+  validation, lifecycle hardening, migration, and security decisions.
 
 The roadmap is tracked in [GitHub issue #1](https://github.com/huggingface/tau/issues/1).

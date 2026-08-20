@@ -46,7 +46,7 @@ Project extensions cannot approve themselves. They execute arbitrary Python and
 remain disabled without both approval and the explicit code opt-in. Trust is not
 a process/filesystem/network/tool/model sandbox.
 
-## Dynamic providers (provisional)
+## Dynamic providers
 
 `tau.register_provider(DynamicProvider(...))` adds a frontend-free provider layer
 to the current staged extension runtime. Definitions can be dormant (zero models)
@@ -90,10 +90,13 @@ retirement. Failures retain the current snapshot and emit one bounded, secret-fr
 diagnostic. Nested compatibility data is deeply immutable while registered.
 Callbacks receive structured data, not Rich or Textual objects.
 
-This API remains provisional pending second-backend validation. The trusted
-built-in `llama.cpp` provider now uses these contracts; its connection, cache,
-and troubleshooting behavior are covered in `local-inference.md`. Router
-management and Hugging Face model mutations remain outside this phase.
+Phase 6 validates these contracts with a permanent second fake backend and a
+small test-only Ollama adapter. The trusted built-in `llama.cpp` provider uses
+the same seams; no production Ollama backend is shipped. Provider discovery and
+backend status may use different protocol endpoints, and `NoAuth` is a first-
+class option. Router management and Hugging Face model mutations remain outside
+this phase; see `architecture/phase-6-local-inference-hardening.md` for the
+validation and migration notes.
 
 ## Local-backend registrations
 

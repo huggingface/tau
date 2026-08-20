@@ -91,6 +91,10 @@ not enter snapshots, sessions, exports, or diagnostics. Resetting settings and
 deleting a stored credential are separate confirmations. See the [local
 inference guide]({{< relref "./local-inference.md" >}}) for troubleshooting.
 
+The built-in integration does not import or rewrite an existing `llama-cpp`
+catalog entry. Configure `llama.cpp` separately through `/local`; Ollama and
+other local servers remain on the manual custom-provider path.
+
 ## Security boundary
 
 **Project trust is an input-loading guard, not a sandbox.** It does not restrict

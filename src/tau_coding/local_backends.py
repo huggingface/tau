@@ -22,6 +22,9 @@ from tau_coding.extensions.provider_registry import (
     ProviderLayerToken,
 )
 
+LOCAL_OPERATION_CANCELLATION_TIMEOUT_SECONDS = 0.25
+_SUPERVISED_LOCAL_OPERATION_TASKS: set[asyncio.Task[object]] = set()
+
 LocalFieldKind = Literal["text", "secret", "choice"]
 LocalConnectionState = Literal[
     "unconfigured",
@@ -430,6 +433,7 @@ class _Operation:
     signal: SimpleCancellationToken
     task: asyncio.Task[LocalOperationResult]
     progress: list[LocalProgress]
+    cancellation_requested: bool = False
 
 
 class LocalBackendRegistry:
@@ -557,10 +561,7 @@ class LocalBackendRegistry:
         cancelled = False
         for (token, operation), state in tuple(self._operations.items()):
             if token.backend_id == backend_id and (action is None or operation == action):
-                state.signal.cancel()
-                if not state.task.done():
-                    state.task.cancel()
-                cancelled = True
+                cancelled = _request_operation_cancellation(state) or cancelled
         return cancelled
 
     async def configure(
@@ -689,10 +690,20 @@ class LocalBackendRegistry:
             self._cancel_token(token)
 
     async def aclose(self) -> None:
+        """Retire the generation and boundedly drain backend operations.
+
+        A backend is extension code and can ignore task cancellation while it
+        unwinds a network client or subprocess.  Do not let final session
+        cleanup hang forever: request cancellation once, wait for the fixed
+        containment window, and keep a still-running task strongly reachable
+        until it actually finishes.  Its context is stale, so late results are
+        discarded by :meth:`_run`.
+        """
         self.retire()
-        if self._operations:
+        operations = tuple(self._operations.values())
+        if operations:
             await asyncio.gather(
-                *(operation.task for operation in tuple(self._operations.values())),
+                *(_cancel_and_drain_operation(operation) for operation in operations),
                 return_exceptions=True,
             )
 
@@ -824,15 +835,52 @@ class LocalBackendRegistry:
         cancelled = False
         for (operation_token, operation_action), operation in tuple(self._operations.items()):
             if operation_token == token and (action is None or operation_action == action):
-                operation.signal.cancel()
-                if not operation.task.done():
-                    operation.task.cancel()
-                cancelled = True
+                cancelled = _request_operation_cancellation(operation) or cancelled
         return cancelled
 
     def _assert_active(self) -> None:
         if self._retired:
             raise LocalOperationError("Local backend registry generation is retired")
+
+
+def _request_operation_cancellation(operation: _Operation) -> bool:
+    """Signal and cancel one operation at most once."""
+    operation.signal.cancel()
+    if operation.cancellation_requested:
+        return False
+    operation.cancellation_requested = True
+    if not operation.task.done():
+        operation.task.cancel()
+    return True
+
+
+async def _cancel_and_drain_operation(operation: _Operation) -> bool:
+    """Wait through one bounded cancellation window without re-cancelling."""
+    if operation.task.done():
+        return True
+    _request_operation_cancellation(operation)
+    _SUPERVISED_LOCAL_OPERATION_TASKS.add(operation.task)
+    operation.task.add_done_callback(_release_supervised_operation)
+    try:
+        async with asyncio.timeout(LOCAL_OPERATION_CANCELLATION_TIMEOUT_SECONDS):
+            await asyncio.shield(operation.task)
+    except TimeoutError:
+        return operation.task.done()
+    except asyncio.CancelledError:
+        # The cleanup owner itself was cancelled.  The task remains supervised
+        # and receives no second cancellation while its backend unwinds.
+        if operation.task.done():
+            return True
+        raise
+    except Exception:
+        return True
+    return True
+
+
+def _release_supervised_operation(task: asyncio.Task[object]) -> None:
+    _SUPERVISED_LOCAL_OPERATION_TASKS.discard(task)
+    with suppress(asyncio.CancelledError):
+        task.exception()
 
 
 def _validate_values(
@@ -994,6 +1042,7 @@ def _identifier(value: str, label: str) -> None:
 
 
 __all__ = [
+    "LOCAL_OPERATION_CANCELLATION_TIMEOUT_SECONDS",
     "ConfigureLocalBackend",
     "DoctorLocalBackend",
     "DownloadModel",

@@ -47,4 +47,12 @@ and progress values. The Textual adapter renders those values and owns
 cancellation, confirmation, and idle checks. No local-backend or Textual code
 belongs in `tau_agent` or `tau_ai`.
 
+Phase 6 validates the boundary with a permanent second fake backend and a
+test-only Ollama adapter. An adapter may use separate provider-discovery and
+backend-status endpoints, expose installed/running state through generic model
+state, and use `NoAuth`; none of those cases require llama.cpp concepts in the
+contract. Refresh cancellation is bounded and generation-safe, and a late
+operation cannot publish after retirement. Router mutations remain a later
+phase.
+
 In a Tau checkout, read `AGENTS.md`, `website/content/internals/architecture.md`, and relevant `dev-notes/architecture/` documents before broad architectural changes.
