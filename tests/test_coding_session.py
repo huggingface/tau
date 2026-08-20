@@ -1055,7 +1055,11 @@ async def test_prompt_persists_user_assistant_and_leaf_entries(tmp_path: Path) -
     assert isinstance(entries[0], SessionInfoEntry)
     assert entries[0].cwd == str(tmp_path)
     assert entries[1] == ModelChangeEntry(
-        id=entries[1].id, parent_id=entries[0].id, model="fake", timestamp=entries[1].timestamp
+        id=entries[1].id,
+        parent_id=entries[0].id,
+        model="fake",
+        provider="openai",
+        timestamp=entries[1].timestamp,
     )
     assert entries[2] == ThinkingLevelChangeEntry(
         id=entries[2].id,
@@ -3240,6 +3244,41 @@ async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Pa
     assert [Path(context_file.path).name for context_file in session.context_files] == ["AGENTS.md"]
     assert "Reloaded project rules." in provider.calls[0][1]
     assert "<name>testing</name>" in provider.calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_session_reload_detects_disable_model_invocation_change(tmp_path: Path) -> None:
+    resource_root = tmp_path / "resources"
+    skills_dir = resource_root / "skills" / "testing"
+    skills_dir.mkdir(parents=True)
+    skill_path = skills_dir / "SKILL.md"
+    skill_path.write_text(
+        "---\ndescription: Test code\n---\n# Testing\nRun pytest.",
+        encoding="utf-8",
+    )
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=storage,
+            cwd=tmp_path,
+            trust_default="always",
+            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        )
+    )
+    assert "<name>testing</name>" in session.system_prompt
+
+    skill_path.write_text(
+        "---\ndescription: Test code\ndisable-model-invocation: true\n---\n# Testing\nRun pytest.",
+        encoding="utf-8",
+    )
+    summary = await session.reload()
+
+    assert summary.system_prompt_rebuilt is True
+    assert "<name>testing</name>" not in session.system_prompt
+    # The skill stays loaded for explicit /skill:testing invocation.
+    assert {skill.name for skill in session.skills} == {"testing"}
 
 
 @pytest.mark.anyio

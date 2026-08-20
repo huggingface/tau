@@ -123,6 +123,29 @@ def test_skills_are_formatted_as_xml_and_escaped(tmp_path: Path) -> None:
     assert f"<location>{skill_path}</location>" in formatted
 
 
+def test_format_skills_for_prompt_excludes_disabled_skills(tmp_path: Path) -> None:
+    visible = Skill(
+        name="visible",
+        path=tmp_path / "skills" / "visible" / "SKILL.md",
+        content="",
+        description="Visible skill",
+    )
+    hidden = Skill(
+        name="hidden",
+        path=tmp_path / "skills" / "hidden" / "SKILL.md",
+        content="",
+        description="Hidden skill",
+        disable_model_invocation=True,
+    )
+
+    formatted = format_skills_for_prompt([visible, hidden])
+
+    assert "<name>visible</name>" in formatted
+    assert "hidden" not in formatted
+
+    assert format_skills_for_prompt([hidden]) == ""
+
+
 def test_skills_are_included_only_when_read_tool_is_available(tmp_path: Path) -> None:
     skill = Skill(name="testing", path=tmp_path / "testing.md", content="", description="Test")
     no_read_tool = AgentTool(

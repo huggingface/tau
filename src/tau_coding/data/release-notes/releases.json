@@ -1,5 +1,35 @@
 [
   {
+    "version": "0.3.12",
+    "date": "2026-08-17",
+    "sections": {
+      "New": [
+        "Keep user-triggered skills out of the model-facing system prompt with disable-model-invocation frontmatter while retaining explicit invocation, picker, autocomplete, reload, and sidebar support."
+      ],
+      "Changed": [
+        "Refine sidebar skill and prompt headings with bold labels, muted metadata, and no hover or focus background highlights."
+      ]
+    }
+  },
+  {
+    "version": "0.3.11",
+    "date": "2026-08-17",
+    "sections": {
+      "New": [
+        "Resume existing sessions in print mode with --session, restoring saved conversation history, working directory, provider, model, and Hugging Face route while allowing explicit provider and model overrides.",
+        "Show a startup transcript alert when a loaded skill or prompt template shadows a same-named resource from another location."
+      ],
+      "Changed": [
+        "Compact adjacent TUI tool activity into selectable batches, group related reads, edits, and writes with their file paths, and keep exact commands and results available through Ctrl+O.",
+        "Group sidebar skills and prompts by resource origin and make both sections independently collapsible with loaded counts and an estimated skill-index token footprint.",
+        "Toggle inline tool-result visibility without showing a redundant notification."
+      ],
+      "Fixed": [
+        "Preserve blank-line boundaries between streamed OpenAI reasoning-summary parts."
+      ]
+    }
+  },
+  {
     "version": "0.3.10",
     "date": "2026-08-15",
     "sections": {

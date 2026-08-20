@@ -28,15 +28,16 @@ from textual.css.query import NoMatches
 from textual.geometry import Offset
 from textual.selection import Selection
 from textual.widget import Widget
+from textual.widgets import Collapsible, Static
 from textual.widgets import Markdown as TextualMarkdown
-from textual.widgets import Static
 from textual.widgets.markdown import MarkdownBlock, MarkdownStream
 
 from tau_agent.tools import AgentTool, ToolCall
+from tau_coding.context_window import estimate_text_tokens
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.session_stats import SessionStats
 from tau_coding.skills import Skill
-from tau_coding.system_prompt import ProjectContextFile
+from tau_coding.system_prompt import ProjectContextFile, format_skills_for_prompt
 from tau_coding.tui.autocomplete import CompletionState
 from tau_coding.tui.config import TAU_DARK_THEME, TuiRoleStyle, TuiTheme
 from tau_coding.tui.state import (
@@ -111,11 +112,33 @@ class SessionSummarySource(Protocol):
 
 
 class SessionSidebar(Vertical):
-    """Compact sidebar with session metadata and bottom-aligned branding."""
+    """Compact sidebar with collapsible resource lists and pinned branding."""
 
     def compose(self) -> Any:
         with VerticalScroll(id="sidebar-scroll"):
             yield Static("", id="sidebar-content")
+            yield Static(_sidebar_separator(theme=TAU_DARK_THEME), classes="sidebar-separator")
+            yield Collapsible(
+                Static("", id="sidebar-skills-content"),
+                title=_sidebar_resource_title(
+                    "skills",
+                    "0 · ~0 tokens",
+                    theme=TAU_DARK_THEME,
+                ),
+                collapsed=True,
+                id="sidebar-skills",
+                classes="sidebar-resource-section",
+            )
+            yield Static(_sidebar_separator(theme=TAU_DARK_THEME), classes="sidebar-separator")
+            yield Collapsible(
+                Static("", id="sidebar-prompts-content"),
+                title=_sidebar_resource_title("prompts", "0", theme=TAU_DARK_THEME),
+                collapsed=True,
+                id="sidebar-prompts",
+                classes="sidebar-resource-section",
+            )
+            yield Static(_sidebar_separator(theme=TAU_DARK_THEME), classes="sidebar-separator")
+            yield Static("", id="sidebar-extensions-content")
         yield Static("", id="sidebar-brand")
 
     _summary_fingerprint: tuple[object, ...] | None = None
@@ -131,9 +154,25 @@ class SessionSidebar(Vertical):
         if fingerprint == self._summary_fingerprint:
             return
         self._summary_fingerprint = fingerprint
+        content = _build_sidebar_content(session, theme=theme)
         self.query_one("#sidebar-content", Static).update(
-            render_session_sidebar(session, theme=theme),
+            Group(*_separate_sidebar_sections(content.summary_sections, theme=theme)),
         )
+        skills = self.query_one("#sidebar-skills", Collapsible)
+        skills.title = _skill_section_title(session, theme=theme)
+        self.query_one("#sidebar-skills-content", Static).update(content.skills)
+        prompts = self.query_one("#sidebar-prompts", Collapsible)
+        prompts.title = _sidebar_resource_title(
+            "prompts",
+            str(len(session.prompt_templates)),
+            theme=theme,
+        )
+        self.query_one("#sidebar-prompts-content", Static).update(content.prompts)
+        self.query_one("#sidebar-extensions-content", Static).update(
+            _sidebar_section("extensions", content.extensions, theme=theme),
+        )
+        for separator in self.query(Static).filter(".sidebar-separator"):
+            separator.update(_sidebar_separator(theme=theme))
         self.query_one("#sidebar-brand", Static).update(
             _sidebar_brand(theme=theme),
             layout=False,
@@ -159,6 +198,26 @@ class CompactSessionInfo(Static):
         self.update(render_compact_session_info(session, theme=theme))
 
 
+def _sidebar_resource_title(label: str, detail: str, *, theme: TuiTheme) -> str:
+    """Style a resource label separately from its quieter summary."""
+    return f"[bold {theme.prompt_text}]{label}[/] [{theme.completion_description}]({detail})[/]"
+
+
+def _skill_section_title(session: SessionSummarySource, *, theme: TuiTheme) -> str:
+    """Summarize skill count and estimated system-prompt footprint."""
+    skill_prompt = (
+        format_skills_for_prompt(session.skills)
+        if any(tool.name == "read" for tool in session.tools)
+        else ""
+    )
+    estimated_tokens = estimate_text_tokens(skill_prompt)
+    return _sidebar_resource_title(
+        "skills",
+        f"{len(session.skills)} · ~{_compact_usage_count(estimated_tokens)} tokens",
+        theme=theme,
+    )
+
+
 def _session_summary_fingerprint(
     session: SessionSummarySource,
     *,
@@ -178,7 +237,10 @@ def _session_summary_fingerprint(
         session.session_stats,
         tuple(session.extension_names),
         tuple(tool.name for tool in session.tools),
-        tuple((skill.name, skill.path) for skill in session.skills),
+        tuple(
+            (skill.name, skill.path, skill.description, skill.disable_model_invocation)
+            for skill in session.skills
+        ),
         tuple((template.name, template.path) for template in session.prompt_templates),
         tuple(context.path for context in session.context_files),
     )
@@ -1512,12 +1574,36 @@ def _clip_selection_offset(offset: Offset | None, lines: list[str]) -> Offset | 
     return Offset(column, line_index)
 
 
+@dataclass(frozen=True, slots=True)
+class _SidebarContent:
+    summary_sections: tuple[RenderableType, ...]
+    skills: RenderableType
+    prompts: RenderableType
+    extensions: RenderableType
+
+
 def render_session_sidebar(
     session: SessionSummarySource,
     *,
     theme: TuiTheme = TAU_DARK_THEME,
 ) -> RenderableType:
-    """Render a dark, minimalist summary of the active coding session."""
+    """Render a static summary of the active coding session."""
+    content = _build_sidebar_content(session, theme=theme)
+    sections = (
+        *content.summary_sections,
+        _sidebar_section("skills", content.skills, theme=theme),
+        _sidebar_section("prompts", content.prompts, theme=theme),
+        _sidebar_section("extensions", content.extensions, theme=theme),
+    )
+    return Group(*_separate_sidebar_sections(sections, theme=theme))
+
+
+def _build_sidebar_content(
+    session: SessionSummarySource,
+    *,
+    theme: TuiTheme,
+) -> _SidebarContent:
+    """Build shared sidebar renderables for static and interactive views."""
     title = Text(session.session_title or "Untitled session", style=f"bold {theme.accent}")
     stats = session.session_stats
     activity = Text(
@@ -1547,37 +1633,42 @@ def render_session_sidebar(
         "off" if threshold is None else f"auto at {_compact_token_count(threshold)}",
         style=theme.completion_description,
     )
-    tools = _comma_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
-    skills = _grouped_skill_list(session.skills, cwd=session.cwd, theme=theme)
-    prompts = _grouped_prompt_list(session.prompt_templates, cwd=session.cwd, theme=theme)
-    extensions = _comma_list(
-        list(session.extension_names),
-        empty="No extensions",
-        theme=theme,
-    )
     context = _limited_bullet_list(
         _context_file_labels(session.context_files, cwd=session.cwd),
         empty="No context files",
         theme=theme,
     )
-    sections = (
-        Padding(title, (0, 0, 0, 1)),
-        _sidebar_section("activity", activity, theme=theme),
-        _sidebar_section("usage", usage, theme=theme),
-        _sidebar_section("compaction", compaction, theme=theme),
-        _sidebar_section("context", context, theme=theme),
-        _sidebar_section("tools", tools, theme=theme),
-        _sidebar_section("skills", skills, theme=theme),
-        _sidebar_section("prompts", prompts, theme=theme),
-        _sidebar_section("extensions", extensions, theme=theme),
+    tools = _comma_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
+    return _SidebarContent(
+        summary_sections=(
+            Padding(title, (0, 0, 0, 1)),
+            _sidebar_section("activity", activity, theme=theme),
+            _sidebar_section("usage", usage, theme=theme),
+            _sidebar_section("compaction", compaction, theme=theme),
+            _sidebar_section("context", context, theme=theme),
+            _sidebar_section("tools", tools, theme=theme),
+        ),
+        skills=_grouped_skill_list(session.skills, cwd=session.cwd, theme=theme),
+        prompts=_grouped_prompt_list(session.prompt_templates, cwd=session.cwd, theme=theme),
+        extensions=_comma_list(
+            list(session.extension_names),
+            empty="No extensions",
+            theme=theme,
+        ),
     )
-    separated_sections: list[RenderableType] = []
+
+
+def _separate_sidebar_sections(
+    sections: Sequence[RenderableType],
+    *,
+    theme: TuiTheme,
+) -> list[RenderableType]:
+    separated: list[RenderableType] = []
     for index, section in enumerate(sections):
         if index:
-            separated_sections.append(_sidebar_separator(theme=theme))
-        separated_sections.append(section)
-
-    return Group(*separated_sections)
+            separated.append(_sidebar_separator(theme=theme))
+        separated.append(section)
+    return separated
 
 
 def _sidebar_section(
@@ -2397,11 +2488,11 @@ def _grouped_skill_list(
     if not skills:
         return Text("No skills loaded", style=theme.completion_description)
 
-    grouped: dict[str, list[str]] = {}
+    grouped: dict[str, list[tuple[str, bool]]] = {}
     for skill in skills:
         origin = skill.path.parent.parent if skill.path.name == "SKILL.md" else skill.path.parent
         label = _resource_origin_label(origin, cwd=cwd)
-        grouped.setdefault(label, []).append(skill.name)
+        grouped.setdefault(label, []).append((skill.name, skill.disable_model_invocation))
     return _grouped_resource_names(grouped, directory="skills", theme=theme)
 
 
@@ -2414,15 +2505,15 @@ def _grouped_prompt_list(
     if not templates:
         return Text("No prompt templates", style=theme.completion_description)
 
-    grouped: dict[str, list[str]] = {}
+    grouped: dict[str, list[tuple[str, bool]]] = {}
     for template in templates:
         label = _resource_origin_label(template.path.parent, cwd=cwd)
-        grouped.setdefault(label, []).append(template.name)
+        grouped.setdefault(label, []).append((template.name, False))
     return _grouped_resource_names(grouped, directory="prompts", theme=theme)
 
 
 def _grouped_resource_names(
-    grouped: dict[str, list[str]],
+    grouped: dict[str, list[tuple[str, bool]]],
     *,
     directory: str,
     theme: TuiTheme,
@@ -2442,8 +2533,9 @@ def _grouped_resource_names(
         if text:
             text.append("\n")
         text.append(origin, style=theme.completion_description)
-        for name in sorted(grouped[origin]):
-            text.append("\n  • ", style=theme.completion_description)
+        for name, hollow_bullet in sorted(grouped[origin]):
+            bullet = "◦" if hollow_bullet else "•"
+            text.append(f"\n  {bullet} ", style=theme.completion_description)
             text.append(name, style=theme.completion_description)
     return text
 

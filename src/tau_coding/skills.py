@@ -24,6 +24,7 @@ class Skill:
     path: Path
     content: str
     description: str | None = None
+    disable_model_invocation: bool = False
 
 
 def is_skill_candidate(path: Path) -> bool:
@@ -147,10 +148,11 @@ def parse_skill_invocation(text: str) -> SkillInvocation | None:
 
 def build_skill_index(skills: Sequence[Skill]) -> str:
     """Build a concise index of available skills for future system prompt assembly."""
-    if not skills:
+    visible_skills = [skill for skill in skills if not skill.disable_model_invocation]
+    if not visible_skills:
         return "Available skills: none"
     lines = ["Available skills:"]
-    for skill in sorted(skills, key=lambda item: item.name):
+    for skill in sorted(visible_skills, key=lambda item: item.name):
         description = skill.description or "No description"
         lines.append(f"- {skill.name}: {description}")
     return "\n".join(lines)
@@ -241,4 +243,13 @@ def _load_skill(name: str, path: Path) -> Skill:
     raw = path.read_text(encoding="utf-8")
     metadata, content = parse_markdown_resource(raw)
     description = metadata.get("description") or derive_description(content)
-    return Skill(name=name, path=path, content=content, description=description)
+    disable_model_invocation = (
+        metadata.get("disable-model-invocation", "").strip().lower() == "true"
+    )
+    return Skill(
+        name=name,
+        path=path,
+        content=content,
+        description=description,
+        disable_model_invocation=disable_model_invocation,
+    )

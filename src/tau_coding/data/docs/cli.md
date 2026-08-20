@@ -1,6 +1,6 @@
 # Tau CLI and commands
 
-Tau supports print mode and a Textual interactive TUI. The CLI entry point is `tau_coding.cli:app`.
+Tau supports print mode, Pi-compatible JSONL RPC mode, and a Textual interactive TUI. The CLI entry point is `tau_coding.cli:app`.
 
 For current user-facing behavior in a Tau checkout, read:
 

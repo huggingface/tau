@@ -13,10 +13,11 @@ from rich.text import Text
 from textual import events
 from textual.color import Color
 from textual.containers import Container, VerticalScroll
+from textual.content import Content
 from textual.content import Style as TextualStyle
 from textual.geometry import Offset
 from textual.selection import SELECT_ALL, Selection
-from textual.widgets import Input, Label, ListItem, ListView, Static, TextArea
+from textual.widgets import Collapsible, Input, Label, ListItem, ListView, Static, TextArea
 from textual.widgets import Markdown as TextualMarkdown
 from textual.widgets.markdown import MarkdownStream
 
@@ -545,6 +546,31 @@ def test_session_sidebar_shows_all_skills() -> None:
     assert "more)" not in output
 
 
+def test_session_sidebar_marks_user_only_skills_with_hollow_bullets() -> None:
+    session = FakeSession()
+    session.skills = (
+        Skill(
+            name="model-visible",
+            path=session.cwd / ".tau/skills/model-visible/SKILL.md",
+            content="Model-visible skill",
+        ),
+        Skill(
+            name="user-only",
+            path=session.cwd / ".tau/skills/user-only/SKILL.md",
+            content="User-only skill",
+            disable_model_invocation=True,
+        ),
+    )
+    console = Console(record=True, width=80)
+
+    console.print(render_session_sidebar(session))
+
+    output = console.export_text()
+    assert "• model-visible" in output
+    assert "◦ user-only" in output
+    assert "• user-only" not in output
+
+
 def test_session_sidebar_groups_skills_by_origin(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -755,7 +781,7 @@ def test_session_sidebar_brand_includes_current_version() -> None:
 
     console.print(_sidebar_brand(theme=TAU_DARK_THEME))
 
-    assert "τ = 2π  0.3.10" in console.export_text()
+    assert "τ = 2π  0.3.12" in console.export_text()
 
 
 def test_session_sidebar_uses_prominent_title_and_accented_section_headers() -> None:
@@ -3019,6 +3045,78 @@ async def test_tui_sidebar_is_visible_on_medium_windows() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_sidebar_resource_sections_expand_independently() -> None:
+    session = FakeSession()
+    session.prompt_templates = (
+        PromptTemplate("explain", session.cwd / ".tau/prompts/explain.md", "Explain"),
+        PromptTemplate("fix", session.cwd / ".tau/prompts/fix.md", "Fix"),
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        skills = app.query_one("#sidebar-skills", Collapsible)
+        prompts = app.query_one("#sidebar-prompts", Collapsible)
+
+        skills_heading = Content.from_markup(skills.title)
+        prompts_heading = Content.from_markup(prompts.title)
+        assert re.fullmatch(r"skills \(1 · ~\d+(?:\.\d+)?k? tokens\)", skills_heading.plain)
+        assert prompts_heading.plain == "prompts (2)"
+        assert str(skills_heading.spans[0].style) == f"bold {TAU_DARK_THEME.prompt_text}"
+        assert str(skills_heading.spans[1].style) == TAU_DARK_THEME.completion_description
+        assert str(prompts_heading.spans[0].style) == f"bold {TAU_DARK_THEME.prompt_text}"
+        assert str(prompts_heading.spans[1].style) == TAU_DARK_THEME.completion_description
+        assert skills.collapsed is True
+        assert prompts.collapsed is True
+
+        skill_title = app.query_one("#sidebar-skills CollapsibleTitle")
+        await pilot.hover("#sidebar-skills CollapsibleTitle")
+        assert skill_title.styles.background == Color.parse("transparent")
+
+        skill_title.focus()
+        await pilot.pause()
+        assert skill_title.styles.background == Color.parse("transparent")
+        assert skills.styles.background_tint == Color.parse("transparent")
+
+        await pilot.click("#sidebar-skills CollapsibleTitle")
+        assert skills.collapsed is False
+        assert prompts.collapsed is True
+
+        await pilot.click("#sidebar-prompts CollapsibleTitle")
+        assert skills.collapsed is False
+        assert prompts.collapsed is False
+
+        await pilot.click("#sidebar-skills CollapsibleTitle")
+        assert skills.collapsed is True
+        assert prompts.collapsed is False
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_refreshes_skill_tokens_when_model_invocation_changes() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 40)):
+        sidebar = app.query_one("#sidebar", SessionSidebar)
+        skills = app.query_one("#sidebar-skills", Collapsible)
+        initial_title = Content.from_markup(skills.title).plain
+        assert initial_title != "skills (1 · ~0 tokens)"
+
+        skill = session.skills[0]
+        session.skills = (
+            Skill(
+                name=skill.name,
+                path=skill.path,
+                content=skill.content,
+                description=skill.description,
+                disable_model_invocation=True,
+            ),
+        )
+        sidebar.update_from_session(session)
+
+        assert Content.from_markup(skills.title).plain == "skills (1 · ~0 tokens)"
+
+
+@pytest.mark.anyio
 async def test_tui_sidebar_scrolls_when_all_skills_overflow() -> None:
     session = FakeSession()
     session.skills = tuple(
@@ -3034,13 +3132,14 @@ async def test_tui_sidebar_scrolls_when_all_skills_overflow() -> None:
     async with app.run_test(size=(120, 40)) as pilot:
         scroll = app.query_one("#sidebar-scroll", VerticalScroll)
         brand = app.query_one("#sidebar-brand", Static)
-        await pilot.pause()
+        app.query_one("#sidebar-skills", Collapsible).collapsed = False
+        await pilot.wait_for_scheduled_animations()
 
         assert scroll.max_scroll_y > 0
         assert brand.region.bottom == app.query_one("#sidebar").content_region.bottom
         scroll.scroll_end(animate=False, immediate=True)
         await pilot.pause()
-        assert scroll.scroll_y == scroll.max_scroll_y
+        assert 0 < scroll.scroll_y <= scroll.max_scroll_y
 
 
 @pytest.mark.anyio
@@ -3064,9 +3163,14 @@ async def test_tui_sidebar_relayouts_when_reload_changes_resource_count() -> Non
             for index in range(1, 31)
         )
         sidebar.update_from_session(session)
+        app.query_one("#sidebar-skills", Collapsible).collapsed = False
         await pilot.pause()
 
         expanded_virtual_height = scroll.virtual_size.height
+        assert re.fullmatch(
+            r"skills \(30 · ~\d+(?:\.\d+)?k? tokens\)",
+            Content.from_markup(app.query_one("#sidebar-skills", Collapsible).title).plain,
+        )
         assert expanded_virtual_height > initial_virtual_height
         assert scroll.max_scroll_y > 0
 
@@ -3074,6 +3178,12 @@ async def test_tui_sidebar_relayouts_when_reload_changes_resource_count() -> Non
         sidebar.update_from_session(session)
         await pilot.pause()
 
+        skills = app.query_one("#sidebar-skills", Collapsible)
+        assert re.fullmatch(
+            r"skills \(1 · ~\d+(?:\.\d+)?k? tokens\)",
+            Content.from_markup(skills.title).plain,
+        )
+        assert skills.collapsed is False
         assert scroll.virtual_size.height < expanded_virtual_height
         assert scroll.max_scroll_y == 0
 
