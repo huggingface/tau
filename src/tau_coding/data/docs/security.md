@@ -23,4 +23,16 @@ shell, network, tool, credential, provider, model, package-install,
 prompt-injection, or exfiltration sandbox. Use OS/container/VM isolation and
 restricted credentials/network when isolation is required.
 
+## Built-in local-backend boundary
+
+Built-in local backends are trusted Tau package code and do not create a project
+trust prompt. Their provider/backend definitions live only in the active,
+generation-owned runtime. Endpoint settings and safe model snapshots, when a
+backend supports them, are user-level integration state—not project inputs.
+
+Configuration secrets are collected by the host as secret fields, passed only to
+the backend transaction, and kept out of reprs, snapshots, session metadata, and
+diagnostics. No API key is synthesized when authentication is optional or absent.
+A local backend never stops a server or deletes model files as part of reset.
+
 Published details: `website/content/guides/project-trust.md`.

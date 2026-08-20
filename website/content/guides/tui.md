@@ -63,8 +63,18 @@ to search and run them. Common ones:
 - `/resume`, `/tree` — open previous sessions or branch from history
 - `/prompts` — search prompt templates, insert an invocation, or edit the template file with **Ctrl+E**
 - `/hotkeys` — show the keyboard shortcuts
+- `/local` — choose and manage a registered local backend
 
-The full list is in the [Slash commands reference]({{< relref "../reference/slash-commands.md" >}}).
+The full list is in the [Slash commands reference]({{< relref "../reference/slash-commands.md" >}}). For local inference, see the [local backends guide]({{< relref "./local-inference.md" >}}).
+
+### Local backends
+
+`/local` first opens an explicit backend chooser. One backend is preselected but
+still requires confirmation; a recommended backend is only a marker. The host
+renders backend-declared text, secret, and choice fields and exposes only the
+optional actions the backend reports. Configure, refresh, status, doctor, reset,
+and model-management work asynchronously, show structured progress, and are
+cancelled when the screen closes. State-changing actions require an idle agent.
 
 ## Running shell commands directly
 

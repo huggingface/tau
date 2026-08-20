@@ -26,8 +26,27 @@ representations and diagnostics. Custom runtime-auth exceptions become categoric
 host errors, while Tau's required-key strategy retains missing-credential guidance.
 Nested compatibility metadata is deeply frozen
 inside registered definitions and copied back to ordinary JSON containers only at
-the transport boundary. Phase 1 provides these contracts and registry mechanics
-only; startup/session selection and `/local` are not implemented yet.
+the transport boundary. Phase 1 provides the provider contracts and registry
+mechanics. The Phase 4 local-backend host adds `/local` for registered backends;
+it does not turn a dynamic provider into a durable catalog entry or silently
+select one at startup. Use an explicit `--provider`/`--model` or the TUI's
+**Use** action after a backend has discovered a model.
+
+## `/local` and dynamic local backends
+
+In the TUI, `/local` first opens an explicit backend chooser. A single backend
+is preselected and may be marked recommended, but it still requires confirmation.
+The backend screen exposes configure, refresh, status, use, doctor, reset, and
+model-management actions only when the backend declares them. Configuration
+fields are host-rendered structured text, secret, or choice values; cancellation,
+validation failure, and failed backend commits leave the prior state untouched.
+
+Dynamic providers are process-local overlays. A backend may persist safe
+integration state through its own versioned store, but provider definitions,
+secrets, and arbitrary response data do not belong in `catalog.toml`,
+`providers.json`, sessions, or generic extension state. Stored credentials are
+referenced indirectly, and diagnostics identify only their source. The generic
+host never probes endpoints on its own and never invents an API key.
 
 ## Changing the built-in catalog
 

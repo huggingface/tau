@@ -1044,6 +1044,11 @@ async def run_print_mode(
         command = session.handle_command(prompt)
         if command.handled:
             message = command.message
+            if command.local_requested:
+                message = (
+                    "The /local command is interactive-only. In print mode, configure a "
+                    "backend in the TUI, then use --provider and --model."
+                )
             if command.reload_requested:
                 try:
                     summary = await session.reload()

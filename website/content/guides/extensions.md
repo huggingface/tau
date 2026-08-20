@@ -165,6 +165,29 @@ or async and always receive `(event, context)`; the context is freshly created
 for each dispatch. Action methods raise `ExtensionError` if called before the session
 is bound — register handlers in `setup` and act on events instead.
 
+### Local-backend registrations
+
+An extension can pair a provider layer with a provider-neutral local backend:
+
+```python
+def setup(tau):
+    tau.register_provider(provider)
+    tau.register_local_backend(backend)
+```
+
+A backend declares structured text, secret, and choice fields plus asynchronous
+configuration, refresh, status, and optional doctor/reset/model-management
+operations. The host renders the values and owns confirmation, cancellation, and
+idle checks; backend code never receives Textual widgets. Configuration is one
+transaction, so validation or safe-state failure does not replace the prior
+configuration. Secrets stay out of representations and host diagnostics.
+
+The backend and provider must be registered by the same source and generation.
+If another source shadows the provider, the backend can remain inspectable but
+cannot use, reset, or manage models through the shadowed layer. Retired or
+reloaded generations cancel their backend work and ignore late results. See the
+[local backends guide]({{< relref "./local-inference.md" >}}).
+
 ### Dynamic providers (provisional)
 
 `register_provider` installs a complete `DynamicProvider` layer owned by the

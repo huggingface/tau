@@ -241,6 +241,13 @@ class DynamicProviderRegistry:
         """Return active dynamic layers in precedence order."""
         return tuple(self._layers.get(provider_id, ()))
 
+    def layer_token(self, provider_id: str, source_id: str) -> ProviderLayerToken | None:
+        """Return one source's exact active layer identity, if registered."""
+        for layer in self._layers.get(provider_id, ()):
+            if layer.token.source_id == source_id:
+                return layer.token
+        return None
+
     async def refresh(
         self,
         provider_id: str,

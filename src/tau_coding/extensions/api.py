@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
     from tau_coding.extensions.providers import DynamicProvider
     from tau_coding.extensions.runtime import ExtensionRuntime
+    from tau_coding.local_backends import LocalBackend
     from tau_coding.tui.config import TuiTheme
 
 AGENT_EVENT_TYPES: frozenset[str] = frozenset(
@@ -896,6 +897,11 @@ class ExtensionAPI:
         """Register or atomically replace this source's dynamic provider layer."""
         self._generation.assert_active()
         self._runtime.register_provider(self._source_id, provider)
+
+    def register_local_backend(self, backend: LocalBackend) -> None:
+        """Register a backend paired with this source's provider layer."""
+        self._generation.assert_active()
+        self._runtime.register_local_backend(self._source_id, backend)
 
     def register_command(
         self,

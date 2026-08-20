@@ -1,5 +1,10 @@
 # Tau CLI and commands
 
+`/local` is an interactive TUI command. Print mode does not execute its
+configuration flow; configure a backend in the TUI, then use explicit
+`--provider` and `--model` flags for headless requests. This avoids probing a
+local endpoint or selecting a model implicitly during non-interactive startup.
+
 Tau supports print mode and a Textual interactive TUI. The CLI entry point is `tau_coding.cli:app`.
 
 For current user-facing behavior in a Tau checkout, read:

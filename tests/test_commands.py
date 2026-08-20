@@ -126,6 +126,7 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
         "compact",
         "export",
         "hotkeys",
+        "local",
         "login",
         "logout",
         "model",
@@ -144,6 +145,14 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
         "tools",
         "tree",
     ]
+
+
+def test_local_command_requests_host_action(tmp_path: Path) -> None:
+    registry = create_default_command_registry()
+    session = FakeSession(tmp_path)
+
+    assert registry.execute(session, "/local").local_requested is True
+    assert registry.execute(session, "/local extra").message == "Usage: /local"
 
 
 def test_prompts_command_requests_picker(tmp_path: Path) -> None:
