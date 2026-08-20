@@ -432,13 +432,12 @@ class CodingSession:
         # never reuse source-project code across replacement trust boundaries.
         previous_runtime = config.extension_runtime
         extension_runtime = ExtensionRuntime()
-        if config.extensions_enabled or config.extension_paths:
-            extension_runtime.load(
-                unfiltered_resource_paths,
-                extra_paths=config.extension_paths,
-                include_resource_dirs=config.extensions_enabled,
-                include_project_dir=False,
-            )
+        extension_runtime.load(
+            unfiltered_resource_paths,
+            extra_paths=config.extension_paths,
+            include_resource_dirs=config.extensions_enabled,
+            include_project_dir=False,
+        )
 
         coordinator = config.project_trust_coordinator or ProjectTrustCoordinator(
             ProjectTrustStore(
@@ -1498,13 +1497,12 @@ class CodingSession:
         unfiltered_paths = resource_paths_with_cwd(self._config.resource_paths, self.cwd)
         previous_ui = self._extension_runtime.ui
         staged_runtime = ExtensionRuntime()
-        if self._config.extensions_enabled or self._config.extension_paths:
-            staged_runtime.load(
-                unfiltered_paths,
-                extra_paths=self._config.extension_paths,
-                include_resource_dirs=self._config.extensions_enabled,
-                include_project_dir=False,
-            )
+        staged_runtime.load(
+            unfiltered_paths,
+            extra_paths=self._config.extension_paths,
+            include_resource_dirs=self._config.extensions_enabled,
+            include_project_dir=False,
+        )
 
         staged_resolution = self._project_trust_resolution
         staged_paths = self._resource_paths
@@ -1953,6 +1951,14 @@ class CodingSession:
                 await self._extension_runtime.emit_session_shutdown("quit")
         except BaseException as exc:
             error = exc
+
+        # Final close has no successor sharing the UI bridge. Remove any
+        # source-owned widgets/interceptors before invalidating the API.
+        try:
+            self._extension_runtime.clear_ui_components()
+        except BaseException as exc:
+            if error is None:
+                error = exc
 
         # A runtime may already be synchronously retired by replacement. Close
         # still owns the async drain/containment step and must never skip it.

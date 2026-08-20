@@ -17,8 +17,10 @@ Detection checks names and metadata only; Tau does not read, parse, or import a
 candidate before deciding.
 
 User resources under `~/.tau` and `~/.agents`, built-ins, and paths explicitly
-passed on the CLI remain eligible. Trusted project extensions still require the
-additional `--project-extensions` opt-in.
+passed on the CLI remain eligible. Trusted built-in extensions are installed Tau
+package code rather than cwd discovery: they load before the decision, even with
+`--no-extensions`, and their presence alone never creates a trust prompt. Trusted
+project extensions still require the additional `--project-extensions` opt-in.
 
 ## Decisions
 

@@ -17,6 +17,29 @@ Installed examples are under `examples/extensions/` next to these docs. Read the
 - `<project>/.tau/extensions/`: requires project approval and `--project-extensions`.
 - `tau -e PATH`: explicitly load a file or directory.
 
+## Trusted built-in sources
+
+Tau can declare product capabilities as `BuiltInExtension` values in
+`tau_coding.built_in_extensions`. These call the same synchronous `setup(tau)`
+and use the same tool, command, provider, hook, and lifecycle APIs as filesystem
+extensions. Generic loading never branches on a capability's name.
+
+Built-ins are trusted because their code ships inside the installed Tau package;
+they are not discovered from the cwd. They load before user, explicit, and
+trusted project extensions, including when `--no-extensions` disables directory
+discovery. Hidden declarations stay active but are omitted from ordinary
+extension-name counts; detailed runtime metadata retains `source="built-in"`,
+the stable `built-in:<name>` source ID, and the hidden flag. A setup failure is a
+normal extension diagnostic and rolls back that source's registrations without
+blocking later extensions or startup.
+
+Every staged runtime loads each declaration once. Reload, resume, new-session,
+and cwd replacement create a fresh generation; retiring the old generation
+invalidates captured APIs, removes source registrations, and cancels its dynamic
+provider work. Built-ins do not create protected project inputs or a trust prompt.
+They can only observe or decide an already-required trust flow through the same
+explicit `project_trust` hook available to eligible pre-trust extensions.
+
 An extension defines `setup(tau)`. Built-in, user, and explicit extensions may
 handle `project_trust` before protected loading; first decisive result wins.
 Project extensions cannot approve themselves. They execute arbitrary Python and

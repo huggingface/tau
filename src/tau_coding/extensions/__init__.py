@@ -39,6 +39,8 @@ from tau_coding.extensions.api import (
 from tau_coding.extensions.loader import (
     DiscoveredExtension,
     ExtensionLoadResult,
+    ExtensionSource,
+    ExtensionSourceMetadata,
     LoadedExtension,
     discover_extensions,
     extension_dirs,
@@ -107,6 +109,8 @@ __all__ = [
     "ExtensionHandler",
     "ExtensionLoadResult",
     "ExtensionRuntime",
+    "ExtensionSource",
+    "ExtensionSourceMetadata",
     "ExtensionUi",
     "InputEvent",
     "InputHookOutcome",

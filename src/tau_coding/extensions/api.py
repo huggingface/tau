@@ -1016,6 +1016,8 @@ class RegisteredExtension:
 
     name: str
     source_id: str
-    path: Path
+    path: Path | None
     api: ExtensionAPI
+    source: Literal["built-in", "user", "explicit", "project"] = "explicit"
+    hidden: bool = False
     handlers: dict[str, list[ExtensionHandler]] = field(default_factory=dict)

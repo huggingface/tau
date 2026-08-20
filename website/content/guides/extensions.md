@@ -50,6 +50,29 @@ defining `setup(tau)`, which runs once at startup with the extension API.
 | `<project>/.tau/extensions/` | only after project approval **and** `--project-extensions` |
 | any file or directory | with `tau -e PATH` (repeatable) |
 
+### Trusted built-in extensions
+
+Tau may bundle product capabilities as `BuiltInExtension` declarations. A
+built-in is not a special provider or command branch: its synchronous
+`setup(tau)` receives the normal extension API and registers tools, commands,
+process-local providers, hooks, or later extension capabilities through the
+same runtime.
+
+Built-ins load once per staged runtime, before user, explicit, and trusted
+project sources. They still load with `--no-extensions`, because that flag turns
+off filesystem discovery rather than capabilities shipped in Tau itself. Their
+code is trusted as installed package code and never counts as ambient project
+input, so a built-in alone cannot trigger project trust.
+
+Declarations are hidden by default. Hidden means omitted from ordinary
+extension-name counts, not inactive: detailed runtime metadata retains the
+`built-in` source, stable `built-in:<name>` source ID, and hidden flag. Setup
+exceptions are isolated diagnostics and all partial registrations from that
+source are removed. Reload, resume, new-session, and cwd replacement use fresh
+generations; retiring an old generation invalidates captured APIs, removes its
+registrations, and cancels generation-owned provider refresh work. Generic core
+loading never checks a built-in capability's name.
+
 Within a directory, `*.py` files are extensions, and a subdirectory
 containing `extension.py` is a package-style extension — its sibling
 modules are imported with relative imports (`from . import helper`).
@@ -83,9 +106,10 @@ first decisive result wins, errors safely defer, and remembered results save
 only the exact cwd before project loading. Project extensions cannot approve
 themselves.
 
-Extensions load project-first after approval; on name conflicts (extension names, tool
-names, command names) the first registration wins. `--no-extensions`
-disables directory discovery entirely (explicit `-e` paths still load).
+After built-ins, filesystem extensions keep their existing precedence; on name
+conflicts (extension names, tool names, command names) the first registration
+wins. `--no-extensions` disables directory discovery (explicit `-e` paths and
+trusted built-ins still load).
 `/reload` awaits `session_shutdown(reason="reload")` on the outgoing
 extension generation, clears its UI, re-imports every extension and re-runs
 `setup`, then awaits `session_start(reason="reload")` on the new generation.

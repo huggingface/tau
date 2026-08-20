@@ -10,6 +10,7 @@ from pathlib import Path
 from time import time_ns
 from typing import Literal, Protocol
 
+import tau_coding.built_in_extensions as built_in_extension_registry
 from tau_agent.events import AgentEvent, AgentStartEvent
 from tau_agent.events import TurnEndEvent as AgentTurnEndEvent
 from tau_agent.events import TurnStartEvent as AgentTurnStartEvent
@@ -21,6 +22,7 @@ from tau_agent.tools import (
     ToolUpdateCallback,
 )
 from tau_agent.types import JSONValue
+from tau_coding.built_in_extensions import BuiltInExtension
 from tau_coding.commands import (
     CommandContext,
     CommandRegistry,
@@ -58,6 +60,7 @@ from tau_coding.extensions.api import (
     UiBridge,
 )
 from tau_coding.extensions.loader import (
+    ExtensionSourceMetadata,
     LoadedExtension,
     load_extensions,
     unload_extension_modules,
@@ -173,8 +176,15 @@ class ExtensionRuntime:
         durable_providers: Sequence[ProviderConfig] = (),
         credentials: CredentialReader | None = None,
         environment: Mapping[str, str] | None = None,
+        built_in_extensions: Sequence[BuiltInExtension] | None = None,
     ) -> None:
         self._generation = ExtensionGeneration()
+        self._built_in_extensions = tuple(
+            built_in_extension_registry.BUILT_IN_EXTENSIONS
+            if built_in_extensions is None
+            else built_in_extensions
+        )
+        self._built_ins_loaded = False
         self._durable_providers = tuple(durable_providers)
         self._provider_credentials = credentials
         self._provider_environment = environment
@@ -210,7 +220,8 @@ class ExtensionRuntime:
         include_project_dir: bool = False,
         include_user_dir: bool = True,
     ) -> None:
-        """Discover extensions and run each `setup` with an isolated API."""
+        """Load built-ins, then discover extensions and run isolated setup."""
+        self._load_built_ins()
         result = load_extensions(
             paths,
             extra_paths=extra_paths,
@@ -222,23 +233,53 @@ class ExtensionRuntime:
         for extension in result.extensions:
             self._setup_extension(extension)
 
+    def _load_built_ins(self) -> None:
+        """Load each trusted declaration once, before filesystem sources."""
+        if self._built_ins_loaded:
+            return
+        self._built_ins_loaded = True
+        for declaration in self._built_in_extensions:
+            self._setup_extension(
+                LoadedExtension(
+                    name=declaration.name,
+                    path=None,
+                    source_id=declaration.source_id,
+                    setup=declaration.setup,
+                    source="built-in",
+                    hidden=declaration.hidden,
+                )
+            )
+
     @property
     def active(self) -> bool:
         """Return whether this runtime generation still owns live registrations."""
         return self._generation.active
 
     def retire(self) -> None:
-        """Invalidate a successfully replaced runtime without touching its successor."""
+        """Invalidate this generation and release all source-owned work."""
         if not self._generation.active:
             return
+        # Replacement callers clear host UI before a successor uses the shared
+        # bridge; clearing here could erase that successor's freshly mounted UI.
+        # Provider retirement synchronously detaches every layer and requests
+        # cancellation of generation-owned refresh work.
         self._provider_registry.retire()
         self._generation.invalidate()
         if self._harness_unsubscribe is not None:
             self._harness_unsubscribe()
             self._harness_unsubscribe = None
+        self._extensions.clear()
+        self._tools.clear()
+        self._commands.clear()
+        self._prompt_guidelines.clear()
+        self._message_renderers.clear()
+        self._renderer_failures_reported.clear()
+        self._turn_requested = None
+        self._session = None
 
     async def aclose(self) -> ProviderRegistryCloseResult:
         """Retire this generation and report drain or bounded containment."""
+        self.retire()
         registries = (*self._retired_provider_registries, self._provider_registry)
         try:
             results = await asyncio.gather(*(registry.aclose() for registry in registries))
@@ -277,6 +318,7 @@ class ExtensionRuntime:
         self._retired_provider_registries.append(self._provider_registry)
         self._generation.invalidate()
         self._generation = ExtensionGeneration()
+        self._built_ins_loaded = False
         self._provider_registry = DynamicProviderRegistry(
             self._durable_providers,
             generation_id=self._generation.id,
@@ -319,6 +361,8 @@ class ExtensionRuntime:
             source_id=source_id,
             path=extension.path,
             api=api,
+            source=extension.source,
+            hidden=extension.hidden,
         )
         self._extensions.append(registered)
         try:
@@ -331,7 +375,11 @@ class ExtensionRuntime:
                     kind="extension",
                     name=extension.name,
                     path=extension.path,
-                    message=f"setup failed: {exc!r}",
+                    message=(
+                        f"built-in setup failed: {exc!r}"
+                        if extension.source == "built-in"
+                        else f"setup failed: {exc!r}"
+                    ),
                     severity="error",
                 )
             )
@@ -653,8 +701,22 @@ class ExtensionRuntime:
 
     @property
     def extension_names(self) -> tuple[str, ...]:
-        """Return loaded extension names in load order."""
-        return tuple(extension.name for extension in self._extensions)
+        """Return visible extension names in load order."""
+        return tuple(extension.name for extension in self._extensions if not extension.hidden)
+
+    @property
+    def extension_metadata(self) -> tuple[ExtensionSourceMetadata, ...]:
+        """Return active visible and hidden source metadata in load order."""
+        return tuple(
+            ExtensionSourceMetadata(
+                name=extension.name,
+                source_id=extension.source_id,
+                source=extension.source,
+                hidden=extension.hidden,
+                path=extension.path,
+            )
+            for extension in self._extensions
+        )
 
     @property
     def diagnostics(self) -> tuple[ResourceDiagnostic, ...]:
