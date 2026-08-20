@@ -49,10 +49,14 @@ def test_install_local_package_copies_manifest_layout(tmp_path: Path) -> None:
     assert diagnostics == ()
 
 
-def test_install_rejects_directory_that_would_not_be_auto_discovered(tmp_path: Path) -> None:
-    source = tmp_path / "loose-files"
-    source.mkdir()
-    (source / "one.py").write_text("def setup(tau):\n    pass\n", encoding="utf-8")
+@pytest.mark.parametrize("nested_entry", ["one.py", "nested/extension.py"])
+def test_install_rejects_directory_that_would_not_be_auto_discovered(
+    tmp_path: Path, nested_entry: str
+) -> None:
+    source = tmp_path / "nested-only"
+    entry = source / nested_entry
+    entry.parent.mkdir(parents=True)
+    entry.write_text("def setup(tau):\n    pass\n", encoding="utf-8")
 
     with pytest.raises(ExtensionInstallError, match="extension.py"):
         install_extension(str(source), extensions_dir=tmp_path / "extensions")
@@ -115,6 +119,21 @@ def test_parse_git_extension_source(source: str, url: str, ref: str | None, name
     assert (parsed.url, parsed.ref, parsed.name) == (url, ref, name)
 
 
+def test_missing_git_is_reported_as_install_error(tmp_path: Path) -> None:
+    def missing_git(
+        command: list[str], *, capture_output: bool, text: bool, check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        del command, capture_output, text, check
+        raise FileNotFoundError("git executable not found")
+
+    with pytest.raises(ExtensionInstallError, match="git executable not found"):
+        install_extension(
+            "git:github.com/example/tau-demo",
+            extensions_dir=tmp_path / "extensions",
+            command_runner=missing_git,
+        )
+
+
 def test_failed_git_install_removes_partial_clone(tmp_path: Path) -> None:
     extensions_dir = tmp_path / "extensions"
 
@@ -160,5 +179,5 @@ def test_install_git_source_clones_and_checks_out_ref(tmp_path: Path) -> None:
     assert destination == tmp_path / "extensions" / "tau-demo"
     assert calls[0][:4] == ["git", "clone", "--", "https://github.com/example/tau-demo"]
     assert calls[1][0:2] == ["git", "-C"]
-    assert Path(calls[1][2]).parent == destination.parent
+    assert Path(calls[1][2]).name == destination.name
     assert calls[1][3:] == ["checkout", "--detach", "v1"]

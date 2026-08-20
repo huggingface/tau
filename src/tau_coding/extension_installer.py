@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import os
+import contextlib
 import re
 import shutil
 import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import mkdtemp, mkstemp
+from tempfile import mkdtemp
 
 from tau_coding.extensions import discover_extensions
 from tau_coding.paths import TauPaths
@@ -45,45 +45,44 @@ def install_extension(
     the normal user-directory discovery path can load them on the next run.
     """
     destination_root = extensions_dir or TauPaths().user_extensions_dir
-    destination_root.mkdir(parents=True, exist_ok=True)
-
-    staging: Path | None = None
+    staging_root: Path | None = None
     try:
+        destination_root.mkdir(parents=True, exist_ok=True)
         local_source = Path(source).expanduser()
+        resolved_source: Path | None = None
+        git_source: GitExtensionSource | None = None
         if local_source.exists():
             resolved_source = local_source.resolve()
             name = _local_install_name(resolved_source)
-            destination = destination_root / name
-            if resolved_source.is_file():
-                descriptor, staging_name = mkstemp(
-                    prefix=f".{resolved_source.stem}.install-",
-                    suffix=".py",
-                    dir=destination_root,
-                )
-                os.close(descriptor)
-                staging = Path(staging_name)
-                shutil.copy2(resolved_source, staging)
-            elif resolved_source.is_dir():
-                staging = Path(mkdtemp(prefix=f".{name}.install-", dir=destination_root))
-                staging.rmdir()
-                shutil.copytree(resolved_source, staging, ignore=_local_copy_ignore)
-            else:
-                raise ExtensionInstallError(f"unsupported local extension source: {source}")
         else:
             git_source = parse_git_extension_source(source)
             name = git_source.name
-            destination = destination_root / name
-            staging = Path(mkdtemp(prefix=f".{name}.install-", dir=destination_root))
-            staging.rmdir()
-            _clone_git_source(git_source, staging, command_runner=command_runner)
+        destination = destination_root / name
 
-        _validate_staged_extension(staging)
+        # Reproduce the exact ~/.tau/extensions/<name> shape during validation.
+        # This catches layouts that explicit -e discovery accepts but normal
+        # user-directory discovery would skip, such as nested/extension.py.
+        staging_root = Path(mkdtemp(prefix=".extension-install-", dir=destination_root))
+        staging = staging_root / "extensions" / name
+        staging.parent.mkdir()
+        if resolved_source is not None and resolved_source.is_file():
+            shutil.copy2(resolved_source, staging)
+        elif resolved_source is not None and resolved_source.is_dir():
+            shutil.copytree(resolved_source, staging, ignore=_local_copy_ignore)
+        elif git_source is not None:
+            _clone_git_source(git_source, staging, command_runner=command_runner)
+        else:
+            raise ExtensionInstallError(f"unsupported local extension source: {source}")
+
+        _validate_staged_extension(staging_root)
         _publish_staged_extension(staging, destination, force=force)
         return destination
-    except BaseException:
-        if staging is not None:
-            _remove_path(staging)
-        raise
+    except OSError as exc:
+        raise ExtensionInstallError(f"extension installation failed: {exc}") from exc
+    finally:
+        if staging_root is not None:
+            with contextlib.suppress(OSError):
+                _remove_path(staging_root)
 
 
 def parse_git_extension_source(source: str) -> GitExtensionSource:
@@ -157,25 +156,13 @@ def _validate_install_name(name: str) -> None:
         raise ExtensionInstallError(f"extension source has an unsupported install name: {name!r}")
 
 
-def _validate_staged_extension(staging: Path) -> None:
-    if staging.is_file():
-        if staging.suffix != ".py":
-            raise ExtensionInstallError("an extension file must have a .py suffix")
-        return
-
-    paths = TauResourcePaths(root=staging.parent / ".validation-home", cwd=Path.cwd())
-    discovered, diagnostics = discover_extensions(
-        paths,
-        extra_paths=(staging,),
-        include_resource_dirs=False,
-    )
+def _validate_staged_extension(staging_root: Path) -> None:
+    paths = TauResourcePaths(root=staging_root, cwd=Path.cwd())
+    discovered, diagnostics = discover_extensions(paths)
     errors = [diagnostic.message for diagnostic in diagnostics if diagnostic.severity == "error"]
     if errors:
         raise ExtensionInstallError("invalid extension package: " + "; ".join(errors))
-    # A directory in ~/.tau/extensions is only auto-discovered when it is a
-    # package-style extension. A loose directory of standalone .py files works
-    # with -e but would silently disappear after installation.
-    if not discovered or any(entry.package_dir is None for entry in discovered):
+    if not discovered:
         raise ExtensionInstallError(
             "an extension directory must contain extension.py or declare "
             "[tool.tau].extensions in pyproject.toml"

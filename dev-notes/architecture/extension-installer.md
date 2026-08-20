@@ -48,7 +48,7 @@ source argument
       ↓
 resolve local path or normalize Git source/ref
       ↓
-copy or clone to a sibling staging path
+copy or clone into a temporary root/extensions/<name> layout
       ↓
 validate that normal user-directory discovery can see it
       ↓
@@ -62,10 +62,14 @@ end in `.py`. A directory must contain `extension.py` or declare entries in
 `[tool.tau].extensions`; a loose directory of Python files is rejected because
 `-e` could discover it but user-directory discovery would not.
 
-Staging happens inside the destination directory so publication is a same-filesystem
-rename. Failed copies, clones, checkouts, and validation remove their staging
-artifacts. Forced replacement keeps the previous destination as a temporary
-backup and restores it if publication fails.
+Staging happens inside the destination directory so publication is a
+same-filesystem rename. The temporary tree reproduces the exact
+`root/extensions/<name>` discovery layout, preventing nested-only packages from
+passing explicit-path validation and then disappearing after installation.
+Failed copies, clones, checkouts, validation, and filesystem operations remove
+their staging artifacts and surface as `ExtensionInstallError`. Forced
+replacement keeps the previous destination as a temporary backup and restores
+it if publication fails.
 
 ## Security boundary
 
