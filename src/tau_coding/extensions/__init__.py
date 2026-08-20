@@ -85,6 +85,7 @@ from tau_coding.extensions.runtime import (
     InputHookOutcome,
 )
 from tau_coding.local_backends import (
+    LOCAL_OPERATION_CANCELLATION_TIMEOUT_SECONDS,
     ConfigureLocalBackend,
     DoctorLocalBackend,
     DownloadModel,
@@ -119,6 +120,7 @@ __all__ = [
     "AGENT_EVENT_TYPES",
     "AGENT_EVENT_WILDCARD",
     "LIFECYCLE_EVENT_TYPES",
+    "LOCAL_OPERATION_CANCELLATION_TIMEOUT_SECONDS",
     "BoundSession",
     "ComponentBridge",
     "ConfigureLocalBackend",

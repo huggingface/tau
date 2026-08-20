@@ -55,3 +55,12 @@ when isolation is required.
 
 For endpoint, auth, cached-downtime, Doctor, and model-selection troubleshooting,
 see `local-inference.md`.
+
+## Migration boundary
+
+The built-in `llama.cpp` integration does not import or rewrite an existing
+`llama-cpp` catalog entry. Configure it separately through `/local`, verify the
+exact model ID returned by `/v1/models`, and remove the old entry only when it
+is no longer needed. Ollama, gateways, and other local servers remain on the
+manual custom-provider path. No Phase 6 operation starts, stops, downloads, or
+deletes an external server or model file.

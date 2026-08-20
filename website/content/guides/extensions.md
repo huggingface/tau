@@ -126,7 +126,7 @@ Use those lifecycle hooks to stop and restart background work and to remount UI.
 def setup(tau):
     # registration
     tau.register_tool(agent_tool)            # tau_agent.tools.AgentTool
-    tau.register_provider(dynamic_provider)  # provisional, process-local
+    tau.register_provider(dynamic_provider)  # process-local
     tau.register_command("name", handler, description="...")
     tau.add_prompt_guideline("Never commit directly to main")
     tau.on("event_name", handler)            # or @tau.on("event_name")
@@ -188,7 +188,7 @@ cannot use, reset, or manage models through the shadowed layer. Retired or
 reloaded generations cancel their backend work and ignore late results. See the
 [local backends guide]({{< relref "./local-inference.md" >}}).
 
-### Dynamic providers (provisional)
+### Dynamic providers
 
 `register_provider` installs a complete `DynamicProvider` layer owned by the
 calling extension source and current runtime generation. A provider may start
@@ -242,11 +242,13 @@ still use their first-registration-wins name registries. Removing a source revea
 the preceding complete layer, including the exact durable provider baseline. The contracts are
 frontend-free and callbacks must not return Rich/Textual values.
 
-This foundation remains provisional until second-backend validation. The
-trusted built-in `llama.cpp` provider now exercises these contracts; its
-connection, cache, and troubleshooting behavior are covered in the [local
-inference guide]({{< relref "./local-inference.md" >}}). Router management and
-Hugging Face model mutations remain outside this phase.
+Phase 6 validates these contracts with a permanent second fake backend and a
+small test-only Ollama adapter. The trusted built-in `llama.cpp` provider uses
+the same seams; no production Ollama backend is shipped. Provider discovery and
+backend status may use different protocol endpoints, and `NoAuth` is a first-
+class option. Its connection, cache, and troubleshooting behavior are covered
+in the [local inference guide]({{< relref "./local-inference.md" >}}). Router
+management and Hugging Face model mutations remain outside this phase.
 
 ### Tools
 
@@ -628,7 +630,7 @@ tau -e ./tau-subagents
 ## Not yet supported
 
 Compared to Pi's extension system, v1 does not yet include: package
-management (`pi install`-style), startup/session selection for provisional
+management (`pi install`-style), startup/session selection for external
 custom providers, extension-authored TUI widgets (custom *message* rendering
 via `register_message_renderer` *is* supported; the host-provided `context.ui`
 dialogs *are* supported), custom

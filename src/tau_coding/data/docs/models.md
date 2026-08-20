@@ -45,6 +45,8 @@ preceding layer or the durable baseline.
 Dynamic providers support required, optional, or absent authentication without
 fake keys. Secrets resolve immediately before refresh or runtime creation and are
 excluded from representations, diagnostics, snapshots, sessions, and exports.
+The contract is validated by a permanent second fake backend and a test-only
+Ollama adapter; Ollama is not a shipped Tau backend.
 
 ## Existing custom providers
 
@@ -67,4 +69,5 @@ Provider/model selection precedence is explicit CLI selection, the resumed
 transcript's provider-aware model entry, the session record for legacy sessions,
 a durable default, and then a usable durable provider. Dynamic local providers
 are selected only by explicit startup, a resumed local session, or an in-session
-`/model`/`/local` action.
+`/model`/`/local` action. The old `llama-cpp` catalog provider is not migrated;
+configure the built-in `llama.cpp` layer separately through `/local`.

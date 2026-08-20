@@ -300,8 +300,9 @@ for current behavior and availability.
 
 ## Dynamic extension providers
 
-Tau's extension API has a provisional, process-local `DynamicProvider` contract.
-Unlike providers created by `/login custom` or `tau setup`, these definitions are
+Tau's extension API has a process-local `DynamicProvider` contract validated
+by a permanent second fake backend and a test-only Ollama adapter. Unlike
+providers created by `/login custom` or `tau setup`, these definitions are
 source/generation-owned overlays and are never copied into `catalog.toml`,
 `providers.json`, sessions, or generic disk storage. Source ownership is a stable
 host identity derived from the canonical extension entry path—not the display
@@ -319,7 +320,7 @@ provides the generic TUI flow for registered dynamic local backends. Dynamic
 providers still do not become durable catalog entries or automatic startup
 fallbacks: configure a backend, then choose its provider/model explicitly. See
 the [local backends guide]({{< relref "./local-inference.md" >}}) and
-[Extensions]({{< relref "./extensions.md#dynamic-providers-provisional" >}}).
+[Extensions]({{< relref "./extensions.md#dynamic-providers" >}}).
 
 ## Adding a custom / local provider
 
@@ -368,8 +369,9 @@ model files. See the [complete llama.cpp guide]({{< relref "./local-inference.md
 for endpoint precedence, Doctor, reset, and troubleshooting.
 
 An older manually configured provider named `llama-cpp` remains separate and is
-not migrated. Use the custom-provider flow below for other OpenAI-compatible
-servers.
+not migrated. Configure the built-in `llama.cpp` layer through `/local`, and use
+the custom-provider flow below for Ollama and other OpenAI-compatible servers.
+Tau does not ship an Ollama backend.
 
 For scripted or one-off setup with another OpenAI-compatible server, use the
 same `tau setup` flow. For example, Ollama's OpenAI-compatible endpoint usually

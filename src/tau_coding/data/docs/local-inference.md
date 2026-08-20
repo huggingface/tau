@@ -125,6 +125,22 @@ separate deletion confirmation succeeds.
   configured provider. Use `llama.cpp` for the built-in backend, or keep the old
   provider for its existing catalog configuration.
 
+## Migration from manual local providers
+
+Existing custom OpenAI-compatible providers continue to work. To move a
+manually configured llama.cpp server to the built-in integration, open
+`/local`, choose and confirm the recommended backend, enter the endpoint and
+optional key, then use the exact ID returned by `/v1/models`. The built-in
+provider ID is `llama.cpp`; an older `llama-cpp` catalog entry is not migrated,
+rewritten, or removed automatically. Remove that entry only after verifying the
+new session. Ollama and other local servers remain supported through the custom
+provider path and are not registered as Tau backends.
+
+Tau never copies old fake keys, fake model IDs, catalog definitions, project
+settings, or environment endpoints into the built-in state. Reset removes only
+built-in settings and safe snapshots; it never stops a server or deletes model
+files.
+
 For project trust and the security boundary, see `security.md`. For command
 flags and print/TUI startup, see `cli.md`, `tui.md`, and `models.md`.
 

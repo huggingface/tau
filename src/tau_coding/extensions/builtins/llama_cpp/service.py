@@ -167,6 +167,10 @@ class LlamaCppService:
             active = None
             self._state_error = str(exc)
         self._active_state = active
+        if active is not None and active.selected_model is not None:
+            cached_ids = {model.id for model in active.models}
+            if active.selected_model not in cached_ids:
+                self._stale_selected_model = active.selected_model
         self._endpoint_error: str | None = None
         endpoint = self._resolve_effective_endpoint(active)
         self._endpoint = endpoint or normalize_llama_cpp_endpoint(LLAMA_CPP_DEFAULT_ENDPOINT)
@@ -480,12 +484,18 @@ class LlamaCppService:
                 diagnostics=(LocalDiagnostic(str(exc), "error", "connection"),),
             )
         selected = _selected_model(self._active_state, discovery.models)
+        if selected is None and self._stale_selected_model is not None:
+            # Doctor is an explicit diagnostic action, not a model-selection
+            # path. Probe a sole currently reported model so connectivity and
+            # tool compatibility remain useful after the active reference goes
+            # stale, while status/model selection still refuse to replace it.
+            selected = discovery.models[0].id if len(discovery.models) == 1 else None
         if selected is None:
             return LocalOperationResult(
                 backend_status=self._status_from_discovery(discovery),
                 diagnostics=(
                     LocalDiagnostic(
-                        "The server is reachable but has no selectable model.",
+                        "The server is reachable but has no selectable model for Doctor.",
                         "warning",
                         "models",
                     ),
@@ -648,9 +658,13 @@ class LlamaCppService:
             and previous_selected not in {model.id for model in discovery.models}
             else None
         )
+        # Preserve the user's exact selection as a stable reference even
+        # when the server temporarily omits it. ``selected`` is intentionally
+        # only the currently usable choice; it must not erase the reference
+        # needed for a later refresh or cached resume.
         state = LlamaCppIntegrationState(
             endpoint=discovery.endpoint.server_root,
-            selected_model=selected,
+            selected_model=previous_selected if previous_selected is not None else selected,
             credential_ref=self._active_state.credential_ref,
             models=tuple(_stored_model(model) for model in discovery.models),
             checked_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -736,7 +750,7 @@ class LlamaCppService:
             selected=(None if self._stale_selected_model is not None else selected),
             diagnostics=diagnostics,
             cached=bool(models),
-            stale=stale,
+            stale=stale or self._stale_selected_model is not None,
         )
 
     def _status(
