@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from textual.widget import Widget
 
     from tau_coding.extensions.runtime import ExtensionRuntime
+    from tau_coding.paths import TauPaths
     from tau_coding.tui.config import TuiTheme
 
 AGENT_EVENT_TYPES: frozenset[str] = frozenset(
@@ -768,6 +769,12 @@ class ExtensionContext:
         """Return the session working directory."""
         self._generation.assert_active()
         return self._runtime.session_view.cwd
+
+    @property
+    def paths(self) -> TauPaths:
+        """Return the resolved Tau filesystem paths for this session."""
+        self._generation.assert_active()
+        return self._runtime.paths
 
     @property
     def model(self) -> str:

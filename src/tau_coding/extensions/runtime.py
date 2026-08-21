@@ -61,6 +61,7 @@ from tau_coding.extensions.loader import (
     load_extensions,
     unload_extension_modules,
 )
+from tau_coding.paths import TauPaths
 from tau_coding.project_trust import ExtensionTrustResult, ProjectTrustEvent
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
 
@@ -166,6 +167,7 @@ class ExtensionRuntime:
         self._renderer_failures_reported: set[str] = set()
         self._load_diagnostics: list[ResourceDiagnostic] = []
         self._runtime_diagnostics: list[ResourceDiagnostic] = []
+        self._paths: TauPaths = TauPaths()
         self._session: BoundSession | None = None
         self._ui: UiBridge = ui or NullUiBridge()
         self._turn_requested: TurnRequestedCallback | None = None
@@ -185,6 +187,7 @@ class ExtensionRuntime:
         include_user_dir: bool = True,
     ) -> None:
         """Discover extensions and run each `setup` with an isolated API."""
+        self._paths = paths.paths or TauPaths(home=paths.root)
         result = load_extensions(
             paths,
             extra_paths=extra_paths,
@@ -547,6 +550,11 @@ class ExtensionRuntime:
                 "register handlers in setup() and act on events instead"
             )
         return self._session
+
+    @property
+    def paths(self) -> TauPaths:
+        """Return the resolved Tau filesystem paths for this runtime."""
+        return self._paths
 
     @property
     def extension_names(self) -> tuple[str, ...]:
