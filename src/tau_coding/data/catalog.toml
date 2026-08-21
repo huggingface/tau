@@ -701,7 +701,7 @@ kind = "google-generative-ai"
 base_url = "https://generativelanguage.googleapis.com/v1beta"
 api_key_env = "GEMINI_API_KEY"
 credential_name = "google"
-models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3.1-flash-lite", "gemini-3.1-flash-lite-preview", "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3.5-flash", "gemini-flash-latest", "gemini-flash-lite-latest", "gemma-4-26b-a4b-it", "gemma-4-31b-it"]
+models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3.1-flash-lite", "gemini-3.1-flash-lite-preview", "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-flash-latest", "gemini-flash-lite-latest", "gemma-4-26b-a4b-it", "gemma-4-31b-it"]
 default_model = "gemini-flash-latest"
 docs_url = "https://ai.google.dev/gemini-api/docs"
 api = "google-generative-ai"
@@ -719,6 +719,9 @@ gemini-3-flash-preview = 1048576
 "gemini-3.1-pro-preview" = 1048576
 "gemini-3.1-pro-preview-customtools" = 1048576
 "gemini-3.5-flash" = 1048576
+"gemini-3.5-flash-lite" = 1048576
+"gemini-3.6-flash" = 1048576
+"gemini-3.7-flash" = 1048576
 gemini-flash-latest = 1048576
 gemini-flash-lite-latest = 1048576
 gemma-4-26b-a4b-it = 262144
@@ -805,13 +808,41 @@ max_tokens = 65536
 cost = { input = 1.5, output = 9, cacheRead = 0.15, cacheWrite = 0 }
 unsupported_thinking_levels = ["off"]
 
+[providers.model_metadata."gemini-3.5-flash-lite"]
+name = "Gemini 3.5 Flash Lite"
+reasoning = true
+input = ["text", "image"]
+context_window = 1048576
+max_tokens = 65536
+cost = { input = 0.3, output = 2.5, cacheRead = 0.03, cacheWrite = 0 }
+unsupported_thinking_levels = ["off"]
+
+[providers.model_metadata."gemini-3.6-flash"]
+name = "Gemini 3.6 Flash"
+reasoning = true
+input = ["text", "image"]
+context_window = 1048576
+max_tokens = 65536
+cost = { input = 0.75, output = 3.75, cacheRead = 0.075, cacheWrite = 0 }
+unsupported_thinking_levels = ["off"]
+
+[providers.model_metadata."gemini-3.7-flash"]
+name = "Gemini 3.7 Flash"
+reasoning = true
+input = ["text", "image"]
+context_window = 1048576
+max_tokens = 65536
+cost = { input = 0.75, output = 3.75, cacheRead = 0.075, cacheWrite = 0 }
+unsupported_thinking_levels = ["off", "minimal"]
+
 [providers.model_metadata.gemini-flash-latest]
 name = "Gemini Flash Latest"
 reasoning = true
 input = ["text", "image"]
 context_window = 1048576
 max_tokens = 65536
-cost = { input = 0.3, output = 2.5, cacheRead = 0.075, cacheWrite = 0 }
+cost = { input = 0.75, output = 3.75, cacheRead = 0.075, cacheWrite = 0 }
+unsupported_thinking_levels = ["off", "minimal"]
 
 [providers.model_metadata.gemini-flash-lite-latest]
 name = "Gemini Flash-Lite Latest"
@@ -819,7 +850,8 @@ reasoning = true
 input = ["text", "image"]
 context_window = 1048576
 max_tokens = 65536
-cost = { input = 0.1, output = 0.4, cacheRead = 0.025, cacheWrite = 0 }
+cost = { input = 0.3, output = 2.5, cacheRead = 0.03, cacheWrite = 0 }
+unsupported_thinking_levels = ["off"]
 
 [providers.model_metadata.gemma-4-26b-a4b-it]
 name = "Gemma 4 26B A4B IT"
