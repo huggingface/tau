@@ -15,7 +15,7 @@ from tau_agent import (
     ToolExecutionUpdateEvent,
 )
 from tau_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
-from tau_coding.events import AutoRetryStartEvent, QueueUpdateEvent
+from tau_coding.events import AutoRetryStartEvent, HuggingFaceRouteEvent, QueueUpdateEvent
 from tau_coding.rendering import FinalTextRenderer, JsonEventRenderer, TranscriptRenderer
 
 
@@ -166,6 +166,37 @@ def test_final_text_renderer_prints_errors_on_finish(capsys: pytest.CaptureFixtu
     assert capsys.readouterr().err == ""
     assert renderer.finish() is False
     assert "Error: provider failed" in capsys.readouterr().err
+
+
+def test_renderers_surface_huggingface_route_changes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    event = HuggingFaceRouteEvent(
+        status="changed",
+        previous_route="scaleway",
+        route="deepinfra",
+        reason="warmed requests reported no cache reuse",
+    )
+
+    TranscriptRenderer().render(event)
+    transcript = capsys.readouterr()
+    assert transcript.out == ""
+    assert "Hugging Face route changed: scaleway -> deepinfra" in transcript.err
+    assert "warmed requests reported no" in transcript.err
+
+    FinalTextRenderer().render(event)
+    final_text = capsys.readouterr()
+    assert final_text.out == ""
+    assert "Hugging Face route changed: scaleway -> deepinfra" in final_text.err
+
+    JsonEventRenderer().render(event)
+    assert json.loads(capsys.readouterr().out) == {
+        "type": "huggingface_route",
+        "status": "changed",
+        "previousRoute": "scaleway",
+        "route": "deepinfra",
+        "reason": "warmed requests reported no cache reuse",
+    }
 
 
 def test_json_renderer_emits_canonical_jsonl(capsys: pytest.CaptureFixture[str]) -> None:

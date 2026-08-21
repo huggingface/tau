@@ -55,7 +55,12 @@ from tau_coding.session_export import (
     export_session_artifact,
     normalize_export_format,
 )
-from tau_coding.session_manager import CodingSessionRecord, SessionManager, validate_session_id
+from tau_coding.session_manager import (
+    CodingSessionRecord,
+    HuggingFaceRouteMode,
+    SessionManager,
+    validate_session_id,
+)
 from tau_coding.shell_config import load_shell_settings
 from tau_coding.tui import run_tui_app
 from tau_coding.update_check import (
@@ -960,12 +965,15 @@ async def run_openai_print_mode(
         provider_name=provider_name if explicit_selection else record.provider_name,
         model=model if explicit_selection else record.model,
     )
-    inference_provider = (
-        record.inference_provider
-        if resume_session_id is not None
+    uses_resumed_route = (
+        resume_session_id is not None
         and record.provider_name == "huggingface"
         and selection.provider.name == "huggingface"
         and record.model == selection.model
+    )
+    inference_provider = (
+        record.inference_provider
+        if uses_resumed_route
         else selection.provider.inference_providers.get(selection.model)
         if isinstance(selection.provider, OpenAICompatibleProviderConfig)
         and selection.provider.name == "huggingface"
@@ -989,6 +997,9 @@ async def run_openai_print_mode(
             session_manager=manager,
             provider_name=selection.provider.name,
             inference_provider=inference_provider,
+            inference_provider_mode=(
+                record.inference_provider_mode if uses_resumed_route else None
+            ),
             provider_settings=settings,
             runtime_provider_config=selection.provider,
             shell_command_prefix=shell_settings.shell_command_prefix,
@@ -1071,6 +1082,7 @@ async def run_print_mode(
     session_manager: SessionManager | None = None,
     provider_name: str = DEFAULT_PROVIDER_NAME,
     inference_provider: str | None = None,
+    inference_provider_mode: HuggingFaceRouteMode | None = None,
     provider_settings: ProviderSettings | None = None,
     runtime_provider_config: ProviderConfig | None = None,
     shell_command_prefix: str | None = None,
@@ -1099,6 +1111,7 @@ async def run_print_mode(
             session_manager=session_manager,
             provider_name=provider_name,
             inference_provider=inference_provider,
+            inference_provider_mode=inference_provider_mode,
             provider_settings=provider_settings,
             runtime_provider_config=runtime_provider_config,
             shell_command_prefix=shell_command_prefix,

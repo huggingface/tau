@@ -14,7 +14,7 @@ from tau_agent.events import (
 )
 from tau_agent.messages import AssistantMessage, CustomMessage, ToolCall
 from tau_ai.events import TextDeltaEvent
-from tau_coding.events import AutoRetryStartEvent, CodingSessionEvent
+from tau_coding.events import AutoRetryStartEvent, CodingSessionEvent, HuggingFaceRouteEvent
 from tau_coding.extensions.api import CustomMessageMarkup
 from tau_coding.tui.state import format_tool_call_block
 
@@ -52,6 +52,10 @@ class TranscriptRenderer:
         if isinstance(event, AutoRetryStartEvent):
             self._newline()
             self._console.print(Text(f"… {event.error_message}", style="bright_black"))
+            return
+        if isinstance(event, HuggingFaceRouteEvent):
+            self._newline()
+            self._console.print(Text(event.display_text, style="bright_black"))
             return
         if isinstance(event, ToolExecutionEndEvent):
             status = "✗" if event.is_error else "✓"

@@ -436,6 +436,9 @@ def _status_command(context: CommandContext) -> CommandResult:
     if session.provider_name == "huggingface":
         route = getattr(session, "inference_provider", None) or "automatic"
         lines.append(f"Hugging Face inference provider: {route}")
+        routing_status = getattr(session, "huggingface_routing_status", None)
+        if routing_status:
+            lines.append(f"Hugging Face cache routing: {routing_status}")
     context_window_source = getattr(session, "context_window_source", None)
     if context_window_source:
         lines.append(f"Context window source: {context_window_source}")

@@ -74,6 +74,22 @@ class AutoRetryEndEvent(WireModel):
     final_error: str | None = Field(None)
 
 
+class HuggingFaceRouteEvent(WireModel):
+    type: Literal["huggingface_route"] = "huggingface_route"
+    status: Literal["changed", "exhausted"]
+    previous_route: str | None = None
+    route: str
+    reason: str
+
+    @property
+    def display_text(self) -> str:
+        """Return the concise route notice shown by human frontends."""
+        if self.status == "changed":
+            previous = self.previous_route or "automatic"
+            return f"Hugging Face route changed: {previous} -> {self.route} ({self.reason})"
+        return f"Hugging Face route evaluation stopped on {self.route}: {self.reason}"
+
+
 type SessionOwnEvent = Annotated[
     SessionAgentEndEvent
     | AgentSettledEvent
@@ -84,7 +100,8 @@ type SessionOwnEvent = Annotated[
     | SessionInfoChangedEvent
     | ThinkingLevelChangedEvent
     | AutoRetryStartEvent
-    | AutoRetryEndEvent,
+    | AutoRetryEndEvent
+    | HuggingFaceRouteEvent,
     Field(discriminator="type"),
 ]
 type CodingSessionEvent = AgentEvent | SessionOwnEvent

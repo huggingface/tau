@@ -48,6 +48,7 @@ class Usage(WireModel):
     input: int = 0
     output: int = 0
     cache_read: int = 0
+    cache_read_reported: bool | None = None
     cache_write: int = 0
     cache_write_1h: int | None = None
     reasoning: int | None = None
