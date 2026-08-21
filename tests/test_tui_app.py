@@ -5535,6 +5535,60 @@ async def test_interrupted_stream_keeps_thinking_row_through_next_turn() -> None
 
 
 @pytest.mark.anyio
+async def test_replaced_stream_keeps_partial_text_through_redraw() -> None:
+    """Text from a stream replaced by a new MessageStart must survive a redraw."""
+    first_partial = AssistantMessage()
+    second_partial = AssistantMessage()
+    second_final = AssistantMessage(content=[TextContent(text="later answer")])
+    session = FakeSession(messages=[UserMessage(content="review")])
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+        # The live transcript follows output while streaming; the pilot starts
+        # unfollowed, which would page the redraw behind a window boundary.
+        transcript._follow_output = True
+        for event in (
+            AgentStartEvent(),
+            MessageStartEvent(message=first_partial),
+            MessageUpdateEvent(
+                message=first_partial,
+                assistant_message_event=TextDeltaEvent(
+                    content_index=0, delta="earlier draft", partial=first_partial
+                ),
+            ),
+            # A new assistant message starts without the first one ending.
+            MessageStartEvent(message=second_partial),
+        ):
+            app.adapter.apply(event)
+            await app._apply_streaming_transcript_event(event)
+        assert [(item.role, item.text) for item in app.state.items] == [
+            ("user", "review"),
+            ("assistant", "earlier draft"),
+        ]
+        app._refresh()
+        await pilot.pause()
+        for event in (
+            MessageUpdateEvent(
+                message=second_partial,
+                assistant_message_event=TextDeltaEvent(
+                    content_index=0, delta="later answer", partial=second_partial
+                ),
+            ),
+            MessageEndEvent(message=second_final),
+            AgentEndEvent(),
+        ):
+            app.adapter.apply(event)
+            await app._apply_streaming_transcript_event(event)
+        await pilot.pause()
+
+        lines = [line.text for line in transcript.lines]
+        assert sum(1 for line in lines if "earlier draft" in line) == 1, lines
+        assert sum(1 for line in lines if "later answer" in line) == 1, lines
+
+
+@pytest.mark.anyio
 async def test_replaced_stream_keeps_thinking_row_through_next_turn() -> None:
     """Thinking from a stream replaced by a new MessageStart must stay mounted."""
     first_partial = AssistantMessage()
