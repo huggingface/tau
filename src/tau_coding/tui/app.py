@@ -4869,6 +4869,7 @@ class TauTuiApp(App[None]):
                 return
             message = _format_prompt_error(exc, self.session)
             self.state.error = message
+            self.state.clear_provisional_items()
             self.state.add_item("error", message)
             self.state.running = False
             self._sync_text_selection_state()
@@ -5065,6 +5066,9 @@ class TauTuiApp(App[None]):
         self._prompt_worker = None
         self.state.running = False
         self.state.assistant_buffer = ""
+        # The adapter never sees MessageEnd for a cancelled stream; its
+        # provisional rows are durable history now, not live streaming state.
+        self.state.clear_provisional_items()
         self._sync_text_selection_state()
         self._refresh()
         if notify:

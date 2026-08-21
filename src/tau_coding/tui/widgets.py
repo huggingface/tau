@@ -859,10 +859,17 @@ class TranscriptView(VerticalScroll):
         for item_id, widget in tuple(self._item_widgets.items()):
             if widget in thinking_children:
                 del self._item_widgets[item_id]
+        self._active_message_widgets = [
+            widget for widget in self._active_message_widgets if widget not in thinking_children
+        ]
+        self._active_thinking_widget = None
 
         non_thinking_index = 0
-        pending: list[tuple[ChatItem, TranscriptMessageWidget]] = []
+        pending: list[tuple[ChatItem, TranscriptMessageWidget | StreamingTranscriptMessageWidget]]
+        pending = []
         hidden_run = False
+        hidden_run_provisional = False
+        last_index = len(window_items) - 1
 
         def flush(before: Widget | None) -> None:
             nonlocal pending
@@ -874,20 +881,35 @@ class TranscriptView(VerticalScroll):
                 self._item_widgets[id(item)] = widget
             pending = []
 
-        for item in window_items:
+        for index, item in enumerate(window_items):
             if item.role == "thinking":
+                live = (
+                    item.provisional
+                    and index == last_index
+                    and self._window_end == len(state.items)
+                )
                 if state.show_thinking:
-                    pending.append(
-                        (
-                            item,
-                            TranscriptMessageWidget(
-                                item,
-                                theme=theme,
-                                show_tool_results=state.show_tool_results,
-                            ),
+                    row: TranscriptMessageWidget | StreamingTranscriptMessageWidget
+                    if live:
+                        # Rebuild the live thinking widget from a copied item so
+                        # later deltas stream into it without double-appending.
+                        row = StreamingTranscriptMessageWidget(
+                            ChatItem(role="thinking", text=item.text),
+                            theme=theme,
                         )
-                    )
-                elif not hidden_run:
+                        self._active_thinking_widget = row
+                    else:
+                        row = TranscriptMessageWidget(
+                            item,
+                            theme=theme,
+                            show_tool_results=state.show_tool_results,
+                        )
+                    pending.append((item, row))
+                    if item.provisional:
+                        self._active_message_widgets.append(row)
+                elif not hidden_run or hidden_run_provisional != item.provisional:
+                    # A provisional run must not share a placeholder with durable
+                    # history: finalization removes live widgets wholesale.
                     placeholder = TranscriptMessageWidget(
                         ChatItem(role="thinking", text=_HIDDEN_THINKING_PLACEHOLDER),
                         theme=theme,
@@ -895,6 +917,9 @@ class TranscriptView(VerticalScroll):
                     )
                     pending.append((item, placeholder))
                     hidden_run = True
+                    hidden_run_provisional = item.provisional
+                    if item.provisional:
+                        self._active_message_widgets.append(placeholder)
                 else:
                     self._item_widgets[id(item)] = pending[-1][1]
                 continue
@@ -910,8 +935,9 @@ class TranscriptView(VerticalScroll):
             if target is not None:
                 flush(target)
 
-        flush(self._bottom_boundary)
-        self._active_thinking_widget = None
+        # Keep a trailing thinking row above the live assistant widget so a
+        # mid-stream toggle does not stream later deltas below the answer text.
+        flush(self._active_assistant_widget or self._bottom_boundary)
         self._hidden_thinking_placeholder_visible = any(
             widget.selection_text == _HIDDEN_THINKING_PLACEHOLDER for _, widget in pending
         ) or _last_transcript_child_is_hidden_thinking_placeholder(self.children)
@@ -964,18 +990,45 @@ class TranscriptView(VerticalScroll):
             widgets.append(self._top_boundary)
 
         hidden_thinking_widget: TranscriptMessageWidget | None = None
-        for item in state.items[self._window_start : self._window_end]:
+        hidden_run_provisional = False
+        window_items = state.items[self._window_start : self._window_end]
+        last_index = len(window_items) - 1
+        for index, item in enumerate(window_items):
             if item.role == "thinking" and not state.show_thinking:
-                if hidden_thinking_widget is None:
+                # A provisional run must not share a placeholder with durable
+                # history: finalization removes live widgets wholesale.
+                if hidden_thinking_widget is None or hidden_run_provisional != item.provisional:
                     hidden_thinking_widget = TranscriptMessageWidget(
                         ChatItem(role="thinking", text=_HIDDEN_THINKING_PLACEHOLDER),
                         theme=theme,
                         show_tool_results=state.show_tool_results,
                     )
+                    hidden_run_provisional = item.provisional
+                    if item.provisional:
+                        self._active_message_widgets.append(hidden_thinking_widget)
                     widgets.append(hidden_thinking_widget)
                 self._item_widgets[id(item)] = hidden_thinking_widget
                 continue
             hidden_thinking_widget = None
+            if (
+                item.provisional
+                and item.role == "thinking"
+                and index == last_index
+                and self._window_end == total
+            ):
+                # Rebuild the live thinking widget so later deltas keep
+                # streaming into it, mirroring the assistant_buffer branch
+                # below. Copy the item: append_fragment mutates widget item
+                # text and add_thinking_delta already grows the state item.
+                streaming_widget = StreamingTranscriptMessageWidget(
+                    ChatItem(role="thinking", text=item.text),
+                    theme=theme,
+                )
+                self._active_thinking_widget = streaming_widget
+                self._active_message_widgets.append(streaming_widget)
+                self._item_widgets[id(item)] = streaming_widget
+                widgets.append(streaming_widget)
+                continue
             expanded = state.show_tool_results or item.always_show_tool_result
             widget = TranscriptMessageWidget(
                 item,
@@ -990,6 +1043,8 @@ class TranscriptView(VerticalScroll):
                 result_markup=state.resolve_tool_result(item, expanded=expanded),
             )
             self._item_widgets[id(item)] = widget
+            if item.provisional:
+                self._active_message_widgets.append(widget)
             widgets.append(widget)
 
         if self._window_end < total:

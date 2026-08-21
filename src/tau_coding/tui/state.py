@@ -75,6 +75,10 @@ class ChatItem:
     custom_type: str | None = None
     details: dict[str, JSONValue] | None = None
     highlight: Literal["alert", "update"] | None = None
+    # Mirrors in-flight streamed thinking that the adapter deletes and replaces
+    # with canonical blocks at MessageEnd; widgets built for a provisional item
+    # are live streaming state, not durable transcript history.
+    provisional: bool = False
 
 
 @dataclass(slots=True)
@@ -521,10 +525,16 @@ class TuiState:
 
     def add_thinking_delta(self, delta: str) -> None:
         """Append a thinking/reasoning fragment to the current thinking block."""
-        if self.items and self.items[-1].role == "thinking":
+        if self.items and self.items[-1].role == "thinking" and self.items[-1].provisional:
             self.items[-1].text += delta
             return
         self.add_item("thinking", delta)
+        self.items[-1].provisional = True
+
+    def clear_provisional_items(self) -> None:
+        """Convert any leftover provisional items into durable transcript rows."""
+        for item in self.items:
+            item.provisional = False
 
     def find_tool_item(self, tool_call_id: str) -> ChatItem | None:
         """Return the transcript item for a tool call id in O(1)."""

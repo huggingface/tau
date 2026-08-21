@@ -58,6 +58,9 @@ class TuiEventAdapter:
             return
         if isinstance(event, MessageStartEvent):
             if isinstance(event.message, AssistantMessage):
+                # An interrupted earlier stream can leave provisional rows that
+                # will never be replaced; they are durable history from here on.
+                self.state.clear_provisional_items()
                 self.state.assistant_buffer = event.message.text
                 self._assistant_start_item_index = len(self.state.items)
             return
@@ -112,6 +115,7 @@ class TuiEventAdapter:
                             previous_was_tool = True
                         else:
                             previous_was_tool = False
+                self.state.clear_provisional_items()
                 self.state.assistant_buffer = ""
                 self._assistant_start_item_index = None
             return
@@ -149,6 +153,7 @@ class TuiEventAdapter:
             self.state.add_item("status", f"… {event.error_message}")
 
     def _flush(self) -> None:
+        self.state.clear_provisional_items()
         if self.state.assistant_buffer:
             self.state.add_item("assistant", self.state.assistant_buffer)
             self.state.assistant_buffer = ""
