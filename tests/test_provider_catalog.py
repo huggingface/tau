@@ -187,6 +187,7 @@ def test_builtin_catalog_separates_openai_api_and_codex_context_limits() -> None
                 "kimi-k2.7-code",
                 "mimo-v2.5",
                 "minimax-m3",
+                "ox-alpha-free",
                 "qwen3.6-plus",
                 "qwen3.7-plus",
             },
@@ -210,6 +211,7 @@ def test_builtin_catalog_separates_openai_api_and_codex_context_limits() -> None
                 "minimax-m3",
                 "qwen3.5-plus",
                 "qwen3.6-plus",
+                "x-preview-f-free",
             },
         ),
         (

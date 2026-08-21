@@ -6586,7 +6586,7 @@ kind = "openai-compatible"
 base_url = "https://opencode.ai/zen/go/v1"
 api_key_env = "OPENCODE_API_KEY"
 credential_name = "opencode-go"
-models = ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5.1", "glm-5.2", "kimi-k2.6", "kimi-k2.7-code", "mimo-v2.5", "mimo-v2.5-pro", "minimax-m2.7", "minimax-m3", "qwen3.6-plus", "qwen3.7-max", "qwen3.7-plus"]
+models = ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5.1", "glm-5.2", "kimi-k2.6", "kimi-k2.7-code", "mimo-v2.5", "mimo-v2.5-pro", "minimax-m2.7", "minimax-m3", "ox-alpha-free", "qwen3.6-plus", "qwen3.7-max", "qwen3.7-plus"]
 default_model = "kimi-k2.7-code"
 docs_url = "https://opencode.ai/docs/go"
 api = "openai-completions"
@@ -6605,6 +6605,7 @@ thinking_parameter = "reasoning_effort"
 "mimo-v2.5-pro" = 262144
 "minimax-m2.7" = 204800
 "minimax-m3" = 204800
+"ox-alpha-free" = 1000000
 "qwen3.6-plus" = 1000000
 "qwen3.7-max" = 1000000
 "qwen3.7-plus" = 1000000
@@ -6639,6 +6640,14 @@ input = ["text"]
 [providers.model_metadata."minimax-m3"]
 input = ["text", "image"]
 
+[providers.model_metadata."ox-alpha-free"]
+name = "Ox Alpha Free"
+reasoning = true
+input = ["text", "image"]
+max_tokens = 131072
+thinking_level_map = { minimal = "low", low = "low", medium = "high", high = "high", xhigh = "max" }
+unsupported_thinking_levels = ["off"]
+
 [providers.model_metadata."qwen3.6-plus"]
 input = ["text", "image"]
 
@@ -6655,7 +6664,7 @@ kind = "openai-compatible"
 base_url = "https://opencode.ai/zen/v1"
 api_key_env = "OPENCODE_API_KEY"
 credential_name = "opencode"
-models = ["big-pickle", "deepseek-v4-flash", "deepseek-v4-flash-free", "deepseek-v4-pro", "glm-5", "glm-5.1", "glm-5.2", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5", "gpt-5.5-pro", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "grok-4.5", "grok-build-0.1", "kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code", "mimo-v2.5-free", "minimax-m2.5", "minimax-m2.7", "minimax-m3", "nemotron-3-ultra-free", "north-mini-code-free", "qwen3.5-plus", "qwen3.6-plus"]
+models = ["big-pickle", "deepseek-v4-flash", "deepseek-v4-flash-free", "deepseek-v4-pro", "glm-5", "glm-5.1", "glm-5.2", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5", "gpt-5.5-pro", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "grok-4.5", "grok-build-0.1", "kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code", "mimo-v2.5-free", "minimax-m2.5", "minimax-m2.7", "minimax-m3", "nemotron-3-ultra-free", "north-mini-code-free", "qwen3.5-plus", "qwen3.6-plus", "x-preview-f-free"]
 default_model = "kimi-k2.7-code"
 docs_url = "https://opencode.ai/docs/zen"
 api = "openai-completions"
@@ -6750,6 +6759,15 @@ input = ["text", "image"]
 
 [providers.model_metadata."qwen3.6-plus"]
 input = ["text", "image"]
+
+[providers.model_metadata."x-preview-f-free"]
+name = "Ox Alpha Free"
+reasoning = true
+input = ["text", "image"]
+context_window = 1000000
+max_tokens = 131072
+thinking_level_map = { minimal = "low", low = "low", medium = "high", high = "high", xhigh = "max" }
+unsupported_thinking_levels = ["off"]
 
 [[providers]]
 name = "github-copilot"
