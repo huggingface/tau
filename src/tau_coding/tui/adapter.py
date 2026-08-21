@@ -58,8 +58,7 @@ class TuiEventAdapter:
             return
         if isinstance(event, MessageStartEvent):
             if isinstance(event.message, AssistantMessage):
-                # An interrupted earlier stream can leave provisional rows that
-                # will never be replaced; they are durable history from here on.
+                # An interrupted stream's provisional rows are durable history now.
                 self.state.clear_provisional_items()
                 self.state.assistant_buffer = event.message.text
                 self._assistant_start_item_index = len(self.state.items)

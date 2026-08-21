@@ -5066,8 +5066,8 @@ class TauTuiApp(App[None]):
         self._prompt_worker = None
         self.state.running = False
         self.state.assistant_buffer = ""
-        # The adapter never sees MessageEnd for a cancelled stream; its
-        # provisional rows are durable history now, not live streaming state.
+        # A cancelled stream never gets its MessageEnd, so its provisional
+        # rows become durable history here.
         self.state.clear_provisional_items()
         self._sync_text_selection_state()
         self._refresh()

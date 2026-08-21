@@ -75,9 +75,8 @@ class ChatItem:
     custom_type: str | None = None
     details: dict[str, JSONValue] | None = None
     highlight: Literal["alert", "update"] | None = None
-    # Mirrors in-flight streamed thinking that the adapter deletes and replaces
-    # with canonical blocks at MessageEnd; widgets built for a provisional item
-    # are live streaming state, not durable transcript history.
+    # In-flight streamed thinking; the adapter replaces provisional rows with
+    # canonical blocks at MessageEnd, so their widgets are live, not history.
     provisional: bool = False
 
 

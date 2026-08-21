@@ -891,8 +891,8 @@ class TranscriptView(VerticalScroll):
                 if state.show_thinking:
                     row: TranscriptMessageWidget | StreamingTranscriptMessageWidget
                     if live:
-                        # Rebuild the live thinking widget from a copied item so
-                        # later deltas stream into it without double-appending.
+                        # Copy the item: append_fragment and add_thinking_delta
+                        # would otherwise both grow the same text per delta.
                         row = StreamingTranscriptMessageWidget(
                             ChatItem(role="thinking", text=item.text),
                             theme=theme,
@@ -908,8 +908,7 @@ class TranscriptView(VerticalScroll):
                     if item.provisional:
                         self._active_message_widgets.append(row)
                 elif not hidden_run or hidden_run_provisional != item.provisional:
-                    # A provisional run must not share a placeholder with durable
-                    # history: finalization removes live widgets wholesale.
+                    # A provisional run must not share a placeholder with history.
                     placeholder = TranscriptMessageWidget(
                         ChatItem(role="thinking", text=_HIDDEN_THINKING_PLACEHOLDER),
                         theme=theme,
@@ -935,17 +934,14 @@ class TranscriptView(VerticalScroll):
             if target is not None:
                 flush(target)
 
-        # Keep a trailing thinking row above the live assistant widget so a
-        # mid-stream toggle does not stream later deltas below the answer text.
-        # The widget can already be unmounted when a toggle interleaves with
-        # message finalization, so anchor on it only while it has a parent.
+        # A trailing thinking row belongs above the live assistant widget, but
+        # that widget may already be unmounted mid-finalization.
         anchor = self._active_assistant_widget
         if anchor is not None and anchor.parent is not self:
             anchor = None
         flush(anchor or self._bottom_boundary)
-        # Track visibility from the window items, mirroring _redraw: the mounted
-        # placeholder may sit above a live assistant widget, so inspecting the
-        # last child would miss it and a later delta would mount a second one.
+        # The placeholder can sit above a live assistant widget, so the last
+        # child is not a reliable visibility signal.
         self._hidden_thinking_placeholder_visible = hidden_run and self._window_end == len(
             state.items
         )
@@ -1003,8 +999,7 @@ class TranscriptView(VerticalScroll):
         last_index = len(window_items) - 1
         for index, item in enumerate(window_items):
             if item.role == "thinking" and not state.show_thinking:
-                # A provisional run must not share a placeholder with durable
-                # history: finalization removes live widgets wholesale.
+                # A provisional run must not share a placeholder with history.
                 if hidden_thinking_widget is None or hidden_run_provisional != item.provisional:
                     hidden_thinking_widget = TranscriptMessageWidget(
                         ChatItem(role="thinking", text=_HIDDEN_THINKING_PLACEHOLDER),
@@ -1024,10 +1019,9 @@ class TranscriptView(VerticalScroll):
                 and index == last_index
                 and self._window_end == total
             ):
-                # Rebuild the live thinking widget so later deltas keep
-                # streaming into it, mirroring the assistant_buffer branch
-                # below. Copy the item: append_fragment mutates widget item
-                # text and add_thinking_delta already grows the state item.
+                # Later deltas stream into the rebuilt widget, like the
+                # assistant_buffer branch below. Copy the item: append_fragment
+                # and add_thinking_delta would both grow the same text.
                 streaming_widget = StreamingTranscriptMessageWidget(
                     ChatItem(role="thinking", text=item.text),
                     theme=theme,
@@ -1333,8 +1327,8 @@ class TranscriptView(VerticalScroll):
     ) -> None:
         """Replace only the provisional assistant tail with canonical ordered blocks."""
         should_follow = self._should_follow_output
-        # Reset live bookkeeping before the awaits so no interleaved caller
-        # can observe a half-finalized view of the streaming state.
+        # Reset before the awaits so interleaved callers never see the
+        # streaming state half-finalized.
         active = tuple(self._active_message_widgets)
         self._active_message_widgets.clear()
         self._active_assistant_widget = None
@@ -1347,10 +1341,8 @@ class TranscriptView(VerticalScroll):
             if widget.parent is None:
                 del self._item_widgets[item_id]
 
-        # The awaits above suspend this coroutine, so a keypress action or a
-        # slash command's refresh can render the (already canonical) state
-        # before mounting resumes. That render wins: rebuilding once beats
-        # mounting a second copy of the message next to it.
+        # A refresh or toggle processed during the awaits above may already
+        # have rendered the canonical state; that render wins.
         if any(
             (existing := self._item_widgets.get(id(item))) is not None and existing.parent is self
             for item in items
