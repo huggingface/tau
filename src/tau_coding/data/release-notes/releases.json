@@ -1,5 +1,23 @@
 [
   {
+    "version": "0.3.13",
+    "date": "2026-08-21",
+    "sections": {
+      "New": [
+        "Drive Tau from editors and other subprocess hosts through a Pi-compatible JSONL RPC mode, including prompting, state, models, sessions, compaction, direct shell commands, exports, and session naming.",
+        "Install trusted local or Git-hosted extensions with tau install, including pinned Git refs, staging validation, and overwrite protection.",
+        "Use Pi-compatible prompt template arguments such as $1, $@, $ARGUMENTS, defaults, and slices while retaining legacy Tau placeholders."
+      ],
+      "Changed": [
+        "List Tau's utility commands in tau --help and add Discord community links to the documentation website and README."
+      ],
+      "Fixed": [
+        "Send agent_settled reliably after completed, failed, and interrupted runs so extensions receive the final idle state after cleanup.",
+        "Keep TUI prompts readable when the terminal is too narrow for the normal prompt gutter."
+      ]
+    }
+  },
+  {
     "version": "0.3.12",
     "date": "2026-08-17",
     "sections": {
