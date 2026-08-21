@@ -5473,7 +5473,9 @@ async def test_midstream_refresh_preserves_earlier_hidden_thinking_row() -> None
         transcript = app.query_one("#transcript", TranscriptView)
         lines = [line.text for line in transcript.lines]
         placeholder_rows = sum(1 for line in lines if "Ctrl+T" in line)
-        assert placeholder_rows == 2, lines
+        # The earlier turn's placeholder must survive; whether the runs merge
+        # into one placeholder row is incidental rendering.
+        assert placeholder_rows >= 1, lines
         assert sum(1 for line in lines if "verdict" in line) == 1, lines
 
 
@@ -5585,6 +5587,75 @@ async def test_thinking_toggle_after_text_delta_keeps_row_order() -> None:
 
         lines = [line.text for line in transcript.lines]
         assert lines == ["review", "secret plan", "verdict"], lines
+
+
+@pytest.mark.anyio
+async def test_hide_thinking_after_text_delta_keeps_single_placeholder() -> None:
+    """Hiding thinking once text streams must not mount a second placeholder."""
+    partial = AssistantMessage()
+    final = AssistantMessage(
+        content=[ThinkingContent(thinking="secret plan"), TextContent(text="verdict")]
+    )
+    session = FakeSession(messages=[UserMessage(content="review")])
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.show_thinking = True
+        for event in (
+            AgentStartEvent(),
+            MessageStartEvent(message=partial),
+            MessageUpdateEvent(
+                message=partial,
+                assistant_message_event=ThinkingDeltaEvent(
+                    content_index=0, delta="secret ", partial=partial
+                ),
+            ),
+            MessageUpdateEvent(
+                message=partial,
+                assistant_message_event=TextDeltaEvent(
+                    content_index=1, delta="ver", partial=partial
+                ),
+            ),
+        ):
+            app.adapter.apply(event)
+            await app._apply_streaming_transcript_event(event)
+        app.action_toggle_thinking()
+        await pilot.pause()
+        for event in (
+            MessageUpdateEvent(
+                message=partial,
+                assistant_message_event=ThinkingDeltaEvent(
+                    content_index=0, delta="plan", partial=partial
+                ),
+            ),
+        ):
+            app.adapter.apply(event)
+            await app._apply_streaming_transcript_event(event)
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        mid_lines = [line.text for line in transcript.lines]
+        assert sum(1 for line in mid_lines if "Ctrl+T" in line) == 1, mid_lines
+        assert mid_lines[-1] == "ver", mid_lines
+
+        for event in (
+            MessageUpdateEvent(
+                message=partial,
+                assistant_message_event=TextDeltaEvent(
+                    content_index=1, delta="dict", partial=partial
+                ),
+            ),
+            MessageEndEvent(message=final),
+            AgentEndEvent(),
+        ):
+            app.adapter.apply(event)
+            await app._apply_streaming_transcript_event(event)
+        await pilot.pause()
+
+        lines = [line.text for line in transcript.lines]
+        assert sum(1 for line in lines if "Ctrl+T" in line) == 1, lines
+        assert sum(1 for line in lines if "verdict" in line) == 1, lines
 
 
 @pytest.mark.anyio

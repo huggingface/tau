@@ -938,9 +938,12 @@ class TranscriptView(VerticalScroll):
         # Keep a trailing thinking row above the live assistant widget so a
         # mid-stream toggle does not stream later deltas below the answer text.
         flush(self._active_assistant_widget or self._bottom_boundary)
-        self._hidden_thinking_placeholder_visible = any(
-            widget.selection_text == _HIDDEN_THINKING_PLACEHOLDER for _, widget in pending
-        ) or _last_transcript_child_is_hidden_thinking_placeholder(self.children)
+        # Track visibility from the window items, mirroring _redraw: the mounted
+        # placeholder may sit above a live assistant widget, so inspecting the
+        # last child would miss it and a later delta would mount a second one.
+        self._hidden_thinking_placeholder_visible = hidden_run and self._window_end == len(
+            state.items
+        )
         self.refresh(layout=True)
         if should_follow:
             self._request_follow_scroll()
@@ -1397,16 +1400,6 @@ def _identity_index(items: Sequence[ChatItem], target: ChatItem) -> int | None:
         if items[index] is target:
             return index
     return None
-
-
-def _last_transcript_child_is_hidden_thinking_placeholder(children: Sequence[Widget]) -> bool:
-    for child in reversed(children):
-        if isinstance(child, TranscriptMessageWidget | StreamingTranscriptMessageWidget):
-            return (
-                child.item.role == "thinking"
-                and child.selection_text == _HIDDEN_THINKING_PLACEHOLDER
-            )
-    return False
 
 
 def _transcript_widget(
