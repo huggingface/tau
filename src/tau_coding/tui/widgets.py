@@ -811,6 +811,13 @@ class TranscriptView(VerticalScroll):
         await widget.finalize()
         self._active_assistant_widget = None
 
+    async def release_live_widgets(self) -> None:
+        """Keep mounted streamed widgets as durable rows when a new stream begins."""
+        await self._finalize_active_thinking_message()
+        await self._finalize_active_assistant_message()
+        self._active_message_widgets.clear()
+        self._hidden_thinking_placeholder_visible = False
+
     def update_from_state(
         self,
         state: TuiState,

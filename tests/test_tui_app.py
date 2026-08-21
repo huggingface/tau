@@ -5535,6 +5535,55 @@ async def test_interrupted_stream_keeps_thinking_row_through_next_turn() -> None
 
 
 @pytest.mark.anyio
+async def test_replaced_stream_keeps_thinking_row_through_next_turn() -> None:
+    """Thinking from a stream replaced by a new MessageStart must stay mounted."""
+    first_partial = AssistantMessage()
+    second_partial = AssistantMessage()
+    second_final = AssistantMessage(
+        content=[ThinkingContent(thinking="later thoughts"), TextContent(text="verdict")]
+    )
+    session = FakeSession(messages=[UserMessage(content="review")])
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.show_thinking = True
+        for event in (
+            AgentStartEvent(),
+            MessageStartEvent(message=first_partial),
+            MessageUpdateEvent(
+                message=first_partial,
+                assistant_message_event=ThinkingDeltaEvent(
+                    content_index=0, delta="earlier thoughts", partial=first_partial
+                ),
+            ),
+            # A new assistant message starts without the first one ending.
+            MessageStartEvent(message=second_partial),
+            MessageUpdateEvent(
+                message=second_partial,
+                assistant_message_event=ThinkingDeltaEvent(
+                    content_index=0, delta="later thoughts", partial=second_partial
+                ),
+            ),
+            MessageUpdateEvent(
+                message=second_partial,
+                assistant_message_event=TextDeltaEvent(
+                    content_index=1, delta="verdict", partial=second_partial
+                ),
+            ),
+            MessageEndEvent(message=second_final),
+            AgentEndEvent(),
+        ):
+            app.adapter.apply(event)
+            await app._apply_streaming_transcript_event(event)
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        lines = [line.text for line in transcript.lines]
+        assert lines == ["review", "earlier thoughts", "later thoughts", "verdict"], lines
+
+
+@pytest.mark.anyio
 async def test_thinking_toggle_after_text_delta_keeps_row_order() -> None:
     """Ctrl+T once text is streaming must not move later thinking below the answer."""
     partial = AssistantMessage()

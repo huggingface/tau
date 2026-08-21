@@ -4898,6 +4898,11 @@ class TauTuiApp(App[None]):
             self._refresh_chrome()
             return
         if isinstance(event, MessageStartEvent):
+            if isinstance(event.message, AssistantMessage):
+                # The adapter just made any leftover provisional rows durable;
+                # their widgets must leave the live set or the next
+                # finalization would remove them.
+                await transcript.release_live_widgets()
             return
         if isinstance(event, MessageUpdateEvent):
             nested = event.assistant_message_event

@@ -115,6 +115,12 @@ class TuiState:
         compare=False,
     )
     _next_tool_batch_id: int = field(default=0, init=False, repr=False, compare=False)
+    _provisional_items: list[ChatItem] = field(
+        default_factory=list,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def add_item(
         self,
@@ -529,11 +535,13 @@ class TuiState:
             return
         self.add_item("thinking", delta)
         self.items[-1].provisional = True
+        self._provisional_items.append(self.items[-1])
 
     def clear_provisional_items(self) -> None:
         """Convert any leftover provisional items into durable transcript rows."""
-        for item in self.items:
+        for item in self._provisional_items:
             item.provisional = False
+        self._provisional_items.clear()
 
     def find_tool_item(self, tool_call_id: str) -> ChatItem | None:
         """Return the transcript item for a tool call id in O(1)."""
@@ -627,6 +635,7 @@ class TuiState:
         self._tool_items_by_call_id.clear()
         self._grouped_calls_by_call_id.clear()
         self._batched_items_by_call_id.clear()
+        self._provisional_items.clear()
         self.assistant_buffer = ""
         self.error = None
 
