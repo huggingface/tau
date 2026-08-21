@@ -937,7 +937,12 @@ class TranscriptView(VerticalScroll):
 
         # Keep a trailing thinking row above the live assistant widget so a
         # mid-stream toggle does not stream later deltas below the answer text.
-        flush(self._active_assistant_widget or self._bottom_boundary)
+        # The widget can already be unmounted when a toggle interleaves with
+        # message finalization, so anchor on it only while it has a parent.
+        anchor = self._active_assistant_widget
+        if anchor is not None and anchor.parent is not self:
+            anchor = None
+        flush(anchor or self._bottom_boundary)
         # Track visibility from the window items, mirroring _redraw: the mounted
         # placeholder may sit above a live assistant widget, so inspecting the
         # last child would miss it and a later delta would mount a second one.
@@ -1328,16 +1333,30 @@ class TranscriptView(VerticalScroll):
     ) -> None:
         """Replace only the provisional assistant tail with canonical ordered blocks."""
         should_follow = self._should_follow_output
-        for widget in tuple(self._active_message_widgets):
-            if widget.parent is self:
-                await widget.remove()
+        # Reset live bookkeeping before the awaits so no interleaved caller
+        # can observe a half-finalized view of the streaming state.
+        active = tuple(self._active_message_widgets)
         self._active_message_widgets.clear()
         self._active_assistant_widget = None
         self._active_thinking_widget = None
         self._hidden_thinking_placeholder_visible = False
+        for widget in active:
+            if widget.parent is self:
+                await widget.remove()
         for item_id, widget in tuple(self._item_widgets.items()):
             if widget.parent is None:
                 del self._item_widgets[item_id]
+
+        # The awaits above suspend this coroutine, so a keypress action or a
+        # slash command's refresh can render the (already canonical) state
+        # before mounting resumes. That render wins: rebuilding once beats
+        # mounting a second copy of the message next to it.
+        if any(
+            (existing := self._item_widgets.get(id(item))) is not None and existing.parent is self
+            for item in items
+        ):
+            self._redraw(scroll_end=should_follow)
+            return
 
         state = self._render_state
         if state is not None:

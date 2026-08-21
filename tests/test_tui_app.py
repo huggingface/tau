@@ -5659,6 +5659,126 @@ async def test_hide_thinking_after_text_delta_keeps_single_placeholder() -> None
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("show_thinking", [True, False])
+async def test_redraw_interleaved_in_finalization_does_not_duplicate(
+    monkeypatch: pytest.MonkeyPatch, show_thinking: bool
+) -> None:
+    """A refresh processed while finalization is suspended must not remount the message.
+
+    finish_structured_assistant_message awaits between removing streamed
+    widgets and mounting canonical ones; a slash command's _refresh() or a
+    keypress action can run in that gap and render the already-canonical
+    state, after which the resumed finalization mounted a second full copy.
+    """
+    partial = AssistantMessage()
+    final = AssistantMessage(
+        content=[ThinkingContent(thinking="plan"), TextContent(text="verdict")]
+    )
+    session = FakeSession(messages=[UserMessage(content="review")])
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.show_thinking = show_thinking
+        transcript = app.query_one("#transcript", TranscriptView)
+
+        interleaved = False
+        original_remove = StreamingTranscriptMessageWidget.remove
+
+        async def remove_with_interleave(self: StreamingTranscriptMessageWidget) -> None:
+            nonlocal interleaved
+            await original_remove(self)
+            if not interleaved:
+                interleaved = True
+                app._refresh()
+
+        monkeypatch.setattr(StreamingTranscriptMessageWidget, "remove", remove_with_interleave)
+
+        for event in (
+            AgentStartEvent(),
+            MessageStartEvent(message=partial),
+            MessageUpdateEvent(
+                message=partial,
+                assistant_message_event=ThinkingDeltaEvent(
+                    content_index=0, delta="plan", partial=partial
+                ),
+            ),
+            MessageUpdateEvent(
+                message=partial,
+                assistant_message_event=TextDeltaEvent(
+                    content_index=1, delta="verdict", partial=partial
+                ),
+            ),
+            MessageEndEvent(message=final),
+            AgentEndEvent(),
+        ):
+            app.adapter.apply(event)
+            await app._apply_streaming_transcript_event(event)
+        await pilot.pause()
+
+        assert interleaved
+        lines = [line.text for line in transcript.lines]
+        assert sum(1 for line in lines if "verdict" in line) == 1, lines
+        assert sum(1 for line in lines if "plan" in line or "Ctrl+T" in line) == 1, lines
+
+
+@pytest.mark.anyio
+async def test_thinking_toggle_interleaved_in_finalization_does_not_duplicate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl+T processed while finalization is suspended must not duplicate rows."""
+    partial = AssistantMessage()
+    final = AssistantMessage(
+        content=[ThinkingContent(thinking="plan"), TextContent(text="verdict")]
+    )
+    session = FakeSession(messages=[UserMessage(content="review")])
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+
+        interleaved = False
+        original_remove = StreamingTranscriptMessageWidget.remove
+
+        async def remove_with_interleave(self: StreamingTranscriptMessageWidget) -> None:
+            nonlocal interleaved
+            await original_remove(self)
+            if not interleaved:
+                interleaved = True
+                app.action_toggle_thinking()
+
+        monkeypatch.setattr(StreamingTranscriptMessageWidget, "remove", remove_with_interleave)
+
+        for event in (
+            AgentStartEvent(),
+            MessageStartEvent(message=partial),
+            MessageUpdateEvent(
+                message=partial,
+                assistant_message_event=ThinkingDeltaEvent(
+                    content_index=0, delta="plan", partial=partial
+                ),
+            ),
+            MessageUpdateEvent(
+                message=partial,
+                assistant_message_event=TextDeltaEvent(
+                    content_index=1, delta="verdict", partial=partial
+                ),
+            ),
+            MessageEndEvent(message=final),
+            AgentEndEvent(),
+        ):
+            app.adapter.apply(event)
+            await app._apply_streaming_transcript_event(event)
+        await pilot.pause()
+
+        assert interleaved
+        lines = [line.text for line in transcript.lines]
+        assert sum(1 for line in lines if "verdict" in line) == 1, lines
+        assert sum(1 for line in lines if "plan" in line or "Ctrl+T" in line) == 1, lines
+
+
+@pytest.mark.anyio
 async def test_tui_app_prompts_picker_filters_and_inserts_without_submitting() -> None:
     session = FakeSession()
     session.prompt_templates = (
