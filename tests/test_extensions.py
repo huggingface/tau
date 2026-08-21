@@ -1939,6 +1939,25 @@ def _make_tool(name: str, *, content: str) -> AgentTool:
     return AgentTool(name=name, label=name, description="d", parameters={}, execute_fn=executor)
 
 
+def test_context_paths_exposes_resolved_paths_from_load(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    resolved = TauPaths(home=tmp_path / "custom-home")
+    runtime.load(TauResourcePaths(root=tmp_path / "unused-root", paths=resolved))
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "reader"))
+    runtime.bind(RecordingSession(tmp_path))
+
+    assert api.context.paths is resolved
+
+
+def test_context_paths_falls_back_to_resource_root_home(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    runtime.load(TauResourcePaths(root=tmp_path / "home-tau"))
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "reader"))
+    runtime.bind(RecordingSession(tmp_path))
+
+    assert api.context.paths.home == tmp_path / "home-tau"
+
+
 # -- coding-session integration ---------------------------------------------------
 
 
@@ -2058,6 +2077,16 @@ async def test_session_lifecycle_recreates_built_in_in_a_fresh_generation(
     with pytest.raises(ExtensionError, match="stale after reload"):
         _ = old_api.name
     await session.aclose()
+
+
+async def test_session_exposes_extension_paths_at_moved_home(tmp_path: Path) -> None:
+    await CodingSession.load(
+        _session_config(tmp_path, FakeProvider([]), extension_body=API_CAPTURING_EXTENSION)
+    )
+    module = _loaded_extension_module("integration")
+    api = cast(ExtensionAPI, module.APIS[-1])  # type: ignore[attr-defined]
+
+    assert api.context.paths.home == tmp_path / "home-tau"
 
 
 async def test_session_exposes_extension_tools_and_commands(tmp_path: Path) -> None:
@@ -2871,6 +2900,8 @@ async def test_reset_for_reload_invalidates_prior_context_and_ui(tmp_path: Path)
 
     with pytest.raises(ExtensionError, match="stale after reload"):
         _ = context.cwd
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = context.paths
     with pytest.raises(ExtensionError, match="stale after reload"):
         _ = context.transcript
     with pytest.raises(ExtensionError, match="stale after reload"):
