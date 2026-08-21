@@ -41,6 +41,20 @@ def _update(event) -> MessageUpdateEvent:  # noqa: ANN001
     return MessageUpdateEvent(message=event.partial, assistant_message_event=event)
 
 
+def _text_update(text: str, *, content_index: int = 0) -> MessageUpdateEvent:
+    """Build a cumulative text snapshot update, as real providers emit."""
+    partial = AssistantMessage(content=[TextContent(text=text)])
+    return _update(TextDeltaEvent(content_index=content_index, delta=text, partial=partial))
+
+
+def _thinking_update(thinking: str, *, content_index: int = 0) -> MessageUpdateEvent:
+    """Build a cumulative thinking snapshot update, as real providers emit."""
+    partial = AssistantMessage(content=[ThinkingContent(thinking=thinking)])
+    return _update(
+        ThinkingDeltaEvent(content_index=content_index, delta=thinking, partial=partial)
+    )
+
+
 def test_tui_adapter_tracks_running_state() -> None:
     state = TuiState()
     adapter = TuiEventAdapter(state)
@@ -96,16 +110,20 @@ def test_tui_adapter_replaces_recovered_overflow_with_terminal_retry_error() -> 
 def test_tui_adapter_builds_assistant_item_from_nested_stream_events() -> None:
     state = TuiState()
     adapter = TuiEventAdapter(state)
-    partial = AssistantMessage()
 
-    adapter.apply(MessageStartEvent(message=partial))
-    adapter.apply(_update(TextDeltaEvent(content_index=0, delta="Hel", partial=partial)))
-    adapter.apply(_update(TextDeltaEvent(content_index=0, delta="lo", partial=partial)))
-    assert state.assistant_buffer == "Hello"
+    adapter.apply(MessageStartEvent(message=AssistantMessage()))
+    assert state.active_assistant is not None
+    assert state.items == []
+
+    adapter.apply(_text_update("Hel"))
+    adapter.apply(_text_update("Hello"))
+    assert state.active_assistant is not None
+    assert state.active_assistant.message.text == "Hello"
+    assert state.items == []
 
     adapter.apply(MessageEndEvent(message=AssistantMessage(content="Hello")))
 
-    assert state.assistant_buffer == ""
+    assert state.active_assistant is None
     assert [(item.role, item.text) for item in state.items] == [("assistant", "Hello")]
 
 
@@ -131,16 +149,138 @@ def test_tui_adapter_builds_user_and_compact_skill_items() -> None:
     ]
 
 
-def test_tui_adapter_groups_nested_thinking_deltas() -> None:
+def test_tui_adapter_keeps_streamed_thinking_out_of_items() -> None:
     state = TuiState()
     adapter = TuiEventAdapter(state)
-    partial = AssistantMessage()
 
-    adapter.apply(_update(ThinkingDeltaEvent(content_index=0, delta="hidden ", partial=partial)))
-    adapter.apply(_update(ThinkingDeltaEvent(content_index=0, delta="reasoning", partial=partial)))
+    adapter.apply(MessageStartEvent(message=AssistantMessage()))
+    adapter.apply(_thinking_update("hidden "))
+    adapter.apply(_thinking_update("hidden reasoning"))
 
-    assert [(item.role, item.text) for item in state.items] == [("thinking", "hidden reasoning")]
+    assert state.items == []
+    assert state.active_assistant is not None
+    assert [
+        block.thinking
+        for block in state.active_assistant.message.content
+        if isinstance(block, ThinkingContent)
+    ] == ["hidden reasoning"]
     assert state.show_thinking is False
+
+
+def test_tui_adapter_update_adopts_cumulative_snapshot_exactly() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+    adapter.apply(MessageStartEvent(message=AssistantMessage()))
+
+    snapshot = AssistantMessage(
+        content=[
+            ThinkingContent(thinking="plan"),
+            TextContent(text="first"),
+            ThinkingContent(thinking="more"),
+            TextContent(text="second"),
+        ]
+    )
+    adapter.apply(
+        _update(TextDeltaEvent(content_index=3, delta="second", partial=snapshot))
+    )
+
+    assert state.active_assistant is not None
+    assert state.active_assistant.message is snapshot
+    assert state.items == []
+
+
+def test_tui_adapter_final_end_projects_canonical_blocks_exactly_once() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+    adapter.apply(MessageStartEvent(message=AssistantMessage()))
+    adapter.apply(_thinking_update("plan"))
+
+    final = AssistantMessage(
+        content=[
+            ThinkingContent(thinking="plan"),
+            TextContent(text="before"),
+            ThinkingContent(thinking="continue"),
+            TextContent(text="done"),
+        ]
+    )
+    adapter.apply(MessageEndEvent(message=final))
+
+    assert state.active_assistant is None
+    assert [(item.role, item.text) for item in state.items] == [
+        ("thinking", "plan"),
+        ("assistant", "before"),
+        ("thinking", "continue"),
+        ("assistant", "done"),
+    ]
+
+
+def test_tui_adapter_final_content_wins_over_partial_snapshot() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+    adapter.apply(MessageStartEvent(message=AssistantMessage()))
+    adapter.apply(_text_update("draft that will be corrected"))
+
+    adapter.apply(MessageEndEvent(message=AssistantMessage(content="corrected")))
+
+    assert state.active_assistant is None
+    assert [(item.role, item.text) for item in state.items] == [("assistant", "corrected")]
+
+
+def test_tui_adapter_bare_agent_end_flushes_unfinished_draft_once() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+    adapter.apply(AgentStartEvent())
+    adapter.apply(MessageStartEvent(message=AssistantMessage()))
+    partial = AssistantMessage(
+        content=[ThinkingContent(thinking="plan"), TextContent(text="partial answer")]
+    )
+    adapter.apply(
+        _update(TextDeltaEvent(content_index=1, delta="partial answer", partial=partial))
+    )
+
+    adapter.apply(AgentEndEvent())
+    adapter.apply(AgentSettledEvent())
+
+    assert state.active_assistant is None
+    assert state.running is False
+    assert [(item.role, item.text) for item in state.items] == [
+        ("thinking", "plan"),
+        ("assistant", "partial answer"),
+    ]
+
+
+def test_tui_adapter_replacement_start_interrupts_whole_previous_turn() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+    adapter.apply(MessageStartEvent(message=AssistantMessage()))
+    partial = AssistantMessage(
+        content=[ThinkingContent(thinking="plan"), TextContent(text="partial")]
+    )
+    adapter.apply(_update(TextDeltaEvent(content_index=1, delta="partial", partial=partial)))
+    first_stream_id = state.active_assistant.stream_id if state.active_assistant else None
+
+    adapter.apply(MessageStartEvent(message=AssistantMessage()))
+
+    assert state.active_assistant is not None
+    assert first_stream_id is not None
+    assert state.active_assistant.stream_id != first_stream_id
+    assert state.active_assistant.message.content == []
+    assert [(item.role, item.text) for item in state.items] == [
+        ("thinking", "plan"),
+        ("assistant", "partial"),
+    ]
+
+
+def test_tui_state_clear_removes_active_draft() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+    adapter.apply(MessageStartEvent(message=AssistantMessage()))
+    adapter.apply(_text_update("partial"))
+
+    state.clear()
+
+    assert state.active_assistant is None
+    assert state.items == []
 
 
 def test_tui_state_restores_persisted_assistant_blocks_in_order() -> None:
@@ -728,18 +868,27 @@ def test_tui_adapter_records_retry_and_queue_status() -> None:
 
 
 def test_tui_adapter_records_assistant_error_and_aborted_message() -> None:
-    state = TuiState(running=True, assistant_buffer="partial")
+    state = TuiState(running=True)
     adapter = TuiEventAdapter(state)
+    adapter.apply(MessageStartEvent(message=AssistantMessage()))
+    adapter.apply(_text_update("partial"))
 
     adapter.apply(
         MessageEndEvent(
-            message=AssistantMessage(stop_reason="error", error_message="provider failed")
+            message=AssistantMessage(
+                content="partial",
+                stop_reason="error",
+                error_message="provider failed",
+            )
         )
     )
 
     assert state.error == "provider failed"
-    assert [(item.role, item.text) for item in state.items] == [("error", "Error: provider failed")]
-    assert state.assistant_buffer == ""
+    assert [(item.role, item.text) for item in state.items] == [
+        ("assistant", "partial"),
+        ("error", "Error: provider failed"),
+    ]
+    assert state.active_assistant is None
 
 
 def test_tui_state_restores_partial_assistant_response_and_error() -> None:

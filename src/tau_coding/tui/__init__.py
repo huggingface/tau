@@ -22,7 +22,7 @@ from tau_coding.tui.config import (
     save_tui_settings,
     tui_settings_path,
 )
-from tau_coding.tui.state import ChatItem, TuiState
+from tau_coding.tui.state import ActiveAssistantDraft, ChatItem, TuiState
 from tau_coding.tui.widgets import (
     CompactSessionInfo,
     SessionSidebar,
@@ -36,6 +36,7 @@ from tau_coding.tui.widgets import (
 )
 
 __all__ = [
+    "ActiveAssistantDraft",
     "BUILTIN_TUI_THEME_NAMES",
     "ChatItem",
     "CompletionOption",
