@@ -31,6 +31,8 @@ from tau_coding.extensions.api import (
     AGENT_EVENT_TYPES,
     AGENT_EVENT_WILDCARD,
     LIFECYCLE_EVENT_TYPES,
+    BeforeAgentStartEvent,
+    BeforeAgentStartHookResult,
     CustomMessageView,
     ExtensionAPI,
     ExtensionCommandContext,
@@ -63,6 +65,7 @@ from tau_coding.extensions.loader import (
 )
 from tau_coding.project_trust import ExtensionTrustResult, ProjectTrustEvent
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
+from tau_coding.system_prompt import SystemPromptInputs
 
 # Host callback that delivers a message through the frontend's serialized run
 # path when the session is idle. Carries the same presentation metadata as a
@@ -850,6 +853,60 @@ class ExtensionRuntime:
                 current = result.text
         return InputHookOutcome(handled=False, text=current)
 
+    async def run_before_agent_start(
+        self,
+        system_prompt: str,
+        system_prompt_inputs: SystemPromptInputs,
+    ) -> str:
+        """Chain run-scoped system-prompt replacements in registration order."""
+        current = system_prompt
+        handlers = tuple(self._handlers_for("before_agent_start"))
+        for extension, handler in handlers:
+            context = self._fresh_context(extension, system_prompt=current)
+            try:
+                result = await _resolve(
+                    handler(
+                        BeforeAgentStartEvent(
+                            system_prompt=current,
+                            system_prompt_inputs=system_prompt_inputs,
+                        ),
+                        context,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - extensions are an isolation boundary
+                self._record_runtime_failure(
+                    extension,
+                    "before_agent_start",
+                    exc,
+                    sensitive=True,
+                )
+                continue
+            finally:
+                context._clear_system_prompt_override()
+            if result is None:
+                continue
+            if not isinstance(result, BeforeAgentStartHookResult):
+                self._record_bad_result(
+                    extension,
+                    "before_agent_start",
+                    result,
+                    sensitive=True,
+                )
+                continue
+            replacement = result.system_prompt
+            if replacement is None:
+                continue
+            if not isinstance(replacement, str):
+                self._record_bad_result(
+                    extension,
+                    "before_agent_start.system_prompt",
+                    replacement,
+                    sensitive=True,
+                )
+                continue
+            current = replacement
+        return current
+
     async def emit_event(self, event: object) -> None:
         """Dispatch one canonical agent or coding-session event to extensions."""
         event_type = getattr(event, "type", None)
@@ -903,10 +960,15 @@ class ExtensionRuntime:
                 return extension
         return None
 
-    def _fresh_context(self, extension_name: str) -> ExtensionContext:
+    def _fresh_context(
+        self,
+        extension_name: str,
+        *,
+        system_prompt: str | None = None,
+    ) -> ExtensionContext:
         """Return a fresh context for one handler invocation."""
         api = self._api_for(extension_name)
-        return ExtensionContext(self, api._generation)
+        return ExtensionContext(self, api._generation, system_prompt=system_prompt)
 
     def _api_for(self, extension_name: str) -> ExtensionAPI:
         extension = self._extension_by_name(extension_name)
@@ -914,25 +976,42 @@ class ExtensionRuntime:
             raise ExtensionError(f"unknown extension: {extension_name}")
         return extension.api
 
-    def _record_runtime_failure(self, extension: str, event: str, exc: Exception) -> None:
+    def _record_runtime_failure(
+        self,
+        extension: str,
+        event: str,
+        exc: Exception,
+        *,
+        sensitive: bool = False,
+    ) -> None:
+        detail = "details omitted for sensitive hook" if sensitive else repr(exc)
         self._runtime_diagnostics.append(
             ResourceDiagnostic(
                 kind="extension",
                 name=extension,
-                message=f"handler for `{event}` raised: {exc!r}",
+                message=f"handler for `{event}` raised: {detail}",
                 severity="error",
             )
         )
 
-    def _record_bad_result(self, extension: str, event: str, result: object) -> None:
+    def _record_bad_result(
+        self,
+        extension: str,
+        event: str,
+        result: object,
+        *,
+        sensitive: bool = False,
+    ) -> None:
+        detail = (
+            "unsupported result; details omitted for sensitive hook"
+            if sensitive
+            else f"unsupported result type {type(result).__name__}; ignored"
+        )
         self._runtime_diagnostics.append(
             ResourceDiagnostic(
                 kind="extension",
                 name=extension,
-                message=(
-                    f"handler for `{event}` returned unsupported"
-                    f" result type {type(result).__name__}; ignored"
-                ),
+                message=f"handler for `{event}` returned {detail}",
             )
         )
 

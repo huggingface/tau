@@ -4,6 +4,8 @@ from tau_coding.extensions.api import (
     AGENT_EVENT_TYPES,
     AGENT_EVENT_WILDCARD,
     LIFECYCLE_EVENT_TYPES,
+    BeforeAgentStartEvent,
+    BeforeAgentStartHookResult,
     ComponentBridge,
     CustomMessageMarkup,
     CustomMessageView,
@@ -49,11 +51,14 @@ from tau_coding.extensions.runtime import (
     ExtensionRuntime,
     InputHookOutcome,
 )
+from tau_coding.system_prompt import SystemPromptInputs, SystemPromptSkill
 
 __all__ = [
     "AGENT_EVENT_TYPES",
     "AGENT_EVENT_WILDCARD",
     "LIFECYCLE_EVENT_TYPES",
+    "BeforeAgentStartEvent",
+    "BeforeAgentStartHookResult",
     "BoundSession",
     "ComponentBridge",
     "CustomMessageMarkup",
@@ -84,6 +89,8 @@ __all__ = [
     "SessionShutdownEvent",
     "SessionStartEvent",
     "StderrUiBridge",
+    "SystemPromptInputs",
+    "SystemPromptSkill",
     "ToolCallHookEvent",
     "ToolCallHookResult",
     "ToolResultHookEvent",

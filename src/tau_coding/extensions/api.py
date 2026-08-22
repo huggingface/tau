@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 from tau_agent.messages import AgentMessage, ToolResultMessage
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
+from tau_coding.system_prompt import SystemPromptInputs
 
 if TYPE_CHECKING:
     from textual import events
@@ -49,6 +50,7 @@ LIFECYCLE_EVENT_TYPES: frozenset[str] = frozenset(
         "session_start",
         "session_shutdown",
         "input",
+        "before_agent_start",
         "tool_call",
         "tool_result",
         "project_trust",
@@ -384,6 +386,21 @@ class InputHookResult:
     action: Literal["continue", "transform", "handled"] = "continue"
     text: str | None = None
     message: str | None = None
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class BeforeAgentStartEvent:
+    """Sensitive inputs for a run-scoped system-prompt replacement hook."""
+
+    system_prompt: str
+    system_prompt_inputs: SystemPromptInputs
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class BeforeAgentStartHookResult:
+    """Optional system-prompt replacement for the current agent run."""
+
+    system_prompt: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -758,10 +775,13 @@ class ExtensionContext:
         self,
         runtime: ExtensionRuntime,
         generation: ExtensionGeneration | None = None,
+        *,
+        system_prompt: str | None = None,
     ) -> None:
         self._runtime = runtime
         self._generation = generation if generation is not None else ExtensionGeneration()
         self._ui = ExtensionUi(runtime, self._generation)
+        self._system_prompt_override = system_prompt
 
     @property
     def cwd(self) -> Path:
@@ -795,9 +815,14 @@ class ExtensionContext:
 
     @property
     def system_prompt(self) -> str:
-        """Return the active system prompt."""
+        """Return the active prompt, including the current pre-run hook chain."""
         self._generation.assert_active()
+        if self._system_prompt_override is not None:
+            return self._system_prompt_override
         return self._runtime.session_view.system_prompt
+
+    def _clear_system_prompt_override(self) -> None:
+        self._system_prompt_override = None
 
     @property
     def is_running(self) -> bool:

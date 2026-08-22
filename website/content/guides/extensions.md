@@ -406,6 +406,7 @@ Lifecycle and intercepting hooks:
 | `session_start` | `SessionStartEvent(reason)` | — |
 | `session_shutdown` | `SessionShutdownEvent(reason)` | — |
 | `input` | `InputEvent(text)` | `InputHookResult(action, text, message)` |
+| `before_agent_start` | `BeforeAgentStartEvent(system_prompt, system_prompt_inputs)` | `BeforeAgentStartHookResult(system_prompt)` |
 | `tool_call` | `ToolCallHookEvent(tool_name, arguments)` | `ToolCallHookResult(block, reason, arguments)` |
 | `tool_result` | `ToolResultHookEvent(tool_name, arguments, result)` | `ToolResultHookResult(content, details)` |
 
@@ -415,6 +416,12 @@ Lifecycle and intercepting hooks:
 - `input` runs on the raw prompt text before skill/template expansion.
   `action="transform"` rewrites it (transforms chain), `action="handled"`
   consumes it without an agent run and shows `message` as a notification.
+- `before_agent_start` runs immediately before an agent run. Replacements chain
+  in registration order and apply to the initial provider request and every
+  tool-loop continuation in that run. The next run starts from the session's base
+  prompt, and replacements are not transcript entries. Inside the hook,
+  `event.system_prompt` and `context.system_prompt` both expose the current
+  chained value.
 - `tool_call` runs before a tool executes. `block=True` prevents execution
   and reports `reason` to the model; returning `arguments` rewrites the
   call. A crashing `tool_call` handler blocks the tool (fail-safe).
@@ -423,6 +430,34 @@ Lifecycle and intercepting hooks:
 
 All other handler failures are contained: they are recorded as diagnostics
 (visible in `/session`) and never crash the session.
+
+#### Per-run system prompts
+
+Return a `BeforeAgentStartHookResult` to replace the prompt for the current run:
+
+```python
+from tau_coding.extensions import (
+    BeforeAgentStartEvent,
+    BeforeAgentStartHookResult,
+)
+
+
+def setup(tau):
+    @tau.on("before_agent_start")
+    def customize(event: BeforeAgentStartEvent, context):
+        del context
+        return BeforeAgentStartHookResult(
+            system_prompt=f"{event.system_prompt}\n\nKeep the final answer concise."
+        )
+```
+
+`event.system_prompt_inputs` is a frozen snapshot containing `custom_prompt`,
+`append_system_prompt`, active tool names and effective `guidelines`, project
+`context_files`, skill metadata (including `disable_model_invocation`), `cwd`,
+and `current_date`. Prompt text,
+instructions, and paths can be sensitive; Tau keeps these event and input
+values out of diagnostic representations and autocomplete metadata, and
+extensions should avoid logging them.
 
 ### Messages and persistence
 
@@ -534,6 +569,7 @@ runtime only sees the former.
 See [`examples/extensions/`](https://github.com/huggingface/tau/tree/main/examples/extensions):
 
 - **`hello_tool.py`** — minimal custom tool.
+- **`prompt_customizer.py`** — replaces the system prompt for each agent run.
 - **`permission_gate.py`** — blocks dangerous bash commands with the
   `tool_call` hook.
 
@@ -557,7 +593,10 @@ tau -e ./tau-subagents
 
 Compared to Pi's extension system, Tau does not yet include a complete package
 manager (the installer has no registry, dependency installation, remove, or
-package-update commands), custom providers, custom entry renderers (non-context
-cards), declarative keyboard-shortcut registration, CLI flag registration,
-system-prompt replacement, or context rewriting. The architecture document
-(`dev-notes/architecture/phase-21-extensions.md`) tracks the extension design.
+package-update commands), custom providers, extension-authored TUI widgets
+(custom *message* rendering via `register_message_renderer` is supported; the
+host-provided `context.ui` dialogs are supported), custom entry renderers
+(non-context cards), declarative keyboard-shortcut registration, CLI flag
+registration, context rewriting, or a project trust store. The architecture
+document (`dev-notes/architecture/phase-21-extensions.md`) tracks the
+extension design.

@@ -22,7 +22,8 @@
     "date": "2026-08-17",
     "sections": {
       "New": [
-        "Keep user-triggered skills out of the model-facing system prompt with disable-model-invocation frontmatter while retaining explicit invocation, picker, autocomplete, reload, and sidebar support."
+        "Keep user-triggered skills out of the model-facing system prompt with disable-model-invocation frontmatter while retaining explicit invocation, picker, autocomplete, reload, and sidebar support.",
+        "Let extensions replace the system prompt for one agent run through a chained before_agent_start hook without persisting the replacement."
       ],
       "Changed": [
         "Refine sidebar skill and prompt headings with bold labels, muted metadata, and no hover or focus background highlights."

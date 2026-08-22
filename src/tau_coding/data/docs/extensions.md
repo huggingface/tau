@@ -37,6 +37,26 @@ Project extensions cannot approve themselves. They execute arbitrary Python and
 remain disabled without both approval and the explicit code opt-in. Trust is not
 a process/filesystem/network/tool/model sandbox.
 
+## Per-run system prompts
+
+Register `before_agent_start` to replace the system prompt for one agent run.
+Handlers receive `BeforeAgentStartEvent.system_prompt` and a typed
+`system_prompt_inputs` snapshot, then may return
+`BeforeAgentStartHookResult(system_prompt=...)`. Handlers run in registration
+order and each sees the prior replacement. The final prompt remains active for
+tool-loop requests, then the next run starts again from the session's base
+prompt. It is never added to the transcript.
+
+During this hook, both `event.system_prompt` and `context.system_prompt` expose
+the current chained value.
+
+Skill metadata includes `disable_model_invocation`, matching whether a skill is
+eligible for model invocation. Prompt inputs can contain project instructions
+and paths. Their container types hide values from `repr` and Tau diagnostics,
+but extensions should still treat
+explicitly accessed fields as sensitive. See
+`examples/extensions/prompt_customizer.py` for a complete extension.
+
 ## Development checklist
 
 1. Read this document and the closest installed example under `examples/extensions/` completely before implementing.
