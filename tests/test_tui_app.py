@@ -42,12 +42,20 @@ from tau_agent import (
     UserMessage,
 )
 from tau_agent.messages import assistant_content
-from tau_agent.provider_events import TextDeltaEvent, ThinkingDeltaEvent
+from tau_agent.provider_events import (
+    TextDeltaEvent,
+    TextEndEvent,
+    TextStartEvent,
+    ThinkingDeltaEvent,
+    ThinkingEndEvent,
+    ThinkingStartEvent,
+)
 from tau_coding.catalog_loader import user_catalog_path
 from tau_coding.commands import CommandResult
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.events import (
     AgentSettledEvent,
+    AutoRetryStartEvent,
     CodingSessionEvent,
     CompactionEndEvent,
     CompactionStartEvent,
@@ -1879,8 +1887,14 @@ async def test_streaming_transcript_applies_role_foreground() -> None:
 
         # Streamed thinking is dimmed immediately, matching the finalized block
         # instead of shifting color on the next redraw.
-        await transcript.append_thinking_delta(
-            "reasoning", theme=TAU_DARK_THEME, show_thinking=True
+        app.state.update_assistant(
+            AssistantMessage(content=[ThinkingContent(thinking="reasoning")])
+        )
+        await transcript.sync_active_assistant(
+            app.state.active_assistant,
+            changed_content_index=0,
+            theme=TAU_DARK_THEME,
+            show_thinking=True,
         )
         await pilot.pause()
         thinking = next(
@@ -1888,7 +1902,17 @@ async def test_streaming_transcript_applies_role_foreground() -> None:
         )
         assert thinking.styles.color == Color.parse(thinking_fg)
 
-        await transcript.append_assistant_delta("answer", theme=TAU_DARK_THEME)
+        app.state.update_assistant(
+            AssistantMessage(
+                content=[ThinkingContent(thinking="reasoning"), TextContent(text="answer")]
+            )
+        )
+        await transcript.sync_active_assistant(
+            app.state.active_assistant,
+            changed_content_index=1,
+            theme=TAU_DARK_THEME,
+            show_thinking=True,
+        )
         await pilot.pause()
         assistant = next(
             w for w in app.query(StreamingTranscriptMessageWidget) if w.item.role == "assistant"
@@ -2207,6 +2231,21 @@ async def test_transcript_resize_preserves_mounted_message_widgets() -> None:
         assert tuple(app.query(TranscriptMessageWidget)) == before
 
 
+async def _stream_assistant_snapshot(
+    app: TauTuiApp,
+    transcript: TranscriptView,
+    cumulative_text: str,
+) -> None:
+    """Advance one streamed answer to a cumulative snapshot through the draft API."""
+    app.state.update_assistant(AssistantMessage(content=[TextContent(text=cumulative_text)]))
+    await transcript.sync_active_assistant(
+        app.state.active_assistant,
+        changed_content_index=0,
+        theme=TAU_DARK_THEME,
+        show_thinking=app.state.show_thinking,
+    )
+
+
 @pytest.mark.anyio
 async def test_streaming_transcript_deltas_do_not_force_scroll_end_during_scrollback() -> None:
     app = TauTuiApp(
@@ -2238,8 +2277,8 @@ async def test_streaming_transcript_deltas_do_not_force_scroll_end_during_scroll
 
         transcript.scroll_end = tracking_scroll_end  # type: ignore[method-assign]
 
-        await transcript.append_assistant_delta("alpha")
-        await transcript.append_assistant_delta(" beta")
+        await _stream_assistant_snapshot(app, transcript, "alpha")
+        await _stream_assistant_snapshot(app, transcript, "alpha beta")
         await pilot.pause()
 
     assert forced_scrolls == 0
@@ -2262,7 +2301,7 @@ async def test_streaming_transcript_deltas_follow_when_at_bottom() -> None:
         await pilot.pause()
         assert transcript.is_vertical_scroll_end
 
-        await transcript.append_assistant_delta("alpha\n" * 20)
+        await _stream_assistant_snapshot(app, transcript, "alpha\n" * 20)
         for _ in range(5):
             await pilot.pause()
             if transcript.is_vertical_scroll_end:
@@ -2297,7 +2336,7 @@ async def test_streaming_transcript_deltas_preserve_user_scrollback() -> None:
         scrollback_y = transcript.scroll_y
         assert not transcript.is_vertical_scroll_end
 
-        await transcript.append_assistant_delta("alpha\n" * 20)
+        await _stream_assistant_snapshot(app, transcript, "alpha\n" * 20)
         await pilot.pause()
 
         assert transcript.scroll_y == scrollback_y
@@ -2321,7 +2360,7 @@ async def test_streaming_transcript_deltas_do_not_apply_stale_follow_scroll() ->
         await pilot.pause()
         assert transcript.is_vertical_scroll_end
 
-        await transcript.append_assistant_delta("alpha\n" * 20)
+        await _stream_assistant_snapshot(app, transcript, "alpha\n" * 20)
         transcript.scroll_to(
             y=max(0, transcript.max_scroll_y - 5),
             animate=False,
@@ -2373,7 +2412,7 @@ async def test_streaming_transcript_fractional_scrollback_after_refollow_stops_f
         scrollback_y = transcript.scroll_y
         assert not transcript.is_vertical_scroll_end
 
-        await transcript.append_assistant_delta("alpha\n" * 20)
+        await _stream_assistant_snapshot(app, transcript, "alpha\n" * 20)
         await pilot.pause()
 
         assert transcript.scroll_y == scrollback_y
@@ -2511,21 +2550,22 @@ async def test_tui_message_start_does_not_mount_empty_assistant_message() -> Non
 
 @pytest.mark.anyio
 async def test_tui_streaming_deltas_update_active_message_without_full_refresh() -> None:
-    partial = AssistantMessage()
+    first = AssistantMessage(content=[TextContent(text="alpha ")])
+    second = AssistantMessage(content=[TextContent(text="alpha beta")])
     session = FakeSession(
         events=[
             AgentStartEvent(),
-            MessageStartEvent(message=partial),
+            MessageStartEvent(message=AssistantMessage()),
             MessageUpdateEvent(
-                message=partial,
+                message=first,
                 assistant_message_event=TextDeltaEvent(
-                    content_index=0, delta="alpha ", partial=partial
+                    content_index=0, delta="alpha ", partial=first
                 ),
             ),
             MessageUpdateEvent(
-                message=partial,
+                message=second,
                 assistant_message_event=TextDeltaEvent(
-                    content_index=0, delta="beta", partial=partial
+                    content_index=0, delta="beta", partial=second
                 ),
             ),
             MessageEndEvent(message=AssistantMessage(content="alpha beta")),
@@ -3378,7 +3418,7 @@ async def test_streaming_code_block_hides_horizontal_scrollbar_until_finalized()
         await pilot.pause()
         transcript = app.query_one("#transcript", TranscriptView)
 
-        await transcript.append_assistant_delta("```python\n" + long_code_line)
+        await _stream_assistant_snapshot(app, transcript, "```python\n" + long_code_line)
         await pilot.pause()
 
         streaming_fence = app.query_one("MarkdownFence")
@@ -3386,7 +3426,14 @@ async def test_streaming_code_block_hides_horizontal_scrollbar_until_finalized()
         assert streaming_fence.styles.scrollbar_size_horizontal == 0
         assert streaming_fence.show_horizontal_scrollbar is False
 
-        await transcript.finish_assistant_message("```python\n" + long_code_line + "\n```")
+        app.state.finish_assistant(
+            AssistantMessage(content="```python\n" + long_code_line + "\n```")
+        )
+        await transcript.finish_active_assistant(
+            [app.state.items[-1]],
+            theme=TAU_DARK_THEME,
+            show_thinking=False,
+        )
         await pilot.pause()
 
         finalized_fence = app.query_one("MarkdownFence")
@@ -5075,7 +5122,10 @@ async def test_tui_mid_run_custom_follow_up_renders_card_not_raw_content() -> No
 @pytest.mark.anyio
 async def test_structured_assistant_redraw_preserves_extension_custom_card() -> None:
     raw = "<task-notification>agent-1 completed</task-notification>"
-    partial = AssistantMessage()
+    thinking = AssistantMessage(content=[ThinkingContent(thinking="plan")])
+    answer = AssistantMessage(
+        content=[ThinkingContent(thinking="plan"), TextContent(text="done")]
+    )
     final = AssistantMessage(content=[ThinkingContent(thinking="plan"), TextContent(text="done")])
     session = FakeSession(
         events=[
@@ -5087,21 +5137,21 @@ async def test_structured_assistant_redraw_preserves_extension_custom_card() -> 
                     details={"description": "Summarize codebase"},
                 )
             ),
-            MessageStartEvent(message=partial),
+            MessageStartEvent(message=AssistantMessage()),
             MessageUpdateEvent(
-                message=partial,
+                message=thinking,
                 assistant_message_event=ThinkingDeltaEvent(
                     content_index=0,
                     delta="plan",
-                    partial=partial,
+                    partial=thinking,
                 ),
             ),
             MessageUpdateEvent(
-                message=partial,
+                message=answer,
                 assistant_message_event=TextDeltaEvent(
                     content_index=1,
                     delta="done",
-                    partial=partial,
+                    partial=answer,
                 ),
             ),
             MessageEndEvent(message=final),
@@ -5125,7 +5175,6 @@ async def test_structured_assistant_redraw_preserves_extension_custom_card() -> 
 @pytest.mark.anyio
 async def test_structured_assistant_finalization_preserves_existing_widget_identity() -> None:
     raw = "<task-notification>agent-1 completed</task-notification>"
-    partial = AssistantMessage()
     session = FakeSession(
         messages=[
             CustomMessage(
@@ -5136,21 +5185,25 @@ async def test_structured_assistant_finalization_preserves_existing_widget_ident
         ],
         events=[
             AgentStartEvent(),
-            MessageStartEvent(message=partial),
+            MessageStartEvent(message=AssistantMessage()),
             MessageUpdateEvent(
-                message=partial,
+                message=AssistantMessage(content=[ThinkingContent(thinking="plan")]),
                 assistant_message_event=ThinkingDeltaEvent(
                     content_index=0,
                     delta="plan",
-                    partial=partial,
+                    partial=AssistantMessage(content=[ThinkingContent(thinking="plan")]),
                 ),
             ),
             MessageUpdateEvent(
-                message=partial,
+                message=AssistantMessage(
+                    content=[ThinkingContent(thinking="plan"), TextContent(text="done")]
+                ),
                 assistant_message_event=TextDeltaEvent(
                     content_index=1,
                     delta="done",
-                    partial=partial,
+                    partial=AssistantMessage(
+                        content=[ThinkingContent(thinking="plan"), TextContent(text="done")]
+                    ),
                 ),
             ),
             MessageEndEvent(
@@ -5178,18 +5231,21 @@ async def test_structured_assistant_finalization_preserves_existing_widget_ident
 
 @pytest.mark.anyio
 async def test_structured_assistant_ignores_empty_final_content_blocks() -> None:
-    partial = AssistantMessage()
     session = FakeSession(
         messages=[UserMessage(content="earlier")],
         events=[
             AgentStartEvent(),
-            MessageStartEvent(message=partial),
+            MessageStartEvent(message=AssistantMessage()),
             MessageUpdateEvent(
-                message=partial,
+                message=AssistantMessage(
+                    content=[ThinkingContent(thinking=""), TextContent(text="done")]
+                ),
                 assistant_message_event=TextDeltaEvent(
                     content_index=1,
                     delta="done",
-                    partial=partial,
+                    partial=AssistantMessage(
+                        content=[ThinkingContent(thinking=""), TextContent(text="done")]
+                    ),
                 ),
             ),
             MessageEndEvent(
@@ -5208,6 +5264,870 @@ async def test_structured_assistant_ignores_empty_final_content_blocks() -> None
 
         transcript = app.query_one("#transcript", TranscriptView)
         assert [line.text for line in transcript.lines] == ["earlier", "done"]
+
+
+def _streamed_thinking_turn_events() -> list[CodingSessionEvent]:
+    """Return a realistic stream whose update messages are cumulative snapshots."""
+    start = AssistantMessage()
+    thinking_started = AssistantMessage(
+        content=[ThinkingContent(thinking="")],
+    )
+    first_thinking = AssistantMessage(
+        content=[ThinkingContent(thinking="plan ")],
+    )
+    complete_thinking = AssistantMessage(
+        content=[ThinkingContent(thinking="plan the review")],
+    )
+    text_started = AssistantMessage(
+        content=[
+            ThinkingContent(thinking="plan the review"),
+            TextContent(text=""),
+        ],
+    )
+    complete_message = AssistantMessage(
+        content=[
+            ThinkingContent(thinking="plan the review"),
+            TextContent(text="verdict"),
+        ],
+    )
+    return [
+        AgentStartEvent(),
+        MessageStartEvent(message=start),
+        MessageUpdateEvent(
+            message=thinking_started,
+            assistant_message_event=ThinkingStartEvent(
+                content_index=0,
+                partial=thinking_started,
+            ),
+        ),
+        MessageUpdateEvent(
+            message=first_thinking,
+            assistant_message_event=ThinkingDeltaEvent(
+                content_index=0,
+                delta="plan ",
+                partial=first_thinking,
+            ),
+        ),
+        MessageUpdateEvent(
+            message=complete_thinking,
+            assistant_message_event=ThinkingDeltaEvent(
+                content_index=0,
+                delta="the review",
+                partial=complete_thinking,
+            ),
+        ),
+        MessageUpdateEvent(
+            message=complete_thinking,
+            assistant_message_event=ThinkingEndEvent(
+                content_index=0,
+                content="plan the review",
+                partial=complete_thinking,
+            ),
+        ),
+        MessageUpdateEvent(
+            message=text_started,
+            assistant_message_event=TextStartEvent(
+                content_index=1,
+                partial=text_started,
+            ),
+        ),
+        MessageUpdateEvent(
+            message=complete_message,
+            assistant_message_event=TextDeltaEvent(
+                content_index=1,
+                delta="verdict",
+                partial=complete_message,
+            ),
+        ),
+        MessageUpdateEvent(
+            message=complete_message,
+            assistant_message_event=TextEndEvent(
+                content_index=1,
+                content="verdict",
+                partial=complete_message,
+            ),
+        ),
+        MessageEndEvent(message=complete_message),
+        AgentEndEvent(),
+    ]
+
+
+async def _apply_tui_stream_event(app: TauTuiApp, event: CodingSessionEvent) -> None:
+    """Apply one event through the same state-then-view order used by the app."""
+    app.adapter.apply(event)
+    await app._apply_streaming_transcript_event(event)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("show_thinking", [False, True])
+async def test_midstream_redraw_keeps_one_complete_thinking_block(show_thinking: bool) -> None:
+    """A redraw between deltas must not orphan or duplicate the live thinking block."""
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.show_thinking = show_thinking
+        redrawn = False
+        for event in _streamed_thinking_turn_events():
+            nested = (
+                event.assistant_message_event if isinstance(event, MessageUpdateEvent) else None
+            )
+            if isinstance(nested, ThinkingDeltaEvent) and nested.delta == "the review":
+                app._refresh()
+                await pilot.pause()
+                redrawn = True
+            await _apply_tui_stream_event(app, event)
+        assert redrawn
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        thinking = (
+            "plan the review"
+            if show_thinking
+            else "Thinking… Press Ctrl+T to show thinking tokens."
+        )
+        assert [line.text for line in transcript.lines] == ["review", thinking, "verdict"]
+
+
+@pytest.mark.anyio
+async def test_midstream_thinking_toggle_keeps_one_complete_thinking_block() -> None:
+    """Ctrl+T between deltas must rebuild, rather than split, the active block."""
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        toggled = False
+        for event in _streamed_thinking_turn_events():
+            nested = (
+                event.assistant_message_event if isinstance(event, MessageUpdateEvent) else None
+            )
+            if isinstance(nested, ThinkingDeltaEvent) and nested.delta == "the review":
+                await pilot.press("ctrl+t")
+                await pilot.pause()
+                toggled = True
+            await _apply_tui_stream_event(app, event)
+        assert toggled
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert [line.text for line in transcript.lines] == [
+            "review",
+            "plan the review",
+            "verdict",
+        ]
+
+
+@pytest.mark.anyio
+async def test_midstream_redraw_after_text_started_keeps_block_order() -> None:
+    """Rebuilding a live thinking-and-text turn must keep one ordered projection."""
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.show_thinking = True
+        redrawn = False
+        for event in _streamed_thinking_turn_events():
+            await _apply_tui_stream_event(app, event)
+            nested = (
+                event.assistant_message_event if isinstance(event, MessageUpdateEvent) else None
+            )
+            if isinstance(nested, TextDeltaEvent):
+                app._refresh()
+                await pilot.pause()
+                redrawn = True
+        assert redrawn
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert [line.text for line in transcript.lines] == [
+            "review",
+            "plan the review",
+            "verdict",
+        ]
+
+
+def _text_snapshot_update(message: AssistantMessage, *, content_index: int) -> MessageUpdateEvent:
+    """Wrap a cumulative snapshot in a text-delta update event."""
+    return MessageUpdateEvent(
+        message=message,
+        assistant_message_event=TextDeltaEvent(
+            content_index=content_index,
+            delta="",
+            partial=message,
+        ),
+    )
+
+
+def _thinking_snapshot_update(
+    message: AssistantMessage,
+    *,
+    content_index: int,
+) -> MessageUpdateEvent:
+    """Wrap a cumulative snapshot in a thinking-delta update event."""
+    return MessageUpdateEvent(
+        message=message,
+        assistant_message_event=ThinkingDeltaEvent(
+            content_index=content_index,
+            delta="",
+            partial=message,
+        ),
+    )
+
+
+@pytest.mark.anyio
+async def test_midstream_redraw_between_text_deltas_keeps_one_answer_row() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        first = AssistantMessage(content=[TextContent(text="ver")])
+        await _apply_tui_stream_event(app, _text_snapshot_update(first, content_index=0))
+        app._refresh()
+        await pilot.pause()
+        second = AssistantMessage(content=[TextContent(text="verdict")])
+        await _apply_tui_stream_event(app, _text_snapshot_update(second, content_index=0))
+        await _apply_tui_stream_event(
+            app, MessageEndEvent(message=AssistantMessage(content="verdict"))
+        )
+        await _apply_tui_stream_event(app, AgentEndEvent())
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert [line.text for line in transcript.lines] == ["review", "verdict"]
+
+
+@pytest.mark.anyio
+async def test_midstream_thinking_toggle_after_text_keeps_thinking_before_answer() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        thinking = AssistantMessage(content=[ThinkingContent(thinking="plan the review")])
+        await _apply_tui_stream_event(app, _thinking_snapshot_update(thinking, content_index=0))
+        started = AssistantMessage(
+            content=[ThinkingContent(thinking="plan the review"), TextContent(text="ver")]
+        )
+        await _apply_tui_stream_event(app, _text_snapshot_update(started, content_index=1))
+
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+
+        complete = AssistantMessage(
+            content=[ThinkingContent(thinking="plan the review"), TextContent(text="verdict")]
+        )
+        await _apply_tui_stream_event(app, _text_snapshot_update(complete, content_index=1))
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert [line.text for line in transcript.lines] == [
+            "review",
+            "plan the review",
+            "verdict",
+        ]
+
+        await _apply_tui_stream_event(app, MessageEndEvent(message=complete))
+        await _apply_tui_stream_event(app, AgentEndEvent())
+        await pilot.pause()
+        assert [line.text for line in transcript.lines] == [
+            "review",
+            "plan the review",
+            "verdict",
+        ]
+
+
+@pytest.mark.anyio
+async def test_repeated_thinking_toggles_midstream_keep_single_projection() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        snapshot = AssistantMessage(
+            content=[ThinkingContent(thinking="plan the review"), TextContent(text="verdict")]
+        )
+        await _apply_tui_stream_event(app, _text_snapshot_update(snapshot, content_index=1))
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        for _ in range(2):
+            await pilot.press("ctrl+t")
+            await pilot.pause()
+        assert [line.text for line in transcript.lines] == [
+            "review",
+            "Thinking… Press Ctrl+T to show thinking tokens.",
+            "verdict",
+        ]
+
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+        assert [line.text for line in transcript.lines] == [
+            "review",
+            "plan the review",
+            "verdict",
+        ]
+
+
+@pytest.mark.anyio
+async def test_slash_command_refresh_during_stream_keeps_single_projection() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.show_thinking = True
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        snapshot = AssistantMessage(
+            content=[ThinkingContent(thinking="plan the review"), TextContent(text="ver")]
+        )
+        await _apply_tui_stream_event(app, _text_snapshot_update(snapshot, content_index=1))
+
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.text = "/session"
+        await app._submit_prompt_from_editor(streaming_behavior="steer")
+        await pilot.pause()
+
+        complete = AssistantMessage(
+            content=[ThinkingContent(thinking="plan the review"), TextContent(text="verdict")]
+        )
+        await _apply_tui_stream_event(app, _text_snapshot_update(complete, content_index=1))
+        await _apply_tui_stream_event(app, MessageEndEvent(message=complete))
+        await _apply_tui_stream_event(app, AgentEndEvent())
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        lines = [line.text for line in transcript.lines]
+        assert lines.count("plan the review") == 1
+        assert lines.count("verdict") == 1
+
+
+@pytest.mark.anyio
+async def test_theme_change_and_resize_during_stream_keep_single_projection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.show_thinking = True
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        snapshot = AssistantMessage(content=[ThinkingContent(thinking="plan the review")])
+        await _apply_tui_stream_event(app, _thinking_snapshot_update(snapshot, content_index=0))
+
+        app._set_tui_theme("tau-light")
+        await pilot.pause()
+        await pilot.resize_terminal(90, 24)
+        await pilot.pause()
+
+        complete = AssistantMessage(
+            content=[ThinkingContent(thinking="plan the review"), TextContent(text="verdict")]
+        )
+        await _apply_tui_stream_event(app, _text_snapshot_update(complete, content_index=1))
+        await _apply_tui_stream_event(app, MessageEndEvent(message=complete))
+        await _apply_tui_stream_event(app, AgentEndEvent())
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert [line.text for line in transcript.lines] == [
+            "review",
+            "plan the review",
+            "verdict",
+        ]
+
+
+@pytest.mark.anyio
+async def test_interleaved_thinking_text_stream_matches_final_canonical_order() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.show_thinking = True
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        stages = [
+            AssistantMessage(content=[ThinkingContent(thinking="plan")]),
+            AssistantMessage(
+                content=[ThinkingContent(thinking="plan"), TextContent(text="first")]
+            ),
+            AssistantMessage(
+                content=[
+                    ThinkingContent(thinking="plan"),
+                    TextContent(text="first"),
+                    ThinkingContent(thinking="more"),
+                ]
+            ),
+            AssistantMessage(
+                content=[
+                    ThinkingContent(thinking="plan"),
+                    TextContent(text="first"),
+                    ThinkingContent(thinking="more"),
+                    TextContent(text="second"),
+                ]
+            ),
+        ]
+        for index, stage in enumerate(stages):
+            update = (
+                _thinking_snapshot_update(stage, content_index=index)
+                if index % 2 == 0
+                else _text_snapshot_update(stage, content_index=index)
+            )
+            await _apply_tui_stream_event(app, update)
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        live_lines = [line.text for line in transcript.lines]
+        assert live_lines == ["review", "plan", "first", "more", "second"]
+
+        await _apply_tui_stream_event(app, MessageEndEvent(message=stages[-1]))
+        await _apply_tui_stream_event(app, AgentEndEvent())
+        await pilot.pause()
+        assert [line.text for line in transcript.lines] == live_lines
+
+
+@pytest.mark.anyio
+async def test_adjacent_hidden_thinking_blocks_share_one_placeholder() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        snapshot = AssistantMessage(
+            content=[
+                ThinkingContent(thinking="first plan"),
+                ThinkingContent(thinking="second plan"),
+                TextContent(text="answer"),
+            ]
+        )
+        await _apply_tui_stream_event(app, _text_snapshot_update(snapshot, content_index=2))
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        placeholder = "Thinking… Press Ctrl+T to show thinking tokens."
+        assert [line.text for line in transcript.lines] == ["review", placeholder, "answer"]
+
+        await _apply_tui_stream_event(app, MessageEndEvent(message=snapshot))
+        await _apply_tui_stream_event(app, AgentEndEvent())
+        await pilot.pause()
+        assert [line.text for line in transcript.lines] == ["review", placeholder, "answer"]
+
+
+@pytest.mark.anyio
+async def test_final_message_correction_replaces_partial_content() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        draft = AssistantMessage(content=[TextContent(text="draft that will change")])
+        await _apply_tui_stream_event(app, _text_snapshot_update(draft, content_index=0))
+        await _apply_tui_stream_event(
+            app, MessageEndEvent(message=AssistantMessage(content="corrected"))
+        )
+        await _apply_tui_stream_event(app, AgentEndEvent())
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert [line.text for line in transcript.lines] == ["review", "corrected"]
+
+
+@pytest.mark.anyio
+async def test_empty_final_content_removes_streamed_tail() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        draft = AssistantMessage(content=[TextContent(text="draft")])
+        await _apply_tui_stream_event(app, _text_snapshot_update(draft, content_index=0))
+        await _apply_tui_stream_event(app, MessageEndEvent(message=AssistantMessage(content=[])))
+        await _apply_tui_stream_event(app, AgentEndEvent())
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert [line.text for line in transcript.lines] == ["review"]
+        assert not list(app.query(StreamingTranscriptMessageWidget))
+
+
+@pytest.mark.anyio
+async def test_aborted_stream_projects_partial_turn_and_single_error() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.show_thinking = True
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        snapshot = AssistantMessage(
+            content=[ThinkingContent(thinking="plan"), TextContent(text="partial")]
+        )
+        await _apply_tui_stream_event(app, _text_snapshot_update(snapshot, content_index=1))
+        aborted = AssistantMessage(
+            content=[ThinkingContent(thinking="plan"), TextContent(text="partial")],
+            stop_reason="aborted",
+            error_message="Operation aborted",
+        )
+        await _apply_tui_stream_event(app, MessageEndEvent(message=aborted))
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        lines = [line.text for line in transcript.lines]
+        assert lines.count("plan") == 1
+        assert lines.count("partial") == 1
+        assert sum(1 for line in lines if line.startswith("Error:")) == 1
+
+
+@pytest.mark.anyio
+async def test_local_cancellation_retains_whole_partial_turn() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.show_thinking = True
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        snapshot = AssistantMessage(
+            content=[ThinkingContent(thinking="plan"), TextContent(text="partial")]
+        )
+        await _apply_tui_stream_event(app, _text_snapshot_update(snapshot, content_index=1))
+
+        app._cancel_active_prompt(notify=False)
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert app.state.active_assistant is None
+        assert [line.text for line in transcript.lines] == ["review", "plan", "partial"]
+        assert not list(app.query(StreamingTranscriptMessageWidget))
+
+
+@pytest.mark.anyio
+async def test_retry_status_row_mounts_before_active_tail() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        snapshot = AssistantMessage(content=[TextContent(text="partial")])
+        await _apply_tui_stream_event(app, _text_snapshot_update(snapshot, content_index=0))
+        await _apply_tui_stream_event(
+            app,
+            AutoRetryStartEvent(
+                attempt=1,
+                max_attempts=3,
+                delay_ms=0,
+                error_message="Retrying provider request.",
+            ),
+        )
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert [line.text for line in transcript.lines] == [
+            "review",
+            "… Retrying provider request.",
+            "partial",
+        ]
+
+
+@pytest.mark.anyio
+async def test_replacement_stream_preserves_previous_partial_turn() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.show_thinking = True
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        partial = AssistantMessage(
+            content=[ThinkingContent(thinking="plan"), TextContent(text="partial")]
+        )
+        await _apply_tui_stream_event(app, _text_snapshot_update(partial, content_index=1))
+
+        # A replacement start without a terminal event for the previous stream.
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        await pilot.pause()
+        replacement = AssistantMessage(content=[TextContent(text="second answer")])
+        await _apply_tui_stream_event(app, _text_snapshot_update(replacement, content_index=0))
+        await _apply_tui_stream_event(app, MessageEndEvent(message=replacement))
+        await _apply_tui_stream_event(app, AgentEndEvent())
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert [line.text for line in transcript.lines] == [
+            "review",
+            "plan",
+            "partial",
+            "second answer",
+        ]
+
+
+@pytest.mark.anyio
+async def test_scrolled_back_window_does_not_mount_live_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tau_coding.tui import widgets as tui_widgets
+
+    monkeypatch.setattr(tui_widgets, "TRANSCRIPT_WINDOW_ITEMS", 6)
+    monkeypatch.setattr(tui_widgets, "TRANSCRIPT_WINDOW_PAGE_ITEMS", 2)
+    app = TauTuiApp(
+        FakeSession(messages=[UserMessage(content=f"message {index}") for index in range(12)])
+    )
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript", TranscriptView)
+        transcript.scroll_to(y=0, animate=False, immediate=True)
+        await pilot.pause()
+        assert transcript._window_end < len(app.state.items)
+
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        snapshot = AssistantMessage(content=[TextContent(text="streamed answer")])
+        await _apply_tui_stream_event(app, _text_snapshot_update(snapshot, content_index=0))
+        await pilot.pause()
+
+        assert not list(app.query(StreamingTranscriptMessageWidget))
+        assert "streamed answer" not in [line.text for line in transcript.lines]
+
+
+@pytest.mark.anyio
+async def test_redraw_during_suspended_markdown_write_keeps_single_copy() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+    suspended = asyncio.Event()
+    release = asyncio.Event()
+    original_write = MarkdownStream.write
+
+    async def gated_write(self: MarkdownStream, fragment: str) -> None:
+        suspended.set()
+        await release.wait()
+        await original_write(self, fragment)
+
+    MarkdownStream.write = gated_write  # type: ignore[method-assign]
+    try:
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await _apply_tui_stream_event(app, AgentStartEvent())
+            await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+            transcript = app.query_one("#transcript", TranscriptView)
+            snapshot = AssistantMessage(content=[TextContent(text="alpha")])
+            app.adapter.apply(_text_snapshot_update(snapshot, content_index=0))
+            pending = asyncio.create_task(
+                app._apply_streaming_transcript_event(
+                    _text_snapshot_update(snapshot, content_index=0)
+                )
+            )
+            await suspended.wait()
+
+            app._refresh()
+            await pilot.pause()
+
+            release.set()
+            await pending
+            await pilot.pause()
+
+            widgets = [
+                widget
+                for widget in app.query(StreamingTranscriptMessageWidget)
+                if widget.parent is transcript
+            ]
+            assert len(widgets) == 1
+            assert widgets[0].selection_text == "alpha"
+            assert [line.text for line in transcript.lines] == ["review", "alpha"]
+            assert transcript._active_render is not None
+    finally:
+        MarkdownStream.write = original_write  # type: ignore[method-assign]
+
+
+@pytest.mark.anyio
+async def test_redraw_during_suspended_finalization_keeps_single_copy() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+    suspended = asyncio.Event()
+    release = asyncio.Event()
+    original_stop = MarkdownStream.stop
+
+    async def gated_stop(self: MarkdownStream) -> None:
+        suspended.set()
+        await release.wait()
+        await original_stop(self)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        snapshot = AssistantMessage(content=[TextContent(text="alpha")])
+        await _apply_tui_stream_event(app, _text_snapshot_update(snapshot, content_index=0))
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        end_event = MessageEndEvent(message=AssistantMessage(content="alpha"))
+        app.adapter.apply(end_event)
+        MarkdownStream.stop = gated_stop  # type: ignore[method-assign]
+        try:
+            pending = asyncio.create_task(app._apply_streaming_transcript_event(end_event))
+            await suspended.wait()
+
+            app._refresh()
+            await pilot.pause()
+
+            release.set()
+            await pending
+        finally:
+            MarkdownStream.stop = original_stop  # type: ignore[method-assign]
+        await _apply_tui_stream_event(app, AgentEndEvent())
+        await pilot.pause()
+
+        assert [line.text for line in transcript.lines] == ["review", "alpha"]
+        canonical = app.state.items[-1]
+        mounted = transcript._item_widgets.get(id(canonical))
+        assert mounted is not None
+        assert mounted.parent is transcript
+        assert transcript._active_render is None
+
+
+@pytest.mark.anyio
+async def test_stale_write_from_replaced_stream_cannot_resurrect_output() -> None:
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+    suspended = asyncio.Event()
+    release = asyncio.Event()
+    original_write = MarkdownStream.write
+    gate_first_write = True
+
+    async def gated_write(self: MarkdownStream, fragment: str) -> None:
+        nonlocal gate_first_write
+        if gate_first_write:
+            gate_first_write = False
+            suspended.set()
+            await release.wait()
+        await original_write(self, fragment)
+
+    MarkdownStream.write = gated_write  # type: ignore[method-assign]
+    try:
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await _apply_tui_stream_event(app, AgentStartEvent())
+            await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+            old_snapshot = AssistantMessage(content=[TextContent(text="old text")])
+            app.adapter.apply(_text_snapshot_update(old_snapshot, content_index=0))
+            pending = asyncio.create_task(
+                app._apply_streaming_transcript_event(
+                    _text_snapshot_update(old_snapshot, content_index=0)
+                )
+            )
+            await suspended.wait()
+
+            # Replacement stream begins while the old write is suspended.
+            await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+            await pilot.pause()
+            replacement = AssistantMessage(content=[TextContent(text="new text")])
+            await _apply_tui_stream_event(
+                app, _text_snapshot_update(replacement, content_index=0)
+            )
+
+            release.set()
+            await pending
+            await pilot.pause()
+
+            transcript = app.query_one("#transcript", TranscriptView)
+            lines = [line.text for line in transcript.lines]
+            assert lines.count("old text") == 1
+            assert lines.count("new text") == 1
+            assert lines == ["review", "old text", "new text"]
+    finally:
+        MarkdownStream.write = original_write  # type: ignore[method-assign]
+
+
+@pytest.mark.anyio
+async def test_thinking_toggle_during_suspended_finalization_keeps_single_copy() -> None:
+    """Ctrl+T processed while finalization is suspended must not duplicate rows."""
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+    suspended = asyncio.Event()
+    release = asyncio.Event()
+    original_stop = MarkdownStream.stop
+
+    async def gated_stop(self: MarkdownStream) -> None:
+        suspended.set()
+        await release.wait()
+        await original_stop(self)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.show_thinking = True
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        thinking = AssistantMessage(content=[ThinkingContent(thinking="plan")])
+        await _apply_tui_stream_event(app, _thinking_snapshot_update(thinking, content_index=0))
+        snapshot = AssistantMessage(
+            content=[ThinkingContent(thinking="plan"), TextContent(text="verdict")]
+        )
+        await _apply_tui_stream_event(app, _text_snapshot_update(snapshot, content_index=1))
+        await pilot.pause()
+
+        end_event = MessageEndEvent(message=snapshot)
+        app.adapter.apply(end_event)
+        MarkdownStream.stop = gated_stop  # type: ignore[method-assign]
+        try:
+            pending = asyncio.create_task(app._apply_streaming_transcript_event(end_event))
+            await suspended.wait()
+
+            app.action_toggle_thinking()
+            await pilot.pause()
+
+            release.set()
+            await pending
+        finally:
+            MarkdownStream.stop = original_stop  # type: ignore[method-assign]
+        await _apply_tui_stream_event(app, AgentEndEvent())
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        lines = [line.text for line in transcript.lines]
+        placeholder = "Thinking… Press Ctrl+T to show thinking tokens."
+        assert lines.count("verdict") == 1
+        assert sum(1 for line in lines if line in {"plan", placeholder}) == 1
+
+
+@pytest.mark.anyio
+async def test_interrupted_stream_rows_survive_next_turn_finalization() -> None:
+    """A cancelled stream's projected rows must survive the next turn's completion."""
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.show_thinking = True
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        earlier = AssistantMessage(content=[ThinkingContent(thinking="earlier thoughts")])
+        await _apply_tui_stream_event(app, _thinking_snapshot_update(earlier, content_index=0))
+
+        app._cancel_active_prompt(notify=False)
+        await pilot.pause()
+
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        later = AssistantMessage(content=[ThinkingContent(thinking="later thoughts")])
+        await _apply_tui_stream_event(app, _thinking_snapshot_update(later, content_index=0))
+        final = AssistantMessage(
+            content=[ThinkingContent(thinking="later thoughts"), TextContent(text="verdict")]
+        )
+        await _apply_tui_stream_event(app, _text_snapshot_update(final, content_index=1))
+        await _apply_tui_stream_event(app, MessageEndEvent(message=final))
+        await _apply_tui_stream_event(app, AgentEndEvent())
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert [line.text for line in transcript.lines] == [
+            "review",
+            "earlier thoughts",
+            "later thoughts",
+            "verdict",
+        ]
 
 
 @pytest.mark.anyio
@@ -7912,7 +8832,7 @@ async def test_tui_app_toggles_thinking_tokens_from_keybinding_while_running() -
 
     async with app.run_test() as pilot:
         app.state.running = True
-        app.state.add_thinking_delta("internal plan")
+        app.state.add_item("thinking", "internal plan")
         app.state.add_item("assistant", "final answer")
         app._refresh()
         await pilot.pause()
@@ -7940,24 +8860,30 @@ async def test_tui_app_toggles_thinking_tokens_from_keybinding_while_running() -
 
 @pytest.mark.anyio
 async def test_tui_app_hidden_thinking_placeholder_stays_before_streamed_answer() -> None:
-    partial = AssistantMessage()
+    thinking = AssistantMessage(content=[ThinkingContent(thinking="private plan")])
+    answer = AssistantMessage(
+        content=[ThinkingContent(thinking="private plan"), TextContent(text="public answer")]
+    )
+    final = AssistantMessage(
+        content=[ThinkingContent(thinking="private plan"), TextContent(text="public answer")]
+    )
     session = FakeSession(
         events=[
             AgentStartEvent(),
+            MessageStartEvent(message=AssistantMessage()),
             MessageUpdateEvent(
-                message=partial,
+                message=thinking,
                 assistant_message_event=ThinkingDeltaEvent(
-                    content_index=0, delta="private plan", partial=partial
+                    content_index=0, delta="private plan", partial=thinking
                 ),
             ),
-            MessageStartEvent(message=partial),
             MessageUpdateEvent(
-                message=partial,
+                message=answer,
                 assistant_message_event=TextDeltaEvent(
-                    content_index=0, delta="public answer", partial=partial
+                    content_index=1, delta="public answer", partial=answer
                 ),
             ),
-            MessageEndEvent(message=AssistantMessage(content="public answer")),
+            MessageEndEvent(message=final),
             AgentEndEvent(),
         ]
     )
@@ -8030,10 +8956,10 @@ async def test_tui_app_thinking_toggle_preserves_unrelated_items() -> None:
 
     async with app.run_test() as pilot:
         app.state.add_item("user", "first prompt")
-        app.state.add_thinking_delta("plan one")
+        app.state.add_item("thinking", "plan one")
         app.state.add_item("assistant", "first answer")
         app.state.add_item("user", "second prompt")
-        app.state.add_thinking_delta("plan two")
+        app.state.add_item("thinking", "plan two")
         app.state.add_item("assistant", "second answer")
         app._refresh()
         await pilot.pause()

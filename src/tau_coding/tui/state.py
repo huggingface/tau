@@ -78,11 +78,25 @@ class ChatItem:
 
 
 @dataclass(slots=True)
+class ActiveAssistantDraft:
+    """The single in-flight assistant turn, mirrored from cumulative stream events.
+
+    The draft is the only provisional source of truth for streamed thinking and
+    text. ``message`` always holds the latest cumulative snapshot from the
+    provider; ``stream_id`` lets views reject async work started for an older
+    assistant stream.
+    """
+
+    stream_id: int
+    message: AssistantMessage
+
+
+@dataclass(slots=True)
 class TuiState:
     """Mutable display state for the interactive TUI."""
 
     items: list[ChatItem] = field(default_factory=list)
-    assistant_buffer: str = ""
+    active_assistant: ActiveAssistantDraft | None = None
     running: bool = False
     error: str | None = None
     show_tool_results: bool = False
@@ -112,6 +126,50 @@ class TuiState:
         compare=False,
     )
     _next_tool_batch_id: int = field(default=0, init=False, repr=False, compare=False)
+    _next_assistant_stream_id: int = field(default=0, init=False, repr=False, compare=False)
+
+    def begin_assistant(self, message: AssistantMessage) -> ActiveAssistantDraft:
+        """Start a new in-flight assistant draft from the initial cumulative snapshot.
+
+        Any unfinished previous draft is interrupted as a whole first so a
+        replacement stream can never silently drop or merge partial output.
+        """
+        self.interrupt_assistant()
+        self._next_assistant_stream_id += 1
+        self.active_assistant = ActiveAssistantDraft(
+            stream_id=self._next_assistant_stream_id,
+            message=message,
+        )
+        return self.active_assistant
+
+    def update_assistant(self, message: AssistantMessage) -> ActiveAssistantDraft:
+        """Adopt the latest cumulative assistant snapshot as the draft's content."""
+        if self.active_assistant is None:
+            return self.begin_assistant(message)
+        self.active_assistant.message = message
+        return self.active_assistant
+
+    def finish_assistant(self, message: AssistantMessage) -> None:
+        """Atomically clear the draft and project the canonical final blocks once."""
+        self.active_assistant = None
+        self.add_assistant_message(message, include_tool_calls=False)
+
+    def discard_assistant(self) -> None:
+        """Clear the draft without projecting it (its terminal message projects instead)."""
+        self.active_assistant = None
+
+    def interrupt_assistant(self) -> None:
+        """Project the entire partial draft into durable items, then clear it.
+
+        Interruption applies one policy to the whole turn: partial thinking and
+        text are both retained, matching the aborted message the session file
+        records. A missing draft is a no-op.
+        """
+        draft = self.active_assistant
+        if draft is None:
+            return
+        self.active_assistant = None
+        self.add_assistant_message(draft.message, include_tool_calls=False)
 
     def add_item(
         self,
@@ -519,13 +577,6 @@ class TuiState:
         if skill_invocation.additional_instructions:
             self.add_item("user", skill_invocation.additional_instructions)
 
-    def add_thinking_delta(self, delta: str) -> None:
-        """Append a thinking/reasoning fragment to the current thinking block."""
-        if self.items and self.items[-1].role == "thinking":
-            self.items[-1].text += delta
-            return
-        self.add_item("thinking", delta)
-
     def find_tool_item(self, tool_call_id: str) -> ChatItem | None:
         """Return the transcript item for a tool call id in O(1)."""
         return self._tool_items_by_call_id.get(tool_call_id)
@@ -618,7 +669,7 @@ class TuiState:
         self._tool_items_by_call_id.clear()
         self._grouped_calls_by_call_id.clear()
         self._batched_items_by_call_id.clear()
-        self.assistant_buffer = ""
+        self.active_assistant = None
         self.error = None
 
     def set_skills(self, skills: Iterable[Skill]) -> None:

@@ -11,7 +11,6 @@ from tau_agent.events import (
     ToolExecutionUpdateEvent,
 )
 from tau_agent.messages import AssistantMessage, CustomMessage, ToolCall, UserMessage
-from tau_ai.events import TextDeltaEvent, ThinkingDeltaEvent
 from tau_coding.events import (
     AutoRetryStartEvent,
     CodingSessionEvent,
@@ -27,7 +26,6 @@ from tau_coding.tui.state import TuiState, _is_file_mutation_only_message
 class TuiEventAdapter:
     def __init__(self, state: TuiState) -> None:
         self.state = state
-        self._assistant_start_item_index: int | None = None
         self._pending_overflow_error: AssistantMessage | None = None
         self._tool_batch_ids: dict[str, int] = {}
         self._file_mutation_continuation_calls: set[str] = set()
@@ -58,15 +56,13 @@ class TuiEventAdapter:
             return
         if isinstance(event, MessageStartEvent):
             if isinstance(event.message, AssistantMessage):
-                self.state.assistant_buffer = event.message.text
-                self._assistant_start_item_index = len(self.state.items)
+                self.state.begin_assistant(event.message)
             return
         if isinstance(event, MessageUpdateEvent):
-            nested = event.assistant_message_event
-            if isinstance(nested, TextDeltaEvent):
-                self.state.assistant_buffer += nested.delta
-            elif isinstance(nested, ThinkingDeltaEvent):
-                self.state.add_thinking_delta(nested.delta)
+            # The cumulative snapshot is semantic truth; deltas are only a
+            # rendering optimization applied by the view layer.
+            if isinstance(event.message, AssistantMessage):
+                self.state.update_assistant(event.message)
             return
         if isinstance(event, MessageEndEvent):
             message = event.message
@@ -79,12 +75,11 @@ class TuiEventAdapter:
                     details=message.details if isinstance(message.details, dict) else None,
                 )
             elif isinstance(message, AssistantMessage):
-                # Replace provisional delta rows with the final canonical
-                # message so persisted block boundaries and ordering win.
-                start = self._assistant_start_item_index
-                if start is not None:
-                    del self.state.items[start:]
+                # The draft is the only provisional representation; the state
+                # lifecycle methods below clear it synchronously so state never
+                # exposes both the draft and the canonical projection at once.
                 if message.stop_reason in {"error", "aborted"}:
+                    self.state.discard_assistant()
                     if is_context_overflow_error(message):
                         # Keep the provider failure provisional while session-level
                         # overflow compaction and retry are still in progress.
@@ -97,7 +92,7 @@ class TuiEventAdapter:
                         self.state.running = False
                 else:
                     self._pending_overflow_error = None
-                    self.state.add_assistant_message(message, include_tool_calls=False)
+                    self.state.finish_assistant(message)
                     previous_was_tool = False
                     batch_id: int | None = None
                     allows_mutation_continuation = _is_file_mutation_only_message(message)
@@ -112,8 +107,6 @@ class TuiEventAdapter:
                             previous_was_tool = True
                         else:
                             previous_was_tool = False
-                self.state.assistant_buffer = ""
-                self._assistant_start_item_index = None
             return
         if isinstance(event, ToolExecutionStartEvent):
             self._flush()
@@ -149,6 +142,6 @@ class TuiEventAdapter:
             self.state.add_item("status", f"… {event.error_message}")
 
     def _flush(self) -> None:
-        if self.state.assistant_buffer:
-            self.state.add_item("assistant", self.state.assistant_buffer)
-            self.state.assistant_buffer = ""
+        # A missing terminal event must not leave an active draft behind; the
+        # state lifecycle method retains the whole partial turn consistently.
+        self.state.interrupt_assistant()
