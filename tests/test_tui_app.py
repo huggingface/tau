@@ -6044,6 +6044,93 @@ async def test_stale_write_from_replaced_stream_cannot_resurrect_output() -> Non
 
 
 @pytest.mark.anyio
+async def test_thinking_toggle_during_suspended_finalization_keeps_single_copy() -> None:
+    """Ctrl+T processed while finalization is suspended must not duplicate rows."""
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+    suspended = asyncio.Event()
+    release = asyncio.Event()
+    original_stop = MarkdownStream.stop
+
+    async def gated_stop(self: MarkdownStream) -> None:
+        suspended.set()
+        await release.wait()
+        await original_stop(self)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.show_thinking = True
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        thinking = AssistantMessage(content=[ThinkingContent(thinking="plan")])
+        await _apply_tui_stream_event(app, _thinking_snapshot_update(thinking, content_index=0))
+        snapshot = AssistantMessage(
+            content=[ThinkingContent(thinking="plan"), TextContent(text="verdict")]
+        )
+        await _apply_tui_stream_event(app, _text_snapshot_update(snapshot, content_index=1))
+        await pilot.pause()
+
+        end_event = MessageEndEvent(message=snapshot)
+        app.adapter.apply(end_event)
+        MarkdownStream.stop = gated_stop  # type: ignore[method-assign]
+        try:
+            pending = asyncio.create_task(app._apply_streaming_transcript_event(end_event))
+            await suspended.wait()
+
+            app.action_toggle_thinking()
+            await pilot.pause()
+
+            release.set()
+            await pending
+        finally:
+            MarkdownStream.stop = original_stop  # type: ignore[method-assign]
+        await _apply_tui_stream_event(app, AgentEndEvent())
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        lines = [line.text for line in transcript.lines]
+        placeholder = "Thinking… Press Ctrl+T to show thinking tokens."
+        assert lines.count("verdict") == 1
+        assert sum(1 for line in lines if line in {"plan", placeholder}) == 1
+
+
+@pytest.mark.anyio
+async def test_interrupted_stream_rows_survive_next_turn_finalization() -> None:
+    """A cancelled stream's projected rows must survive the next turn's completion."""
+    app = TauTuiApp(FakeSession(messages=[UserMessage(content="review")]))
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.show_thinking = True
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        earlier = AssistantMessage(content=[ThinkingContent(thinking="earlier thoughts")])
+        await _apply_tui_stream_event(app, _thinking_snapshot_update(earlier, content_index=0))
+
+        app._cancel_active_prompt(notify=False)
+        await pilot.pause()
+
+        await _apply_tui_stream_event(app, AgentStartEvent())
+        await _apply_tui_stream_event(app, MessageStartEvent(message=AssistantMessage()))
+        later = AssistantMessage(content=[ThinkingContent(thinking="later thoughts")])
+        await _apply_tui_stream_event(app, _thinking_snapshot_update(later, content_index=0))
+        final = AssistantMessage(
+            content=[ThinkingContent(thinking="later thoughts"), TextContent(text="verdict")]
+        )
+        await _apply_tui_stream_event(app, _text_snapshot_update(final, content_index=1))
+        await _apply_tui_stream_event(app, MessageEndEvent(message=final))
+        await _apply_tui_stream_event(app, AgentEndEvent())
+        await pilot.pause()
+
+        transcript = app.query_one("#transcript", TranscriptView)
+        assert [line.text for line in transcript.lines] == [
+            "review",
+            "earlier thoughts",
+            "later thoughts",
+            "verdict",
+        ]
+
+
+@pytest.mark.anyio
 async def test_tui_app_prompts_picker_filters_and_inserts_without_submitting() -> None:
     session = FakeSession()
     session.prompt_templates = (
