@@ -72,6 +72,7 @@ class AgentHarness:
         self._messages = list(messages)
         self._listeners: list[EventListener] = []
         self._current_signal: SimpleCancellationToken | None = None
+        self._active_system_prompt: str | None = None
         self._running = False
         self._steering_queue: deque[AgentMessage] = deque()
         self._follow_up_queue: deque[AgentMessage] = deque()
@@ -83,6 +84,13 @@ class AgentHarness:
     @property
     def config(self) -> AgentHarnessConfig:
         return self._config
+
+    @property
+    def system_prompt(self) -> str:
+        """Return the active run prompt, or the configured base while idle."""
+        if self._active_system_prompt is not None:
+            return self._active_system_prompt
+        return self._config.system
 
     @property
     def is_running(self) -> bool:
@@ -144,26 +152,34 @@ class AgentHarness:
     def pop_latest_steering(self) -> AgentMessage | None:
         return self._steering_queue.pop() if self._steering_queue else None
 
-    def prompt_message(self, message: AgentMessage) -> AsyncIterator[AgentEvent]:
+    def prompt_message(
+        self,
+        message: AgentMessage,
+        *,
+        system: str | None = None,
+    ) -> AsyncIterator[AgentEvent]:
         self._ensure_not_running()
         self._running = True
-        return self._run(prompts=(message,))
+        return self._run(prompts=(message,), system=system)
 
-    def prompt(self, content: str) -> AsyncIterator[AgentEvent]:
-        return self.prompt_message(UserMessage(content=content))
+    def prompt(self, content: str, *, system: str | None = None) -> AsyncIterator[AgentEvent]:
+        return self.prompt_message(UserMessage(content=content), system=system)
 
-    def continue_(self) -> AsyncIterator[AgentEvent]:
+    def continue_(self, *, system: str | None = None) -> AsyncIterator[AgentEvent]:
         self._ensure_not_running()
         self._running = True
-        return self._run()
+        return self._run(system=system)
 
     async def _run(
         self,
         *,
         prompts: Sequence[AgentMessage] = (),
+        system: str | None = None,
     ) -> AsyncIterator[AgentEvent]:
         signal = SimpleCancellationToken()
         self._current_signal = signal
+        effective_system = self._config.system if system is None else system
+        self._active_system_prompt = effective_system
         try:
             # Repair dangling tool calls here, not in prompt()/continue_(),
             # so the synthetic results flow through events and reach push
@@ -174,7 +190,7 @@ class AgentHarness:
             async for event in run_agent_loop(
                 provider=self._config.provider,
                 model=self._config.model,
-                system=self._config.system,
+                system=effective_system,
                 messages=self._messages,
                 prompts=prompts,
                 prelude_messages=repairs,
@@ -190,19 +206,22 @@ class AgentHarness:
                 await self._notify(event)
                 yield event
         finally:
-            if signal.is_cancelled():
-                repaired_from = len(self._messages)
-                self._append_interrupted_tool_results()
-                # The consumer is usually gone here; push the repairs to
-                # subscribers. Listener errors are suppressed; cancellation
-                # itself is not.
-                for message in self._messages[repaired_from:]:
-                    with suppress(Exception):
-                        await self._notify(MessageStartEvent(message=message))
-                        await self._notify(MessageEndEvent(message=message))
-            if self._current_signal is signal:
-                self._current_signal = None
-            self._running = False
+            try:
+                if signal.is_cancelled():
+                    repaired_from = len(self._messages)
+                    self._append_interrupted_tool_results()
+                    # The consumer is usually gone here; push the repairs to
+                    # subscribers. Listener errors are suppressed; cancellation
+                    # itself is not.
+                    for message in self._messages[repaired_from:]:
+                        with suppress(Exception):
+                            await self._notify(MessageStartEvent(message=message))
+                            await self._notify(MessageEndEvent(message=message))
+            finally:
+                if self._current_signal is signal:
+                    self._current_signal = None
+                self._active_system_prompt = None
+                self._running = False
 
     async def _notify(self, event: AgentEvent) -> None:
         for listener in list(self._listeners):

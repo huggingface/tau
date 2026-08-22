@@ -21,6 +21,35 @@ class ProjectContextFile:
     content: str
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class SystemPromptSkill:
+    """Read-only skill-index metadata included in a generated system prompt."""
+
+    name: str
+    description: str | None
+    path: Path
+    disable_model_invocation: bool = False
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class SystemPromptInputs:
+    """Immutable extension-facing snapshot of system-prompt inputs.
+
+    Prompt text and project paths may be sensitive, so the generated repr is
+    deliberately disabled. Extensions can inspect fields explicitly without
+    diagnostics accidentally rendering the complete prompt inputs.
+    """
+
+    custom_prompt: str | None
+    append_system_prompt: str | None
+    tools: tuple[str, ...]
+    guidelines: tuple[str, ...]
+    context_files: tuple[ProjectContextFile, ...]
+    skills: tuple[SystemPromptSkill, ...]
+    cwd: Path
+    current_date: date
+
+
 @dataclass(frozen=True, slots=True)
 class BuildSystemPromptOptions:
     """Options used to build Tau's system prompt."""
@@ -140,6 +169,28 @@ def collect_prompt_guidelines(
     add("Be concise in your responses")
     add("Show file paths clearly when working with files")
     return guidelines
+
+
+def snapshot_system_prompt_inputs(options: BuildSystemPromptOptions) -> SystemPromptInputs:
+    """Freeze the structured inputs extensions may inspect before an agent run."""
+    return SystemPromptInputs(
+        custom_prompt=options.custom_prompt,
+        append_system_prompt=options.append_system_prompt,
+        tools=tuple(tool.name for tool in options.tools),
+        guidelines=tuple(collect_prompt_guidelines(options.tools, options.extra_guidelines)),
+        context_files=tuple(options.context_files),
+        skills=tuple(
+            SystemPromptSkill(
+                name=skill.name,
+                description=skill.description,
+                path=skill.path,
+                disable_model_invocation=skill.disable_model_invocation,
+            )
+            for skill in options.skills
+        ),
+        cwd=options.cwd,
+        current_date=options.current_date or date.today(),
+    )
 
 
 def format_guidelines(tools: Sequence[AgentTool], extra_guidelines: Sequence[str] = ()) -> str:

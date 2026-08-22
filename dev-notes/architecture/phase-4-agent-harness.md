@@ -66,7 +66,10 @@ config = AgentHarnessConfig(
 )
 ```
 
-The harness receives this config and uses it for every prompt or continuation.
+The harness receives this config as the stable default. `prompt()` and
+`continue_()` may receive a keyword-only run prompt; when omitted, they use the
+configured value. A run prompt is cleared when that run settles and never
+changes the config.
 
 ## Prompt flow
 

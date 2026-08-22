@@ -7,6 +7,7 @@ mocking the extension API, these load the real files through the real
 for how extension authors can test their own extensions.
 """
 
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,7 @@ import pytest
 from tau_agent.messages import TextContent
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_coding import TauResourcePaths
-from tau_coding.extensions import ExtensionRuntime
+from tau_coding.extensions import ExtensionRuntime, SystemPromptInputs
 
 pytestmark = pytest.mark.anyio
 
@@ -85,6 +86,27 @@ async def test_hello_tool_defaults_to_world(tmp_path: Path) -> None:
     result = await hello.execute("test-call", {})
 
     assert result.text == "Hello, world!"
+
+
+# -- prompt_customizer.py -------------------------------------------------------
+
+
+async def test_prompt_customizer_replaces_prompt_for_run(tmp_path: Path) -> None:
+    runtime = _runtime_with_examples(tmp_path, "prompt_customizer.py")
+    inputs = SystemPromptInputs(
+        custom_prompt=None,
+        append_system_prompt=None,
+        tools=("read", "bash"),
+        guidelines=(),
+        context_files=(),
+        skills=(),
+        cwd=tmp_path,
+        current_date=date(2026, 8, 17),
+    )
+
+    result = await runtime.run_before_agent_start("Base prompt", inputs)
+
+    assert result == "Base prompt\n\nActive tools for this run: read, bash."
 
 
 # -- permission_gate.py ---------------------------------------------------------

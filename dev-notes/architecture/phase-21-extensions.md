@@ -4,8 +4,9 @@ title: "Phase 21: Extensions"
 
 Tau extensions are Python modules that customize a coding session: they add
 tools and slash commands, observe the agent event stream, and intercept tool
-calls, tool results, and user input. The design is a deliberate port of Pi's
-extension system (`packages/coding-agent/src/core/extensions/` in
+calls, tool results, user input, and per-run system prompts. The design is a
+deliberate port of Pi's extension system
+(`packages/coding-agent/src/core/extensions/` in
 `earendil-works/pi`) onto Tau's Python architecture, scoped so the core is
 small while still supporting real extensions such as a Claude Code-style
 subagents extension.
@@ -21,11 +22,11 @@ are called out inline as **Ruling:** notes.
   `register_tool`, `register_command`, `on(event)`, `send_user_message`,
   `append_entry`, and read access to session context.
 - Support Pi's load-bearing hook semantics: `tool_call` (block/mutate),
-  `tool_result` (transform), `input` (transform/handle), plus observation of
-  every portable `AgentEvent`.
-- Keep `tau_agent` untouched: the extension machinery lives entirely in
-  `tau_coding`, using existing seams (`AgentHarness.subscribe`, executor
-  wrapping, `CommandRegistry`, `CustomEntry`).
+  `tool_result` (transform), `input` (transform/handle),
+  `before_agent_start` (replace the run prompt), plus observation of every
+  portable `AgentEvent`.
+- Keep extension policy in `tau_coding`; `tau_agent` exposes only portable
+  seams such as `AgentHarness.subscribe` and the run-scoped prompt argument.
 - Isolate failures: a broken extension is a `ResourceDiagnostic`, never a
   crashed session.
 
@@ -34,8 +35,8 @@ are called out inline as **Ruling:** notes.
 - npm-style package management (`pi install`), provider registration,
   custom TUI components/widgets (extension-authored Textual widgets),
   custom **entry** renderers (`registerEntryRenderer`/`appendEntry`-rendered,
-  non-LLM-context cards), shortcut and flag registration, system-prompt
-  replacement, `context`/`before_provider_request` rewriting, and a project
+  non-LLM-context cards), shortcut and flag registration,
+  `context`/`before_provider_request` rewriting, and a project
   trust store.
   These have reserved names and documented extension points but no
   implementation yet.
@@ -240,6 +241,7 @@ Lifecycle events, dispatched by the runtime:
 | `session_start` | `SessionStartEvent(reason: "startup" \| "reload" \| "new" \| "resume" \| "branch")` | — |
 | `session_shutdown` | `SessionShutdownEvent(reason)` | — |
 | `input` | `InputEvent(text, source="interactive" \| "extension", streaming_behavior="steer" \| "follow_up" \| None)` | `InputHookResult(action="continue" \| "transform" \| "handled", text=None, message=None)` |
+| `before_agent_start` | `BeforeAgentStartEvent(system_prompt, system_prompt_inputs)` | `BeforeAgentStartHookResult(system_prompt=None)` |
 | `tool_call` | `ToolCallHookEvent(tool_name, arguments)` | `ToolCallHookResult(block=False, reason=None, arguments=None)` |
 | `tool_result` | `ToolResultHookEvent(tool_name, arguments, result)` | `ToolResultHookResult(content=None, ok=None, details=None)` |
 
@@ -559,7 +561,7 @@ the extension runtime) and the **queued-message preview**
 (`harness.py` `queue_update_event` reports queued content strings). Both are
 raw-text views by design; only live transcripts (TUI + print mode) render.
 
-## Hook wiring (how interception works without touching tau_agent)
+## Hook wiring and the portable tau_agent seam
 
 - **Observation** — the runtime subscribes one listener via
   `AgentHarness.subscribe` and fans events out to extension handlers.
@@ -578,6 +580,13 @@ raw-text views by design; only live transcripts (TUI + print mode) render.
   consumes the input: the prompt generator returns without yielding run
   events, and the optional `message` is delivered through the UI bridge
   notification channel.
+- **`before_agent_start`** — `CodingSession` chains prompt replacements before
+  each `prompt` or `continue_` run, then passes the final value through a
+  keyword-only `AgentHarness` run argument. The harness keeps that local value
+  for every provider call in the tool loop and clears it in `finally`; its base
+  config and transcript are unchanged. The hook receives frozen, repr-hidden
+  prompt inputs with skill content omitted. Its fresh `ExtensionContext` also
+  exposes the current chained prompt, matching Pi's `ctx.getSystemPrompt()`.
 - **`send_user_message` / `send_custom_message`** — both funnel through one
   `_deliver_message` path. When a run is active, they map to
   `queue_steering_message` / `queue_follow_up_message` (which build a
@@ -709,8 +718,9 @@ of the newer API seams (manifest, dialogs, renderers, `on_update`,
   falling back to `send_user_message` on older builds — which also
   exercises the idle `turn_requested` path.
 
-Smaller examples: `hello_tool.py` (minimal tool) and `permission_gate.py`
-(`tool_call` blocking for dangerous bash commands).
+Smaller examples: `hello_tool.py` (minimal tool), `prompt_customizer.py`
+(`before_agent_start` replacement), and `permission_gate.py` (`tool_call`
+blocking for dangerous bash commands).
 
 ## Verification
 
@@ -719,7 +729,9 @@ Smaller examples: `hello_tool.py` (minimal tool) and `permission_gate.py`
   isolation, sync-only `setup` enforcement, tool registration/override,
   command registration/duplicate handling, event fan-out, `tool_call`
   block + argument mutation, `tool_result` transform, `input`
-  transform/handled, send_user_message queueing and idle turn-request,
+  transform/handled, `before_agent_start` chaining/failure isolation and
+  run reset/tool-loop/transcript behavior, send_user_message queueing and idle
+  turn-request,
   append_entry persistence and on-path replay, reload including module
   purge and stale-listener replacement, runtime survival across
   resume/new.

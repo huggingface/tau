@@ -189,6 +189,55 @@ async def test_harness_passes_canonical_tools_to_loop() -> None:
     assert provider.calls[0][3] == [tool]
 
 
+@pytest.mark.anyio
+async def test_run_system_override_survives_tool_loop_and_resets() -> None:
+    harness: AgentHarness
+
+    async def execute(
+        tool_call_id: str,
+        arguments: Mapping[str, JSONValue],
+        signal=None,  # noqa: ANN001
+        on_update=None,  # noqa: ANN001
+    ) -> AgentToolResult:
+        del tool_call_id, arguments, signal, on_update
+        harness.config.tools.append(tool)
+        return AgentToolResult(content="ran")
+
+    tool = AgentTool(
+        name="work",
+        label="Work",
+        description="Do work.",
+        parameters={"type": "object"},
+        execute_fn=execute,
+    )
+    call = ToolCall(id="call-1", name="work", arguments={})
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(),
+                tool_call_end(call),
+                assistant_done(AssistantMessage(content=[call]), "toolUse"),
+            ],
+            [assistant_start(), assistant_done(AssistantMessage(content="Done"))],
+            [assistant_start(), assistant_done(AssistantMessage(content="Again"))],
+        ]
+    )
+    harness = AgentHarness(
+        AgentHarnessConfig(provider=provider, model="fake", system="Base prompt", tools=[tool])
+    )
+
+    _ = [event async for event in harness.prompt("start", system="Run-only prompt")]
+
+    assert [call[1] for call in provider.calls[:2]] == ["Run-only prompt", "Run-only prompt"]
+    assert [len(call[3]) for call in provider.calls[:2]] == [1, 2]
+    assert harness.system_prompt == "Base prompt"
+
+    _ = [event async for event in harness.prompt("next")]
+
+    assert provider.calls[2][1] == "Base prompt"
+    assert harness.system_prompt == "Base prompt"
+
+
 def test_queue_mutators_return_canonical_snapshots() -> None:
     harness = AgentHarness(
         AgentHarnessConfig(provider=FakeProvider([]), model="fake", system="You are Tau.")
@@ -254,7 +303,7 @@ async def test_cancelled_run_notifies_listeners_of_interrupted_tool_repair() -> 
     harness.subscribe(seen.append)
 
     async def consume() -> None:
-        async for _event in harness.prompt("go"):
+        async for _event in harness.prompt("go", system="Run-only prompt"):
             pass
 
     task = asyncio.create_task(consume())
@@ -273,6 +322,7 @@ async def test_cancelled_run_notifies_listeners_of_interrupted_tool_repair() -> 
         if isinstance(event, MessageEndEvent) and isinstance(event.message, ToolResultMessage)
     ]
     assert [event.message.tool_call_id for event in repair_ends] == ["call-1"]
+    assert harness.system_prompt == "You are Tau."
 
 
 @pytest.mark.anyio
@@ -299,6 +349,33 @@ async def test_listener_error_during_teardown_does_not_mask_cancellation() -> No
         await task
 
     assert isinstance(harness.messages[-1], ToolResultMessage)
+
+
+@pytest.mark.anyio
+async def test_teardown_base_exception_still_resets_run_state() -> None:
+    tool_started = asyncio.Event()
+    release = asyncio.Event()
+    harness = _blocking_run_harness(tool_started, release)
+
+    def cancel_cleanup(event: object) -> None:
+        if isinstance(event, MessageEndEvent) and isinstance(event.message, ToolResultMessage):
+            raise asyncio.CancelledError
+
+    harness.subscribe(cancel_cleanup)
+
+    async def consume() -> None:
+        async for _event in harness.prompt("go", system="Run-only prompt"):
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(tool_started.wait(), timeout=5)
+    harness.cancel()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert harness.is_running is False
+    assert harness.system_prompt == "You are Tau."
 
 
 def test_harness_repairs_interrupted_tool_calls() -> None:

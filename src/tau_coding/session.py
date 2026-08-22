@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import string
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -127,7 +127,9 @@ from tau_coding.skills import Skill, expand_skill_command, load_skills_with_diag
 from tau_coding.system_prompt import (
     BuildSystemPromptOptions,
     ProjectContextFile,
+    SystemPromptInputs,
     build_system_prompt,
+    snapshot_system_prompt_inputs,
 )
 from tau_coding.thinking import (
     DEFAULT_THINKING_LEVEL,
@@ -298,6 +300,7 @@ class CodingSession:
         state: SessionState,
         harness: AgentHarness,
         last_parent_id: str | None,
+        system_prompt_inputs: SystemPromptInputs | None = None,
         skills: tuple[Skill, ...] = (),
         prompt_templates: tuple[PromptTemplate, ...] = (),
         context_files: tuple[ProjectContextFile, ...] = (),
@@ -316,6 +319,16 @@ class CodingSession:
         self._state = state
         self._harness = harness
         self._extension_runtime = extension_runtime or ExtensionRuntime()
+        if system_prompt_inputs is None:
+            system_prompt_inputs = snapshot_system_prompt_inputs(
+                BuildSystemPromptOptions(
+                    cwd=config.cwd,
+                    tools=config.tools or (),
+                    custom_prompt=config.system,
+                    extra_guidelines=self._extension_runtime.prompt_guidelines,
+                )
+            )
+        self._system_prompt_inputs = system_prompt_inputs
         self._image_support = image_support or ImageSupportState()
         self._session_start_pending = False
         self._last_parent_id = last_parent_id
@@ -471,28 +484,40 @@ class CodingSession:
             )
         )
         tools = extension_runtime.compose_tools(base_tools)
+        system_prompt_options = BuildSystemPromptOptions(
+            cwd=config.cwd,
+            tools=tools,
+            skills=resources.skills if config.system is None else (),
+            custom_prompt=(
+                config.system
+                if config.system is not None
+                else (
+                    config.custom_system_prompt
+                    if config.custom_system_prompt is not None
+                    else resources.custom_system_prompt
+                )
+            ),
+            append_system_prompt=(
+                None
+                if config.system is not None
+                else (
+                    config.append_system_prompt
+                    if config.append_system_prompt is not None
+                    else resources.append_system_prompt
+                )
+            ),
+            context_files=resources.context_files if config.system is None else (),
+            extra_guidelines=extension_runtime.prompt_guidelines,
+        )
+        system_prompt_inputs = snapshot_system_prompt_inputs(system_prompt_options)
+        system_prompt_options = replace(
+            system_prompt_options,
+            current_date=system_prompt_inputs.current_date,
+        )
         system = (
             config.system
             if config.system is not None
-            else build_system_prompt(
-                BuildSystemPromptOptions(
-                    cwd=config.cwd,
-                    tools=tools,
-                    skills=resources.skills,
-                    custom_prompt=(
-                        config.custom_system_prompt
-                        if config.custom_system_prompt is not None
-                        else resources.custom_system_prompt
-                    ),
-                    append_system_prompt=(
-                        config.append_system_prompt
-                        if config.append_system_prompt is not None
-                        else resources.append_system_prompt
-                    ),
-                    context_files=resources.context_files,
-                    extra_guidelines=extension_runtime.prompt_guidelines,
-                )
-            )
+            else build_system_prompt(system_prompt_options)
         )
         harness = AgentHarness(
             AgentHarnessConfig(
@@ -511,6 +536,7 @@ class CodingSession:
             state=state,
             harness=harness,
             last_parent_id=_last_parent_id_from_state(state),
+            system_prompt_inputs=system_prompt_inputs,
             skills=resources.skills,
             prompt_templates=resources.prompt_templates,
             context_files=resources.context_files,
@@ -779,7 +805,7 @@ class CodingSession:
             title=_session_export_title(self),
             source=str(session_path) if session_path is not None else self.session_id,
             format=export_format,
-            system_prompt=self.system_prompt,
+            system_prompt=self._harness.config.system,
         )
 
     @property
@@ -812,7 +838,7 @@ class CodingSession:
         """Return structured context accounting for the active provider context."""
         if self._context_usage_cache is None:
             self._context_usage_cache = estimate_context_usage(
-                system=self._harness.config.system,
+                system=self.system_prompt,
                 messages=self._harness.messages,
                 tools=tuple(self._harness.config.tools),
             )
@@ -821,7 +847,7 @@ class CodingSession:
     @property
     def system_prompt(self) -> str:
         """Return the effective system prompt sent to the model."""
-        return self._harness.config.system
+        return self._harness.system_prompt
 
     @property
     def auto_compact_token_threshold(self) -> int | None:
@@ -1478,7 +1504,7 @@ class CodingSession:
             append_system_prompt_path=self._append_system_prompt_path,
         )
         before_extensions = _extension_signatures(self._extension_runtime)
-        before_tool_names = tuple(tool.name for tool in self._harness.config.tools)
+        before_tool_prompts = _tool_prompt_signatures(self._harness.config.tools)
         before_guidelines = self._extension_runtime.prompt_guidelines
 
         # Nothing below mutates the live session. Eligible extensions are loaded
@@ -1569,29 +1595,46 @@ class CodingSession:
             append_system_prompt_path=resources.append_system_prompt_path,
         )
         after_guidelines = staged_runtime.prompt_guidelines
-        system_prompt_rebuilt = self._config.system is None and (
+        system_prompt_inputs_changed = (
             before_system_prompt_inputs != after_system_prompt_inputs
-            or before_tool_names != tuple(tool.name for tool in staged_tools)
+            or before_tool_prompts != _tool_prompt_signatures(staged_tools)
             or before_guidelines != after_guidelines
         )
+        system_prompt_rebuilt = self._config.system is None and system_prompt_inputs_changed
         staged_system = self._harness.config.system
+        staged_system_prompt_inputs = self._system_prompt_inputs
         if system_prompt_rebuilt:
-            staged_system = build_system_prompt(
+            staged_system_prompt_options = BuildSystemPromptOptions(
+                cwd=self._config.cwd,
+                tools=staged_tools,
+                skills=resources.skills,
+                custom_prompt=(
+                    self._config.custom_system_prompt
+                    if self._config.custom_system_prompt is not None
+                    else resources.custom_system_prompt
+                ),
+                append_system_prompt=(
+                    self._config.append_system_prompt
+                    if self._config.append_system_prompt is not None
+                    else resources.append_system_prompt
+                ),
+                context_files=resources.context_files,
+                extra_guidelines=after_guidelines,
+            )
+            staged_system_prompt_inputs = snapshot_system_prompt_inputs(
+                staged_system_prompt_options
+            )
+            staged_system_prompt_options = replace(
+                staged_system_prompt_options,
+                current_date=staged_system_prompt_inputs.current_date,
+            )
+            staged_system = build_system_prompt(staged_system_prompt_options)
+        elif self._config.system is not None and system_prompt_inputs_changed:
+            staged_system_prompt_inputs = snapshot_system_prompt_inputs(
                 BuildSystemPromptOptions(
                     cwd=self._config.cwd,
                     tools=staged_tools,
-                    skills=resources.skills,
-                    custom_prompt=(
-                        self._config.custom_system_prompt
-                        if self._config.custom_system_prompt is not None
-                        else resources.custom_system_prompt
-                    ),
-                    append_system_prompt=(
-                        self._config.append_system_prompt
-                        if self._config.append_system_prompt is not None
-                        else resources.append_system_prompt
-                    ),
-                    context_files=resources.context_files,
+                    custom_prompt=self._config.system,
                     extra_guidelines=after_guidelines,
                 )
             )
@@ -1632,6 +1675,7 @@ class CodingSession:
         self._extension_runtime = staged_runtime
         self._harness.config.tools = staged_tools
         self._harness.config.system = staged_system
+        self._system_prompt_inputs = staged_system_prompt_inputs
         if system_prompt_rebuilt:
             self._invalidate_context_usage_cache()
         staged_runtime.attach_harness_listener(self._harness.subscribe)
@@ -1857,6 +1901,7 @@ class CodingSession:
         self._skills = replacement._skills
         self._prompt_templates = replacement._prompt_templates
         self._context_files = replacement._context_files
+        self._system_prompt_inputs = replacement._system_prompt_inputs
         self._custom_system_prompt = replacement._custom_system_prompt
         self._custom_system_prompt_path = replacement._custom_system_prompt_path
         self._append_system_prompt = replacement._append_system_prompt
@@ -2080,7 +2125,14 @@ class CodingSession:
                 )
             else:
                 prompt_message = UserMessage(content=expanded_content)
-            events = self._harness.prompt_message(prompt_message)
+            effective_system_prompt = await self._extension_runtime.run_before_agent_start(
+                self._harness.config.system,
+                self._system_prompt_inputs,
+            )
+            events = self._harness.prompt_message(
+                prompt_message,
+                system=effective_system_prompt,
+            )
             self._invalidate_context_usage_cache()
             async for event in events:
                 auto_name_message: str | None = None
@@ -2136,7 +2188,7 @@ class CodingSession:
                     )
                     await self._extension_runtime.emit_event(retry_start)
                     yield retry_start
-                    events = self._harness.continue_()
+                    events = self._harness.continue_(system=effective_system_prompt)
                     self._invalidate_context_usage_cache()
                     async for retry_event in events:
                         if isinstance(retry_event, ToolExecutionEndEvent):
@@ -2176,6 +2228,7 @@ class CodingSession:
             try:
                 await self._reconcile_run_persistence(events, context=context)
             finally:
+                self._invalidate_context_usage_cache()
                 if events is not None:
                     settled_event = await self._dispatch_agent_settled()
         if settled_event is not None:
@@ -2192,7 +2245,11 @@ class CodingSession:
         events: AsyncIterator[AgentEvent] | None = None
         settled_event: AgentSettledEvent | None = None
         try:
-            events = self._harness.continue_()
+            effective_system_prompt = await self._extension_runtime.run_before_agent_start(
+                self._harness.config.system,
+                self._system_prompt_inputs,
+            )
+            events = self._harness.continue_(system=effective_system_prompt)
             self._invalidate_context_usage_cache()
             async for event in events:
                 if isinstance(event, ToolExecutionEndEvent):
@@ -2223,6 +2280,7 @@ class CodingSession:
             try:
                 await self._reconcile_run_persistence(events, context=context)
             finally:
+                self._invalidate_context_usage_cache()
                 if events is not None:
                     settled_event = await self._dispatch_agent_settled()
         if settled_event is not None:
@@ -3267,6 +3325,10 @@ def _diagnostic_signatures(
 
 def _extension_signatures(runtime: ExtensionRuntime) -> tuple[tuple[object, ...], ...]:
     return tuple((name,) for name in runtime.extension_names)
+
+
+def _tool_prompt_signatures(tools: Sequence[AgentTool]) -> tuple[tuple[object, ...], ...]:
+    return tuple((tool.name, tool.prompt_snippet, tool.prompt_guidelines) for tool in tools)
 
 
 def _system_prompt_resource_signatures(

@@ -3,11 +3,14 @@
 import asyncio
 import sys
 import time
+from dataclasses import replace
+from datetime import date
 from pathlib import Path
 from typing import cast
 
 import pytest
 
+import tau_coding.system_prompt as system_prompt_module
 from pi_event_helpers import assistant_done, assistant_start
 from tau_agent import AssistantMessage, ToolCall, UserMessage
 from tau_agent.messages import AgentMessage, assistant_content
@@ -15,15 +18,26 @@ from tau_agent.session import CustomEntry, JsonlSessionStorage, LeafEntry, Messa
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
 from tau_ai import FakeProvider
-from tau_coding import CodingSession, CodingSessionConfig, ResourceError, TauResourcePaths
+from tau_coding import (
+    CodingSession,
+    CodingSessionConfig,
+    ProjectContextFile,
+    ResourceError,
+    TauResourcePaths,
+)
 from tau_coding.extensions import (
+    BeforeAgentStartEvent,
+    BeforeAgentStartHookResult,
     CustomMessageView,
     ExtensionAPI,
+    ExtensionContext,
     ExtensionError,
     ExtensionRuntime,
     InputEvent,
     InputHookResult,
     MessageRenderOptions,
+    SystemPromptInputs,
+    SystemPromptSkill,
     ToolCallHookResult,
     ToolResultHookResult,
     discover_extensions,
@@ -894,6 +908,150 @@ async def test_input_hook_receives_source_and_streaming_behavior(tmp_path: Path)
     assert seen[0].streaming_behavior == "steer"
 
 
+async def test_before_agent_start_hooks_chain_and_isolate_failures(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    runtime.bind(RecordingSession(tmp_path))
+    first = cast(ExtensionAPI, _register_inline_extension(runtime, "first"))
+    broken = cast(ExtensionAPI, _register_inline_extension(runtime, "broken"))
+    last = cast(ExtensionAPI, _register_inline_extension(runtime, "last"))
+    seen: list[tuple[str, str]] = []
+    captured_contexts: list[ExtensionContext] = []
+
+    def replace_prompt(
+        event: BeforeAgentStartEvent, context: ExtensionContext
+    ) -> BeforeAgentStartHookResult:
+        captured_contexts.append(context)
+        seen.append((event.system_prompt, context.system_prompt))
+        return BeforeAgentStartHookResult(system_prompt=f"{event.system_prompt} one")
+
+    def replace_from_context(
+        event: BeforeAgentStartEvent, context: ExtensionContext
+    ) -> BeforeAgentStartHookResult:
+        captured_contexts.append(context)
+        seen.append((event.system_prompt, context.system_prompt))
+        return BeforeAgentStartHookResult(system_prompt=f"{context.system_prompt} two")
+
+    SensitiveFailure = type("PrivatePromptLeakFailure", (RuntimeError,), {})
+    SensitiveResult = type("PrivatePromptLeakResult", (), {})
+
+    def fail(event: BeforeAgentStartEvent, context: ExtensionContext) -> None:
+        captured_contexts.append(context)
+        raise SensitiveFailure(event.system_prompt)
+
+    def invalid_result(event: BeforeAgentStartEvent, context: ExtensionContext) -> object:
+        del event
+        captured_contexts.append(context)
+        return SensitiveResult()
+
+    def invalid_prompt(
+        event: BeforeAgentStartEvent, context: ExtensionContext
+    ) -> BeforeAgentStartHookResult:
+        del event
+        captured_contexts.append(context)
+        return BeforeAgentStartHookResult(system_prompt=SensitiveResult())  # type: ignore[arg-type]
+
+    def finish_prompt(
+        event: BeforeAgentStartEvent, context: ExtensionContext
+    ) -> BeforeAgentStartHookResult:
+        captured_contexts.append(context)
+        seen.append((event.system_prompt, context.system_prompt))
+        return BeforeAgentStartHookResult(system_prompt=f"{event.system_prompt} three")
+
+    first.on("before_agent_start", replace_prompt)
+    first.on("before_agent_start", replace_from_context)
+    broken.on("before_agent_start", fail)
+    broken.on("before_agent_start", invalid_result)
+    broken.on("before_agent_start", invalid_prompt)
+    last.on("before_agent_start", finish_prompt)
+    inputs = SystemPromptInputs(
+        custom_prompt="sensitive custom base",
+        append_system_prompt="sensitive append",
+        tools=("read",),
+        guidelines=("sensitive effective guideline",),
+        context_files=(ProjectContextFile(path="/secret/AGENTS.md", content="sensitive context"),),
+        skills=(
+            SystemPromptSkill(
+                name="private-skill",
+                description="sensitive skill description",
+                path=Path("/secret/SKILL.md"),
+                disable_model_invocation=False,
+            ),
+        ),
+        cwd=tmp_path,
+        current_date=date(2026, 8, 17),
+    )
+
+    effective = await runtime.run_before_agent_start("base", inputs)
+
+    assert effective == "base one two three"
+    assert seen == [
+        ("base", "base"),
+        ("base one", "base one"),
+        ("base one two", "base one two"),
+    ]
+    assert [context.system_prompt for context in captured_contexts] == [
+        "You are Tau.",
+        "You are Tau.",
+        "You are Tau.",
+        "You are Tau.",
+        "You are Tau.",
+        "You are Tau.",
+    ]
+    hook_diagnostics = [
+        diagnostic
+        for diagnostic in runtime.diagnostics
+        if "before_agent_start" in diagnostic.message
+    ]
+    assert len(hook_diagnostics) == 3
+    assert all("details omitted" in diagnostic.message for diagnostic in hook_diagnostics)
+    assert not any("PrivatePromptLeak" in diagnostic.message for diagnostic in hook_diagnostics)
+    assert not any("base one two" in diagnostic.message for diagnostic in hook_diagnostics)
+    assert "sensitive" not in repr(inputs)
+    assert "sensitive" not in repr(
+        BeforeAgentStartEvent(system_prompt="sensitive prompt", system_prompt_inputs=inputs)
+    )
+    assert "sensitive" not in repr(
+        BeforeAgentStartHookResult(system_prompt="sensitive replacement")
+    )
+
+
+async def test_before_agent_start_uses_a_registration_snapshot(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "dynamic"))
+    seen: list[str] = []
+    registered = False
+
+    def late(event: BeforeAgentStartEvent, context: object) -> None:
+        del event, context
+        seen.append("late")
+
+    def register_late(event: BeforeAgentStartEvent, context: object) -> None:
+        nonlocal registered
+        del event, context
+        seen.append("initial")
+        if not registered:
+            registered = True
+            api.on("before_agent_start", late)
+
+    api.on("before_agent_start", register_late)
+    inputs = SystemPromptInputs(
+        custom_prompt=None,
+        append_system_prompt=None,
+        tools=(),
+        guidelines=(),
+        context_files=(),
+        skills=(),
+        cwd=tmp_path,
+        current_date=date(2026, 8, 17),
+    )
+
+    await runtime.run_before_agent_start("base", inputs)
+    assert seen == ["initial"]
+
+    await runtime.run_before_agent_start("base", inputs)
+    assert seen == ["initial", "initial", "late"]
+
+
 async def test_agent_event_fan_out_and_wildcard(tmp_path: Path) -> None:
     runtime = ExtensionRuntime()
     api = _register_inline_extension(runtime, "observer")
@@ -1493,22 +1651,228 @@ async def test_extension_guideline_reaches_system_prompt(tmp_path: Path) -> None
     assert "Never commit directly to main" in session.system_prompt
 
 
-async def test_reload_picks_up_guideline_changes(tmp_path: Path) -> None:
-    provider = FakeProvider([])
-    session = await CodingSession.load(_session_config(tmp_path, provider))
+async def test_per_run_system_prompt_replacement_reaches_provider_without_persisting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = (
+        "from tau_coding.extensions import BeforeAgentStartHookResult\n\n"
+        "INPUTS = []\n"
+        "ACTIVE_PROMPTS = []\n\n\n"
+        "def _hook(event, context):\n"
+        "    INPUTS.append(event.system_prompt_inputs)\n"
+        "    return BeforeAgentStartHookResult(\n"
+        "        system_prompt=f'{event.system_prompt}\\nRun marker: {len(INPUTS)}'\n"
+        "    )\n\n\n"
+        "def setup(tau):\n"
+        "    tau.add_prompt_guideline('Static extension guideline')\n"
+        "    tau.on('before_agent_start', _hook)\n"
+        "    tau.on(\n"
+        "        'agent_start',\n"
+        "        lambda event, context: ACTIVE_PROMPTS.append(context.system_prompt),\n"
+        "    )\n"
+    )
+    paths = _paths(tmp_path)
+    skill_path = paths.root / "skills" / "testing" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.write_text(
+        "---\ndescription: Test code\ndisable-model-invocation: true\n---\n# Testing",
+        encoding="utf-8",
+    )
+    call = ToolCall(id="call-1", name="read", arguments={"path": "missing.txt"})
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(
+                    message=AssistantMessage(content=assistant_content("", [call])),
+                    finish_reason="toolUse",
+                ),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="first done")),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="second done")),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="continued")),
+            ],
+        ]
+    )
+    config = replace(
+        _session_config(tmp_path, provider, extension_body=body),
+        custom_system_prompt="Sensitive custom base",
+        append_system_prompt="Sensitive append",
+        context_files=(
+            ProjectContextFile(path="virtual/AGENTS.md", content="Sensitive project context"),
+        ),
+    )
+
+    class LoadDate(date):
+        @classmethod
+        def today(cls) -> date:
+            return date(2026, 8, 17)
+
+    class RunDate(date):
+        @classmethod
+        def today(cls) -> date:
+            return date(2026, 8, 18)
+
+    monkeypatch.setattr(system_prompt_module, "date", LoadDate)
+    session = await CodingSession.load(config)
+    base_prompt = session.system_prompt
+    module = _loaded_extension_module("integration")
+    monkeypatch.setattr(system_prompt_module, "date", RunDate)
+
+    first_run = session.prompt("first")
+    first_event = await anext(first_run)
+    assert first_event.type == "agent_start"
+    active_export = await session.export(tmp_path / "active-run.html")
+    assert "Run marker:" not in active_export.read_text(encoding="utf-8")
+    _ = [event async for event in first_run]
+
+    assert provider.calls[0][1] == provider.calls[1][1]
+    assert provider.calls[0][1].endswith("Run marker: 1")
+    assert [provider.calls[0][1]] == module.ACTIVE_PROMPTS  # type: ignore[attr-defined]
+    assert session.system_prompt == base_prompt
+    assert len(module.INPUTS) == 1  # type: ignore[attr-defined]
+    inputs = module.INPUTS[0]  # type: ignore[attr-defined]
+    assert isinstance(inputs, SystemPromptInputs)
+    assert inputs.custom_prompt == "Sensitive custom base"
+    assert inputs.append_system_prompt == "Sensitive append"
+    assert inputs.tools[:4] == ("read", "write", "edit", "bash")
+    assert "Static extension guideline" in inputs.guidelines
+    assert inputs.context_files == (
+        ProjectContextFile(
+            path="virtual/AGENTS.md",
+            content="Sensitive project context",
+        ),
+    )
+    assert [
+        (
+            skill.name,
+            skill.description,
+            skill.path,
+            skill.disable_model_invocation,
+        )
+        for skill in inputs.skills
+    ] == [("testing", "Test code", skill_path, True)]
+    assert inputs.cwd == paths.cwd
+    assert inputs.current_date == date(2026, 8, 17)
+    assert "Current date: 2026-08-17" in base_prompt
+    assert "<name>testing</name>" not in base_prompt
+
+    _ = [event async for event in session.prompt("second")]
+
+    assert provider.calls[2][1].endswith("Run marker: 2")
+    assert "Run marker: 1" not in provider.calls[2][1]
+    assert provider.calls[2][1].count("Run marker:") == 1
+    assert session.system_prompt == base_prompt
+
+    _ = [event async for event in session.continue_()]
+
+    assert provider.calls[3][1].endswith("Run marker: 3")
+    assert [
+        provider.calls[0][1],
+        provider.calls[2][1],
+        provider.calls[3][1],
+    ] == module.ACTIVE_PROMPTS  # type: ignore[attr-defined]
+    assert not any("Run marker:" in message.text for message in session.messages)
+    assert "Run marker:" not in (tmp_path / "session.jsonl").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("static_system", "expected_rebuilt"),
+    [(None, True), ("Static system prompt", False)],
+)
+async def test_reload_picks_up_guideline_changes(
+    tmp_path: Path,
+    static_system: str | None,
+    expected_rebuilt: bool,
+) -> None:
+    provider = FakeProvider(
+        [[assistant_start(model="fake"), assistant_done(message=AssistantMessage(content="done"))]]
+    )
+    config = replace(_session_config(tmp_path, provider), system=static_system)
+    session = await CodingSession.load(config)
     assert "Prefer uv over pip" not in session.system_prompt
 
     paths = _paths(tmp_path)
     _write_extension(
         _user_extensions_dir(paths),
         "late_guideline",
-        "def setup(tau):\n    tau.add_prompt_guideline('Prefer uv over pip')\n",
+        "INPUTS = []\n\n\n"
+        "def _capture(event, context):\n"
+        "    INPUTS.append(event.system_prompt_inputs)\n\n\n"
+        "def setup(tau):\n"
+        "    tau.add_prompt_guideline('Prefer uv over pip')\n"
+        "    tau.on('before_agent_start', _capture)\n",
     )
 
     summary = await session.reload()
+    _ = [event async for event in session.prompt("check reload")]
+    module = _loaded_extension_module("late_guideline")
+
+    assert summary.system_prompt_rebuilt is expected_rebuilt
+    if static_system is None:
+        assert "Prefer uv over pip" in session.system_prompt
+    else:
+        assert session.system_prompt == static_system
+    inputs = module.INPUTS[0]  # type: ignore[attr-defined]
+    assert inputs.custom_prompt == static_system
+    assert "Prefer uv over pip" in inputs.guidelines
+
+
+async def test_reload_rebuilds_prompt_when_same_tool_metadata_changes(tmp_path: Path) -> None:
+    def extension_body(snippet: str, guideline: str) -> str:
+        return (
+            "from tau_agent.tools import AgentTool, AgentToolResult\n\n"
+            "INPUTS = []\n\n\n"
+            "async def _run(tool_call_id, arguments, signal=None, on_update=None):\n"
+            "    return AgentToolResult(content='done')\n\n\n"
+            "def _capture(event, context):\n"
+            "    INPUTS.append(event.system_prompt_inputs)\n\n\n"
+            "def setup(tau):\n"
+            "    tau.register_tool(AgentTool(\n"
+            "        name='changing', label='Changing', description='Changes',\n"
+            "        parameters={}, execute_fn=_run,\n"
+            f"        prompt_snippet={snippet!r},\n"
+            f"        prompt_guidelines=({guideline!r},),\n"
+            "    ))\n"
+            "    tau.on('before_agent_start', _capture)\n"
+        )
+
+    paths = _paths(tmp_path)
+    extension_path = _write_extension(
+        _user_extensions_dir(paths),
+        "changing_tool",
+        extension_body("First tool summary", "First tool guideline"),
+    )
+    provider = FakeProvider(
+        [[assistant_start(model="fake"), assistant_done(message=AssistantMessage(content="done"))]]
+    )
+    session = await CodingSession.load(_session_config(tmp_path, provider))
+    assert "First tool summary" in session.system_prompt
+    assert "First tool guideline" in session.system_prompt
+
+    extension_path.write_text(
+        extension_body("Second tool summary", "Second tool guideline"),
+        encoding="utf-8",
+    )
+    summary = await session.reload()
+    _ = [event async for event in session.prompt("check metadata")]
+    module = _loaded_extension_module("changing_tool")
+    inputs = module.INPUTS[0]  # type: ignore[attr-defined]
 
     assert summary.system_prompt_rebuilt is True
-    assert "Prefer uv over pip" in session.system_prompt
+    assert "Second tool summary" in session.system_prompt
+    assert "First tool summary" not in session.system_prompt
+    assert "Second tool guideline" in inputs.guidelines
+    assert "First tool guideline" not in inputs.guidelines
 
 
 async def test_session_start_deferred_until_host_emits(tmp_path: Path) -> None:
