@@ -202,6 +202,9 @@ async def test_download_progress_renders_fraction_and_remaining_detail() -> None
                 fraction=0.25,
             )
         )
+        # A catalog poll can only report the state, not byte progress. It must
+        # not replace the newer determinate SSE update.
+        context.report_progress(LocalProgress("Downloading owner/repo:Q4_K_M…"))
         started.set()
         await release.wait()
         return LocalOperationResult(message="Download complete.", committed=True)
@@ -226,6 +229,9 @@ async def test_download_progress_renders_fraction_and_remaining_detail() -> None
         assert "4.0 GiB remaining" in progress
         assert progress_bar.styles.display == "block"
         assert progress_bar.progress == 0.25
+        assert (
+            progress_bar.size.width == screen.query_one("#local-backend-screen").content_size.width
+        )
 
         release.set()
         await screen._worker

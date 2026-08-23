@@ -178,6 +178,7 @@ class LocalBackendScreen(ModalScreen[None]):
         self._action_items: tuple[tuple[str, str], ...] = ()
         self._worker: asyncio.Task[None] | None = None
         self._use_task: asyncio.Task[None] | None = None
+        self._progress_fraction: float | None = None
         self._closing = False
 
     def compose(self) -> ComposeResult:
@@ -193,12 +194,14 @@ class LocalBackendScreen(ModalScreen[None]):
             yield Static("Actions", id="local-action-section-title")
             yield ListView(id="local-action-menu")
             yield Static("", id="local-backend-progress")
-            yield ProgressBar(
+            progress_bar = ProgressBar(
                 total=1,
                 show_percentage=True,
                 show_eta=False,
                 id="local-backend-progress-bar",
             )
+            progress_bar.styles.width = "100%"
+            yield progress_bar
             yield Static(
                 "↑/↓ navigate across sections - Enter selects - Escape closes",
                 id="local-backend-footer",
@@ -448,6 +451,7 @@ class LocalBackendScreen(ModalScreen[None]):
         model_id: str | None,
         confirmation: str | None = None,
     ) -> None:
+        self._progress_fraction = None
         self._set_progress("Working…", show_bar=action == "download_model")
 
         def progress(item: LocalProgress) -> None:
@@ -721,6 +725,14 @@ class LocalBackendScreen(ModalScreen[None]):
     ) -> None:
         if not self._can_update_ui:
             return
+        if show_bar and fraction is None and self._progress_fraction is not None:
+            # Catalog polling only knows that a download is active. Do not let
+            # that coarser update erase newer byte progress from the SSE stream.
+            return
+        if fraction is not None:
+            self._progress_fraction = fraction
+        elif not show_bar:
+            self._progress_fraction = None
         with suppress(NoMatches):
             self.query_one("#local-backend-progress", Static).update(message)
             progress_bar = self.query_one("#local-backend-progress-bar", ProgressBar)
