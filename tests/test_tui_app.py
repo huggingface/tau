@@ -4128,9 +4128,12 @@ async def test_local_modals_receive_app_level_arrow_navigation() -> None:
         app.session.extension_runtime = SimpleNamespace(local_backend_registry=registry)
         prompt = app.query_one("#prompt", PromptInput)
         prompt.focus()
-        app._handle_local_backend_picker_result("local")
+        app._open_local_backend_picker()
+        await pilot.pause()
+        await pilot.press("enter")
         await pilot.pause()
         assert isinstance(app.screen, LocalBackendScreen)
+        assert len(app.screen_stack) == 2
         menu = app.screen.query_one("#local-backend-menu", ListView)
         assert menu.index == 0
         await pilot.press("down")
@@ -4138,8 +4141,9 @@ async def test_local_modals_receive_app_level_arrow_navigation() -> None:
         await pilot.press("up")
         assert menu.index == 0
 
-        app.pop_screen()
+        await pilot.press("escape")
         await pilot.pause()
+        assert len(app.screen_stack) == 1
         assert app.focused is prompt
         await pilot.press("x")
         assert prompt.text == "x"

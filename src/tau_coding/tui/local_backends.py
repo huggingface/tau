@@ -262,11 +262,7 @@ class LocalBackendScreen(ModalScreen[None]):
             self._open_model_action(cast(LocalAction, token))
 
     def action_cancel(self) -> None:
-        self._closing = True
-        self.registry.cancel(self.backend_id)
-        for task in (self._worker, self._use_task):
-            if task is not None and not task.done():
-                task.cancel()
+        # on_unmount owns cancellation; let Textual begin the screen pop first.
         self.dismiss(None)
 
     def _open_configure(self) -> None:

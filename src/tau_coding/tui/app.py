@@ -6132,8 +6132,13 @@ class TauTuiApp(App[None]):
         )
 
     def _handle_local_backend_picker_result(self, backend_id: str | None) -> None:
-        prompt = self.query_one("#prompt", PromptInput)
-        prompt.focus()
+        # Screen.dismiss() invokes its result callback before popping the screen.
+        # Defer the transition so the picker cannot pop the backend screen that
+        # this callback opens.
+        self.call_later(self._finish_local_backend_picker, backend_id)
+
+    def _finish_local_backend_picker(self, backend_id: str | None) -> None:
+        self._restore_prompt_focus()
         if backend_id is None:
             return
         runtime = getattr(self.session, "extension_runtime", None)
@@ -6149,12 +6154,8 @@ class TauTuiApp(App[None]):
                 on_use=self._use_local_model,
                 notify_callback=self._notify_local_backend,
                 is_idle=lambda: not self._is_agent_or_queue_active(),
-            ),
-            callback=self._handle_local_backend_closed,
+            )
         )
-
-    def _handle_local_backend_closed(self, _: None) -> None:
-        self.call_later(self._restore_prompt_focus)
 
     def _restore_prompt_focus(self) -> None:
         with suppress(NoMatches):
