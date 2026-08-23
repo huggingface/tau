@@ -3344,7 +3344,8 @@ class TauTuiApp(App[None]):
     #local-backend-screen,
     #local-configure-screen,
     #local-confirm-screen,
-    #local-model-action-screen {
+    #local-model-action-screen,
+    #local-search-results-screen {
         width: 82;
         max-width: 92%;
         height: auto;
@@ -3358,7 +3359,8 @@ class TauTuiApp(App[None]):
     #local-backend-title,
     #local-configure-title,
     #local-confirm-title,
-    #local-model-action-title {
+    #local-model-action-title,
+    #local-search-results-title {
         height: auto;
         color: $tau-chrome-text;
         text-style: bold;
@@ -3368,13 +3370,17 @@ class TauTuiApp(App[None]):
     #local-backend-picker-help,
     #local-backend-help,
     #local-configure-screen Label,
-    #local-confirm-message {
+    #local-confirm-message,
+    #local-search-results-help,
+    #local-model-list-title {
         color: $tau-muted-text;
     }
 
     #local-backend-list,
     #local-backend-status,
     #local-backend-progress,
+    #local-model-list,
+    #local-search-results-list,
     #local-configure-screen Input,
     #local-configure-screen Select,
     #local-model-action-input {
@@ -3383,16 +3389,24 @@ class TauTuiApp(App[None]):
         margin-top: 1;
     }
 
-    #local-backend-list {
+    #local-backend-list,
+    #local-model-list,
+    #local-search-results-list {
         height: auto;
         max-height: 16;
+    }
+
+    #local-model-list-title {
+        height: 1;
+        margin-top: 1;
     }
 
     #local-backend-actions,
     #local-backend-picker-buttons,
     #local-configure-buttons,
     #local-confirm-buttons,
-    #local-model-action-buttons {
+    #local-model-action-buttons,
+    #local-search-results-buttons {
         height: auto;
         margin-top: 1;
     }

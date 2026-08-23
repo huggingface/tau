@@ -71,10 +71,12 @@ The full list is in the [Slash commands reference]({{< relref "../reference/slas
 
 `/local` first opens an explicit backend chooser. One backend is preselected but
 still requires confirmation; a recommended backend is only a marker. Tau's
-built-in `llama.cpp` backend asks for an endpoint and optional secret key,
-discovers exact `/v1/models` IDs, and exposes status, refresh, use, Doctor, and
-reset. The host renders backend-declared text, secret, and choice fields and
-exposes only the optional actions the backend reports.
+built-in `llama.cpp` backend automatically probes its one effective
+saved/environment/default endpoint; **Configure** accepts another URL and an
+optional secret key. It renders discovered models as selectable rows and
+exposes Hugging Face search/download, load/unload, status, refresh, use, Doctor,
+and reset when supported. The host renders only backend-declared fields, models,
+and actions.
 
 Configure, refresh, status, Doctor, and reset work asynchronously, show
 structured progress/diagnostics, and are cancelled when the screen closes.

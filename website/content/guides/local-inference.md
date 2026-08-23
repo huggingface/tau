@@ -32,21 +32,23 @@ Start Tau and enter:
 ```
 
 Choose the recommended `llama.cpp` backend and confirm the choice, even when it
-is the only backend. Enter the server URL with or without `/v1`, then optionally
-enter an API key. Tau probes only the endpoint you provide; it never scans ports,
-processes, or the local network.
+is the only backend. Tau immediately probes the saved endpoint,
+`LLAMA_BASE_URL`, or the default `http://127.0.0.1:8080`. Use **Configure** for a
+server URL elsewhere (with or without `/v1`) and an optional API key. Tau probes
+only that one effective endpoint; it never scans ports, processes, or the local
+network.
 
 Endpoint precedence is:
 
-1. the endpoint currently entered in `/local`;
+1. a URL submitted through **Configure**;
 2. the saved endpoint;
 3. `LLAMA_BASE_URL` for the current process;
 4. `http://127.0.0.1:8080` as the offered default.
 
-The default alone does not configure the backend or trigger a network request.
-An explicit saved endpoint or non-empty `LLAMA_BASE_URL` counts as configured.
-Successful setup discovers exact IDs from `/v1/models`; it never requires a fake
-model ID.
+Opening the confirmed backend triggers the probe. Probing the offered default
+makes discovered models available for the current Tau process but does not save
+the endpoint; use **Configure** to persist it. Successful discovery uses exact
+IDs from `/v1/models` and never requires a fake model ID.
 
 ### Authentication
 
@@ -93,19 +95,23 @@ the tested **b9688–b10595** range. Unknown, older, or newer builds safely degr
 to `/v1/models` discovery: inference remains available, but Tau sends no router
 mutation. Single-model servers remain fully supported.
 
-After Refresh confirms a compatible router, `/local` lists loaded, sleeping,
-unloaded, loading, downloading, failed, and unknown server states. Only loaded
-or sleeping models enter `/model`. Actions are always explicit:
+After the automatic probe or Refresh confirms a compatible router, `/local`
+lists loaded, sleeping, unloaded, loading, downloading, failed, and unknown
+server states as selectable rows. Only loaded or sleeping models enter `/model`.
+Select an unloaded row to load it, or a loaded/sleeping row to use it. Actions
+are always explicit:
 
-- **Load model** waits until refreshed router state reports loaded or sleeping.
-  If other models are active, choose whether to keep or unload them; Tau never
-  decides for a shared router.
+- Selecting an unloaded row (or **Load model**) waits until refreshed router
+  state reports loaded or sleeping. If other models are active, choose whether
+  to keep or unload them; Tau never decides for a shared router.
 - **Unload model** asks for model-specific confirmation.
-- **Search models** queries Hugging Face for GGUF repositories and shows gating,
-  quantizations, and reported sizes. `Q4_K_M` is marked recommended only as a UI
-  preference, not persisted model metadata.
+- **Search models** accepts a Hugging Face model ID or search text, then opens a
+  selectable repository/quantization list with gating and reported sizes.
+  `Q4_K_M` is marked recommended only as a UI preference, not persisted model
+  metadata.
 - **Download model** accepts the exact `owner/repository[:quantization]` value,
-  asks for confirmation, and requests a server-side download.
+  asks for confirmation, and requests a server-side download. The completed
+  model appears as an unloaded row ready to select and load.
 
 Progress is bounded and cancellable. llama.cpp documents `/models/unload` as the
 cancel operation for load/download, so Tau requests it and then refreshes. On a

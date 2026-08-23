@@ -27,21 +27,23 @@ Open Tau and run:
 ```
 
 Choose the recommended `llama.cpp` backend and confirm the choice, even when it
-is the only backend. Enter the server URL, with or without `/v1`, and optionally
-enter an API key. Tau probes only the endpoint you provide. It never scans ports,
-processes, or the local network.
+is the only backend. Tau immediately probes the saved endpoint,
+`LLAMA_BASE_URL`, or the default `http://127.0.0.1:8080`. Use **Configure** to
+enter another server URL, with or without `/v1`, and an optional API key. Tau
+probes only that one effective endpoint; it never scans ports, processes, or the
+local network.
 
 Endpoint precedence is:
 
-1. the value currently entered in `/local`;
+1. a URL submitted through **Configure**;
 2. the saved endpoint;
 3. `LLAMA_BASE_URL` for the current process;
 4. `http://127.0.0.1:8080` as the offered default.
 
-The default alone does not configure the backend or cause a network request. An
-explicitly saved endpoint or non-empty `LLAMA_BASE_URL` counts as configured.
-Successful setup discovers the exact IDs returned by `/v1/models`; it never
-requires a fake model ID.
+Opening the confirmed backend triggers the probe. Probing the offered default
+makes discovered models available for the current Tau process but does not save
+the endpoint; use **Configure** to persist it. Successful discovery uses the
+exact IDs returned by `/v1/models` and never requires a fake model ID.
 
 Use the optional key in one of these ways:
 
@@ -93,15 +95,18 @@ tested llama.cpp build range, **b9688–b10595**. Unknown/incompatible routers
 fall back to standard `/v1/models` discovery without mutation controls.
 Single-model servers remain fully supported.
 
-`/local` lists every server-reported router state, while only loaded and sleeping
-models appear in `/model`. Load, unload, and server-side download are explicit;
-unload and download require confirmation, and loading asks whether to keep or
-unload other active shared-router models. Cancellation uses llama.cpp's
-documented unload operation and refreshes state. Connection loss also refreshes
-when possible and never replays an interrupted mutation.
+`/local` lists every server-reported router state as selectable rows, while only
+loaded and sleeping models appear in `/model`. Select an unloaded row to load it;
+select a loaded/sleeping row to use it. Load, unload, and server-side download
+are explicit; unload and download require confirmation, and loading asks whether
+to keep or unload other active shared-router models. Cancellation uses
+llama.cpp's documented unload operation and refreshes state. Connection loss
+also refreshes when possible and never replays an interrupted mutation.
 
-Search queries Hugging Face GGUF repositories and reports gating, quantizations,
-and sizes. `Q4_K_M` is a UI recommendation only. Tau discovers `HF_TOKEN` from
+Enter an exact Hugging Face `owner/repository[:quantization]` in **Download
+model**, or use **Search models** and select a repository/quantization result.
+Search reports gating, quantizations, and sizes. `Q4_K_M` is a UI recommendation
+only. Tau discovers `HF_TOKEN` from
 the environment or standard Hugging Face token files for search, but never saves
 or forwards it. The independent llama.cpp process separately needs its own token
 to download gated repositories after their terms are accepted.

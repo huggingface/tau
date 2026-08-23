@@ -12,7 +12,9 @@ import httpx
 HF_API_ROOT = "https://huggingface.co/api"
 HF_TOKEN_ENV = "HF_TOKEN"
 _QUANTIZATION = re.compile(
-    r"(?:^|[-_.])((?:IQ|Q)\d(?:_[A-Z0-9]+)+|F(?:16|32)|BF16)(?:[-_.]|$)", re.IGNORECASE
+    r"(?:^|[-_.])((?:UD-)?(?:IQ\d(?:_[A-Z0-9]+)+|Q\d(?:_[A-Z0-9]+)+|"
+    r"BF16|F16|F32|MXFP\d(?:_[A-Z0-9]+)*))(?=[-_.]|$)",
+    re.IGNORECASE,
 )
 _EXACT_REPOSITORY = re.compile(r"^[^\s/:]+/[^\s/:]+(?::[^\s:]+)?$")
 
@@ -78,7 +80,13 @@ async def search_gguf_repositories(
         return (await repository_details(client, exact, token=token),)
     response = await client.get(
         HF_API_ROOT + "/models",
-        params={"search": normalized, "filter": "gguf", "limit": str(limit)},
+        params={
+            "search": normalized,
+            "filter": "gguf",
+            "sort": "downloads",
+            "direction": "-1",
+            "limit": str(limit),
+        },
         headers=_headers(token),
     )
     _raise_http(response, "searching Hugging Face")
@@ -126,7 +134,10 @@ async def repository_details(
             filename = sibling.get("rfilename", sibling.get("path"))
             if not isinstance(filename, str) or not filename.casefold().endswith(".gguf"):
                 continue
-            match = _QUANTIZATION.search(Path(filename).name)
+            name = Path(filename).name
+            if name.casefold().startswith("mmproj"):
+                continue
+            match = _QUANTIZATION.search(name)
             if match is None:
                 continue
             quantization = match.group(1).upper()
@@ -180,8 +191,17 @@ def _raise_http(response: httpx.Response, operation: str) -> None:
 
 def _standard_token_paths(environment: Mapping[str, str]) -> tuple[Path, ...]:
     home = Path(environment.get("HOME") or Path.home())
-    hf_home = Path(environment.get("HF_HOME") or home / ".cache" / "huggingface")
-    return (hf_home / "token", home / ".huggingface" / "token")
+    explicit = environment.get("HF_TOKEN_PATH", "").strip()
+    hf_home = environment.get("HF_HOME", "").strip()
+    xdg_cache = environment.get("XDG_CACHE_HOME", "").strip()
+    candidates = (
+        Path(explicit) if explicit else None,
+        Path(hf_home) / "token" if hf_home else None,
+        Path(xdg_cache) / "huggingface" / "token" if xdg_cache else None,
+        home / ".cache" / "huggingface" / "token",
+        home / ".huggingface" / "token",
+    )
+    return tuple(dict.fromkeys(path for path in candidates if path is not None))
 
 
 __all__ = [

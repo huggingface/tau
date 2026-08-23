@@ -4,11 +4,12 @@ import asyncio
 
 import pytest
 from textual.app import App
-from textual.widgets import Input, Label, Select, Static
+from textual.widgets import Input, Label, ListView, Select, Static
 
 from tau_coding.extensions import (
     DynamicProvider,
     DynamicProviderRegistry,
+    LocalArtifactOption,
     LocalBackend,
     LocalBackendRegistry,
     LocalBackendStatus,
@@ -16,6 +17,8 @@ from tau_coding.extensions import (
     LocalConfigureResult,
     LocalConfigureSpec,
     LocalModel,
+    LocalOperationResult,
+    LocalSearchResult,
     NoAuth,
     OpenAICompatibleTransport,
     ProviderModel,
@@ -26,6 +29,7 @@ from tau_coding.tui.local_backends import (
     LocalBackendScreen,
     LocalConfigureScreen,
     LocalConfirmScreen,
+    LocalSearchResultsScreen,
 )
 
 pytestmark = pytest.mark.anyio
@@ -45,6 +49,8 @@ def _registry(
     *,
     refresh=None,
     reset=None,
+    load_model=None,
+    unload_model=None,
     recommended: bool = False,
 ) -> LocalBackendRegistry:
     providers = DynamicProviderRegistry(generation_id="generation")
@@ -83,6 +89,8 @@ def _registry(
             status=status,
             refresh=refresh or status,
             reset=reset,
+            load_model=load_model,
+            unload_model=unload_model,
             recommended=recommended,
         ),
     )
@@ -111,6 +119,131 @@ async def test_single_backend_is_preselected_but_requires_explicit_confirmation(
 
     assert selected == ["backend"]
     await registry.aclose()
+
+
+async def test_backend_open_auto_refreshes_and_renders_clickable_models() -> None:
+    refreshed = asyncio.Event()
+
+    async def refresh(context):
+        del context
+        refreshed.set()
+        return LocalBackendStatus(
+            state="ready",
+            endpoint_display="http://127.0.0.1:8080/v1",
+            models=(LocalModel("downloaded", "Downloaded model", "unloaded"),),
+            actions=("refresh", "load_model"),
+        )
+
+    loaded: list[str] = []
+
+    async def load_model(model_id, context):
+        del context
+        loaded.append(model_id)
+        return LocalOperationResult(
+            backend_status=LocalBackendStatus(
+                state="ready",
+                models=(LocalModel(model_id, "Downloaded model", "loaded"),),
+                selected_model=model_id,
+                actions=("refresh", "load_model", "use"),
+            ),
+            committed=True,
+        )
+
+    registry = _registry(refresh=refresh, load_model=load_model)
+    app = _Host()
+
+    async with app.run_test() as pilot:
+        app.push_screen(LocalBackendScreen(registry, "backend", theme=TAU_DARK_THEME))
+        await refreshed.wait()
+        await pilot.pause()
+
+        screen = app.screen
+        status = screen.query_one("#local-backend-status", Static).render().plain
+        assert "http://127.0.0.1:8080/v1" in status
+        model_list = screen.query_one("#local-model-list", ListView)
+        label = model_list.children[0].query_one(Label).render().plain
+        assert "Downloaded model" in label
+        assert "unloaded" in label
+
+        model_list.action_select_cursor()
+        await pilot.pause()
+        assert loaded == ["downloaded"]
+        assert "loaded" in model_list.children[0].query_one(Label).render().plain
+
+    await registry.aclose()
+
+
+async def test_clicking_loaded_model_uses_exact_model_id() -> None:
+    async def refresh(context):
+        del context
+        return LocalBackendStatus(
+            state="ready",
+            models=(
+                LocalModel("first", state="loaded"),
+                LocalModel("second", state="sleeping"),
+            ),
+            actions=("refresh",),
+        )
+
+    used: list[tuple[str, str]] = []
+    registry = _registry(refresh=refresh)
+    app = _Host()
+
+    async def use(provider_id: str, model_id: str) -> None:
+        used.append((provider_id, model_id))
+
+    async with app.run_test() as pilot:
+        app.push_screen(
+            LocalBackendScreen(
+                registry,
+                "backend",
+                theme=TAU_DARK_THEME,
+                on_use=use,
+            )
+        )
+        await pilot.pause()
+        model_list = app.screen.query_one("#local-model-list", ListView)
+        model_list.index = 1
+        model_list.action_select_cursor()
+        await pilot.pause()
+
+    assert used == [("provider", "second")]
+    await registry.aclose()
+
+
+async def test_search_results_preselect_recommended_download_variant() -> None:
+    selected: list[str | None] = []
+    app = _Host()
+    results = (
+        LocalSearchResult(
+            "owner/repo",
+            "owner/repo",
+            options=(
+                LocalArtifactOption("owner/repo:Q8_0", "Q8_0", 8_000_000_000),
+                LocalArtifactOption(
+                    "owner/repo:Q4_K_M",
+                    "Q4_K_M",
+                    4_000_000_000,
+                    recommended=True,
+                ),
+            ),
+        ),
+    )
+
+    async with app.run_test() as pilot:
+        app.push_screen(
+            LocalSearchResultsScreen(results, theme=TAU_DARK_THEME),
+            callback=selected.append,
+        )
+        await pilot.pause()
+
+        model_list = app.screen.query_one("#local-search-results-list", ListView)
+        assert model_list.index == 1
+        assert "recommended" in model_list.children[1].query_one(Label).render().plain
+        model_list.action_select_cursor()
+        await pilot.pause()
+
+    assert selected == ["owner/repo:Q4_K_M"]
 
 
 async def test_configuration_screen_renders_text_secret_and_choice_fields() -> None:

@@ -20,11 +20,12 @@ the active extension-runtime generation. Endpoint settings and allowlisted model
 snapshots are user-level integration state, not project inputs; they live under
 `~/.tau/state/extensions/llama.cpp.json`.
 
-`/local` probes only the endpoint the user entered, saved, or supplied through
-`LLAMA_BASE_URL`. It does not scan processes, ports, or the local network. Tau
-does not install, start, stop, download, or delete llama.cpp servers or model
-files. The default localhost endpoint is an offered value, not an automatic
-probe.
+After the user confirms a backend, `/local` probes only the endpoint they
+entered, saved, supplied through `LLAMA_BASE_URL`, or accepted as the default. It
+does not scan processes, ports, or the local network. Tau does not install,
+start, or stop llama.cpp and never writes or deletes model files. On a compatible
+router, an explicit confirmed action can ask the independent llama.cpp server to
+download a selected model.
 
 ## Credentials and safe state
 

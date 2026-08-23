@@ -15,6 +15,7 @@ from tau_agent.harness import SimpleCancellationToken
 from tau_coding.credentials import FileCredentialStore
 from tau_coding.extensions import ExtensionRuntime
 from tau_coding.extensions.builtins.llama_cpp import service as llama_service
+from tau_coding.extensions.builtins.llama_cpp.huggingface import discover_hf_token
 from tau_coding.extensions.builtins.llama_cpp.service import (
     LLAMA_CPP_API_KEY_ENV,
     LLAMA_CPP_DEFAULT_ENDPOINT,
@@ -209,6 +210,25 @@ def test_endpoint_precedence_is_stored_then_environment_then_default(tmp_path: P
     )
     assert dormant.endpoint.server_root == LLAMA_CPP_DEFAULT_ENDPOINT
     assert dormant.configured is False
+
+
+@pytest.mark.anyio
+async def test_explicit_local_refresh_probes_default_and_publishes_live_models(
+    tmp_path: Path,
+) -> None:
+    client, requests = _client(_healthy_handler())
+    service, state_store, _ = _service(tmp_path, client=client, environment={})
+
+    assert service.configured is False
+    result = await service.refresh(_context())
+
+    assert requests[0].url == f"{LLAMA_CPP_DEFAULT_ENDPOINT}/health"
+    assert result.backend_status is not None
+    assert result.backend_status.state == "ready"
+    assert result.backend_status.endpoint_display == f"{LLAMA_CPP_DEFAULT_ENDPOINT}/v1"
+    assert [model.id for model in service.provider().models] == ["qwen-local"]
+    assert not state_store.path.exists()
+    await client.aclose()
 
 
 @pytest.mark.anyio
@@ -952,6 +972,50 @@ async def test_router_load_unload_download_confirm_reconcile_and_publish(tmp_pat
 
 
 @pytest.mark.anyio
+async def test_fast_router_download_finishes_without_observing_intermediate_state(
+    tmp_path: Path,
+) -> None:
+    downloaded = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal downloaded
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.url.path == "/props":
+            return httpx.Response(200, json={"role": "router", "build_info": "b10000-test"})
+        if request.url.path == "/models" and request.method == "GET":
+            models = (
+                [{"id": "owner/repo:Q4_K_M", "status": {"value": "unloaded"}}] if downloaded else []
+            )
+            return httpx.Response(200, json={"data": models})
+        if request.url.path == "/models" and request.method == "POST":
+            downloaded = True
+            return httpx.Response(200, json={"success": True})
+        return httpx.Response(404)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    service, state_store, credentials = _service(tmp_path, client=client)
+    state_store.save(_state(selected_model=None, models=()))
+    service = LlamaCppService(
+        state_store=state_store,
+        credential_store=credentials,
+        client=client,
+        environment={},
+    )
+    await service.refresh(_context())
+
+    result = await service.download_model(
+        "owner/repo:Q4_K_M",
+        _context("download_model", confirmation="download"),
+    )
+
+    assert result.committed is True
+    assert result.backend_status is not None
+    assert result.backend_status.models[0].state == "unloaded"
+    await client.aclose()
+
+
+@pytest.mark.anyio
 async def test_router_connection_loss_reconciles_without_replaying_mutation(tmp_path: Path) -> None:
     posts = 0
     list_calls = 0
@@ -1062,6 +1126,8 @@ async def test_hugging_face_search_details_token_and_gating_are_search_only(tmp_
                     "siblings": [
                         {"rfilename": "model-Q4_K_M.gguf", "size": 4_000_000_000},
                         {"rfilename": "model-Q8_0.gguf", "lfs": {"size": 8_000_000_000}},
+                        {"rfilename": "model-UD-Q6_K_XL.gguf", "size": 6_000_000_000},
+                        {"rfilename": "mmproj-F16.gguf", "size": 1_000_000_000},
                     ],
                 },
             )
@@ -1079,7 +1145,11 @@ async def test_hugging_face_search_details_token_and_gating_are_search_only(tmp_
     assert len(result.search_results) == 1
     repository = result.search_results[0]
     assert repository.restricted is True
-    assert [option.label for option in repository.options] == ["Q4_K_M", "Q8_0"]
+    assert [option.label for option in repository.options] == [
+        "Q4_K_M",
+        "Q8_0",
+        "UD-Q6_K_XL",
+    ]
     assert repository.options[0].recommended is True
     assert "server process" in (repository.diagnostic or "")
     assert all(
@@ -1088,6 +1158,19 @@ async def test_hugging_face_search_details_token_and_gating_are_search_only(tmp_
     assert "search-secret" not in repr(result)
     assert not state_store_text(tmp_path)
     await client.aclose()
+
+
+def test_hugging_face_token_lookup_matches_standard_environment_paths(tmp_path: Path) -> None:
+    explicit = tmp_path / "explicit-token"
+    explicit.write_text(" explicit ", encoding="utf-8")
+    assert discover_hf_token({"HF_TOKEN_PATH": str(explicit), "HOME": str(tmp_path)}) == "explicit"
+
+    explicit.unlink()
+    xdg = tmp_path / "xdg"
+    token = xdg / "huggingface" / "token"
+    token.parent.mkdir(parents=True)
+    token.write_text(" xdg-token ", encoding="utf-8")
+    assert discover_hf_token({"XDG_CACHE_HOME": str(xdg), "HOME": str(tmp_path)}) == "xdg-token"
 
 
 @pytest.mark.anyio

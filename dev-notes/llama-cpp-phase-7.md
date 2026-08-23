@@ -27,8 +27,10 @@ Phase 7 completes issue #602 without changing the Phase 5 single-model path.
   only `llama.cpp` plus the exact model ID. Unloaded/stale rows remain visible
   as unavailable, cannot be selected/cycled, and cause no discovery or mutation.
 - Generic `/local` contracts gained backend-neutral search artifacts and
-  structured confirmations. The Textual host renders them without router,
-  Hugging Face, GGUF, or quantization branches.
+  structured confirmations. After explicit backend confirmation, the Textual
+  host probes its effective endpoint, renders model states as selectable rows,
+  and lets users select search variants for download without router, Hugging
+  Face, GGUF, or quantization branches in host logic.
 
 Tau never calls llama.cpp's delete endpoint.
 

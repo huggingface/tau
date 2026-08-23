@@ -228,11 +228,15 @@ class LlamaCppService:
 
     def provider(self) -> DynamicProvider:
         active = self._active_state
-        models = (
-            tuple(_provider_model(model) for model in active.models)
-            if active is not None and active.endpoint == self.endpoint.server_root
-            else ()
-        )
+        if active is not None and active.endpoint == self.endpoint.server_root:
+            models = tuple(_provider_model(model) for model in active.models)
+        elif self._last_discovery is not None and self._last_discovery.endpoint == self.endpoint:
+            # Explicit /local probing may use the offered default endpoint
+            # without persisting it. Keep that live discovery available to the
+            # current process so /model and model switching work immediately.
+            models = self._last_discovery.models
+        else:
+            models = ()
         default = (
             None if self._stale_selected_model is not None else _selected_model(active, models)
         )
@@ -463,6 +467,8 @@ class LlamaCppService:
 
     async def status(self, context: LocalOperationContext) -> LocalBackendStatus:
         del context
+        if self._last_discovery is not None:
+            return self._status_from_discovery(self._last_discovery)
         if not self.configured:
             if self._state_error or self._endpoint_error:
                 return self._cached_status()
@@ -470,30 +476,19 @@ class LlamaCppService:
                 "unconfigured",
                 diagnostics=(
                     LocalDiagnostic(
-                        "Configure an endpoint to connect to llama.cpp.",
+                        "Tau will check the offered default endpoint when this backend opens. "
+                        "Use Configure for a different server URL.",
                         "info",
                         "configuration",
                     ),
                 ),
             )
-        if self._last_discovery is not None:
-            return self._status_from_discovery(self._last_discovery)
         return self._cached_status()
 
     async def refresh(self, context: LocalOperationContext) -> LocalOperationResult:
-        if not self.configured:
-            return LocalOperationResult(
-                backend_status=self._status(
-                    "unconfigured",
-                    diagnostics=(
-                        LocalDiagnostic(
-                            "No configured endpoint was probed. Enter an endpoint in Configure.",
-                            "info",
-                            "configuration",
-                        ),
-                    ),
-                )
-            )
+        # /local is an explicit opt-in to probe exactly one effective endpoint:
+        # saved state, LLAMA_BASE_URL, or the offered localhost default. This
+        # is not a process/port/network scan and does not persist the default.
         try:
             auth = await _resolve_auth_for_backend(self)
             discovery = await self.discover(auth, signal=context.signal)
@@ -513,13 +508,6 @@ class LlamaCppService:
             )
 
     async def doctor(self, context: LocalOperationContext) -> LocalOperationResult:
-        if not self.configured:
-            return LocalOperationResult(
-                backend_status=await self.status(context),
-                diagnostics=(
-                    LocalDiagnostic("Configure an endpoint before running doctor.", "warning"),
-                ),
-            )
         try:
             auth = await _resolve_auth_for_backend(self)
             discovery = await self.discover(auth, signal=context.signal)
@@ -739,7 +727,7 @@ class LlamaCppService:
                 model_id,
                 {"unloaded", "loaded", "sleeping", "failed"},
                 context,
-                require_observed=True,
+                minimum_polls=2,
             )
             reconciled = _router_model(models, model_id)
             if reconciled is None or reconciled.state == "failed":
@@ -829,23 +817,20 @@ class LlamaCppService:
         terminal: set[str],
         context: LocalOperationContext,
         *,
-        require_observed: bool = False,
+        minimum_polls: int = 1,
     ) -> tuple[RouterModel, ...]:
         deadline = asyncio.get_running_loop().time() + LLAMA_CPP_ROUTER_RECONCILE_TIMEOUT_SECONDS
-        observed_transition = False
+        polls = 0
         while True:
             if context.cancelled:
                 raise asyncio.CancelledError
             models = await list_router_models(client, self.endpoint.server_root, headers)
             await self._publish_router_models(models)
+            polls += 1
             model = _router_model(models, model_id)
             if model is not None:
-                observed_transition = observed_transition or model.state in {
-                    "loading",
-                    "downloading",
-                }
                 context.report_progress(_router_progress(model))
-                if model.state in terminal and (observed_transition or not require_observed):
+                if model.state in terminal and polls >= minimum_polls:
                     return models
             if asyncio.get_running_loop().time() >= deadline:
                 raise TimeoutError("router reconciliation timed out")
@@ -1186,6 +1171,15 @@ class LlamaCppService:
                     "models",
                 )
             )
+        if models and not selectable:
+            diagnostics.append(
+                LocalDiagnostic(
+                    "The router is ready, but no model is loaded. Select an unloaded model to "
+                    "load it.",
+                    "info",
+                    "models",
+                )
+            )
         actions: list[LocalAction] = [
             "configure",
             "refresh",
@@ -1199,7 +1193,7 @@ class LlamaCppService:
         if selected is not None:
             actions.append("use")
         return LocalBackendStatus(
-            state="ready" if selectable else "unavailable",
+            state="ready",
             endpoint_display=self.endpoint.inference_base,
             authentication_source=_authentication_source(
                 self._active_state, self.environment, self.credential_store
@@ -1262,7 +1256,7 @@ class LlamaCppService:
             actions.append("use")
         return LocalBackendStatus(
             state=state,  # type: ignore[arg-type]
-            endpoint_display=self.endpoint.inference_base if self.configured else None,
+            endpoint_display=self.endpoint.inference_base,
             authentication_source=_authentication_source(
                 self._active_state,
                 self.environment,

@@ -79,9 +79,11 @@ instead of reusing the source project's outcome.
 
 The bundled `llama.cpp` backend is trusted Tau package code. It loads before the
 project-trust decision, including with `--no-extensions`, and never creates a
-trust prompt. `/local` probes only its explicitly entered, saved, or
-`LLAMA_BASE_URL` endpoint; it does not scan ports, processes, or the local
-network. Tau never starts/stops the external server or deletes model files.
+trust prompt. After backend confirmation, `/local` probes only its entered,
+saved, `LLAMA_BASE_URL`, or default endpoint; it does not scan ports, processes,
+or the local network. Tau never starts/stops the external server or deletes
+model files. Explicit downloads are performed by the independent llama.cpp
+router, not Tau's filesystem code.
 
 The safe integration snapshot at `~/.tau/state/extensions/llama.cpp.json`
 contains only the normalized endpoint, exact model IDs, allowlisted metadata,

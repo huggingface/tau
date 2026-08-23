@@ -8,8 +8,10 @@ them and owns interaction.
 
 Type `/local` to open the generic local-backend host. It explicitly chooses a
 registered backend even when only one is available; the recommended backend is
-preselected but still requires confirmation. Tau's built-in `llama.cpp` backend
-provides endpoint/API-key fields, status, refresh, use, Doctor, and reset.
+preselected but still requires confirmation. Once confirmed, Tau probes its one
+effective saved/environment/default endpoint. The built-in `llama.cpp` backend
+provides endpoint/API-key fields, clickable model rows, Hugging Face
+search/download, status, refresh, use, Doctor, and reset.
 
 Configuration fields are structured text, secret, or choice values. Secret input
 is not echoed into diagnostics or session history. Backends perform async

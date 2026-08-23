@@ -25,8 +25,10 @@ from tau_coding.local_backends import (
     LocalConfigureSpec,
     LocalConfigValues,
     LocalConfirmationRequest,
+    LocalModel,
     LocalOperationResult,
     LocalProgress,
+    LocalSearchResult,
     ProgressCallback,
 )
 from tau_coding.tui.config import TuiTheme
@@ -159,6 +161,7 @@ class LocalBackendScreen(ModalScreen[None]):
         self._notify_callback = notify_callback or (lambda message, level: None)
         self._is_idle = is_idle or (lambda: True)
         self.status: LocalBackendStatus | None = None
+        self._selected_model_id: str | None = None
         self._worker: asyncio.Task[None] | None = None
         self._use_task: asyncio.Task[None] | None = None
         self._closing = False
@@ -170,7 +173,9 @@ class LocalBackendScreen(ModalScreen[None]):
                 "Select an action to inspect or change this backend.",
                 id="local-backend-help",
             )
-            yield Static("Not checked yet.", id="local-backend-status")
+            yield Static("Looking for a local server…", id="local-backend-status")
+            yield Static("Models", id="local-model-list-title")
+            yield ListView(id="local-model-list")
             with Horizontal(id="local-backend-actions"):
                 yield Button("Configure", id="local-action-configure")
                 yield Button("Refresh", id="local-action-refresh")
@@ -193,6 +198,10 @@ class LocalBackendScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         self._update_action_visibility(None)
+        # Opening a backend is an explicit user action, so probe its effective
+        # saved/environment/default endpoint immediately. Backends still own
+        # which endpoint that means; the generic host never scans.
+        self._start_operation("refresh")
 
     def on_unmount(self) -> None:
         """Stop host-owned tasks before Textual detaches this modal."""
@@ -217,14 +226,25 @@ class LocalBackendScreen(ModalScreen[None]):
             self._start_operation("doctor")
         elif action == "local-action-reset":
             self._confirm_reset()
-        elif action in {
-            "local-action-load-model",
-            "local-action-unload-model",
-            "local-action-download-model",
-            "local-action-search-models",
-        }:
+        elif action in {"local-action-load-model", "local-action-unload-model"}:
+            self._manage_selected_model(
+                cast(Literal["load_model", "unload_model"], action.removeprefix("local-action-"))
+            )
+        elif action in {"local-action-download-model", "local-action-search-models"}:
             operation = action.removeprefix("local-action-")
-            self._open_model_action(operation)  # type: ignore[arg-type]
+            self._open_model_action(cast(LocalAction, operation))
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        if event.list_view.id != "local-model-list":
+            return
+        self._sync_selected_model()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.list_view.id != "local-model-list":
+            return
+        event.stop()
+        self._sync_selected_model()
+        self._activate_selected_model()
 
     def action_cancel(self) -> None:
         self._closing = True
@@ -235,6 +255,11 @@ class LocalBackendScreen(ModalScreen[None]):
         self.dismiss(None)
 
     def _open_configure(self) -> None:
+        # Do not make users wait for an unavailable default probe before they
+        # can enter a custom endpoint.
+        if self._worker is not None and not self._worker.done():
+            self.registry.cancel(self.backend_id, "refresh")
+            self._worker.cancel()
         view = self.registry.effective(self.backend_id)
         if view is None:
             self._show_message("This backend is no longer available.", "error")
@@ -283,19 +308,67 @@ class LocalBackendScreen(ModalScreen[None]):
             )
             return
         labels = {
-            "load_model": "Load model",
-            "unload_model": "Unload model",
             "download_model": "Download model",
-            "search_models": "Search models",
+            "search_models": "Search Hugging Face models",
         }
+        placeholders = {
+            "download_model": "owner/repository[:quantization]",
+            "search_models": "Hugging Face model ID or search query",
+        }
+        if action not in labels:
+            self._show_message("Select a model from the model list first.", "warning")
+            return
         self.app.push_screen(
-            LocalModelActionScreen(labels[action], theme=self.theme),
+            LocalModelActionScreen(
+                labels[action],
+                placeholder=placeholders[action],
+                theme=self.theme,
+            ),
             callback=lambda model_id: self._handle_model_action(action, model_id),
         )
 
     def _handle_model_action(self, action: LocalAction, model_id: str | None) -> None:
         if model_id is not None:
             self._start_operation(action, model_id=model_id)
+
+    def _manage_selected_model(self, action: Literal["load_model", "unload_model"]) -> None:
+        model = self._selected_model()
+        if model is None:
+            self._show_message("Select a discovered model first.", "warning")
+            return
+        self._start_operation(action, model_id=model.id)
+
+    def _activate_selected_model(self) -> None:
+        model = self._selected_model()
+        if model is None or self.status is None:
+            return
+        if model.state in {"loaded", "sleeping", "available", None}:
+            self._use_model(model.id)
+            return
+        if model.state in {"loading", "downloading", "unknown"}:
+            self._show_message(f"{model.id} is currently {model.state}.", "warning")
+            return
+        if "load_model" in self.status.actions:
+            self._start_operation("load_model", model_id=model.id)
+        else:
+            self._show_message(f"{model.id} is not currently available to use.", "warning")
+
+    def _selected_model(self) -> LocalModel | None:
+        if self.status is None or self._selected_model_id is None:
+            return None
+        return next(
+            (model for model in self.status.models if model.id == self._selected_model_id),
+            None,
+        )
+
+    def _sync_selected_model(self) -> None:
+        if self.status is None or not self.status.models:
+            self._selected_model_id = None
+            return
+        model_list = self.query_one("#local-model-list", ListView)
+        index = model_list.index
+        if index is not None and 0 <= index < len(self.status.models):
+            self._selected_model_id = self.status.models[index].id
 
     def _start_operation(
         self,
@@ -390,7 +463,7 @@ class LocalBackendScreen(ModalScreen[None]):
             return
         if result.backend_status is not None:
             self.status = result.backend_status
-            self._render_status(result.backend_status)
+            await self._render_status(result.backend_status)
         if result.confirmation is not None:
             self._open_operation_confirmation(result.confirmation, action, values, model_id)
             self._set_progress("")
@@ -403,21 +476,11 @@ class LocalBackendScreen(ModalScreen[None]):
         elif result.message:
             self._show_message(result.message, "info")
         if result.search_results:
-            lines: list[str] = []
-            for item in result.search_results:
-                marker = " [restricted]" if item.restricted else ""
-                lines.append(f"{item.label}{marker}")
-                for option in item.options:
-                    size = (
-                        f" — {_format_bytes(option.size_bytes)}"
-                        if option.size_bytes is not None
-                        else ""
-                    )
-                    preferred = " — recommended" if option.recommended else ""
-                    lines.append(f"  {option.id}{size}{preferred}")
-                if item.diagnostic:
-                    lines.append(f"  {item.diagnostic}")
-            self._set_progress("\n".join(lines))
+            self._set_progress("Select a model and quantization to download.")
+            self.app.push_screen(
+                LocalSearchResultsScreen(result.search_results, theme=self.theme),
+                callback=self._download_search_result,
+            )
         for diagnostic in result.diagnostics:
             message = (
                 f"{diagnostic.stage}: {diagnostic.message}"
@@ -427,6 +490,10 @@ class LocalBackendScreen(ModalScreen[None]):
             self._show_message(message, diagnostic.severity)
         if result.credential_orphaned:
             self._set_progress("Credential cleanup needs attention.")
+
+    def _download_search_result(self, model_id: str | None) -> None:
+        if model_id is not None:
+            self._start_operation("download_model", model_id=model_id)
 
     def _open_operation_confirmation(
         self,
@@ -453,26 +520,30 @@ class LocalBackendScreen(ModalScreen[None]):
             self._start_operation(action, values=values, model_id=model_id, confirmation=choice)
 
     def _use_selected(self) -> None:
-        if not self._is_idle():
+        model = self._selected_model()
+        model_id = (
+            model.id if model is not None else self.status.selected_model if self.status else None
+        )
+        if model_id is None:
             self._show_message(
-                "Tau must be idle before switching models.",
+                "Refresh this backend and select an available model first.",
                 "warning",
             )
+            return
+        if model is not None and model.state not in {"loaded", "sleeping", "available", None}:
+            self._show_message(f"{model.id} must be loaded before it can be used.", "warning")
+            return
+        self._use_model(model_id)
+
+    def _use_model(self, model_id: str) -> None:
+        if not self._is_idle():
+            self._show_message("Tau must be idle before switching models.", "warning")
             return
         if self._worker is not None and not self._worker.done():
             self._show_message("An operation is already in progress.", "warning")
             return
         if self._use_task is not None and not self._use_task.done():
             self._show_message("A model switch is already in progress.", "warning")
-            return
-        if self.status is None or self.status.selected_model is None:
-            self._show_message(
-                "Refresh this backend and select an available model first.",
-                "warning",
-            )
-            return
-        if "use" not in self.status.actions:
-            self._show_message("Using a model is unavailable for this backend.", "warning")
             return
         if self.on_use is None:
             self._show_message("Model selection is unavailable in this host.", "warning")
@@ -484,7 +555,7 @@ class LocalBackendScreen(ModalScreen[None]):
                 "warning",
             )
             return
-        result = self.on_use(view.backend.provider_id, self.status.selected_model)
+        result = self.on_use(view.backend.provider_id, model_id)
         if result is not None:
             self._use_task = asyncio.create_task(self._await_use(result))
 
@@ -497,16 +568,12 @@ class LocalBackendScreen(ModalScreen[None]):
             if self._can_update_ui:
                 self._show_message("Could not switch to the selected model.", "error")
 
-    def _render_status(self, status: LocalBackendStatus) -> None:
+    async def _render_status(self, status: LocalBackendStatus) -> None:
         lines = [f"State: {status.state}"]
         if status.endpoint_display:
             lines.append(f"Endpoint: {status.endpoint_display}")
         lines.append(f"Authentication: {status.authentication_source}")
-        if status.models:
-            lines.append(
-                "Models: " + ", ".join(model.display_name or model.id for model in status.models)
-            )
-        else:
+        if not status.models:
             lines.append("Models: none discovered")
         if status.selected_model:
             lines.append(f"Selected: {status.selected_model}")
@@ -521,7 +588,30 @@ class LocalBackendScreen(ModalScreen[None]):
                 else diagnostic.message
             )
         self.query_one("#local-backend-status", Static).update("\n".join(lines))
+        await self._render_model_list(status)
         self._update_action_visibility(status)
+
+    async def _render_model_list(self, status: LocalBackendStatus) -> None:
+        model_list = self.query_one("#local-model-list", ListView)
+        preferred = self._selected_model_id or status.selected_model
+        await model_list.clear()
+        if not status.models:
+            self._selected_model_id = None
+            model_list.styles.display = "none"
+            self.query_one("#local-model-list-title", Static).styles.display = "none"
+            return
+        model_list.styles.display = "block"
+        self.query_one("#local-model-list-title", Static).styles.display = "block"
+        await model_list.extend(
+            ListItem(Label(_model_label(model, status.selected_model), markup=False))
+            for model in status.models
+        )
+        index = next(
+            (index for index, model in enumerate(status.models) if model.id == preferred),
+            0,
+        )
+        model_list.index = index
+        self._selected_model_id = status.models[index].id
 
     def _update_action_visibility(self, status: LocalBackendStatus | None) -> None:
         """Reflect backend-declared capabilities without protocol assumptions."""
@@ -707,6 +797,76 @@ class LocalChoiceConfirmScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class LocalSearchResultsScreen(ModalScreen[str | None]):
+    """Choose one backend-provided artifact variant for download."""
+
+    BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("enter", "confirm", "Download", show=False),
+    ]
+
+    def __init__(
+        self,
+        results: tuple[LocalSearchResult, ...],
+        *,
+        theme: TuiTheme,
+    ) -> None:
+        super().__init__()
+        self.results = results
+        self.theme = theme
+        self.options = tuple(
+            option for result in results for option in _search_result_options(result)
+        )
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="local-search-results-screen"):
+            yield Static("Download model", id="local-search-results-title", markup=False)
+            yield Static(
+                "Choose a Hugging Face model variant. llama.cpp performs the download.",
+                id="local-search-results-help",
+                markup=False,
+            )
+            yield ListView(
+                *[ListItem(Label(label, markup=False)) for _, label, _ in self.options],
+                id="local-search-results-list",
+            )
+            with Horizontal(id="local-search-results-buttons"):
+                yield Button("Download", id="local-search-results-download", variant="primary")
+                yield Button("Cancel", id="local-search-results-cancel")
+
+    def on_mount(self) -> None:
+        if not self.options:
+            return
+        index = next(
+            (index for index, (_, _, recommended) in enumerate(self.options) if recommended),
+            0,
+        )
+        model_list = self.query_one("#local-search-results-list", ListView)
+        model_list.index = index
+        model_list.focus()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        event.stop()
+        self.action_confirm()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if event.button.id == "local-search-results-download":
+            self.action_confirm()
+        else:
+            self.action_cancel()
+
+    def action_confirm(self) -> None:
+        if not self.options:
+            return
+        index = self.query_one("#local-search-results-list", ListView).index
+        if index is not None and 0 <= index < len(self.options):
+            self.dismiss(self.options[index][0])
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class LocalModelActionScreen(ModalScreen[str | None]):
     """Collect one opaque model reference for a backend-provided action."""
 
@@ -714,15 +874,22 @@ class LocalModelActionScreen(ModalScreen[str | None]):
         Binding("escape", "cancel", "Cancel"),
     ]
 
-    def __init__(self, title: str, *, theme: TuiTheme) -> None:
+    def __init__(
+        self,
+        title: str,
+        *,
+        placeholder: str = "Model identifier",
+        theme: TuiTheme,
+    ) -> None:
         super().__init__()
         self.title_text = title
+        self.placeholder = placeholder
         self.theme = theme
 
     def compose(self) -> ComposeResult:
         with Vertical(id="local-model-action-screen"):
             yield Static(self.title_text, id="local-model-action-title", markup=False)
-            yield Input(placeholder="Model identifier", id="local-model-action-input")
+            yield Input(placeholder=self.placeholder, id="local-model-action-input")
             with Horizontal(id="local-model-action-buttons"):
                 yield Button("Continue", id="local-model-action-continue", variant="primary")
                 yield Button("Cancel", id="local-model-action-cancel")
@@ -750,6 +917,37 @@ class LocalModelActionScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+def _model_label(model: LocalModel, selected_model: str | None) -> str:
+    label = model.display_name or model.id
+    if label != model.id:
+        label = f"{label} ({model.id})"
+    details = []
+    if model.state:
+        details.append(model.state)
+    if model.id == selected_model:
+        details.append("active")
+    return label + (" — " + " · ".join(details) if details else "")
+
+
+def _search_result_options(
+    result: LocalSearchResult,
+) -> tuple[tuple[str, str, bool], ...]:
+    if not result.options:
+        restricted = " — restricted" if result.restricted else ""
+        return ((result.id, result.label + restricted, False),)
+    options: list[tuple[str, str, bool]] = []
+    for option in result.options:
+        details = [option.label]
+        if option.size_bytes is not None:
+            details.append(_format_bytes(option.size_bytes))
+        if option.recommended:
+            details.append("recommended")
+        if result.restricted:
+            details.append("restricted")
+        options.append((option.id, f"{result.label} — " + " · ".join(details), option.recommended))
+    return tuple(options)
+
+
 def _format_bytes(value: int) -> str:
     size = float(value)
     for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
@@ -766,4 +964,5 @@ __all__ = [
     "LocalChoiceConfirmScreen",
     "LocalConfirmScreen",
     "LocalModelActionScreen",
+    "LocalSearchResultsScreen",
 ]
