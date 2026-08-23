@@ -1,10 +1,10 @@
 # Issue #602 implementation plan: built-in local inference with llama.cpp
 
-**Status:** Revised implementation plan (router management required)  
-**Umbrella issue:** [#602 — Built-in local inference: `/local` with llama.cpp as the default backend](https://github.com/huggingface/tau/issues/602)  
-**Supersedes:** #415, #443, and draft PR #417  
-**Tau implementation baseline:** `origin/main` at `9c1285d68f41059105bd8a834d309a4d601a3b07`  
-**Pi reference baseline:** `eb1f87fa9a29e27e0c63dcb40dbed9a3624c82b1`  
+**Status:** Revised implementation plan (router management required)
+**Umbrella issue:** [#602 — Built-in local inference: `/local` with llama.cpp as the default backend](https://github.com/huggingface/tau/issues/602)
+**Supersedes:** #415, #443, and draft PR #417
+**Tau implementation baseline:** `origin/main` at `9c1285d68f41059105bd8a834d309a4d601a3b07`
+**Pi reference baseline:** `eb1f87fa9a29e27e0c63dcb40dbed9a3624c82b1`
 **Plan type:** Multi-PR implementation; not one monolithic change
 
 > Baseline refreshed before implementation. All umbrella work starts from the exact `origin/main` commit above; historical prototype branches remain evidence only.
@@ -1581,62 +1581,62 @@ Record any additional deviations as explicit rulings in the implementation archi
 
 ### Startup/session refactor regression
 
-**Risk:** Shared preparation touches TUI, print, resume, trust, and provider selection.  
+**Risk:** Shared preparation touches TUI, print, resume, trust, and provider selection.
 **Mitigation:** Phase 0 characterization tests; extract stages without changing behavior first; migrate one frontend at a time behind the same service.
 
 ### Project trust bypass
 
-**Risk:** Provider registration or refresh executes project code before approval.  
+**Risk:** Provider registration or refresh executes project code before approval.
 **Mitigation:** Runtime-local registries; load/restore project source only after trust; test setup and network callbacks separately.
 
 ### Stale async publication
 
-**Risk:** Old refresh overwrites new endpoint/models after reload.  
+**Risk:** Old refresh overwrites new endpoint/models after reload.
 **Mitigation:** Source + layer + generation publication token; cancellation; shared-task bookkeeping under one coordinator.
 
 ### Provider/session partial switch
 
-**Risk:** Active model changes before runtime creation succeeds.  
+**Risk:** Active model changes before runtime creation succeeds.
 **Mitigation:** Async candidate-first switch and one atomic adoption point.
 
 ### Resource leaks or double close
 
-**Risk:** Frontend and session both own startup provider, or replacement loses ownership.  
+**Risk:** Frontend and session both own startup provider, or replacement loses ownership.
 **Mitigation:** Prepared-session ownership ledger; idempotent abort; session owns adopted providers; explicit close-count tests.
 
 ### Durable configuration contamination
 
-**Risk:** A dynamic provider definition ends up in the catalog/global defaults, or scoped-model persistence accidentally serializes transient definitions or metadata.  
+**Risk:** A dynamic provider definition ends up in the catalog/global defaults, or scoped-model persistence accidentally serializes transient definitions or metadata.
 **Mitigation:** Separate effective-provider view and persistence guards; no conversion back to `ProviderSettings` for saves. Scoped persistence is restricted to host-defined stable references for trusted built-ins and never stores provider definitions, endpoint data, credentials, or discovered metadata.
 
 ### Secret leakage
 
-**Risk:** API key enters extension state, snapshots, diagnostics, URLs, or session export.  
+**Risk:** API key enters extension state, snapshots, diagnostics, URLs, or session export.
 **Mitigation:** host secret input; credential-store-only persistence; reject URL userinfo; allowlisted snapshot schema; redaction tests.
 
 ### Generic API shaped only around llama.cpp
 
-**Risk:** `/local` becomes `/llama` with another name.  
+**Risk:** `/local` becomes `/llama` with another name.
 **Mitigation:** fake second backend in Phase 4 and a real adapter spike before API stability.
 
 ### Unknown metadata converted into unsafe defaults
 
-**Risk:** Compaction, image handling, or request limits use guessed values.  
+**Risk:** Compaction, image handling, or request limits use guessed values.
 **Mitigation:** optional metadata through all layers; conservative existing fallback only where Tau already requires it; source shown in `/session`.
 
 ### Built-in integration blocks normal startup
 
-**Risk:** Local network failure slows or crashes every Tau launch.  
+**Risk:** Local network failure slows or crashes every Tau launch.
 **Mitigation:** synchronous cached registration, no unrelated startup probing, explicit bounded refresh, dormant provider, isolated diagnostics.
 
 ### Existing custom llama.cpp configuration conflicts
 
-**Risk:** Existing `llama-cpp` user provider changes meaning.  
+**Risk:** Existing `llama-cpp` user provider changes meaning.
 **Mitigation:** canonical built-in ID `llama.cpp`; no automatic migration; document coexistence and optional manual cleanup.
 
 ### Public API churn
 
-**Risk:** External extensions adopt an unvalidated contract.  
+**Risk:** External extensions adopt an unvalidated contract.
 **Mitigation:** mark APIs provisional through second-backend validation; document stability only after Phase 6.
 
 ## 20. Non-goals
