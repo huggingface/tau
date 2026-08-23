@@ -2596,6 +2596,18 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         """Close without selecting a model."""
         self.dismiss(None)
 
+    def update_choices(
+        self,
+        choices: Sequence[ModelChoice],
+        scoped_choices: Sequence[ModelChoice],
+    ) -> None:
+        """Publish a refreshed catalog without replacing the open picker."""
+        available = tuple(dict.fromkeys(choices))
+        self.scoped_choices = tuple(dict.fromkeys(scoped_choices))
+        self.unavailable_choices = frozenset(self.scoped_choices) - frozenset(available)
+        self.choices = tuple(dict.fromkeys((*available, *self.scoped_choices)))
+        self._refresh_model_list()
+
     def _select_visible_choice(self) -> None:
         if not self.visible_choices:
             return
@@ -6261,6 +6273,29 @@ class TauTuiApp(App[None]):
                 picker_kind="model",
             ),
             callback=self._handle_model_picker_result,
+        )
+        self.run_worker(self._refresh_open_model_picker(), exclusive=False)
+
+    async def _refresh_open_model_picker(self) -> None:
+        refresh = getattr(self.session, "refresh_model_catalogs", None)
+        if not callable(refresh):
+            return
+        try:
+            await refresh()
+        except Exception as error:
+            if isinstance(self.screen, ModelPickerScreen):
+                self._notify(f"Could not refresh model catalogs: {error}", severity="warning")
+            return
+        if not isinstance(self.screen, ModelPickerScreen):
+            return
+        picker = self.screen
+        while not picker.is_mounted:
+            await asyncio.sleep(0)
+            if self.screen is not picker:
+                return
+        picker.update_choices(
+            self._available_model_choices(),
+            tuple(getattr(self.session, "scoped_model_choices", ())),
         )
 
     def _open_scoped_models_picker(self) -> None:

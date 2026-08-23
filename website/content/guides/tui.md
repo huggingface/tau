@@ -199,8 +199,10 @@ when you want to reduce what is sent to the model.
 
 ## Picking models and themes
 
-- **`/model`** opens the model picker. Selecting a model from another provider
-  switches the active provider too.
+- **`/model`** opens the model picker. It shows cached/bundled models immediately,
+  refreshes catalogs in the background, and updates the open list. Selecting a
+  model from another provider switches the active provider too. Use
+  `tau update --models` to force refresh or `TAU_OFFLINE=1` to disable it.
 - **Ctrl+P** quickly cycles through your *scoped* (favorite) models without
   opening the picker. Manage that list with `/scoped-models` or by pressing
   `Space` on a model in the `/model` picker.

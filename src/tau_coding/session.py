@@ -75,6 +75,7 @@ from tau_coding.events import (
 from tau_coding.extensions.provider_registry import DynamicProviderRegistry
 from tau_coding.extensions.providers import DynamicProvider, ProviderModel
 from tau_coding.extensions.runtime import ExtensionRuntime
+from tau_coding.models_dev_store import ModelsDevRefreshResult, refresh_models_dev_catalog
 from tau_coding.paths import TauPaths
 from tau_coding.project_trust import (
     CanonicalProjectPath,
@@ -2186,6 +2187,15 @@ class CodingSession:
             ),
             system_prompt_rebuilt=system_prompt_rebuilt,
         )
+
+    async def refresh_model_catalogs(self, *, force: bool = False) -> ModelsDevRefreshResult:
+        """Refresh the persisted remote catalog and publish it to this session."""
+        result = await refresh_models_dev_catalog(
+            paths=self._resource_paths.paths,
+            force=force,
+        )
+        self.reload_provider_settings()
+        return result
 
     def reload_provider_settings(self) -> None:
         """Reload provider settings for login and model-selection flows."""

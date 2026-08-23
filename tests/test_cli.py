@@ -381,6 +381,27 @@ def test_update_command_upgrades_without_startup_check(monkeypatch: pytest.Monke
     assert "Tau update completed with: uv tool install tau-ai@0.2.4" in result.stdout
 
 
+def test_update_models_force_refreshes_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[bool] = []
+
+    async def refresh_models(*, force: bool) -> cli.ModelsDevRefreshResult:
+        calls.append(force)
+        return cli.ModelsDevRefreshResult(
+            refreshed=True,
+            not_modified=False,
+            model_count=42,
+            cache_path=Path("/tmp/models-store.json"),
+        )
+
+    monkeypatch.setattr(cli, "refresh_models_dev_catalog", refresh_models)
+
+    result = CliRunner().invoke(app, ["update", "--models"])
+
+    assert result.exit_code == 0
+    assert calls == [True]
+    assert "Model catalogs refreshed: 42 models" in result.stdout
+
+
 def test_update_command_reports_windows_handoff_without_claiming_completion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

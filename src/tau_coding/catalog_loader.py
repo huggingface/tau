@@ -146,13 +146,14 @@ def user_catalog_path(paths: TauPaths | None = None) -> Path:
 
 
 def effective_catalog(paths: TauPaths | None = None) -> tuple[ProviderCatalogEntry, ...]:
-    """Return the builtin catalog with the user's ~/.tau/catalog.toml overlaid."""
+    """Return bundled, refreshed, then user-overlaid provider model data."""
+    builtin_raw = _builtin_raw_with_cached_models(paths)
     path = user_catalog_path(paths)
     if not path.exists():
-        return builtin_catalog()
+        filtered = _apply_model_tombstones(builtin_raw, base=_builtin_raw())
+        return _entries_from_raw(filtered, source="effective built-in catalog")
     overlay_raw = _parse_catalog_text(path.read_text(encoding="utf-8"), source=str(path))
     _validate_catalog_root(overlay_raw, source=str(path))
-    builtin_raw = _builtin_raw_with_generated_models()
     merged = _merge_raw_catalogs(builtin_raw, overlay_raw)
     filtered = _apply_model_tombstones(merged, base=_builtin_raw())
     return _entries_from_raw(filtered, source=str(path))
@@ -194,6 +195,24 @@ def save_user_catalog_entries(
 @cache
 def _builtin_raw() -> dict[str, Any]:
     return _parse_catalog_text(builtin_catalog_resource_text(), source="built-in catalog.toml")
+
+
+def _builtin_raw_with_cached_models(paths: TauPaths | None) -> dict[str, Any]:
+    from tau_coding.models_dev_store import cached_models_dev_catalog_overlay
+
+    raw = _builtin_raw_with_generated_models()
+    overlay = cached_models_dev_catalog_overlay(paths)
+    if overlay is None:
+        return raw
+    merged = _merge_generated_catalog(raw, overlay)
+    try:
+        _entries_from_raw(
+            _apply_model_tombstones(merged, base=_builtin_raw()),
+            source="cached models.dev catalog",
+        )
+    except CatalogError:
+        return raw
+    return merged
 
 
 @cache

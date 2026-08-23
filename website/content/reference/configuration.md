@@ -13,6 +13,7 @@ those locations and file formats.
 ~/.tau/
 ├── catalog.toml        # optional provider/model catalog overlay
 ├── providers.json      # provider/model preferences
+├── models-store.json   # refreshed models.dev catalog cache
 ├── credentials.json    # saved API keys / OAuth tokens (0600, atomic writes)
 ├── state/extensions/    # built-in integration state, including llama.cpp
 ├── settings.json       # general settings (trust default, shell prefix)
@@ -41,6 +42,11 @@ relative paths or unknown fields. See [Project trust]({{< relref
 Startup update checks cache their latest PyPI result in
 `~/.tau/cache/update-check.json` and refresh at most once per day. Set
 `TAU_NO_UPDATE_CHECK=1` to disable the check; Tau also skips it when `CI` is set.
+
+`models-store.json` caches an ETag-revalidated models.dev catalog newer than the
+bundled snapshot. `/model` refreshes it in the background at most every four
+hours; `tau update --models` forces revalidation. Set `TAU_OFFLINE=1` to disable
+catalog network access. User `catalog.toml` overrides still apply after the cache.
 
 ## System prompt files
 

@@ -41,16 +41,30 @@ If generated constraints make a remembered `providers.json` thinking default
 unavailable, Tau ignores that stale preference and resolves a safe current
 default instead of failing startup.
 
-## Runtime and failure behavior
+## Runtime refresh and failure behavior
 
-Tau never contacts models.dev during startup. It validates and layers the
-packaged snapshot in memory. Missing, malformed, or catalog-incompatible
-generated data falls back silently to `catalog.toml`, preserving offline startup.
-`providers.json` remains preference-only and is neither regenerated nor used as
-model-definition storage.
+Tau also mirrors Pi's refreshable-catalog behavior. Opening `/model` renders the
+last-known snapshot immediately and refreshes models.dev in the background.
+Refreshes are throttled to four hours, use ETag revalidation, apply the same live
+NVIDIA filter as generation, and atomically cache the transformed catalog in
+`~/.tau/models-store.json`. `tau update --models` bypasses the freshness window
+and forces immediate revalidation.
 
-A new models.dev model becomes available in Tau after the snapshot is regenerated
-and shipped in a Tau release; no hand edit to the model inventory is required.
+Unlike Pi, which serves transformed provider catalogs from `pi.dev`, Tau has no
+catalog service, so it fetches models.dev and NVIDIA directly and performs the
+same deterministic transformation locally. A cached catalog is applied only
+when newer than the bundled snapshot. User `~/.tau/catalog.toml` overrides are
+still applied last.
+
+Network, parsing, persistence, and validation failures preserve the previous
+cache and bundled catalog. Startup restores cache only and never requires
+network. Setting `TAU_OFFLINE` disables catalog network access while retaining
+cached/bundled reads. Missing, malformed, or incompatible generated/cache data falls
+back silently to `catalog.toml`. `providers.json` remains preference-only.
+
+A new model or capability can therefore arrive through `/model` or
+`tau update --models` without a Tau release. Patch releases still refresh the
+bundled offline baseline.
 
 ## Refreshing the snapshot
 

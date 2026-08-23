@@ -25,6 +25,11 @@ from tau_coding.commands import format_reload_summary
 from tau_coding.credentials import FileCredentialStore
 from tau_coding.extension_installer import ExtensionInstallError, install_extension
 from tau_coding.extensions import StderrUiBridge
+from tau_coding.models_dev_store import (
+    ModelsDevRefreshError,
+    ModelsDevRefreshResult,
+    refresh_models_dev_catalog,
+)
 from tau_coding.project_trust import TrustDefault, TrustOverride
 from tau_coding.provider_config import (
     DEFAULT_MODEL,
@@ -357,6 +362,10 @@ def main(
         bool,
         typer.Option("--version", "-v", help="Show Tau's version and exit."),
     ] = False,
+    models: Annotated[
+        bool,
+        typer.Option("--models", help="With `tau update`, refresh model catalogs only."),
+    ] = False,
 ) -> None:
     """Run the Tau CLI."""
     current_version = _current_version()
@@ -417,10 +426,17 @@ def main(
         raise typer.BadParameter("--export cannot be combined with --mode rpc")
 
     if not rpc_requested and not print_requested and not export and command == "update":
-        if len(positional_args) != 1:
-            raise typer.BadParameter("Usage: tau update")
-        update_command()
+        positional_models = positional_args[1:] == ["--models"]
+        if len(positional_args) != 1 and not positional_models:
+            raise typer.BadParameter("Usage: tau update [--models]")
+        if models or positional_models:
+            update_models_command()
+        else:
+            update_command()
         raise typer.Exit()
+
+    if models:
+        raise typer.BadParameter("--models is only supported with `tau update`")
 
     if not rpc_requested and not print_requested and not export and command == "install":
         install_command(positional_args[1:])
@@ -611,6 +627,23 @@ async def run_openai_tui(
 
 def _startup_update_notice() -> UpdateNotice | None:
     return startup_update_notice(_current_version())
+
+
+def update_models_command() -> None:
+    """Force-refresh and persist the runtime model catalog."""
+
+    async def refresh() -> ModelsDevRefreshResult:
+        return await refresh_models_dev_catalog(force=True)
+
+    try:
+        result = anyio.run(refresh)
+    except ModelsDevRefreshError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    status = "refreshed" if result.refreshed else "unchanged"
+    typer.echo(
+        f"Model catalogs {status}: {result.model_count} models cached at {result.cache_path}"
+    )
 
 
 def update_command() -> None:

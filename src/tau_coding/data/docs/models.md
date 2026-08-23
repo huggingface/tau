@@ -110,11 +110,18 @@ Tau thinking levels match Pi: `off`, `minimal`, `low`, `medium`, `high`,
 Empty or toggle-only reasoning options produce no generated override, matching
 Pi. Provider/manual behavior remains in effect for those models.
 
-Generation happens before release, never during startup, so offline use has no
-network dependency. Missing, invalid, or incompatible generated data falls back
-silently to `catalog.toml`. User `~/.tau/catalog.toml` overlays are applied last.
-When withdrawing one provider's model, add it to that provider's
-`removed_models` list so stale user overlays cannot restore it.
+Tau also refreshes catalogs like Pi. Opening `/model` shows the current snapshot
+immediately and refreshes in the background. `tau update --models` forces a
+refresh. Results are ETag-revalidated, throttled to four hours, and cached at
+`~/.tau/models-store.json`; a cache applies only when newer than the bundled
+snapshot. Since Tau has no hosted catalog service, it fetches models.dev and
+NVIDIA directly and transforms them locally. `TAU_OFFLINE=1` disables catalog
+network access.
+
+Startup never requires network. Missing, invalid, or incompatible generated or
+cached data falls back silently to `catalog.toml`. User `~/.tau/catalog.toml`
+overlays are applied last. When withdrawing one provider's model, add it to that
+provider's `removed_models` list so stale user overlays cannot restore it.
 
 Update `website/content/guides/providers-and-models.md` and a development note
 for substantial changes. Run focused provider tests, full pytest, Ruff,

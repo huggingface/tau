@@ -35,6 +35,11 @@ class TauPaths:
         return self.logs_dir / "agent-calls.jsonl"
 
     @property
+    def models_store_path(self) -> Path:
+        """Return the persisted remote model-catalog cache path."""
+        return self.home / "models-store.json"
+
+    @property
     def extension_state_dir(self) -> Path:
         """Return the user-level state directory owned by built-in extensions."""
         return self.home / "state" / "extensions"

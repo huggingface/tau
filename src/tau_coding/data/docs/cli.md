@@ -47,6 +47,18 @@ Explicit `--provider` and `--model` overrides take precedence over a resumed
 provider-aware transcript entry. Print mode reports actionable errors instead of
 opening an interactive login or local setup flow.
 
+## Model catalog refresh
+
+```bash
+tau update --models
+```
+
+This forces ETag revalidation of models.dev and the live NVIDIA model filter,
+then atomically caches the transformed catalog at `~/.tau/models-store.json`.
+Opening `/model` performs the same refresh in the background, subject to a
+four-hour freshness window. Cached/bundled models remain available on failure;
+set `TAU_OFFLINE=1` to disable catalog network access.
+
 ## Safety boundary
 
 Project trust controls ambient project-resource loading; it is not a sandbox.

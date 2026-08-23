@@ -245,6 +245,7 @@ class FakeSession:
         self.prompt_sources: list[str] = []
         self.reload_count = 0
         self.provider_reload_count = 0
+        self.model_catalog_refresh_count = 0
         self.queued_steering_messages: tuple[str, ...] = ()
         self.queued_follow_up_messages: tuple[str, ...] = ()
         self.streaming_behaviors: list[str | None] = []
@@ -386,6 +387,9 @@ class FakeSession:
 
     def reload_provider_settings(self) -> None:
         self.provider_reload_count += 1
+
+    async def refresh_model_catalogs(self) -> None:
+        self.model_catalog_refresh_count += 1
 
     async def set_thinking_level(self, level: str) -> str:
         self.thinking_level = level
@@ -7515,6 +7519,7 @@ async def test_tui_model_opens_interactive_picker() -> None:
     assert session.provider_name == "local"
     assert session.model == "local-model"
     assert session.prompt_texts == []
+    assert session.model_catalog_refresh_count == 1
     assert notifications == []
 
 

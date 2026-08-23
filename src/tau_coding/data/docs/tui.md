@@ -4,6 +4,14 @@ Tau's interactive interface uses Textual behind an adapter boundary. The
 portable `tau_agent` harness emits provider-neutral events; the TUI renders
 them and owns interaction.
 
+## `/model`
+
+The picker renders cached/bundled choices immediately, then refreshes remote
+catalogs in the background and updates the open list. Refreshes are throttled to
+four hours and failures leave the existing list usable. Use
+`tau update --models` for forced revalidation or `TAU_OFFLINE=1` to disable
+catalog network access.
+
 ## `/local`
 
 Type `/local` to open the generic local-backend host. It explicitly chooses a

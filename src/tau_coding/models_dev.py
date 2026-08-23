@@ -11,13 +11,56 @@ from tau_coding.provider_catalog import ProviderCatalogEntry
 from tau_coding.thinking import THINKING_LEVELS, ThinkingLevel
 
 MODELS_DEV_URL = "https://models.dev/api.json"
+NVIDIA_MODELS_URL = "https://integrate.api.nvidia.com/v1/models"
 MODELS_DEV_CATALOG_RESOURCE = "data/models-dev-catalog.json"
+NVIDIA_UNSUPPORTED_MODELS = {
+    "abacusai/dracarys-llama-3.1-70b-instruct",
+    "bytedance/seed-oss-36b-instruct",
+    "deepseek-ai/deepseek-v4-flash",
+    "deepseek-ai/deepseek-v4-pro",
+    "google/gemma-2-2b-it",
+    "google/gemma-3n-e2b-it",
+    "google/gemma-3n-e4b-it",
+    "google/gemma-4-31b-it",
+    "meta/llama-3.2-1b-instruct",
+    "meta/llama-4-maverick-17b-128e-instruct",
+    "microsoft/phi-4-mini-instruct",
+    "minimaxai/minimax-m2.7",
+    "mistralai/mistral-nemotron",
+    "nvidia/nemotron-mini-4b-instruct",
+    "qwen/qwen3-next-80b-a3b-instruct",
+    "qwen/qwen3.5-397b-a17b",
+    "sarvamai/sarvam-m",
+    "upstage/solar-10.7b-instruct",
+}
 
 # Tau names providers for users; models.dev names them for its own catalog.
 _MODELS_DEV_PROVIDER_KEYS = {
     "kimi-code": "kimi-for-coding",
     "together": "togetherai",
 }
+
+
+def nvidia_model_filter(source: object, live_source: object) -> set[str]:
+    """Return models.dev NVIDIA IDs accepted by Pi's live NIM filter."""
+    if not isinstance(source, dict) or not isinstance(live_source, dict):
+        raise ValueError("NVIDIA filtering sources must be JSON objects")
+    provider = source.get("nvidia")
+    source_models = provider.get("models") if isinstance(provider, dict) else None
+    live_models = live_source.get("data")
+    if not isinstance(source_models, dict) or not isinstance(live_models, list):
+        raise ValueError("NVIDIA filtering sources have invalid model data")
+    live_ids = {
+        model["id"].lower().replace("_", ".")
+        for model in live_models
+        if isinstance(model, dict) and isinstance(model.get("id"), str)
+    }
+    return {
+        model_id
+        for model_id in source_models
+        if model_id.lower().replace("_", ".") in live_ids
+        and model_id not in NVIDIA_UNSUPPORTED_MODELS
+    }
 
 
 def thinking_level_map_from_reasoning_options(
@@ -54,6 +97,7 @@ def models_dev_catalog_document(
     catalog: Iterable[ProviderCatalogEntry],
     *,
     provider_model_filters: Mapping[str, set[str]] | None = None,
+    generated_at: int = 0,
 ) -> dict[str, Any]:
     """Generate complete model inventories and metadata for Tau providers.
 
@@ -108,17 +152,25 @@ def models_dev_catalog_document(
     return {
         "schema_version": 1,
         "source": MODELS_DEV_URL,
+        "generated_at": generated_at,
         "providers": providers,
     }
 
 
-def bundled_models_dev_catalog_overlay() -> dict[str, Any] | None:
+def bundled_models_dev_catalog_document() -> dict[str, Any] | None:
     """Load and validate generated model data, or fall back silently."""
     try:
         text = files("tau_coding").joinpath(MODELS_DEV_CATALOG_RESOURCE).read_text(encoding="utf-8")
-        return models_dev_catalog_overlay(json.loads(text))
+        document = json.loads(text)
+        models_dev_catalog_overlay(document)
+        return document if isinstance(document, dict) else None
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return None
+
+
+def bundled_models_dev_catalog_overlay() -> dict[str, Any] | None:
+    document = bundled_models_dev_catalog_document()
+    return models_dev_catalog_overlay(document) if document is not None else None
 
 
 def models_dev_catalog_overlay(document: object) -> dict[str, Any]:
