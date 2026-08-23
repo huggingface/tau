@@ -318,7 +318,11 @@ runtime creation; Tau's required-key guidance remains actionable.
 Phase 1 established the contracts and registry mechanics. The `/local` host now
 provides the generic TUI flow for registered dynamic local backends. Dynamic
 providers still do not become durable catalog entries or automatic startup
-fallbacks: configure a backend, then choose its provider/model explicitly. See
+fallbacks: configure a backend, then choose its provider/model explicitly. The
+trusted built-in llama.cpp provider is the narrow scoped-model exception: Tau
+may persist only its stable provider ID plus exact model ID. An unloaded/stale
+reference remains visible as unavailable and cannot trigger load or download.
+User and project dynamic providers cannot opt into durable references. See
 the [local backends guide]({{< relref "./local-inference.md" >}}) and
 [Extensions]({{< relref "./extensions.md#dynamic-providers" >}}).
 
@@ -350,8 +354,10 @@ Then open Tau and run:
 ```
 
 Choose and confirm the recommended `llama.cpp` backend, enter the endpoint, and
-optionally enter its API key. Tau discovers the exact model IDs returned by
-`/v1/models`; it does not use a fake key or fake model. No key means no
+optionally enter its API key. Tau discovers exact loaded model IDs through OpenAI-compatible or compatible
+router discovery; it does not use a fake key or fake model. Compatible
+b9688–b10595 routers also expose explicitly confirmed load, unload, Hugging Face
+GGUF search, and server-side download actions. No key means no
 `Authorization` header. A saved key takes precedence over `LLAMA_API_KEY`.
 
 Use the discovered ID explicitly from the TUI or print mode:

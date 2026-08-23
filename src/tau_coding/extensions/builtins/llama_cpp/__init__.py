@@ -9,6 +9,7 @@ from tau_coding.built_in_extensions import BuiltInExtensionContext
 from tau_coding.credentials import FileCredentialStore, credentials_path
 from tau_coding.paths import TauPaths
 
+from .router import LLAMA_CPP_ROUTER_MAX_BUILD, LLAMA_CPP_ROUTER_MIN_BUILD
 from .service import (
     DEFAULT_LLAMA_CPP_TIMEOUT_SECONDS,
     LLAMA_CPP_API_KEY_ENV,
@@ -69,6 +70,8 @@ __all__ = [
     "LLAMA_CPP_DISPLAY_NAME",
     "LLAMA_CPP_ENDPOINT_ENV",
     "LLAMA_CPP_PROVIDER_ID",
+    "LLAMA_CPP_ROUTER_MAX_BUILD",
+    "LLAMA_CPP_ROUTER_MIN_BUILD",
     "LLAMA_CPP_STATE_SCHEMA_VERSION",
     "LlamaCppDiscovery",
     "LlamaCppEndpoint",

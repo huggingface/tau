@@ -110,7 +110,12 @@ The built-in llama.cpp backend stores only its normalized endpoint and safe
 server-reported model snapshot at `~/.tau/state/extensions/llama.cpp.json`.
 Optional credentials remain in `credentials.json` or `LLAMA_API_KEY`; dynamic
 llama.cpp provider definitions are not written to `catalog.toml` or
-`providers.json`. See the [local inference guide]({{< relref
+`providers.json`. Scoped llama.cpp entries in `providers.json` contain only the
+stable `llama.cpp` provider ID and exact model ID; stale entries do not create
+availability or router work. For Hugging Face GGUF search, Tau reads `HF_TOKEN`
+or standard Hugging Face token files but never stores or forwards that token to
+the llama.cpp server. The independent server needs its own `HF_TOKEN` for gated
+downloads. See the [local inference guide]({{< relref
 "../guides/local-inference.md" >}}).
 
 Tau intentionally reads catalog overlays only from the user-level

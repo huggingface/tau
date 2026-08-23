@@ -18,8 +18,10 @@ llama-server -hf <tool-capable-gguf>
 ```
 
 The default endpoint is `http://127.0.0.1:8080`. Tau does not install, start,
-stop, scan for, or download llama.cpp models. Keep the server running while Tau
-uses it.
+stop, or scan for llama.cpp. Keep the server running while Tau uses it. In
+compatible router mode, Tau can explicitly ask that independent server to
+download a selected Hugging Face model; Tau itself never writes or deletes the
+model file.
 
 ## Configure `/local`
 
@@ -83,6 +85,58 @@ endpoint, selected model reference, allowlisted model metadata, and a timestamp.
 The file is versioned, locked, atomically replaced, and private. Dynamic provider
 definitions are never copied into `catalog.toml` or `providers.json`.
 
+## Router model management
+
+A current `llama-server` started without a model runs in router mode. Tau enables
+management only when `/props` identifies the router and its `build_info` is in
+the tested **b9688–b10595** range. Unknown, older, or newer builds safely degrade
+to `/v1/models` discovery: inference remains available, but Tau sends no router
+mutation. Single-model servers remain fully supported.
+
+After Refresh confirms a compatible router, `/local` lists loaded, sleeping,
+unloaded, loading, downloading, failed, and unknown server states. Only loaded
+or sleeping models enter `/model`. Actions are always explicit:
+
+- **Load model** waits until refreshed router state reports loaded or sleeping.
+  If other models are active, choose whether to keep or unload them; Tau never
+  decides for a shared router.
+- **Unload model** asks for model-specific confirmation.
+- **Search models** queries Hugging Face for GGUF repositories and shows gating,
+  quantizations, and reported sizes. `Q4_K_M` is marked recommended only as a UI
+  preference, not persisted model metadata.
+- **Download model** accepts the exact `owner/repository[:quantization]` value,
+  asks for confirmation, and requests a server-side download.
+
+Progress is bounded and cancellable. llama.cpp documents `/models/unload` as the
+cancel operation for load/download, so Tau requests it and then refreshes. On a
+timeout or lost connection Tau refreshes if possible and never replays the
+interrupted POST; review state before manually retrying. Tau never restores,
+unloads, downloads, or deletes a model without a displayed decision.
+
+### Hugging Face tokens and gated repositories
+
+Tau uses `HF_TOKEN`, `$HF_HOME/token`, or the standard Hugging Face token file
+only for Hugging Face **search/details** requests. It does not save this token,
+copy it into integration state, or forward it to llama.cpp. A gated repository
+requires accepting its terms on `huggingface.co`.
+
+The independently running llama.cpp server performs downloads, so that server
+process separately needs an authorized `HF_TOKEN` in its own environment. A Tau
+search succeeding does not prove the server can download a gated model.
+
+## Scoped llama.cpp models
+
+Loaded or sleeping llama.cpp models can be added and removed through
+`/scoped-models`, then selected from `/model` or cycled like ordinary scoped
+models. Tau persists only `{provider: "llama.cpp", model: "<exact-id>"}`; the
+dynamic provider definition, endpoint, credentials, and metadata stay out of
+`providers.json`.
+
+If another client unloads the model, its scoped row remains visible as
+**unavailable**. It is inert: selecting or cycling cannot synthesize a model,
+contact Hugging Face, or trigger router load/download. Remove it through
+`/scoped-models`, or load the model explicitly through `/local` and Refresh.
+
 ## Status and Doctor
 
 `/local` provides status and refresh. Refresh publishes a complete model
@@ -142,6 +196,6 @@ files. For other OpenAI-compatible endpoints, keep using [`/login custom`]({{<
 relref "../guides/providers-and-models.md#adding-a-custom--local-provider" >}})
 or `tau setup`.
 
-Router model management, Hugging Face search/download, and implicit
-load/unload are not part of this phase. Standard OpenAI-compatible loaded-model
-inference remains supported; mutating router workflows require a later phase.
+Router management never changes the safety boundary: all mutations are explicit,
+model files are never deleted, and standard OpenAI-compatible single-model
+inference remains supported.

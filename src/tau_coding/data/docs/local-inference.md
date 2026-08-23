@@ -15,8 +15,8 @@ llama-server -hf <tool-capable-gguf>
 ```
 
 The default endpoint is `http://127.0.0.1:8080`. Tau does not install, start,
-stop, scan for, or download llama.cpp models. Keep the server running while Tau
-uses it.
+stop, or scan for llama.cpp. In compatible router mode it can explicitly ask the
+independent server to download a model; Tau never writes or deletes model files.
 
 ## Configure `/local`
 
@@ -86,6 +86,31 @@ metadata, and a timestamp. The file is versioned, locked, atomically replaced,
 and private. Dynamic provider definitions are not copied into `catalog.toml` or
 `providers.json`.
 
+## Router management and scoped models
+
+Refresh enables management only when `/props` identifies a router in Tau's
+tested llama.cpp build range, **b9688–b10595**. Unknown/incompatible routers
+fall back to standard `/v1/models` discovery without mutation controls.
+Single-model servers remain fully supported.
+
+`/local` lists every server-reported router state, while only loaded and sleeping
+models appear in `/model`. Load, unload, and server-side download are explicit;
+unload and download require confirmation, and loading asks whether to keep or
+unload other active shared-router models. Cancellation uses llama.cpp's
+documented unload operation and refreshes state. Connection loss also refreshes
+when possible and never replays an interrupted mutation.
+
+Search queries Hugging Face GGUF repositories and reports gating, quantizations,
+and sizes. `Q4_K_M` is a UI recommendation only. Tau discovers `HF_TOKEN` from
+the environment or standard Hugging Face token files for search, but never saves
+or forwards it. The independent llama.cpp process separately needs its own token
+to download gated repositories after their terms are accepted.
+
+Loaded/sleeping models can be toggled through `/scoped-models`. Only the exact
+`llama.cpp` provider/model pair is persisted. If unloaded later, the reference
+stays visible as unavailable and cannot synthesize availability or trigger a
+load/download; remove it or explicitly manage it through `/local`.
+
 ## Status, refresh, doctor, and reset
 
 `/local` provides status and refresh. Refresh updates the complete model
@@ -144,6 +169,5 @@ files.
 For project trust and the security boundary, see `security.md`. For command
 flags and print/TUI startup, see `cli.md`, `tui.md`, and `models.md`.
 
-Router model management, Hugging Face search/download, and implicit load/unload
-are not part of this phase. Use the standard OpenAI-compatible loaded-model API;
-those mutating workflows require a later router phase.
+Router actions never silently load, unload, download, restore, or delete
+anything. Review refreshed shared-router state before every manual retry.

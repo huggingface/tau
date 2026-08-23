@@ -425,3 +425,151 @@ async def test_optional_capabilities_return_structured_unavailable_results() -> 
     assert result.diagnostics == (LocalDiagnostic("This action is unavailable.", "warning"),)
     assert registry.effective("backend").backend.doctor is None  # type: ignore[union-attr]
     await registry.aclose()
+
+
+async def test_confirmation_request_round_trips_through_the_host() -> None:
+    from tau_coding.extensions import LocalConfirmationChoice, LocalConfirmationRequest
+
+    providers = DynamicProviderRegistry(generation_id="generation")
+    registry = LocalBackendRegistry(providers, generation_id="generation")
+    providers.register("source", _provider("provider"))
+    confirmations: list[str | None] = []
+
+    async def load_model(model_id, context):
+        confirmations.append(context.confirmation)
+        if context.confirmation is None:
+            return LocalOperationResult(
+                confirmation=LocalConfirmationRequest(
+                    message="Other models are active. Choose how to proceed.",
+                    choices=(
+                        LocalConfirmationChoice("keep", "Keep others"),
+                        LocalConfirmationChoice("unload", "Unload others"),
+                        LocalConfirmationChoice("cancel", "Cancel"),
+                    ),
+                )
+            )
+        if context.confirmation == "cancel":
+            return LocalOperationResult(message="Load cancelled.")
+        return LocalOperationResult(message=f"Loaded {model_id}", committed=True)
+
+    registry.register(
+        "source",
+        _backend(
+            "backend",
+            "provider",
+            LocalConfigureSpec(),
+            configure=lambda values, context: LocalConfigureResult(),
+        ),
+    )
+    view = registry.effective("backend")
+    assert view is not None
+    registry.unregister("backend", "source")
+    registry.register(
+        "source",
+        LocalBackend(
+            id="backend",
+            provider_id="provider",
+            display_name="Backend",
+            configure_spec=LocalConfigureSpec(),
+            configure=lambda values, context: LocalConfigureResult(),
+            status=lambda context: LocalBackendStatus(state="ready"),
+            refresh=lambda context: LocalBackendStatus(state="ready"),
+            load_model=load_model,
+        ),
+    )
+
+    asked = await registry.manage_model("backend", "load_model", "model")
+    assert asked.committed is False
+    assert asked.confirmation is not None
+    assert [choice.value for choice in asked.confirmation.choices] == ["keep", "unload", "cancel"]
+
+    kept = await registry.manage_model("backend", "load_model", "model", confirmation="keep")
+    assert kept.committed is True
+    assert kept.message == "Loaded model"
+    assert confirmations == [None, "keep"]
+
+    cancelled = await registry.manage_model("backend", "load_model", "model", confirmation="cancel")
+    assert cancelled.committed is False
+    await registry.aclose()
+
+
+async def test_confirmation_request_is_validated() -> None:
+    from tau_coding.extensions import LocalConfirmationChoice, LocalConfirmationRequest
+
+    with pytest.raises(LocalBackendError, match="committed operation"):
+        LocalOperationResult(
+            committed=True,
+            confirmation=LocalConfirmationRequest(
+                message="invalid", choices=(LocalConfirmationChoice("a", "A"),)
+            ),
+        )
+    with pytest.raises(LocalBackendError, match="unique"):
+        LocalConfirmationRequest(
+            message="invalid",
+            choices=(
+                LocalConfirmationChoice("a", "A"),
+                LocalConfirmationChoice("a", "B"),
+            ),
+        )
+
+
+async def test_search_models_is_optional_bounded_and_source_bound() -> None:
+    providers = DynamicProviderRegistry(generation_id="generation")
+    registry = LocalBackendRegistry(providers, generation_id="generation")
+    providers.register("source", _provider("provider"))
+    queries: list[str] = []
+
+    async def search(query, context):
+        queries.append(query)
+        assert context.action == "search_models"
+        return LocalOperationResult(
+            backend_status=LocalBackendStatus(
+                state="ready",
+                models=(LocalModel("owner/repository", state="available"),),
+                actions=("download_model",),
+            )
+        )
+
+    registry.register(
+        "source",
+        LocalBackend(
+            id="backend",
+            provider_id="provider",
+            display_name="Backend",
+            configure_spec=LocalConfigureSpec(),
+            configure=lambda values, context: LocalConfigureResult(),
+            status=lambda context: LocalBackendStatus(state="ready"),
+            refresh=lambda context: LocalBackendStatus(state="ready"),
+            search_models=search,
+        ),
+    )
+
+    empty = await registry.search_models("backend", "  ")
+    assert empty.diagnostics[0].message == "Enter a search query."
+    assert queries == []
+
+    result = await registry.search_models("backend", " qwen ")
+    assert queries == ["qwen"]
+    assert result.backend_status is not None
+    assert result.backend_status.models[0].id == "owner/repository"
+
+    without_search = LocalBackendRegistry(
+        DynamicProviderRegistry(generation_id="other"), generation_id="other"
+    )
+    without_search._providers.register("source", _provider("provider"))
+    without_search.register(
+        "source",
+        LocalBackend(
+            id="backend",
+            provider_id="provider",
+            display_name="Backend",
+            configure_spec=LocalConfigureSpec(),
+            configure=lambda values, context: LocalConfigureResult(),
+            status=lambda context: LocalBackendStatus(state="ready"),
+            refresh=lambda context: LocalBackendStatus(state="ready"),
+        ),
+    )
+    unavailable = await without_search.search_models("backend", "qwen")
+    assert unavailable.diagnostics[0].message == "This action is unavailable."
+    await registry.aclose()
+    await without_search.aclose()

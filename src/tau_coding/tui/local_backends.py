@@ -24,6 +24,7 @@ from tau_coding.local_backends import (
     LocalBackendStatus,
     LocalConfigureSpec,
     LocalConfigValues,
+    LocalConfirmationRequest,
     LocalOperationResult,
     LocalProgress,
     ProgressCallback,
@@ -184,6 +185,8 @@ class LocalBackendScreen(ModalScreen[None]):
                         yield Button("Unload model", id="local-action-unload-model")
                     if view.backend.download_model is not None:
                         yield Button("Download model", id="local-action-download-model")
+                    if view.backend.search_models is not None:
+                        yield Button("Search models", id="local-action-search-models")
                 yield Button("Use", id="local-action-use")
             yield Static("", id="local-backend-progress")
             yield Button("Close", id="local-action-close")
@@ -218,6 +221,7 @@ class LocalBackendScreen(ModalScreen[None]):
             "local-action-load-model",
             "local-action-unload-model",
             "local-action-download-model",
+            "local-action-search-models",
         }:
             operation = action.removeprefix("local-action-")
             self._open_model_action(operation)  # type: ignore[arg-type]
@@ -282,6 +286,7 @@ class LocalBackendScreen(ModalScreen[None]):
             "load_model": "Load model",
             "unload_model": "Unload model",
             "download_model": "Download model",
+            "search_models": "Search models",
         }
         self.app.push_screen(
             LocalModelActionScreen(labels[action], theme=self.theme),
@@ -298,6 +303,7 @@ class LocalBackendScreen(ModalScreen[None]):
         *,
         values: Mapping[str, str] | LocalConfigValues | None = None,
         model_id: str | None = None,
+        confirmation: str | None = None,
     ) -> None:
         if not self._is_idle():
             self._show_message(
@@ -308,13 +314,16 @@ class LocalBackendScreen(ModalScreen[None]):
         if self._worker is not None and not self._worker.done():
             self._show_message("An operation is already in progress.", "warning")
             return
-        self._worker = asyncio.create_task(self._run_operation(action, values, model_id))
+        self._worker = asyncio.create_task(
+            self._run_operation(action, values, model_id, confirmation)
+        )
 
     async def _run_operation(
         self,
         action: LocalAction,
         values: Mapping[str, str] | LocalConfigValues | None,
         model_id: str | None,
+        confirmation: str | None = None,
     ) -> None:
         self._set_progress("Working…")
 
@@ -354,6 +363,14 @@ class LocalBackendScreen(ModalScreen[None]):
                     manage_action,
                     model_id,
                     progress=cast(ProgressCallback, progress),
+                    confirmation=confirmation,
+                )
+            elif action == "search_models":
+                assert model_id is not None
+                result = await self.registry.search_models(
+                    self.backend_id,
+                    model_id,
+                    progress=cast(ProgressCallback, progress),
                 )
             else:
                 result = LocalOperationResult(message="Unsupported action.")
@@ -374,6 +391,10 @@ class LocalBackendScreen(ModalScreen[None]):
         if result.backend_status is not None:
             self.status = result.backend_status
             self._render_status(result.backend_status)
+        if result.confirmation is not None:
+            self._open_operation_confirmation(result.confirmation, action, values, model_id)
+            self._set_progress("")
+            return
         if result.field_errors:
             self._show_message(
                 "Configuration was not saved. Review the fields and try again.",
@@ -381,6 +402,22 @@ class LocalBackendScreen(ModalScreen[None]):
             )
         elif result.message:
             self._show_message(result.message, "info")
+        if result.search_results:
+            lines: list[str] = []
+            for item in result.search_results:
+                marker = " [restricted]" if item.restricted else ""
+                lines.append(f"{item.label}{marker}")
+                for option in item.options:
+                    size = (
+                        f" — {_format_bytes(option.size_bytes)}"
+                        if option.size_bytes is not None
+                        else ""
+                    )
+                    preferred = " — recommended" if option.recommended else ""
+                    lines.append(f"  {option.id}{size}{preferred}")
+                if item.diagnostic:
+                    lines.append(f"  {item.diagnostic}")
+            self._set_progress("\n".join(lines))
         for diagnostic in result.diagnostics:
             message = (
                 f"{diagnostic.stage}: {diagnostic.message}"
@@ -388,9 +425,32 @@ class LocalBackendScreen(ModalScreen[None]):
                 else diagnostic.message
             )
             self._show_message(message, diagnostic.severity)
-        self._set_progress(
-            "Credential cleanup needs attention." if result.credential_orphaned else ""
+        if result.credential_orphaned:
+            self._set_progress("Credential cleanup needs attention.")
+
+    def _open_operation_confirmation(
+        self,
+        request: LocalConfirmationRequest,
+        action: LocalAction,
+        values: Mapping[str, str] | LocalConfigValues | None,
+        model_id: str | None,
+    ) -> None:
+        self.app.push_screen(
+            LocalChoiceConfirmScreen(request, theme=self.theme),
+            callback=lambda choice: self._resume_confirmed_operation(
+                choice, action, values, model_id
+            ),
         )
+
+    def _resume_confirmed_operation(
+        self,
+        choice: str | None,
+        action: LocalAction,
+        values: Mapping[str, str] | LocalConfigValues | None,
+        model_id: str | None,
+    ) -> None:
+        if choice is not None:
+            self._start_operation(action, values=values, model_id=model_id, confirmation=choice)
 
     def _use_selected(self) -> None:
         if not self._is_idle():
@@ -471,13 +531,7 @@ class LocalBackendScreen(ModalScreen[None]):
             view = self.registry.effective(self.backend_id)
             actions = {"configure", "refresh"}
             if view is not None:
-                for action in (
-                    "doctor",
-                    "reset",
-                    "load_model",
-                    "unload_model",
-                    "download_model",
-                ):
+                for action in ("doctor", "reset"):
                     if getattr(view.backend, action) is not None:
                         actions.add(action)
         for action, button_id in (
@@ -487,6 +541,7 @@ class LocalBackendScreen(ModalScreen[None]):
             ("load_model", "#local-action-load-model"),
             ("unload_model", "#local-action-unload-model"),
             ("download_model", "#local-action-download-model"),
+            ("search_models", "#local-action-search-models"),
         ):
             with suppress(NoMatches):
                 self.query_one(button_id, Button).styles.display = (
@@ -609,6 +664,49 @@ class LocalConfirmScreen(ModalScreen[bool | None]):
         self.dismiss(None)
 
 
+class LocalChoiceConfirmScreen(ModalScreen[str | None]):
+    """Render an arbitrary backend confirmation without protocol knowledge."""
+
+    BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
+        Binding("escape", "cancel", "Cancel"),
+    ]
+
+    def __init__(self, request: LocalConfirmationRequest, *, theme: TuiTheme) -> None:
+        super().__init__()
+        self.request = request
+        self.theme = theme
+        self._ids = {
+            f"local-choice-{index}": choice.value for index, choice in enumerate(request.choices)
+        }
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="local-confirm-screen"):
+            yield Static("Confirm backend action", id="local-confirm-title", markup=False)
+            yield Static(self.request.message, id="local-confirm-message", markup=False)
+            with Horizontal(id="local-confirm-buttons"):
+                for index, choice in enumerate(self.request.choices):
+                    label = f"{choice.label} (recommended)" if choice.recommended else choice.label
+                    yield Button(label, id=f"local-choice-{index}")
+
+    def on_mount(self) -> None:
+        recommended = next(
+            (
+                f"#local-choice-{index}"
+                for index, choice in enumerate(self.request.choices)
+                if choice.recommended
+            ),
+            "#local-choice-0",
+        )
+        self.query_one(recommended, Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(self._ids.get(event.button.id or ""))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class LocalModelActionScreen(ModalScreen[str | None]):
     """Collect one opaque model reference for a backend-provided action."""
 
@@ -652,10 +750,20 @@ class LocalModelActionScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+def _format_bytes(value: int) -> str:
+    size = float(value)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if size < 1024 or unit == "TiB":
+            return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+        size /= 1024
+    return f"{value} B"
+
+
 __all__ = [
     "LocalBackendPickerScreen",
     "LocalBackendScreen",
     "LocalConfigureScreen",
+    "LocalChoiceConfirmScreen",
     "LocalConfirmScreen",
     "LocalModelActionScreen",
 ]

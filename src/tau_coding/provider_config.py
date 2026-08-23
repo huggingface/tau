@@ -565,6 +565,31 @@ def save_provider_thinking_level(
     return updated
 
 
+def toggle_saved_stable_scoped_model(
+    *,
+    provider_name: str,
+    model: str,
+    paths: TauPaths | None = None,
+    fallback_settings: ProviderSettings | None = None,
+) -> ProviderSettings:
+    """Toggle an already-authorized stable reference without saving a definition.
+
+    Callers must restrict this path to trusted built-in dynamic providers.  The
+    durable value is only the exact provider/model pair; availability continues
+    to come from the process-local provider snapshot.
+    """
+    settings = _load_provider_settings_for_write(paths, fallback_settings=fallback_settings)
+    target = ScopedModelConfig(provider=provider_name, model=model)
+    existing = list(settings.scoped_models)
+    if target in existing:
+        existing = [item for item in existing if item != target]
+    else:
+        existing.append(target)
+    updated = replace(settings, scoped_models=tuple(existing))
+    save_provider_settings(updated, paths)
+    return updated
+
+
 def toggle_saved_scoped_model(
     *,
     provider_name: str,

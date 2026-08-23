@@ -48,6 +48,12 @@ excluded from representations, diagnostics, snapshots, sessions, and exports.
 The contract is validated by a permanent second fake backend and a test-only
 Ollama adapter; Ollama is not a shipped Tau backend.
 
+Trusted built-in llama.cpp models may persist as scoped references containing
+only provider ID plus exact model ID. Loaded/sleeping references are selectable.
+An unloaded or missing reference remains visible as unavailable and inert: it
+cannot create dynamic metadata, perform network discovery, or trigger a router
+mutation. User/project dynamic providers cannot persist scoped references.
+
 ## Existing custom providers
 
 Other OpenAI-compatible endpoints can still be configured with `/login custom`,
