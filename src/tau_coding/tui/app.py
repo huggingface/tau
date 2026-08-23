@@ -86,6 +86,7 @@ from tau_coding.extensions.api import (
     MainViewFactory,
     MainViewHandle,
     Placement,
+    SidebarContent,
     SlotWidgetContent,
     SlotWidgetFactory,
 )
@@ -175,6 +176,7 @@ from tau_coding.tui.widgets import (
     SessionSidebar,
     TranscriptView,
     _custom_markup_to_text,
+    _sidebar_separator,
     render_completion_suggestions,
 )
 
@@ -232,6 +234,14 @@ class LoginRequiredProvider:
 
 
 _DialogResult = TypeVar("_DialogResult")
+
+
+@dataclass(frozen=True, slots=True)
+class _SidebarContribution:
+    """One extension-owned sidebar section retained for theme rebuilds."""
+
+    title: str
+    content: SidebarContent
 
 
 class _TuiExtensionUiBridge:
@@ -343,6 +353,31 @@ class _TuiExtensionUiBridge:
         picker, command palette) is on top.
         """
         return self._app._register_extension_key_interceptor(handler)
+
+    @property
+    def supports_sidebar(self) -> bool:
+        """Return whether the configured TUI sidebar can host sections."""
+        return self._app.tui_settings.sidebar_position != "off"
+
+    def set_sidebar_section(
+        self,
+        extension_name: str,
+        key: str,
+        *,
+        title: str,
+        content: SidebarContent,
+    ) -> None:
+        """Add or replace one host-framed extension sidebar section."""
+        self._app._set_extension_sidebar_section(
+            extension_name,
+            key,
+            title=title,
+            content=content,
+        )
+
+    def remove_sidebar_section(self, extension_name: str, key: str) -> None:
+        """Remove one extension-owned sidebar section."""
+        self._app._remove_extension_sidebar_section(extension_name, key)
 
     def clear_components(self) -> None:
         """Tear down all extension-owned UI (runtime-driven: /reload, rebind)."""
@@ -3044,6 +3079,22 @@ class TauTuiApp(App[None]):
         padding: 1 0 0 1;
     }
 
+    #sidebar-extension-sections,
+    #sidebar .extension-sidebar-section,
+    #sidebar .extension-sidebar-body {
+        width: 1fr;
+        height: auto;
+    }
+
+    #sidebar .extension-sidebar-title {
+        height: auto;
+        padding: 0 0 0 1;
+    }
+
+    #sidebar .extension-sidebar-body {
+        padding: 1 0 0 1;
+    }
+
     #sidebar-brand {
         height: auto;
         color: $tau-prompt-text;
@@ -3715,6 +3766,11 @@ class TauTuiApp(App[None]):
         self._extension_slot_slot_ids: dict[str, str] = {}
         self._extension_slot_locks: dict[str, asyncio.Lock] = {}
         self._extension_key_interceptors: list[KeyInterceptor] = []
+        self._extension_sidebar_contributions: dict[tuple[str, str], _SidebarContribution] = {}
+        self._extension_sidebar_widgets: dict[tuple[str, str], Widget] = {}
+        self._extension_sidebar_mounted: dict[tuple[str, str], Widget] = {}
+        self._extension_sidebar_lock = asyncio.Lock()
+        self._extension_sidebar_theme: TuiTheme | None = None
         self._extension_main_view: _MainViewHandle | None = None
         self._extension_main_view_mounted: Widget | None = None
         self._extension_main_view_lock = asyncio.Lock()
@@ -4563,6 +4619,141 @@ class TauTuiApp(App[None]):
                 return
             self._extension_slot_mounted[key] = target
 
+    def _build_extension_sidebar_widget(
+        self,
+        owner: tuple[str, str],
+        contribution: _SidebarContribution,
+        *,
+        theme: TuiTheme,
+    ) -> Widget | None:
+        """Build one host-framed sidebar section, isolating its body factory."""
+        content = contribution.content
+        try:
+            if callable(content):
+                body = content(theme)
+            else:
+                lines = [content] if isinstance(content, str) else list(content)
+                body = self._string_slot_widget(lines)
+            if not isinstance(body, Widget):
+                raise TypeError("sidebar factory must return a Textual Widget")
+            header = Text(contribution.title, style=f"bold {theme.prompt_text}")
+            return Vertical(
+                Static(_sidebar_separator(theme=theme), classes="sidebar-separator"),
+                Static(header, classes="extension-sidebar-title"),
+                Container(body, classes="extension-sidebar-body"),
+                classes="extension-sidebar-section",
+            )
+        except Exception as exc:  # noqa: BLE001 - isolation boundary
+            extension_name, key = owner
+            self._record_extension_component_failure(
+                f"sidebar:{extension_name}:{key}",
+                exc,
+                notify=True,
+                extension_name=extension_name,
+            )
+            return None
+
+    def _set_extension_sidebar_section(
+        self,
+        extension_name: str,
+        key: str,
+        *,
+        title: str,
+        content: SidebarContent,
+    ) -> None:
+        """Add or replace a sidebar contribution while preserving key order."""
+        if self.tui_settings.sidebar_position == "off":
+            return
+        owner = (extension_name, key)
+        contribution = _SidebarContribution(title=title, content=content)
+        widget = self._build_extension_sidebar_widget(
+            owner,
+            contribution,
+            theme=self.tui_settings.resolved_theme,
+        )
+        if widget is None:
+            return
+        self._extension_sidebar_contributions[owner] = contribution
+        self._extension_sidebar_widgets[owner] = widget
+        self._extension_sidebar_theme = self.tui_settings.resolved_theme
+        self._schedule_extension_swap(self._reconcile_sidebar())
+
+    def _remove_extension_sidebar_section(self, extension_name: str, key: str) -> None:
+        """Forget and unmount one extension-owned sidebar contribution."""
+        owner = (extension_name, key)
+        self._extension_sidebar_contributions.pop(owner, None)
+        self._extension_sidebar_widgets.pop(owner, None)
+        self._schedule_extension_swap(self._reconcile_sidebar())
+
+    def _rebuild_extension_sidebar_sections(self, *, theme: TuiTheme) -> None:
+        """Recreate sidebar factories for a changed live theme."""
+        if self.tui_settings.sidebar_position == "off":
+            return
+        changed = False
+        for owner, contribution in tuple(self._extension_sidebar_contributions.items()):
+            widget = self._build_extension_sidebar_widget(owner, contribution, theme=theme)
+            if widget is not None:
+                self._extension_sidebar_widgets[owner] = widget
+                changed = True
+        self._extension_sidebar_theme = theme
+        if changed:
+            self._schedule_extension_swap(self._reconcile_sidebar())
+
+    async def _reconcile_sidebar(self) -> None:
+        """Mount sidebar sections in registration order after removals drain."""
+        async with self._extension_sidebar_lock:
+            target_items = tuple(self._extension_sidebar_widgets.items())
+            mounted_items = tuple(self._extension_sidebar_mounted.items())
+            if mounted_items == target_items:
+                return
+            try:
+                slot = self.query_one("#sidebar-extension-sections", Container)
+            except NoMatches:
+                return
+            # Remove only stale roots. An unchanged Textual widget cannot be
+            # removed and mounted again: removal prunes its composed children.
+            # Keeping unchanged roots also avoids rerunning unrelated factories.
+            for owner, mounted in mounted_items:
+                if self._extension_sidebar_widgets.get(owner) is mounted:
+                    continue
+                with suppress(Exception):
+                    await mounted.remove()
+                if self._extension_sidebar_mounted.get(owner) is mounted:
+                    self._extension_sidebar_mounted.pop(owner, None)
+            # Re-read after awaits: rapid updates collapse to the latest target.
+            target_items = tuple(self._extension_sidebar_widgets.items())
+            for index, (owner, target) in enumerate(target_items):
+                if self._extension_sidebar_mounted.get(owner) is target:
+                    continue
+                later_mounted = next(
+                    (
+                        self._extension_sidebar_mounted.get(later_owner)
+                        for later_owner, _ in target_items[index + 1 :]
+                        if self._extension_sidebar_mounted.get(later_owner) is not None
+                    ),
+                    None,
+                )
+                try:
+                    await slot.mount(target, before=later_mounted)
+                except Exception as exc:  # noqa: BLE001 - isolation boundary
+                    extension_name, key = owner
+                    if self._extension_sidebar_widgets.get(owner) is target:
+                        self._extension_sidebar_widgets.pop(owner, None)
+                        self._extension_sidebar_contributions.pop(owner, None)
+                    self._record_extension_component_failure(
+                        f"sidebar:{extension_name}:{key}",
+                        exc,
+                        notify=True,
+                        extension_name=extension_name,
+                    )
+                    continue
+                self._extension_sidebar_mounted[owner] = target
+            self._extension_sidebar_mounted = {
+                owner: target
+                for owner, target in target_items
+                if self._extension_sidebar_mounted.get(owner) is target
+            }
+
     def _open_extension_main_view(self, factory: MainViewFactory) -> MainViewHandle:
         """Open a display-toggled main-area view mounting ``factory(handle, theme)``.
 
@@ -4666,7 +4857,10 @@ class TauTuiApp(App[None]):
 
     def _refresh_extension_components(self) -> None:
         """Re-render all mounted extension widgets (analog of requestRender)."""
-        for widget in tuple(self._extension_slot_widgets.values()):
+        for widget in (
+            *self._extension_slot_widgets.values(),
+            *self._extension_sidebar_widgets.values(),
+        ):
             with suppress(Exception):
                 widget.refresh()
         handle = self._extension_main_view
@@ -4692,6 +4886,10 @@ class TauTuiApp(App[None]):
         self._extension_slot_slot_ids.clear()
         for key in slot_keys:
             self._schedule_extension_swap(self._reconcile_slot(key))
+        self._extension_sidebar_contributions.clear()
+        self._extension_sidebar_widgets.clear()
+        self._extension_sidebar_theme = None
+        self._schedule_extension_swap(self._reconcile_sidebar())
         handle = self._extension_main_view
         self._extension_main_view = None
         self._release_main_view_handle(handle)
@@ -4707,6 +4905,8 @@ class TauTuiApp(App[None]):
         for widget in (
             *self._extension_slot_widgets.values(),
             *self._extension_slot_mounted.values(),
+            *self._extension_sidebar_widgets.values(),
+            *self._extension_sidebar_mounted.values(),
         ):
             if id(widget) not in seen:
                 seen.add(id(widget))
@@ -4765,6 +4965,7 @@ class TauTuiApp(App[None]):
             culprit.display = False
         with suppress(Exception):
             culprit.disabled = True
+        sidebar_owner: tuple[str, str] | None = None
         if (
             self._extension_main_view is not None and self._extension_main_view.widget is culprit
         ) or self._extension_main_view_mounted is culprit:
@@ -4777,13 +4978,40 @@ class TauTuiApp(App[None]):
                 culprit.remove()
             self._restore_main_transcript()
         else:
-            for tracker in (self._extension_slot_widgets, self._extension_slot_mounted):
-                key = next((k for k, w in tracker.items() if w is culprit), None)
-                if key is not None:
-                    tracker.pop(key, None)
+            sidebar_owner = next(
+                (
+                    owner
+                    for owner, widget in (
+                        *self._extension_sidebar_widgets.items(),
+                        *self._extension_sidebar_mounted.items(),
+                    )
+                    if widget is culprit
+                ),
+                None,
+            )
+            if sidebar_owner is not None:
+                self._extension_sidebar_widgets.pop(sidebar_owner, None)
+                self._extension_sidebar_mounted.pop(sidebar_owner, None)
+                self._extension_sidebar_contributions.pop(sidebar_owner, None)
+            else:
+                for tracker in (self._extension_slot_widgets, self._extension_slot_mounted):
+                    key = next((k for k, w in tracker.items() if w is culprit), None)
+                    if key is not None:
+                        tracker.pop(key, None)
             with suppress(Exception):
                 culprit.remove()
-        self._record_extension_component_failure(f"render:{id(culprit)}", error, notify=True)
+        extension_name = sidebar_owner[0] if sidebar_owner else None
+        context = (
+            f"sidebar:{sidebar_owner[0]}:{sidebar_owner[1]}"
+            if sidebar_owner
+            else f"render:{id(culprit)}"
+        )
+        self._record_extension_component_failure(
+            context,
+            error,
+            notify=True,
+            extension_name=extension_name,
+        )
         return True
 
     def _handle_exception(self, error: Exception) -> None:
@@ -4801,7 +5029,12 @@ class TauTuiApp(App[None]):
         super()._handle_exception(error)
 
     def _record_extension_component_failure(
-        self, context: str, error: BaseException, *, notify: bool = False
+        self,
+        context: str,
+        error: BaseException,
+        *,
+        notify: bool = False,
+        extension_name: str | None = None,
     ) -> None:
         """Diagnose an extension-component failure once per context.
 
@@ -4820,6 +5053,10 @@ class TauTuiApp(App[None]):
         if context in self._extension_component_failures_reported:
             return
         self._extension_component_failures_reported.add(context)
+        if extension_name is not None:
+            runtime = getattr(self.session, "extension_runtime", None)
+            if runtime is not None:
+                runtime.record_ui_failure(extension_name, context, error)
         if notify:
             summary = f"{type(error).__name__}: {error}"
             if len(summary) > 120:
@@ -6093,6 +6330,8 @@ class TauTuiApp(App[None]):
         self._sync_queue_state()
         sidebar = self.query_one("#sidebar", SessionSidebar)
         sidebar.update_from_session(self.session, theme=theme)
+        if self._extension_sidebar_theme != theme:
+            self._rebuild_extension_sidebar_sections(theme=theme)
         compact_info = self.query_one("#compact-session-info", CompactSessionInfo)
         compact_info.update_from_session(self.session, theme=theme)
         queued_messages = self.query_one("#queued-messages", Static)

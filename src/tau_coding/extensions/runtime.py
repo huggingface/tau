@@ -1185,13 +1185,28 @@ class ExtensionRuntime:
     def _fresh_context(self, source_id: str) -> ExtensionContext:
         """Return a fresh context for one handler invocation."""
         api = self._api_for(source_id)
-        return ExtensionContext(self, api._generation)
+        return ExtensionContext(
+            self,
+            api._generation,
+            extension_name=self._extension_display_name(source_id),
+        )
 
     def _api_for(self, source_id: str) -> ExtensionAPI:
         extension = self._extension_by_source(source_id)
         if extension is None:
             raise ExtensionError(f"unknown extension source: {source_id}")
         return extension.api
+
+    def record_ui_failure(self, extension: str, context: str, exc: BaseException) -> None:
+        """Record a host-isolated extension UI failure in session diagnostics."""
+        self._runtime_diagnostics.append(
+            ResourceDiagnostic(
+                kind="extension",
+                name=extension,
+                message=f"UI component `{context}` failed: {exc!r}",
+                severity="error",
+            )
+        )
 
     def _record_runtime_failure(self, extension: str, event: str, exc: Exception) -> None:
         self._runtime_diagnostics.append(

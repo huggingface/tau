@@ -1594,6 +1594,29 @@ class RecordingUiBridge:
 
         return _DeadMainViewHandle()
 
+    @property
+    def supports_sidebar(self) -> bool:
+        return self._has_ui
+
+    def set_sidebar_section(
+        self,
+        extension_name,
+        key,
+        *,
+        title,
+        content,  # noqa: ANN001
+    ) -> None:
+        self.calls.append(
+            (
+                "set_sidebar_section",
+                (extension_name, key),
+                {"title": title, "content": content},
+            )
+        )
+
+    def remove_sidebar_section(self, extension_name, key):  # noqa: ANN001, ANN201
+        self.calls.append(("remove_sidebar_section", (extension_name, key), {}))
+
     def clear_components(self) -> None:
         self.calls.append(("clear_components", (), {}))
 
@@ -1703,6 +1726,9 @@ async def test_headless_ui_bridges_component_seam_are_noops(tmp_path: Path) -> N
         assert await asyncio.wait_for(handle.wait(), timeout=1.0) is None
         unsubscribe = bridge.register_key_interceptor(lambda event, text: False)
         unsubscribe()  # must not raise
+        assert bridge.supports_sidebar is False
+        bridge.set_sidebar_section("ext", "status", title="Status", content=["ready"])
+        bridge.remove_sidebar_section("ext", "status")
 
 
 async def test_context_ui_components_pass_through(tmp_path: Path) -> None:
@@ -1726,6 +1752,60 @@ async def test_context_ui_components_pass_through(tmp_path: Path) -> None:
     assert ui.interceptors == []
 
 
+async def test_context_ui_sidebar_is_owned_and_passes_through(tmp_path: Path) -> None:
+    from typing import cast
+
+    from tau_coding.extensions.api import ExtensionAPI
+
+    ui = RecordingUiBridge()
+    runtime = ExtensionRuntime(ui=ui)
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "sidebar-owner"))
+
+    sidebar = api.context.ui.sidebar
+    assert sidebar.supported is True
+    sidebar.set_section("status", title="Status", content=["ready"])
+    sidebar.remove_section("status")
+
+    assert ui.calls == [
+        (
+            "set_sidebar_section",
+            ("sidebar-owner", "status"),
+            {"title": "Status", "content": ["ready"]},
+        ),
+        ("remove_sidebar_section", ("sidebar-owner", "status"), {}),
+    ]
+
+
+async def test_context_ui_sidebar_validates_keys_and_titles(tmp_path: Path) -> None:
+    from typing import cast
+
+    from tau_coding.extensions import ExtensionError
+    from tau_coding.extensions.api import ExtensionAPI
+
+    runtime = ExtensionRuntime(ui=RecordingUiBridge())
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "sidebar"))
+
+    with pytest.raises(ExtensionError, match="key must not be empty"):
+        api.context.ui.sidebar.set_section(" ", title="Status", content=["ready"])
+    with pytest.raises(ExtensionError, match="title must not be empty"):
+        api.context.ui.sidebar.set_section("status", title=" ", content=["ready"])
+
+
+async def test_context_ui_sidebar_degrades_on_older_host_bridge(tmp_path: Path) -> None:
+    from typing import cast
+
+    from tau_coding.extensions import UiBridge
+    from tau_coding.extensions.api import ExtensionAPI
+
+    runtime = ExtensionRuntime(ui=cast(UiBridge, object()))
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "legacy-host"))
+
+    sidebar = api.context.ui.sidebar
+    assert sidebar.supported is False
+    sidebar.set_section("status", title="Status", content=["ready"])
+    sidebar.remove_section("status")
+
+
 async def test_context_ui_components_headless_reports_unsupported(tmp_path: Path) -> None:
     from typing import cast
 
@@ -1735,6 +1815,7 @@ async def test_context_ui_components_headless_reports_unsupported(tmp_path: Path
     api = cast(ExtensionAPI, _register_inline_extension(runtime, "headless-components"))
 
     assert api.context.ui.components.supports_components is False
+    assert api.context.ui.sidebar.supported is False
 
 
 async def test_default_runtime_ui_is_headless(tmp_path: Path) -> None:
@@ -2646,9 +2727,11 @@ async def test_reset_for_reload_invalidates_prior_context_and_ui(tmp_path: Path)
         ui.notify("zombie")
     with pytest.raises(ExtensionError, match="stale after reload"):
         await ui.select("Pick", ("a", "b"))
-    # The component bridge is unreachable through a stale facade.
+    # Component and sidebar bridges are unreachable through a stale facade.
     with pytest.raises(ExtensionError, match="stale after reload"):
         _ = ui.components
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = ui.sidebar
 
 
 async def test_reload_invalidates_old_instance_and_new_instance_works(

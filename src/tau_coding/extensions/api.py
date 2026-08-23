@@ -129,6 +129,11 @@ SlotWidgetFactory = Callable[["TuiTheme"], "Widget"]
 # ``setWidget``). Strings are rendered as Rich markup, with a literal-text
 # fallback if the markup is malformed.
 SlotWidgetContent = Sequence[str] | SlotWidgetFactory
+# Sidebar bodies use the same data-first shape: simple sections provide Rich
+# display lines without importing Textual; advanced sections provide a widget
+# factory receiving the live theme.
+SidebarWidgetFactory = Callable[["TuiTheme"], "Widget"]
+SidebarContent = Sequence[str] | SidebarWidgetFactory
 # The main-view factory also receives the handle so the widget can close itself.
 MainViewFactory = Callable[["MainViewHandle", "TuiTheme"], "Widget"]
 
@@ -270,6 +275,64 @@ class ComponentBridge(Protocol):
         interceptable.
         """
         ...
+
+
+class ExtensionSidebar:
+    """Extension-owned facade for host-framed TUI sidebar sections.
+
+    Sections are isolated by extension name and stable key. Re-setting a key
+    updates it without changing its position; removing and re-adding it appends
+    it after the remaining extension sections. The host owns headings,
+    separators, width, scrolling, sidebar placement, and lifecycle cleanup.
+    """
+
+    def __init__(
+        self,
+        runtime: ExtensionRuntime,
+        extension_name: str,
+        generation: ExtensionGeneration,
+    ) -> None:
+        self._runtime = runtime
+        self._extension_name = extension_name
+        self._generation = generation
+
+    @property
+    def supported(self) -> bool:
+        """Return whether the active frontend can display sidebar sections."""
+        self._generation.assert_active()
+        return bool(getattr(self._runtime.ui, "supports_sidebar", False))
+
+    def set_section(self, key: str, *, title: str, content: SidebarContent) -> None:
+        """Add or replace a host-framed sidebar section under stable ``key``."""
+        self._generation.assert_active()
+        normalized_key = key.strip()
+        normalized_title = title.strip()
+        if not normalized_key:
+            raise ExtensionError("sidebar section key must not be empty")
+        if not normalized_title:
+            raise ExtensionError("sidebar section title must not be empty")
+        if not self.supported:
+            return
+        setter = getattr(self._runtime.ui, "set_sidebar_section", None)
+        if setter is not None:
+            setter(
+                self._extension_name,
+                normalized_key,
+                title=normalized_title,
+                content=content,
+            )
+
+    def remove_section(self, key: str) -> None:
+        """Remove this extension's sidebar section under ``key``, if present."""
+        self._generation.assert_active()
+        normalized_key = key.strip()
+        if not normalized_key:
+            raise ExtensionError("sidebar section key must not be empty")
+        if not self.supported:
+            return
+        remover = getattr(self._runtime.ui, "remove_sidebar_section", None)
+        if remover is not None:
+            remover(self._extension_name, normalized_key)
 
 
 class ExtensionError(RuntimeError):
@@ -547,6 +610,26 @@ class UiBridge(Protocol):
         """
         ...
 
+    @property
+    def supports_sidebar(self) -> bool:
+        """Return whether this frontend can host extension sidebar sections."""
+        ...
+
+    def set_sidebar_section(
+        self,
+        extension_name: str,
+        key: str,
+        *,
+        title: str,
+        content: SidebarContent,
+    ) -> None:
+        """Add or replace one extension-owned, host-framed sidebar section."""
+        ...
+
+    def remove_sidebar_section(self, extension_name: str, key: str) -> None:
+        """Remove one extension-owned sidebar section, if present."""
+        ...
+
     def clear_components(self) -> None:
         """Tear down all extension-owned UI (host-driven, not for extensions).
 
@@ -652,6 +735,24 @@ class NullUiBridge:
         """Return a no-op unsubscribe: no key stream to intercept."""
         return lambda: None
 
+    @property
+    def supports_sidebar(self) -> bool:
+        """Return False: print mode has no interactive sidebar."""
+        return False
+
+    def set_sidebar_section(
+        self,
+        extension_name: str,
+        key: str,
+        *,
+        title: str,
+        content: SidebarContent,
+    ) -> None:
+        """Do nothing: there is no sidebar in print mode."""
+
+    def remove_sidebar_section(self, extension_name: str, key: str) -> None:
+        """Do nothing: there is no sidebar in print mode."""
+
     def clear_components(self) -> None:
         """Do nothing: no components were ever mounted."""
 
@@ -692,9 +793,12 @@ class ExtensionUi:
         self,
         runtime: ExtensionRuntime,
         generation: ExtensionGeneration | None = None,
+        *,
+        extension_name: str = "",
     ) -> None:
         self._runtime = runtime
         self._generation = generation if generation is not None else ExtensionGeneration()
+        self._sidebar = ExtensionSidebar(runtime, extension_name, self._generation)
 
     @property
     def has_ui(self) -> bool:
@@ -736,6 +840,12 @@ class ExtensionUi:
         return await self._runtime.ui.input(title, placeholder, timeout=timeout)
 
     @property
+    def sidebar(self) -> ExtensionSidebar:
+        """Return this extension's host-framed sidebar capability."""
+        self._generation.assert_active()
+        return self._sidebar
+
+    @property
     def components(self) -> ComponentBridge:
         """Return the host widget-hosting capability.
 
@@ -767,10 +877,12 @@ class ExtensionContext:
         self,
         runtime: ExtensionRuntime,
         generation: ExtensionGeneration | None = None,
+        *,
+        extension_name: str = "",
     ) -> None:
         self._runtime = runtime
         self._generation = generation if generation is not None else ExtensionGeneration()
-        self._ui = ExtensionUi(runtime, self._generation)
+        self._ui = ExtensionUi(runtime, self._generation, extension_name=extension_name)
 
     @property
     def cwd(self) -> Path:
@@ -875,7 +987,11 @@ class ExtensionAPI:
         self._extension_name = extension_name
         self._source_id = source_id or f"extension-name:{extension_name}"
         self._generation = generation if generation is not None else ExtensionGeneration()
-        self._context = ExtensionContext(runtime, self._generation)
+        self._context = ExtensionContext(
+            runtime,
+            self._generation,
+            extension_name=extension_name,
+        )
 
     @property
     def name(self) -> str:
