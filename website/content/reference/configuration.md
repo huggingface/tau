@@ -258,14 +258,18 @@ Provider preferences live in `~/.tau/providers.json`:
   `"inference_providers": { "zai-org/GLM-5.2": "deepinfra" }`. Each key must be
   a configured model and each value an explicit provider suffix advertised by
   Hugging Face—not the `fastest`, `cheapest`, or `preferred` routing policies.
-  Tau snapshots the selected suffix into new session metadata, retains it on
-  resume, and sends only the suffixed wire model; ordinary model identity and
-  catalog metadata remain unsuffixed. Without a preference, Tau starts with
-  automatic routing and pins the `x-inference-provider` reported by the first
-  successful response. `/session` reports the route; changing the active session
-  route is available in Tau 0.3.10+ through the external
+  Tau snapshots the selected suffix into new session metadata as a fixed route,
+  retains it on resume, and sends only the suffixed wire model; ordinary model
+  identity and catalog metadata remain unsuffixed. Without a preference, Tau
+  starts in automatic mode and records the `x-inference-provider` reported by
+  the first successful response as a sticky but recoverable route. After a
+  retryable pre-output HTTP failure exhausts provider-level retries, Tau clears
+  that automatic pin, retries the interrupted turn once through Hugging Face
+  automatic routing, and stores the successful replacement. Explicitly configured
+  routes never fail over. `/session` reports both mode and current route; changing
+  the active session route is available through the external
   [`tau-huggingface`](https://github.com/alejandro-ao/tau-huggingface) extension;
-  clone it and launch Tau with `tau -e ./tau-huggingface`.
+  clone it and launch Tau with `tau -e ./tau-huggingface`, then use `/hf route`.
   `timeout_seconds` defaults to `60` (> 0); `max_retries`
   defaults to `2`; `max_retry_delay_seconds` defaults to `1` (both ≥ 0).
   Retries cover transient HTTP statuses (`408`, `409`, `425`, `429`, `5xx`),
@@ -273,7 +277,10 @@ Provider preferences live in `~/.tau/providers.json`:
   otherwise successful HTTP 200 response. Anthropic retries `api_error`,
   `overloaded_error`, and `rate_limit_error`; OpenAI Codex retries transient
   events such as `server_is_overloaded`. In-stream errors remain terminal after
-  partial content to prevent duplicate output or tool calls.
+  partial content to prevent duplicate output or tool calls. Existing session
+  records that contain a Hugging Face route but predate route-mode metadata are
+  treated as fixed, preventing an upgrade from overriding a potentially explicit
+  user selection.
 - API keys and OAuth credentials are **not** stored here — they live in
   `~/.tau/credentials.json` (private but not encrypted). OAuth objects may contain
   provider metadata such as a GitHub Enterprise domain and are refreshed

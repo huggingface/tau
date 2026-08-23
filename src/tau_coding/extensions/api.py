@@ -788,6 +788,12 @@ class ExtensionContext:
         return self._runtime.session_view.inference_provider
 
     @property
+    def inference_provider_mode(self) -> str:
+        """Return whether Hugging Face routing is automatic or explicitly fixed."""
+        self._generation.assert_active()
+        return self._runtime.session_view.inference_provider_mode
+
+    @property
     def session_id(self) -> str | None:
         """Return the current session id, if the session is indexed."""
         self._generation.assert_active()
