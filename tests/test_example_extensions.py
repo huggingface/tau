@@ -62,10 +62,15 @@ def _fake_tool(name: str) -> tuple[AgentTool, list[dict[str, object]]]:
 # -- hello_tool.py -------------------------------------------------------------
 
 
-def test_hello_and_permission_gate_examples_load(tmp_path: Path) -> None:
-    runtime = _runtime_with_examples(tmp_path, "hello_tool.py", "permission_gate.py")
+def test_shipped_examples_load(tmp_path: Path) -> None:
+    runtime = _runtime_with_examples(
+        tmp_path,
+        "hello_tool.py",
+        "permission_gate.py",
+        "sidebar_status.py",
+    )
 
-    assert runtime.extension_names == ("hello_tool", "permission_gate")
+    assert runtime.extension_names == ("hello_tool", "permission_gate", "sidebar_status")
     assert [tool.name for tool in runtime.extension_tools] == ["hello"]
 
 

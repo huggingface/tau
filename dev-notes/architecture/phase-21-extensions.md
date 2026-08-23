@@ -47,8 +47,9 @@ are called out inline as **Ruling:** notes.
   widgets** (`context.ui.components`: slot widgets, a main-area view, and
   pre-dispatch key interceptors), adopted as the committed design via the
   component-seam experiment (see the superseding Ruling under "Custom message
-  rendering" and `dev-notes/design/component-seam-experiment.md`). Custom
-  entry renderers remain out of scope.
+  rendering" and `dev-notes/design/component-seam-experiment.md`), plus
+  host-framed **sidebar sections** (`context.ui.sidebar`) whose stable keys are
+  isolated by extension ownership. Custom entry renderers remain out of scope.
 
 When any of these lands, design it from Pi's implementation first
 (`packages/coding-agent/src/core/extensions/` and `docs/extensions.md` in
@@ -709,8 +710,9 @@ of the newer API seams (manifest, dialogs, renderers, `on_update`,
   falling back to `send_user_message` on older builds — which also
   exercises the idle `turn_requested` path.
 
-Smaller examples: `hello_tool.py` (minimal tool) and `permission_gate.py`
-(`tool_call` blocking for dangerous bash commands).
+Smaller examples: `hello_tool.py` (minimal tool), `permission_gate.py`
+(`tool_call` blocking for dangerous bash commands), and `sidebar_status.py`
+(host-framed sidebar updates).
 
 ## Verification
 

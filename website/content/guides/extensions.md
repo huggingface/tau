@@ -159,6 +159,11 @@ def setup(tau):
     tau.context.is_running, tau.context.has_ui
     tau.context.transcript   # parent conversation, deep-copied AgentMessages
 
+    # host-framed sidebar sections (see "Sidebar sections" below)
+    sidebar = getattr(tau.context.ui, "sidebar", None)
+    if sidebar is not None and sidebar.supported:
+        sidebar.set_section("status", title="Status", content=["[green]ready[/green]"])
+
     # interactive UI dialogs (async; see "UI dialogs" below)
     await tau.context.ui.select("Title", ["a", "b"])   # -> str | None
     await tau.context.ui.confirm("Title", "message")   # -> bool
@@ -263,6 +268,62 @@ def setup(tau):
 The task runs on the same event loop as the session, so awaiting the dialog
 there is safe. (A tool executor, which is already `async`, can `await
 tau.context.ui...` directly.)
+
+### Sidebar sections
+
+`tau.context.ui.sidebar` lets an extension contribute a section to Tau's
+interactive session sidebar without querying private widget IDs or importing
+`TauTuiApp`. Register sections from `session_start`, after the frontend bridge
+is attached:
+
+```python
+def setup(tau):
+    turn_count = 0
+
+    def show(context):
+        sidebar = getattr(context.ui, "sidebar", None)
+        if sidebar is not None and sidebar.supported:
+            sidebar.set_section(
+                "turns",
+                title="extension status",
+                content=[f"[green]{turn_count}[/green] completed turns"],
+            )
+
+    @tau.on("session_start")
+    def started(event, context):
+        show(context)
+
+    @tau.on("turn_end")
+    def finished(event, context):
+        nonlocal turn_count
+        turn_count += 1
+        show(context)  # replacing the same key updates it in place
+
+    @tau.on("session_shutdown")
+    def stopped(event, context):
+        sidebar = getattr(context.ui, "sidebar", None)
+        if sidebar is not None:
+            sidebar.remove_section("turns")
+```
+
+- Feature-detect the `sidebar` attribute with `getattr` when supporting older
+  Tau versions. On current Tau, `sidebar.supported` is `False` in
+  print/headless mode and when `sidebar_position` is `"off"`; calls are safe
+  no-ops without a visible sidebar.
+- `set_section(key, *, title, content)` adds or replaces this extension's key.
+  Keys are isolated by extension, so two extensions may both use `"status"`.
+  Updating a key preserves its position; removing and re-adding it places it
+  after existing extension sections.
+- `content` is either a sequence of Rich-markup display lines or a
+  `factory(theme) -> textual.widget.Widget`. Prefer lines when possible: they
+  need no Textual import and the host owns wrapping, width, scrolling, heading,
+  separator, and left/right placement. Factories are rebuilt with the live
+  theme and use the same crash isolation as other extension widgets.
+- `remove_section(key)` removes the section. The host also clears every
+  extension section on reload, session replacement, and shutdown. Responsive
+  hiding preserves sections so they return when the terminal grows.
+
+See `examples/extensions/sidebar_status.py` for a complete example.
 
 ### Component widgets
 
@@ -536,6 +597,7 @@ See [`examples/extensions/`](https://github.com/huggingface/tau/tree/main/exampl
 - **`hello_tool.py`** — minimal custom tool.
 - **`permission_gate.py`** — blocks dangerous bash commands with the
   `tool_call` hook.
+- **`sidebar_status.py`** — adds and updates a host-framed sidebar section.
 
 A larger, real-world extension lives in its own repository:
 [rian-dolphin/tau-subagents](https://github.com/rian-dolphin/tau-subagents)

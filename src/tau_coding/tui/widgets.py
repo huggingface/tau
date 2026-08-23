@@ -22,7 +22,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.content import Style as TextualStyle  # type: ignore[attr-defined]
 from textual.css.query import NoMatches
 from textual.geometry import Offset
@@ -139,6 +139,7 @@ class SessionSidebar(Vertical):
             )
             yield Static(_sidebar_separator(theme=TAU_DARK_THEME), classes="sidebar-separator")
             yield Static("", id="sidebar-extensions-content")
+            yield Container(id="sidebar-extension-sections")
         yield Static("", id="sidebar-brand")
 
     _summary_fingerprint: tuple[object, ...] | None = None
