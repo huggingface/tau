@@ -1081,6 +1081,32 @@ def test_huggingface_glm_5_2_does_not_send_unverified_medium_effort(
     assert config.reasoning_effort is None
 
 
+def test_stale_saved_glm_thinking_default_is_ignored(tmp_path: Path) -> None:
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    (tau_home / "providers.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "default_provider": "huggingface",
+                "provider_preferences": {
+                    "huggingface": {
+                        "default_model": "zai-org/GLM-5.2",
+                        "thinking_defaults": {"zai-org/GLM-5.2": "medium"},
+                    }
+                },
+                "scoped_models": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    provider = load_provider_settings(TauPaths(home=tau_home)).get_provider("huggingface")
+
+    assert provider.thinking_defaults == {}
+    assert resolve_startup_thinking_level(provider, "zai-org/GLM-5.2") is None
+
+
 def test_openai_compatible_config_from_provider_rejects_unsupported_thinking_level(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

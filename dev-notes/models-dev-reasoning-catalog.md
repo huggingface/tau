@@ -30,7 +30,10 @@ This follows Pi's generated-catalog approach without adding network I/O, cache
 state, or a startup failure mode. Tau always starts offline. If the generated
 resource is missing or invalid, catalog loading silently keeps the hand-reviewed
 `catalog.toml` behavior. User catalog overlays are applied after generated
-metadata, so explicit user configuration still wins.
+metadata, so explicit user configuration still wins. If a generated constraint
+makes a remembered `providers.json` thinking default unavailable, Tau ignores
+that stale preference and resolves a safe current default instead of failing
+startup.
 
 Provider aliases are explicit (`together` to `togetherai`, `kimi-code` to
 `kimi-for-coding`) rather than guessed. Models absent from either side are

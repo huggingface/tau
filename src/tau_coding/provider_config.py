@@ -1321,6 +1321,7 @@ def _apply_provider_preference(
             provider,
             f"provider_preferences.{provider.name}.thinking_defaults",
             ignore_unknown_models=True,
+            ignore_unavailable=True,
         )
         if "thinking_defaults" in value
         else provider.thinking_defaults
@@ -1373,20 +1374,25 @@ def _thinking_defaults_dict(
     field_name: str,
     *,
     ignore_unknown_models: bool = False,
+    ignore_unavailable: bool = False,
 ) -> dict[str, ThinkingLevel]:
     raw = _raw_thinking_defaults_dict(value, field_name)
     if ignore_unknown_models:
         raw = {model: level for model, level in raw.items() if model in provider.models}
+    valid: dict[str, ThinkingLevel] = {}
     for model, thinking_level in raw.items():
         validate_provider_model(provider, model)
         available = provider_thinking_levels(provider, model=model)
         if thinking_level not in available:
+            if ignore_unavailable:
+                continue
             modes = ", ".join(available) or "none"
             raise ProviderConfigError(
                 f"Provider thinking default {thinking_level} is not available for "
                 f"{provider.name}:{model}. Available modes: {modes}"
             )
-    return raw
+        valid[model] = thinking_level
+    return valid
 
 
 def _raw_thinking_defaults_dict(value: object, field_name: str) -> dict[str, ThinkingLevel]:
