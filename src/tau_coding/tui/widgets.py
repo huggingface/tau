@@ -1531,9 +1531,20 @@ def _transcript_item_markdown(
     visible_text = _visible_chat_text(
         item, show_tool_results=show_tool_results, invocation=invocation
     )
+    if item.system_prompt:
+        return _system_prompt_markdown(visible_text)
     if item.role in {"assistant", "thinking", "status", "branch_summary", "compaction_summary"}:
         return visible_text
     return _plain_markdown(visible_text)
+
+
+def _system_prompt_markdown(text: str) -> str:
+    """Protect prompt markup tags so Markdown displays them as highlighted code."""
+    return re.sub(
+        r"</?[A-Za-z][^>\n]*>",
+        lambda match: f"`{match.group(0).replace('`', '\\\\`')}`",
+        text,
+    )
 
 
 def _plain_markdown(text: str) -> str:

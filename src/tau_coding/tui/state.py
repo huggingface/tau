@@ -74,6 +74,7 @@ class ChatItem:
     always_show_tool_result: bool = False
     custom_type: str | None = None
     details: dict[str, JSONValue] | None = None
+    system_prompt: bool = False
     highlight: Literal["alert", "update"] | None = None
 
 
@@ -123,6 +124,7 @@ class TuiState:
         always_show_tool_result: bool = False,
         custom_type: str | None = None,
         details: dict[str, JSONValue] | None = None,
+        system_prompt: bool = False,
         highlight: Literal["alert", "update"] | None = None,
     ) -> None:
         """Append a transcript item."""
@@ -134,6 +136,7 @@ class TuiState:
             always_show_tool_result=always_show_tool_result,
             custom_type=custom_type,
             details=details,
+            system_prompt=system_prompt,
             highlight=highlight,
         )
         self.items.append(item)

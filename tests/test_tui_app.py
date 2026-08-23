@@ -142,6 +142,7 @@ from tau_coding.tui.widgets import (
     _split_rich_style_colors,
     _styled_cwd,
     _syntax_language,
+    _system_prompt_markdown,
     _transcript_plain_body_text,
     render_chat_item,
     render_compact_session_info,
@@ -1491,6 +1492,18 @@ async def test_textual_markdown_widget_uses_theme_link_style() -> None:
     assert block.styles.link_style_hover.underline is True
     assert [(span.start, span.end) for span in link_spans] == [(5, 9)]
     assert block.content.plain[5:9] == "docs"
+
+
+def test_system_prompt_markdown_highlights_markup_tags_as_inline_code() -> None:
+    prompt = (
+        '<project_instructions path="/workspace/AGENTS.md">\nUse `rg`.\n</project_instructions>'
+    )
+
+    rendered = _system_prompt_markdown(prompt)
+
+    assert rendered == (
+        '`<project_instructions path="/workspace/AGENTS.md">`\nUse `rg`.\n`</project_instructions>`'
+    )
 
 
 def test_textual_markdown_uses_theme_highlight_and_aqua_inline_code() -> None:
@@ -6428,7 +6441,7 @@ async def test_tui_app_reload_appends_command_output_to_transcript() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_app_system_opens_scrollable_command_output() -> None:
+async def test_tui_app_system_appends_markdown_command_output_to_transcript() -> None:
     session = FakeSession()
     session.system_prompt = "You are Tau.\n" + "\n".join(
         f"Guideline {index}" for index in range(80)
@@ -6441,14 +6454,17 @@ async def test_tui_app_system_opens_scrollable_command_output() -> None:
         await pilot.press("enter")
         await pilot.pause()
 
-        assert isinstance(app.screen, CommandOutputScreen)
-        assert app.screen.title_text == "/system"
-        assert app.screen.message == session.system_prompt
-        assert app.state.items == []
-
-        scroll = app.screen.query_one("#command-output-scroll", VerticalScroll)
-        assert scroll.max_scroll_y > 0
-        assert app.screen.focused is scroll
+        assert not isinstance(app.screen, CommandOutputScreen)
+        assert app.state.items == [
+            ChatItem(
+                role="status",
+                text=f"### /system\n\n{session.system_prompt}",
+                system_prompt=True,
+            )
+        ]
+        transcript = app.query_one("#transcript", TranscriptView)
+        message = transcript.query_one(TranscriptMessageWidget)
+        assert isinstance(message.query_one(ThemedMarkdownWidget), ThemedMarkdownWidget)
 
 
 @pytest.mark.anyio
