@@ -709,6 +709,11 @@ def test_tui_adapter_renders_skill_file_reads_with_skill_style() -> None:
 def test_tui_adapter_records_retry_and_queue_status() -> None:
     state = TuiState()
     adapter = TuiEventAdapter(state)
+    adapter.apply(
+        MessageEndEvent(
+            message=AssistantMessage(stop_reason="error", error_message="provider failed")
+        )
+    )
 
     adapter.apply(
         AutoRetryStartEvent(
@@ -723,6 +728,7 @@ def test_tui_adapter_records_retry_and_queue_status() -> None:
     assert [(item.role, item.text) for item in state.items] == [
         ("status", "… Retrying provider request 2/3 after HTTP 503.")
     ]
+    assert state.error is None
     assert state.queued_steering == ("adjust",)
     assert state.queued_follow_up == ("after",)
 

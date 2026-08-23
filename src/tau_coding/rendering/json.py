@@ -4,7 +4,7 @@ import typer
 
 from tau_agent.events import MessageEndEvent
 from tau_agent.messages import AssistantMessage
-from tau_coding.events import CodingSessionEvent
+from tau_coding.events import AutoRetryEndEvent, CodingSessionEvent
 
 
 class JsonEventRenderer:
@@ -12,6 +12,8 @@ class JsonEventRenderer:
         self._failed = False
 
     def render(self, event: CodingSessionEvent) -> None:
+        if isinstance(event, AutoRetryEndEvent) and event.success:
+            self._failed = False
         if (
             isinstance(event, MessageEndEvent)
             and isinstance(event.message, AssistantMessage)

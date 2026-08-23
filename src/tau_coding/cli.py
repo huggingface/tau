@@ -6,7 +6,7 @@ import contextlib
 import sys
 from os import environ
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import anyio
 import typer
@@ -890,6 +890,16 @@ async def run_openai_rpc_mode(
         and selection.provider.name == "huggingface"
         else None
     )
+    inference_provider_mode = (
+        record.inference_provider_mode
+        if resume_session_id is not None
+        and record.provider_name == "huggingface"
+        and selection.provider.name == "huggingface"
+        and record.model == selection.model
+        else "fixed"
+        if inference_provider is not None
+        else "automatic"
+    )
     provider = create_model_provider(
         selection.provider,
         model=selection.model,
@@ -906,6 +916,7 @@ async def run_openai_rpc_mode(
             session_manager=manager,
             provider_name=selection.provider.name,
             inference_provider=inference_provider,
+            inference_provider_mode=inference_provider_mode,
             provider_settings=settings,
             runtime_provider_config=selection.provider,
             shell_command_prefix=shell_settings.shell_command_prefix,
@@ -971,6 +982,16 @@ async def run_openai_print_mode(
         and selection.provider.name == "huggingface"
         else None
     )
+    inference_provider_mode = (
+        record.inference_provider_mode
+        if resume_session_id is not None
+        and record.provider_name == "huggingface"
+        and selection.provider.name == "huggingface"
+        and record.model == selection.model
+        else "fixed"
+        if inference_provider is not None
+        else "automatic"
+    )
     provider = create_model_provider(
         selection.provider,
         model=selection.model,
@@ -1000,6 +1021,7 @@ async def run_openai_print_mode(
             trust_override=trust_override,
             trust_default=shell_settings.default_project_trust,
             startup_model_override=provider_name is not None or model is not None,
+            inference_provider_mode=inference_provider_mode,
         )
     finally:
         await provider.aclose()
@@ -1071,6 +1093,7 @@ async def run_print_mode(
     session_manager: SessionManager | None = None,
     provider_name: str = DEFAULT_PROVIDER_NAME,
     inference_provider: str | None = None,
+    inference_provider_mode: Literal["automatic", "fixed"] | None = None,
     provider_settings: ProviderSettings | None = None,
     runtime_provider_config: ProviderConfig | None = None,
     shell_command_prefix: str | None = None,
@@ -1099,6 +1122,7 @@ async def run_print_mode(
             session_manager=session_manager,
             provider_name=provider_name,
             inference_provider=inference_provider,
+            inference_provider_mode=inference_provider_mode,
             provider_settings=provider_settings,
             runtime_provider_config=runtime_provider_config,
             shell_command_prefix=shell_command_prefix,
