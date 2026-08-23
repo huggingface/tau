@@ -1072,6 +1072,52 @@ async def test_fast_router_download_finishes_without_observing_intermediate_stat
 
 
 @pytest.mark.anyio
+async def test_router_download_rejection_surfaces_server_message(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.url.path == "/props":
+            return httpx.Response(200, json={"role": "router", "build_info": "b10000-test"})
+        if request.url.path == "/models" and request.method == "GET":
+            return httpx.Response(200, json={"data": []})
+        if request.url.path == "/models" and request.method == "POST":
+            return httpx.Response(
+                500,
+                json={
+                    "error": {
+                        "code": 500,
+                        "message": "model limit reached, try again later",
+                        "type": "server_error",
+                    }
+                },
+            )
+        return httpx.Response(404)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    service, state_store, credentials = _service(tmp_path, client=client)
+    state_store.save(_state(selected_model=None, models=()))
+    service = LlamaCppService(
+        state_store=state_store,
+        credential_store=credentials,
+        client=client,
+        environment={},
+    )
+    await service.refresh(_context())
+
+    result = await service.download_model(
+        "owner/repo:Q4_K_M",
+        _context("download_model", confirmation="download"),
+    )
+
+    assert result.committed is False
+    assert result.diagnostics[0].stage == "router"
+    assert result.diagnostics[0].severity == "error"
+    assert "model limit reached, try again later" in result.diagnostics[0].message
+    assert "State was refreshed" in result.diagnostics[0].message
+    await client.aclose()
+
+
+@pytest.mark.anyio
 async def test_router_connection_loss_reconciles_without_replaying_mutation(tmp_path: Path) -> None:
     posts = 0
     list_calls = 0

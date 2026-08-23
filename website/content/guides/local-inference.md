@@ -174,6 +174,9 @@ separate deletion confirmation succeeds.
 - **HTTP 401/403:** enter the server's configured key in `/local`, or set
   `LLAMA_API_KEY`. A stored key wins over the environment value.
 - **Loading:** wait for llama.cpp to finish loading, then refresh.
+- **`model limit reached` during download:** the shared router rejected the
+  request. Review `/local`; unload another model only if intended, or try again
+  later. Tau refreshes state and shows the router's exact rejection message.
 - **Malformed or empty `/v1/models`:** inspect the server response and model
   loading state. Tau does not invent an ID or metadata.
 - **Print mode reports an unavailable model:** configure `/local` first and pass

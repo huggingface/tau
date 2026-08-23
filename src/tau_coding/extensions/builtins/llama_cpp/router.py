@@ -183,9 +183,29 @@ def _raise_http(response: httpx.Response, operation: str) -> None:
             "llama.cpp rejected the router request. Check the optional API key or LLAMA_API_KEY."
         )
     if response.status_code >= 400:
+        detail = _server_error_detail(response)
+        suffix = f": {detail}" if detail else "."
         raise LlamaCppRouterError(
-            f"llama.cpp returned HTTP {response.status_code} while {operation}."
+            f"llama.cpp returned HTTP {response.status_code} while {operation}{suffix}"
         )
+
+
+def _server_error_detail(response: httpx.Response) -> str | None:
+    """Extract one bounded, user-actionable message from a router error."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    error = payload.get("error")
+    message = error.get("message") if isinstance(error, Mapping) else None
+    if not isinstance(message, str):
+        return None
+    normalized = " ".join(message.split())
+    if not normalized:
+        return None
+    return normalized[:300]
 
 
 __all__ = [

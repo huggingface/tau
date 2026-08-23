@@ -922,16 +922,22 @@ class LlamaCppService:
         try:
             models = await list_router_models(client, self.endpoint.server_root, headers)
             await self._publish_router_models(models)
+            if isinstance(error, LlamaCppRouterError):
+                diagnostic = LocalDiagnostic(
+                    f"{error} State was refreshed; retry only after reviewing it.",
+                    "error",
+                    "router",
+                )
+            else:
+                diagnostic = LocalDiagnostic(
+                    f"The operation was interrupted ({error}). State was refreshed; retry "
+                    "only after reviewing it.",
+                    "warning",
+                    "reconciliation",
+                )
             return LocalOperationResult(
                 backend_status=self._status_from_router(models),
-                diagnostics=(
-                    LocalDiagnostic(
-                        f"The operation was interrupted ({error}). State was refreshed; retry "
-                        "only after reviewing it.",
-                        "warning",
-                        "reconciliation",
-                    ),
-                ),
+                diagnostics=(diagnostic,),
             )
         except Exception:
             return LocalOperationResult(
