@@ -1131,6 +1131,8 @@ models = ["nvidia/llama-3.3-nemotron-super-49b-v1.5", "nvidia/nvidia-nemotron-na
 default_model = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
 docs_url = "https://docs.api.nvidia.com/nim"
 api = "openai-completions"
+headers = { NVCF-POLL-SECONDS = "3600" }
+compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = false, maxTokensField = "max_tokens", supportsStrictMode = false, supportsLongCacheRetention = false }
 thinking_levels = ["off", "minimal", "low", "medium", "high"]
 thinking_default = "medium"
 thinking_parameter = "reasoning_effort"
@@ -3891,8 +3893,8 @@ models = ["k3", "kimi-for-coding"]
 default_model = "kimi-for-coding"
 docs_url = "https://www.kimi.com/code/docs/en/kimi-code/models"
 api = "openai-completions"
-thinking_levels = ["low", "medium", "high", "xhigh"]
-thinking_default = "xhigh"
+thinking_levels = ["low", "medium", "high", "xhigh", "max"]
+thinking_default = "max"
 thinking_parameter = "reasoning_effort"
 
 [providers.context_windows]
@@ -4504,6 +4506,8 @@ context_window = 262144
 max_tokens = 131072
 compat = { supportsDeveloperRole = false }
 cost = { input = 1.4, output = 4.4, cacheRead = 0, cacheWrite = 0 }
+thinking_level_map = { off = "none", high = "high", max = "max" }
+unsupported_thinking_levels = ["minimal", "low", "medium", "xhigh"]
 
 [[providers]]
 name = "fireworks"

@@ -31,7 +31,7 @@ _PROVIDER_APIS = frozenset(
         "mistral-conversations",
     }
 )
-_THINKING_LEVELS = frozenset({"off", "minimal", "low", "medium", "high", "xhigh"})
+_THINKING_LEVELS = frozenset({"off", "minimal", "low", "medium", "high", "xhigh", "max"})
 
 type ModelCost = Mapping[str, float]
 type ImmutableJSONValue = (

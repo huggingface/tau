@@ -313,7 +313,15 @@ async def test_load_empty_session_defers_transcript_file(tmp_path: Path) -> None
     assert session.messages == ()
     assert session.state.model == "fake"
     assert session.thinking_level == "medium"
-    assert session.available_thinking_levels == ("off", "minimal", "low", "medium", "high", "xhigh")
+    assert session.available_thinking_levels == (
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    )
     assert session.cwd == tmp_path
     assert session.model == "fake"
     assert [tool.name for tool in session.tools] == ["read", "write", "edit", "bash"]

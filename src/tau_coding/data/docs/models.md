@@ -89,28 +89,32 @@ overridden. The external Hugging Face extension controls these modes with
 
 ## Changing the built-in catalog
 
-For first-party provider/model changes, verify exact metadata in official
-provider documentation, confirm Tau supports the transport, and update
-`src/tau_coding/data/catalog.toml`. Never guess undocumented metadata. Preserve
-the existing default unless changing it intentionally, and test catalog,
-configuration, runtime, thinking-level, and wire behavior.
+Tau follows Pi's build-time model-generation design. Provider transports,
+authentication, defaults, compatibility corrections, and fallback model rows
+live in `src/tau_coding/data/catalog.toml`. Complete model inventories and
+models.dev-owned metadata live in the checked-in
+`data/models-dev-catalog.json`. Refresh that snapshot with:
 
-Tau thinking levels are `off`, `minimal`, `low`, `medium`, `high`, and `xhigh`.
-Provider-level levels must cover every model's supported values. For
-OpenAI-compatible effort providers, Tau overlays the bundled catalog with the
-checked-in `data/models-dev-reasoning.json` snapshot generated from
-`https://models.dev/api.json`. The picker exposes only verified per-model values;
-`none` becomes `off`, and `max` becomes `xhigh` when needed. If a model advertises
-no effort values, Tau hides its effort controls and omits `reasoning_effort`
-instead of sending the provider-wide default.
+```bash
+uv run python scripts/generate_models.py
+```
+
+Generation includes non-deprecated, tool-capable text models and copies names,
+reasoning support, modalities, costs, context limits, output limits, and verified
+effort values. New source models therefore require no hand edit to the inventory.
+Verify transports and narrow corrections against official provider documentation;
+never guess them.
+
+Tau thinking levels match Pi: `off`, `minimal`, `low`, `medium`, `high`,
+`xhigh`, and `max`. `none` becomes `off`; `max` remains distinct from `xhigh`.
+Empty or toggle-only reasoning options produce no generated override, matching
+Pi. Provider/manual behavior remains in effect for those models.
 
 Generation happens before release, never during startup, so offline use has no
-network dependency. Missing or invalid generated data falls back silently to
-`catalog.toml`. Refresh the repository snapshot with
-`uv run python scripts/generate_models_dev_reasoning.py`; the script only updates
-reasoning maps for existing catalog models. When withdrawing one provider's
-model, add it to that provider's `removed_models` list so stale user overlays
-cannot restore it.
+network dependency. Missing, invalid, or incompatible generated data falls back
+silently to `catalog.toml`. User `~/.tau/catalog.toml` overlays are applied last.
+When withdrawing one provider's model, add it to that provider's
+`removed_models` list so stale user overlays cannot restore it.
 
 Update `website/content/guides/providers-and-models.md` and a development note
 for substantial changes. Run focused provider tests, full pytest, Ruff,

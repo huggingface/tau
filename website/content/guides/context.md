@@ -95,7 +95,7 @@ Some models can spend extra effort reasoning before answering. Tau exposes a
 thinking level you can cycle:
 
 ```text
-off → minimal → low → medium → high → xhigh
+off → minimal → low → medium → high → xhigh → max
 ```
 
 - **Shift+Tab** cycles the thinking level (default is `medium`).

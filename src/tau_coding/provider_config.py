@@ -41,6 +41,7 @@ from tau_coding.provider_catalog import (
 )
 from tau_coding.thinking import (
     DEFAULT_THINKING_LEVEL,
+    THINKING_LEVELS,
     ThinkingLevel,
     ThinkingParameter,
     anthropic_thinking_budget_for_level,
@@ -1471,8 +1472,13 @@ def provider_thinking_levels(
         return ()
     return tuple(
         level
-        for level in provider.thinking_levels
-        if metadata is None or _metadata_supports_thinking_level(metadata, level)
+        for level in THINKING_LEVELS
+        if (
+            level in provider.thinking_levels
+            or metadata is not None
+            and metadata.thinking_level_map.get(level) is not None
+        )
+        and (metadata is None or _metadata_supports_thinking_level(metadata, level))
     )
 
 
@@ -1504,9 +1510,10 @@ def provider_thinking_unavailable_reason(
 def _levels_from_thinking_map(
     thinking_level_map: dict[ThinkingLevel, str | None],
 ) -> tuple[ThinkingLevel, ...]:
-    levels: tuple[ThinkingLevel, ...] = ("off", "minimal", "low", "medium", "high", "xhigh")
     return tuple(
-        level for level in levels if _thinking_level_map_supports(thinking_level_map, level)
+        level
+        for level in THINKING_LEVELS
+        if _thinking_level_map_supports(thinking_level_map, level)
     )
 
 
@@ -1525,7 +1532,7 @@ def _thinking_level_map_supports(
 ) -> bool:
     if level in thinking_level_map:
         return thinking_level_map[level] is not None
-    return level != "xhigh"
+    return level not in {"xhigh", "max"}
 
 
 def _metadata_for_model(provider: ProviderConfig, model: str) -> ProviderModelMetadata | None:

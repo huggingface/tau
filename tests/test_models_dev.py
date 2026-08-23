@@ -6,18 +6,18 @@ from pathlib import Path
 import pytest
 
 from tau_coding import models_dev
-from tau_coding.catalog_loader import builtin_catalog
+from tau_coding.catalog_loader import builtin_source_catalog
 from tau_coding.models_dev import (
-    bundled_reasoning_catalog_overlay,
-    reasoning_catalog_overlay,
-    reasoning_maps_from_models_dev,
+    bundled_models_dev_catalog_overlay,
+    models_dev_catalog_document,
+    models_dev_catalog_overlay,
     thinking_level_map_from_reasoning_options,
 )
 
-FIXTURE = Path(__file__).parent / "fixtures/models_dev_reasoning.json"
+FIXTURE = Path(__file__).parent / "fixtures/models_dev_catalog.json"
 
 
-def test_effort_options_map_only_verified_values_and_max_to_xhigh() -> None:
+def test_effort_options_use_pi_level_map_semantics() -> None:
     source = json.loads(FIXTURE.read_text(encoding="utf-8"))
     options = source["huggingface"]["models"]["zai-org/GLM-5.2"]["reasoning_options"]
 
@@ -27,11 +27,12 @@ def test_effort_options_map_only_verified_values_and_max_to_xhigh() -> None:
         "low": None,
         "medium": None,
         "high": "high",
-        "xhigh": "max",
+        "xhigh": None,
+        "max": "max",
     }
 
 
-def test_full_effort_options_preserve_every_tau_level() -> None:
+def test_full_effort_options_preserve_every_pi_level() -> None:
     source = json.loads(FIXTURE.read_text(encoding="utf-8"))
     options = source["huggingface"]["models"]["moonshotai/Kimi-K3"]["reasoning_options"]
 
@@ -42,39 +43,47 @@ def test_full_effort_options_preserve_every_tau_level() -> None:
         "medium": "medium",
         "high": "high",
         "xhigh": "xhigh",
+        "max": "max",
     }
 
 
-def test_generation_is_provider_and_model_scoped() -> None:
+def test_empty_or_toggle_only_options_do_not_override_manual_behavior() -> None:
+    assert thinking_level_map_from_reasoning_options([]) is None
+    assert thinking_level_map_from_reasoning_options([{"type": "toggle"}]) is None
+
+
+def test_generation_adds_new_tool_models_and_provider_aliases() -> None:
     source = json.loads(FIXTURE.read_text(encoding="utf-8"))
 
-    maps = reasoning_maps_from_models_dev(source, builtin_catalog())
+    document = models_dev_catalog_document(source, builtin_source_catalog())
 
-    assert set(maps) == {"huggingface", "together"}
-    assert set(maps["huggingface"]) == {"moonshotai/Kimi-K3", "zai-org/GLM-5.2"}
-    assert maps["together"]["zai-org/GLM-5.1"]["xhigh"] == "max"
-
-
-def test_empty_reasoning_options_disable_unverified_provider_defaults() -> None:
-    assert thinking_level_map_from_reasoning_options([]) == {
-        "off": None,
-        "minimal": None,
-        "low": None,
-        "medium": None,
-        "high": None,
-        "xhigh": None,
+    assert set(document["providers"]) == {"huggingface", "together"}
+    huggingface = document["providers"]["huggingface"]
+    assert "example/new-tool-model" in huggingface["models"]
+    assert huggingface["model_metadata"]["example/new-tool-model"] == {
+        "name": "New Tool Model",
+        "reasoning": False,
+        "input": ["text"],
+        "cost": {"input": 0.1, "output": 0.2, "cacheRead": 0.0, "cacheWrite": 0.0},
+        "context_window": 65536,
+        "max_tokens": 8192,
+    }
+    together = document["providers"]["together"]
+    assert together["model_metadata"]["zai-org/GLM-5.1"]["thinking_level_map"] == {
+        "high": "high",
+        "max": "max",
     }
 
 
-def test_invalid_generated_metadata_falls_back_to_catalog() -> None:
+def test_invalid_generated_catalog_is_rejected() -> None:
     with pytest.raises(ValueError, match="unsupported schema"):
-        reasoning_catalog_overlay({"schema_version": 2, "providers": {}})
+        models_dev_catalog_overlay({"schema_version": 2, "providers": {}})
 
 
-def test_missing_bundled_metadata_falls_back_silently(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_bundled_catalog_falls_back_silently(monkeypatch: pytest.MonkeyPatch) -> None:
     def missing_files(_package: str) -> None:
         raise OSError("offline package fixture")
 
     monkeypatch.setattr(models_dev, "files", missing_files)
 
-    assert bundled_reasoning_catalog_overlay() is None
+    assert bundled_models_dev_catalog_overlay() is None

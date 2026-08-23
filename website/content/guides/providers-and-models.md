@@ -140,24 +140,22 @@ needed. Available models and plan limits change over time; consult the
 
 ### Hugging Face Inference Providers
 
-Log in with `/login huggingface` or set `HF_TOKEN`. Tau's built-in Hugging Face
-catalog includes 47 coding-capable models routed through
-`https://router.huggingface.co/v1`, including DeepSeek, Gemma, GLM, GPT OSS,
-Kimi, Llama, MiniMax, MiMo, Qwen, and Step families. This includes
-`moonshotai/Kimi-K3`, with text and image input, a 1,048,576-token context
-window, and `low`, `high`, and `max` reasoning effort. Tau exposes `max` as its
-`xhigh` thinking level. Use `/model` to search the full list; model availability
-and the inference provider selected by Hugging Face can vary over time and by
-account.
+Log in with `/login huggingface` or set `HF_TOKEN`. Tau's Hugging Face model
+list is generated at build time from [models.dev](https://models.dev) and routed
+through `https://router.huggingface.co/v1`. It includes tool-capable models from
+DeepSeek, Gemma, GLM, GPT OSS, Kimi, Llama, MiniMax, MiMo, Qwen, Step, and other
+families. Use `/model` to search the generated list; availability and the backing
+inference provider can vary over time and by account.
 
-Tau's released catalog includes a build-time snapshot of per-model reasoning
-options from [models.dev](https://models.dev). The thinking picker only shows
-verified effort values: `none` appears as `off`, while a provider's `max` appears
-as `xhigh`. If models.dev advertises no configurable effort for a model, Tau
-hides those controls and sends no `reasoning_effort`, allowing the router to use
-its model-safe default. This prevents a provider-wide `medium` default from
-breaking models such as `zai-org/GLM-5.2`. The snapshot is bundled, so Tau does
-not contact models.dev during startup and continues to work offline.
+Like Pi, Tau's released snapshot includes model names, limits, costs, modalities,
+reasoning support, and verified effort values. Thinking levels are `off`,
+`minimal`, `low`, `medium`, `high`, `xhigh`, and `max`; `max` is distinct from
+`xhigh`. Empty or toggle-only reasoning options do not replace provider/manual
+behavior. Hugging Face `zai-org/GLM-5.2` currently uses a narrow verified
+correction exposing `off`, `high`, and `max`, so Tau never sends its unsupported
+`medium` value. The snapshot is bundled: Tau does not contact models.dev during
+startup and continues to work offline. New models appear after Tau regenerates
+and ships an updated snapshot.
 
 For a new session without an explicit preference, Hugging Face initially routes
 the model automatically. After the first successful response, Tau reads Hugging
@@ -229,8 +227,8 @@ different endpoints, and charge against different billing plans:
 Kimi K3 uses the `k3` model ID, accepts text and image input, and supports up to
 a 1,048,576-token context window on eligible plans. It supports three
 reasoning-effort levels via the `reasoning_effort` field: `low`, `high`, and
-`max` (default). Tau exposes these as the `low`, `high`, and `xhigh` thinking
-levels respectively, and starts new K3 sessions at `xhigh` unless a remembered
+`max` (default). Tau exposes these as the distinct `low`, `high`, and `max`
+thinking levels, and starts new K3 sessions at `max` unless a remembered
 per-model choice exists. Start a new session when switching to K3 so the
 previous model's context cache is not re-prefilled. See
 [Kimi's model documentation](https://www.kimi.com/code/docs/en/kimi-code/models)
@@ -307,9 +305,8 @@ exposing users to provider validation errors or rewriting the saved JSONL histor
 Tau supports Anthropic's `claude-opus-5` through the direct `anthropic`
 provider. The model has a 1M-token context window, accepts text and images,
 generates up to 128k tokens, and costs $5 / $25 per million input/output tokens.
-Anthropic enables adaptive thinking by default. Tau maps its `low` through
-`high` modes directly, maps `xhigh` to Anthropic's maximum effort, and sends an
-explicit disabled-thinking request for `off`.
+Anthropic enables adaptive thinking by default. Tau exposes models.dev's
+verified `low`, `medium`, `high`, `xhigh`, and `max` efforts as distinct modes.
 
 Use `/login anthropic-api` or `/login anthropic-subscription`, then select
 **Claude Opus 5** in `/model`. See Anthropic's
