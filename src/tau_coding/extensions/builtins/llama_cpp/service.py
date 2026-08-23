@@ -70,6 +70,7 @@ from .router import (
     detect_router,
     list_router_models,
     mutate_router_model,
+    watch_router_download_progress,
 )
 from .state import (
     LLAMA_CPP_CREDENTIAL_PREFIX,
@@ -711,6 +712,7 @@ class LlamaCppService:
             return prepared
         client, owned, headers = prepared
         mutation_started = False
+        progress_task: asyncio.Task[None] | None = None
         try:
             if context.confirmation is None:
                 return LocalOperationResult(
@@ -726,6 +728,17 @@ class LlamaCppService:
                 return LocalOperationResult(cancelled=True)
             if context.confirmation != "download":
                 return self._router_failure("Downloading requires explicit confirmation.")
+            progress_task = asyncio.create_task(
+                watch_router_download_progress(
+                    client,
+                    self.endpoint.server_root,
+                    headers,
+                    model_id,
+                    lambda downloaded, total: context.report_progress(
+                        _download_progress(model_id, downloaded, total)
+                    ),
+                )
+            )
             mutation_started = True
             await mutate_router_model(
                 client,
@@ -758,6 +771,10 @@ class LlamaCppService:
         except (httpx.HTTPError, LlamaCppRouterError, TimeoutError) as exc:
             return await self._reconcile_after_router_failure(client, headers, exc)
         finally:
+            if progress_task is not None:
+                progress_task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await progress_task
             if owned:
                 await client.aclose()
 
@@ -1624,13 +1641,10 @@ def _router_progress(model: RouterModel) -> LocalProgress:
         and model.downloaded_bytes is not None
         and model.download_total_bytes is not None
     ):
-        downloaded = min(model.downloaded_bytes, model.download_total_bytes)
-        remaining = model.download_total_bytes - downloaded
-        return LocalProgress(
-            f"Downloading {model.id} on the llama.cpp server… "
-            f"{_format_bytes(downloaded)} / {_format_bytes(model.download_total_bytes)} "
-            f"({_format_bytes(remaining)} remaining)",
-            fraction=downloaded / model.download_total_bytes,
+        return _download_progress(
+            model.id,
+            model.downloaded_bytes,
+            model.download_total_bytes,
         )
     messages = {
         "loading": f"Loading {model.id}…",
@@ -1643,6 +1657,17 @@ def _router_progress(model: RouterModel) -> LocalProgress:
     }
     return LocalProgress(
         messages[model.state], done=model.state in {"loaded", "sleeping", "unloaded", "failed"}
+    )
+
+
+def _download_progress(model_id: str, downloaded_bytes: int, total_bytes: int) -> LocalProgress:
+    downloaded = min(downloaded_bytes, total_bytes)
+    remaining = total_bytes - downloaded
+    return LocalProgress(
+        f"Downloading {model_id} on the llama.cpp server… "
+        f"{_format_bytes(downloaded)} / {_format_bytes(total_bytes)} "
+        f"({_format_bytes(remaining)} remaining)",
+        fraction=downloaded / total_bytes,
     )
 
 

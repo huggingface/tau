@@ -17,6 +17,7 @@ from tau_coding.credentials import FileCredentialStore
 from tau_coding.extensions import ExtensionRuntime
 from tau_coding.extensions.builtins.llama_cpp import service as llama_service
 from tau_coding.extensions.builtins.llama_cpp.huggingface import discover_hf_token
+from tau_coding.extensions.builtins.llama_cpp.router import watch_router_download_progress
 from tau_coding.extensions.builtins.llama_cpp.service import (
     LLAMA_CPP_API_KEY_ENV,
     LLAMA_CPP_DEFAULT_ENDPOINT,
@@ -1073,6 +1074,38 @@ async def test_fast_router_download_finishes_without_observing_intermediate_stat
     assert result.committed is True
     assert result.backend_status is not None
     assert result.backend_status.models[0].state == "unloaded"
+    await client.aclose()
+
+
+@pytest.mark.anyio
+async def test_router_sse_reports_aggregate_download_progress() -> None:
+    payload = "\n".join(
+        (
+            'data: {"model":"other","event":"download_progress","data":'
+            '{"progress":{"file":{"done":99,"total":100}}}}',
+            "",
+            'data: {"model":"owner/repo:Q4_K_M","event":"download_progress","data":'
+            '{"progress":{"one":{"done":25,"total":80},'
+            '"two":{"done":10,"total":20}}}}',
+            "",
+        )
+    )
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, text=payload, request=request)
+        )
+    )
+    progress: list[tuple[int, int]] = []
+
+    await watch_router_download_progress(
+        client,
+        SERVER,
+        {},
+        "owner/repo:Q4_K_M",
+        lambda downloaded, total: progress.append((downloaded, total)),
+    )
+
+    assert progress == [(35, 100)]
     await client.aclose()
 
 

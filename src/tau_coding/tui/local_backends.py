@@ -448,10 +448,14 @@ class LocalBackendScreen(ModalScreen[None]):
         model_id: str | None,
         confirmation: str | None = None,
     ) -> None:
-        self._set_progress("Working…")
+        self._set_progress("Working…", show_bar=action == "download_model")
 
         def progress(item: LocalProgress) -> None:
-            self._set_progress(item.message, fraction=item.fraction)
+            self._set_progress(
+                item.message,
+                fraction=item.fraction,
+                show_bar=action == "download_model",
+            )
 
         try:
             if action == "configure":
@@ -708,14 +712,22 @@ class LocalBackendScreen(ModalScreen[None]):
     def _can_update_ui(self) -> bool:
         return not self._closing and self.is_mounted and self.is_attached and self.is_current
 
-    def _set_progress(self, message: str, *, fraction: float | None = None) -> None:
+    def _set_progress(
+        self,
+        message: str,
+        *,
+        fraction: float | None = None,
+        show_bar: bool = False,
+    ) -> None:
         if not self._can_update_ui:
             return
         with suppress(NoMatches):
             self.query_one("#local-backend-progress", Static).update(message)
             progress_bar = self.query_one("#local-backend-progress-bar", ProgressBar)
-            progress_bar.styles.display = "block" if fraction is not None else "none"
-            if fraction is not None:
+            progress_bar.styles.display = "block" if show_bar or fraction is not None else "none"
+            if fraction is None:
+                progress_bar.update(total=None, progress=0)
+            else:
                 progress_bar.update(total=1, progress=fraction)
 
     def _show_message(self, message: str, level: str) -> None:

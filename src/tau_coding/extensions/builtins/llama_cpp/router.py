@@ -7,9 +7,10 @@ model discovery in the owning service.
 
 from __future__ import annotations
 
+import json
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal, TypeGuard, cast
 
@@ -188,6 +189,57 @@ def _is_non_negative_number(value: object) -> TypeGuard[int | float]:
     )
 
 
+async def watch_router_download_progress(
+    client: httpx.AsyncClient,
+    server_root: str,
+    headers: Mapping[str, str],
+    model_id: str,
+    callback: Callable[[int, int], None],
+) -> None:
+    """Forward bounded aggregate download progress from the router SSE stream."""
+    async with client.stream(
+        "GET",
+        server_root + "/models/sse",
+        headers=dict(headers),
+        timeout=None,
+    ) as response:
+        _raise_http(response, "watching model progress")
+        data_lines: list[str] = []
+        data_size = 0
+        async for line in response.aiter_lines():
+            if line:
+                if line.startswith("data:"):
+                    value = line[5:].lstrip()
+                    data_size += len(value)
+                    if data_size <= 1_000_000:
+                        data_lines.append(value)
+                continue
+            if data_lines and data_size <= 1_000_000:
+                _forward_download_progress("\n".join(data_lines), model_id, callback)
+            data_lines = []
+            data_size = 0
+        if data_lines and data_size <= 1_000_000:
+            _forward_download_progress("\n".join(data_lines), model_id, callback)
+
+
+def _forward_download_progress(
+    data: str,
+    model_id: str,
+    callback: Callable[[int, int], None],
+) -> None:
+    try:
+        event = json.loads(data)
+    except (json.JSONDecodeError, ValueError):
+        return
+    if not isinstance(event, Mapping):
+        return
+    if event.get("model") != model_id or event.get("event") != "download_progress":
+        return
+    downloaded, total = _download_progress(event.get("data"))
+    if downloaded is not None and total is not None:
+        callback(downloaded, total)
+
+
 async def mutate_router_model(
     client: httpx.AsyncClient,
     server_root: str,
@@ -259,4 +311,5 @@ __all__ = [
     "detect_router",
     "list_router_models",
     "mutate_router_model",
+    "watch_router_download_progress",
 ]

@@ -14,8 +14,8 @@ Phase 7 completes issue #602 without changing the Phase 5 single-model path.
   documented `/models`, `/models/load`, and `/models/unload` requests. Load
   waits for reconciled loaded/sleeping state. Unload and download require
   confirmation; loading with active peers asks whether to keep or unload them.
-- Polling emits bounded progress, including aggregate router-reported byte and
-  percentage progress for downloads. Cancellation requests the documented
+- Router SSE emits bounded aggregate byte and percentage download progress while
+  catalog polling remains authoritative for completion. Cancellation requests the documented
   unload operation for load/download and refreshes state. Timeout or connection loss
   attempts refresh and never replays a mutation.
 - Hugging Face search/details use its public API through the injected HTTP
