@@ -4125,8 +4125,12 @@ async def test_local_modals_receive_app_level_arrow_navigation() -> None:
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.push_screen(LocalBackendScreen(registry, "local", theme=TAU_DARK_THEME))
+        app.session.extension_runtime = SimpleNamespace(local_backend_registry=registry)
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.focus()
+        app._handle_local_backend_picker_result("local")
         await pilot.pause()
+        assert isinstance(app.screen, LocalBackendScreen)
         menu = app.screen.query_one("#local-backend-menu", ListView)
         assert menu.index == 0
         await pilot.press("down")
@@ -4135,6 +4139,11 @@ async def test_local_modals_receive_app_level_arrow_navigation() -> None:
         assert menu.index == 0
 
         app.pop_screen()
+        await pilot.pause()
+        assert app.focused is prompt
+        await pilot.press("x")
+        assert prompt.text == "x"
+
         selected: list[bool | None] = []
         app.push_screen(
             LocalConfirmScreen("Load model?", "This is expensive.", theme=TAU_DARK_THEME),
