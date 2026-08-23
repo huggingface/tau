@@ -73,7 +73,7 @@ from tau_coding.events import (
     SessionAgentEndEvent,
 )
 from tau_coding.extensions.provider_registry import DynamicProviderRegistry
-from tau_coding.extensions.providers import DynamicProvider
+from tau_coding.extensions.providers import DynamicProvider, ProviderModel
 from tau_coding.extensions.runtime import ExtensionRuntime
 from tau_coding.paths import TauPaths
 from tau_coding.project_trust import (
@@ -720,6 +720,13 @@ class CodingSession:
         return effective.definition
 
     @property
+    def _active_dynamic_model(self) -> ProviderModel | None:
+        dynamic = self._active_dynamic_provider
+        if dynamic is None:
+            return None
+        return next((model for model in dynamic.models if model.id == self.model), None)
+
+    @property
     def available_providers(self) -> tuple[str, ...]:
         """Return provider names Tau can call with available credentials."""
         names: list[str] = []
@@ -933,6 +940,12 @@ class CodingSession:
     @property
     def available_thinking_levels(self) -> tuple[ThinkingLevel, ...]:
         """Return thinking modes supported by the active provider/model."""
+        dynamic = self._active_dynamic_provider
+        if dynamic is not None:
+            model = self._active_dynamic_model
+            if model is None:
+                return ()
+            return model.thinking_levels or ()
         if self._provider_settings is None:
             return THINKING_LEVELS
         provider = self._active_provider_config()
@@ -945,6 +958,17 @@ class CodingSession:
         """Return why thinking controls are unavailable for the active model."""
         if self.available_thinking_levels:
             return None
+        dynamic = self._active_dynamic_provider
+        if dynamic is not None:
+            model = self._active_dynamic_model
+            if model is None:
+                return f"{self.provider_name}:{self.model} metadata is not available"
+            if model.thinking_levels is None:
+                return (
+                    f"{self.provider_name}:{self.model} does not declare configurable "
+                    "thinking levels"
+                )
+            return f"{self.provider_name}:{self.model} declares no configurable thinking levels"
         provider = self._active_provider_config()
         if provider is None:
             return "Active provider settings are not available"

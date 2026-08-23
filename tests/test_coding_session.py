@@ -59,6 +59,11 @@ from tau_coding import (
 )
 from tau_coding import session as coding_session_module
 from tau_coding.events import AgentSettledEvent, QueueUpdateEvent
+from tau_coding.extensions import (
+    DynamicProvider,
+    OpenAICompatibleTransport,
+    ProviderModel,
+)
 from tau_coding.extensions.runtime import InputHookOutcome
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_config import ProviderModelMetadata
@@ -1676,6 +1681,53 @@ async def test_session_uses_active_model_thinking_capabilities(
     assert session.available_thinking_levels == ("off", "low", "high")
     assert session.thinking_level == "high"
     assert session.thinking_unavailable_reason is None
+
+
+@pytest.mark.anyio
+async def test_session_reports_dynamic_model_thinking_controls_separately_from_output(
+    tmp_path: Path,
+) -> None:
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="reasoner",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "dynamic-session.jsonl"),
+            cwd=tmp_path,
+            provider_name="local",
+            provider_settings=ProviderSettings(),
+        )
+    )
+    runtime = session.extension_runtime
+    runtime.provider_registry.register(
+        "test",
+        DynamicProvider(
+            id="local",
+            display_name="Local",
+            models=(ProviderModel("reasoner", reasoning=True),),
+            default_model="reasoner",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+        ),
+    )
+
+    assert session.available_thinking_levels == ()
+    assert session.thinking_unavailable_reason == (
+        "local:reasoner does not declare configurable thinking levels"
+    )
+
+    runtime.provider_registry.register(
+        "test",
+        DynamicProvider(
+            id="local",
+            display_name="Local",
+            models=(ProviderModel("reasoner", reasoning=True, thinking_levels=("off", "high")),),
+            default_model="reasoner",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+        ),
+    )
+    assert session.available_thinking_levels == ("off", "high")
+    assert session.thinking_unavailable_reason is None
+    await session.aclose()
 
 
 @pytest.mark.anyio
