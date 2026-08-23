@@ -869,6 +869,20 @@ def test_compact_session_info_renders_sidebar_facts() -> None:
     assert context_line == provider_line + 1
 
 
+def test_compact_session_info_omits_unavailable_thinking_controls() -> None:
+    console = Console(record=True, width=120)
+    session = FakeSession()
+    session.available_thinking_levels = ()
+
+    console.print(render_compact_session_info(session))
+
+    provider_line = next(
+        line for line in console.export_text().splitlines() if "openai:fake-model" in line
+    )
+    assert "unavailable" not in provider_line
+    assert "fake-model (" not in provider_line
+
+
 def test_compact_session_info_shows_unknown_without_provider_usage() -> None:
     console = Console(record=True, width=120)
     session = FakeSession()

@@ -1705,8 +1705,10 @@ def render_compact_session_info(
     right = Text(style=theme.muted_text, overflow="fold", no_wrap=False, justify="right")
     right.append(session.provider_name, style=theme.completion_description)
     right.append(f":{session.model}", style=theme.prompt_text)
-    right.append(" ")
-    right.append(f"({_thinking_level(session)})", style=theme.completion_description)
+    thinking_level = _thinking_level(session)
+    if thinking_level is not None:
+        right.append(" ")
+        right.append(f"({thinking_level})", style=theme.completion_description)
     right.append("\n")
     right.append(_context_usage(session), style=theme.completion_description)
 
@@ -2309,10 +2311,10 @@ def _context_file_label(path: Path, *, cwd: Path) -> str:
         return _short_path(absolute_path)
 
 
-def _thinking_level(session: SessionSummarySource) -> str:
+def _thinking_level(session: SessionSummarySource) -> str | None:
     available = getattr(session, "available_thinking_levels", None)
     if available == ():
-        return "unavailable"
+        return None
     explicit_level = getattr(session, "thinking_level", None)
     if explicit_level:
         return str(explicit_level)
