@@ -150,6 +150,15 @@ window, and `low`, `high`, and `max` reasoning effort. Tau exposes `max` as its
 and the inference provider selected by Hugging Face can vary over time and by
 account.
 
+Tau's released catalog includes a build-time snapshot of per-model reasoning
+options from [models.dev](https://models.dev). The thinking picker only shows
+verified effort values: `none` appears as `off`, while a provider's `max` appears
+as `xhigh`. If models.dev advertises no configurable effort for a model, Tau
+hides those controls and sends no `reasoning_effort`, allowing the router to use
+its model-safe default. This prevents a provider-wide `medium` default from
+breaking models such as `zai-org/GLM-5.2`. The snapshot is bundled, so Tau does
+not contact models.dev during startup and continues to work offline.
+
 For a new session without an explicit preference, Hugging Face initially routes
 the model automatically. After the first successful response, Tau reads Hugging
 Face's `x-inference-provider` response header and keeps that backing provider as

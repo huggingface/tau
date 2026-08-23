@@ -175,7 +175,6 @@ def test_builtin_openai_declares_model_scoped_thinking_capabilities() -> None:
     )
     assert provider_thinking_levels(openrouter, model="openai/gpt-5.5") == (
         "off",
-        "minimal",
         "low",
         "medium",
         "high",
@@ -183,23 +182,16 @@ def test_builtin_openai_declares_model_scoped_thinking_capabilities() -> None:
     )
     assert provider_thinking_unavailable_reason(openrouter, model="openai/gpt-5.5") is None
     assert provider_thinking_levels(openrouter, model="anthropic/claude-sonnet-4.6") == (
-        "off",
-        "minimal",
         "low",
         "medium",
         "high",
+        "xhigh",
     )
     assert (
         provider_thinking_unavailable_reason(openrouter, model="anthropic/claude-sonnet-4.6")
         is None
     )
-    assert provider_thinking_levels(huggingface, model="MiniMaxAI/MiniMax-M2.7") == (
-        "off",
-        "minimal",
-        "low",
-        "medium",
-        "high",
-    )
+    assert provider_thinking_levels(huggingface, model="MiniMaxAI/MiniMax-M2.7") == ()
     assert provider_thinking_unavailable_reason(huggingface, model="MiniMaxAI/MiniMax-M2.7") is None
     assert provider_thinking_levels(codex, model="gpt-5.5") == (
         "off",
@@ -1069,6 +1061,24 @@ def test_huggingface_kimi_k3_maps_thinking_levels_to_reasoning_effort(
         "xhigh",
     )
     assert config.reasoning_effort == expected_effort
+
+
+def test_huggingface_glm_5_2_does_not_send_unverified_medium_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HF_TOKEN", "test-key")
+    provider = load_provider_settings(TauPaths(home=Path("/missing"))).get_provider("huggingface")
+
+    startup_level = resolve_startup_thinking_level(provider, "zai-org/GLM-5.2")
+    config = openai_compatible_config_from_provider(
+        provider,
+        model="zai-org/GLM-5.2",
+        thinking_level=startup_level,
+    )
+
+    assert provider_thinking_levels(provider, model="zai-org/GLM-5.2") == ()
+    assert startup_level is None
+    assert config.reasoning_effort is None
 
 
 def test_openai_compatible_config_from_provider_rejects_unsupported_thinking_level(

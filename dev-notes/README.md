@@ -26,6 +26,8 @@ User-facing documentation lives in `website/content/` and is published at
 - `catalog-model-safety.md` — checklist for adding providers and models to the built-in catalog safely.
 - `startup-thinking-level-fallback.md` — why startup resolves a valid thinking
   level per model instead of assuming the global `medium` default.
+- `models-dev-reasoning-catalog.md` — build-time models.dev reasoning metadata,
+  exact effort mapping, offline fallback, and snapshot refresh workflow.
 - `llama-cpp-phase-5.md` — built-in llama.cpp connection, safe state, `/local`,
   failure handling, and Phase 5 validation.
 - `architecture/phase-6-local-inference-hardening.md` — second-backend contract

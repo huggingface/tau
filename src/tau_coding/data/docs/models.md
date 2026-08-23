@@ -96,8 +96,19 @@ the existing default unless changing it intentionally, and test catalog,
 configuration, runtime, thinking-level, and wire behavior.
 
 Tau thinking levels are `off`, `minimal`, `low`, `medium`, `high`, and `xhigh`.
-Provider-level levels must cover every model's supported values. Model metadata
-may map wire values or mark unsupported levels. When withdrawing one provider's
+Provider-level levels must cover every model's supported values. For
+OpenAI-compatible effort providers, Tau overlays the bundled catalog with the
+checked-in `data/models-dev-reasoning.json` snapshot generated from
+`https://models.dev/api.json`. The picker exposes only verified per-model values;
+`none` becomes `off`, and `max` becomes `xhigh` when needed. If a model advertises
+no effort values, Tau hides its effort controls and omits `reasoning_effort`
+instead of sending the provider-wide default.
+
+Generation happens before release, never during startup, so offline use has no
+network dependency. Missing or invalid generated data falls back silently to
+`catalog.toml`. Refresh the repository snapshot with
+`uv run python scripts/generate_models_dev_reasoning.py`; the script only updates
+reasoning maps for existing catalog models. When withdrawing one provider's
 model, add it to that provider's `removed_models` list so stale user overlays
 cannot restore it.
 

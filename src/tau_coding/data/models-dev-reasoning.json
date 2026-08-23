@@ -1,0 +1,2670 @@
+{
+  "providers": {
+    "cerebras": {
+      "gpt-oss-120b": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    },
+    "deepseek": {
+      "deepseek-v4-flash": {
+        "high": "high",
+        "low": "low",
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": "max"
+      },
+      "deepseek-v4-pro": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": "max"
+      }
+    },
+    "github-copilot": {
+      "claude-fable-5": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "claude-haiku-4.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "claude-opus-4.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "claude-opus-4.6": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "max"
+      },
+      "claude-opus-4.7": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "claude-opus-4.8": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "claude-sonnet-4": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "claude-sonnet-4.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "claude-sonnet-4.6": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "max"
+      },
+      "claude-sonnet-5": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "gemini-3.1-pro-preview": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "gemini-3.5-flash": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": "minimal",
+        "off": null,
+        "xhigh": null
+      },
+      "gpt-5-mini": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "gpt-5.2": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "gpt-5.2-codex": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "gpt-5.3-codex": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "gpt-5.4": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.4-mini": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.4-nano": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "gpt-5.5": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.6-luna": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.6-sol": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.6-terra": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "kimi-k2.7-code": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "mai-code-1-flash-picker": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    },
+    "groq": {
+      "openai/gpt-oss-120b": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/gpt-oss-20b": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/gpt-oss-safeguard-20b": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    },
+    "huggingface": {
+      "MiniMaxAI/MiniMax-M2": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "MiniMaxAI/MiniMax-M2.1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "MiniMaxAI/MiniMax-M2.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "MiniMaxAI/MiniMax-M2.7": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "MiniMaxAI/MiniMax-M3": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "Qwen/Qwen3-235B-A22B": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "Qwen/Qwen3-235B-A22B-Thinking-2507": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "Qwen/Qwen3-32B": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "Qwen/Qwen3.5-122B-A10B": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "Qwen/Qwen3.5-27B": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "Qwen/Qwen3.5-35B-A3B": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "Qwen/Qwen3.5-397B-A17B": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": null
+      },
+      "Qwen/Qwen3.5-9B": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "Qwen/Qwen3.6-27B": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "Qwen/Qwen3.6-35B-A3B": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "XiaomiMiMo/MiMo-V2.5-Pro": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "deepseek-ai/DeepSeek-R1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "deepseek-ai/DeepSeek-R1-0528": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "deepseek-ai/DeepSeek-V3.2": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "deepseek-ai/DeepSeek-V4-Flash": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "deepseek-ai/DeepSeek-V4-Pro": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "google/gemma-4-26B-A4B-it": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "google/gemma-4-31B-it": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "moonshotai/Kimi-K2.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "moonshotai/Kimi-K2.6": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "moonshotai/Kimi-K2.7-Code": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "moonshotai/Kimi-K3": {
+        "high": "high",
+        "low": "low",
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": "max"
+      },
+      "openai/gpt-oss-120b": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/gpt-oss-20b": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "stepfun-ai/Step-3.5-Flash": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "stepfun-ai/Step-3.7-Flash": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "zai-org/GLM-4.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "zai-org/GLM-4.5-Air": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "zai-org/GLM-4.5V": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "zai-org/GLM-4.6": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "zai-org/GLM-4.7": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "zai-org/GLM-4.7-Flash": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "zai-org/GLM-5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "zai-org/GLM-5.1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "zai-org/GLM-5.2": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    },
+    "kimi-code": {
+      "k3": {
+        "high": "high",
+        "low": "low",
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": "max"
+      },
+      "kimi-for-coding": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    },
+    "moonshotai": {
+      "kimi-k2-thinking": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "kimi-k2-thinking-turbo": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "kimi-k2.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "kimi-k2.6": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "kimi-k2.7-code": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    },
+    "moonshotai-cn": {
+      "kimi-k2-thinking": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "kimi-k2-thinking-turbo": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "kimi-k2.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "kimi-k2.6": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "kimi-k2.7-code": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    },
+    "nvidia": {
+      "deepseek-ai/deepseek-v4-pro": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": "none",
+        "xhigh": "max"
+      },
+      "nvidia/llama-3.3-nemotron-super-49b-v1.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "nvidia/nvidia-nemotron-nano-9b-v2": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/gpt-oss-120b": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3.5-122b-a10b": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    },
+    "openai": {
+      "gpt-5": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": "minimal",
+        "off": null,
+        "xhigh": null
+      },
+      "gpt-5-mini": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": "minimal",
+        "off": null,
+        "xhigh": null
+      },
+      "gpt-5-nano": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": "minimal",
+        "off": null,
+        "xhigh": null
+      },
+      "gpt-5-pro": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "gpt-5.1": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": null
+      },
+      "gpt-5.2": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.2-chat-latest": {
+        "high": null,
+        "low": null,
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "gpt-5.2-pro": {
+        "high": "high",
+        "low": null,
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "gpt-5.3-codex": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.4": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.4-mini": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.4-nano": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.4-pro": {
+        "high": "high",
+        "low": null,
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "gpt-5.5": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.5-pro": {
+        "high": "high",
+        "low": null,
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "gpt-5.6": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.6-luna": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.6-sol": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.6-terra": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "o1": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "o1-pro": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "o3": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "o3-mini": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "o3-pro": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "o4-mini": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    },
+    "opencode": {
+      "big-pickle": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "deepseek-v4-flash": {
+        "high": "high",
+        "low": "low",
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": "max"
+      },
+      "deepseek-v4-flash-free": {
+        "high": "high",
+        "low": "low",
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": "max"
+      },
+      "deepseek-v4-pro": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": "max"
+      },
+      "glm-5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "glm-5.1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "glm-5.2": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": "max"
+      },
+      "gpt-5.4": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.4-mini": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.5": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.5-pro": {
+        "high": "high",
+        "low": null,
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "gpt-5.6-luna": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.6-sol": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "gpt-5.6-terra": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "grok-4.5": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "grok-build-0.1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "kimi-k2.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "kimi-k2.6": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "kimi-k2.7-code": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "mimo-v2.5-free": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "minimax-m2.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "minimax-m2.7": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "minimax-m3": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "nemotron-3-ultra-free": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "north-mini-code-free": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": "none",
+        "xhigh": null
+      },
+      "qwen3.5-plus": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen3.6-plus": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    },
+    "opencode-go": {
+      "deepseek-v4-flash": {
+        "high": "high",
+        "low": "low",
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": "max"
+      },
+      "deepseek-v4-pro": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": "max"
+      },
+      "glm-5.1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "glm-5.2": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": "max"
+      },
+      "kimi-k2.6": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "kimi-k2.7-code": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "mimo-v2.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "mimo-v2.5-pro": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "minimax-m2.7": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "minimax-m3": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen3.6-plus": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen3.7-max": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen3.7-plus": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    },
+    "openrouter": {
+      "amazon/nova-2-lite-v1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "anthropic/claude-haiku-4.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "anthropic/claude-opus-4": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "anthropic/claude-opus-4.1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "anthropic/claude-opus-4.5": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "anthropic/claude-opus-4.6": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "max"
+      },
+      "anthropic/claude-opus-4.7": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "anthropic/claude-opus-4.7-fast": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "anthropic/claude-sonnet-4": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "anthropic/claude-sonnet-4.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "anthropic/claude-sonnet-4.6": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "max"
+      },
+      "arcee-ai/trinity-large-thinking": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "bytedance-seed/seed-1.6": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "bytedance-seed/seed-1.6-flash": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "bytedance-seed/seed-2.0-lite": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": "minimal",
+        "off": null,
+        "xhigh": null
+      },
+      "bytedance-seed/seed-2.0-mini": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": "minimal",
+        "off": null,
+        "xhigh": null
+      },
+      "deepseek/deepseek-chat-v3.1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "deepseek/deepseek-r1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "deepseek/deepseek-r1-0528": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "deepseek/deepseek-v3.1-terminus": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "deepseek/deepseek-v3.2": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "deepseek/deepseek-v3.2-exp": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "deepseek/deepseek-v4-flash": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "deepseek/deepseek-v4-pro": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "google/gemini-2.5-flash": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "google/gemini-2.5-flash-lite": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "google/gemini-2.5-pro": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "google/gemini-2.5-pro-preview": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "google/gemini-2.5-pro-preview-05-06": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "google/gemini-3-flash-preview": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": "minimal",
+        "off": null,
+        "xhigh": null
+      },
+      "google/gemini-3.1-flash-lite": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": "minimal",
+        "off": null,
+        "xhigh": null
+      },
+      "google/gemini-3.1-flash-lite-preview": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": "minimal",
+        "off": null,
+        "xhigh": null
+      },
+      "google/gemini-3.1-pro-preview": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "google/gemini-3.1-pro-preview-customtools": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "google/gemini-3.5-flash": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": "minimal",
+        "off": null,
+        "xhigh": null
+      },
+      "google/gemma-4-26b-a4b-it": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "google/gemma-4-26b-a4b-it:free": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "google/gemma-4-31b-it": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "google/gemma-4-31b-it:free": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "inception/mercury-2": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": null
+      },
+      "inclusionai/ring-2.6-1t": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "minimax/minimax-m1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "minimax/minimax-m2": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "minimax/minimax-m2.1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "minimax/minimax-m2.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "minimax/minimax-m2.7": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "mistralai/mistral-medium-3-5": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": "none",
+        "xhigh": null
+      },
+      "mistralai/mistral-small-2603": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": "none",
+        "xhigh": null
+      },
+      "moonshotai/kimi-k2-thinking": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "moonshotai/kimi-k2.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "moonshotai/kimi-k2.6": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "nvidia/nemotron-3-nano-30b-a3b": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "nvidia/nemotron-3-nano-30b-a3b:free": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "nvidia/nemotron-3-super-120b-a12b": {
+        "high": null,
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "nvidia/nemotron-3-super-120b-a12b:free": {
+        "high": null,
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "nvidia/nemotron-nano-12b-v2-vl:free": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "nvidia/nemotron-nano-9b-v2:free": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/gpt-5": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": "minimal",
+        "off": null,
+        "xhigh": null
+      },
+      "openai/gpt-5-mini": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": "minimal",
+        "off": null,
+        "xhigh": null
+      },
+      "openai/gpt-5-nano": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": "minimal",
+        "off": null,
+        "xhigh": null
+      },
+      "openai/gpt-5-pro": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/gpt-5.1": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": null
+      },
+      "openai/gpt-5.1-codex": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/gpt-5.1-codex-max": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "openai/gpt-5.1-codex-mini": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/gpt-5.2": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "openai/gpt-5.2-codex": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "openai/gpt-5.2-pro": {
+        "high": "high",
+        "low": null,
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "openai/gpt-5.3-codex": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "openai/gpt-5.4": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "openai/gpt-5.4-mini": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "openai/gpt-5.4-nano": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "openai/gpt-5.4-pro": {
+        "high": "high",
+        "low": null,
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "openai/gpt-5.5": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "openai/gpt-5.5-pro": {
+        "high": "high",
+        "low": null,
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "openai/gpt-oss-120b": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/gpt-oss-20b": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/gpt-oss-safeguard-20b": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/o1": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/o3": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/o3-mini": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/o3-mini-high": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/o3-pro": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/o4-mini": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/o4-mini-high": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openrouter/auto": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openrouter/free": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen-plus-2025-07-28:thinking": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3-14b": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3-235b-a22b": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3-235b-a22b-thinking-2507": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3-30b-a3b": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3-30b-a3b-thinking-2507": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3-32b": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3-8b": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3-max-thinking": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3-next-80b-a3b-thinking": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3-vl-235b-a22b-thinking": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3-vl-30b-a3b-thinking": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3-vl-8b-thinking": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3.5-122b-a10b": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3.5-27b": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3.5-35b-a3b": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3.5-397b-a17b": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3.5-9b": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3.5-flash-02-23": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3.5-plus-02-15": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3.5-plus-20260420": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3.6-27b": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3.6-35b-a3b": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3.6-flash": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3.6-max-preview": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3.6-plus": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "qwen/qwen3.7-max": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "stepfun/step-3.5-flash": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "tencent/hy3-preview": {
+        "high": "high",
+        "low": "low",
+        "medium": null,
+        "minimal": null,
+        "off": "none",
+        "xhigh": null
+      },
+      "upstage/solar-pro-3": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "x-ai/grok-4.20": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "x-ai/grok-4.3": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": null
+      },
+      "x-ai/grok-build-0.1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "xiaomi/mimo-v2.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "xiaomi/mimo-v2.5-pro": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "z-ai/glm-4.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "z-ai/glm-4.5-air": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "z-ai/glm-4.5v": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "z-ai/glm-4.6": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "z-ai/glm-4.6v": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "z-ai/glm-4.7": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "z-ai/glm-4.7-flash": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "z-ai/glm-5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "z-ai/glm-5-turbo": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "z-ai/glm-5.1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "z-ai/glm-5v-turbo": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "~anthropic/claude-haiku-latest": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "~anthropic/claude-opus-latest": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "~anthropic/claude-sonnet-latest": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": "xhigh"
+      },
+      "~google/gemini-flash-latest": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "~google/gemini-pro-latest": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "~moonshotai/kimi-latest": {
+        "high": "high",
+        "low": "low",
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": "max"
+      },
+      "~openai/gpt-latest": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      },
+      "~openai/gpt-mini-latest": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": "xhigh"
+      }
+    },
+    "together": {
+      "MiniMaxAI/MiniMax-M2.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "MiniMaxAI/MiniMax-M2.7": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "Qwen/Qwen3.5-397B-A17B": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "Qwen/Qwen3.6-Plus": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "deepseek-ai/DeepSeek-V3-1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "deepseek-ai/DeepSeek-V4-Pro": {
+        "high": "high",
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": "max"
+      },
+      "google/gemma-4-31B-it": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "moonshotai/Kimi-K2.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "moonshotai/Kimi-K2.6": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "openai/gpt-oss-120b": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "zai-org/GLM-5.1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    },
+    "xai": {
+      "grok-4.20-0309-reasoning": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "grok-4.3": {
+        "high": "high",
+        "low": "low",
+        "medium": "medium",
+        "minimal": null,
+        "off": "none",
+        "xhigh": null
+      },
+      "grok-build-0.1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    },
+    "xiaomi": {
+      "mimo-v2-flash": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "mimo-v2-omni": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "mimo-v2-pro": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "mimo-v2.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "mimo-v2.5-pro": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    },
+    "xiaomi-token-plan-ams": {
+      "mimo-v2-pro": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "mimo-v2.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "mimo-v2.5-pro": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    },
+    "xiaomi-token-plan-cn": {
+      "mimo-v2-pro": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "mimo-v2.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "mimo-v2.5-pro": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    },
+    "xiaomi-token-plan-sgp": {
+      "mimo-v2-pro": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "mimo-v2.5": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "mimo-v2.5-pro": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    },
+    "zai": {
+      "glm-4.5-air": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "glm-4.7": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "glm-5-turbo": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "glm-5.1": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      },
+      "glm-5v-turbo": {
+        "high": null,
+        "low": null,
+        "medium": null,
+        "minimal": null,
+        "off": null,
+        "xhigh": null
+      }
+    }
+  },
+  "schema_version": 1,
+  "source": "https://models.dev/api.json"
+}

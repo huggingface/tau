@@ -126,9 +126,9 @@ def builtin_catalog_resource_text() -> str:
 
 @cache
 def builtin_catalog() -> tuple[ProviderCatalogEntry, ...]:
-    """Return Tau's built-in provider catalog from the packaged data file."""
-    raw = _builtin_raw()
-    filtered = _apply_model_tombstones(raw, base=raw)
+    """Return Tau's built-in catalog with generated models.dev metadata."""
+    raw = _builtin_raw_with_generated_reasoning()
+    filtered = _apply_model_tombstones(raw, base=_builtin_raw())
     return _entries_from_raw(filtered, source="built-in catalog.toml")
 
 
@@ -144,9 +144,9 @@ def effective_catalog(paths: TauPaths | None = None) -> tuple[ProviderCatalogEnt
         return builtin_catalog()
     overlay_raw = _parse_catalog_text(path.read_text(encoding="utf-8"), source=str(path))
     _validate_catalog_root(overlay_raw, source=str(path))
-    builtin_raw = _builtin_raw()
+    builtin_raw = _builtin_raw_with_generated_reasoning()
     merged = _merge_raw_catalogs(builtin_raw, overlay_raw)
-    filtered = _apply_model_tombstones(merged, base=builtin_raw)
+    filtered = _apply_model_tombstones(merged, base=_builtin_raw())
     return _entries_from_raw(filtered, source=str(path))
 
 
@@ -186,6 +186,17 @@ def save_user_catalog_entries(
 @cache
 def _builtin_raw() -> dict[str, Any]:
     return _parse_catalog_text(builtin_catalog_resource_text(), source="built-in catalog.toml")
+
+
+@cache
+def _builtin_raw_with_generated_reasoning() -> dict[str, Any]:
+    # Imported lazily because models_dev uses the catalog dataclasses imported by
+    # this module. Missing or invalid generated data is deliberately non-fatal.
+    from tau_coding.models_dev import bundled_reasoning_catalog_overlay
+
+    raw = _builtin_raw()
+    overlay = bundled_reasoning_catalog_overlay()
+    return _merge_raw_catalogs(raw, overlay) if overlay is not None else raw
 
 
 def _parse_catalog_text(text: str, *, source: str) -> dict[str, Any]:

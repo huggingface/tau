@@ -436,7 +436,9 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
         "off": None,
         "minimal": None,
         "low": None,
+        "medium": None,
         "high": None,
+        "xhigh": None,
     }
 
     coding = builtin_provider_entry("kimi-code")
@@ -472,6 +474,7 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
         "off": None,
         "minimal": None,
         "low": None,
+        "medium": None,
         "high": None,
         "xhigh": None,
     }
