@@ -663,6 +663,13 @@ class LocalBackendRegistry:
         views = [self.effective(backend_id) for backend_id in self._layers]
         return tuple(view for view in views if view is not None)
 
+    def operation_running(self, backend_id: str, action: LocalAction) -> bool:
+        """Return whether one effective backend action is still in flight."""
+        return any(
+            token.backend_id == backend_id and operation == action and not state.task.done()
+            for (token, operation), state in self._operations.items()
+        )
+
     def cancel(self, backend_id: str, action: LocalAction | None = None) -> bool:
         cancelled = False
         for (token, operation), state in tuple(self._operations.items()):

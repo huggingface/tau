@@ -16,6 +16,8 @@ from tau_coding.extensions import (
     LocalConfigField,
     LocalConfigureResult,
     LocalConfigureSpec,
+    LocalConfirmationChoice,
+    LocalConfirmationRequest,
     LocalModel,
     LocalOperationResult,
     LocalProgress,
@@ -282,6 +284,27 @@ async def test_clicking_loaded_model_uses_exact_model_id() -> None:
     await registry.aclose()
 
 
+async def test_confirmation_preselects_cancel_without_recommending_it() -> None:
+    request = LocalConfirmationRequest(
+        "Download a large model?",
+        (
+            LocalConfirmationChoice("download", "Start download"),
+            LocalConfirmationChoice("cancel", "Cancel"),
+        ),
+    )
+    app = _Host()
+
+    async with app.run_test() as pilot:
+        app.push_screen(LocalChoiceConfirmScreen(request, theme=TAU_DARK_THEME))
+        await pilot.pause()
+
+        choices = app.screen.query_one("#local-choice-list", ListView)
+        assert choices.index == 1
+        assert all(
+            "recommended" not in item.query_one(Label).render().plain for item in choices.children
+        )
+
+
 async def test_search_results_preselect_recommended_download_variant() -> None:
     selected: list[str | None] = []
     app = _Host()
@@ -334,6 +357,62 @@ async def test_configuration_screen_renders_text_secret_and_choice_fields() -> N
         assert len(tuple(app.screen.query(Input))) == 2
         assert app.screen.query_one("#local-config-input-1", Input).password is True
         assert app.screen.query_one("#local-config-input-2", Select)
+
+
+async def test_closing_download_modal_detaches_and_reopen_offers_explicit_cancel() -> None:
+    entered = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def refresh(context):
+        del context
+        return LocalBackendStatus(state="ready", actions=("refresh", "download_model"))
+
+    async def download_model(model_id, context):
+        del model_id, context
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    registry = _registry(refresh=refresh, download_model=download_model)
+    app = _Host()
+
+    async with app.run_test() as pilot:
+        screen = LocalBackendScreen(registry, "backend", theme=TAU_DARK_THEME)
+        app.push_screen(screen)
+        await pilot.pause()
+        screen._start_operation(
+            "download_model",
+            model_id="owner/repo:Q4_K_M",
+            confirmation="download",
+        )
+        await entered.wait()
+        worker = screen._worker
+        assert worker is not None
+
+        screen.action_cancel()
+        await pilot.pause()
+
+        assert cancelled.is_set() is False
+        assert worker.done() is False
+        assert registry.operation_running("backend", "download_model") is True
+
+        reopened = LocalBackendScreen(registry, "backend", theme=TAU_DARK_THEME)
+        app.push_screen(reopened)
+        await pilot.pause()
+        labels = [
+            item.query_one(Label).render().plain
+            for item in reopened.query_one("#local-action-menu", ListView).children
+        ]
+        assert "Cancel active download…" in labels
+
+        reopened._cancel_download("cancel_download")
+        await worker
+        assert cancelled.is_set()
+        assert registry.operation_running("backend", "download_model") is False
+
+    await registry.aclose()
 
 
 async def test_unmount_cancels_backend_work_without_late_updates() -> None:

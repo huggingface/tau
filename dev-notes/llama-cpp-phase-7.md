@@ -65,6 +65,12 @@ safe state, sessions, exports, diagnostics, or search results. Hugging Face
 gating terms and server-side token responsibility are shown without printing a
 token.
 
+Server-side downloads outlive the `/local` modal: Escape detaches the observer
+rather than sending `/models/unload`. The registry keeps supervising the task,
+and a reopened modal detects it and exposes an explicit cancel action. Known
+Hugging Face artifact sizes are carried into confirmation without persisting
+search metadata.
+
 ## How to test
 
 All HTTP behavior is deterministic through `httpx.MockTransport`:

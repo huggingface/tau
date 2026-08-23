@@ -17,7 +17,10 @@ from tau_coding.credentials import FileCredentialStore
 from tau_coding.extensions import ExtensionRuntime
 from tau_coding.extensions.builtins.llama_cpp import service as llama_service
 from tau_coding.extensions.builtins.llama_cpp.huggingface import discover_hf_token
-from tau_coding.extensions.builtins.llama_cpp.router import watch_router_download_progress
+from tau_coding.extensions.builtins.llama_cpp.router import (
+    RouterCapability,
+    watch_router_download_progress,
+)
 from tau_coding.extensions.builtins.llama_cpp.service import (
     LLAMA_CPP_API_KEY_ENV,
     LLAMA_CPP_DEFAULT_ENDPOINT,
@@ -927,7 +930,7 @@ async def test_router_load_requires_explicit_confirmation_without_active_peers(
         "load",
         "cancel",
     ]
-    assert confirmation.confirmation.choices[1].recommended is True
+    assert not any(choice.recommended for choice in confirmation.confirmation.choices)
     assert posts == 0
 
     loaded = await service.load_model("target", _context("load_model", confirmation="load"))
@@ -1002,7 +1005,7 @@ async def test_router_load_unload_download_confirm_reconcile_and_publish(tmp_pat
     confirmation = await service.load_model("target", _context("load_model"))
     assert confirmation.confirmation is not None
     assert confirmation.confirmation.choices[-1].value == "cancel"
-    assert confirmation.confirmation.choices[-1].recommended is True
+    assert not any(choice.recommended for choice in confirmation.confirmation.choices)
     assert mutations == []
     loaded = await service.load_model("target", _context("load_model", confirmation="keep"))
     assert loaded.committed is True
@@ -1023,6 +1026,8 @@ async def test_router_load_unload_download_confirm_reconcile_and_publish(tmp_pat
         "owner/repo:Q4_K_M", _context("download_model")
     )
     assert download_confirmation.confirmation is not None
+    assert "Download size is unavailable" in download_confirmation.confirmation.message
+    assert not any(choice.recommended for choice in download_confirmation.confirmation.choices)
     downloaded = await service.download_model(
         "owner/repo:Q4_K_M",
         _context("download_model", confirmation="download"),
@@ -1371,6 +1376,13 @@ async def test_hugging_face_search_details_token_and_gating_are_search_only(tmp_
         "UD-Q6_K_XL",
     ]
     assert repository.options[0].recommended is True
+    service._router_capability = RouterCapability("compatible", 10_000)
+    confirmation = await service.download_model(
+        "owner/repo-GGUF:Q4_K_M", _context("download_model")
+    )
+    assert confirmation.confirmation is not None
+    assert "3.7 GiB" in confirmation.confirmation.message
+    assert "continues if this modal is closed" in confirmation.confirmation.message
     assert "server process" in (repository.diagnostic or "")
     assert all(
         request.headers.get("authorization") == "Bearer search-secret" for request in requests

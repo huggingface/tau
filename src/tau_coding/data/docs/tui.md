@@ -12,9 +12,10 @@ preselected but still requires confirmation. Once confirmed, Tau probes its one
 effective saved/environment/default endpoint. The built-in `llama.cpp` backend
 provides endpoint/API-key fields plus separate arrow-key navigable model and
 action sections. Enter selects; Escape closes. Loading and downloading open a
-separate safe-default confirmation before work begins. Downloading shows a
+separate confirmation with model details before work begins. Downloading shows a
 router-reported percentage bar and byte counts. The actions section exposes
-Hugging Face search/download, status, refresh, Doctor, and reset.
+Hugging Face search/download, explicit active-download cancellation, status,
+refresh, Doctor, and reset.
 
 Configuration fields are structured text, secret, or choice values. Secret input
 is not echoed into diagnostics or session history. Backends perform async
@@ -25,7 +26,9 @@ Refresh may show a cached/stale model snapshot when the server is down. Use an
 exact discovered model with `--provider llama.cpp --model ...` for print or TUI
 startup. A missing active model is marked stale rather than silently replaced.
 State-changing local actions require an idle agent. Closing the screen cancels
-its owned work, and results from a retired or replaced extension generation are
+its owned work except an active server-side download, which continues in
+llama.cpp and can be explicitly cancelled from the Actions section after
+reopening `/local`. Results from a retired or replaced extension generation are
 ignored.
 
 Reset removes only Tau's llama.cpp settings and safe snapshot. Stored credential

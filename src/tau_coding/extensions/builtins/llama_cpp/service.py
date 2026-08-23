@@ -185,6 +185,7 @@ class LlamaCppService:
         self._last_discovery: LlamaCppDiscovery | None = None
         self._router_capability = RouterCapability("standard")
         self._router_models: tuple[RouterModel, ...] = ()
+        self._download_sizes: dict[str, int] = {}
         self._last_error: LlamaCppError | None = None
         self._state_error: str | None = None
         self._orphaned_credentials: tuple[str, ...] = ()
@@ -588,12 +589,12 @@ class LlamaCppService:
                     (
                         LocalConfirmationChoice("keep", "Load model and keep existing models"),
                         LocalConfirmationChoice("unload", "Unload existing models, then load"),
-                        LocalConfirmationChoice("cancel", "Cancel", True),
+                        LocalConfirmationChoice("cancel", "Cancel"),
                     )
                     if existing
                     else (
                         LocalConfirmationChoice("load", "Load model"),
-                        LocalConfirmationChoice("cancel", "Cancel", True),
+                        LocalConfirmationChoice("cancel", "Cancel"),
                     )
                 )
                 detail = " Other models are active on this shared router." if existing else ""
@@ -668,7 +669,7 @@ class LlamaCppService:
                         f"Unload {model_id!r} from this shared router?",
                         (
                             LocalConfirmationChoice("unload", "Unload model"),
-                            LocalConfirmationChoice("cancel", "Keep model loaded", True),
+                            LocalConfirmationChoice("cancel", "Keep model loaded"),
                         ),
                     ),
                 )
@@ -715,12 +716,19 @@ class LlamaCppService:
         progress_task: asyncio.Task[None] | None = None
         try:
             if context.confirmation is None:
+                size = self._download_sizes.get(model_id)
+                size_detail = (
+                    f"Download size: {_format_bytes(size)}."
+                    if size is not None
+                    else "Download size is unavailable until the server reports transfer progress."
+                )
                 return LocalOperationResult(
                     confirmation=LocalConfirmationRequest(
-                        f"Ask the shared llama.cpp server to download {model_id!r}?",
+                        f"Download {model_id!r} on the shared llama.cpp server? "
+                        f"{size_detail} The download continues if this modal is closed.",
                         (
                             LocalConfirmationChoice("download", "Start server-side download"),
-                            LocalConfirmationChoice("cancel", "Cancel", True),
+                            LocalConfirmationChoice("cancel", "Cancel"),
                         ),
                     )
                 )
@@ -793,6 +801,12 @@ class LlamaCppService:
         finally:
             if owned:
                 await client.aclose()
+        for repository in repositories:
+            for variant in repository.variants:
+                if variant.size_bytes is not None:
+                    self._download_sizes[f"{repository.id}:{variant.quantization}"] = (
+                        variant.size_bytes
+                    )
         results = tuple(
             LocalSearchResult(
                 repository.id,

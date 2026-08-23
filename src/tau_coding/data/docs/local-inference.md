@@ -109,10 +109,13 @@ also refreshes when possible and never replays an interrupted mutation.
 
 Choose **Download an exact Hugging Face model…** and enter
 `owner/repository[:quantization]`, or choose **Search Hugging Face models…** and
-select a repository/quantization result. Tau shows a separate safe-default
-confirmation before starting the expensive server-side download. While the
-router reports byte totals, `/local` shows a percentage bar, transferred bytes,
-and bytes remaining. Search reports gating, quantizations, and sizes. `Q4_K_M`
+select a repository/quantization result. Tau shows a separate confirmation with
+the selected model and its known download size before starting the server-side
+download. Cancel remains preselected as a safety default but is not labelled as
+a recommendation. While the router reports byte totals, `/local` shows a
+percentage bar, transferred bytes, and bytes remaining. Closing `/local` leaves
+the llama.cpp download running; reopen it and choose **Cancel active download…**
+to stop it explicitly. Search reports gating, quantizations, and sizes. `Q4_K_M`
 is a UI recommendation only. Tau
 discovers `HF_TOKEN` from
 the environment or standard Hugging Face token files for search, but never saves

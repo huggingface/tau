@@ -105,7 +105,8 @@ Enter on a loaded/sleeping row offers use or unload. Actions are always explicit
 
 - Confirming an unloaded row waits until refreshed router state reports loaded
   or sleeping. If other models are active, choose whether to keep or unload
-  them; Tau never decides for a shared router. Cancel is preselected.
+  them; Tau never decides for a shared router. Cancel is preselected as a safety
+  default but is not labelled as recommended.
 - **Unload model** asks for model-specific confirmation.
 - **Search Hugging Face models…** accepts a model ID or search text, then opens
   an arrow-key navigable repository/quantization list with gating and reported
@@ -113,13 +114,16 @@ Enter on a loaded/sleeping row offers use or unload. Actions are always explicit
   model metadata.
 - **Download an exact Hugging Face model…** accepts
   `owner/repository[:quantization]`. Both search and exact-ID paths open a
-  separate safe-default confirmation before requesting the server-side
-  download. During transfer, `/local` shows the router-reported percentage,
-  transferred bytes, and bytes remaining. The completed model appears as an
-  unloaded row ready to select.
+  separate confirmation showing the selected model and known size before
+  requesting the server-side download. During transfer, `/local` shows the
+  router-reported percentage, transferred bytes, and bytes remaining. Closing
+  `/local` detaches from the transfer without stopping llama.cpp. Reopen it and
+  choose **Cancel active download…** to stop the download explicitly. The
+  completed model appears as an unloaded row ready to select.
 
-Progress is bounded and cancellable. llama.cpp documents `/models/unload` as the
-cancel operation for load/download, so Tau requests it and then refreshes. On a
+Progress is bounded and explicitly cancellable. llama.cpp documents
+`/models/unload` as the cancel operation for load/download, so Tau requests it
+and then refreshes. On a
 timeout or lost connection Tau refreshes if possible and never replays the
 interrupted POST; review state before manually retrying. Tau never restores,
 unloads, downloads, or deletes a model without a displayed decision.

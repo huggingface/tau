@@ -369,7 +369,8 @@ through OpenAI-compatible or compatible router discovery; it does not use a
 fake key or fake model. Compatible b9688–b10595 routers show arrow-key
 navigable model states plus explicitly confirmed load, unload, Hugging Face GGUF
 search, and server-side download actions. Load/download confirmations preselect
-Cancel. No key means no
+Cancel as an unlabelled safety default. Closing `/local` leaves an active
+server-side download running; reopen it to cancel explicitly. No key means no
 `Authorization` header. A saved key takes precedence over `LLAMA_API_KEY`.
 
 Use the discovered ID explicitly from the TUI or print mode:

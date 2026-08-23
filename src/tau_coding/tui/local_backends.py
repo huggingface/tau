@@ -177,6 +177,7 @@ class LocalBackendScreen(ModalScreen[None]):
         self._model_items: tuple[str, ...] = ()
         self._action_items: tuple[tuple[str, str], ...] = ()
         self._worker: asyncio.Task[None] | None = None
+        self._active_action: LocalAction | None = None
         self._use_task: asyncio.Task[None] | None = None
         self._progress_fraction: float | None = None
         self._closing = False
@@ -219,10 +220,15 @@ class LocalBackendScreen(ModalScreen[None]):
     def on_unmount(self) -> None:
         """Stop host-owned tasks before Textual detaches this modal."""
         self._closing = True
-        self.registry.cancel(self.backend_id)
-        for task in (self._worker, self._use_task):
-            if task is not None and not task.done():
-                task.cancel()
+        # A server-side download belongs to llama.cpp, not this modal. Closing
+        # the UI only detaches from it; explicit cancellation remains available
+        # from the Actions section after reopening /local.
+        if self._active_action is not None and self._active_action != "download_model":
+            self.registry.cancel(self.backend_id, self._active_action)
+            if self._worker is not None and not self._worker.done():
+                self._worker.cancel()
+        if self._use_task is not None and not self._use_task.done():
+            self._use_task.cancel()
 
     def on_key(self, event: Key) -> None:
         if event.key == "up":
@@ -292,6 +298,8 @@ class LocalBackendScreen(ModalScreen[None]):
             self._confirm_reset()
         elif token in {"download_model", "search_models"}:
             self._open_model_action(cast(LocalAction, token))
+        elif token == "cancel_download":
+            self._confirm_cancel_download()
 
     def action_cancel(self) -> None:
         # on_unmount owns cancellation; let Textual begin the screen pop first.
@@ -440,9 +448,31 @@ class LocalBackendScreen(ModalScreen[None]):
         if self._worker is not None and not self._worker.done():
             self._show_message("An operation is already in progress.", "warning")
             return
+        self._active_action = action
         self._worker = asyncio.create_task(
             self._run_operation(action, values, model_id, confirmation)
         )
+
+    def _confirm_cancel_download(self) -> None:
+        request = LocalConfirmationRequest(
+            "Cancel the active server-side download? Already transferred data may be discarded.",
+            (
+                LocalConfirmationChoice("keep", "Keep downloading"),
+                LocalConfirmationChoice("cancel_download", "Cancel download"),
+            ),
+        )
+        self.app.push_screen(
+            LocalChoiceConfirmScreen(request, theme=self.theme),
+            callback=self._cancel_download,
+        )
+
+    def _cancel_download(self, choice: str | None) -> None:
+        if choice != "cancel_download":
+            return
+        if self.registry.cancel(self.backend_id, "download_model"):
+            self._show_message("Download cancellation requested.", "warning")
+        else:
+            self._show_message("No active download was found.", "warning")
 
     async def _run_operation(
         self,
@@ -451,8 +481,11 @@ class LocalBackendScreen(ModalScreen[None]):
         model_id: str | None,
         confirmation: str | None = None,
     ) -> None:
+        self._active_action = action
         self._progress_fraction = None
         self._set_progress("Working…", show_bar=action == "download_model")
+        if action == "download_model" and confirmation == "download":
+            await self._render_sections(self.status)
 
         def progress(item: LocalProgress) -> None:
             self._set_progress(
@@ -506,11 +539,14 @@ class LocalBackendScreen(ModalScreen[None]):
             else:
                 result = LocalOperationResult(message="Unsupported action.")
         except asyncio.CancelledError:
+            self._active_action = None
             return
         except Exception as exc:  # noqa: BLE001 - host keeps modal alive
+            self._active_action = None
             if self._can_update_ui:
                 self._show_message(f"Could not complete action: {type(exc).__name__}", "error")
             return
+        self._active_action = None
         if not self._can_update_ui:
             return
         if result.stale:
@@ -688,6 +724,13 @@ class LocalBackendScreen(ModalScreen[None]):
         self._action_items = tuple(
             (action, label) for action, label in action_labels if action in actions
         )
+        if self._active_action == "download_model" or self.registry.operation_running(
+            self.backend_id, "download_model"
+        ):
+            self._action_items = (
+                ("cancel_download", "Cancel active download…"),
+                *self._action_items,
+            )
         await action_menu.clear()
         await action_menu.extend(
             ListItem(Label(label, markup=False)) for _, label in self._action_items
@@ -928,7 +971,14 @@ class LocalChoiceConfirmScreen(ModalScreen[str | None]):
         choices = self.query_one("#local-choice-list", ListView)
         choices.index = next(
             (index for index, choice in enumerate(self.request.choices) if choice.recommended),
-            0,
+            next(
+                (
+                    index
+                    for index, choice in enumerate(self.request.choices)
+                    if choice.value == "cancel"
+                ),
+                0,
+            ),
         )
         choices.focus()
 
