@@ -420,6 +420,9 @@ async def test_closing_download_modal_detaches_and_reopen_offers_explicit_cancel
             for item in reopened.query_one("#local-action-menu", ListView).children
         ]
         assert "Cancel active download…" in labels
+        server_status = reopened.query_one("#local-backend-status", Static).render().plain
+        assert "State: ready" in server_status
+        assert "Looking for a local server" not in server_status
         progress = reopened.query_one("#local-backend-progress", Static).render().plain
         progress_bar = reopened.query_one("#local-backend-progress-bar", ProgressBar)
         assert "3.0 GiB remaining" in progress

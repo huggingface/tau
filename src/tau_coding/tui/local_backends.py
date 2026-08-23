@@ -256,11 +256,11 @@ class LocalBackendScreen(ModalScreen[None]):
         # cannot hide its replayed byte progress.
         if self._attach_download_progress():
             self._download_watch_task = asyncio.create_task(self._watch_download_completion())
-        else:
-            # Opening a backend is an explicit user action, so probe its effective
-            # saved/environment/default endpoint immediately. Backends still own
-            # which endpoint that means; the generic host never scans.
-            self._start_operation("refresh")
+        # Opening a backend is an explicit user action, so probe its effective
+        # saved/environment/default endpoint immediately. Backends still own
+        # which endpoint that means; the generic host never scans. A detached
+        # download observer keeps its progress visible during this refresh.
+        self._start_operation("refresh")
 
     def on_unmount(self) -> None:
         """Stop host-owned tasks before Textual detaches this modal."""
@@ -306,8 +306,13 @@ class LocalBackendScreen(ModalScreen[None]):
             self._progress_unsubscribe()
             self._progress_unsubscribe = None
         if self._can_update_ui:
-            self._progress_fraction = None
-            self._start_operation("refresh")
+            worker = self._worker
+            if worker is not None and not worker.done():
+                with suppress(asyncio.CancelledError):
+                    await asyncio.shield(worker)
+            if self._can_update_ui:
+                self._progress_fraction = None
+                self._start_operation("refresh")
 
     def on_key(self, event: Key) -> None:
         if event.key == "up":
@@ -561,17 +566,20 @@ class LocalBackendScreen(ModalScreen[None]):
         confirmation: str | None = None,
     ) -> None:
         self._active_action = action
-        self._progress_fraction = None
-        self._set_progress("Working…", show_bar=action == "download_model")
+        preserve_download_progress = action == "refresh" and self._progress_unsubscribe is not None
+        if not preserve_download_progress:
+            self._progress_fraction = None
+            self._set_progress("Working…", show_bar=action == "download_model")
         if action == "download_model" and confirmation == "download":
             await self._render_sections(self.status)
 
         def progress(item: LocalProgress) -> None:
-            self._set_progress(
-                item.message,
-                fraction=item.fraction,
-                show_bar=action == "download_model",
-            )
+            if not preserve_download_progress:
+                self._set_progress(
+                    item.message,
+                    fraction=item.fraction,
+                    show_bar=action == "download_model",
+                )
 
         try:
             if action == "configure":

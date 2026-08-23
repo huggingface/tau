@@ -118,7 +118,8 @@ Enter on a loaded/sleeping row offers use or unload. Actions are always explicit
   requesting the server-side download. During transfer, `/local` shows a
   full-width block progress bar, transferred bytes, and bytes remaining. Closing
   `/local` detaches from the transfer without stopping llama.cpp. Reopening it
-  reattaches to the latest byte progress and offers **Cancel active download…**
+  refreshes server status, reattaches to the latest byte progress, and offers
+  **Cancel active download…**
   to stop the download explicitly. The
   completed model appears as an unloaded row ready to select.
 
