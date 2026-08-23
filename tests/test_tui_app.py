@@ -1524,6 +1524,20 @@ def test_system_prompt_markdown_uses_longer_delimiter_for_backticks_in_tags() ->
     assert _system_prompt_markdown(prompt) == '``<project value="a`b">``'
 
 
+def test_system_prompt_markdown_preserves_markdown_autolinks() -> None:
+    prompt = "<https://example.com> <user@example.com> <project>"
+
+    assert _system_prompt_markdown(prompt) == (
+        "<https://example.com> <user@example.com> `<project>`"
+    )
+
+
+def test_system_prompt_markdown_skips_tags_in_indented_code_blocks() -> None:
+    prompt = "    <project>\n\n<visible>"
+
+    assert _system_prompt_markdown(prompt) == "    <project>\n\n`<visible>`"
+
+
 def test_textual_markdown_uses_theme_highlight_and_aqua_inline_code() -> None:
     variables = _theme_css_variables(TAU_LIGHT_THEME)
 

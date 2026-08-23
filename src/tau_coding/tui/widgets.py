@@ -1538,8 +1538,26 @@ def _transcript_item_markdown(
     return _plain_markdown(visible_text)
 
 
-_SYSTEM_PROMPT_TAG_PATTERN = re.compile(r"</?[A-Za-z][^>\n]*>")
+_SYSTEM_PROMPT_TAG_PATTERN = re.compile(
+    r"""
+    </?
+    [A-Za-z][A-Za-z0-9_.:-]*
+    (?:
+        \s+
+        [A-Za-z_:][A-Za-z0-9_.:-]*
+        \s*=\s*
+        (?:
+            "[^"]*"
+            | '[^']*'
+            | [^\s"'=<>`]+
+        )
+    )*
+    \s*/?>
+    """,
+    re.VERBOSE,
+)
 _SYSTEM_PROMPT_FENCE_PATTERN = re.compile(r"^ {0,3}(?P<marker>`{3,}|~{3,})")
+_SYSTEM_PROMPT_INDENTED_CODE_PATTERN = re.compile(r"^(?: {4,}|[ ]*\t)")
 
 
 def _system_prompt_markdown(text: str) -> str:
@@ -1569,9 +1587,12 @@ def _system_prompt_markdown(text: str) -> str:
 
 
 def _system_prompt_protected_ranges(text: str) -> tuple[tuple[int, int], ...]:
-    """Return fenced and inline Markdown code ranges in *text*."""
-    ranges = list(_system_prompt_fenced_ranges(text))
-    ranges.extend(_system_prompt_inline_code_ranges(text, ranges))
+    """Return code-block and inline-code ranges in *text*."""
+    block_ranges = [
+        *_system_prompt_fenced_ranges(text),
+        *_system_prompt_indented_code_ranges(text),
+    ]
+    ranges = [*block_ranges, *_system_prompt_inline_code_ranges(text, block_ranges)]
     return tuple(sorted(ranges))
 
 
@@ -1619,17 +1640,28 @@ def _is_system_prompt_fence_close(
     return not stripped[marker.end() :].strip()
 
 
+def _system_prompt_indented_code_ranges(text: str) -> tuple[tuple[int, int], ...]:
+    """Find lines belonging to indented Markdown code blocks."""
+    ranges: list[tuple[int, int]] = []
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        if _SYSTEM_PROMPT_INDENTED_CODE_PATTERN.match(line) is not None:
+            ranges.append((offset, offset + len(line)))
+        offset += len(line)
+    return tuple(ranges)
+
+
 def _system_prompt_inline_code_ranges(
     text: str,
-    fenced_ranges: Sequence[tuple[int, int]],
+    block_ranges: Sequence[tuple[int, int]],
 ) -> tuple[tuple[int, int], ...]:
-    """Find inline backtick code spans outside fenced Markdown blocks."""
+    """Find inline backtick code spans outside Markdown code blocks."""
     ranges: list[tuple[int, int]] = []
     position = 0
     while position < len(text):
-        fenced_end = _protected_range_end(position, fenced_ranges)
-        if fenced_end is not None:
-            position = fenced_end
+        block_end = _protected_range_end(position, block_ranges)
+        if block_end is not None:
+            position = block_end
             continue
         if text[position] != "`":
             position += 1
@@ -1640,7 +1672,7 @@ def _system_prompt_inline_code_ranges(
             text,
             start=opener_end,
             delimiter_length=delimiter_length,
-            fenced_ranges=fenced_ranges,
+            block_ranges=block_ranges,
         )
         if closing is None:
             position = opener_end
@@ -1656,13 +1688,13 @@ def _find_backtick_closer(
     *,
     start: int,
     delimiter_length: int,
-    fenced_ranges: Sequence[tuple[int, int]],
+    block_ranges: Sequence[tuple[int, int]],
 ) -> int | None:
     position = start
     while position < len(text):
-        fenced_end = _protected_range_end(position, fenced_ranges)
-        if fenced_end is not None:
-            position = fenced_end
+        block_end = _protected_range_end(position, block_ranges)
+        if block_end is not None:
+            position = block_end
             continue
         if text[position] != "`":
             position += 1
@@ -1685,12 +1717,13 @@ def _protected_range_end(
     position: int,
     ranges: Sequence[tuple[int, int]],
 ) -> int | None:
+    protected_end: int | None = None
     for start, end in ranges:
         if position < start:
-            return None
-        if start <= position < end:
-            return end
-    return None
+            break
+        if position < end:
+            protected_end = max(protected_end or end, end)
+    return protected_end
 
 
 def _position_in_ranges(position: int, ranges: Sequence[tuple[int, int]]) -> bool:
