@@ -12,6 +12,7 @@ import pytest
 
 from conftest import isolate_home
 from tau_agent.harness import SimpleCancellationToken
+from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS
 from tau_coding.credentials import FileCredentialStore
 from tau_coding.extensions import ExtensionRuntime
 from tau_coding.extensions.builtins.llama_cpp import service as llama_service
@@ -474,6 +475,9 @@ async def test_gpt_and_codex_model_ids_use_local_chat_transport(tmp_path: Path) 
         client=client,
     )
     provider = service.provider()
+    assert provider.transport is not None
+    assert provider.transport.timeout_seconds == DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS
+    assert service.timeout_seconds == llama_service.DEFAULT_LLAMA_CPP_TIMEOUT_SECONDS
     for model in ("gpt-5.4-local", "codex-local"):
         runtime = await create_dynamic_model_provider(
             provider,

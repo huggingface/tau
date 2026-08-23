@@ -24,7 +24,7 @@ from tau_agent.provider_events import (
 )
 from tau_agent.tools import AgentTool, AgentToolResult, ToolCancellationToken
 from tau_agent.types import JSONValue
-from tau_ai.env import OpenAICompatibleConfig
+from tau_ai.env import DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS, OpenAICompatibleConfig
 from tau_ai.http import create_async_client
 from tau_ai.openai_compatible import OpenAICompatibleProvider
 from tau_coding.credentials import CredentialStore, FileCredentialStore, credentials_path
@@ -248,7 +248,9 @@ class LlamaCppService:
             transport=OpenAICompatibleTransport(
                 base_url=self.endpoint.inference_base,
                 auth=_LlamaCppAuth(active.credential_ref if active else None),
-                timeout_seconds=self.timeout_seconds,
+                # Backend discovery should fail quickly, but first-token latency
+                # for large local prompts routinely exceeds that 5s probe bound.
+                timeout_seconds=DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS,
                 max_retries=2,
                 max_retry_delay_seconds=1.0,
                 client=self.client,
