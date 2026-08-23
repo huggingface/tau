@@ -100,6 +100,8 @@ from tau_coding.local_backends import (
     LocalConfigureResult,
     LocalConfigureSpec,
     LocalConfigValues,
+    LocalConfirmationChoice,
+    LocalConfirmationRequest,
     LocalConnectionState,
     LocalDiagnostic,
     LocalFieldKind,
@@ -114,6 +116,7 @@ from tau_coding.local_backends import (
     ReadLocalBackendStatus,
     RefreshLocalBackend,
     ResetLocalBackend,
+    SearchModels,
 )
 
 __all__ = [
@@ -161,6 +164,8 @@ __all__ = [
     "LocalConfigValues",
     "LocalConfigureResult",
     "LocalConfigureSpec",
+    "LocalConfirmationChoice",
+    "LocalConfirmationRequest",
     "LocalConnectionState",
     "LocalDiagnostic",
     "LocalFieldKind",
@@ -204,6 +209,7 @@ __all__ = [
     "ResolvedProviderAuth",
     "ResetLocalBackend",
     "RuntimeFactory",
+    "SearchModels",
     "SessionShutdownEvent",
     "SessionStartEvent",
     "StderrUiBridge",

@@ -45,6 +45,7 @@ LocalAction = Literal[
     "load_model",
     "unload_model",
     "download_model",
+    "search_models",
 ]
 LocalDiagnosticSeverity = Literal["info", "warning", "error"]
 
@@ -199,6 +200,47 @@ class LocalProgress:
 
 
 @dataclass(frozen=True, slots=True)
+class LocalConfirmationChoice:
+    """One host-rendered option answering a backend confirmation request."""
+
+    value: str
+    label: str
+    recommended: bool = False
+
+    def __post_init__(self) -> None:
+        _identifier(self.value, "Confirmation choice value")
+        _non_empty(self.label, "Confirmation choice label")
+        if not isinstance(self.recommended, bool):
+            raise LocalBackendError("Confirmation choice recommended flag must be boolean")
+
+
+@dataclass(frozen=True, slots=True)
+class LocalConfirmationRequest:
+    """An explicit decision a backend needs before an operation may proceed.
+
+    Backends declare structured questions; the host renders, confirms, and
+    resubmits the chosen value through the operation context.  A request is
+    never an instruction for the host to guess: an unanswered request leaves
+    the operation uncommitted.
+    """
+
+    message: str
+    choices: tuple[LocalConfirmationChoice, ...]
+
+    def __post_init__(self) -> None:
+        _non_empty(self.message, "Confirmation request message")
+        if not isinstance(self.choices, tuple) or not self.choices:
+            raise LocalBackendError("Confirmation request choices must be a non-empty tuple")
+        if any(not isinstance(choice, LocalConfirmationChoice) for choice in self.choices):
+            raise LocalBackendError("Confirmation request choices are malformed")
+        values = [choice.value for choice in self.choices]
+        if len(set(values)) != len(values):
+            raise LocalBackendError("Confirmation request choice values must be unique")
+        if sum(1 for choice in self.choices if choice.recommended) > 1:
+            raise LocalBackendError("At most one confirmation choice may be recommended")
+
+
+@dataclass(frozen=True, slots=True)
 class LocalBackendStatus:
     """Structured status snapshot; no backend-specific protocol vocabulary."""
 
@@ -248,6 +290,7 @@ class LocalBackendStatus:
                 "load_model",
                 "unload_model",
                 "download_model",
+                "search_models",
             }
             for action in self.actions
         ):
@@ -271,6 +314,7 @@ class LocalOperationContext:
     source_id: str
     _is_current: Callable[[], bool] = field(repr=False)
     _progress: Callable[[LocalProgress], None] = field(repr=False)
+    confirmation: str | None = None
 
     @property
     def cancelled(self) -> bool:
@@ -299,6 +343,7 @@ class LocalOperationResult:
     committed: bool = False
     field_errors: Mapping[str, str] = field(default_factory=dict)
     credential_orphaned: bool = False
+    confirmation: LocalConfirmationRequest | None = None
 
     def __post_init__(self) -> None:
         if self.message is not None and not isinstance(self.message, str):
@@ -318,6 +363,12 @@ class LocalOperationResult:
             for key, value in self.field_errors.items()
         ):
             raise LocalBackendError("Configuration field errors must contain strings")
+        if self.confirmation is not None and not isinstance(
+            self.confirmation, LocalConfirmationRequest
+        ):
+            raise LocalBackendError("Operation confirmation must be a structured request")
+        if self.confirmation is not None and self.committed:
+            raise LocalBackendError("A committed operation cannot request confirmation")
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,6 +430,7 @@ ManageModel = Callable[
     LocalOperationResult | Awaitable[LocalOperationResult],
 ]
 DownloadModel = ManageModel
+SearchModels = ManageModel
 
 
 @dataclass(frozen=True, slots=True)
@@ -397,6 +449,7 @@ class LocalBackend:
     load_model: ManageModel | None = None
     unload_model: ManageModel | None = None
     download_model: DownloadModel | None = None
+    search_models: SearchModels | None = None
     recommended: bool = False
 
     def __post_init__(self) -> None:
@@ -417,6 +470,7 @@ class LocalBackend:
             self.load_model,
             self.unload_model,
             self.download_model,
+            self.search_models,
         ):
             if callback is not None and not callable(callback):
                 raise LocalBackendError("Local backend capability must be callable")
@@ -657,6 +711,7 @@ class LocalBackendRegistry:
         model_id: str,
         *,
         progress: ProgressCallback | None = None,
+        confirmation: str | None = None,
     ) -> LocalOperationResult:
         view = self._require_view(backend_id)
         callback = getattr(view.backend, action)
@@ -678,6 +733,41 @@ class LocalBackendRegistry:
             view,
             action,
             lambda context: _invoke(callback, model_id, context),
+            progress=progress,
+            confirmation=confirmation,
+        )
+
+    async def search_models(
+        self,
+        backend_id: str,
+        query: str,
+        *,
+        progress: ProgressCallback | None = None,
+    ) -> LocalOperationResult:
+        view = self._require_view(backend_id)
+        callback = view.backend.search_models
+        if callback is None:
+            return LocalOperationResult(
+                diagnostics=(LocalDiagnostic("This action is unavailable.", "warning"),)
+            )
+        if not view.use_available:
+            return LocalOperationResult(
+                diagnostics=(
+                    LocalDiagnostic(
+                        "This action is unavailable while this backend is shadowed by "
+                        "another source.",
+                        "warning",
+                    ),
+                )
+            )
+        if not query.strip():
+            return LocalOperationResult(
+                diagnostics=(LocalDiagnostic("Enter a search query.", "warning"),)
+            )
+        return await self._run(
+            view,
+            "search_models",
+            lambda context: _invoke(callback, query.strip(), context),
             progress=progress,
         )
 
@@ -715,6 +805,7 @@ class LocalBackendRegistry:
         *,
         progress: ProgressCallback | None,
         secrets: Sequence[str] = (),
+        confirmation: str | None = None,
     ) -> LocalOperationResult:
         token = view.token
         key = (token, action)
@@ -729,6 +820,7 @@ class LocalBackendRegistry:
             generation_id=self._generation_id,
             backend_id=token.backend_id,
             source_id=token.source_id,
+            confirmation=confirmation,
             _is_current=lambda: self._token_is_current(token),
             _progress=lambda item: _record_progress(
                 _redact_progress(item, secrets), progress_events, progress
@@ -806,6 +898,7 @@ class LocalBackendRegistry:
                     committed=value.committed,
                     field_errors=value.field_errors,
                     credential_orphaned=value.credential_orphaned,
+                    confirmation=value.confirmation,
                 ),
                 secrets,
             )
@@ -993,6 +1086,19 @@ def _safe_operation_result(
             cached=status.cached,
             stale=status.stale,
         )
+    confirmation = result.confirmation
+    if confirmation is not None:
+        confirmation = LocalConfirmationRequest(
+            message=_redact(confirmation.message, secrets) or "[redacted]",
+            choices=tuple(
+                LocalConfirmationChoice(
+                    choice.value,
+                    _redact(choice.label, secrets) or "[redacted]",
+                    choice.recommended,
+                )
+                for choice in confirmation.choices
+            ),
+        )
     return LocalOperationResult(
         backend_status=status,
         message=_redact(result.message, secrets),
@@ -1020,6 +1126,7 @@ def _safe_operation_result(
             for key, message in result.field_errors.items()
         },
         credential_orphaned=result.credential_orphaned,
+        confirmation=confirmation,
     )
 
 
@@ -1057,6 +1164,8 @@ __all__ = [
     "LocalConfigValues",
     "LocalConfigureResult",
     "LocalConfigureSpec",
+    "LocalConfirmationChoice",
+    "LocalConfirmationRequest",
     "LocalConnectionState",
     "LocalDiagnostic",
     "LocalFieldKind",
@@ -1070,4 +1179,5 @@ __all__ = [
     "ReadLocalBackendStatus",
     "RefreshLocalBackend",
     "ResetLocalBackend",
+    "SearchModels",
 ]
