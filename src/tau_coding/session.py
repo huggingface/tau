@@ -774,6 +774,13 @@ class CodingSession:
         return tuple(choice for choice in self.scoped_model_choices if choice not in available)
 
     def _stable_dynamic_scoped_provider(self, provider_name: str) -> bool:
+        return any(
+            layer.token.source_id.startswith("built-in:")
+            and layer.provider.stable_scoped_references
+            for layer in self._provider_registry.layers(provider_name)
+        )
+
+    def _effective_stable_dynamic_scoped_provider(self, provider_name: str) -> bool:
         effective = self._provider_registry.effective(provider_name)
         return bool(
             effective is not None
@@ -1462,9 +1469,12 @@ class CodingSession:
         existing = choice in self.scoped_model_choices
         effective = self._provider_registry.effective(choice.provider_name)
         if effective is not None and isinstance(effective.definition, DynamicProvider):
-            if not self._stable_dynamic_scoped_provider(choice.provider_name):
+            if not (
+                self._effective_stable_dynamic_scoped_provider(choice.provider_name)
+                or (existing and self._stable_dynamic_scoped_provider(choice.provider_name))
+            ):
                 raise ProviderConfigError(
-                    "Only trusted built-in dynamic providers support scoped references"
+                    "Only effective trusted built-in dynamic providers support scoped references"
                 )
             if choice not in available and not existing:
                 raise ProviderConfigError(

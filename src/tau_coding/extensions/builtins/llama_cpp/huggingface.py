@@ -34,6 +34,16 @@ class GgufRepository:
     variants: tuple[GgufVariant, ...]
 
 
+def validate_repository_reference(value: str) -> str:
+    """Return one exact owner/repository[:quantization] download reference."""
+    normalized = value.strip()
+    if not _EXACT_REPOSITORY.fullmatch(normalized):
+        raise HuggingFaceSearchError(
+            "Enter an exact Hugging Face owner/repository[:quantization] reference."
+        )
+    return normalized
+
+
 def discover_hf_token(
     environment: Mapping[str, str],
     *,
@@ -183,4 +193,5 @@ __all__ = [
     "discover_hf_token",
     "repository_details",
     "search_gguf_repositories",
+    "validate_repository_reference",
 ]

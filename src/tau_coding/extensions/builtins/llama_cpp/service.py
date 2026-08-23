@@ -61,6 +61,7 @@ from .huggingface import (
     HuggingFaceSearchError,
     discover_hf_token,
     search_gguf_repositories,
+    validate_repository_reference,
 )
 from .router import (
     LlamaCppRouterError,
@@ -577,6 +578,7 @@ class LlamaCppService:
         if isinstance(prepared, LocalOperationResult):
             return prepared
         client, owned, headers = prepared
+        cancel_target: str | None = None
         try:
             models = await list_router_models(client, self.endpoint.server_root, headers)
             target = _router_model(models, model_id)
@@ -620,6 +622,7 @@ class LlamaCppService:
                     await self._wait_for_router_state(
                         client, headers, existing_id, {"unloaded", "failed"}, context
                     )
+            cancel_target = model_id
             await mutate_router_model(
                 client,
                 self.endpoint.server_root,
@@ -637,7 +640,9 @@ class LlamaCppService:
                 )
             return await self._publish_router_models(models, message=f"Loaded {model_id}.")
         except asyncio.CancelledError:
-            return await self._cancel_router_mutation(client, headers, model_id)
+            if cancel_target is not None:
+                return await self._cancel_router_mutation(client, headers, cancel_target)
+            return await self._reconcile_cancelled(client, headers)
         except (httpx.HTTPError, LlamaCppRouterError, TimeoutError) as exc:
             return await self._reconcile_after_router_failure(client, headers, exc)
         finally:
@@ -694,10 +699,17 @@ class LlamaCppService:
         self, model_id: str, context: LocalOperationContext
     ) -> LocalOperationResult:
         """Request one exact server-side repository download after confirmation."""
+        try:
+            model_id = validate_repository_reference(model_id)
+        except HuggingFaceSearchError as exc:
+            return LocalOperationResult(
+                diagnostics=(LocalDiagnostic(str(exc), "error", "download"),)
+            )
         prepared = await self._prepare_router_operation(context)
         if isinstance(prepared, LocalOperationResult):
             return prepared
         client, owned, headers = prepared
+        mutation_started = False
         try:
             if context.confirmation is None:
                 return LocalOperationResult(
@@ -713,6 +725,7 @@ class LlamaCppService:
                 return LocalOperationResult(cancelled=True)
             if context.confirmation != "download":
                 return self._router_failure("Downloading requires explicit confirmation.")
+            mutation_started = True
             await mutate_router_model(
                 client,
                 self.endpoint.server_root,
@@ -737,7 +750,9 @@ class LlamaCppService:
                 models, message=f"Server-side download completed for {model_id}."
             )
         except asyncio.CancelledError:
-            return await self._cancel_router_mutation(client, headers, model_id)
+            if mutation_started:
+                return await self._cancel_router_mutation(client, headers, model_id)
+            return await self._reconcile_cancelled(client, headers)
         except (httpx.HTTPError, LlamaCppRouterError, TimeoutError) as exc:
             return await self._reconcile_after_router_failure(client, headers, exc)
         finally:

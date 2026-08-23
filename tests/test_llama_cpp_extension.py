@@ -933,6 +933,10 @@ async def test_router_load_unload_download_confirm_reconcile_and_publish(tmp_pat
     assert unloaded.committed is True
     assert [model.id for model in service.provider().models] == ["already"]
 
+    invalid_download = await service.download_model("not-a-repository", _context("download_model"))
+    assert "owner/repository" in invalid_download.diagnostics[0].message
+    assert not any(action == "download" for action, _ in mutations)
+
     download_confirmation = await service.download_model(
         "owner/repo:Q4_K_M", _context("download_model")
     )
