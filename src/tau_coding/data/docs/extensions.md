@@ -94,9 +94,9 @@ Phase 6 validates these contracts with a permanent second fake backend and a
 small test-only Ollama adapter. The trusted built-in `llama.cpp` provider uses
 the same seams; no production Ollama backend is shipped. Provider discovery and
 backend status may use different protocol endpoints, and `NoAuth` is a first-
-class option. Router management and Hugging Face model mutations remain outside
-this phase; see `architecture/phase-6-local-inference-hardening.md` for the
-validation and migration notes.
+class option. The built-in llama.cpp package now contributes version-gated
+router management and Hugging Face search through these generic host contracts;
+no router vocabulary or mutation logic enters extension core.
 
 ## Local-backend registrations
 
