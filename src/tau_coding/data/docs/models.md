@@ -77,3 +77,30 @@ a durable default, and then a usable durable provider. Dynamic local providers
 are selected only by explicit startup, a resumed local session, or an in-session
 `/model`/`/local` action. The old `llama-cpp` catalog provider is not migrated;
 configure the built-in `llama.cpp` layer separately through `/local`.
+
+## Hugging Face routing
+
+Hugging Face routing has two session modes. Automatic mode keeps the provider
+from the first successful response as a sticky route, but retries once through
+unsuffixed routing after that route exhausts retryable pre-output HTTP failures.
+A configured or extension-selected provider is fixed and never silently
+overridden. The external Hugging Face extension controls these modes with
+`/hf route`; core owns safe continuation, persistence, and reroute diagnostics.
+
+## Changing the built-in catalog
+
+For first-party provider/model changes, verify exact metadata in official
+provider documentation, confirm Tau supports the transport, and update
+`src/tau_coding/data/catalog.toml`. Never guess undocumented metadata. Preserve
+the existing default unless changing it intentionally, and test catalog,
+configuration, runtime, thinking-level, and wire behavior.
+
+Tau thinking levels are `off`, `minimal`, `low`, `medium`, `high`, and `xhigh`.
+Provider-level levels must cover every model's supported values. Model metadata
+may map wire values or mark unsupported levels. When withdrawing one provider's
+model, add it to that provider's `removed_models` list so stale user overlays
+cannot restore it.
+
+Update `website/content/guides/providers-and-models.md` and a development note
+for substantial changes. Run focused provider tests, full pytest, Ruff,
+formatting, mypy, and the website build when published docs change.

@@ -24,6 +24,7 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.events import Key, Resize
 from textual.screen import ModalScreen
+from textual.strip import Strip
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import (
@@ -605,6 +606,17 @@ class PromptInput(TextArea):
             self.text = ""
             self.move_cursor((0, 0))
             self._clear_pending_paste()
+
+    def render_line(self, y: int) -> Strip:
+        """Render safely while a narrow terminal leaves no content width.
+
+        Textual's placeholder wrapping currently raises when the content width
+        is zero. This can happen briefly while a narrow terminal pane is
+        switching from the sidebar layout to compact mode.
+        """
+        if self.content_size.width <= 0:
+            return Strip.blank(0, self.visual_style.rich_style)
+        return super().render_line(y)
 
     def get_line(self, line_index: int) -> Text:
         """Retrieve one prompt line, coloring terminal commands like a running tool."""
@@ -4950,7 +4962,9 @@ class TauTuiApp(App[None]):
                     and event.message.stop_reason == "error"
                 ):
                     _attach_diagnostic_log_path_to_error(self.state, self.session)
-                    _attach_retry_hint_to_error(self.state, event.message)
+                    will_auto_retry = getattr(self.session, "will_auto_retry", None)
+                    if not (callable(will_auto_retry) and will_auto_retry(event.message)):
+                        _attach_retry_hint_to_error(self.state, event.message)
                 elif (
                     isinstance(event, CompactionEndEvent)
                     and event.reason == "overflow"
@@ -7008,13 +7022,22 @@ def _create_startup_session_record(
             model=selection.model,
             provider_name=selection.provider.name,
             inference_provider=inference_provider,
+            inference_provider_mode="fixed",
         )
     except TypeError:
-        return manager.prepare_session(
-            cwd=cwd,
-            model=selection.model,
-            provider_name=selection.provider.name,
-        )
+        try:
+            return manager.prepare_session(
+                cwd=cwd,
+                model=selection.model,
+                provider_name=selection.provider.name,
+                inference_provider=inference_provider,
+            )
+        except TypeError:
+            return manager.prepare_session(
+                cwd=cwd,
+                model=selection.model,
+                provider_name=selection.provider.name,
+            )
 
 
 def _resolve_tui_startup_selection(
@@ -7143,6 +7166,15 @@ def _startup_inference_provider(
     return provider.inference_providers.get(selection.model)
 
 
+def _startup_inference_provider_mode(
+    selection: ProviderSelection,
+    record: CodingSessionRecord | None,
+) -> Literal["automatic", "fixed"]:
+    if record is not None and record.model == selection.model:
+        return record.inference_provider_mode
+    return "fixed" if _startup_inference_provider(selection, None) is not None else "automatic"
+
+
 async def run_tui_app(
     *,
     model: str | None,
@@ -7219,6 +7251,9 @@ async def run_tui_app(
     initial_provider: ClosableModelProvider | None = None
     runtime_provider_config: ProviderConfig | None = selection.provider if selection else None
     inference_provider = _startup_inference_provider(selection, record) if selection else None
+    inference_provider_mode: Literal["automatic", "fixed"] = (
+        _startup_inference_provider_mode(selection, record) if selection else "automatic"
+    )
     if selection is not None:
         try:
             initial_provider = create_model_provider(
@@ -7281,6 +7316,7 @@ async def run_tui_app(
                 session_manager=manager,
                 provider_name=selected_provider_name,
                 inference_provider=inference_provider,
+                inference_provider_mode=inference_provider_mode,
                 requested_provider=provider_name if explicit_selection else None,
                 requested_model=model if explicit_selection else None,
                 session_provider_name=record.provider_name,

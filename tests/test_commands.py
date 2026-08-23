@@ -15,6 +15,7 @@ class FakeSession:
         self.cwd = tmp_path
         self.provider_name = "openai"
         self.inference_provider: str | None = None
+        self.inference_provider_mode = "automatic"
         self.model = "fake-model"
         self.available_models = ("fake-model", "other-model")
         self.available_model_choices = (
@@ -67,6 +68,7 @@ class FakeSession:
 
     def set_inference_provider(self, route: str | None) -> str:
         self.inference_provider = route
+        self.inference_provider_mode = "fixed" if route is not None else "automatic"
         return route or "automatic (will pin after the next successful response)"
 
     def set_provider(self, provider_name: str) -> None:
@@ -258,6 +260,23 @@ def test_session_command_includes_session_details(tmp_path: Path) -> None:
     assert (
         create_default_command_registry().execute(FakeSession(tmp_path), "/status").handled is False
     )
+
+
+def test_session_command_distinguishes_automatic_and_fixed_huggingface_routes(
+    tmp_path: Path,
+) -> None:
+    session = FakeSession(tmp_path)
+    session.provider_name = "huggingface"
+    session.inference_provider = "baseten"
+
+    automatic = create_default_command_registry().execute(session, "/session")
+    session.inference_provider_mode = "fixed"
+    fixed = create_default_command_registry().execute(session, "/session")
+
+    assert automatic.message is not None
+    assert "Hugging Face inference provider: automatic (currently baseten)" in automatic.message
+    assert fixed.message is not None
+    assert "Hugging Face inference provider: baseten (fixed)" in fixed.message
 
 
 def test_route_command_is_not_built_in(tmp_path: Path) -> None:

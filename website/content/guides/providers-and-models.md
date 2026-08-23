@@ -152,8 +152,11 @@ account.
 
 For a new session without an explicit preference, Hugging Face initially routes
 the model automatically. After the first successful response, Tau reads Hugging
-Face's `x-inference-provider` response header and pins that backing provider for
-the rest of the session. To choose the initial provider instead, add a per-model
+Face's `x-inference-provider` response header and keeps that backing provider as
+a sticky automatic route. If that route later exhausts its normal retries with a
+retryable HTTP failure before producing output, Tau retries the interrupted turn
+once through unsuffixed automatic routing and makes the successful replacement
+the new sticky route. To choose a fixed provider instead, add a per-model
 `inference_providers` preference to `~/.tau/providers.json`:
 
 ```json
@@ -184,17 +187,23 @@ git clone https://github.com/alejandro-ao/tau-huggingface.git
 tau -e ./tau-huggingface
 ```
 
-Then use `/route <provider>` to select a route or `/route automatic` to reset
-it. Switching models uses that model's configured pin or starts automatic
-resolution again.
+Then use `/hf route` to pick from the model's currently live routes,
+`/hf route <provider>` to select a fixed route, or `/hf route automatic` to
+return to recoverable automatic routing. Switching models uses that model's
+configured fixed route or starts automatic resolution again. `/session` reports
+`automatic (currently <provider>)` for a sticky automatic route and
+`<provider> (fixed)` for an explicit route.
 
-Transient failures retry on the same wire model, and stream failures are not
-retried after model output has started. Pinning can reduce cold prefix-cache
-misses caused by cross-provider routing, but cannot prevent eviction, TTL expiry,
-or load balancing among workers within the chosen provider. Tau does not yet
-fall back automatically from an unavailable pinned route: doing so also requires
-a user-visible reroute event and durable reroute telemetry. Use the Hugging Face
-extension or start a new automatic session to resolve another route. See
+Transient failures first retry on the same wire model, and stream failures are
+not retried or rerouted after model output has started. After those retries are
+exhausted, only sticky routes selected in automatic mode fail over; routes chosen
+through `/hf route <provider>` or the `inference_providers` preference remain
+fixed so Tau never overrides explicit user intent. Automatic failover emits
+visible retry progress and durable provider diagnostics. Pinning can reduce cold
+prefix-cache misses caused by cross-provider routing, but cannot prevent eviction,
+TTL expiry, or load balancing among workers within the chosen provider. A reroute
+may require a cold prefix prefill, and account-wide rate limits may still fail on
+the automatic retry. See
 [Configuration]({{< relref "../reference/configuration.md#provider-preferences" >}}).
 
 ### Moonshot AI API vs. Kimi Code

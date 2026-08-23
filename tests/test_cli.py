@@ -119,6 +119,50 @@ def test_help_lists_system_prompt_options() -> None:
     assert result.exit_code == 0
     assert "--system-promptTEXT_OR_PATH" in output
     assert "--append-system-promptTEXT_OR_PATH" in output
+    assert "tauinstallSOURCE[--force]" in output
+
+
+def test_install_command_installs_extension(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[str, bool]] = []
+    destination = tmp_path / ".tau" / "extensions" / "demo"
+
+    def fake_install(source: str, *, force: bool = False) -> Path:
+        calls.append((source, force))
+        return destination
+
+    monkeypatch.setattr(cli, "install_extension", fake_install)
+
+    result = CliRunner().invoke(
+        app,
+        ["install", "git:github.com/example/demo", "--force"],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [("git:github.com/example/demo", True)]
+    assert "execute arbitrary Python" in result.output
+    assert f"Installed git:github.com/example/demo to {destination}" in result.output
+
+
+def test_install_command_reports_install_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_install(source: str, *, force: bool = False) -> Path:
+        del source, force
+        raise cli.ExtensionInstallError("clone failed")
+
+    monkeypatch.setattr(cli, "install_extension", fail_install)
+
+    result = CliRunner().invoke(app, ["install", "git:github.com/example/demo"])
+
+    assert result.exit_code == 1
+    assert "Could not install extension: clone failed" in result.output
+
+
+def test_install_command_requires_exactly_one_source() -> None:
+    result = CliRunner().invoke(app, ["install"])
+
+    assert result.exit_code == 2
+    assert "Usage: tau install <source> [--force]" in _panel_text(result.output)
 
 
 def test_prompt_inputs_resolve_files_literals_and_append_order(tmp_path: Path) -> None:

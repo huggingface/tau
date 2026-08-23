@@ -25,7 +25,7 @@ A skill with `disable-model-invocation: true` in its `SKILL.md` frontmatter is e
 
 ## Prompt templates
 
-Templates load from user and project `.tau/prompts/` and `.agents/prompts/` directories. They are prompt shortcuts, not background knowledge, and may contain `{{ variable }}` placeholders.
+Templates load from user and project `.tau/prompts/` and `.agents/prompts/` directories. They are prompt shortcuts, not background knowledge, and support Pi-compatible argument placeholders such as `$1`, `$@`, `$ARGUMENTS`, defaults, and slices. Legacy `{{ arguments }}` and `{{ args }}` placeholders remain supported.
 
 Use a skill for reference know-how and a template for a frequently repeated prompt. Run `/reload` after changing resources in an active TUI session.
 

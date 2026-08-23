@@ -42,6 +42,42 @@ def setup(tau):
 Start `tau` and the model can call `greet`. Every extension is a module
 defining `setup(tau)`, which runs once at startup with the extension API.
 
+## Install an extension
+
+Install a trusted extension from Git with the same command shape as Pi:
+
+```bash
+tau install git:github.com/owner/repository
+tau install git:github.com/owner/repository@v1.2.0
+tau install https://github.com/owner/repository.git
+```
+
+Tau clones the repository into `~/.tau/extensions/<repository>` and loads it on
+the next Tau startup. A pinned ref may be a tag, branch, or commit. Replacing an
+existing install requires an explicit opt-in:
+
+```bash
+tau install git:github.com/owner/repository@v1.3.0 --force
+```
+
+Local files and package directories work too:
+
+```bash
+tau install ./my_extension.py
+tau install ./my-extension
+```
+
+A local file is copied into `~/.tau/extensions/`. A directory is copied and must
+contain `extension.py` or declare `[tool.tau].extensions` in `pyproject.toml`, so
+it remains discoverable without `-e`. Local virtual environments, VCS metadata,
+and Python cache directories are not copied.
+
+The installer validates discovery metadata without importing the extension.
+It does not install Python dependencies, maintain a package registry, or provide
+remove/update commands yet. Install dependencies into Tau's Python environment
+separately when an extension requires them. Extensions execute arbitrary Python
+with your user permissions, so review the source before installation.
+
 ## Where extensions live
 
 | Location | Loaded |
@@ -143,7 +179,8 @@ def setup(tau):
 
     # read-only context
     tau.context.cwd, tau.context.model, tau.context.provider_name
-    tau.context.inference_provider             # Hugging Face route, or None
+    tau.context.inference_provider             # current Hugging Face route, or None
+    tau.context.inference_provider_mode        # "automatic" or "fixed"
     tau.context.session_id, tau.context.system_prompt
     tau.context.is_running, tau.context.has_ui
     tau.context.transcript   # parent conversation, deep-copied AgentMessages
@@ -156,9 +193,13 @@ def setup(tau):
 ```
 
 `set_inference_provider(route)` lets provider-specific extensions select a
-Hugging Face inference-provider route for the active session; pass `None` to
-return to automatic routing. Other providers reject the operation. The current
-pin is available as `context.inference_provider`.
+Hugging Face inference-provider route for the active session. A provider name
+sets `context.inference_provider_mode` to `"fixed"`, so Tau honors the explicit
+selection and does not automatically fail over. Passing `None` selects
+`"automatic"` mode: the next successful response becomes a sticky route that
+Tau may replace after an exhausted retryable pre-output failure. Other providers
+reject the operation. The current resolved route is available as
+`context.inference_provider`.
 
 `setup` must be a plain `def` (not `async def`). Event handlers may be sync
 or async and always receive `(event, context)`; the context is freshly created
@@ -425,7 +466,7 @@ Observation events mirror the canonical agent/session stream. Handlers receive
 |---|---|
 | `agent_start` | — |
 | `agent_end` | `messages`, `will_retry` on the session form |
-| `agent_settled` | —; no retry, compaction, or queued continuation remains |
+| `agent_settled` | —; the started run has finished teardown and has no automatic retry, compaction, or continuation remaining; dispatched to extensions after interruption even if the cancelling frontend can no longer consume the streamed event |
 | `turn_start` | `turn_index`, Unix-millisecond `timestamp` |
 | `turn_end` | matching `turn_index`, `message`, `tool_results` |
 | `message_start` / `message_end` | `message`; assistant usage is at `message.usage` |
@@ -629,13 +670,9 @@ tau -e ./tau-subagents
 
 ## Not yet supported
 
-Compared to Pi's extension system, v1 does not yet include: package
-management (`pi install`-style), startup/session selection for external
-custom providers, extension-authored TUI widgets (custom *message* rendering
-via `register_message_renderer` *is* supported; the host-provided `context.ui`
-dialogs *are* supported), custom
-entry renderers (non-context cards), keyboard shortcuts, CLI flag
-registration, system-prompt replacement, context rewriting, or a project trust
-store. The
-architecture document
-(`dev-notes/architecture/phase-21-extensions.md`) tracks these.
+Compared to Pi's extension system, Tau does not yet include a complete package
+manager (the installer has no registry, dependency installation, remove, or
+package-update commands), custom entry renderers (non-context cards),
+declarative keyboard-shortcut registration, CLI flag registration,
+system-prompt replacement, or context rewriting. The architecture document
+(`dev-notes/architecture/phase-21-extensions.md`) tracks the extension design.

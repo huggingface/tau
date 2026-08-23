@@ -65,6 +65,8 @@ class CompactionEntry(BaseSessionEntry):
     type: Literal["compaction"] = "compaction"
     summary: str
     replaces_entry_ids: list[str] = Field(default_factory=list)
+    first_kept_entry_id: str | None = None
+    tokens_before: int | None = None
 
 
 class BranchSummaryEntry(BaseSessionEntry):

@@ -781,7 +781,7 @@ def test_session_sidebar_brand_includes_current_version() -> None:
 
     console.print(_sidebar_brand(theme=TAU_DARK_THEME))
 
-    assert "τ = 2π  0.3.12" in console.export_text()
+    assert "τ = 2π  0.3.13" in console.export_text()
 
 
 def test_session_sidebar_uses_prominent_title_and_accented_section_headers() -> None:
@@ -3210,6 +3210,17 @@ async def test_tui_sidebar_hides_on_narrow_windows() -> None:
         assert sidebar.display is False
         assert compact_info.display is True
         assert app.has_class("-hide-sidebar")
+
+
+@pytest.mark.anyio
+async def test_prompt_renders_when_narrow_layout_has_no_content_width() -> None:
+    """A narrow pane can briefly give the prompt zero content cells."""
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(3, 10)):
+        prompt = app.query_one("#prompt", PromptInput)
+        assert prompt.content_size.width == 0
+        prompt.render_line(0)
 
 
 @pytest.mark.anyio

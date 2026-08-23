@@ -4,7 +4,7 @@ import typer
 
 from tau_agent.events import MessageEndEvent
 from tau_agent.messages import AssistantMessage
-from tau_coding.events import CodingSessionEvent
+from tau_coding.events import AutoRetryEndEvent, CodingSessionEvent
 
 
 class FinalTextRenderer:
@@ -14,6 +14,10 @@ class FinalTextRenderer:
         self._error_messages: list[str] = []
 
     def render(self, event: CodingSessionEvent) -> None:
+        if isinstance(event, AutoRetryEndEvent) and event.success:
+            self._failed = False
+            self._error_messages.clear()
+            return
         if not isinstance(event, MessageEndEvent) or not isinstance(
             event.message, AssistantMessage
         ):

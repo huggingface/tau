@@ -1,8 +1,9 @@
 # Tau CLI and commands
 
-`tau` opens the interactive TUI by default. Print mode is selected with
-`-p/--print` or `--mode` and uses the same staged session/provider preparation
-as the TUI.
+Tau supports print mode, Pi-compatible JSONL RPC mode, and a Textual interactive
+TUI. `tau` opens the TUI by default. Print mode is selected with `-p/--print` or
+`--mode` and uses the same staged session/provider preparation as the TUI. The
+CLI entry point is `tau_coding.cli:app`.
 
 ## Local inference
 

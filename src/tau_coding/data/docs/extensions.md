@@ -2,6 +2,8 @@
 
 Tau extensions are Python modules that can register custom tools, slash commands, and process-local provider definitions; observe lifecycle events; intercept tool calls and results; show UI dialogs; and customize message rendering.
 
+For Hugging Face-specific routing extensions, `set_inference_provider(<provider>)` selects a fixed route while `set_inference_provider(None)` restores recoverable automatic routing. Read both `context.inference_provider` (current route) and `context.inference_provider_mode` (`automatic` or `fixed`) when presenting route status.
+
 ## Start here
 
 For complete API documentation, read the repository's published guide when working in a Tau checkout:
@@ -16,6 +18,22 @@ Installed examples are under `examples/extensions/` next to these docs. Read the
 - `~/.tau/extensions/`: discovered by default.
 - `<project>/.tau/extensions/`: requires project approval and `--project-extensions`.
 - `tau -e PATH`: explicitly load a file or directory.
+
+## Installing extensions
+
+Install a trusted local or Git extension for future runs with:
+
+```bash
+tau install git:github.com/owner/repository
+tau install git:github.com/owner/repository@v1.2.0
+tau install ./path/to/extension.py
+tau install ./path/to/extension-directory
+```
+
+Git repositories and local directories install under `~/.tau/extensions/` and
+must contain `extension.py` or a `[tool.tau].extensions` manifest. Use `--force`
+to replace an existing install. The installer does not install Python
+dependencies or provide package remove/update commands yet.
 
 ## Trusted built-in sources
 
