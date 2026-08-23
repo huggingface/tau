@@ -9,10 +9,13 @@ exceptions staying un-swallowed, and main-view open/close restoring the main
 transcript.
 """
 
+from pathlib import Path
+
 import pytest
 from textual.containers import Container
 from textual.widgets import Static
 
+from conftest import isolate_home
 from tau_coding.extensions import ExtensionRuntime
 from tau_coding.tui.app import PromptInput, TauTuiApp
 from tau_coding.tui.config import TuiSettings
@@ -391,7 +394,10 @@ async def test_sidebar_sections_work_in_both_sidebar_positions(position: str) ->
 
 
 @pytest.mark.anyio
-async def test_sidebar_factory_rebuilds_with_live_theme() -> None:
+async def test_sidebar_factory_rebuilds_with_live_theme(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
     app = TauTuiApp(FakeSession())
     themes: list[str] = []
 
