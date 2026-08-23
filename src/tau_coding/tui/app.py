@@ -3487,6 +3487,17 @@ class TauTuiApp(App[None]):
         margin-top: 1;
     }
 
+    #local-backend-progress-bar Bar {
+        width: 1fr;
+    }
+
+    #local-backend-progress-bar Bar > .bar--bar,
+    #local-backend-progress-bar Bar > .bar--complete,
+    #local-backend-progress-bar Bar > .bar--indeterminate {
+        color: $tau-accent;
+        background: $tau-border;
+    }
+
     #local-backend-picker-footer,
     #local-backend-footer,
     #local-configure-footer,

@@ -113,9 +113,10 @@ select a repository/quantization result. Tau shows a separate confirmation with
 the selected model and its known download size before starting the server-side
 download. Cancel remains preselected as a safety default but is not labelled as
 a recommendation. While the router reports byte totals, `/local` shows a
-percentage bar, transferred bytes, and bytes remaining. Closing `/local` leaves
-the llama.cpp download running; reopen it and choose **Cancel active download…**
-to stop it explicitly. Search reports gating, quantizations, and sizes. `Q4_K_M`
+full-width block progress bar, transferred bytes, and bytes remaining. Closing
+`/local` leaves the llama.cpp download running; reopening it reattaches to the
+latest byte progress and offers **Cancel active download…** to stop it explicitly.
+Search reports gating, quantizations, and sizes. `Q4_K_M`
 is a UI recommendation only. Tau
 discovers `HF_TOKEN` from
 the environment or standard Hugging Face token files for search, but never saves

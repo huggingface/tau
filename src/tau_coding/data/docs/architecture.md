@@ -43,8 +43,10 @@ owns a `LocalBackendRegistry` beside its provider registry. Each backend is
 bound to the exact source-owned provider layer and generation that registered it;
 this prevents a shadowing source from using or resetting another source's
 integration. Backends return typed configuration, status, action, diagnostic,
-and progress values. The Textual adapter renders those values and owns
-cancellation, confirmation, and idle checks. No local-backend or Textual code
+and progress values. The registry supervises in-flight work and permits a new
+frontend screen to observe its latest progress without restarting the backend
+operation. The Textual adapter renders those values and owns cancellation,
+confirmation, and idle checks. No local-backend or Textual code
 belongs in `tau_agent` or `tau_ai`.
 
 Phase 6 validates the boundary with a permanent second fake backend and a

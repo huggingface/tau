@@ -1,8 +1,10 @@
 """Textual lifecycle tests for the provider-neutral local-backend host."""
 
 import asyncio
+from io import StringIO
 
 import pytest
+from rich.console import Console
 from textual.app import App
 from textual.widgets import Input, Label, ListView, ProgressBar, Select, Static
 
@@ -234,6 +236,13 @@ async def test_download_progress_renders_fraction_and_remaining_detail() -> None
         assert (
             progress_bar.size.width == screen.query_one("#local-backend-screen").content_size.width
         )
+        bar = progress_bar.query_one("#bar")
+        assert bar.size.width == progress_bar.content_size.width
+        console = Console(width=bar.size.width, record=True, file=StringIO())
+        console.print(bar.render())
+        rendered_bar = console.export_text().strip()
+        assert "█" in rendered_bar
+        assert "─" in rendered_bar
 
         release.set()
         await screen._worker
@@ -368,7 +377,12 @@ async def test_closing_download_modal_detaches_and_reopen_offers_explicit_cancel
         return LocalBackendStatus(state="ready", actions=("refresh", "download_model"))
 
     async def download_model(model_id, context):
-        del model_id, context
+        del model_id
+        context.report_progress(
+            LocalProgress("Downloading owner/repo:Q4_K_M… 3.0 GiB remaining", fraction=0.25)
+        )
+        # A later state-only poll must not replace byte progress when reattaching.
+        context.report_progress(LocalProgress("Downloading owner/repo:Q4_K_M…"))
         entered.set()
         try:
             await asyncio.Event().wait()
@@ -406,6 +420,12 @@ async def test_closing_download_modal_detaches_and_reopen_offers_explicit_cancel
             for item in reopened.query_one("#local-action-menu", ListView).children
         ]
         assert "Cancel active download…" in labels
+        progress = reopened.query_one("#local-backend-progress", Static).render().plain
+        progress_bar = reopened.query_one("#local-backend-progress-bar", ProgressBar)
+        assert "3.0 GiB remaining" in progress
+        assert progress_bar.styles.display == "block"
+        assert progress_bar.progress == 0.25
+        assert progress_bar.query_one("#bar").size.width == progress_bar.content_size.width
 
         reopened._cancel_download("cancel_download")
         await worker

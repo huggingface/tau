@@ -76,8 +76,9 @@ saved/environment/default endpoint; **Configure** accepts another URL and an
 optional secret key. It renders models and backend actions as separate
 arrow-key navigable sections; Enter selects and Escape closes. Expensive
 load/download operations require a separate confirmation with model details,
-and active downloads show router-reported percentage and byte progress. The
-actions section exposes Hugging Face search/download, explicit active-download
+and active downloads show a full-width block bar with router-reported byte
+progress, including after reopening `/local`. The actions section exposes
+Hugging Face search/download, explicit active-download
 cancellation, status, refresh, Doctor, and reset; the model section owns load,
 use, and unload.
 

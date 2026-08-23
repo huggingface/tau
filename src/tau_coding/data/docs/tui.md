@@ -13,7 +13,8 @@ effective saved/environment/default endpoint. The built-in `llama.cpp` backend
 provides endpoint/API-key fields plus separate arrow-key navigable model and
 action sections. Enter selects; Escape closes. Loading and downloading open a
 separate confirmation with model details before work begins. Downloading shows a
-router-reported percentage bar and byte counts. The actions section exposes
+full-width block bar and router-reported byte counts, including after reopening
+`/local` during a transfer. The actions section exposes
 Hugging Face search/download, explicit active-download cancellation, status,
 refresh, Doctor, and reset.
 

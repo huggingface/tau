@@ -11,11 +11,15 @@ from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from typing import ClassVar, Literal, cast
 
+from rich.console import Console, ConsoleOptions, RenderResult
+from rich.style import StyleType
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.events import Key
+from textual.renderables.bar import Bar as BarRenderable
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label, ListItem, ListView, ProgressBar, Select, Static
 
@@ -38,6 +42,38 @@ from tau_coding.tui.config import TuiTheme
 LocalUseCallback = Callable[[str, str], Awaitable[None] | None]
 LocalNotifyCallback = Callable[[str, str], None]
 LocalIdleCallback = Callable[[], bool]
+
+
+class _BlockProgressRenderable(BarRenderable):
+    """Render determinate progress as solid blocks over a thin track."""
+
+    def __init__(
+        self,
+        highlight_range: tuple[float, float] = (0, 0),
+        highlight_style: StyleType = "default",
+        background_style: StyleType = "default",
+        **_: object,
+    ) -> None:
+        self.highlight_range = highlight_range
+        self.highlight_style = highlight_style
+        self.background_style = background_style
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        del console
+        width = options.max_width
+        start, end = self.highlight_range
+        bar = Text(end="")
+        for cell in range(width):
+            highlighted = cell + 0.5 >= start and cell + 0.5 < end
+            bar.append(
+                "█" if highlighted else "─",
+                style=self.highlight_style if highlighted else self.background_style,
+            )
+        yield bar
+
+
+class _LocalDownloadProgressBar(ProgressBar):
+    BAR_RENDERABLE = _BlockProgressRenderable
 
 
 class LocalBackendPickerScreen(ModalScreen[str | None]):
@@ -179,6 +215,8 @@ class LocalBackendScreen(ModalScreen[None]):
         self._worker: asyncio.Task[None] | None = None
         self._active_action: LocalAction | None = None
         self._use_task: asyncio.Task[None] | None = None
+        self._download_watch_task: asyncio.Task[None] | None = None
+        self._progress_unsubscribe: Callable[[], None] | None = None
         self._progress_fraction: float | None = None
         self._closing = False
 
@@ -195,9 +233,9 @@ class LocalBackendScreen(ModalScreen[None]):
             yield Static("Actions", id="local-action-section-title")
             yield ListView(id="local-action-menu")
             yield Static("", id="local-backend-progress")
-            progress_bar = ProgressBar(
+            progress_bar = _LocalDownloadProgressBar(
                 total=1,
-                show_percentage=True,
+                show_percentage=False,
                 show_eta=False,
                 id="local-backend-progress-bar",
             )
@@ -211,11 +249,18 @@ class LocalBackendScreen(ModalScreen[None]):
     async def on_mount(self) -> None:
         await self._render_sections(None)
         self.query_one("#local-action-menu", ListView).focus()
-        self.query_one("#local-backend-progress-bar", ProgressBar).styles.display = "none"
-        # Opening a backend is an explicit user action, so probe its effective
-        # saved/environment/default endpoint immediately. Backends still own
-        # which endpoint that means; the generic host never scans.
-        self._start_operation("refresh")
+        progress_bar = self.query_one("#local-backend-progress-bar", ProgressBar)
+        progress_bar.styles.display = "none"
+        progress_bar.query_one("#bar").styles.width = "1fr"
+        # Reattach to a server-owned download before probing so refresh output
+        # cannot hide its replayed byte progress.
+        if self._attach_download_progress():
+            self._download_watch_task = asyncio.create_task(self._watch_download_completion())
+        else:
+            # Opening a backend is an explicit user action, so probe its effective
+            # saved/environment/default endpoint immediately. Backends still own
+            # which endpoint that means; the generic host never scans.
+            self._start_operation("refresh")
 
     def on_unmount(self) -> None:
         """Stop host-owned tasks before Textual detaches this modal."""
@@ -227,8 +272,42 @@ class LocalBackendScreen(ModalScreen[None]):
             self.registry.cancel(self.backend_id, self._active_action)
             if self._worker is not None and not self._worker.done():
                 self._worker.cancel()
+        if self._progress_unsubscribe is not None:
+            self._progress_unsubscribe()
+            self._progress_unsubscribe = None
+        if self._download_watch_task is not None and not self._download_watch_task.done():
+            self._download_watch_task.cancel()
         if self._use_task is not None and not self._use_task.done():
             self._use_task.cancel()
+
+    def _attach_download_progress(self) -> bool:
+        def progress(item: LocalProgress) -> None:
+            self.call_after_refresh(
+                self._set_progress,
+                item.message,
+                fraction=item.fraction,
+                show_bar=True,
+            )
+
+        self._progress_unsubscribe = self.registry.observe_progress(
+            self.backend_id,
+            "download_model",
+            cast(ProgressCallback, progress),
+        )
+        return self._progress_unsubscribe is not None
+
+    async def _watch_download_completion(self) -> None:
+        try:
+            while self.registry.operation_running(self.backend_id, "download_model"):
+                await asyncio.sleep(0.25)
+        except asyncio.CancelledError:
+            return
+        if self._progress_unsubscribe is not None:
+            self._progress_unsubscribe()
+            self._progress_unsubscribe = None
+        if self._can_update_ui:
+            self._progress_fraction = None
+            self._start_operation("refresh")
 
     def on_key(self, event: Key) -> None:
         if event.key == "up":

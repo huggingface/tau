@@ -1680,7 +1680,7 @@ def _download_progress(model_id: str, downloaded_bytes: int, total_bytes: int) -
     return LocalProgress(
         f"Downloading {model_id} on the llama.cpp server… "
         f"{_format_bytes(downloaded)} / {_format_bytes(total_bytes)} "
-        f"({_format_bytes(remaining)} remaining)",
+        f"({downloaded / total_bytes:.1%}; {_format_bytes(remaining)} remaining)",
         fraction=downloaded / total_bytes,
     )
 

@@ -1187,6 +1187,7 @@ async def test_router_download_reports_aggregate_byte_progress(tmp_path: Path) -
 
     fractions = [item.fraction for item in progress if item.fraction is not None]
     assert fractions == [0.35, 0.85]
+    assert "35.0%" in progress[0].message
     assert "65 B remaining" in progress[0].message
     assert result.committed is True
     await client.aclose()

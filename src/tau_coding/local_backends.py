@@ -539,6 +539,9 @@ class _Operation:
     signal: SimpleCancellationToken
     task: asyncio.Task[LocalOperationResult]
     progress: list[LocalProgress]
+    listeners: list[ProgressCallback]
+    latest_progress: LocalProgress | None = None
+    latest_fractional_progress: LocalProgress | None = None
     cancellation_requested: bool = False
 
 
@@ -669,6 +672,35 @@ class LocalBackendRegistry:
             token.backend_id == backend_id and operation == action and not state.task.done()
             for (token, operation), state in self._operations.items()
         )
+
+    def observe_progress(
+        self,
+        backend_id: str,
+        action: LocalAction,
+        callback: ProgressCallback,
+    ) -> Callable[[], None] | None:
+        """Observe one running action and replay its best current progress."""
+        state = next(
+            (
+                state
+                for (token, operation), state in self._operations.items()
+                if token.backend_id == backend_id and operation == action and not state.task.done()
+            ),
+            None,
+        )
+        if state is None:
+            return None
+        state.listeners.append(callback)
+        current = state.latest_fractional_progress or state.latest_progress
+        if current is not None:
+            with suppress(Exception):
+                callback(current)
+
+        def unsubscribe() -> None:
+            with suppress(ValueError):
+                state.listeners.remove(callback)
+
+        return unsubscribe
 
     def cancel(self, backend_id: str, action: LocalAction | None = None) -> bool:
         cancelled = False
@@ -873,6 +905,8 @@ class LocalBackendRegistry:
             self._cancel_token(token, action)
         signal = SimpleCancellationToken()
         progress_events: list[LocalProgress] = []
+        listeners = [progress] if progress is not None else []
+        operation: _Operation
         context = LocalOperationContext(
             signal=signal,
             action=action,
@@ -881,15 +915,18 @@ class LocalBackendRegistry:
             source_id=token.source_id,
             confirmation=confirmation,
             _is_current=lambda: self._token_is_current(token),
-            _progress=lambda item: _record_progress(
-                _redact_progress(item, secrets), progress_events, progress
-            ),
+            _progress=lambda item: _record_progress(_redact_progress(item, secrets), operation),
         )
         task = asyncio.create_task(
             self._invoke_operation(context, callback, progress_events, secrets),
             name=f"tau-local-backend:{token.source_id}:{token.backend_id}:{action}",
         )
-        operation = _Operation(signal=signal, task=task, progress=progress_events)
+        operation = _Operation(
+            signal=signal,
+            task=task,
+            progress=progress_events,
+            listeners=listeners,
+        )
         self._operations[key] = operation
         try:
             result = await task
@@ -1058,13 +1095,12 @@ def _validate_values(
     return LocalConfigValues(submitted, secret_keys=secret_keys), MappingProxyType(errors)
 
 
-def _record_progress(
-    item: LocalProgress,
-    events: list[LocalProgress],
-    callback: ProgressCallback | None,
-) -> None:
-    events.append(item)
-    if callback is not None:
+def _record_progress(item: LocalProgress, operation: _Operation) -> None:
+    operation.progress.append(item)
+    operation.latest_progress = item
+    if item.fraction is not None:
+        operation.latest_fractional_progress = item
+    for callback in tuple(operation.listeners):
         # A closing or replaced host must not turn backend work into a failed
         # transaction merely because progress rendering disappeared.
         with suppress(Exception):

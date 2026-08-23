@@ -67,8 +67,9 @@ token.
 
 Server-side downloads outlive the `/local` modal: Escape detaches the observer
 rather than sending `/models/unload`. The registry keeps supervising the task,
-and a reopened modal detects it and exposes an explicit cancel action. Known
-Hugging Face artifact sizes are carried into confirmation without persisting
+retains its latest determinate progress, and lets a reopened modal subscribe to
+updates and expose an explicit cancel action. Known Hugging Face artifact sizes
+are carried into confirmation without persisting
 search metadata.
 
 ## How to test
