@@ -6428,17 +6428,27 @@ async def test_tui_app_reload_appends_command_output_to_transcript() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_app_system_appends_command_output_to_transcript() -> None:
-    app = TauTuiApp(FakeSession())
+async def test_tui_app_system_opens_scrollable_command_output() -> None:
+    session = FakeSession()
+    session.system_prompt = "You are Tau.\n" + "\n".join(
+        f"Guideline {index}" for index in range(80)
+    )
+    app = TauTuiApp(session)
 
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(100, 20)) as pilot:
         prompt = app.query_one("#prompt")
         prompt.value = "/system"
         await pilot.press("enter")
         await pilot.pause()
 
-        assert not isinstance(app.screen, CommandOutputScreen)
-        assert app.state.items == [ChatItem(role="status", text="/system\nYou are Tau.")]
+        assert isinstance(app.screen, CommandOutputScreen)
+        assert app.screen.title_text == "/system"
+        assert app.screen.message == session.system_prompt
+        assert app.state.items == []
+
+        scroll = app.screen.query_one("#command-output-scroll", VerticalScroll)
+        assert scroll.max_scroll_y > 0
+        assert app.screen.focused is scroll
 
 
 @pytest.mark.anyio
