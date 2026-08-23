@@ -87,6 +87,9 @@ class BoundSession(Protocol):
     def inference_provider(self) -> str | None: ...
 
     @property
+    def inference_provider_mode(self) -> str: ...
+
+    @property
     def session_id(self) -> str | None: ...
 
     @property

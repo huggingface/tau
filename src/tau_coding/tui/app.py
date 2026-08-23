@@ -5091,7 +5091,9 @@ class TauTuiApp(App[None]):
                     and event.message.stop_reason == "error"
                 ):
                     _attach_diagnostic_log_path_to_error(self.state, self.session)
-                    _attach_retry_hint_to_error(self.state, event.message)
+                    will_auto_retry = getattr(self.session, "will_auto_retry", None)
+                    if not (callable(will_auto_retry) and will_auto_retry(event.message)):
+                        _attach_retry_hint_to_error(self.state, event.message)
                 elif (
                     isinstance(event, CompactionEndEvent)
                     and event.reason == "overflow"
@@ -7091,13 +7093,22 @@ def _create_startup_session_record(
             model=selection.model,
             provider_name=selection.provider.name,
             inference_provider=inference_provider,
+            inference_provider_mode="fixed",
         )
     except TypeError:
-        return manager.prepare_session(
-            cwd=cwd,
-            model=selection.model,
-            provider_name=selection.provider.name,
-        )
+        try:
+            return manager.prepare_session(
+                cwd=cwd,
+                model=selection.model,
+                provider_name=selection.provider.name,
+                inference_provider=inference_provider,
+            )
+        except TypeError:
+            return manager.prepare_session(
+                cwd=cwd,
+                model=selection.model,
+                provider_name=selection.provider.name,
+            )
 
 
 def _resolve_tui_startup_selection(
@@ -7226,6 +7237,15 @@ def _startup_inference_provider(
     return provider.inference_providers.get(selection.model)
 
 
+def _startup_inference_provider_mode(
+    selection: ProviderSelection,
+    record: CodingSessionRecord | None,
+) -> Literal["automatic", "fixed"]:
+    if record is not None and record.model == selection.model:
+        return record.inference_provider_mode
+    return "fixed" if _startup_inference_provider(selection, None) is not None else "automatic"
+
+
 async def run_tui_app(
     *,
     model: str | None,
@@ -7268,6 +7288,7 @@ async def run_tui_app(
     startup_error_notice: str | None = None
     runtime_provider_config: ProviderConfig | None = selection.provider
     inference_provider = _startup_inference_provider(selection, record)
+    inference_provider_mode = _startup_inference_provider_mode(selection, record)
     try:
         provider = create_model_provider(
             selection.provider,
@@ -7314,6 +7335,7 @@ async def run_tui_app(
                 session_manager=manager,
                 provider_name=selection.provider.name,
                 inference_provider=inference_provider,
+                inference_provider_mode=inference_provider_mode,
                 provider_settings=provider_settings,
                 runtime_provider_config=runtime_provider_config,
                 auto_compact_token_threshold=auto_compact_token_threshold,

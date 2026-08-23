@@ -102,6 +102,7 @@ class RecordingSession:
         self.model = "fake"
         self.provider_name = "fake"
         self.inference_provider: str | None = None
+        self.inference_provider_mode = "automatic"
         self.session_id = "session-1"
         self.system_prompt = "You are Tau."
         self.is_running = running
@@ -136,6 +137,7 @@ class RecordingSession:
 
     def set_inference_provider(self, route: str | None) -> str:
         self.inference_provider = route
+        self.inference_provider_mode = "fixed" if route is not None else "automatic"
         return route or "automatic (will pin after the next successful response)"
 
 
@@ -1954,11 +1956,14 @@ def test_extension_can_read_and_change_inference_provider(tmp_path: Path) -> Non
     runtime.bind(session)
 
     assert api.context.inference_provider is None
+    assert api.context.inference_provider_mode == "automatic"
     assert api.set_inference_provider("deepinfra") == "deepinfra"
     assert api.context.inference_provider == "deepinfra"
+    assert api.context.inference_provider_mode == "fixed"
     assert api.set_inference_provider(None) == (
         "automatic (will pin after the next successful response)"
     )
+    assert api.context.inference_provider_mode == "automatic"
 
 
 # -- reload staleness guard (Pi's assertActive/invalidate) ---------------------

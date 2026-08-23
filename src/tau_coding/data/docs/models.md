@@ -6,6 +6,8 @@ Tau separates provider/model streaming (`tau_ai`), the portable harness (`tau_ag
 
 Use `/login` and `/model` for built-in providers. The custom-provider flow supports OpenAI-compatible endpoints. Durable provider settings live under Tau's home directory; consult the published `website/content/guides/providers-and-models.md` in a Tau checkout for the current schema and authentication behavior.
 
+Hugging Face routing has two session modes. Automatic mode keeps the provider from the first successful response as a sticky route, but retries once through unsuffixed routing after that route exhausts retryable pre-output HTTP failures. A configured or extension-selected provider is fixed and never silently overridden. The external Hugging Face extension controls these modes with `/hf route`; core owns safe continuation, persistence, and reroute diagnostics.
+
 ## Changing the built-in catalog
 
 For changes to a first-party provider or model, use this workflow:

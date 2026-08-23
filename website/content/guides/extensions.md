@@ -154,7 +154,8 @@ def setup(tau):
 
     # read-only context
     tau.context.cwd, tau.context.model, tau.context.provider_name
-    tau.context.inference_provider             # Hugging Face route, or None
+    tau.context.inference_provider             # current Hugging Face route, or None
+    tau.context.inference_provider_mode        # "automatic" or "fixed"
     tau.context.session_id, tau.context.system_prompt
     tau.context.is_running, tau.context.has_ui
     tau.context.transcript   # parent conversation, deep-copied AgentMessages
@@ -172,9 +173,13 @@ def setup(tau):
 ```
 
 `set_inference_provider(route)` lets provider-specific extensions select a
-Hugging Face inference-provider route for the active session; pass `None` to
-return to automatic routing. Other providers reject the operation. The current
-pin is available as `context.inference_provider`.
+Hugging Face inference-provider route for the active session. A provider name
+sets `context.inference_provider_mode` to `"fixed"`, so Tau honors the explicit
+selection and does not automatically fail over. Passing `None` selects
+`"automatic"` mode: the next successful response becomes a sticky route that
+Tau may replace after an exhausted retryable pre-output failure. Other providers
+reject the operation. The current resolved route is available as
+`context.inference_provider`.
 
 `setup` must be a plain `def` (not `async def`). Event handlers may be sync
 or async and always receive `(event, context)`; the context is freshly created

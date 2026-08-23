@@ -146,6 +146,9 @@ class TuiEventAdapter:
                 self._pending_overflow_error = None
             return
         if isinstance(event, AutoRetryStartEvent):
+            if self.state.items and self.state.items[-1].role == "error":
+                self.state.items.pop()
+            self.state.error = None
             self.state.add_item("status", f"… {event.error_message}")
 
     def _flush(self) -> None:

@@ -434,8 +434,13 @@ def _status_command(context: CommandContext) -> CommandResult:
         f"Context window: {session.context_window_tokens}",
     ]
     if session.provider_name == "huggingface":
-        route = getattr(session, "inference_provider", None) or "automatic"
-        lines.append(f"Hugging Face inference provider: {route}")
+        route = getattr(session, "inference_provider", None)
+        mode = getattr(session, "inference_provider_mode", "fixed" if route else "automatic")
+        if mode == "automatic":
+            route_status = f"automatic (currently {route})" if route else "automatic"
+        else:
+            route_status = f"{route} (fixed)" if route else "fixed"
+        lines.append(f"Hugging Face inference provider: {route_status}")
     context_window_source = getattr(session, "context_window_source", None)
     if context_window_source:
         lines.append(f"Context window source: {context_window_source}")
