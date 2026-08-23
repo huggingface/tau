@@ -1558,6 +1558,7 @@ _SYSTEM_PROMPT_TAG_PATTERN = re.compile(
 )
 _SYSTEM_PROMPT_FENCE_PATTERN = re.compile(r"^ {0,3}(?P<marker>`{3,}|~{3,})")
 _SYSTEM_PROMPT_INDENTED_CODE_PATTERN = re.compile(r"^(?: {4,}|[ ]*\t)")
+_SYSTEM_PROMPT_URI_AUTOLINK_PATTERN = re.compile(r"<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\s]+>")
 
 
 def _system_prompt_markdown(text: str) -> str:
@@ -1587,12 +1588,16 @@ def _system_prompt_markdown(text: str) -> str:
 
 
 def _system_prompt_protected_ranges(text: str) -> tuple[tuple[int, int], ...]:
-    """Return code-block and inline-code ranges in *text*."""
+    """Return Markdown ranges that must not be rewritten."""
     block_ranges = [
         *_system_prompt_fenced_ranges(text),
         *_system_prompt_indented_code_ranges(text),
     ]
-    ranges = [*block_ranges, *_system_prompt_inline_code_ranges(text, block_ranges)]
+    ranges = [
+        *block_ranges,
+        *_system_prompt_uri_autolink_ranges(text),
+        *_system_prompt_inline_code_ranges(text, block_ranges),
+    ]
     return tuple(sorted(ranges))
 
 
@@ -1649,6 +1654,13 @@ def _system_prompt_indented_code_ranges(text: str) -> tuple[tuple[int, int], ...
             ranges.append((offset, offset + len(line)))
         offset += len(line)
     return tuple(ranges)
+
+
+def _system_prompt_uri_autolink_ranges(text: str) -> tuple[tuple[int, int], ...]:
+    """Find CommonMark URI autolinks, including schemes without ``//``."""
+    return tuple(
+        (match.start(), match.end()) for match in _SYSTEM_PROMPT_URI_AUTOLINK_PATTERN.finditer(text)
+    )
 
 
 def _system_prompt_inline_code_ranges(

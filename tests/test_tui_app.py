@@ -1538,6 +1538,14 @@ def test_system_prompt_markdown_skips_tags_in_indented_code_blocks() -> None:
     assert _system_prompt_markdown(prompt) == "    <project>\n\n`<visible>`"
 
 
+def test_system_prompt_markdown_preserves_uri_autolinks_without_double_slashes() -> None:
+    prompt = "<http:foo> <tel:123456> <urn:isbn:9780141036144> <project>"
+
+    assert _system_prompt_markdown(prompt) == (
+        "<http:foo> <tel:123456> <urn:isbn:9780141036144> `<project>`"
+    )
+
+
 def test_textual_markdown_uses_theme_highlight_and_aqua_inline_code() -> None:
     variables = _theme_css_variables(TAU_LIGHT_THEME)
 
