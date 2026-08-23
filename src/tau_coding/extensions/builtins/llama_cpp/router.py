@@ -7,10 +7,11 @@ model discovery in the owning service.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal, TypeGuard, cast
 
 import httpx
 
@@ -44,6 +45,8 @@ class RouterModel:
     display_name: str | None = None
     input_modalities: tuple[Literal["text", "image"], ...] | None = None
     failed: bool = False
+    downloaded_bytes: int | None = None
+    download_total_bytes: int | None = None
 
 
 async def detect_router(
@@ -135,16 +138,54 @@ async def list_router_models(
                 tuple[Literal["text", "image"], ...], tuple(dict.fromkeys(modalities_raw))
             )
         display = raw.get("name", raw.get("display_name"))
+        downloaded_bytes, download_total_bytes = _download_progress(status)
         result.append(
             RouterModel(
-                model_id,
-                state,
-                display if isinstance(display, str) and display.strip() else model_id,
-                modalities,
-                failed,
+                id=model_id,
+                state=state,
+                display_name=(
+                    display if isinstance(display, str) and display.strip() else model_id
+                ),
+                input_modalities=modalities,
+                failed=failed,
+                downloaded_bytes=downloaded_bytes,
+                download_total_bytes=download_total_bytes,
             )
         )
     return tuple(result)
+
+
+def _download_progress(status: object) -> tuple[int | None, int | None]:
+    if not isinstance(status, Mapping):
+        return None, None
+    progress = status.get("progress")
+    if not isinstance(progress, Mapping):
+        return None, None
+    downloaded = 0.0
+    total = 0.0
+    found = False
+    for value in progress.values():
+        if not isinstance(value, Mapping):
+            continue
+        done = value.get("done")
+        size = value.get("total")
+        if not _is_non_negative_number(done) or not _is_non_negative_number(size):
+            continue
+        downloaded += float(done)
+        total += float(size)
+        found = True
+    if not found or total <= 0:
+        return None, None
+    return int(downloaded), int(total)
+
+
+def _is_non_negative_number(value: object) -> TypeGuard[int | float]:
+    return (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value >= 0
+    )
 
 
 async def mutate_router_model(

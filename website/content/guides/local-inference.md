@@ -97,10 +97,11 @@ mutation. Single-model servers remain fully supported.
 
 After the automatic probe or Refresh confirms a compatible router, `/local`
 lists loaded, sleeping, unloaded, loading, downloading, failed, and unknown
-server states in an arrow-key navigable picker. Only loaded or sleeping models
-enter `/model`. Press Enter on an unloaded row to review a confirmation before
-loading; Enter on a loaded/sleeping row offers use or unload. Actions are always
-explicit:
+server states in a dedicated model section. A separate actions section contains
+Hugging Face search/download, configuration, refresh, Doctor, and reset. Arrow
+keys move within and between both sections. Only loaded or sleeping models enter
+`/model`. Press Enter on an unloaded row to review a confirmation before loading;
+Enter on a loaded/sleeping row offers use or unload. Actions are always explicit:
 
 - Confirming an unloaded row waits until refreshed router state reports loaded
   or sleeping. If other models are active, choose whether to keep or unload
@@ -113,7 +114,9 @@ explicit:
 - **Download an exact Hugging Face model…** accepts
   `owner/repository[:quantization]`. Both search and exact-ID paths open a
   separate safe-default confirmation before requesting the server-side
-  download. The completed model appears as an unloaded row ready to select.
+  download. During transfer, `/local` shows the router-reported percentage,
+  transferred bytes, and bytes remaining. The completed model appears as an
+  unloaded row ready to select.
 
 Progress is bounded and cancellable. llama.cpp documents `/models/unload` as the
 cancel operation for load/download, so Tau requests it and then refreshes. On a

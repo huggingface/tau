@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 from textual.app import App
-from textual.widgets import Input, Label, ListView, Select, Static
+from textual.widgets import Input, Label, ListView, ProgressBar, Select, Static
 
 from tau_coding.extensions import (
     DynamicProvider,
@@ -18,6 +18,7 @@ from tau_coding.extensions import (
     LocalConfigureSpec,
     LocalModel,
     LocalOperationResult,
+    LocalProgress,
     LocalSearchResult,
     NoAuth,
     OpenAICompatibleTransport,
@@ -52,6 +53,7 @@ def _registry(
     reset=None,
     load_model=None,
     unload_model=None,
+    download_model=None,
     recommended: bool = False,
 ) -> LocalBackendRegistry:
     providers = DynamicProviderRegistry(generation_id="generation")
@@ -92,6 +94,7 @@ def _registry(
             reset=reset,
             load_model=load_model,
             unload_model=unload_model,
+            download_model=download_model,
             recommended=recommended,
         ),
     )
@@ -164,7 +167,10 @@ async def test_backend_open_auto_refreshes_and_renders_clickable_models() -> Non
         screen = app.screen
         status = screen.query_one("#local-backend-status", Static).render().plain
         assert "http://127.0.0.1:8080/v1" in status
-        model_list = screen.query_one("#local-backend-menu", ListView)
+        model_list = screen.query_one("#local-model-list", ListView)
+        action_menu = screen.query_one("#local-action-menu", ListView)
+        assert model_list is not action_menu
+        assert "Refresh" in action_menu.children[0].query_one(Label).render().plain
         label = model_list.children[0].query_one(Label).render().plain
         assert "Downloaded model" in label
         assert "unloaded" in label
@@ -173,6 +179,57 @@ async def test_backend_open_auto_refreshes_and_renders_clickable_models() -> Non
         await pilot.pause()
         assert loaded == ["downloaded"]
         assert "loaded" in model_list.children[0].query_one(Label).render().plain
+
+    await registry.aclose()
+
+
+async def test_download_progress_renders_fraction_and_remaining_detail() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def refresh(context):
+        del context
+        return LocalBackendStatus(
+            state="ready",
+            actions=("refresh", "download_model"),
+        )
+
+    async def download_model(model_id, context):
+        assert model_id == "owner/repo:Q4_K_M"
+        context.report_progress(
+            LocalProgress(
+                "Downloading owner/repo:Q4_K_M… 4.0 GiB remaining",
+                fraction=0.25,
+            )
+        )
+        started.set()
+        await release.wait()
+        return LocalOperationResult(message="Download complete.", committed=True)
+
+    registry = _registry(refresh=refresh, download_model=download_model)
+    app = _Host()
+
+    async with app.run_test() as pilot:
+        screen = LocalBackendScreen(registry, "backend", theme=TAU_DARK_THEME)
+        app.push_screen(screen)
+        await pilot.pause()
+        screen._start_operation(
+            "download_model",
+            model_id="owner/repo:Q4_K_M",
+            confirmation="download",
+        )
+        await started.wait()
+        await pilot.pause()
+
+        progress = screen.query_one("#local-backend-progress", Static).render().plain
+        progress_bar = screen.query_one("#local-backend-progress-bar", ProgressBar)
+        assert "4.0 GiB remaining" in progress
+        assert progress_bar.styles.display == "block"
+        assert progress_bar.progress == 0.25
+
+        release.set()
+        await screen._worker
+        assert progress_bar.styles.display == "none"
 
     await registry.aclose()
 
@@ -206,7 +263,7 @@ async def test_clicking_loaded_model_uses_exact_model_id() -> None:
             )
         )
         await pilot.pause()
-        model_list = app.screen.query_one("#local-backend-menu", ListView)
+        model_list = app.screen.query_one("#local-model-list", ListView)
         model_list.index = 1
         await pilot.press("enter")
         await pilot.pause()

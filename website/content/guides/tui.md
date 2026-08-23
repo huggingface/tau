@@ -73,11 +73,12 @@ The full list is in the [Slash commands reference]({{< relref "../reference/slas
 still requires confirmation; a recommended backend is only a marker. Tau's
 built-in `llama.cpp` backend automatically probes its one effective
 saved/environment/default endpoint; **Configure** accepts another URL and an
-optional secret key. It renders models and actions in the same arrow-key
-navigable picker; Enter selects and Escape closes. Expensive load/download
-operations require a separate safe-default confirmation. The picker exposes
-Hugging Face search/download, load/unload, status, refresh, use, Doctor, and reset
-when supported.
+optional secret key. It renders models and backend actions as separate
+arrow-key navigable sections; Enter selects and Escape closes. Expensive
+load/download operations require a separate safe-default confirmation, and
+active downloads show router-reported percentage and byte progress. The actions
+section exposes Hugging Face search/download, status, refresh, Doctor, and reset;
+the model section owns load, use, and unload.
 
 Configure, refresh, status, Doctor, and reset work asynchronously, show
 structured progress/diagnostics, and are cancelled when the screen closes.

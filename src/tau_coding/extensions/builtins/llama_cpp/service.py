@@ -88,6 +88,7 @@ LLAMA_CPP_API_KEY_ENV = "LLAMA_API_KEY"
 DEFAULT_LLAMA_CPP_TIMEOUT_SECONDS = 5.0
 LLAMA_CPP_ROUTER_POLL_SECONDS = 0.1
 LLAMA_CPP_ROUTER_RECONCILE_TIMEOUT_SECONDS = 30.0
+LLAMA_CPP_ROUTER_DOWNLOAD_TIMEOUT_SECONDS = 4 * 60 * 60.0
 
 
 class LlamaCppError(RuntimeError):
@@ -740,6 +741,7 @@ class LlamaCppService:
                 {"unloaded", "loaded", "sleeping", "failed"},
                 context,
                 minimum_polls=2,
+                timeout_seconds=LLAMA_CPP_ROUTER_DOWNLOAD_TIMEOUT_SECONDS,
             )
             reconciled = _router_model(models, model_id)
             if reconciled is None or reconciled.state == "failed":
@@ -830,8 +832,9 @@ class LlamaCppService:
         context: LocalOperationContext,
         *,
         minimum_polls: int = 1,
+        timeout_seconds: float = LLAMA_CPP_ROUTER_RECONCILE_TIMEOUT_SECONDS,
     ) -> tuple[RouterModel, ...]:
-        deadline = asyncio.get_running_loop().time() + LLAMA_CPP_ROUTER_RECONCILE_TIMEOUT_SECONDS
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
         polls = 0
         while True:
             if context.cancelled:
@@ -1616,6 +1619,19 @@ def _router_model(models: tuple[RouterModel, ...], model_id: str) -> RouterModel
 
 
 def _router_progress(model: RouterModel) -> LocalProgress:
+    if (
+        model.state == "downloading"
+        and model.downloaded_bytes is not None
+        and model.download_total_bytes is not None
+    ):
+        downloaded = min(model.downloaded_bytes, model.download_total_bytes)
+        remaining = model.download_total_bytes - downloaded
+        return LocalProgress(
+            f"Downloading {model.id} on the llama.cpp server… "
+            f"{_format_bytes(downloaded)} / {_format_bytes(model.download_total_bytes)} "
+            f"({_format_bytes(remaining)} remaining)",
+            fraction=downloaded / model.download_total_bytes,
+        )
     messages = {
         "loading": f"Loading {model.id}…",
         "downloading": f"Downloading {model.id} on the llama.cpp server…",
@@ -1628,6 +1644,15 @@ def _router_progress(model: RouterModel) -> LocalProgress:
     return LocalProgress(
         messages[model.state], done=model.state in {"loaded", "sleeping", "unloaded", "failed"}
     )
+
+
+def _format_bytes(value: int) -> str:
+    size = float(value)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if size < 1024 or unit == "TiB":
+            return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+        size /= 1024
+    return f"{value} B"
 
 
 def _selected_model(

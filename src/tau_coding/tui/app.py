@@ -3446,7 +3446,8 @@ class TauTuiApp(App[None]):
     #local-backend-list,
     #local-backend-status,
     #local-backend-progress,
-    #local-backend-menu,
+    #local-model-list,
+    #local-action-menu,
     #local-confirm-list,
     #local-choice-list,
     #local-search-results-list,
@@ -3459,12 +3460,30 @@ class TauTuiApp(App[None]):
     }
 
     #local-backend-list,
-    #local-backend-menu,
+    #local-model-list,
+    #local-action-menu,
     #local-confirm-list,
     #local-choice-list,
     #local-search-results-list {
         height: auto;
         max-height: 16;
+    }
+
+    #local-model-list,
+    #local-action-menu {
+        max-height: 10;
+    }
+
+    #local-model-section-title,
+    #local-action-section-title {
+        height: 1;
+        margin-top: 1;
+        color: $tau-chrome-text;
+        text-style: bold;
+    }
+
+    #local-backend-progress-bar {
+        margin-top: 1;
     }
 
     #local-backend-picker-footer,

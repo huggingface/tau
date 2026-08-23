@@ -17,7 +17,7 @@ from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.events import Key
 from textual.screen import ModalScreen
-from textual.widgets import Input, Label, ListItem, ListView, Select, Static
+from textual.widgets import Input, Label, ListItem, ListView, ProgressBar, Select, Static
 
 from tau_coding.local_backends import (
     LocalAction,
@@ -174,7 +174,8 @@ class LocalBackendScreen(ModalScreen[None]):
         self._is_idle = is_idle or (lambda: True)
         self.status: LocalBackendStatus | None = None
         self._selected_model_id: str | None = None
-        self._menu_items: tuple[tuple[str, str], ...] = ()
+        self._model_items: tuple[str, ...] = ()
+        self._action_items: tuple[tuple[str, str], ...] = ()
         self._worker: asyncio.Task[None] | None = None
         self._use_task: asyncio.Task[None] | None = None
         self._closing = False
@@ -187,16 +188,26 @@ class LocalBackendScreen(ModalScreen[None]):
                 id="local-backend-help",
             )
             yield Static("Looking for a local server…", id="local-backend-status")
-            yield ListView(id="local-backend-menu")
+            yield Static("Models", id="local-model-section-title")
+            yield ListView(id="local-model-list")
+            yield Static("Actions", id="local-action-section-title")
+            yield ListView(id="local-action-menu")
             yield Static("", id="local-backend-progress")
+            yield ProgressBar(
+                total=1,
+                show_percentage=True,
+                show_eta=False,
+                id="local-backend-progress-bar",
+            )
             yield Static(
-                "↑/↓ navigate - Enter selects - Escape closes",
+                "↑/↓ navigate across sections - Enter selects - Escape closes",
                 id="local-backend-footer",
             )
 
     async def on_mount(self) -> None:
-        await self._render_menu(None)
-        self.query_one("#local-backend-menu", ListView).focus()
+        await self._render_sections(None)
+        self.query_one("#local-action-menu", ListView).focus()
+        self.query_one("#local-backend-progress-bar", ProgressBar).styles.display = "none"
         # Opening a backend is an explicit user action, so probe its effective
         # saved/environment/default endpoint immediately. Backends still own
         # which endpoint that means; the generic host never scans.
@@ -222,35 +233,53 @@ class LocalBackendScreen(ModalScreen[None]):
             self.action_select_cursor()
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
-        if event.list_view.id != "local-backend-menu":
-            return
-        self._sync_selected_model()
+        if event.list_view.id == "local-model-list":
+            self._sync_selected_model()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        if event.list_view.id != "local-backend-menu":
-            return
         event.stop()
-        self._activate_menu_item(event.index)
+        if event.list_view.id == "local-model-list":
+            if 0 <= event.index < len(self._model_items):
+                self._selected_model_id = self._model_items[event.index]
+                self._activate_selected_model()
+        elif event.list_view.id == "local-action-menu":
+            self._activate_action(event.index)
 
     def action_cursor_up(self) -> None:
-        self.query_one("#local-backend-menu", ListView).action_cursor_up()
+        models = self.query_one("#local-model-list", ListView)
+        actions = self.query_one("#local-action-menu", ListView)
+        if actions.has_focus and self._model_items and actions.index in {None, 0}:
+            models.index = len(self._model_items) - 1
+            models.focus()
+            self._sync_selected_model()
+            return
+        self._focused_list().action_cursor_up()
         self._sync_selected_model()
 
     def action_cursor_down(self) -> None:
-        self.query_one("#local-backend-menu", ListView).action_cursor_down()
+        models = self.query_one("#local-model-list", ListView)
+        actions = self.query_one("#local-action-menu", ListView)
+        if models.has_focus and self._action_items and models.index == len(self._model_items) - 1:
+            actions.index = 0
+            actions.focus()
+            return
+        self._focused_list().action_cursor_down()
         self._sync_selected_model()
 
     def action_select_cursor(self) -> None:
-        self.query_one("#local-backend-menu", ListView).action_select_cursor()
+        self._focused_list().action_select_cursor()
 
-    def _activate_menu_item(self, index: int) -> None:
-        if not 0 <= index < len(self._menu_items):
+    def _focused_list(self) -> ListView:
+        models = self.query_one("#local-model-list", ListView)
+        if models.has_focus:
+            return models
+        return self.query_one("#local-action-menu", ListView)
+
+    def _activate_action(self, index: int) -> None:
+        if not 0 <= index < len(self._action_items):
             return
-        token = self._menu_items[index][0]
-        if token.startswith("model:"):
-            self._selected_model_id = token.removeprefix("model:")
-            self._activate_selected_model()
-        elif token == "configure":
+        token = self._action_items[index][0]
+        if token == "configure":
             self._open_configure()
         elif token == "refresh":
             self._start_operation("refresh")
@@ -386,13 +415,10 @@ class LocalBackendScreen(ModalScreen[None]):
             self._start_operation("unload_model", model_id=model_id)
 
     def _sync_selected_model(self) -> None:
-        menu = self.query_one("#local-backend-menu", ListView)
-        index = menu.index
-        if index is None or not 0 <= index < len(self._menu_items):
-            return
-        token = self._menu_items[index][0]
-        if token.startswith("model:"):
-            self._selected_model_id = token.removeprefix("model:")
+        models = self.query_one("#local-model-list", ListView)
+        index = models.index
+        if index is not None and 0 <= index < len(self._model_items):
+            self._selected_model_id = self._model_items[index]
 
     def _start_operation(
         self,
@@ -425,7 +451,7 @@ class LocalBackendScreen(ModalScreen[None]):
         self._set_progress("Working…")
 
         def progress(item: LocalProgress) -> None:
-            self._set_progress(item.message)
+            self._set_progress(item.message, fraction=item.fraction)
 
         try:
             if action == "configure":
@@ -612,19 +638,37 @@ class LocalBackendScreen(ModalScreen[None]):
                 else diagnostic.message
             )
         self.query_one("#local-backend-status", Static).update("\n".join(lines))
-        await self._render_menu(status)
+        await self._render_sections(status)
 
-    async def _render_menu(self, status: LocalBackendStatus | None) -> None:
-        menu = self.query_one("#local-backend-menu", ListView)
-        prior_token = None
-        if menu.index is not None and 0 <= menu.index < len(self._menu_items):
-            prior_token = self._menu_items[menu.index][0]
+    async def _render_sections(self, status: LocalBackendStatus | None) -> None:
+        model_list = self.query_one("#local-model-list", ListView)
+        action_menu = self.query_one("#local-action-menu", ListView)
+        action_focused = action_menu.has_focus
+        had_models = bool(self._model_items)
+        prior_action = None
+        if action_menu.index is not None and 0 <= action_menu.index < len(self._action_items):
+            prior_action = self._action_items[action_menu.index][0]
+
         actions = set(status.actions) if status is not None else {"configure", "refresh"}
         models = status.models if status is not None else ()
         selected_model = status.selected_model if status is not None else None
-        items: list[tuple[str, str]] = [
-            (f"model:{model.id}", _model_label(model, selected_model)) for model in models
-        ]
+        self._model_items = tuple(model.id for model in models)
+        await model_list.clear()
+        await model_list.extend(
+            ListItem(Label(_model_label(model, selected_model), markup=False)) for model in models
+        )
+        model_list.styles.display = "block" if models else "none"
+        if models:
+            preferred_model = self._selected_model_id or selected_model or models[0].id
+            model_list.index = next(
+                (index for index, model in enumerate(models) if model.id == preferred_model),
+                0,
+            )
+            self._sync_selected_model()
+        else:
+            model_list.index = None
+            self._selected_model_id = None
+
         action_labels = (
             ("search_models", "Search Hugging Face models…"),
             ("download_model", "Download an exact Hugging Face model…"),
@@ -633,33 +677,46 @@ class LocalBackendScreen(ModalScreen[None]):
             ("doctor", "Run Doctor"),
             ("reset", "Reset integration settings…"),
         )
-        items.extend((action, label) for action, label in action_labels if action in actions)
-        self._menu_items = tuple(items)
-        await menu.clear()
-        await menu.extend(ListItem(Label(label, markup=False)) for _, label in self._menu_items)
-        if not self._menu_items:
-            menu.index = None
-            return
-        preferred = prior_token or (
-            f"model:{self._selected_model_id}" if self._selected_model_id else None
+        self._action_items = tuple(
+            (action, label) for action, label in action_labels if action in actions
         )
-        if models and self._selected_model_id is None:
-            preferred = f"model:{selected_model or models[0].id}"
-        menu.index = next(
-            (index for index, (token, _) in enumerate(self._menu_items) if token == preferred),
-            0,
+        await action_menu.clear()
+        await action_menu.extend(
+            ListItem(Label(label, markup=False)) for _, label in self._action_items
         )
-        self._sync_selected_model()
+        action_menu.styles.display = "block" if self._action_items else "none"
+        if self._action_items:
+            action_menu.index = next(
+                (
+                    index
+                    for index, (token, _) in enumerate(self._action_items)
+                    if token == prior_action
+                ),
+                0,
+            )
+        else:
+            action_menu.index = None
+
+        if models and (not had_models or not action_focused):
+            model_list.focus()
+        elif self._action_items:
+            action_menu.focus()
+        elif models:
+            model_list.focus()
 
     @property
     def _can_update_ui(self) -> bool:
         return not self._closing and self.is_mounted and self.is_attached and self.is_current
 
-    def _set_progress(self, message: str) -> None:
+    def _set_progress(self, message: str, *, fraction: float | None = None) -> None:
         if not self._can_update_ui:
             return
         with suppress(NoMatches):
             self.query_one("#local-backend-progress", Static).update(message)
+            progress_bar = self.query_one("#local-backend-progress-bar", ProgressBar)
+            progress_bar.styles.display = "block" if fraction is not None else "none"
+            if fraction is not None:
+                progress_bar.update(total=1, progress=fraction)
 
     def _show_message(self, message: str, level: str) -> None:
         if not self._can_update_ui:

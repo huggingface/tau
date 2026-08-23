@@ -4148,12 +4148,21 @@ async def test_local_modals_receive_app_level_arrow_navigation() -> None:
         await pilot.pause()
         assert isinstance(app.screen, LocalBackendScreen)
         assert len(app.screen_stack) == 2
-        menu = app.screen.query_one("#local-backend-menu", ListView)
-        assert menu.index == 0
+        model_list = app.screen.query_one("#local-model-list", ListView)
+        action_menu = app.screen.query_one("#local-action-menu", ListView)
+        assert model_list.has_focus
+        assert model_list.index == 0
+        assert action_menu.index == 0
         await pilot.press("down")
-        assert menu.index == 1
+        assert model_list.index == 1
         await pilot.press("up")
-        assert menu.index == 0
+        assert model_list.index == 0
+        await pilot.press("down", "down")
+        assert action_menu.has_focus
+        assert action_menu.index == 0
+        await pilot.press("up")
+        assert model_list.has_focus
+        assert model_list.index == 1
 
         await pilot.press("escape")
         await pilot.pause()

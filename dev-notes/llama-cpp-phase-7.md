@@ -14,8 +14,9 @@ Phase 7 completes issue #602 without changing the Phase 5 single-model path.
   documented `/models`, `/models/load`, and `/models/unload` requests. Load
   waits for reconciled loaded/sleeping state. Unload and download require
   confirmation; loading with active peers asks whether to keep or unload them.
-- Polling emits bounded progress. Cancellation requests the documented unload
-  operation for load/download and refreshes state. Timeout or connection loss
+- Polling emits bounded progress, including aggregate router-reported byte and
+  percentage progress for downloads. Cancellation requests the documented
+  unload operation for load/download and refreshes state. Timeout or connection loss
   attempts refresh and never replays a mutation.
 - Hugging Face search/details use its public API through the injected HTTP
   client. Results include repository gating and GGUF quantization/size data;
@@ -28,8 +29,8 @@ Phase 7 completes issue #602 without changing the Phase 5 single-model path.
   as unavailable, cannot be selected/cycled, and cause no discovery or mutation.
 - Generic `/local` contracts gained backend-neutral search artifacts and
   structured confirmations. After explicit backend confirmation, the Textual
-  host probes its effective endpoint, renders model states and actions in an
-  arrow-key navigable picker, and lets users select search variants for download
+  host probes its effective endpoint, renders model states and backend actions
+  in separate arrow-key navigable sections, and lets users select search variants for download
   without router, Hugging Face, GGUF, or quantization branches in host logic.
   Expensive load/download operations use backend-owned confirmations with Cancel
   preselected.

@@ -33,7 +33,7 @@ from tau_coding.extensions.builtins.llama_cpp.state import (
     LlamaCppStoredModel,
 )
 from tau_coding.extensions.providers import ProviderRefreshContext, ResolvedProviderAuth
-from tau_coding.local_backends import LocalOperationContext
+from tau_coding.local_backends import LocalOperationContext, LocalProgress
 from tau_coding.paths import TauPaths
 from tau_coding.provider_runtime import create_dynamic_model_provider
 from tau_coding.resources import TauResourcePaths
@@ -49,7 +49,12 @@ MODEL = LlamaCppStoredModel(
 )
 
 
-def _context(action: str = "refresh", *, confirmation: str | None = None) -> LocalOperationContext:
+def _context(
+    action: str = "refresh",
+    *,
+    confirmation: str | None = None,
+    progress: Callable[[LocalProgress], None] | None = None,
+) -> LocalOperationContext:
     return LocalOperationContext(
         signal=SimpleCancellationToken(),
         action=action,  # type: ignore[arg-type]
@@ -58,7 +63,7 @@ def _context(action: str = "refresh", *, confirmation: str | None = None) -> Loc
         source_id="built-in:llama.cpp",
         confirmation=confirmation,
         _is_current=lambda: True,
-        _progress=lambda _: None,
+        _progress=progress or (lambda _: None),
     )
 
 
@@ -1068,6 +1073,84 @@ async def test_fast_router_download_finishes_without_observing_intermediate_stat
     assert result.committed is True
     assert result.backend_status is not None
     assert result.backend_status.models[0].state == "unloaded"
+    await client.aclose()
+
+
+@pytest.mark.anyio
+async def test_router_download_reports_aggregate_byte_progress(tmp_path: Path) -> None:
+    download_poll = 0
+    started = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal download_poll, started
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.url.path == "/props":
+            return httpx.Response(200, json={"role": "router", "build_info": "b10000-test"})
+        if request.url.path == "/models" and request.method == "POST":
+            started = True
+            return httpx.Response(200, json={"success": True})
+        if request.url.path == "/models" and request.method == "GET":
+            if not started:
+                return httpx.Response(200, json={"data": []})
+            download_poll += 1
+            if download_poll >= 3:
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {
+                                "id": "owner/repo:Q4_K_M",
+                                "status": {"value": "unloaded"},
+                            }
+                        ]
+                    },
+                )
+            done = 25 if download_poll == 1 else 75
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "owner/repo:Q4_K_M",
+                            "status": {
+                                "value": "downloading",
+                                "progress": {
+                                    "model-00001.gguf": {"done": done, "total": 80},
+                                    "model-00002.gguf": {"done": 10, "total": 20},
+                                },
+                            },
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(404)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    service, state_store, credentials = _service(tmp_path, client=client)
+    state_store.save(_state(selected_model=None, models=()))
+    service = LlamaCppService(
+        state_store=state_store,
+        credential_store=credentials,
+        client=client,
+        environment={},
+    )
+    await service.refresh(_context())
+    progress: list[LocalProgress] = []
+
+    result = await service.download_model(
+        "owner/repo:Q4_K_M",
+        _context(
+            "download_model",
+            confirmation="download",
+            progress=progress.append,
+        ),
+    )
+
+    fractions = [item.fraction for item in progress if item.fraction is not None]
+    assert fractions == [0.35, 0.85]
+    assert "65 B remaining" in progress[0].message
+    assert result.committed is True
     await client.aclose()
 
 
