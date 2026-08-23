@@ -13,10 +13,11 @@ from typing import ClassVar, Literal, cast
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.css.query import NoMatches
+from textual.events import Key
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, ListItem, ListView, Select, Static
+from textual.widgets import Input, Label, ListItem, ListView, Select, Static
 
 from tau_coding.local_backends import (
     LocalAction,
@@ -24,6 +25,7 @@ from tau_coding.local_backends import (
     LocalBackendStatus,
     LocalConfigureSpec,
     LocalConfigValues,
+    LocalConfirmationChoice,
     LocalConfirmationRequest,
     LocalModel,
     LocalOperationResult,
@@ -69,16 +71,17 @@ class LocalBackendPickerScreen(ModalScreen[str | None]):
                 yield Static("No local backends are available.", id="local-backend-empty")
             else:
                 yield Static(
-                    "Choose a backend, then confirm. The recommended choice is marked.",
+                    "Choose a backend. The recommended choice is marked.",
                     id="local-backend-picker-help",
                 )
                 yield ListView(
                     *[ListItem(Label(self._label(view), markup=False)) for view in self.views],
                     id="local-backend-list",
                 )
-                with Horizontal(id="local-backend-picker-buttons"):
-                    yield Button("Confirm", id="local-backend-confirm", variant="primary")
-                    yield Button("Cancel", id="local-backend-cancel")
+                yield Static(
+                    "↑/↓ navigate - Enter selects - Escape closes",
+                    id="local-backend-picker-footer",
+                )
 
     def on_mount(self) -> None:
         if self.views:
@@ -86,16 +89,21 @@ class LocalBackendPickerScreen(ModalScreen[str | None]):
             backend_list.index = self._selected_index()
             backend_list.focus()
 
+    def on_key(self, event: Key) -> None:
+        if event.key == "up":
+            event.stop()
+            self.action_cursor_up()
+        elif event.key == "down":
+            event.stop()
+            self.action_cursor_down()
+        elif event.key == "enter":
+            event.stop()
+            self.action_select_cursor()
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         event.stop()
-        self._sync_selected()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        if event.button.id == "local-backend-confirm":
-            self.action_confirm()
-        elif event.button.id == "local-backend-cancel":
-            self.action_cancel()
+        self.selected = self.views[event.index].backend.id
+        self.dismiss(self.selected)
 
     def action_cursor_up(self) -> None:
         self.query_one("#local-backend-list", ListView).action_cursor_up()
@@ -105,10 +113,11 @@ class LocalBackendPickerScreen(ModalScreen[str | None]):
         self.query_one("#local-backend-list", ListView).action_cursor_down()
         self._sync_selected()
 
+    def action_select_cursor(self) -> None:
+        self.query_one("#local-backend-list", ListView).action_select_cursor()
+
     def action_confirm(self) -> None:
-        self._sync_selected()
-        if self.selected is not None:
-            self.dismiss(self.selected)
+        self.action_select_cursor()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -141,6 +150,9 @@ class LocalBackendScreen(ModalScreen[None]):
 
     BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
         Binding("escape", "cancel", "Close"),
+        Binding("up", "cursor_up", "Up", show=False),
+        Binding("down", "cursor_down", "Down", show=False),
+        Binding("enter", "select_cursor", "Select", show=False),
     ]
 
     def __init__(
@@ -162,6 +174,7 @@ class LocalBackendScreen(ModalScreen[None]):
         self._is_idle = is_idle or (lambda: True)
         self.status: LocalBackendStatus | None = None
         self._selected_model_id: str | None = None
+        self._menu_items: tuple[tuple[str, str], ...] = ()
         self._worker: asyncio.Task[None] | None = None
         self._use_task: asyncio.Task[None] | None = None
         self._closing = False
@@ -170,34 +183,20 @@ class LocalBackendScreen(ModalScreen[None]):
         with Vertical(id="local-backend-screen"):
             yield Static("Local backend", id="local-backend-title")
             yield Static(
-                "Select an action to inspect or change this backend.",
+                "Choose a model or backend action.",
                 id="local-backend-help",
             )
             yield Static("Looking for a local server…", id="local-backend-status")
-            yield Static("Models", id="local-model-list-title")
-            yield ListView(id="local-model-list")
-            with Horizontal(id="local-backend-actions"):
-                yield Button("Configure", id="local-action-configure")
-                yield Button("Refresh", id="local-action-refresh")
-                if (view := self.registry.effective(self.backend_id)) is not None:
-                    if view.backend.doctor is not None:
-                        yield Button("Doctor", id="local-action-doctor")
-                    if view.backend.reset is not None:
-                        yield Button("Reset", id="local-action-reset")
-                    if view.backend.load_model is not None:
-                        yield Button("Load model", id="local-action-load-model")
-                    if view.backend.unload_model is not None:
-                        yield Button("Unload model", id="local-action-unload-model")
-                    if view.backend.download_model is not None:
-                        yield Button("Download model", id="local-action-download-model")
-                    if view.backend.search_models is not None:
-                        yield Button("Search models", id="local-action-search-models")
-                yield Button("Use", id="local-action-use")
+            yield ListView(id="local-backend-menu")
             yield Static("", id="local-backend-progress")
-            yield Button("Close", id="local-action-close")
+            yield Static(
+                "↑/↓ navigate - Enter selects - Escape closes",
+                id="local-backend-footer",
+            )
 
-    def on_mount(self) -> None:
-        self._update_action_visibility(None)
+    async def on_mount(self) -> None:
+        await self._render_menu(None)
+        self.query_one("#local-backend-menu", ListView).focus()
         # Opening a backend is an explicit user action, so probe its effective
         # saved/environment/default endpoint immediately. Backends still own
         # which endpoint that means; the generic host never scans.
@@ -211,40 +210,56 @@ class LocalBackendScreen(ModalScreen[None]):
             if task is not None and not task.done():
                 task.cancel()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        action = event.button.id
-        if action == "local-action-close":
-            self.action_cancel()
-        elif action == "local-action-configure":
-            self._open_configure()
-        elif action == "local-action-refresh":
-            self._start_operation("refresh")
-        elif action == "local-action-use":
-            self._use_selected()
-        elif action == "local-action-doctor":
-            self._start_operation("doctor")
-        elif action == "local-action-reset":
-            self._confirm_reset()
-        elif action in {"local-action-load-model", "local-action-unload-model"}:
-            self._manage_selected_model(
-                cast(Literal["load_model", "unload_model"], action.removeprefix("local-action-"))
-            )
-        elif action in {"local-action-download-model", "local-action-search-models"}:
-            operation = action.removeprefix("local-action-")
-            self._open_model_action(cast(LocalAction, operation))
+    def on_key(self, event: Key) -> None:
+        if event.key == "up":
+            event.stop()
+            self.action_cursor_up()
+        elif event.key == "down":
+            event.stop()
+            self.action_cursor_down()
+        elif event.key == "enter":
+            event.stop()
+            self.action_select_cursor()
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
-        if event.list_view.id != "local-model-list":
+        if event.list_view.id != "local-backend-menu":
             return
         self._sync_selected_model()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        if event.list_view.id != "local-model-list":
+        if event.list_view.id != "local-backend-menu":
             return
         event.stop()
+        self._activate_menu_item(event.index)
+
+    def action_cursor_up(self) -> None:
+        self.query_one("#local-backend-menu", ListView).action_cursor_up()
         self._sync_selected_model()
-        self._activate_selected_model()
+
+    def action_cursor_down(self) -> None:
+        self.query_one("#local-backend-menu", ListView).action_cursor_down()
+        self._sync_selected_model()
+
+    def action_select_cursor(self) -> None:
+        self.query_one("#local-backend-menu", ListView).action_select_cursor()
+
+    def _activate_menu_item(self, index: int) -> None:
+        if not 0 <= index < len(self._menu_items):
+            return
+        token = self._menu_items[index][0]
+        if token.startswith("model:"):
+            self._selected_model_id = token.removeprefix("model:")
+            self._activate_selected_model()
+        elif token == "configure":
+            self._open_configure()
+        elif token == "refresh":
+            self._start_operation("refresh")
+        elif token == "doctor":
+            self._start_operation("doctor")
+        elif token == "reset":
+            self._confirm_reset()
+        elif token in {"download_model", "search_models"}:
+            self._open_model_action(cast(LocalAction, token))
 
     def action_cancel(self) -> None:
         self._closing = True
@@ -331,19 +346,12 @@ class LocalBackendScreen(ModalScreen[None]):
         if model_id is not None:
             self._start_operation(action, model_id=model_id)
 
-    def _manage_selected_model(self, action: Literal["load_model", "unload_model"]) -> None:
-        model = self._selected_model()
-        if model is None:
-            self._show_message("Select a discovered model first.", "warning")
-            return
-        self._start_operation(action, model_id=model.id)
-
     def _activate_selected_model(self) -> None:
         model = self._selected_model()
         if model is None or self.status is None:
             return
         if model.state in {"loaded", "sleeping", "available", None}:
-            self._use_model(model.id)
+            self._choose_loaded_model_action(model.id)
             return
         if model.state in {"loading", "downloading", "unknown"}:
             self._show_message(f"{model.id} is currently {model.state}.", "warning")
@@ -361,14 +369,34 @@ class LocalBackendScreen(ModalScreen[None]):
             None,
         )
 
+    def _choose_loaded_model_action(self, model_id: str) -> None:
+        request = LocalConfirmationRequest(
+            f"Choose an action for {model_id!r}.",
+            (
+                LocalConfirmationChoice("use", "Use model", True),
+                LocalConfirmationChoice("unload", "Unload model"),
+                LocalConfirmationChoice("cancel", "Cancel"),
+            ),
+        )
+        self.app.push_screen(
+            LocalChoiceConfirmScreen(request, theme=self.theme),
+            callback=lambda choice: self._handle_loaded_model_action(model_id, choice),
+        )
+
+    def _handle_loaded_model_action(self, model_id: str, choice: str | None) -> None:
+        if choice == "use":
+            self._use_model(model_id)
+        elif choice == "unload":
+            self._start_operation("unload_model", model_id=model_id)
+
     def _sync_selected_model(self) -> None:
-        if self.status is None or not self.status.models:
-            self._selected_model_id = None
+        menu = self.query_one("#local-backend-menu", ListView)
+        index = menu.index
+        if index is None or not 0 <= index < len(self._menu_items):
             return
-        model_list = self.query_one("#local-model-list", ListView)
-        index = model_list.index
-        if index is not None and 0 <= index < len(self.status.models):
-            self._selected_model_id = self.status.models[index].id
+        token = self._menu_items[index][0]
+        if token.startswith("model:"):
+            self._selected_model_id = token.removeprefix("model:")
 
     def _start_operation(
         self,
@@ -588,55 +616,44 @@ class LocalBackendScreen(ModalScreen[None]):
                 else diagnostic.message
             )
         self.query_one("#local-backend-status", Static).update("\n".join(lines))
-        await self._render_model_list(status)
-        self._update_action_visibility(status)
+        await self._render_menu(status)
 
-    async def _render_model_list(self, status: LocalBackendStatus) -> None:
-        model_list = self.query_one("#local-model-list", ListView)
-        preferred = self._selected_model_id or status.selected_model
-        await model_list.clear()
-        if not status.models:
-            self._selected_model_id = None
-            model_list.styles.display = "none"
-            self.query_one("#local-model-list-title", Static).styles.display = "none"
-            return
-        model_list.styles.display = "block"
-        self.query_one("#local-model-list-title", Static).styles.display = "block"
-        await model_list.extend(
-            ListItem(Label(_model_label(model, status.selected_model), markup=False))
-            for model in status.models
+    async def _render_menu(self, status: LocalBackendStatus | None) -> None:
+        menu = self.query_one("#local-backend-menu", ListView)
+        prior_token = None
+        if menu.index is not None and 0 <= menu.index < len(self._menu_items):
+            prior_token = self._menu_items[menu.index][0]
+        actions = set(status.actions) if status is not None else {"configure", "refresh"}
+        models = status.models if status is not None else ()
+        selected_model = status.selected_model if status is not None else None
+        items: list[tuple[str, str]] = [
+            (f"model:{model.id}", _model_label(model, selected_model)) for model in models
+        ]
+        action_labels = (
+            ("search_models", "Search Hugging Face models…"),
+            ("download_model", "Download an exact Hugging Face model…"),
+            ("configure", "Configure connection…"),
+            ("refresh", "Refresh server state"),
+            ("doctor", "Run Doctor"),
+            ("reset", "Reset integration settings…"),
         )
-        index = next(
-            (index for index, model in enumerate(status.models) if model.id == preferred),
+        items.extend((action, label) for action, label in action_labels if action in actions)
+        self._menu_items = tuple(items)
+        await menu.clear()
+        await menu.extend(ListItem(Label(label, markup=False)) for _, label in self._menu_items)
+        if not self._menu_items:
+            menu.index = None
+            return
+        preferred = prior_token or (
+            f"model:{self._selected_model_id}" if self._selected_model_id else None
+        )
+        if models and self._selected_model_id is None:
+            preferred = f"model:{selected_model or models[0].id}"
+        menu.index = next(
+            (index for index, (token, _) in enumerate(self._menu_items) if token == preferred),
             0,
         )
-        model_list.index = index
-        self._selected_model_id = status.models[index].id
-
-    def _update_action_visibility(self, status: LocalBackendStatus | None) -> None:
-        """Reflect backend-declared capabilities without protocol assumptions."""
-        if status is not None:
-            actions = set(status.actions)
-        else:
-            view = self.registry.effective(self.backend_id)
-            actions = {"configure", "refresh"}
-            if view is not None:
-                for action in ("doctor", "reset"):
-                    if getattr(view.backend, action) is not None:
-                        actions.add(action)
-        for action, button_id in (
-            ("use", "#local-action-use"),
-            ("doctor", "#local-action-doctor"),
-            ("reset", "#local-action-reset"),
-            ("load_model", "#local-action-load-model"),
-            ("unload_model", "#local-action-unload-model"),
-            ("download_model", "#local-action-download-model"),
-            ("search_models", "#local-action-search-models"),
-        ):
-            with suppress(NoMatches):
-                self.query_one(button_id, Button).styles.display = (
-                    "block" if action in actions else "none"
-                )
+        self._sync_selected_model()
 
     @property
     def _can_update_ui(self) -> bool:
@@ -660,6 +677,7 @@ class LocalConfigureScreen(ModalScreen[LocalConfigValues | None]):
 
     BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
         Binding("escape", "cancel", "Cancel"),
+        Binding("ctrl+s", "save", "Save", show=False),
     ]
 
     def __init__(self, spec: LocalConfigureSpec, *, theme: TuiTheme) -> None:
@@ -688,16 +706,25 @@ class LocalConfigureScreen(ModalScreen[LocalConfigValues | None]):
                         password=field.kind == "secret",
                         id=field_id,
                     )
-            with Horizontal(id="local-configure-buttons"):
-                yield Button("Save", id="local-configure-save", variant="primary")
-                yield Button("Cancel", id="local-configure-cancel")
+            yield Static(
+                "Enter advances/saves - Ctrl+S saves - Escape cancels",
+                id="local-configure-footer",
+            )
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    def on_mount(self) -> None:
+        if self.spec.fields:
+            self.query_one(f"#{self._field_ids[self.spec.fields[0].key]}").focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        field_ids = tuple(self._field_ids[field.key] for field in self.spec.fields)
+        if event.input.id not in field_ids:
+            return
         event.stop()
-        if event.button.id == "local-configure-save":
+        index = field_ids.index(event.input.id)
+        if index == len(field_ids) - 1:
             self.action_save()
-        elif event.button.id == "local-configure-cancel":
-            self.action_cancel()
+        else:
+            self.query_one(f"#{field_ids[index + 1]}").focus()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -723,7 +750,9 @@ class LocalConfirmScreen(ModalScreen[bool | None]):
 
     BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
         Binding("escape", "cancel", "Cancel"),
-        Binding("enter", "confirm", "Confirm", show=False),
+        Binding("up", "cursor_up", "Up", show=False),
+        Binding("down", "cursor_down", "Down", show=False),
+        Binding("enter", "select_cursor", "Select", show=False),
     ]
 
     def __init__(self, title: str, message: str, *, theme: TuiTheme) -> None:
@@ -736,16 +765,44 @@ class LocalConfirmScreen(ModalScreen[bool | None]):
         with Vertical(id="local-confirm-screen"):
             yield Static(self.title_text, id="local-confirm-title", markup=False)
             yield Static(self.message, id="local-confirm-message", markup=False)
-            with Horizontal(id="local-confirm-buttons"):
-                yield Button("Confirm", id="local-confirm-yes", variant="primary")
-                yield Button("Cancel", id="local-confirm-no")
+            yield ListView(
+                ListItem(Label("Yes", markup=False)),
+                ListItem(Label("No", markup=False)),
+                id="local-confirm-list",
+            )
+            yield Static(
+                "↑/↓ navigate - Enter selects - Escape cancels",
+                id="local-confirm-footer",
+            )
 
     def on_mount(self) -> None:
-        self.query_one("#local-confirm-yes", Button).focus()
+        choices = self.query_one("#local-confirm-list", ListView)
+        choices.index = 1
+        choices.focus()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    def on_key(self, event: Key) -> None:
+        if event.key == "up":
+            event.stop()
+            self.action_cursor_up()
+        elif event.key == "down":
+            event.stop()
+            self.action_cursor_down()
+        elif event.key == "enter":
+            event.stop()
+            self.action_select_cursor()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
         event.stop()
-        self.dismiss(event.button.id == "local-confirm-yes")
+        self.dismiss(event.index == 0)
+
+    def action_cursor_up(self) -> None:
+        self.query_one("#local-confirm-list", ListView).action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        self.query_one("#local-confirm-list", ListView).action_cursor_down()
+
+    def action_select_cursor(self) -> None:
+        self.query_one("#local-confirm-list", ListView).action_select_cursor()
 
     def action_confirm(self) -> None:
         self.dismiss(True)
@@ -759,39 +816,68 @@ class LocalChoiceConfirmScreen(ModalScreen[str | None]):
 
     BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
         Binding("escape", "cancel", "Cancel"),
+        Binding("up", "cursor_up", "Up", show=False),
+        Binding("down", "cursor_down", "Down", show=False),
+        Binding("enter", "select_cursor", "Select", show=False),
     ]
 
     def __init__(self, request: LocalConfirmationRequest, *, theme: TuiTheme) -> None:
         super().__init__()
         self.request = request
         self.theme = theme
-        self._ids = {
-            f"local-choice-{index}": choice.value for index, choice in enumerate(request.choices)
-        }
 
     def compose(self) -> ComposeResult:
         with Vertical(id="local-confirm-screen"):
             yield Static("Confirm backend action", id="local-confirm-title", markup=False)
             yield Static(self.request.message, id="local-confirm-message", markup=False)
-            with Horizontal(id="local-confirm-buttons"):
-                for index, choice in enumerate(self.request.choices):
-                    label = f"{choice.label} (recommended)" if choice.recommended else choice.label
-                    yield Button(label, id=f"local-choice-{index}")
+            yield ListView(
+                *[
+                    ListItem(
+                        Label(
+                            f"{choice.label} — recommended" if choice.recommended else choice.label,
+                            markup=False,
+                        )
+                    )
+                    for choice in self.request.choices
+                ],
+                id="local-choice-list",
+            )
+            yield Static(
+                "↑/↓ navigate - Enter selects - Escape cancels",
+                id="local-confirm-footer",
+            )
 
     def on_mount(self) -> None:
-        recommended = next(
-            (
-                f"#local-choice-{index}"
-                for index, choice in enumerate(self.request.choices)
-                if choice.recommended
-            ),
-            "#local-choice-0",
+        choices = self.query_one("#local-choice-list", ListView)
+        choices.index = next(
+            (index for index, choice in enumerate(self.request.choices) if choice.recommended),
+            0,
         )
-        self.query_one(recommended, Button).focus()
+        choices.focus()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    def on_key(self, event: Key) -> None:
+        if event.key == "up":
+            event.stop()
+            self.action_cursor_up()
+        elif event.key == "down":
+            event.stop()
+            self.action_cursor_down()
+        elif event.key == "enter":
+            event.stop()
+            self.action_select_cursor()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
         event.stop()
-        self.dismiss(self._ids.get(event.button.id or ""))
+        self.dismiss(self.request.choices[event.index].value)
+
+    def action_cursor_up(self) -> None:
+        self.query_one("#local-choice-list", ListView).action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        self.query_one("#local-choice-list", ListView).action_cursor_down()
+
+    def action_select_cursor(self) -> None:
+        self.query_one("#local-choice-list", ListView).action_select_cursor()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -830,9 +916,10 @@ class LocalSearchResultsScreen(ModalScreen[str | None]):
                 *[ListItem(Label(label, markup=False)) for _, label, _ in self.options],
                 id="local-search-results-list",
             )
-            with Horizontal(id="local-search-results-buttons"):
-                yield Button("Download", id="local-search-results-download", variant="primary")
-                yield Button("Cancel", id="local-search-results-cancel")
+            yield Static(
+                "↑/↓ navigate - Enter continues - Escape cancels",
+                id="local-search-results-footer",
+            )
 
     def on_mount(self) -> None:
         if not self.options:
@@ -845,16 +932,29 @@ class LocalSearchResultsScreen(ModalScreen[str | None]):
         model_list.index = index
         model_list.focus()
 
+    def on_key(self, event: Key) -> None:
+        if event.key == "up":
+            event.stop()
+            self.action_cursor_up()
+        elif event.key == "down":
+            event.stop()
+            self.action_cursor_down()
+        elif event.key == "enter":
+            event.stop()
+            self.action_select_cursor()
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         event.stop()
         self.action_confirm()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        if event.button.id == "local-search-results-download":
-            self.action_confirm()
-        else:
-            self.action_cancel()
+    def action_cursor_up(self) -> None:
+        self.query_one("#local-search-results-list", ListView).action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        self.query_one("#local-search-results-list", ListView).action_cursor_down()
+
+    def action_select_cursor(self) -> None:
+        self.query_one("#local-search-results-list", ListView).action_select_cursor()
 
     def action_confirm(self) -> None:
         if not self.options:
@@ -890,9 +990,10 @@ class LocalModelActionScreen(ModalScreen[str | None]):
         with Vertical(id="local-model-action-screen"):
             yield Static(self.title_text, id="local-model-action-title", markup=False)
             yield Input(placeholder=self.placeholder, id="local-model-action-input")
-            with Horizontal(id="local-model-action-buttons"):
-                yield Button("Continue", id="local-model-action-continue", variant="primary")
-                yield Button("Cancel", id="local-model-action-cancel")
+            yield Static(
+                "Enter continues - Escape cancels",
+                id="local-model-action-footer",
+            )
 
     def on_mount(self) -> None:
         self.query_one("#local-model-action-input", Input).focus()
@@ -900,13 +1001,6 @@ class LocalModelActionScreen(ModalScreen[str | None]):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
         self._submit()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        if event.button.id == "local-model-action-continue":
-            self._submit()
-        elif event.button.id == "local-model-action-cancel":
-            self.action_cancel()
 
     def _submit(self) -> None:
         value = self.query_one("#local-model-action-input", Input).value.strip()

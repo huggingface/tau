@@ -28,9 +28,11 @@ Phase 7 completes issue #602 without changing the Phase 5 single-model path.
   as unavailable, cannot be selected/cycled, and cause no discovery or mutation.
 - Generic `/local` contracts gained backend-neutral search artifacts and
   structured confirmations. After explicit backend confirmation, the Textual
-  host probes its effective endpoint, renders model states as selectable rows,
-  and lets users select search variants for download without router, Hugging
-  Face, GGUF, or quantization branches in host logic.
+  host probes its effective endpoint, renders model states and actions in an
+  arrow-key navigable picker, and lets users select search variants for download
+  without router, Hugging Face, GGUF, or quantization branches in host logic.
+  Expensive load/download operations use backend-owned confirmations with Cancel
+  preselected.
 
 Tau never calls llama.cpp's delete endpoint.
 

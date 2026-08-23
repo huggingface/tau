@@ -27,6 +27,7 @@ from tau_coding.tui.config import TAU_DARK_THEME
 from tau_coding.tui.local_backends import (
     LocalBackendPickerScreen,
     LocalBackendScreen,
+    LocalChoiceConfirmScreen,
     LocalConfigureScreen,
     LocalConfirmScreen,
     LocalSearchResultsScreen,
@@ -113,8 +114,11 @@ async def test_single_backend_is_preselected_but_requires_explicit_confirmation(
         assert picker.selected == "backend"
         label = picker.query_one("#local-backend-list").children[0].query_one(Label)
         assert "Recommended" in label.render().plain
-        assert picker.query_one("#local-backend-confirm")
-        await pilot.click("#local-backend-confirm")
+        assert (
+            "Enter selects"
+            in picker.query_one("#local-backend-picker-footer", Static).render().plain
+        )
+        await pilot.press("enter")
         await pilot.pause()
 
     assert selected == ["backend"]
@@ -160,7 +164,7 @@ async def test_backend_open_auto_refreshes_and_renders_clickable_models() -> Non
         screen = app.screen
         status = screen.query_one("#local-backend-status", Static).render().plain
         assert "http://127.0.0.1:8080/v1" in status
-        model_list = screen.query_one("#local-model-list", ListView)
+        model_list = screen.query_one("#local-backend-menu", ListView)
         label = model_list.children[0].query_one(Label).render().plain
         assert "Downloaded model" in label
         assert "unloaded" in label
@@ -202,9 +206,13 @@ async def test_clicking_loaded_model_uses_exact_model_id() -> None:
             )
         )
         await pilot.pause()
-        model_list = app.screen.query_one("#local-model-list", ListView)
+        model_list = app.screen.query_one("#local-backend-menu", ListView)
         model_list.index = 1
-        model_list.action_select_cursor()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, LocalChoiceConfirmScreen)
+        assert app.screen.query_one("#local-choice-list", ListView).index == 0
+        await pilot.press("enter")
         await pilot.pause()
 
     assert used == [("provider", "second")]
@@ -327,7 +335,8 @@ async def test_reset_and_use_are_rechecked_after_the_host_becomes_idle() -> None
         screen._confirm_reset()
         await pilot.pause()
         assert isinstance(app.screen, LocalConfirmScreen)
-        await pilot.click("#local-confirm-no")
+        assert app.screen.query_one("#local-confirm-list", ListView).index == 1
+        await pilot.press("enter")
         await pilot.pause()
 
         screen._use_selected()

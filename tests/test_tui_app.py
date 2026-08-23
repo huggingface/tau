@@ -54,6 +54,19 @@ from tau_coding.events import (
     QueueUpdateEvent,
     SessionAgentEndEvent,
 )
+from tau_coding.extensions import (
+    DynamicProvider,
+    DynamicProviderRegistry,
+    LocalBackend,
+    LocalBackendRegistry,
+    LocalBackendStatus,
+    LocalConfigureResult,
+    LocalConfigureSpec,
+    LocalModel,
+    NoAuth,
+    OpenAICompatibleTransport,
+    ProviderModel,
+)
 from tau_coding.paths import TauPaths
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_config import (
@@ -121,6 +134,7 @@ from tau_coding.tui.config import (
     TuiTheme,
     tui_settings_path,
 )
+from tau_coding.tui.local_backends import LocalBackendScreen, LocalConfirmScreen
 from tau_coding.tui.state import ChatItem, TuiState
 from tau_coding.tui.terminal_notification import TerminalNotificationController
 from tau_coding.tui.terminal_title import TerminalTitleController
@@ -4064,6 +4078,76 @@ async def test_extension_confirm_dialog_yes_and_cancel() -> None:
         await pilot.pause()
         await pilot.press("escape")
         assert await cancel_task is False
+
+
+@pytest.mark.anyio
+async def test_local_modals_receive_app_level_arrow_navigation() -> None:
+    providers = DynamicProviderRegistry(generation_id="local-navigation")
+    providers.register(
+        "source",
+        DynamicProvider(
+            id="local-provider",
+            display_name="Local provider",
+            models=(ProviderModel("first"), ProviderModel("second")),
+            default_model="first",
+            transport=OpenAICompatibleTransport(
+                base_url="http://example.test/v1",
+                auth=NoAuth(),
+            ),
+        ),
+    )
+    registry = LocalBackendRegistry(providers, generation_id="local-navigation")
+
+    async def status(context):
+        del context
+        return LocalBackendStatus(
+            state="ready",
+            models=(
+                LocalModel("first", state="unloaded"),
+                LocalModel("second", state="unloaded"),
+            ),
+            actions=("configure", "refresh"),
+        )
+
+    registry.register(
+        "source",
+        LocalBackend(
+            id="local",
+            provider_id="local-provider",
+            display_name="Local",
+            configure_spec=LocalConfigureSpec(),
+            configure=lambda values, context: LocalConfigureResult(committed=True),
+            status=status,
+            refresh=status,
+        ),
+    )
+    app = TauTuiApp(FakeSession())  # type: ignore[arg-type]
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(LocalBackendScreen(registry, "local", theme=TAU_DARK_THEME))
+        await pilot.pause()
+        menu = app.screen.query_one("#local-backend-menu", ListView)
+        assert menu.index == 0
+        await pilot.press("down")
+        assert menu.index == 1
+        await pilot.press("up")
+        assert menu.index == 0
+
+        app.pop_screen()
+        selected: list[bool | None] = []
+        app.push_screen(
+            LocalConfirmScreen("Load model?", "This is expensive.", theme=TAU_DARK_THEME),
+            callback=selected.append,
+        )
+        await pilot.pause()
+        choices = app.screen.query_one("#local-confirm-list", ListView)
+        assert choices.index == 1  # No is the safe default.
+        await pilot.press("up")
+        await pilot.press("enter")
+        assert selected == [True]
+
+    await registry.aclose()
 
 
 @pytest.mark.anyio

@@ -159,6 +159,9 @@ from tau_coding.tui.file_drop import normalize_dropped_paths
 from tau_coding.tui.local_backends import (
     LocalBackendPickerScreen,
     LocalBackendScreen,
+    LocalChoiceConfirmScreen,
+    LocalConfirmScreen,
+    LocalSearchResultsScreen,
 )
 from tau_coding.tui.project_trust import ProjectTrustScreen, prompt_project_trust
 from tau_coding.tui.state import TuiState, format_terminal_command_result_block
@@ -3344,9 +3347,11 @@ class TauTuiApp(App[None]):
     ExtensionInputScreen,
     LocalBackendPickerScreen,
     LocalBackendScreen,
+    LocalChoiceConfirmScreen,
     LocalConfigureScreen,
     LocalConfirmScreen,
     LocalModelActionScreen,
+    LocalSearchResultsScreen,
     ProjectTrustScreen {
         align: center middle;
     }
@@ -3434,15 +3439,16 @@ class TauTuiApp(App[None]):
     #local-backend-help,
     #local-configure-screen Label,
     #local-confirm-message,
-    #local-search-results-help,
-    #local-model-list-title {
+    #local-search-results-help {
         color: $tau-muted-text;
     }
 
     #local-backend-list,
     #local-backend-status,
     #local-backend-progress,
-    #local-model-list,
+    #local-backend-menu,
+    #local-confirm-list,
+    #local-choice-list,
     #local-search-results-list,
     #local-configure-screen Input,
     #local-configure-screen Select,
@@ -3453,25 +3459,23 @@ class TauTuiApp(App[None]):
     }
 
     #local-backend-list,
-    #local-model-list,
+    #local-backend-menu,
+    #local-confirm-list,
+    #local-choice-list,
     #local-search-results-list {
         height: auto;
         max-height: 16;
     }
 
-    #local-model-list-title {
+    #local-backend-picker-footer,
+    #local-backend-footer,
+    #local-configure-footer,
+    #local-confirm-footer,
+    #local-model-action-footer,
+    #local-search-results-footer {
         height: 1;
         margin-top: 1;
-    }
-
-    #local-backend-actions,
-    #local-backend-picker-buttons,
-    #local-configure-buttons,
-    #local-confirm-buttons,
-    #local-model-action-buttons,
-    #local-search-results-buttons {
-        height: auto;
-        margin-top: 1;
+        color: $tau-muted-text;
     }
 
     #local-backend-progress {
@@ -5436,6 +5440,11 @@ class TauTuiApp(App[None]):
             | ThemePickerScreen
             | ExtensionSelectScreen
             | ExtensionConfirmScreen
+            | LocalBackendPickerScreen
+            | LocalBackendScreen
+            | LocalChoiceConfirmScreen
+            | LocalConfirmScreen
+            | LocalSearchResultsScreen
             | ProjectTrustScreen,
         ):
             self.screen.action_select_cursor()
@@ -5470,6 +5479,11 @@ class TauTuiApp(App[None]):
             | ToolsReferenceScreen
             | ExtensionSelectScreen
             | ExtensionConfirmScreen
+            | LocalBackendPickerScreen
+            | LocalBackendScreen
+            | LocalChoiceConfirmScreen
+            | LocalConfirmScreen
+            | LocalSearchResultsScreen
             | ProjectTrustScreen,
         ):
             self.screen.action_cursor_down()
@@ -5501,6 +5515,11 @@ class TauTuiApp(App[None]):
             | ToolsReferenceScreen
             | ExtensionSelectScreen
             | ExtensionConfirmScreen
+            | LocalBackendPickerScreen
+            | LocalBackendScreen
+            | LocalChoiceConfirmScreen
+            | LocalConfirmScreen
+            | LocalSearchResultsScreen
             | ProjectTrustScreen,
         ):
             self.screen.action_cursor_up()

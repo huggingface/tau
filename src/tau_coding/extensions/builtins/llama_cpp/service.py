@@ -579,25 +579,35 @@ class LlamaCppService:
                 for model in models
                 if model.id != model_id and model.state in {"loaded", "sleeping"}
             )
-            if existing and context.confirmation is None:
+            if context.confirmation is None:
+                choices = (
+                    (
+                        LocalConfirmationChoice("keep", "Load model and keep existing models"),
+                        LocalConfirmationChoice("unload", "Unload existing models, then load"),
+                        LocalConfirmationChoice("cancel", "Cancel", True),
+                    )
+                    if existing
+                    else (
+                        LocalConfirmationChoice("load", "Load model"),
+                        LocalConfirmationChoice("cancel", "Cancel", True),
+                    )
+                )
+                detail = " Other models are active on this shared router." if existing else ""
                 return LocalOperationResult(
                     backend_status=self._status_from_router(models),
                     confirmation=LocalConfirmationRequest(
-                        "Other models are loaded on this shared router. Keep them loaded or "
-                        "explicitly unload them before loading this model?",
-                        (
-                            LocalConfirmationChoice("keep", "Keep existing models", True),
-                            LocalConfirmationChoice("unload", "Unload existing models"),
-                            LocalConfirmationChoice("cancel", "Cancel"),
-                        ),
+                        f"Load {model_id!r}? Loading can consume substantial memory and time."
+                        + detail,
+                        choices,
                     ),
                 )
             if context.confirmation == "cancel":
                 return LocalOperationResult(
                     cancelled=True, backend_status=self._status_from_router(models)
                 )
-            if existing and context.confirmation not in {"keep", "unload"}:
-                return self._router_failure("Loading requires an explicit shared-router choice.")
+            allowed = {"keep", "unload"} if existing else {"load"}
+            if context.confirmation not in allowed:
+                return self._router_failure("Loading requires explicit confirmation.")
             if context.confirmation == "unload":
                 for existing_id in existing:
                     await mutate_router_model(

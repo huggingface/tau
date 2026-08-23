@@ -877,6 +877,56 @@ async def test_router_capability_version_gate_falls_back_without_mutations(tmp_p
 
 
 @pytest.mark.anyio
+async def test_router_load_requires_explicit_confirmation_without_active_peers(
+    tmp_path: Path,
+) -> None:
+    state = "unloaded"
+    posts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal state, posts
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.url.path == "/props":
+            return httpx.Response(200, json={"role": "router", "build_info": "b10000-test"})
+        if request.url.path == "/models" and request.method == "GET":
+            return httpx.Response(
+                200,
+                json={"data": [{"id": "target", "status": {"value": state}}]},
+            )
+        if request.url.path == "/models/load":
+            posts += 1
+            state = "loaded"
+            return httpx.Response(200, json={"success": True})
+        return httpx.Response(404)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    service, state_store, credentials = _service(tmp_path, client=client)
+    state_store.save(_state(selected_model=None, models=()))
+    service = LlamaCppService(
+        state_store=state_store,
+        credential_store=credentials,
+        client=client,
+        environment={},
+    )
+    await service.refresh(_context())
+
+    confirmation = await service.load_model("target", _context("load_model"))
+    assert confirmation.confirmation is not None
+    assert [choice.value for choice in confirmation.confirmation.choices] == [
+        "load",
+        "cancel",
+    ]
+    assert confirmation.confirmation.choices[1].recommended is True
+    assert posts == 0
+
+    loaded = await service.load_model("target", _context("load_model", confirmation="load"))
+    assert loaded.committed is True
+    assert posts == 1
+    await client.aclose()
+
+
+@pytest.mark.anyio
 async def test_router_load_unload_download_confirm_reconcile_and_publish(tmp_path: Path) -> None:
     states = {"already": "loaded", "target": "unloaded"}
     transitions: dict[str, int] = {}
@@ -941,6 +991,8 @@ async def test_router_load_unload_download_confirm_reconcile_and_publish(tmp_pat
 
     confirmation = await service.load_model("target", _context("load_model"))
     assert confirmation.confirmation is not None
+    assert confirmation.confirmation.choices[-1].value == "cancel"
+    assert confirmation.confirmation.choices[-1].recommended is True
     assert mutations == []
     loaded = await service.load_model("target", _context("load_model", confirmation="keep"))
     assert loaded.committed is True
@@ -1048,7 +1100,7 @@ async def test_router_connection_loss_reconciles_without_replaying_mutation(tmp_
         environment={},
     )
     await service.refresh(_context())
-    result = await service.load_model("target", _context("load_model"))
+    result = await service.load_model("target", _context("load_model", confirmation="load"))
     assert posts == 1
     assert any("will not replay" in item.message for item in result.diagnostics)
     await client.aclose()
@@ -1095,7 +1147,9 @@ async def test_router_cancellation_requests_documented_cancel_and_reconciles(
         environment={},
     )
     await service.refresh(_context())
-    operation = asyncio.create_task(service.load_model("target", _context("load_model")))
+    operation = asyncio.create_task(
+        service.load_model("target", _context("load_model", confirmation="load"))
+    )
     await load_started.wait()
     operation.cancel()
 

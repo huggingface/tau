@@ -97,21 +97,23 @@ mutation. Single-model servers remain fully supported.
 
 After the automatic probe or Refresh confirms a compatible router, `/local`
 lists loaded, sleeping, unloaded, loading, downloading, failed, and unknown
-server states as selectable rows. Only loaded or sleeping models enter `/model`.
-Select an unloaded row to load it, or a loaded/sleeping row to use it. Actions
-are always explicit:
+server states in an arrow-key navigable picker. Only loaded or sleeping models
+enter `/model`. Press Enter on an unloaded row to review a confirmation before
+loading; Enter on a loaded/sleeping row offers use or unload. Actions are always
+explicit:
 
-- Selecting an unloaded row (or **Load model**) waits until refreshed router
-  state reports loaded or sleeping. If other models are active, choose whether
-  to keep or unload them; Tau never decides for a shared router.
+- Confirming an unloaded row waits until refreshed router state reports loaded
+  or sleeping. If other models are active, choose whether to keep or unload
+  them; Tau never decides for a shared router. Cancel is preselected.
 - **Unload model** asks for model-specific confirmation.
-- **Search models** accepts a Hugging Face model ID or search text, then opens a
-  selectable repository/quantization list with gating and reported sizes.
-  `Q4_K_M` is marked recommended only as a UI preference, not persisted model
-  metadata.
-- **Download model** accepts the exact `owner/repository[:quantization]` value,
-  asks for confirmation, and requests a server-side download. The completed
-  model appears as an unloaded row ready to select and load.
+- **Search Hugging Face models…** accepts a model ID or search text, then opens
+  an arrow-key navigable repository/quantization list with gating and reported
+  sizes. `Q4_K_M` is marked recommended only as a UI preference, not persisted
+  model metadata.
+- **Download an exact Hugging Face model…** accepts
+  `owner/repository[:quantization]`. Both search and exact-ID paths open a
+  separate safe-default confirmation before requesting the server-side
+  download. The completed model appears as an unloaded row ready to select.
 
 Progress is bounded and cancellable. llama.cpp documents `/models/unload` as the
 cancel operation for load/download, so Tau requests it and then refreshes. On a

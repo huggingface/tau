@@ -95,18 +95,21 @@ tested llama.cpp build range, **b9688–b10595**. Unknown/incompatible routers
 fall back to standard `/v1/models` discovery without mutation controls.
 Single-model servers remain fully supported.
 
-`/local` lists every server-reported router state as selectable rows, while only
-loaded and sleeping models appear in `/model`. Select an unloaded row to load it;
-select a loaded/sleeping row to use it. Load, unload, and server-side download
-are explicit; unload and download require confirmation, and loading asks whether
-to keep or unload other active shared-router models. Cancellation uses
+`/local` lists every server-reported router state in an arrow-key navigable
+picker, while only loaded and sleeping models appear in `/model`. Press Enter on
+an unloaded row to review a confirmation before loading it; Enter on a
+loaded/sleeping row offers use or unload. Load, unload, and server-side download
+are explicit and require confirmation; loading also asks whether to keep or
+unload other active shared-router models. Cancellation uses
 llama.cpp's documented unload operation and refreshes state. Connection loss
 also refreshes when possible and never replays an interrupted mutation.
 
-Enter an exact Hugging Face `owner/repository[:quantization]` in **Download
-model**, or use **Search models** and select a repository/quantization result.
-Search reports gating, quantizations, and sizes. `Q4_K_M` is a UI recommendation
-only. Tau discovers `HF_TOKEN` from
+Choose **Download an exact Hugging Face model…** and enter
+`owner/repository[:quantization]`, or choose **Search Hugging Face models…** and
+select a repository/quantization result. Tau shows a separate safe-default
+confirmation before starting the expensive server-side download. Search reports
+gating, quantizations, and sizes. `Q4_K_M` is a UI recommendation only. Tau
+discovers `HF_TOKEN` from
 the environment or standard Hugging Face token files for search, but never saves
 or forwards it. The independent llama.cpp process separately needs its own token
 to download gated repositories after their terms are accepted.

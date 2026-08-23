@@ -366,9 +366,10 @@ Choose and confirm the recommended `llama.cpp` backend. Tau automatically
 checks the saved, environment, or default endpoint; use **Configure** for a
 server elsewhere and an optional API key. Tau discovers exact loaded model IDs
 through OpenAI-compatible or compatible router discovery; it does not use a
-fake key or fake model. Compatible b9688–b10595 routers show clickable model
-states plus explicitly confirmed load, unload, Hugging Face GGUF search, and
-server-side download actions. No key means no
+fake key or fake model. Compatible b9688–b10595 routers show arrow-key
+navigable model states plus explicitly confirmed load, unload, Hugging Face GGUF
+search, and server-side download actions. Load/download confirmations preselect
+Cancel. No key means no
 `Authorization` header. A saved key takes precedence over `LLAMA_API_KEY`.
 
 Use the discovered ID explicitly from the TUI or print mode:
