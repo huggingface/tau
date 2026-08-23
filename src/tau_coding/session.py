@@ -107,6 +107,7 @@ from tau_coding.provider_config import (
     save_default_provider_model,
     save_provider_thinking_level,
     toggle_saved_scoped_model,
+    toggle_saved_stable_scoped_model,
     validate_huggingface_inference_provider,
     validate_provider_model,
 )
@@ -755,17 +756,30 @@ class CodingSession:
 
     @property
     def scoped_model_choices(self) -> tuple[ModelChoice, ...]:
-        """Return configured quick-switch model choices that are currently usable."""
+        """Return scoped references, including inert trusted built-in references."""
         if self._provider_settings is None:
             return ()
         available = set(self.available_model_choices)
-        return tuple(
-            choice
-            for choice in (
-                ModelChoice(provider_name=item.provider, model=item.model)
-                for item in self._provider_settings.scoped_models
-            )
-            if choice in available
+        choices: list[ModelChoice] = []
+        for item in self._provider_settings.scoped_models:
+            choice = ModelChoice(provider_name=item.provider, model=item.model)
+            if choice in available or self._stable_dynamic_scoped_provider(item.provider):
+                choices.append(choice)
+        return tuple(choices)
+
+    @property
+    def unavailable_scoped_model_choices(self) -> tuple[ModelChoice, ...]:
+        """Return persisted references that have no current provider snapshot row."""
+        available = set(self.available_model_choices)
+        return tuple(choice for choice in self.scoped_model_choices if choice not in available)
+
+    def _stable_dynamic_scoped_provider(self, provider_name: str) -> bool:
+        effective = self._provider_registry.effective(provider_name)
+        return bool(
+            effective is not None
+            and effective.source_id.startswith("built-in:")
+            and isinstance(effective.definition, DynamicProvider)
+            and effective.definition.stable_scoped_references
         )
 
     @property
@@ -1442,20 +1456,29 @@ class CodingSession:
 
     def toggle_scoped_model(self, choice: ModelChoice) -> tuple[ModelChoice, ...]:
         """Add or remove a model from the persisted scoped model list."""
-        effective = self._provider_registry.effective(choice.provider_name)
-        if effective is not None and isinstance(effective.definition, DynamicProvider):
-            raise ProviderConfigError(
-                "Dynamic providers do not support persisted scoped models yet"
-            )
         if self._provider_settings is None:
             raise ProviderConfigError("Provider settings are not available for this session")
         available = set(self.available_model_choices)
-        if choice not in available:
-            raise ProviderConfigError(
-                f"Model is not available: {choice.provider_name}:{choice.model}"
-            )
+        existing = choice in self.scoped_model_choices
+        effective = self._provider_registry.effective(choice.provider_name)
+        if effective is not None and isinstance(effective.definition, DynamicProvider):
+            if not self._stable_dynamic_scoped_provider(choice.provider_name):
+                raise ProviderConfigError(
+                    "Only trusted built-in dynamic providers support scoped references"
+                )
+            if choice not in available and not existing:
+                raise ProviderConfigError(
+                    f"Model is unavailable: {choice.provider_name}:{choice.model}"
+                )
+            toggle = toggle_saved_stable_scoped_model
+        else:
+            if choice not in available:
+                raise ProviderConfigError(
+                    f"Model is not available: {choice.provider_name}:{choice.model}"
+                )
+            toggle = toggle_saved_scoped_model
 
-        self._provider_settings = toggle_saved_scoped_model(
+        self._provider_settings = toggle(
             provider_name=choice.provider_name,
             model=choice.model,
             paths=self._resource_paths.paths,
@@ -1465,8 +1488,9 @@ class CodingSession:
         return self.scoped_model_choices
 
     def cycle_scoped_model(self, *, reverse: bool = False) -> ModelChoice:
-        """Switch to the next configured scoped model."""
-        scoped = self.scoped_model_choices
+        """Switch to the next currently available configured scoped model."""
+        available = set(self.available_model_choices)
+        scoped = tuple(choice for choice in self.scoped_model_choices if choice in available)
         if not scoped:
             raise ProviderConfigError("No scoped models configured.")
         current = ModelChoice(provider_name=self.provider_name, model=self.model)

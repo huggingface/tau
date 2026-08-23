@@ -200,6 +200,53 @@ class LocalProgress:
 
 
 @dataclass(frozen=True, slots=True)
+class LocalArtifactOption:
+    """One backend-neutral variant offered for a discovered artifact."""
+
+    id: str
+    label: str
+    size_bytes: int | None = None
+    recommended: bool = False
+
+    def __post_init__(self) -> None:
+        _identifier(self.id, "Artifact option id")
+        _non_empty(self.label, "Artifact option label")
+        if self.size_bytes is not None and (
+            not isinstance(self.size_bytes, int)
+            or isinstance(self.size_bytes, bool)
+            or self.size_bytes < 0
+        ):
+            raise LocalBackendError("Artifact option size must be a non-negative integer")
+        if not isinstance(self.recommended, bool):
+            raise LocalBackendError("Artifact option recommended flag must be boolean")
+
+
+@dataclass(frozen=True, slots=True)
+class LocalSearchResult:
+    """One host-renderable backend search result and its selectable variants."""
+
+    id: str
+    label: str
+    restricted: bool = False
+    options: tuple[LocalArtifactOption, ...] = ()
+    diagnostic: str | None = None
+
+    def __post_init__(self) -> None:
+        _identifier(self.id, "Search result id")
+        _non_empty(self.label, "Search result label")
+        if not isinstance(self.restricted, bool):
+            raise LocalBackendError("Search result restricted flag must be boolean")
+        if not isinstance(self.options, tuple) or any(
+            not isinstance(option, LocalArtifactOption) for option in self.options
+        ):
+            raise LocalBackendError("Search result options are malformed")
+        if len({option.id for option in self.options}) != len(self.options):
+            raise LocalBackendError("Search result option ids must be unique")
+        if self.diagnostic is not None:
+            _non_empty(self.diagnostic, "Search result diagnostic")
+
+
+@dataclass(frozen=True, slots=True)
 class LocalConfirmationChoice:
     """One host-rendered option answering a backend confirmation request."""
 
@@ -344,6 +391,7 @@ class LocalOperationResult:
     field_errors: Mapping[str, str] = field(default_factory=dict)
     credential_orphaned: bool = False
     confirmation: LocalConfirmationRequest | None = None
+    search_results: tuple[LocalSearchResult, ...] = ()
 
     def __post_init__(self) -> None:
         if self.message is not None and not isinstance(self.message, str):
@@ -369,6 +417,10 @@ class LocalOperationResult:
             raise LocalBackendError("Operation confirmation must be a structured request")
         if self.confirmation is not None and self.committed:
             raise LocalBackendError("A committed operation cannot request confirmation")
+        if not isinstance(self.search_results, tuple) or any(
+            not isinstance(item, LocalSearchResult) for item in self.search_results
+        ):
+            raise LocalBackendError("Operation search results are malformed")
 
 
 @dataclass(frozen=True, slots=True)
@@ -899,6 +951,7 @@ class LocalBackendRegistry:
                     field_errors=value.field_errors,
                     credential_orphaned=value.credential_orphaned,
                     confirmation=value.confirmation,
+                    search_results=value.search_results,
                 ),
                 secrets,
             )
@@ -1127,6 +1180,24 @@ def _safe_operation_result(
         },
         credential_orphaned=result.credential_orphaned,
         confirmation=confirmation,
+        search_results=tuple(
+            LocalSearchResult(
+                id=_redact(item.id, secrets) or "[redacted]",
+                label=_redact(item.label, secrets) or "[redacted]",
+                restricted=item.restricted,
+                options=tuple(
+                    LocalArtifactOption(
+                        id=_redact(option.id, secrets) or "[redacted]",
+                        label=_redact(option.label, secrets) or "[redacted]",
+                        size_bytes=option.size_bytes,
+                        recommended=option.recommended,
+                    )
+                    for option in item.options
+                ),
+                diagnostic=_redact(item.diagnostic, secrets),
+            )
+            for item in result.search_results
+        ),
     )
 
 
@@ -1154,6 +1225,7 @@ __all__ = [
     "DoctorLocalBackend",
     "DownloadModel",
     "LocalAction",
+    "LocalArtifactOption",
     "LocalBackend",
     "LocalBackendError",
     "LocalBackendLayerToken",
@@ -1174,6 +1246,7 @@ __all__ = [
     "LocalOperationError",
     "LocalOperationResult",
     "LocalProgress",
+    "LocalSearchResult",
     "ManageModel",
     "ReadConfigureSpec",
     "ReadLocalBackendStatus",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import MappingProxyType
@@ -39,18 +40,36 @@ from tau_coding.extensions.providers import (
 )
 from tau_coding.local_backends import (
     LocalAction,
+    LocalArtifactOption,
     LocalBackend,
     LocalBackendStatus,
     LocalConfigField,
     LocalConfigureResult,
     LocalConfigureSpec,
+    LocalConfirmationChoice,
+    LocalConfirmationRequest,
     LocalDiagnostic,
     LocalModel,
     LocalOperationContext,
     LocalOperationResult,
+    LocalProgress,
+    LocalSearchResult,
 )
 from tau_coding.paths import TauPaths
 
+from .huggingface import (
+    HuggingFaceSearchError,
+    discover_hf_token,
+    search_gguf_repositories,
+)
+from .router import (
+    LlamaCppRouterError,
+    RouterCapability,
+    RouterModel,
+    detect_router,
+    list_router_models,
+    mutate_router_model,
+)
 from .state import (
     LLAMA_CPP_CREDENTIAL_PREFIX,
     LlamaCppIntegrationState,
@@ -66,6 +85,8 @@ LLAMA_CPP_DEFAULT_ENDPOINT = "http://127.0.0.1:8080"
 LLAMA_CPP_ENDPOINT_ENV = "LLAMA_BASE_URL"
 LLAMA_CPP_API_KEY_ENV = "LLAMA_API_KEY"
 DEFAULT_LLAMA_CPP_TIMEOUT_SECONDS = 5.0
+LLAMA_CPP_ROUTER_POLL_SECONDS = 0.1
+LLAMA_CPP_ROUTER_RECONCILE_TIMEOUT_SECONDS = 30.0
 
 
 class LlamaCppError(RuntimeError):
@@ -86,11 +107,13 @@ class LlamaCppEndpoint:
 
 @dataclass(frozen=True, slots=True)
 class LlamaCppDiscovery:
-    """Defensive result from the standard health and model endpoints."""
+    """Defensive result from standard discovery and optional router state."""
 
     endpoint: LlamaCppEndpoint
     models: tuple[ProviderModel, ...]
     health: str = "ok"
+    router_capability: RouterCapability = RouterCapability("standard")
+    router_models: tuple[RouterModel, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +180,8 @@ class LlamaCppService:
         self._update_provider = update_provider
         self._register_backend = register_backend
         self._last_discovery: LlamaCppDiscovery | None = None
+        self._router_capability = RouterCapability("standard")
+        self._router_models: tuple[RouterModel, ...] = ()
         self._last_error: LlamaCppError | None = None
         self._state_error: str | None = None
         self._orphaned_credentials: tuple[str, ...] = ()
@@ -224,6 +249,7 @@ class LlamaCppService:
                 client=self.client,
             ),
             refresh_models=self.refresh_provider_models,
+            stable_scoped_references=True,
         )
 
     async def refresh_provider_models(
@@ -264,17 +290,40 @@ class LlamaCppService:
                 )
             if health_state == "unavailable":
                 raise LlamaCppError("llama.cpp reported that its server is unavailable.")
+            capability = await self._detect_router_safely(client, headers)
+            self._router_capability = capability
+            if capability.compatible:
+                router_models = await list_router_models(client, self.endpoint.server_root, headers)
+                self._router_models = router_models
+                models = _router_provider_models(router_models)
+                return LlamaCppDiscovery(
+                    self.endpoint,
+                    models,
+                    health=health_state,
+                    router_capability=capability,
+                    router_models=router_models,
+                )
+            self._router_models = ()
             response = await self._get(
                 client, self.endpoint.inference_base + "/models", headers, signal
             )
             payload = _json_object(response, "/v1/models")
             models = _parse_models(payload)
-            return LlamaCppDiscovery(self.endpoint, models, health=health_state)
+            return LlamaCppDiscovery(
+                self.endpoint,
+                models,
+                health=health_state,
+                router_capability=capability,
+            )
         except asyncio.CancelledError:
             raise
         except LlamaCppError as exc:
             self._last_error = exc
             raise
+        except LlamaCppRouterError as exc:
+            error = LlamaCppError(str(exc))
+            self._last_error = error
+            raise error from exc
         except httpx.TimeoutException as exc:
             error = LlamaCppError(
                 f"Timed out connecting to llama.cpp at {self.endpoint.server_root}. "
@@ -520,6 +569,379 @@ class LlamaCppService:
             backend_status=self._status_from_discovery(discovery), diagnostics=tuple(diagnostics)
         )
 
+    async def load_model(
+        self, model_id: str, context: LocalOperationContext
+    ) -> LocalOperationResult:
+        """Explicitly load one router model and reconcile before claiming success."""
+        prepared = await self._prepare_router_operation(context)
+        if isinstance(prepared, LocalOperationResult):
+            return prepared
+        client, owned, headers = prepared
+        try:
+            models = await list_router_models(client, self.endpoint.server_root, headers)
+            target = _router_model(models, model_id)
+            if target is None:
+                return self._router_failure(f"Router model is not available: {model_id}")
+            if target.state in {"loaded", "sleeping"}:
+                return await self._publish_router_models(models, message="Model is already loaded.")
+            existing = tuple(
+                model.id
+                for model in models
+                if model.id != model_id and model.state in {"loaded", "sleeping"}
+            )
+            if existing and context.confirmation is None:
+                return LocalOperationResult(
+                    backend_status=self._status_from_router(models),
+                    confirmation=LocalConfirmationRequest(
+                        "Other models are loaded on this shared router. Keep them loaded or "
+                        "explicitly unload them before loading this model?",
+                        (
+                            LocalConfirmationChoice("keep", "Keep existing models", True),
+                            LocalConfirmationChoice("unload", "Unload existing models"),
+                            LocalConfirmationChoice("cancel", "Cancel"),
+                        ),
+                    ),
+                )
+            if context.confirmation == "cancel":
+                return LocalOperationResult(
+                    cancelled=True, backend_status=self._status_from_router(models)
+                )
+            if existing and context.confirmation not in {"keep", "unload"}:
+                return self._router_failure("Loading requires an explicit shared-router choice.")
+            if context.confirmation == "unload":
+                for existing_id in existing:
+                    await mutate_router_model(
+                        client,
+                        self.endpoint.server_root,
+                        headers,
+                        action="unload",
+                        model_id=existing_id,
+                    )
+                    await self._wait_for_router_state(
+                        client, headers, existing_id, {"unloaded", "failed"}, context
+                    )
+            await mutate_router_model(
+                client,
+                self.endpoint.server_root,
+                headers,
+                action="load",
+                model_id=model_id,
+            )
+            models = await self._wait_for_router_state(
+                client, headers, model_id, {"loaded", "sleeping", "failed"}, context
+            )
+            reconciled = _router_model(models, model_id)
+            if reconciled is None or reconciled.state not in {"loaded", "sleeping"}:
+                return self._router_failure(
+                    "The router did not reach a loaded state. Refresh before retrying.", models
+                )
+            return await self._publish_router_models(models, message=f"Loaded {model_id}.")
+        except asyncio.CancelledError:
+            return await self._cancel_router_mutation(client, headers, model_id)
+        except (httpx.HTTPError, LlamaCppRouterError, TimeoutError) as exc:
+            return await self._reconcile_after_router_failure(client, headers, exc)
+        finally:
+            if owned:
+                await client.aclose()
+
+    async def unload_model(
+        self, model_id: str, context: LocalOperationContext
+    ) -> LocalOperationResult:
+        """Unload only after a model-specific explicit confirmation."""
+        prepared = await self._prepare_router_operation(context)
+        if isinstance(prepared, LocalOperationResult):
+            return prepared
+        client, owned, headers = prepared
+        try:
+            models = await list_router_models(client, self.endpoint.server_root, headers)
+            if context.confirmation is None:
+                return LocalOperationResult(
+                    backend_status=self._status_from_router(models),
+                    confirmation=LocalConfirmationRequest(
+                        f"Unload {model_id!r} from this shared router?",
+                        (
+                            LocalConfirmationChoice("unload", "Unload model"),
+                            LocalConfirmationChoice("cancel", "Keep model loaded", True),
+                        ),
+                    ),
+                )
+            if context.confirmation == "cancel":
+                return LocalOperationResult(
+                    cancelled=True, backend_status=self._status_from_router(models)
+                )
+            if context.confirmation != "unload":
+                return self._router_failure("Unloading requires explicit confirmation.")
+            await mutate_router_model(
+                client,
+                self.endpoint.server_root,
+                headers,
+                action="unload",
+                model_id=model_id,
+            )
+            models = await self._wait_for_router_state(
+                client, headers, model_id, {"unloaded", "failed"}, context
+            )
+            return await self._publish_router_models(models, message=f"Unloaded {model_id}.")
+        except asyncio.CancelledError:
+            return await self._reconcile_cancelled(client, headers)
+        except (httpx.HTTPError, LlamaCppRouterError, TimeoutError) as exc:
+            return await self._reconcile_after_router_failure(client, headers, exc)
+        finally:
+            if owned:
+                await client.aclose()
+
+    async def download_model(
+        self, model_id: str, context: LocalOperationContext
+    ) -> LocalOperationResult:
+        """Request one exact server-side repository download after confirmation."""
+        prepared = await self._prepare_router_operation(context)
+        if isinstance(prepared, LocalOperationResult):
+            return prepared
+        client, owned, headers = prepared
+        try:
+            if context.confirmation is None:
+                return LocalOperationResult(
+                    confirmation=LocalConfirmationRequest(
+                        f"Ask the shared llama.cpp server to download {model_id!r}?",
+                        (
+                            LocalConfirmationChoice("download", "Start server-side download"),
+                            LocalConfirmationChoice("cancel", "Cancel", True),
+                        ),
+                    )
+                )
+            if context.confirmation == "cancel":
+                return LocalOperationResult(cancelled=True)
+            if context.confirmation != "download":
+                return self._router_failure("Downloading requires explicit confirmation.")
+            await mutate_router_model(
+                client,
+                self.endpoint.server_root,
+                headers,
+                action="download",
+                model_id=model_id,
+            )
+            models = await self._wait_for_router_state(
+                client,
+                headers,
+                model_id,
+                {"unloaded", "loaded", "sleeping", "failed"},
+                context,
+                require_observed=True,
+            )
+            reconciled = _router_model(models, model_id)
+            if reconciled is None or reconciled.state == "failed":
+                return self._router_failure(
+                    "The server-side download did not complete. Refresh before retrying.", models
+                )
+            return await self._publish_router_models(
+                models, message=f"Server-side download completed for {model_id}."
+            )
+        except asyncio.CancelledError:
+            return await self._cancel_router_mutation(client, headers, model_id)
+        except (httpx.HTTPError, LlamaCppRouterError, TimeoutError) as exc:
+            return await self._reconcile_after_router_failure(client, headers, exc)
+        finally:
+            if owned:
+                await client.aclose()
+
+    async def search_models(
+        self, query: str, context: LocalOperationContext
+    ) -> LocalOperationResult:
+        """Search Hugging Face with a search-only token and return safe GGUF details."""
+        del context
+        owned = self.client is None
+        client = self.client or create_async_client(timeout=self.timeout_seconds)
+        token = discover_hf_token(self.environment)
+        try:
+            repositories = await search_gguf_repositories(client, query, token=token)
+        except (httpx.HTTPError, HuggingFaceSearchError) as exc:
+            return LocalOperationResult(diagnostics=(LocalDiagnostic(str(exc), "error", "search"),))
+        finally:
+            if owned:
+                await client.aclose()
+        results = tuple(
+            LocalSearchResult(
+                repository.id,
+                repository.id,
+                restricted=repository.gated,
+                options=tuple(
+                    LocalArtifactOption(
+                        f"{repository.id}:{variant.quantization}",
+                        variant.quantization,
+                        variant.size_bytes,
+                        recommended=variant.quantization == "Q4_K_M",
+                    )
+                    for variant in repository.variants
+                ),
+                diagnostic=(
+                    "Gated repository: accept access on huggingface.co and ensure the "
+                    "independent llama.cpp server process has its own authorized HF_TOKEN. "
+                    "Tau's search token is never forwarded."
+                    if repository.gated
+                    else None
+                ),
+            )
+            for repository in repositories
+        )
+        return LocalOperationResult(
+            message=(
+                f"Found {len(results)} GGUF repositories."
+                if results
+                else "No GGUF repositories found."
+            ),
+            search_results=results,
+        )
+
+    async def _prepare_router_operation(
+        self, context: LocalOperationContext
+    ) -> tuple[httpx.AsyncClient, bool, Mapping[str, str]] | LocalOperationResult:
+        if context.cancelled:
+            return LocalOperationResult(cancelled=True)
+        if not self._router_capability.compatible:
+            return self._router_failure(
+                "Router management is unavailable until a compatible router is detected by Refresh."
+            )
+        auth = await _resolve_auth_for_backend(self)
+        owned = self.client is None
+        client = self.client or create_async_client(timeout=self.timeout_seconds)
+        return client, owned, _auth_headers(auth)
+
+    async def _wait_for_router_state(
+        self,
+        client: httpx.AsyncClient,
+        headers: Mapping[str, str],
+        model_id: str,
+        terminal: set[str],
+        context: LocalOperationContext,
+        *,
+        require_observed: bool = False,
+    ) -> tuple[RouterModel, ...]:
+        deadline = asyncio.get_running_loop().time() + LLAMA_CPP_ROUTER_RECONCILE_TIMEOUT_SECONDS
+        observed_transition = False
+        while True:
+            if context.cancelled:
+                raise asyncio.CancelledError
+            models = await list_router_models(client, self.endpoint.server_root, headers)
+            await self._publish_router_models(models)
+            model = _router_model(models, model_id)
+            if model is not None:
+                observed_transition = observed_transition or model.state in {
+                    "loading",
+                    "downloading",
+                }
+                context.report_progress(_router_progress(model))
+                if model.state in terminal and (observed_transition or not require_observed):
+                    return models
+            if asyncio.get_running_loop().time() >= deadline:
+                raise TimeoutError("router reconciliation timed out")
+            await asyncio.sleep(LLAMA_CPP_ROUTER_POLL_SECONDS)
+
+    async def _publish_router_models(
+        self,
+        models: tuple[RouterModel, ...],
+        *,
+        message: str | None = None,
+    ) -> LocalOperationResult:
+        self._router_models = models
+        discovery = LlamaCppDiscovery(
+            self.endpoint,
+            _router_provider_models(models),
+            router_capability=self._router_capability,
+            router_models=models,
+        )
+        self._last_discovery = discovery
+        self._save_discovery(discovery)
+        self._publish_provider()
+        return LocalOperationResult(
+            backend_status=self._status_from_router(models),
+            message=message,
+            committed=message is not None,
+        )
+
+    async def _cancel_router_mutation(
+        self,
+        client: httpx.AsyncClient,
+        headers: Mapping[str, str],
+        model_id: str,
+    ) -> LocalOperationResult:
+        with suppress(Exception):
+            await asyncio.shield(
+                mutate_router_model(
+                    client,
+                    self.endpoint.server_root,
+                    headers,
+                    action="unload",
+                    model_id=model_id,
+                )
+            )
+        return await self._reconcile_cancelled(client, headers)
+
+    async def _reconcile_cancelled(
+        self, client: httpx.AsyncClient, headers: Mapping[str, str]
+    ) -> LocalOperationResult:
+        try:
+            models = await asyncio.shield(
+                list_router_models(client, self.endpoint.server_root, headers)
+            )
+            await self._publish_router_models(models)
+            return LocalOperationResult(
+                backend_status=self._status_from_router(models), cancelled=True
+            )
+        except Exception:
+            return LocalOperationResult(
+                backend_status=self._cached_status(stale=True),
+                cancelled=True,
+                diagnostics=(
+                    LocalDiagnostic(
+                        "Cancellation was requested, but reconciliation lost the connection. "
+                        "Refresh before retrying; Tau will not replay the mutation.",
+                        "warning",
+                        "reconciliation",
+                    ),
+                ),
+            )
+
+    async def _reconcile_after_router_failure(
+        self,
+        client: httpx.AsyncClient,
+        headers: Mapping[str, str],
+        error: BaseException,
+    ) -> LocalOperationResult:
+        try:
+            models = await list_router_models(client, self.endpoint.server_root, headers)
+            await self._publish_router_models(models)
+            return LocalOperationResult(
+                backend_status=self._status_from_router(models),
+                diagnostics=(
+                    LocalDiagnostic(
+                        f"The operation was interrupted ({error}). State was refreshed; retry "
+                        "only after reviewing it.",
+                        "warning",
+                        "reconciliation",
+                    ),
+                ),
+            )
+        except Exception:
+            return LocalOperationResult(
+                backend_status=self._cached_status(stale=True),
+                diagnostics=(
+                    LocalDiagnostic(
+                        "The connection was lost and state could not be reconciled. Refresh before "
+                        "retrying; Tau will not replay the interrupted mutation.",
+                        "error",
+                        "reconciliation",
+                    ),
+                ),
+            )
+
+    def _router_failure(
+        self, message: str, models: tuple[RouterModel, ...] | None = None
+    ) -> LocalOperationResult:
+        return LocalOperationResult(
+            backend_status=self._status_from_router(models) if models is not None else None,
+            diagnostics=(LocalDiagnostic(message, "error", "router"),),
+        )
+
     async def reset(self, context: LocalOperationContext) -> LocalOperationResult:
         del context
         try:
@@ -528,6 +950,8 @@ class LlamaCppService:
             return LocalOperationResult(diagnostics=(LocalDiagnostic(str(exc), "error", "reset"),))
         self._active_state = None
         self._last_discovery = None
+        self._router_capability = RouterCapability("standard")
+        self._router_models = ()
         self._last_error = None
         self._stale_selected_model = None
         self._endpoint = self._endpoint_from_environment_or_default()
@@ -579,6 +1003,10 @@ class LlamaCppService:
             refresh=self.refresh,
             doctor=self.doctor,
             reset=self.reset,
+            load_model=self.load_model,
+            unload_model=self.unload_model,
+            download_model=self.download_model,
+            search_models=self.search_models,
             recommended=True,
         )
 
@@ -688,8 +1116,14 @@ class LlamaCppService:
 
     def _status_from_discovery(self, discovery: LlamaCppDiscovery) -> LocalBackendStatus:
         self._last_error = None
+        if discovery.router_capability.compatible:
+            return self._status_from_router(discovery.router_models)
         stale_model = self._stale_selected_model
         diagnostics: list[LocalDiagnostic] = []
+        if discovery.router_capability.diagnostic:
+            diagnostics.append(
+                LocalDiagnostic(discovery.router_capability.diagnostic, "warning", "router")
+            )
         if not discovery.models:
             diagnostics.append(
                 LocalDiagnostic(
@@ -717,6 +1151,51 @@ class LlamaCppService:
             ),
             diagnostics=tuple(diagnostics),
             stale=stale_model is not None,
+        )
+
+    def _status_from_router(self, models: tuple[RouterModel, ...]) -> LocalBackendStatus:
+        selectable = _router_provider_models(models)
+        selected = _selected_model(self._active_state, selectable)
+        diagnostics: list[LocalDiagnostic] = []
+        failed = tuple(model.id for model in models if model.state == "failed")
+        unknown = tuple(model.id for model in models if model.state == "unknown")
+        if failed:
+            diagnostics.append(
+                LocalDiagnostic("Failed router models: " + ", ".join(failed), "warning", "models")
+            )
+        if unknown:
+            diagnostics.append(
+                LocalDiagnostic(
+                    "Models with unknown router state are management-only: " + ", ".join(unknown),
+                    "warning",
+                    "models",
+                )
+            )
+        actions: list[LocalAction] = [
+            "configure",
+            "refresh",
+            "doctor",
+            "reset",
+            "load_model",
+            "unload_model",
+            "download_model",
+            "search_models",
+        ]
+        if selected is not None:
+            actions.append("use")
+        return LocalBackendStatus(
+            state="ready" if selectable else "unavailable",
+            endpoint_display=self.endpoint.inference_base,
+            authentication_source=_authentication_source(
+                self._active_state, self.environment, self.credential_store
+            ),
+            models=tuple(
+                LocalModel(model.id, model.display_name or model.id, model.state)
+                for model in models
+            ),
+            selected_model=selected,
+            actions=tuple(actions),
+            diagnostics=tuple(diagnostics),
         )
 
     def _cached_status(
@@ -878,6 +1357,22 @@ class LlamaCppService:
             "Streaming works, but the model did not emit a tool call. Use a tool-capable "
             "instruct GGUF and a compatible llama.cpp chat template."
         )
+
+    async def _detect_router_safely(
+        self,
+        client: httpx.AsyncClient,
+        headers: Mapping[str, str],
+    ) -> RouterCapability:
+        try:
+            return await detect_router(client, self.endpoint.server_root, headers)
+        except LlamaCppRouterError as exc:
+            return RouterCapability(
+                "incompatible",
+                diagnostic=(
+                    f"Router capabilities could not be verified ({exc}); management is "
+                    "disabled and standard discovery remains available."
+                ),
+            )
 
     async def _get(
         self,
@@ -1074,6 +1569,38 @@ def _stored_model(model: ProviderModel) -> LlamaCppStoredModel:
 
 def _local_model(model: ProviderModel) -> LocalModel:
     return LocalModel(model.id, model.display_name or model.id)
+
+
+def _router_provider_models(models: tuple[RouterModel, ...]) -> tuple[ProviderModel, ...]:
+    return tuple(
+        ProviderModel(
+            id=model.id,
+            display_name=model.display_name or model.id,
+            api="openai-completions",
+            input_modalities=model.input_modalities,
+        )
+        for model in models
+        if model.state in {"loaded", "sleeping"}
+    )
+
+
+def _router_model(models: tuple[RouterModel, ...], model_id: str) -> RouterModel | None:
+    return next((model for model in models if model.id == model_id), None)
+
+
+def _router_progress(model: RouterModel) -> LocalProgress:
+    messages = {
+        "loading": f"Loading {model.id}…",
+        "downloading": f"Downloading {model.id} on the llama.cpp server…",
+        "loaded": f"Loaded {model.id}.",
+        "sleeping": f"{model.id} is sleeping and available.",
+        "unloaded": f"Unloaded {model.id}.",
+        "failed": f"Router operation failed for {model.id}.",
+        "unknown": f"Waiting for a reconciled state for {model.id}…",
+    }
+    return LocalProgress(
+        messages[model.state], done=model.state in {"loaded", "sleeping", "unloaded", "failed"}
+    )
 
 
 def _selected_model(

@@ -47,13 +47,14 @@ MODEL = LlamaCppStoredModel(
 )
 
 
-def _context(action: str = "refresh") -> LocalOperationContext:
+def _context(action: str = "refresh", *, confirmation: str | None = None) -> LocalOperationContext:
     return LocalOperationContext(
         signal=SimpleCancellationToken(),
         action=action,  # type: ignore[arg-type]
         generation_id="test-generation",
         backend_id="llama.cpp",
         source_id="built-in:llama.cpp",
+        confirmation=confirmation,
         _is_current=lambda: True,
         _progress=lambda _: None,
     )
@@ -817,6 +818,333 @@ async def test_builtin_source_lifecycle_is_generation_local(tmp_path: Path) -> N
     )
     assert runtime.provider_registry.effective("llama.cpp") is not None
     await runtime.aclose()
+
+
+@pytest.mark.anyio
+async def test_router_capability_version_gate_falls_back_without_mutations(tmp_path: Path) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.url.path == "/props":
+            return httpx.Response(200, json={"role": "router", "build_info": "b20000-new"})
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json={"data": [{"id": "fallback"}]})
+        return httpx.Response(500)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    service, state_store, credentials = _service(tmp_path, client=client)
+    state_store.save(_state(selected_model=None, models=()))
+    service = LlamaCppService(
+        state_store=state_store,
+        credential_store=credentials,
+        client=client,
+        environment={},
+    )
+
+    refreshed = await service.refresh(_context())
+
+    assert refreshed.backend_status is not None
+    assert [model.id for model in refreshed.backend_status.models] == ["fallback"]
+    assert "load_model" not in refreshed.backend_status.actions
+    assert any("tested range" in item.message for item in refreshed.backend_status.diagnostics)
+    result = await service.load_model("fallback", _context("load_model"))
+    assert "compatible router" in result.diagnostics[0].message
+    assert not any(request.method == "POST" for request in requests)
+    await client.aclose()
+
+
+@pytest.mark.anyio
+async def test_router_load_unload_download_confirm_reconcile_and_publish(tmp_path: Path) -> None:
+    states = {"already": "loaded", "target": "unloaded"}
+    transitions: dict[str, int] = {}
+    mutations: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.url.path == "/props":
+            return httpx.Response(200, json={"role": "router", "build_info": "b10000-test"})
+        if request.url.path == "/models" and request.method == "GET":
+            for model_id, remaining in tuple(transitions.items()):
+                if remaining <= 0:
+                    states[model_id] = "loaded" if states[model_id] == "loading" else "unloaded"
+                    transitions.pop(model_id)
+                else:
+                    transitions[model_id] = remaining - 1
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": model_id,
+                            "status": {"value": state},
+                            "architecture": {"input_modalities": ["text"]},
+                        }
+                        for model_id, state in states.items()
+                    ]
+                },
+            )
+        if request.method == "POST":
+            model_id = json.loads(request.content)["model"]
+            if request.url.path == "/models/load":
+                mutations.append(("load", model_id))
+                states[model_id] = "loading"
+                transitions[model_id] = 1
+            elif request.url.path == "/models/unload":
+                mutations.append(("unload", model_id))
+                states[model_id] = "unloaded"
+            elif request.url.path == "/models":
+                mutations.append(("download", model_id))
+                states[model_id] = "downloading"
+                transitions[model_id] = 1
+            return httpx.Response(200, json={"success": True})
+        return httpx.Response(404)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    published = []
+    service, state_store, credentials = _service(tmp_path, client=client)
+    state_store.save(_state(selected_model=None, models=()))
+    service = LlamaCppService(
+        state_store=state_store,
+        credential_store=credentials,
+        client=client,
+        environment={},
+        update_provider=lambda provider: published.append(provider) is not None,
+    )
+    refreshed = await service.refresh(_context())
+    assert refreshed.backend_status is not None
+    assert {model.state for model in refreshed.backend_status.models} == {"loaded", "unloaded"}
+    assert [model.id for model in service.provider().models] == ["already"]
+
+    confirmation = await service.load_model("target", _context("load_model"))
+    assert confirmation.confirmation is not None
+    assert mutations == []
+    loaded = await service.load_model("target", _context("load_model", confirmation="keep"))
+    assert loaded.committed is True
+    assert set(model.id for model in service.provider().models) == {"already", "target"}
+
+    unload_confirmation = await service.unload_model("target", _context("unload_model"))
+    assert unload_confirmation.confirmation is not None
+    assert mutations == [("load", "target")]
+    unloaded = await service.unload_model("target", _context("unload_model", confirmation="unload"))
+    assert unloaded.committed is True
+    assert [model.id for model in service.provider().models] == ["already"]
+
+    download_confirmation = await service.download_model(
+        "owner/repo:Q4_K_M", _context("download_model")
+    )
+    assert download_confirmation.confirmation is not None
+    downloaded = await service.download_model(
+        "owner/repo:Q4_K_M",
+        _context("download_model", confirmation="download"),
+    )
+    assert downloaded.committed is True
+    assert ("download", "owner/repo:Q4_K_M") in mutations
+    assert published
+    await client.aclose()
+
+
+@pytest.mark.anyio
+async def test_router_connection_loss_reconciles_without_replaying_mutation(tmp_path: Path) -> None:
+    posts = 0
+    list_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal posts, list_calls
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.url.path == "/props":
+            return httpx.Response(200, json={"role": "router", "build_info": "b10000-test"})
+        if request.url.path == "/models" and request.method == "GET":
+            list_calls += 1
+            if list_calls > 2:
+                raise httpx.ConnectError("lost", request=request)
+            return httpx.Response(
+                200, json={"data": [{"id": "target", "status": {"value": "unloaded"}}]}
+            )
+        if request.url.path == "/models/load":
+            posts += 1
+            return httpx.Response(200, json={"success": True})
+        return httpx.Response(404)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    service, state_store, credentials = _service(tmp_path, client=client)
+    state_store.save(_state(selected_model=None, models=()))
+    service = LlamaCppService(
+        state_store=state_store,
+        credential_store=credentials,
+        client=client,
+        environment={},
+    )
+    await service.refresh(_context())
+    result = await service.load_model("target", _context("load_model"))
+    assert posts == 1
+    assert any("will not replay" in item.message for item in result.diagnostics)
+    await client.aclose()
+
+
+@pytest.mark.anyio
+async def test_router_cancellation_requests_documented_cancel_and_reconciles(
+    tmp_path: Path,
+) -> None:
+    import asyncio
+
+    state = "unloaded"
+    load_started = asyncio.Event()
+    mutations: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal state
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.url.path == "/props":
+            return httpx.Response(200, json={"role": "router", "build_info": "b10000-test"})
+        if request.url.path == "/models" and request.method == "GET":
+            return httpx.Response(
+                200, json={"data": [{"id": "target", "status": {"value": state}}]}
+            )
+        if request.url.path == "/models/load":
+            mutations.append("load")
+            state = "loading"
+            load_started.set()
+            return httpx.Response(200, json={"success": True})
+        if request.url.path == "/models/unload":
+            mutations.append("unload")
+            state = "unloaded"
+            return httpx.Response(200, json={"success": True})
+        return httpx.Response(404)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    service, state_store, credentials = _service(tmp_path, client=client)
+    state_store.save(_state(selected_model=None, models=()))
+    service = LlamaCppService(
+        state_store=state_store,
+        credential_store=credentials,
+        client=client,
+        environment={},
+    )
+    await service.refresh(_context())
+    operation = asyncio.create_task(service.load_model("target", _context("load_model")))
+    await load_started.wait()
+    operation.cancel()
+
+    result = await operation
+
+    assert result.cancelled is True
+    assert mutations == ["load", "unload"]
+    assert result.backend_status is not None
+    assert result.backend_status.models[0].state == "unloaded"
+    assert service.provider().models == ()
+    await client.aclose()
+
+
+@pytest.mark.anyio
+async def test_hugging_face_search_details_token_and_gating_are_search_only(tmp_path: Path) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/api/models":
+            return httpx.Response(200, json=[{"id": "owner/repo-GGUF"}])
+        if request.url.path == "/api/models/owner/repo-GGUF":
+            return httpx.Response(
+                200,
+                json={
+                    "id": "owner/repo-GGUF",
+                    "gated": "manual",
+                    "siblings": [
+                        {"rfilename": "model-Q4_K_M.gguf", "size": 4_000_000_000},
+                        {"rfilename": "model-Q8_0.gguf", "lfs": {"size": 8_000_000_000}},
+                    ],
+                },
+            )
+        return _healthy_handler()(request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    service, _, _ = _service(
+        tmp_path,
+        client=client,
+        environment={"HF_TOKEN": "search-secret", LLAMA_CPP_ENDPOINT_ENV: SERVER},
+    )
+
+    result = await service.search_models("repo", _context("search_models"))
+
+    assert len(result.search_results) == 1
+    repository = result.search_results[0]
+    assert repository.restricted is True
+    assert [option.label for option in repository.options] == ["Q4_K_M", "Q8_0"]
+    assert repository.options[0].recommended is True
+    assert "server process" in (repository.diagnostic or "")
+    assert all(
+        request.headers.get("authorization") == "Bearer search-secret" for request in requests
+    )
+    assert "search-secret" not in repr(result)
+    assert not state_store_text(tmp_path)
+    await client.aclose()
+
+
+@pytest.mark.anyio
+async def test_llama_scoped_reference_persists_pair_and_stays_inert_when_unloaded(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+
+    from tau_coding.provider_config import (
+        OpenAICompatibleProviderConfig,
+        ProviderSettings,
+        load_provider_settings,
+    )
+    from tau_coding.session import CodingSession, ModelChoice
+
+    paths = TauPaths(home=tmp_path / "tau", agents_home=tmp_path / "agents")
+    LlamaCppStateStore(paths=paths).save(_state())
+    runtime, _, _ = _runtime(tmp_path)
+    settings = ProviderSettings(
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="ordinary", models=("ordinary-model",), default_model="ordinary-model"
+            ),
+        )
+    )
+    session = object.__new__(CodingSession)
+    session._provider_settings = settings
+    session._provider_registry = runtime.provider_registry
+    session._resource_paths = TauResourcePaths(root=paths.home, paths=paths)
+    session._credential_store = FileCredentialStore(paths.home / "credentials.json")
+    session._sync_thinking_level_to_active_model = lambda: None  # type: ignore[method-assign]
+    choice = ModelChoice(provider_name="llama.cpp", model="qwen-local")
+
+    assert choice in session.available_model_choices
+    assert session.toggle_scoped_model(choice) == (choice,)
+    saved = load_provider_settings(paths)
+    assert saved.scoped_models[0].to_json() == {
+        "provider": "llama.cpp",
+        "model": "qwen-local",
+    }
+    payload = json.loads((paths.home / "providers.json").read_text(encoding="utf-8"))
+    assert "llama.cpp" not in payload["provider_preferences"]
+
+    effective = runtime.provider_registry.effective("llama.cpp")
+    assert effective is not None
+    dynamic = effective.definition
+    runtime.provider_registry.update(
+        effective.source_id,
+        replace(dynamic, models=(), default_model=None),  # type: ignore[arg-type]
+    )
+    assert choice not in session.available_model_choices
+    assert session.scoped_model_choices == (choice,)
+    assert session.unavailable_scoped_model_choices == (choice,)
+    assert session.toggle_scoped_model(choice) == ()
+    assert load_provider_settings(paths).scoped_models == ()
+    await runtime.aclose()
+
+
+def state_store_text(tmp_path: Path) -> str:
+    path = TauPaths(home=tmp_path / "tau", agents_home=tmp_path / "agents").llama_cpp_state_path
+    return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
 __all__ = []

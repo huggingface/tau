@@ -2415,8 +2415,10 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         picker_kind: Literal["model", "scoped"] = "model",
     ) -> None:
         super().__init__()
-        self.choices = tuple(dict.fromkeys(choices))
+        available = tuple(dict.fromkeys(choices))
         self.scoped_choices = tuple(dict.fromkeys(scoped_choices))
+        self.unavailable_choices = frozenset(self.scoped_choices) - frozenset(available)
+        self.choices = tuple(dict.fromkeys((*available, *self.scoped_choices)))
         self.visible_choices = self.choices
         self.current_model = current_model
         self.provider_name = provider_name
@@ -2444,6 +2446,7 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
                                 current_model=self.current_model,
                                 current_provider=self.provider_name,
                                 scoped=choice in self.scoped_choices,
+                                unavailable=choice in self.unavailable_choices,
                             ),
                             markup=False,
                         )
@@ -2554,6 +2557,8 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         if self.picker_kind == "scoped":
             self.action_toggle_scoped()
             return
+        if choice in self.unavailable_choices:
+            return
         self.dismiss(choice)
 
     def _refresh_model_list(self) -> None:
@@ -2570,6 +2575,7 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
                             current_model=self.current_model,
                             current_provider=self.provider_name,
                             scoped=choice in self.scoped_choices,
+                            unavailable=choice in self.unavailable_choices,
                         ),
                         markup=False,
                     )
@@ -5889,7 +5895,8 @@ class TauTuiApp(App[None]):
 
     def _open_model_picker(self) -> None:
         choices = self._available_model_choices()
-        if not choices:
+        scoped = tuple(getattr(self.session, "scoped_model_choices", ()))
+        if not choices and not scoped:
             self._notify(
                 "No configured providers are usable. Run /login to set up a provider.",
                 severity="warning",
@@ -5898,7 +5905,7 @@ class TauTuiApp(App[None]):
         self.push_screen(
             ModelPickerScreen(
                 choices,
-                scoped_choices=tuple(getattr(self.session, "scoped_model_choices", ())),
+                scoped_choices=scoped,
                 current_model=self.session.model,
                 provider_name=self.session.provider_name,
                 theme=self.tui_settings.resolved_theme,
@@ -5910,7 +5917,8 @@ class TauTuiApp(App[None]):
 
     def _open_scoped_models_picker(self) -> None:
         choices = self._available_model_choices()
-        if not choices:
+        scoped = tuple(getattr(self.session, "scoped_model_choices", ()))
+        if not choices and not scoped:
             self._notify(
                 "No configured providers are usable. Run /login to set up a provider.",
                 severity="warning",
@@ -5919,7 +5927,7 @@ class TauTuiApp(App[None]):
         self.push_screen(
             ModelPickerScreen(
                 choices,
-                scoped_choices=tuple(getattr(self.session, "scoped_model_choices", ())),
+                scoped_choices=scoped,
                 current_model=self.session.model,
                 provider_name=self.session.provider_name,
                 theme=self.tui_settings.resolved_theme,
@@ -6682,13 +6690,14 @@ def _model_picker_label(
     current_model: str,
     current_provider: str,
     scoped: bool = False,
+    unavailable: bool = False,
 ) -> str:
     marker = (
         "* "
         if (choice.provider_name == current_provider and choice.model == current_model)
         else "  "
     )
-    suffix = " [scoped]" if scoped else ""
+    suffix = (" [scoped]" if scoped else "") + (" [unavailable]" if unavailable else "")
     return f"{marker}{choice.provider_name}:{choice.model}{suffix}"
 
 
