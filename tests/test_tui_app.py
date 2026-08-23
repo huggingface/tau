@@ -1506,6 +1506,24 @@ def test_system_prompt_markdown_highlights_markup_tags_as_inline_code() -> None:
     )
 
 
+def test_system_prompt_markdown_skips_tags_inside_fenced_code() -> None:
+    prompt = "```xml\n<project>\n```\n\n<visible>"
+
+    assert _system_prompt_markdown(prompt) == "```xml\n<project>\n```\n\n`<visible>`"
+
+
+def test_system_prompt_markdown_skips_tags_inside_existing_inline_code() -> None:
+    prompt = "Use `<project>` as an example, then use <visible>."
+
+    assert _system_prompt_markdown(prompt) == "Use `<project>` as an example, then use `<visible>`."
+
+
+def test_system_prompt_markdown_uses_longer_delimiter_for_backticks_in_tags() -> None:
+    prompt = '<project value="a`b">'
+
+    assert _system_prompt_markdown(prompt) == '``<project value="a`b">``'
+
+
 def test_textual_markdown_uses_theme_highlight_and_aqua_inline_code() -> None:
     variables = _theme_css_variables(TAU_LIGHT_THEME)
 
