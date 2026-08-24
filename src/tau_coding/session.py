@@ -2339,30 +2339,53 @@ class CodingSession:
         await self._adopt_replacement(replacement, reason="resume")
         return f"Resumed session: {record.id}"
 
-    def set_session_name(self, name: str) -> None:
-        """Set the indexed session's human-friendly name."""
-        normalized = normalize_session_name(name)
-        manager = self._config.session_manager
-        session_id = self._config.session_id
-        if manager is None or session_id is None:
-            raise ValueError("Session manager is not available")
-        if manager.touch_session(session_id, title=normalized) is None:
-            raise ValueError(f"Unknown session: {session_id}")
-
-    async def rename_session(self, name: str) -> str:
+    async def set_session_name(self, name: str) -> str:
         """Persist a session name and notify extensions after it changes."""
         normalized = normalize_session_name(name)
+        persisted = self._persist_session_name(
+            normalized,
+            only_if_unnamed=False,
+            index_if_missing=True,
+        )
+        if persisted is None:
+            return normalized
+        await self._extension_runtime.emit_event(SessionInfoChangedEvent(name=persisted))
+        return persisted
+
+    def _persist_session_name(
+        self,
+        name: str,
+        *,
+        only_if_unnamed: bool,
+        index_if_missing: bool,
+    ) -> str | None:
+        """Persist and return a changed name; return None for a no-op."""
+        normalized = normalize_session_name(name)
         manager = self._config.session_manager
         session_id = self._config.session_id
         if manager is None or session_id is None:
             raise ValueError("Session manager is not available")
-        if manager.get_session(session_id) is None:
+        record = manager.get_session(session_id)
+        if record is None and index_if_missing:
             self.ensure_session_indexed()
-        if self.session_name == normalized:
-            return normalized
-        self.set_session_name(normalized)
-        await self._extension_runtime.emit_event(SessionInfoChangedEvent(name=normalized))
-        return normalized
+            record = manager.get_session(session_id)
+        if record is None:
+            return None
+        if only_if_unnamed and record.title:
+            return None
+        if record.title == normalized:
+            return None
+        updated = manager.touch_session(
+            session_id,
+            model=self.model,
+            provider_name=self.provider_name,
+            title=normalized,
+        )
+        if updated is None:
+            if index_if_missing:
+                raise ValueError(f"Unknown session: {session_id}")
+            return None
+        return updated.title or normalized
 
     async def new_session(self) -> str:
         """Replace this session's active state with a pending unindexed session."""
@@ -3366,8 +3389,13 @@ class CodingSession:
             title = _fallback_session_name(first_message)
         if title is None:
             return
-        if self._set_auto_session_title(title):
-            await self._extension_runtime.emit_event(SessionInfoChangedEvent(name=title))
+        persisted = self._persist_session_name(
+            title,
+            only_if_unnamed=True,
+            index_if_missing=False,
+        )
+        if persisted is not None:
+            await self._extension_runtime.emit_event(SessionInfoChangedEvent(name=persisted))
 
     def _should_auto_name_session(self) -> bool:
         if self._config.session_id is None or self._config.session_manager is None:
@@ -3400,20 +3428,6 @@ class CodingSession:
                     f"Session naming failed: {event.error.error_message or event.reason}"
                 )
         return _sanitize_session_name(final_text if final_text is not None else "".join(text_parts))
-
-    def _set_auto_session_title(self, title: str) -> bool:
-        if self._config.session_id is None or self._config.session_manager is None:
-            return False
-        existing = self._config.session_manager.get_session(self._config.session_id)
-        if existing is not None and existing.title:
-            return False
-        updated = self._config.session_manager.touch_session(
-            self._config.session_id,
-            model=self.model,
-            provider_name=self.provider_name,
-            title=title,
-        )
-        return updated is not None
 
     def _provider_is_usable(self, provider: ProviderConfig) -> bool:
         return provider_has_usable_credentials(

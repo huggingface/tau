@@ -2102,18 +2102,13 @@ async def test_session_metadata_changes_reach_extensions(tmp_path: Path) -> None
     api.on("session_info_changed", record_event)
     api.on("thinking_level_changed", record_event)
 
-    # Preserve the existing synchronous SDK setter; notifying hosts use the
-    # awaited rename path below.
-    assert session.set_session_name("SDK name") is None
-    assert session.session_name == "SDK name"
-    assert seen == []
     with pytest.raises(ValueError, match="single line"):
-        await session.rename_session("bad\nname")
+        await session.set_session_name("bad\nname")
 
-    assert await session.rename_session("New name") == "New name"
+    assert await session.set_session_name("New name") == "New name"
     assert await session.set_thinking_level("high") == "Thinking mode: high"
     # Assigning either current value is a no-op and must not duplicate events.
-    assert await session.rename_session("New name") == "New name"
+    assert await session.set_session_name("New name") == "New name"
     assert await session.set_thinking_level("high") == "Thinking mode: high"
 
     assert seen == [

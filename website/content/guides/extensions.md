@@ -540,7 +540,7 @@ Observation events mirror the canonical agent/session stream. Handlers receive
 | `compaction_start` | `reason` (`manual`, `threshold`, or `overflow`) |
 | `compaction_end` | `reason`, `result`, `aborted`, `will_retry`, `error_message` |
 | `entry_appended` | persisted session `entry` |
-| `session_info_changed` | session `name`; emitted after automatic naming or async host renames |
+| `session_info_changed` | session `name`; emitted after automatic naming or `await session.set_session_name(...)` |
 | `thinking_level_changed` | `level`; emitted after an explicit thinking-mode change |
 | `auto_retry_start` | `attempt`, `max_attempts`, `delay_ms`, `error_message` |
 | `auto_retry_end` | `success`, `attempt`, `final_error` |

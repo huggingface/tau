@@ -1288,7 +1288,7 @@ async def run_print_mode(
                     message = format_reload_summary(summary)
             if command.session_name is not None:
                 try:
-                    renamed = await session.rename_session(command.session_name)
+                    renamed = await session.set_session_name(command.session_name)
                 except ValueError as exc:
                     message = f"Could not rename session: {exc}"
                 else:

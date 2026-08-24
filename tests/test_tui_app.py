@@ -393,7 +393,7 @@ class FakeSession:
     async def refresh_model_catalogs(self) -> None:
         self.model_catalog_refresh_count += 1
 
-    async def rename_session(self, name: str) -> str:
+    async def set_session_name(self, name: str) -> str:
         self._session_title = name
         return name
 

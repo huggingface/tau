@@ -4285,7 +4285,7 @@ class TauTuiApp(App[None]):
                 self._open_theme_picker()
             if command.session_name is not None:
                 try:
-                    await self.session.rename_session(command.session_name)
+                    await self.session.set_session_name(command.session_name)
                 except Exception as exc:  # noqa: BLE001 - surface rename failures in the TUI
                     self._notify(f"Could not rename session: {exc}", severity="error")
                     self._refresh()
