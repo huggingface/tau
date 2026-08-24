@@ -80,6 +80,21 @@ def test_system_prompt_files_replace_by_precedence_and_append_in_order(tmp_path:
     ]
 
 
+def test_overlapping_user_and_project_append_path_is_loaded_once(tmp_path: Path) -> None:
+    tau_home = tmp_path / ".tau"
+    tau_home.mkdir()
+    append_path = tau_home / "APPEND_SYSTEM.md"
+    append_path.write_text("Once", encoding="utf-8")
+
+    resources = discover_system_prompt_resources(
+        TauResourcePaths(root=tau_home, agents_root=None, cwd=tmp_path)
+    )
+
+    assert resources.append_prompt == "Once"
+    assert resources.append_prompt_paths == (append_path,)
+    assert [(item.name, item.path) for item in resources.diagnostics] == [("append", append_path)]
+
+
 def test_explicit_replacement_shadows_file_but_append_files_still_load(tmp_path: Path) -> None:
     tau_home = tmp_path / ".tau"
     tau_home.mkdir()

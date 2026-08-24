@@ -257,8 +257,13 @@ def _discover_append_system_prompt_files(
 
     contents: list[str] = []
     selected_paths: list[Path] = []
+    seen_paths: set[Path] = set()
     for scope, path in candidates:
         try:
+            resolved_path = path.expanduser().resolve()
+            if resolved_path in seen_paths:
+                continue
+            seen_paths.add(resolved_path)
             exists = path.exists()
         except OSError as exc:
             raise ResourceError(
