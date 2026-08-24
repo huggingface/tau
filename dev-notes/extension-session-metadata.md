@@ -20,7 +20,8 @@ The `/name` command now returns a rename intent. Async hosts apply that intent
 through `await CodingSession.set_session_name(...)`. This is the one public
 session-name mutation path: it persists the change, then awaits extension event
 delivery before returning. The setter was synchronous before this change, so
-SDK callers must now await it. Keeping one notifying setter avoids a silent
+SDK callers must now await it. It also refreshes the record's model and
+provider alongside the title, as the `/name` command already did. Keeping one notifying setter avoids a silent
 mutation path that could leave extensions stale.
 
 Focused coverage is in `tests/test_extensions.py`, `tests/test_commands.py`,
