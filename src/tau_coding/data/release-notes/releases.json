@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.4.0",
+    "date": "2026-08-24",
+    "sections": {
+      "New": [
+        "Run tool-capable GGUF models through Tau's built-in llama.cpp local backend, with the /local workflow for endpoint configuration, diagnostics, model discovery, downloads, and load or unload management.",
+        "Keep model metadata current from models.dev with a generated offline snapshot, background /model refreshes, tau update --models, richer capability metadata, and Pi-compatible reasoning levels including max.",
+        "Recover eligible Hugging Face pre-output route failures automatically, persist successful replacement routes, and expose structured failover diagnostics while preserving explicitly fixed routes.",
+        "Build dynamic providers from trusted extensions and let extensions add live sidebar sections, structured system-prompt sections, and react to session-name or thinking-level changes.",
+        "Show active SYSTEM.md and APPEND_SYSTEM.md sources in the TUI sidebar."
+      ],
+      "Changed": [
+        "Render /system output as transcript Markdown without adding it to model context or session history.",
+        "Compose all discovered user and project APPEND_SYSTEM.md files from broad to specific before explicit CLI append content, deduplicating overlapping paths across reloads."
+      ],
+      "Fixed": [
+        "Require explicit Google finish reasons, retry empty clean closes, preserve partial failures, and reject malformed stream chunks instead of treating incomplete streams as successful.",
+        "Prevent malformed syntax-highlighter spans from crashing the TUI when rendering fenced code blocks.",
+        "Update extension-owned sidebar content in place to prevent flicker and unnecessary widget remounts."
+      ]
+    }
+  },
+  {
     "version": "0.3.13",
     "date": "2026-08-21",
     "sections": {
