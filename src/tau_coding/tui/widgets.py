@@ -1532,9 +1532,215 @@ def _transcript_item_markdown(
     visible_text = _visible_chat_text(
         item, show_tool_results=show_tool_results, invocation=invocation
     )
+    if item.system_prompt:
+        return _system_prompt_markdown(visible_text)
     if item.role in {"assistant", "thinking", "status", "branch_summary", "compaction_summary"}:
         return visible_text
     return _plain_markdown(visible_text)
+
+
+_SYSTEM_PROMPT_TAG_PATTERN = re.compile(
+    r"""
+    </?
+    [A-Za-z][A-Za-z0-9_.:-]*
+    (?:
+        \s+
+        [A-Za-z_:][A-Za-z0-9_.:-]*
+        \s*=\s*
+        (?:
+            "[^"]*"
+            | '[^']*'
+            | [^\s"'=<>`]+
+        )
+    )*
+    \s*/?>
+    """,
+    re.VERBOSE,
+)
+_SYSTEM_PROMPT_FENCE_PATTERN = re.compile(r"^ {0,3}(?P<marker>`{3,}|~{3,})")
+_SYSTEM_PROMPT_INDENTED_CODE_PATTERN = re.compile(r"^(?: {4,}|[ ]*\t)")
+_SYSTEM_PROMPT_URI_AUTOLINK_PATTERN = re.compile(r"<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\s]+>")
+
+
+def _system_prompt_markdown(text: str) -> str:
+    """Protect prompt markup tags so Markdown displays them as highlighted code.
+
+    Tags inside fenced blocks or existing inline code are left untouched. Tags
+    containing backticks use a longer code-span delimiter so their source stays
+    valid Markdown.
+    """
+    protected_ranges = _system_prompt_protected_ranges(text)
+    output: list[str] = []
+    cursor = 0
+    for match in _SYSTEM_PROMPT_TAG_PATTERN.finditer(text):
+        if _position_in_ranges(match.start(), protected_ranges):
+            continue
+        output.append(text[cursor : match.start()])
+        tag = match.group(0)
+        longest_backtick_run = max(
+            (len(run) for run in re.findall(r"`+", tag)),
+            default=0,
+        )
+        delimiter = "`" * (longest_backtick_run + 1)
+        output.append(f"{delimiter}{tag}{delimiter}")
+        cursor = match.end()
+    output.append(text[cursor:])
+    return "".join(output)
+
+
+def _system_prompt_protected_ranges(text: str) -> tuple[tuple[int, int], ...]:
+    """Return Markdown ranges that must not be rewritten."""
+    block_ranges = [
+        *_system_prompt_fenced_ranges(text),
+        *_system_prompt_indented_code_ranges(text),
+    ]
+    ranges = [
+        *block_ranges,
+        *_system_prompt_uri_autolink_ranges(text),
+        *_system_prompt_inline_code_ranges(text, block_ranges),
+    ]
+    return tuple(sorted(ranges))
+
+
+def _system_prompt_fenced_ranges(text: str) -> tuple[tuple[int, int], ...]:
+    """Find fenced Markdown blocks, including unterminated blocks."""
+    ranges: list[tuple[int, int]] = []
+    offset = 0
+    fence_start: int | None = None
+    fence_character: str | None = None
+    fence_length = 0
+    for line in text.splitlines(keepends=True):
+        if fence_character is None:
+            opening = _SYSTEM_PROMPT_FENCE_PATTERN.match(line)
+            if opening is not None:
+                marker = opening.group("marker")
+                fence_start = offset
+                fence_character = marker[0]
+                fence_length = len(marker)
+        elif _is_system_prompt_fence_close(
+            line,
+            character=fence_character,
+            minimum_length=fence_length,
+        ):
+            assert fence_start is not None
+            ranges.append((fence_start, offset + len(line)))
+            fence_start = None
+            fence_character = None
+            fence_length = 0
+        offset += len(line)
+    if fence_start is not None:
+        ranges.append((fence_start, len(text)))
+    return tuple(ranges)
+
+
+def _is_system_prompt_fence_close(
+    line: str,
+    *,
+    character: str,
+    minimum_length: int,
+) -> bool:
+    stripped = line.rstrip("\r\n")
+    marker = re.match(rf"^ {{0,3}}{re.escape(character)}+", stripped)
+    if marker is None or len(marker.group(0).lstrip()) < minimum_length:
+        return False
+    return not stripped[marker.end() :].strip()
+
+
+def _system_prompt_indented_code_ranges(text: str) -> tuple[tuple[int, int], ...]:
+    """Find lines belonging to indented Markdown code blocks."""
+    ranges: list[tuple[int, int]] = []
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        if _SYSTEM_PROMPT_INDENTED_CODE_PATTERN.match(line) is not None:
+            ranges.append((offset, offset + len(line)))
+        offset += len(line)
+    return tuple(ranges)
+
+
+def _system_prompt_uri_autolink_ranges(text: str) -> tuple[tuple[int, int], ...]:
+    """Find CommonMark URI autolinks, including schemes without ``//``."""
+    return tuple(
+        (match.start(), match.end()) for match in _SYSTEM_PROMPT_URI_AUTOLINK_PATTERN.finditer(text)
+    )
+
+
+def _system_prompt_inline_code_ranges(
+    text: str,
+    block_ranges: Sequence[tuple[int, int]],
+) -> tuple[tuple[int, int], ...]:
+    """Find inline backtick code spans outside Markdown code blocks."""
+    ranges: list[tuple[int, int]] = []
+    position = 0
+    while position < len(text):
+        block_end = _protected_range_end(position, block_ranges)
+        if block_end is not None:
+            position = block_end
+            continue
+        if text[position] != "`":
+            position += 1
+            continue
+        opener_end = _backtick_run_end(text, position)
+        delimiter_length = opener_end - position
+        closing = _find_backtick_closer(
+            text,
+            start=opener_end,
+            delimiter_length=delimiter_length,
+            block_ranges=block_ranges,
+        )
+        if closing is None:
+            position = opener_end
+            continue
+        closing_end = closing + delimiter_length
+        ranges.append((position, closing_end))
+        position = closing_end
+    return tuple(ranges)
+
+
+def _find_backtick_closer(
+    text: str,
+    *,
+    start: int,
+    delimiter_length: int,
+    block_ranges: Sequence[tuple[int, int]],
+) -> int | None:
+    position = start
+    while position < len(text):
+        block_end = _protected_range_end(position, block_ranges)
+        if block_end is not None:
+            position = block_end
+            continue
+        if text[position] != "`":
+            position += 1
+            continue
+        run_end = _backtick_run_end(text, position)
+        if run_end - position == delimiter_length:
+            return position
+        position = run_end
+    return None
+
+
+def _backtick_run_end(text: str, start: int) -> int:
+    end = start
+    while end < len(text) and text[end] == "`":
+        end += 1
+    return end
+
+
+def _protected_range_end(
+    position: int,
+    ranges: Sequence[tuple[int, int]],
+) -> int | None:
+    protected_end: int | None = None
+    for start, end in ranges:
+        if position < start:
+            break
+        if position < end:
+            protected_end = max(protected_end or end, end)
+    return protected_end
+
+
+def _position_in_ranges(position: int, ranges: Sequence[tuple[int, int]]) -> bool:
+    return _protected_range_end(position, ranges) is not None
 
 
 def _plain_markdown(text: str) -> str:

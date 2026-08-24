@@ -5886,7 +5886,16 @@ class TauTuiApp(App[None]):
 
     def _append_command_message(self, command_text: str, message: str) -> None:
         """Append non-persistent command output to the visible transcript."""
-        self.state.add_item("status", f"{_command_output_title(command_text)}\n{message}")
+        is_system_prompt = command_text.split(maxsplit=1)[0].casefold() == "/system"
+        separator = "\n\n" if is_system_prompt else "\n"
+        title = _command_output_title(command_text)
+        if is_system_prompt:
+            title = f"### {title}"
+        self.state.add_item(
+            "status",
+            f"{title}{separator}{message}",
+            system_prompt=is_system_prompt,
+        )
 
     def _show_command_message(self, command_text: str, message: str) -> None:
         self.push_screen(
