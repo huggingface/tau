@@ -249,6 +249,7 @@ class LocalBackendScreen(ModalScreen[None]):
     async def on_mount(self) -> None:
         await self._render_sections(None)
         self.query_one("#local-action-menu", ListView).focus()
+        self.query_one("#local-backend-progress", Static).styles.display = "none"
         progress_bar = self.query_one("#local-backend-progress-bar", ProgressBar)
         progress_bar.styles.display = "none"
         progress_bar.query_one("#bar").styles.width = "1fr"
@@ -870,7 +871,9 @@ class LocalBackendScreen(ModalScreen[None]):
         elif not show_bar:
             self._progress_fraction = None
         with suppress(NoMatches):
-            self.query_one("#local-backend-progress", Static).update(message)
+            progress_message = self.query_one("#local-backend-progress", Static)
+            progress_message.update(message)
+            progress_message.styles.display = "block" if message else "none"
             progress_bar = self.query_one("#local-backend-progress-bar", ProgressBar)
             progress_bar.styles.display = "block" if show_bar or fraction is not None else "none"
             if fraction is None:

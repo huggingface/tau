@@ -171,6 +171,7 @@ async def test_backend_open_auto_refreshes_and_renders_clickable_models() -> Non
         screen = app.screen
         status = screen.query_one("#local-backend-status", Static).render().plain
         assert "http://127.0.0.1:8080/v1" in status
+        assert screen.query_one("#local-backend-progress", Static).styles.display == "none"
         model_list = screen.query_one("#local-model-list", ListView)
         action_menu = screen.query_one("#local-action-menu", ListView)
         assert model_list is not action_menu
@@ -231,6 +232,7 @@ async def test_download_progress_renders_fraction_and_remaining_detail() -> None
         progress = screen.query_one("#local-backend-progress", Static).render().plain
         progress_bar = screen.query_one("#local-backend-progress-bar", ProgressBar)
         assert "4.0 GiB remaining" in progress
+        assert screen.query_one("#local-backend-progress", Static).styles.display == "block"
         assert progress_bar.styles.display == "block"
         assert progress_bar.progress == 0.25
         assert (
