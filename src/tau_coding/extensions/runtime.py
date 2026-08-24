@@ -79,6 +79,7 @@ from tau_coding.paths import TauPaths
 from tau_coding.project_trust import ExtensionTrustResult, ProjectTrustEvent
 from tau_coding.provider_config import ProviderConfig
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
+from tau_coding.system_prompt import PromptSection
 
 # Host callback that delivers a message through the frontend's serialized run
 # path when the session is idle. Carries the same presentation metadata as a
@@ -236,6 +237,7 @@ class ExtensionRuntime:
         self._tools: dict[str, RegisteredExtensionTool] = {}
         self._commands: dict[str, ExtensionCommand] = {}
         self._prompt_guidelines: list[tuple[str, str, str]] = []
+        self._prompt_sections: list[tuple[str, str, PromptSection]] = []
         self._message_renderers: dict[str, tuple[str, str, MessageRenderer]] = {}
         self._renderer_failures_reported: set[str] = set()
         self._load_diagnostics: list[ResourceDiagnostic] = []
@@ -321,6 +323,7 @@ class ExtensionRuntime:
         self._tools.clear()
         self._commands.clear()
         self._prompt_guidelines.clear()
+        self._prompt_sections.clear()
         self._message_renderers.clear()
         self._renderer_failures_reported.clear()
         self._turn_requested = None
@@ -395,6 +398,7 @@ class ExtensionRuntime:
         self._tools.clear()
         self._commands.clear()
         self._prompt_guidelines.clear()
+        self._prompt_sections.clear()
         self._message_renderers.clear()
         self._renderer_failures_reported.clear()
         self._load_diagnostics.clear()
@@ -461,6 +465,11 @@ class ExtensionRuntime:
         self._prompt_guidelines = [
             (owner, extension, guideline)
             for owner, extension, guideline in self._prompt_guidelines
+            if owner != source_id
+        ]
+        self._prompt_sections = [
+            (owner, extension, section)
+            for owner, extension, section in self._prompt_sections
             if owner != source_id
         ]
         self._message_renderers = {
@@ -691,6 +700,46 @@ class ExtensionRuntime:
             return
         self._prompt_guidelines.append((source_id, extension_name, normalized))
 
+    def register_prompt_section(
+        self,
+        source_id: str,
+        extension_name: str,
+        title: str | None,
+        body: str,
+    ) -> None:
+        """Register a free-form system-prompt section."""
+        normalized_body = body.strip()
+        if not normalized_body:
+            self._load_diagnostics.append(
+                ResourceDiagnostic(
+                    kind="extension",
+                    name=extension_name,
+                    message="empty prompt section ignored",
+                )
+            )
+            return
+        normalized_title = title.strip() if title is not None else None
+        if normalized_title == "":
+            normalized_title = None
+        if normalized_title is not None and any(
+            separator in normalized_title for separator in ("\r", "\n")
+        ):
+            self._load_diagnostics.append(
+                ResourceDiagnostic(
+                    kind="extension",
+                    name=extension_name,
+                    message="prompt section ignored because its title spans multiple lines",
+                )
+            )
+            return
+        self._prompt_sections.append(
+            (
+                source_id,
+                extension_name,
+                PromptSection(title=normalized_title, body=normalized_body),
+            )
+        )
+
     def subscribe(self, source_id: str, event: str, handler: ExtensionHandler) -> None:
         """Subscribe an extension handler to a named event."""
         known = (
@@ -847,6 +896,11 @@ class ExtensionRuntime:
     def prompt_guidelines(self) -> tuple[str, ...]:
         """Return standalone guideline lines in registration order."""
         return tuple(guideline for _, _, guideline in self._prompt_guidelines)
+
+    @property
+    def prompt_sections(self) -> tuple[PromptSection, ...]:
+        """Return free-form prompt sections in registration order."""
+        return tuple(section for _, _, section in self._prompt_sections)
 
     # -- actions (called through ExtensionAPI) --------------------------------
 

@@ -623,6 +623,7 @@ class CodingSession:
                     ),
                     context_files=resources.context_files,
                     extra_guidelines=extension_runtime.prompt_guidelines,
+                    extra_sections=extension_runtime.prompt_sections,
                 )
             )
         )
@@ -2005,6 +2006,7 @@ class CodingSession:
         before_extensions = _extension_signatures(self._extension_runtime)
         before_tool_names = tuple(tool.name for tool in self._harness.config.tools)
         before_guidelines = self._extension_runtime.prompt_guidelines
+        before_sections = self._extension_runtime.prompt_sections
 
         # Nothing below mutates the live session. Eligible extensions are loaded
         # first so project code cannot import before the destination decision.
@@ -2108,10 +2110,12 @@ class CodingSession:
             append_system_prompt_path=resources.append_system_prompt_path,
         )
         after_guidelines = staged_runtime.prompt_guidelines
+        after_sections = staged_runtime.prompt_sections
         system_prompt_rebuilt = self._config.system is None and (
             before_system_prompt_inputs != after_system_prompt_inputs
             or before_tool_names != tuple(tool.name for tool in staged_tools)
             or before_guidelines != after_guidelines
+            or before_sections != after_sections
         )
         staged_system = self._harness.config.system
         if system_prompt_rebuilt:
@@ -2132,6 +2136,7 @@ class CodingSession:
                     ),
                     context_files=resources.context_files,
                     extra_guidelines=after_guidelines,
+                    extra_sections=after_sections,
                 )
             )
 
