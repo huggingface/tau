@@ -13,11 +13,11 @@ Tau now discovers optional replacement and append files:
 <cwd>/.tau/APPEND_SYSTEM.md
 ```
 
-Explicit `--system-prompt` or `--append-system-prompt` input wins over discovery.
-Otherwise a project file wins over its user counterpart. Replacement and append
-precedence are independent, so a project replacement can be paired with a user
-append. Project and user append files are alternatives rather than cumulative
-layers.
+Replacement inputs use precedence: explicit `--system-prompt`, then the project
+file, then the user file. Append inputs are cumulative layers: user
+`APPEND_SYSTEM.md`, project `APPEND_SYSTEM.md`, then explicit
+`--append-system-prompt` values in CLI order. This broad-to-specific ordering
+matches Tau's cumulative `AGENTS.md` model while retaining raw append formatting.
 
 The files use the existing custom-base prompt builder. Replacement content still
 receives selected append text, project context, eligible skills, date, and cwd.
@@ -32,14 +32,16 @@ and instructions is unchanged, while system prompt files remain Tau-specific.
 
 ## Reload and diagnostics
 
-`CodingSession` stores the discovered content and source paths separately from
-explicit startup values. `/reload` compares both source and content signatures,
-so adding, changing, removing, or shadowing a file rebuilds the next-turn prompt.
-Explicit startup values remain authoritative across reloads.
+`CodingSession` stores the discovered content and ordered source paths separately
+from explicit startup values. `/reload` compares both source and content
+signatures, so adding, changing, or removing an append file rebuilds the
+next-turn prompt. Explicit startup append values remain the final append layers
+across reloads.
 
-Resource diagnostics identify selected, shadowed, and CLI-overridden files
-without exposing their contents. Missing files are ignored. A selected path that
-cannot be inspected, read, or decoded as UTF-8 fails startup/reload rather than
+Resource diagnostics identify every selected append file and any selected,
+shadowed, or CLI-overridden replacement files without exposing their contents.
+Missing files are ignored. A selected path that cannot be inspected, read, or
+decoded as UTF-8 fails startup/reload rather than
 silently weakening precedence. A failed reload leaves the previous prompt active.
 
 ## Trust boundary

@@ -60,17 +60,19 @@ files:
 <project>/.tau/APPEND_SYSTEM.md  # project append
 ```
 
-For each kind, precedence is explicit CLI input, then the project file, then the
-user file. A higher-precedence append file replaces the lower-precedence append
-file; Tau does not concatenate project and user files. Replacement content still
-receives the selected append text, project instructions, eligible skills, the
-current date, and the working directory. Empty files are valid explicit values.
+Replacement inputs use precedence: explicit CLI input, then the project
+`SYSTEM.md`, then the user `SYSTEM.md`. Append inputs compose instead of
+shadowing one another: Tau adds the user `APPEND_SYSTEM.md`, then the project
+`APPEND_SYSTEM.md`, then every explicit `--append-system-prompt` value in CLI
+order. Replacement content still receives all append text, project instructions,
+eligible skills, the current date, and the working directory. Empty files are
+valid contributions.
 
 Run `/reload` after adding, changing, or removing a file. Tau rebuilds the prompt
 for the next model request without adding it to session history. `/session`
-resource diagnostics identify selected, shadowed, or CLI-overridden files. A
-selected file that cannot be inspected or decoded as UTF-8 stops startup or
-reload rather than silently falling back.
+resource diagnostics identify selected append files and selected, shadowed, or
+CLI-overridden replacement files. A selected file that cannot be inspected or
+decoded as UTF-8 stops startup or reload rather than silently falling back.
 
 System prompt files are Tau-specific and are not discovered from `.agents`.
 Project files load only after the destination cwd is trusted. User files and

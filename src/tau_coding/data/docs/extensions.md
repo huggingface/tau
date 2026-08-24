@@ -29,10 +29,10 @@ Use `tau.add_prompt_guideline(text)` for one behavioral bullet in Tau's
 always-on context containing paragraphs, lists, or code blocks. `title` may be
 `None`; otherwise Tau renders it as a level-two Markdown heading.
 
-Extension sections follow user/project `APPEND_SYSTEM.md` or explicit
-`--append-system-prompt` content, then compose in extension load and registration
-order. Empty bodies and multi-line titles are ignored with diagnostics. Prompt
-registrations are source-owned and disappear on failed setup, reload, or runtime
+Extension sections follow cumulative user and project `APPEND_SYSTEM.md` files
+and explicit `--append-system-prompt` content, then compose in extension load and
+registration order. Empty bodies and multi-line titles are ignored with
+diagnostics. Prompt registrations are source-owned and disappear on failed setup, reload, or runtime
 retirement. See `examples/extensions/prompt_section.py`.
 
 ## Installing extensions

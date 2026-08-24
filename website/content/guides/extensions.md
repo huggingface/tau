@@ -330,7 +330,7 @@ adds a line to the system prompt's Guidelines section (de-duplicated at
 build time; `/reload` rebuilds the prompt when guidelines change).
 
 For structured, always-on context, `add_prompt_section(title, body)` appends a
-free-form section after user/project `APPEND_SYSTEM.md` or
+free-form section after cumulative user and project `APPEND_SYSTEM.md` files and
 `--append-system-prompt` content. The title may be `None`; a title is rendered
 as a level-two Markdown heading. Bodies may contain paragraphs, lists, and code
 blocks without being forced into a guideline bullet:

@@ -3161,6 +3161,7 @@ async def test_session_loads_tau_native_system_prompt_files(tmp_path: Path) -> N
     (tau_home / "SYSTEM.md").write_text("User base", encoding="utf-8")
     (project_tau / "SYSTEM.md").write_text("Project base", encoding="utf-8")
     (tau_home / "APPEND_SYSTEM.md").write_text("User append", encoding="utf-8")
+    (project_tau / "APPEND_SYSTEM.md").write_text("Project append", encoding="utf-8")
     (tmp_path / "AGENTS.md").write_text("Project instructions", encoding="utf-8")
 
     session = await CodingSession.load(
@@ -3174,7 +3175,7 @@ async def test_session_loads_tau_native_system_prompt_files(tmp_path: Path) -> N
         )
     )
 
-    assert session.system_prompt.startswith("Project base\n\nUser append")
+    assert session.system_prompt.startswith("Project base\n\nUser append\n\nProject append")
     assert "User base" not in session.system_prompt
     assert "Project instructions" in session.system_prompt
     assert "Current date:" in session.system_prompt
@@ -3182,19 +3183,30 @@ async def test_session_loads_tau_native_system_prompt_files(tmp_path: Path) -> N
     assert session.system_prompt_files == (
         project_tau / "SYSTEM.md",
         tau_home / "APPEND_SYSTEM.md",
+        project_tau / "APPEND_SYSTEM.md",
     )
     prompt_diagnostics = [
         item for item in session.resource_diagnostics if item.kind == "system-prompt"
     ]
-    assert [item.severity for item in prompt_diagnostics] == ["info", "warning", "info"]
+    assert [item.severity for item in prompt_diagnostics] == [
+        "info",
+        "warning",
+        "info",
+        "info",
+    ]
 
 
 @pytest.mark.anyio
-async def test_explicit_system_prompt_values_override_discovered_files(tmp_path: Path) -> None:
+async def test_explicit_base_overrides_file_while_explicit_append_composes(
+    tmp_path: Path,
+) -> None:
     tau_home = tmp_path / "tau-home"
+    project_tau = tmp_path / ".tau"
     tau_home.mkdir()
+    project_tau.mkdir()
     (tau_home / "SYSTEM.md").write_bytes(b"\xff")
-    (tau_home / "APPEND_SYSTEM.md").write_bytes(b"\xff")
+    (tau_home / "APPEND_SYSTEM.md").write_text("User append", encoding="utf-8")
+    (project_tau / "APPEND_SYSTEM.md").write_text("Project append", encoding="utf-8")
 
     session = await CodingSession.load(
         CodingSessionConfig(
@@ -3203,18 +3215,24 @@ async def test_explicit_system_prompt_values_override_discovered_files(tmp_path:
             storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
             cwd=tmp_path,
             resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+            trust_default="always",
             custom_system_prompt="Explicit base",
             append_system_prompt="Explicit append",
         )
     )
 
-    assert session.system_prompt.startswith("Explicit base\n\nExplicit append")
-    assert session.system_prompt_files == ()
-    assert all(
-        "explicit startup value" in item.message
-        for item in session.resource_diagnostics
-        if item.kind == "system-prompt"
+    assert session.system_prompt.startswith(
+        "Explicit base\n\nUser append\n\nProject append\n\nExplicit append"
     )
+    assert session.system_prompt_files == (
+        tau_home / "APPEND_SYSTEM.md",
+        project_tau / "APPEND_SYSTEM.md",
+    )
+    prompt_diagnostics = [
+        item for item in session.resource_diagnostics if item.kind == "system-prompt"
+    ]
+    assert "explicit startup value" in prompt_diagnostics[0].message
+    assert "selected user" in prompt_diagnostics[1].message
 
 
 @pytest.mark.anyio
