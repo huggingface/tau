@@ -23,8 +23,11 @@ if sidebar is not None and sidebar.supported:
 ```
 
 Calling `set_section` again with the same key replaces the section in place.
-`remove_section(key)` removes it. Keys are internally scoped by extension name,
-so unrelated extensions can safely choose the same local key. Registration
+For host-rendered display lines, Tau retains the mounted section root and updates
+its title and body directly; identical contributions are no-ops. Widget factories
+retain replacement semantics because the host cannot safely mutate an arbitrary
+extension widget. `remove_section(key)` removes it. Keys are internally scoped by
+extension name, so unrelated extensions can safely choose the same local key. Registration
 order is deterministic; replacing preserves position, while remove plus re-add
 moves the section to the end.
 

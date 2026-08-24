@@ -275,15 +275,20 @@ async def test_sidebar_sections_mount_update_and_remove_by_owned_key() -> None:
             "Beta",
         ]
 
-        bridge.set_sidebar_section("alpha", "status", title="Alpha", content=["updated"])
+        alpha_section = slot.children[0]
+        bridge.set_sidebar_section("alpha", "status", title="Alpha", content=["first"])
         await pilot.pause()
+        assert slot.children[0] is alpha_section
+
+        bridge.set_sidebar_section("alpha", "status", title="Alpha updated", content=["updated"])
         await pilot.pause()
 
+        assert slot.children[0] is alpha_section
         assert [
             section.query_one(".extension-sidebar-title", Static).render().plain
             for section in slot.children
         ] == [
-            "Alpha",
+            "Alpha updated",
             "Beta",
         ]
         alpha_body = slot.children[0].query_one(".extension-sidebar-body", Container)
@@ -296,6 +301,27 @@ async def test_sidebar_sections_mount_update_and_remove_by_owned_key() -> None:
         assert (
             slot.children[0].query_one(".extension-sidebar-title", Static).render().plain == "Beta"
         )
+
+
+@pytest.mark.anyio
+async def test_sidebar_removing_absent_key_does_not_schedule_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        scheduled = False
+
+        def schedule(coro):  # noqa: ANN001, ANN202
+            nonlocal scheduled
+            scheduled = True
+            coro.close()
+
+        monkeypatch.setattr(app, "_schedule_extension_swap", schedule)
+        _component_bridge(app).remove_sidebar_section("ext", "absent")
+
+        assert scheduled is False
 
 
 @pytest.mark.anyio

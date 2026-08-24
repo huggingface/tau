@@ -4721,26 +4721,60 @@ class TauTuiApp(App[None]):
         title: str,
         content: SidebarContent,
     ) -> None:
-        """Add or replace a sidebar contribution while preserving key order."""
+        """Add or update a sidebar contribution while preserving key order."""
         if self.tui_settings.sidebar_position == "off":
             return
         owner = (extension_name, key)
-        contribution = _SidebarContribution(title=title, content=content)
-        widget = self._build_extension_sidebar_widget(
-            owner,
-            contribution,
-            theme=self.tui_settings.resolved_theme,
-        )
+        normalized_content: SidebarContent
+        if callable(content):
+            normalized_content = content
+        elif isinstance(content, str):
+            normalized_content = (content,)
+        else:
+            normalized_content = tuple(content)
+        contribution = _SidebarContribution(title=title, content=normalized_content)
+        theme = self.tui_settings.resolved_theme
+        previous = self._extension_sidebar_contributions.get(owner)
+        if previous == contribution and self._extension_sidebar_theme == theme:
+            return
+        mounted = self._extension_sidebar_mounted.get(owner)
+        target = self._extension_sidebar_widgets.get(owner)
+        if (
+            previous is not None
+            and not callable(previous.content)
+            and not callable(normalized_content)
+            and mounted is not None
+            and mounted is target
+            and self._extension_sidebar_theme == theme
+        ):
+            try:
+                header = Text(title, style=f"bold {theme.prompt_text}")
+                mounted.query_one(".extension-sidebar-title", Static).update(header)
+                body = mounted.query_one(".extension-sidebar-body", Container).query_one(Static)
+                body.update(_custom_markup_to_text("\n".join(normalized_content)))
+            except Exception as exc:  # noqa: BLE001 - isolation boundary
+                self._record_extension_component_failure(
+                    f"sidebar:{extension_name}:{key}",
+                    exc,
+                    notify=True,
+                    extension_name=extension_name,
+                )
+                return
+            self._extension_sidebar_contributions[owner] = contribution
+            return
+        widget = self._build_extension_sidebar_widget(owner, contribution, theme=theme)
         if widget is None:
             return
         self._extension_sidebar_contributions[owner] = contribution
         self._extension_sidebar_widgets[owner] = widget
-        self._extension_sidebar_theme = self.tui_settings.resolved_theme
+        self._extension_sidebar_theme = theme
         self._schedule_extension_swap(self._reconcile_sidebar())
 
     def _remove_extension_sidebar_section(self, extension_name: str, key: str) -> None:
         """Forget and unmount one extension-owned sidebar contribution."""
         owner = (extension_name, key)
+        if owner not in self._extension_sidebar_contributions:
+            return
         self._extension_sidebar_contributions.pop(owner, None)
         self._extension_sidebar_widgets.pop(owner, None)
         self._schedule_extension_swap(self._reconcile_sidebar())
