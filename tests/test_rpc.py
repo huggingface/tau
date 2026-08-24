@@ -17,6 +17,8 @@ from tau_coding import (
     ModelChoice,
     OpenAICompatibleProviderConfig,
     ProviderSettings,
+    SessionManager,
+    TauPaths,
 )
 from tau_coding import cli as cli_module
 from tau_coding.provider_config import ProviderModelMetadata
@@ -100,6 +102,37 @@ async def test_rpc_state_matches_pi_frontend_contract(tmp_path: Path) -> None:
         "success": True,
         "id": "thinking",
     }
+
+
+@pytest.mark.anyio
+async def test_rpc_set_session_name_persists_rename(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(cwd=tmp_path, model="fake", title="Old name")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(record.path),
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+        )
+    )
+    stdin = StringIO('{"id":"rename","type":"set_session_name","name":"New name"}\n')
+    stdout = StringIO()
+
+    await RpcServer(session, stdin=stdin, stdout=stdout).run()
+
+    assert json.loads(stdout.getvalue()) == {
+        "type": "response",
+        "command": "set_session_name",
+        "success": True,
+        "id": "rename",
+    }
+    updated = manager.get_session(record.id)
+    assert updated is not None
+    assert updated.title == "New name"
 
 
 @pytest.mark.anyio

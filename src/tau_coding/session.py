@@ -71,6 +71,8 @@ from tau_coding.events import (
     CompactionStartEvent,
     QueueUpdateEvent,
     SessionAgentEndEvent,
+    SessionInfoChangedEvent,
+    ThinkingLevelChangedEvent,
 )
 from tau_coding.extensions.provider_registry import DynamicProviderRegistry
 from tau_coding.extensions.providers import DynamicProvider, ProviderModel
@@ -131,7 +133,11 @@ from tau_coding.session_export import (
     export_session_artifact,
     normalize_export_format,
 )
-from tau_coding.session_manager import InferenceProviderMode, SessionManager
+from tau_coding.session_manager import (
+    InferenceProviderMode,
+    SessionManager,
+    normalize_session_name,
+)
 from tau_coding.session_stats import SessionStats, calculate_session_stats
 from tau_coding.skills import Skill, expand_skill_command, load_skills_with_diagnostics
 from tau_coding.system_prompt import (
@@ -1256,6 +1262,11 @@ class CodingSession:
         return record.title
 
     @property
+    def session_name(self) -> str | None:
+        """Return this session's indexed human-friendly name, if named."""
+        return self.session_title
+
+    @property
     def session_manager(self) -> SessionManager | None:
         """Return the session manager, if available."""
         return self._config.session_manager
@@ -1709,6 +1720,7 @@ class CodingSession:
 
         self._persist_thinking_level_choice()
         await self._refresh_persisted_state(leaf_id=entry.id)
+        await self._extension_runtime.emit_event(ThinkingLevelChangedEvent(level=normalized))
         return f"Thinking mode: {normalized}"
 
     async def cycle_thinking_level(self) -> str:
@@ -2329,17 +2341,53 @@ class CodingSession:
         await self._adopt_replacement(replacement, reason="resume")
         return f"Resumed session: {record.id}"
 
-    def set_session_name(self, name: str) -> None:
-        """Set the indexed session's human-friendly name."""
-        normalized = name.strip()
-        if not normalized:
-            raise ValueError("Session name cannot be empty")
+    async def set_session_name(self, name: str) -> str:
+        """Persist a session name and notify extensions after it changes."""
+        normalized = normalize_session_name(name)
+        persisted = self._persist_session_name(
+            normalized,
+            only_if_unnamed=False,
+            index_if_missing=True,
+        )
+        if persisted is None:
+            return normalized
+        await self._extension_runtime.emit_event(SessionInfoChangedEvent(name=persisted))
+        return persisted
+
+    def _persist_session_name(
+        self,
+        name: str,
+        *,
+        only_if_unnamed: bool,
+        index_if_missing: bool,
+    ) -> str | None:
+        """Persist and return a changed name; return None for a no-op."""
+        normalized = normalize_session_name(name)
         manager = self._config.session_manager
         session_id = self._config.session_id
         if manager is None or session_id is None:
             raise ValueError("Session manager is not available")
-        if manager.touch_session(session_id, title=normalized) is None:
-            raise ValueError(f"Unknown session: {session_id}")
+        record = manager.get_session(session_id)
+        if record is None and index_if_missing:
+            self.ensure_session_indexed()
+            record = manager.get_session(session_id)
+        if record is None:
+            return None
+        if only_if_unnamed and record.title:
+            return None
+        if record.title == normalized:
+            return None
+        updated = manager.touch_session(
+            session_id,
+            model=self.model,
+            provider_name=self.provider_name,
+            title=normalized,
+        )
+        if updated is None:
+            if index_if_missing:
+                raise ValueError(f"Unknown session: {session_id}")
+            return None
+        return updated.title or normalized
 
     async def new_session(self) -> str:
         """Replace this session's active state with a pending unindexed session."""
@@ -3343,7 +3391,13 @@ class CodingSession:
             title = _fallback_session_name(first_message)
         if title is None:
             return
-        self._set_auto_session_title(title)
+        persisted = self._persist_session_name(
+            title,
+            only_if_unnamed=True,
+            index_if_missing=False,
+        )
+        if persisted is not None:
+            await self._extension_runtime.emit_event(SessionInfoChangedEvent(name=persisted))
 
     def _should_auto_name_session(self) -> bool:
         if self._config.session_id is None or self._config.session_manager is None:
@@ -3376,19 +3430,6 @@ class CodingSession:
                     f"Session naming failed: {event.error.error_message or event.reason}"
                 )
         return _sanitize_session_name(final_text if final_text is not None else "".join(text_parts))
-
-    def _set_auto_session_title(self, title: str) -> None:
-        if self._config.session_id is None or self._config.session_manager is None:
-            return
-        existing = self._config.session_manager.get_session(self._config.session_id)
-        if existing is not None and existing.title:
-            return
-        self._config.session_manager.touch_session(
-            self._config.session_id,
-            model=self.model,
-            provider_name=self.provider_name,
-            title=title,
-        )
 
     def _provider_is_usable(self, provider: ProviderConfig) -> bool:
         return provider_has_usable_credentials(

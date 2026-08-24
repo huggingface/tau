@@ -12,7 +12,11 @@ from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG, builtin_provider_entry
 from tau_coding.reload import CodingReloadSummary, ReloadCategorySummary
 from tau_coding.resources import ResourceDiagnostic
-from tau_coding.session_manager import CodingSessionRecord, SessionManager
+from tau_coding.session_manager import (
+    CodingSessionRecord,
+    SessionManager,
+    normalize_session_name,
+)
 from tau_coding.skills import Skill
 from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.thinking import normalize_thinking_level
@@ -124,6 +128,7 @@ class CommandResult:
     thinking_level: str | None = None
     theme: str | None = None
     message: str | None = None
+    session_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -607,18 +612,11 @@ def _name_command(context: CommandContext) -> CommandResult:
     except ValueError as exc:
         return CommandResult(handled=True, message=str(exc))
 
-    if manager.get_session(session_id) is None:
-        context.session.ensure_session_indexed()
-
-    updated = manager.touch_session(
-        session_id,
-        model=context.session.model,
-        provider_name=context.session.provider_name,
-        title=name,
+    return CommandResult(
+        handled=True,
+        session_name=name,
+        message=f"Session renamed: {name}",
     )
-    if updated is None:
-        return CommandResult(handled=True, message=f"Unknown current session: {session_id}")
-    return CommandResult(handled=True, message=f"Session renamed: {updated.title}")
 
 
 def _format_sessions(context: CommandContext) -> str:
@@ -893,12 +891,9 @@ def _parse_export_args(args: str) -> tuple[str | None, Path | None]:
 
 
 def _validated_session_name(value: str) -> str:
-    name = value.strip()
-    if not name:
+    if not value.strip():
         raise ValueError("Usage: /name <new name>")
-    if any(char in name for char in "\r\n\t"):
-        raise ValueError("Session name must be a single line.")
-    return name
+    return normalize_session_name(value)
 
 
 def _normalize_name(name: str) -> str:

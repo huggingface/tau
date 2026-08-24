@@ -2800,6 +2800,49 @@ async def test_session_auto_name_does_not_overwrite_manual_name(tmp_path: Path) 
 
 
 @pytest.mark.anyio
+async def test_manual_name_wins_while_auto_name_is_in_flight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(cwd=tmp_path, model="fake")
+    provider = WaitingProvider()
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+        )
+    )
+    metadata_names: list[str | None] = []
+    original_emit = session.extension_runtime.emit_event
+
+    async def record_metadata_event(event: object) -> None:
+        if getattr(event, "type", None) == "session_info_changed":
+            metadata_names.append(getattr(event, "name", None))
+        await original_emit(event)
+
+    monkeypatch.setattr(session.extension_runtime, "emit_event", record_metadata_event)
+    prompt_task = asyncio.create_task(
+        _collect_session_events(session.prompt("Generate a session name"))
+    )
+    await provider.started.wait()
+
+    assert await session.set_session_name("Manual name") == "Manual name"
+    provider.release.set()
+    await prompt_task
+
+    updated = manager.get_session(record.id)
+    assert updated is not None
+    assert updated.title == "Manual name"
+    assert metadata_names == ["Manual name"]
+
+
+@pytest.mark.anyio
 async def test_session_auto_name_does_not_index_new_session_before_first_persist(
     tmp_path: Path,
 ) -> None:
@@ -5598,9 +5641,12 @@ async def test_session_name_indexes_pending_session_without_prompt(
     assert manager.get_session(pending_id) is None
 
     result = session.handle_command("/name Customer bugfix")
+    assert result.session_name == "Customer bugfix"
+    renamed = await session.set_session_name(result.session_name)
 
     indexed = manager.get_session(pending_id)
     assert result.message == "Session renamed: Customer bugfix"
+    assert renamed == "Customer bugfix"
     assert indexed is not None
     assert indexed.title == "Customer bugfix"
     assert indexed.provider_name == "openai"

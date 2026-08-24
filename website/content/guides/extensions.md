@@ -182,7 +182,8 @@ def setup(tau):
     tau.context.cwd, tau.context.model, tau.context.provider_name
     tau.context.inference_provider             # current Hugging Face route, or None
     tau.context.inference_provider_mode        # "automatic" or "fixed"
-    tau.context.session_id, tau.context.system_prompt
+    tau.context.session_id, tau.context.session_name
+    tau.context.thinking_level, tau.context.system_prompt
     tau.context.is_running, tau.context.has_ui
     tau.context.transcript   # parent conversation, deep-copied AgentMessages
 
@@ -564,8 +565,8 @@ Observation events mirror the canonical agent/session stream. Handlers receive
 | `compaction_start` | `reason` (`manual`, `threshold`, or `overflow`) |
 | `compaction_end` | `reason`, `result`, `aborted`, `will_retry`, `error_message` |
 | `entry_appended` | persisted session `entry` |
-| `session_info_changed` | session `name` |
-| `thinking_level_changed` | `level` |
+| `session_info_changed` | session `name`; emitted after automatic naming or `await session.set_session_name(...)` |
+| `thinking_level_changed` | `level`; emitted after an explicit thinking-mode change |
 | `auto_retry_start` | `attempt`, `max_attempts`, `delay_ms`, `error_message` |
 | `auto_retry_end` | `success`, `attempt`, `final_error` |
 
@@ -574,6 +575,15 @@ stream. Its nested `type` is one of `text_start`, `text_delta`, `text_end`,
 `thinking_start`, `thinking_delta`, `thinking_end`, `toolcall_start`,
 `toolcall_delta`, or `toolcall_end`. Terminal provider events become
 `message_end`, rather than another `message_update`.
+
+`context.session_name` and `context.thinking_level` provide the current values
+when an extension attaches or a replacement session starts. Their matching
+change events carry snapshots of later updates; no-op assignments do not emit.
+Model changes, `/model` and `/local` selections, scoped-model toggles,
+provider reloads, and branch/resume can coerce the active thinking level to
+what the selected model supports without an explicit `thinking_level_changed`
+event, so read the live context when handling other events instead of treating
+change events as a complete cache feed.
 
 Extension turn events are session-enriched like Pi's. `turn_start` and its
 matching `turn_end` carry the same zero-based `turn_index`; `turn_start` also

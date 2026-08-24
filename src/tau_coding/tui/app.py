@@ -4283,6 +4283,14 @@ class TauTuiApp(App[None]):
                 self._open_skills_picker()
             if command.theme_picker_requested:
                 self._open_theme_picker()
+            if command.session_name is not None:
+                try:
+                    await self.session.set_session_name(command.session_name)
+                except ValueError as exc:
+                    self._notify(f"Could not rename session: {exc}", severity="error")
+                    self._refresh()
+                    return
+                self._sync_session_title()
             if command.thinking_level is not None:
                 await self._set_thinking_level(command.thinking_level)
             if command.theme is not None:

@@ -343,10 +343,11 @@ class FakeSession:
         if text.startswith("/theme "):
             return CommandResult(handled=True, theme=text.removeprefix("/theme "))
         if text.startswith("/name "):
-            self._session_title = text.removeprefix("/name ")
+            name = text.removeprefix("/name ")
             return CommandResult(
                 handled=True,
-                message=f"Session renamed: {self._session_title}",
+                session_name=name,
+                message=f"Session renamed: {name}",
             )
         return CommandResult(handled=False)
 
@@ -391,6 +392,10 @@ class FakeSession:
 
     async def refresh_model_catalogs(self) -> None:
         self.model_catalog_refresh_count += 1
+
+    async def set_session_name(self, name: str) -> str:
+        self._session_title = name
+        return name
 
     async def set_thinking_level(self, level: str) -> str:
         self.thinking_level = level

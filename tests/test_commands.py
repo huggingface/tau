@@ -540,7 +540,7 @@ def test_name_command_shows_current_name_and_usage(tmp_path: Path) -> None:
     assert result.message == "Current session name: Test session\nUsage: /name <new name>"
 
 
-def test_name_command_renames_current_session(tmp_path: Path) -> None:
+def test_name_command_requests_session_rename(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake-model", title="Old name")
     session = FakeSession(tmp_path, manager=manager)
@@ -549,14 +549,13 @@ def test_name_command_renames_current_session(tmp_path: Path) -> None:
     result = create_default_command_registry().execute(session, "/name Customer bugfix")
 
     assert result.message == "Session renamed: Customer bugfix"
-    renamed = manager.get_session(record.id)
-    assert renamed is not None
-    assert renamed.title == "Customer bugfix"
-    assert renamed.model == "fake-model"
-    assert renamed.updated_at >= record.updated_at
+    assert result.session_name == "Customer bugfix"
+    unchanged = manager.get_session(record.id)
+    assert unchanged is not None
+    assert unchanged.title == "Old name"
 
 
-def test_name_command_indexes_pending_session_before_renaming(tmp_path: Path) -> None:
+def test_name_command_defers_indexing_pending_session(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     session = FakeSession(tmp_path, manager=manager)
     session.session_id = "pending-session"
@@ -564,10 +563,9 @@ def test_name_command_indexes_pending_session_before_renaming(tmp_path: Path) ->
     result = create_default_command_registry().execute(session, "/name Customer bugfix")
 
     assert result.message == "Session renamed: Customer bugfix"
-    assert session.ensure_session_indexed_called is True
-    record = manager.get_session("pending-session")
-    assert record is not None
-    assert record.title == "Customer bugfix"
+    assert result.session_name == "Customer bugfix"
+    assert session.ensure_session_indexed_called is False
+    assert manager.get_session("pending-session") is None
 
 
 def test_name_command_reports_missing_session_manager(tmp_path: Path) -> None:

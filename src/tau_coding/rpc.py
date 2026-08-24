@@ -133,7 +133,7 @@ class RpcSession(Protocol):
         self, command: str, *, add_to_context: bool
     ) -> TerminalCommandResult: ...
 
-    def set_session_name(self, name: str) -> None: ...
+    async def set_session_name(self, name: str) -> str: ...
 
     async def emit_pending_session_start(self) -> None: ...
 
@@ -442,7 +442,7 @@ class RpcServer:
                 await self._response(request_id, command_type, {"text": text})
                 return
             if command_type == "set_session_name":
-                self._session.set_session_name(_required_string(command, "name"))
+                await self._session.set_session_name(_required_string(command, "name"))
                 await self._response(request_id, command_type)
                 return
             if command_type == "fork":

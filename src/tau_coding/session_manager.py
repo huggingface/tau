@@ -26,6 +26,16 @@ _SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$"
 InferenceProviderMode = Literal["automatic", "fixed"]
 
 
+def normalize_session_name(value: str) -> str:
+    """Return a trimmed, single-line session name or raise ValueError."""
+    name = value.strip()
+    if not name:
+        raise ValueError("Session name cannot be empty")
+    if any(char in name for char in "\r\n\t"):
+        raise ValueError("Session name must be a single line.")
+    return name
+
+
 def validate_session_id(session_id: str) -> None:
     """Reject custom session ids that are unsafe as file names."""
     if not _SESSION_ID_PATTERN.fullmatch(session_id):
