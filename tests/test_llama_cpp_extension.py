@@ -324,6 +324,7 @@ async def test_discovery_timeout_and_health_loading_are_actionable(tmp_path: Pat
     result = await service.refresh(_context())
     assert result.backend_status is not None
     assert "Timed out" in result.backend_status.diagnostics[0].message
+    assert "github.com/ggml-org/llama.cpp" in result.backend_status.diagnostics[0].message
     await client.aclose()
 
     loading_client, _ = _client(lambda request: httpx.Response(503, json={"status": "loading"}))

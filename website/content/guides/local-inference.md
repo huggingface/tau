@@ -10,12 +10,58 @@ user-created `llama-cpp` catalog provider.
 
 ## Start llama.cpp
 
-Install llama.cpp separately and start its OpenAI-compatible server with a
-model suitable for your work:
+Install llama.cpp separately using its official
+[server quick start](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#quick-start).
+Tau recommends [router mode](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#using-multiple-models)
+for `/local` model download/load/unload management: start the server **without**
+a model argument. This conservative single-user baseline keeps one model and
+one inference slot resident:
+
+```bash
+llama-server \
+  --models-max 1 \
+  --parallel 1 \
+  --flash-attn auto
+```
+
+Some installations expose the same entry point as `llama serve`. Bare
+`llama-server` also works, but its defaults permit up to four loaded models and
+choose the slot count automatically. A single-model server remains supported
+for inference but does not expose router management:
 
 ```bash
 llama-server -hf <tool-capable-gguf>
 ```
+
+There is no universally optimal command. For one interactive Tau user with
+enough unified memory/VRAM and a model supporting a 65,536-token context, use a
+long-context profile only after confirming it fits:
+
+```bash
+llama-server \
+  --models-max 1 \
+  --parallel 1 \
+  --ctx-size 65536 \
+  --flash-attn on \
+  --cache-type-k q8_0 \
+  --cache-type-v q8_0
+```
+
+- `--models-max 1` limits simultaneously loaded models, not downloaded models.
+- `--parallel 1` gives one request the context/KV cache instead of spending
+  memory on concurrent slots.
+- `q8_0` KV caches use less memory than the `f16` defaults while retaining more
+  fidelity than lower-bit cache types.
+- `--ctx-size 65536` can still exceed the hardware or model limit; reduce it
+  first when loading fails.
+- `--flash-attn auto` is portable; force `on` only on a supported backend.
+
+Sampling and reasoning options are model behavior, not universal performance
+settings. `--min-p 0` disables llama.cpp's default min-p sampler.
+`--reasoning-effort medium` (or the older template-kwargs equivalent) and
+`--reasoning-preserve` should be used only with templates that support them.
+Check the model card and run `/local` → Doctor instead of applying those flags
+to every model.
 
 The default endpoint is `http://127.0.0.1:8080`. Tau does not install, start,
 stop, or scan for llama.cpp. Keep the server running while Tau uses it. In
@@ -101,8 +147,8 @@ server states in a dedicated model section. A separate actions section contains
 Hugging Face search/download, configuration, refresh, Doctor, and reset. Arrow
 keys move within and between both sections, while Tab switches sections
 directly. Only the focused section shows a `focused` marker, accent border, and
-highlighted row, so Enter's target is explicit. Only loaded or sleeping models enter
-`/model`. Router models in the `unloaded` state are labelled **available to
+highlighted row, so Enter's target is explicit. Only loaded or sleeping models
+enter `/model`. Router models in the `unloaded` state are labelled **available to
 load**; press Enter on one to review a loading confirmation. Enter on a
 loaded/sleeping row offers use or unload. Actions are always explicit:
 

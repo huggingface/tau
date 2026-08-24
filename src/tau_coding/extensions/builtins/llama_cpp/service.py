@@ -86,6 +86,9 @@ LLAMA_CPP_BACKEND_ID = "llama.cpp"
 LLAMA_CPP_DEFAULT_ENDPOINT = "http://127.0.0.1:8080"
 LLAMA_CPP_ENDPOINT_ENV = "LLAMA_BASE_URL"
 LLAMA_CPP_API_KEY_ENV = "LLAMA_API_KEY"
+LLAMA_CPP_SERVER_GUIDE_URL = (
+    "https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#using-multiple-models"
+)
 DEFAULT_LLAMA_CPP_TIMEOUT_SECONDS = 5.0
 LLAMA_CPP_ROUTER_POLL_SECONDS = 0.1
 LLAMA_CPP_ROUTER_RECONCILE_TIMEOUT_SECONDS = 30.0
@@ -337,14 +340,14 @@ class LlamaCppService:
         except httpx.TimeoutException as exc:
             error = LlamaCppError(
                 f"Timed out connecting to llama.cpp at {self.endpoint.server_root}. "
-                "Check the server and retry."
+                f"Check the server and retry. Router setup: {LLAMA_CPP_SERVER_GUIDE_URL}"
             )
             self._last_error = error
             raise error from exc
         except httpx.HTTPError as exc:
             error = LlamaCppError(
                 f"Could not connect to llama.cpp at {self.endpoint.server_root}. "
-                "Start llama-server and retry."
+                f"Start llama-server and retry. Router setup: {LLAMA_CPP_SERVER_GUIDE_URL}"
             )
             self._last_error = error
             raise error from exc
@@ -451,7 +454,8 @@ class LlamaCppService:
             else self._cached_status(
                 diagnostics=(
                     LocalDiagnostic(
-                        "Start llama-server at the configured endpoint and refresh.",
+                        "Start llama-server at the configured endpoint and refresh. "
+                        f"Router setup: {LLAMA_CPP_SERVER_GUIDE_URL}",
                         "warning",
                         "connection",
                     ),

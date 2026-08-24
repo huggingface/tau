@@ -350,11 +350,15 @@ metadata to `~/.tau/catalog.toml`, and makes the provider available immediately.
 ### Built-in llama.cpp backend
 
 Tau's first-class llama.cpp integration is configured through the provider-neutral
-`/local` command. Start llama.cpp independently with a real GGUF model:
+`/local` command. For download/load/unload management, start llama.cpp
+independently in router mode without a model argument:
 
 ```bash
-llama-server -hf <tool-capable-gguf>
+llama-server --models-max 1 --parallel 1 --flash-attn auto
 ```
+
+See the [official router guide](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#using-multiple-models)
+and Tau's complete guide below before adding hardware- or model-specific flags.
 
 Then open Tau and run:
 
