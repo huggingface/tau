@@ -921,6 +921,18 @@ class ExtensionContext:
         return self._runtime.session_view.session_id
 
     @property
+    def session_name(self) -> str | None:
+        """Return the session's human-friendly name, if it has one."""
+        self._generation.assert_active()
+        return self._runtime.session_view.session_name
+
+    @property
+    def thinking_level(self) -> str:
+        """Return the active thinking mode for future turns."""
+        self._generation.assert_active()
+        return self._runtime.session_view.thinking_level
+
+    @property
     def system_prompt(self) -> str:
         """Return the active system prompt."""
         self._generation.assert_active()

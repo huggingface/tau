@@ -179,7 +179,7 @@ class ExtensionAPI:
 ```
 
 `ExtensionContext` exposes `cwd`, `model`, `provider_name`, `inference_provider`, `session_id`,
-`system_prompt`, `is_running`, `has_ui`, and `transcript`. It is a live view
+`session_name`, `thinking_level`, `system_prompt`, `is_running`, `has_ui`, and `transcript`. It is a live view
 over the bound `CodingSession`; action methods raise `ExtensionError` if
 called before binding (Pi's throwing-stubs-then-`bindCore` model).
 

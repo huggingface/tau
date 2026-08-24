@@ -5580,9 +5580,12 @@ async def test_session_name_indexes_pending_session_without_prompt(
     assert manager.get_session(pending_id) is None
 
     result = session.handle_command("/name Customer bugfix")
+    assert result.session_name == "Customer bugfix"
+    renamed = await session.rename_session(result.session_name)
 
     indexed = manager.get_session(pending_id)
     assert result.message == "Session renamed: Customer bugfix"
+    assert renamed == "Customer bugfix"
     assert indexed is not None
     assert indexed.title == "Customer bugfix"
     assert indexed.provider_name == "openai"
