@@ -3480,6 +3480,26 @@ async def test_tui_transcript_code_block_scrollbar_matches_overflow(
 
 
 @pytest.mark.anyio
+async def test_tui_transcript_code_fence_ignores_invalid_highlighter_spans() -> None:
+    app = TauTuiApp(
+        FakeSession(
+            messages=[
+                AssistantMessage(content="```ini\nkeybind = alt+arrow_left=text:\\\n```")
+            ]
+        )
+    )
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        label = app.query_one("#code-content", Label)
+        content = label.render()
+
+    assert isinstance(content, Content)
+    assert content.plain == "keybind = alt+arrow_left=text:\\"
+    assert all(0 <= span.start < span.end <= len(content.plain) for span in content.spans)
+
+
+@pytest.mark.anyio
 async def test_streaming_code_block_hides_horizontal_scrollbar_until_finalized() -> None:
     app = TauTuiApp(FakeSession())
     long_code_line = "value = '" + ("x" * 140) + "'"

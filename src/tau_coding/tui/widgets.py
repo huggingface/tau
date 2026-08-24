@@ -23,6 +23,7 @@ from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.content import Content, Span
 from textual.content import Style as TextualStyle  # type: ignore[attr-defined]
 from textual.css.query import NoMatches
 from textual.geometry import Offset
@@ -30,7 +31,7 @@ from textual.selection import Selection
 from textual.widget import Widget
 from textual.widgets import Collapsible, Static
 from textual.widgets import Markdown as TextualMarkdown
-from textual.widgets.markdown import MarkdownBlock, MarkdownStream
+from textual.widgets.markdown import MarkdownBlock, MarkdownFence, MarkdownStream
 
 from tau_agent.tools import AgentTool, ToolCall
 from tau_coding.context_window import estimate_text_tokens
@@ -288,10 +289,38 @@ class TauMarkdownBlock(MarkdownBlock):
         return type(content)(content.plain, spans=spans)
 
 
+class TauMarkdownFence(MarkdownFence):
+    """Code fence that discards invalid spans produced by Textual's highlighter."""
+
+    @classmethod
+    def highlight(
+        cls,
+        code: str,
+        language: str,
+        ansi: bool = False,
+        dark: bool = False,
+    ) -> Content:
+        content = super().highlight(code, language, ansi=ansi, dark=dark)
+        text_length = len(content.plain)
+        if all(0 <= span.start < span.end <= text_length for span in content.spans):
+            return content
+        spans = [
+            Span(max(0, span.start), min(text_length, span.end), span.style)
+            for span in content.spans
+            if max(0, span.start) < min(text_length, span.end)
+        ]
+        return Content(content.plain, spans=spans)
+
+
 class ThemedMarkdownWidget(TextualMarkdown):
     """Textual Markdown widget reserved for Tau transcript streaming."""
 
-    BLOCKS = {**TextualMarkdown.BLOCKS, "paragraph_open": TauMarkdownBlock}
+    BLOCKS = {
+        **TextualMarkdown.BLOCKS,
+        "paragraph_open": TauMarkdownBlock,
+        "fence": TauMarkdownFence,
+        "code_block": TauMarkdownFence,
+    }
 
     DEFAULT_CSS = """
     ThemedMarkdownWidget MarkdownH1,
