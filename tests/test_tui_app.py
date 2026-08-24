@@ -3483,9 +3483,7 @@ async def test_tui_transcript_code_block_scrollbar_matches_overflow(
 async def test_tui_transcript_code_fence_ignores_invalid_highlighter_spans() -> None:
     app = TauTuiApp(
         FakeSession(
-            messages=[
-                AssistantMessage(content="```ini\nkeybind = alt+arrow_left=text:\\\n```")
-            ]
+            messages=[AssistantMessage(content="```ini\nkeybind = alt+arrow_left=text:\\\n```")]
         )
     )
 
