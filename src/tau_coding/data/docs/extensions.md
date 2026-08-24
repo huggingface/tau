@@ -22,6 +22,19 @@ Installed examples are under `examples/extensions/` next to these docs. Read the
 - `<project>/.tau/extensions/`: requires project approval and `--project-extensions`.
 - `tau -e PATH`: explicitly load a file or directory.
 
+## System-prompt contributions
+
+Use `tau.add_prompt_guideline(text)` for one behavioral bullet in Tau's
+`Guidelines` section. Use `tau.add_prompt_section(title, body)` for structured,
+always-on context containing paragraphs, lists, or code blocks. `title` may be
+`None`; otherwise Tau renders it as a level-two Markdown heading.
+
+Extension sections follow user/project `APPEND_SYSTEM.md` or explicit
+`--append-system-prompt` content, then compose in extension load and registration
+order. Empty bodies and multi-line titles are ignored with diagnostics. Prompt
+registrations are source-owned and disappear on failed setup, reload, or runtime
+retirement. See `examples/extensions/prompt_section.py`.
+
 ## Installing extensions
 
 Install a trusted local or Git extension for future runs with:

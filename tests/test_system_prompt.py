@@ -6,6 +6,7 @@ from tau_coding import Skill
 from tau_coding.system_prompt import (
     BuildSystemPromptOptions,
     ProjectContextFile,
+    PromptSection,
     build_system_prompt,
     collect_prompt_guidelines,
     format_available_tools,
@@ -88,6 +89,33 @@ def test_custom_prompt_replaces_default_but_keeps_append_context_and_date(tmp_pa
     assert '<project_instructions path="/repo/AGENTS.md">' in prompt
     assert "Follow rules." in prompt
     assert "Current date: 2026-06-17" in prompt
+
+
+def test_extra_sections_follow_user_append_in_registration_order(tmp_path: Path) -> None:
+    prompt = build_system_prompt(
+        BuildSystemPromptOptions(
+            cwd=tmp_path,
+            custom_prompt="Custom base.",
+            append_system_prompt="User append.",
+            extra_sections=(
+                PromptSection(
+                    title="Extension procedure", body="First step.\n\n```bash\nuv run pytest\n```"
+                ),
+                PromptSection(title=None, body="Untitled extension context."),
+            ),
+            context_files=(ProjectContextFile(path="/repo/AGENTS.md", content="Project rules."),),
+            current_date=date(2026, 6, 17),
+        )
+    )
+
+    expected = (
+        "Custom base.\n\nUser append.\n\n## Extension procedure\n\n"
+        "First step.\n\n```bash\nuv run pytest\n```\n\n"
+        "Untitled extension context."
+    )
+    assert prompt.startswith(expected)
+    assert prompt.index("User append.") < prompt.index("## Extension procedure")
+    assert prompt.index("Untitled extension context.") < prompt.index("<project_instructions")
 
 
 def test_empty_custom_prompt_is_still_custom(tmp_path: Path) -> None:

@@ -3,6 +3,7 @@
 import asyncio
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -42,6 +43,7 @@ from tau_coding.extensions import (
     load_extensions,
 )
 from tau_coding.project_trust import ProjectTrustRequest, TrustChoice
+from tau_coding.system_prompt import PromptSection
 
 pytestmark = pytest.mark.anyio
 
@@ -928,6 +930,7 @@ def setup(tau):
     ))
     tau.register_command("orphan-command", _command)
     tau.add_prompt_guideline("orphan guideline")
+    tau.add_prompt_section("Orphan section", "orphan body")
     tau.register_message_renderer("orphan:message", _renderer)
     tau.on("input", _handler)
     entry = Path({str(entry)!r})
@@ -949,6 +952,7 @@ def setup(tau):
     assert runtime.extension_tools == ()
     assert runtime.build_command_registry().get("orphan-command") is None
     assert runtime.prompt_guidelines == ()
+    assert runtime.prompt_sections == ()
     assert runtime.render_custom_message("orphan:message", "content", None, False) is None
     outcome = await runtime.run_input_hooks("unchanged")
     assert outcome.text == "unchanged"
@@ -1035,6 +1039,25 @@ def test_prompt_guideline_registration(tmp_path: Path) -> None:
 
     assert runtime.prompt_guidelines == ("Always run the tests before claiming success",)
     assert any("empty prompt guideline" in diag.message for diag in runtime.diagnostics)
+
+
+def test_prompt_section_registration(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _register_inline_extension(runtime, "structured-guidance")
+    api.add_prompt_section("  Review procedure  ", "  First step.\n\n```bash\nuv run pytest\n```  ")
+    api.add_prompt_section("   ", "Untitled context")
+    api.add_prompt_section(None, "   ")
+    api.add_prompt_section("bad\ntitle", "ignored")
+
+    assert runtime.prompt_sections == (
+        PromptSection(
+            title="Review procedure",
+            body="First step.\n\n```bash\nuv run pytest\n```",
+        ),
+        PromptSection(title=None, body="Untitled context"),
+    )
+    assert any("empty prompt section" in diag.message for diag in runtime.diagnostics)
+    assert any("title spans multiple lines" in diag.message for diag in runtime.diagnostics)
 
 
 def test_unknown_event_subscription_is_a_diagnostic(tmp_path: Path) -> None:
@@ -2062,6 +2085,45 @@ async def test_extension_guideline_reaches_system_prompt(tmp_path: Path) -> None
     )
 
     assert "Never commit directly to main" in session.system_prompt
+
+
+async def test_extension_prompt_section_reaches_system_prompt_after_user_append(
+    tmp_path: Path,
+) -> None:
+    body = (
+        "def setup(tau):\n"
+        "    tau.add_prompt_section('Review procedure', "
+        "'First step.\\n\\n```bash\\nuv run pytest\\n```')\n"
+    )
+    config = _session_config(tmp_path, FakeProvider([]), extension_body=body)
+    config = replace(config, append_system_prompt="User append")
+
+    session = await CodingSession.load(config)
+
+    assert (
+        "## Review procedure\n\nFirst step.\n\n```bash\nuv run pytest\n```" in session.system_prompt
+    )
+    assert session.system_prompt.index("User append") < session.system_prompt.index(
+        "## Review procedure"
+    )
+
+
+async def test_reload_picks_up_prompt_section_changes(tmp_path: Path) -> None:
+    provider = FakeProvider([])
+    session = await CodingSession.load(_session_config(tmp_path, provider))
+    assert "## Late procedure" not in session.system_prompt
+
+    paths = _paths(tmp_path)
+    _write_extension(
+        _user_extensions_dir(paths),
+        "late_section",
+        "def setup(tau):\n    tau.add_prompt_section('Late procedure', 'Run the checks.')\n",
+    )
+
+    summary = await session.reload()
+
+    assert summary.system_prompt_rebuilt is True
+    assert "## Late procedure\n\nRun the checks." in session.system_prompt
 
 
 async def test_reload_picks_up_guideline_changes(tmp_path: Path) -> None:

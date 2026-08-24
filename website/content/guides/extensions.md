@@ -165,6 +165,7 @@ def setup(tau):
     tau.register_provider(dynamic_provider)  # process-local
     tau.register_command("name", handler, description="...")
     tau.add_prompt_guideline("Never commit directly to main")
+    tau.add_prompt_section("Review procedure", "Read the diff, then run tests.")
     tau.on("event_name", handler)            # or @tau.on("event_name")
 
     # message rendering (register in setup; send once running)
@@ -327,6 +328,30 @@ something to replace.
 For behavioral guidance not tied to any tool, `add_prompt_guideline(text)`
 adds a line to the system prompt's Guidelines section (de-duplicated at
 build time; `/reload` rebuilds the prompt when guidelines change).
+
+For structured, always-on context, `add_prompt_section(title, body)` appends a
+free-form section after user/project `APPEND_SYSTEM.md` or
+`--append-system-prompt` content. The title may be `None`; a title is rendered
+as a level-two Markdown heading. Bodies may contain paragraphs, lists, and code
+blocks without being forced into a guideline bullet:
+
+````python
+def setup(tau):
+    tau.add_prompt_section(
+        "Review procedure",
+        """Read the complete diff before editing.
+
+```bash
+uv run pytest
+```
+""",
+    )
+````
+
+Sections compose in extension load and registration order. Empty bodies and
+multi-line titles are ignored with a resource diagnostic. Registrations are
+source-owned, so failed setup, `/reload`, and generation retirement remove them
+along with the extension's other contributions.
 
 ### Commands
 
@@ -713,6 +738,7 @@ See [`examples/extensions/`](https://github.com/huggingface/tau/tree/main/exampl
 - **`permission_gate.py`** — blocks dangerous bash commands with the
   `tool_call` hook.
 - **`sidebar_status.py`** — adds and updates a host-framed sidebar section.
+- **`prompt_section.py`** — appends a labeled multi-line system-prompt section.
 
 A larger, real-world extension lives in its own repository:
 [rian-dolphin/tau-subagents](https://github.com/rian-dolphin/tau-subagents)

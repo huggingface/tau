@@ -67,11 +67,19 @@ def test_shipped_examples_load(tmp_path: Path) -> None:
         tmp_path,
         "hello_tool.py",
         "permission_gate.py",
+        "prompt_section.py",
         "sidebar_status.py",
     )
 
-    assert runtime.extension_names == ("hello_tool", "permission_gate", "sidebar_status")
+    assert runtime.extension_names == (
+        "hello_tool",
+        "permission_gate",
+        "prompt_section",
+        "sidebar_status",
+    )
     assert [tool.name for tool in runtime.extension_tools] == ["hello"]
+    assert runtime.prompt_sections[0].title == "Review procedure"
+    assert "```bash" in runtime.prompt_sections[0].body
 
 
 async def test_hello_tool_greets(tmp_path: Path) -> None:
