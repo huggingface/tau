@@ -4288,6 +4288,7 @@ class TauTuiApp(App[None]):
                     await self.session.rename_session(command.session_name)
                 except Exception as exc:  # noqa: BLE001 - surface rename failures in the TUI
                     self._notify(f"Could not rename session: {exc}", severity="error")
+                    self._refresh()
                     return
                 self._sync_session_title()
             if command.thinking_level is not None:
