@@ -97,8 +97,10 @@ Single-model servers remain fully supported.
 
 `/local` separates server-reported model states from backend actions. The model
 section handles load, use, and unload; the actions section contains Hugging Face
-search/download, connection configuration, refresh, Doctor, and reset. Arrow
-keys move within and between both sections. Only loaded and sleeping models
+search/download, connection configuration, refresh, Doctor, and reset. The focused section alone shows an
+`focused` marker, accent border, and highlighted row, making Enter's target
+explicit. Arrow keys move within and between sections; Tab switches sections
+directly. Only loaded and sleeping models
 appear in `/model`. Router models in the `unloaded` state are labelled
 **available to load**; press Enter on one to review a loading confirmation.
 Enter on a loaded/sleeping row offers use or unload. Load,

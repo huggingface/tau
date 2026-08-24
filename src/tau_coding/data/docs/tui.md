@@ -11,7 +11,10 @@ registered backend even when only one is available; the recommended backend is
 preselected but still requires confirmation. Once confirmed, Tau probes its one
 effective saved/environment/default endpoint. The built-in `llama.cpp` backend
 provides endpoint/API-key fields plus separate arrow-key navigable model and
-action sections. Enter selects; Escape closes. Loading and downloading open a
+action sections. Only the focused section has a `focused` marker, accent border,
+and selection highlight. Up/Down moves continuously across section boundaries;
+Tab switches sections directly. Enter selects from the focused section and
+Escape closes. Loading and downloading open a
 separate confirmation with model details before work begins. Downloading shows a
 full-width block bar and router-reported byte counts, including after reopening
 `/local` during a transfer. The actions section exposes

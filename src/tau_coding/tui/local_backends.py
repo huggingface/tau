@@ -18,7 +18,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.css.query import NoMatches
-from textual.events import Key
+from textual.events import DescendantFocus, Key
 from textual.renderables.bar import Bar as BarRenderable
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label, ListItem, ListView, ProgressBar, Select, Static
@@ -189,6 +189,8 @@ class LocalBackendScreen(ModalScreen[None]):
         Binding("up", "cursor_up", "Up", show=False),
         Binding("down", "cursor_down", "Down", show=False),
         Binding("enter", "select_cursor", "Select", show=False),
+        Binding("tab", "toggle_section", "Switch section", show=False),
+        Binding("shift+tab", "toggle_section", "Switch section", show=False),
     ]
 
     def __init__(
@@ -242,7 +244,7 @@ class LocalBackendScreen(ModalScreen[None]):
             progress_bar.styles.width = "100%"
             yield progress_bar
             yield Static(
-                "↑/↓ navigate across sections - Enter selects - Escape closes",
+                "↑/↓ navigate - Tab switches section - Enter selects - Escape closes",
                 id="local-backend-footer",
             )
 
@@ -319,6 +321,10 @@ class LocalBackendScreen(ModalScreen[None]):
                 self._progress_fraction = None
                 self._start_operation("refresh")
 
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        if event.widget.id in {"local-model-list", "local-action-menu"}:
+            self._update_section_focus()
+
     def on_key(self, event: Key) -> None:
         if event.key == "up":
             event.stop()
@@ -366,6 +372,28 @@ class LocalBackendScreen(ModalScreen[None]):
 
     def action_select_cursor(self) -> None:
         self._focused_list().action_select_cursor()
+
+    def action_toggle_section(self) -> None:
+        models = self.query_one("#local-model-list", ListView)
+        actions = self.query_one("#local-action-menu", ListView)
+        if models.has_focus and self._action_items:
+            actions.focus()
+        elif self._model_items:
+            models.focus()
+        self._update_section_focus()
+
+    def _update_section_focus(self) -> None:
+        models = self.query_one("#local-model-list", ListView)
+        actions = self.query_one("#local-action-menu", ListView)
+        models_focused = models.has_focus
+        models.set_class(not models_focused, "local-section-inactive")
+        actions.set_class(models_focused, "local-section-inactive")
+        self.query_one("#local-model-section-title", Static).update(
+            "Models — focused" if models_focused else "Models"
+        )
+        self.query_one("#local-action-section-title", Static).update(
+            "Actions" if models_focused else "Actions — focused"
+        )
 
     def _focused_list(self) -> ListView:
         models = self.query_one("#local-model-list", ListView)

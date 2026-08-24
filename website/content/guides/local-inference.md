@@ -99,7 +99,9 @@ After the automatic probe or Refresh confirms a compatible router, `/local`
 lists loaded, sleeping, unloaded, loading, downloading, failed, and unknown
 server states in a dedicated model section. A separate actions section contains
 Hugging Face search/download, configuration, refresh, Doctor, and reset. Arrow
-keys move within and between both sections. Only loaded or sleeping models enter
+keys move within and between both sections, while Tab switches sections
+directly. Only the focused section shows a `focused` marker, accent border, and
+highlighted row, so Enter's target is explicit. Only loaded or sleeping models enter
 `/model`. Router models in the `unloaded` state are labelled **available to
 load**; press Enter on one to review a loading confirmation. Enter on a
 loaded/sleeping row offers use or unload. Actions are always explicit:

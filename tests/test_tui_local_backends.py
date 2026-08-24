@@ -179,6 +179,17 @@ async def test_backend_open_auto_refreshes_and_renders_clickable_models() -> Non
         label = model_list.children[0].query_one(Label).render().plain
         assert "Downloaded model" in label
         assert "available to load" in label
+        assert model_list.has_focus
+        assert "focused" in screen.query_one("#local-model-section-title", Static).render().plain
+        assert (
+            "focused" not in screen.query_one("#local-action-section-title", Static).render().plain
+        )
+
+        await pilot.press("tab")
+        assert action_menu.has_focus
+        assert "focused" in screen.query_one("#local-action-section-title", Static).render().plain
+        await pilot.press("shift+tab")
+        assert model_list.has_focus
 
         model_list.action_select_cursor()
         await pilot.pause()

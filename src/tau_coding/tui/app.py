@@ -3474,6 +3474,19 @@ class TauTuiApp(App[None]):
         max-height: 10;
     }
 
+    #local-model-list:focus,
+    #local-action-menu:focus {
+        border: tall $tau-accent;
+    }
+
+    #local-model-list.local-section-inactive > ListItem.-highlight,
+    #local-action-menu.local-section-inactive > ListItem.-highlight,
+    #local-model-list.local-section-inactive > ListItem.-highlight Label,
+    #local-action-menu.local-section-inactive > ListItem.-highlight Label {
+        background: $tau-transcript-background;
+        color: $tau-chrome-text;
+    }
+
     #local-model-section-title,
     #local-action-section-title {
         height: 1;

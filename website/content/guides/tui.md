@@ -74,7 +74,9 @@ still requires confirmation; a recommended backend is only a marker. Tau's
 built-in `llama.cpp` backend automatically probes its one effective
 saved/environment/default endpoint; **Configure** accepts another URL and an
 optional secret key. It renders models and backend actions as separate
-arrow-key navigable sections; Enter selects and Escape closes. Expensive
+arrow-key navigable sections. Only the focused section shows a `focused` marker,
+accent border, and highlighted row; Tab switches sections directly. Enter
+selects from the focused section and Escape closes. Expensive
 load/download operations require a separate confirmation with model details,
 and active downloads show a full-width block bar with router-reported byte
 progress, including after reopening `/local`. The actions section exposes
