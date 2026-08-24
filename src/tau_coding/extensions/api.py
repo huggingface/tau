@@ -1073,6 +1073,21 @@ class ExtensionAPI:
         self._generation.assert_active()
         self._runtime.register_prompt_guideline(self._source_id, self._extension_name, guideline)
 
+    def add_prompt_section(self, title: str | None, body: str) -> None:
+        """Append a free-form, optionally titled section to the system prompt.
+
+        Use this for structured, always-on extension context such as procedures,
+        paragraphs, and code blocks. Use :meth:`add_prompt_guideline` for one
+        behavioral bullet instead.
+        """
+        self._generation.assert_active()
+        self._runtime.register_prompt_section(
+            self._source_id,
+            self._extension_name,
+            title,
+            body,
+        )
+
     def on(
         self,
         event: str,

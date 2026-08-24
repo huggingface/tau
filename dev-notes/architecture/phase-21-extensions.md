@@ -328,7 +328,10 @@ sidebar, and `/session` counts like built-ins. Tool-attached
 `prompt_snippet`/`prompt_guidelines` flow into the system prompt as for
 built-ins, and `add_prompt_guideline` contributes standalone guideline
 lines through `BuildSystemPromptOptions.extra_guidelines` (rebuilt on
-`/reload` when they change).
+`/reload` when they change). Extensions that need structured always-on context
+use `add_prompt_section(title, body)`. These source-owned free-form blocks flow
+through `BuildSystemPromptOptions.extra_sections` after CLI/resource append
+content, retain registration order, and participate in reload change detection.
 
 ### Commands
 
