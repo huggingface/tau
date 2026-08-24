@@ -10,6 +10,10 @@ naming or an awaited rename through `CodingSession.set_session_name()`.
 It dispatches `thinking_level_changed` after a successful explicit
 thinking-mode change. Event handlers are awaited before the
 mutation method returns. Failed and no-op updates do not emit events.
+Silent coercion paths (`set_model`, `select_provider_model`,
+`toggle_scoped_model`, `reload_provider_settings`, branch, resume, and
+`_sync_thinking_level_to_active_model`) do not emit either; extensions read
+the live value instead.
 
 Initial values do not produce change events during load. Extensions read them
 from the context in `session_start`. Session replacement also uses the existing

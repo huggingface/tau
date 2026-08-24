@@ -554,9 +554,11 @@ stream. Its nested `type` is one of `text_start`, `text_delta`, `text_end`,
 `context.session_name` and `context.thinking_level` provide the current values
 when an extension attaches or a replacement session starts. Their matching
 change events carry snapshots of later updates; no-op assignments do not emit.
-A model change can coerce the active thinking level without an explicit
-`thinking_level_changed` event, so read the live context when handling other
-events instead of treating change events as a complete cache feed.
+Model changes, `/model` and `/local` selections, scoped-model toggles,
+provider reloads, and branch/resume can coerce the active thinking level to
+what the selected model supports without an explicit `thinking_level_changed`
+event, so read the live context when handling other events instead of treating
+change events as a complete cache feed.
 
 Extension turn events are session-enriched like Pi's. `turn_start` and its
 matching `turn_end` carry the same zero-based `turn_index`; `turn_start` also
