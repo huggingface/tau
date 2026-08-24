@@ -177,7 +177,7 @@ async def test_backend_open_auto_refreshes_and_renders_clickable_models() -> Non
         assert "Refresh" in action_menu.children[0].query_one(Label).render().plain
         label = model_list.children[0].query_one(Label).render().plain
         assert "Downloaded model" in label
-        assert "unloaded" in label
+        assert "available to load" in label
 
         model_list.action_select_cursor()
         await pilot.pause()
@@ -434,6 +434,105 @@ async def test_closing_download_modal_detaches_and_reopen_offers_explicit_cancel
         await worker
         assert cancelled.is_set()
         assert registry.operation_running("backend", "download_model") is False
+
+    await registry.aclose()
+
+
+async def test_detached_download_completion_immediately_shows_model_available() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    completed = False
+
+    def status() -> LocalBackendStatus:
+        return LocalBackendStatus(
+            state="ready",
+            models=(
+                LocalModel(
+                    "owner/repo:Q4_K_M",
+                    state="unloaded" if completed else "downloading",
+                ),
+            ),
+            actions=("refresh", "download_model", "load_model"),
+        )
+
+    async def refresh(context):
+        del context
+        return status()
+
+    async def download_model(model_id, context):
+        nonlocal completed
+        del model_id
+        context.report_progress(LocalProgress("Downloading owner/repo:Q4_K_M…", fraction=0.75))
+        entered.set()
+        await release.wait()
+        completed = True
+        return LocalOperationResult(
+            backend_status=status(),
+            message="Server-side download completed.",
+            committed=True,
+        )
+
+    registry = _registry(refresh=refresh, download_model=download_model)
+    app = _Host()
+
+    async with app.run_test() as pilot:
+        screen = LocalBackendScreen(registry, "backend", theme=TAU_DARK_THEME)
+        app.push_screen(screen)
+        await pilot.pause()
+        screen._start_operation(
+            "download_model",
+            model_id="owner/repo:Q4_K_M",
+            confirmation="download",
+        )
+        await entered.wait()
+        worker = screen._worker
+        assert worker is not None
+        screen.action_cancel()
+        await pilot.pause()
+
+        reopened = LocalBackendScreen(registry, "backend", theme=TAU_DARK_THEME)
+        app.push_screen(reopened)
+        await pilot.pause()
+        assert (
+            "downloading"
+            in reopened.query_one("#local-model-list", ListView)
+            .children[0]
+            .query_one(Label)
+            .render()
+            .plain
+        )
+
+        release.set()
+        await worker
+        for _ in range(20):
+            await asyncio.sleep(0.05)
+            await pilot.pause()
+            current_label = (
+                reopened.query_one("#local-model-list", ListView)
+                .children[0]
+                .query_one(Label)
+                .render()
+                .plain
+            )
+            if "available to load" in current_label:
+                break
+
+        reopened._render_observed_download_progress(
+            LocalProgress("Downloading owner/repo:Q4_K_M…", fraction=0.75)
+        )
+        label = (
+            reopened.query_one("#local-model-list", ListView)
+            .children[0]
+            .query_one(Label)
+            .render()
+            .plain
+        )
+        assert "available to load" in label
+        assert "downloading" not in label
+        assert reopened.query_one("#local-backend-progress", Static).render().plain == ""
+        assert (
+            reopened.query_one("#local-backend-progress-bar", ProgressBar).styles.display == "none"
+        )
 
     await registry.aclose()
 

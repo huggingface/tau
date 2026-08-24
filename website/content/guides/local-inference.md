@@ -100,8 +100,9 @@ lists loaded, sleeping, unloaded, loading, downloading, failed, and unknown
 server states in a dedicated model section. A separate actions section contains
 Hugging Face search/download, configuration, refresh, Doctor, and reset. Arrow
 keys move within and between both sections. Only loaded or sleeping models enter
-`/model`. Press Enter on an unloaded row to review a confirmation before loading;
-Enter on a loaded/sleeping row offers use or unload. Actions are always explicit:
+`/model`. Router models in the `unloaded` state are labelled **available to
+load**; press Enter on one to review a loading confirmation. Enter on a
+loaded/sleeping row offers use or unload. Actions are always explicit:
 
 - Confirming an unloaded row waits until refreshed router state reports loaded
   or sleeping. If other models are active, choose whether to keep or unload
@@ -120,8 +121,9 @@ Enter on a loaded/sleeping row offers use or unload. Actions are always explicit
   `/local` detaches from the transfer without stopping llama.cpp. Reopening it
   refreshes server status, reattaches to the latest byte progress, and offers
   **Cancel active download…**
-  to stop the download explicitly. The
-  completed model appears as an unloaded row ready to select.
+  to stop the download explicitly. On completion, stale transfer text and the
+  progress bar are cleared and the model immediately appears as **available to
+  load**.
 
 Progress is bounded and explicitly cancellable. llama.cpp documents
 `/models/unload` as the cancel operation for load/download, so Tau requests it

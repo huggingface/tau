@@ -282,12 +282,7 @@ class LocalBackendScreen(ModalScreen[None]):
 
     def _attach_download_progress(self) -> bool:
         def progress(item: LocalProgress) -> None:
-            self.call_after_refresh(
-                self._set_progress,
-                item.message,
-                fraction=item.fraction,
-                show_bar=True,
-            )
+            self.call_after_refresh(self._render_observed_download_progress, item)
 
         self._progress_unsubscribe = self.registry.observe_progress(
             self.backend_id,
@@ -295,6 +290,15 @@ class LocalBackendScreen(ModalScreen[None]):
             cast(ProgressCallback, progress),
         )
         return self._progress_unsubscribe is not None
+
+    def _render_observed_download_progress(self, item: LocalProgress) -> None:
+        # A replay queued during mount can run after the operation finishes.
+        # Never let that stale callback restore downloading text over refreshed
+        # available-model state.
+        if self._progress_unsubscribe is not None and self.registry.operation_running(
+            self.backend_id, "download_model"
+        ):
+            self._set_progress(item.message, fraction=item.fraction, show_bar=True)
 
     async def _watch_download_completion(self) -> None:
         try:
@@ -656,6 +660,8 @@ class LocalBackendScreen(ModalScreen[None]):
             )
         elif result.message:
             self._show_message(result.message, "info")
+        elif action == "refresh" and not preserve_download_progress:
+            self._set_progress("")
         if result.search_results:
             self._set_progress("Select a model and quantization to download.")
             self.app.push_screen(
@@ -1231,7 +1237,7 @@ def _model_label(model: LocalModel, selected_model: str | None) -> str:
         label = f"{label} ({model.id})"
     details = []
     if model.state:
-        details.append(model.state)
+        details.append("available to load" if model.state == "unloaded" else model.state)
     if model.id == selected_model:
         details.append("active")
     return label + (" — " + " · ".join(details) if details else "")

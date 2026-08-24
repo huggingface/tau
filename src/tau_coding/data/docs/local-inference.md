@@ -99,8 +99,9 @@ Single-model servers remain fully supported.
 section handles load, use, and unload; the actions section contains Hugging Face
 search/download, connection configuration, refresh, Doctor, and reset. Arrow
 keys move within and between both sections. Only loaded and sleeping models
-appear in `/model`. Press Enter on an unloaded row to review a confirmation
-before loading it; Enter on a loaded/sleeping row offers use or unload. Load,
+appear in `/model`. Router models in the `unloaded` state are labelled
+**available to load**; press Enter on one to review a loading confirmation.
+Enter on a loaded/sleeping row offers use or unload. Load,
 unload, and server-side download
 are explicit and require confirmation; loading also asks whether to keep or
 unload other active shared-router models. Cancellation uses
