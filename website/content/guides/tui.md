@@ -235,11 +235,14 @@ with `disable-model-invocation: true` use a hollow bullet (`◦`). If
 the sidebar content is
 taller than the available space, scroll it to see the remaining resource groups;
 the Tau version mark stays pinned at the bottom. Context files
-use a bullet list with one path per line, limited to five entries. Truncated sections
-end with `...(X more)` showing how many context entries are hidden. Project
-context paths are relative to the working directory; context
-loaded from the home directory starts with `~/`, while other context loaded from
-outside the project uses its full path.
+use a bullet list with one path per line, limited to five entries. When Tau loads a
+`SYSTEM.md` replacement or `APPEND_SYSTEM.md` addition from a user or project
+`.tau` directory, a separate **system prompt** section lists each active file.
+Tau omits that section when no system-prompt files are active. Truncated sections
+end with `...(X more)` showing how many entries are hidden. Project resource paths
+are relative to the working directory; resources loaded from the home directory
+start with `~/`, while other resources loaded from outside the project use their
+full path.
 
 The wider, borderless sidebar uses the prompt field's background color, bright
 section headings, quieter gray values, and keeps Tau's versioned `τ = 2π` mark

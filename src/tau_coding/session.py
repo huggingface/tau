@@ -1023,6 +1023,15 @@ class CodingSession:
         return self._context_files
 
     @property
+    def system_prompt_files(self) -> tuple[Path, ...]:
+        """Return active discovered system-prompt resource files."""
+        return tuple(
+            path
+            for path in (self._custom_system_prompt_path, self._append_system_prompt_path)
+            if path is not None
+        )
+
+    @property
     def context_token_estimate(self) -> int:
         """Return the best available token count for the active provider context."""
         return self.context_usage.total_tokens

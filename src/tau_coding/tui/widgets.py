@@ -87,6 +87,9 @@ class SessionSummarySource(Protocol):
     def context_files(self) -> Sequence[ProjectContextFile]: ...
 
     @property
+    def system_prompt_files(self) -> Sequence[Path]: ...
+
+    @property
     def context_token_estimate(self) -> int: ...
 
     @property
@@ -244,6 +247,7 @@ def _session_summary_fingerprint(
         ),
         tuple((template.name, template.path) for template in session.prompt_templates),
         tuple(context.path for context in session.context_files),
+        tuple(session.system_prompt_files),
     )
 
 
@@ -1845,6 +1849,16 @@ def _build_sidebar_content(
         empty="No context files",
         theme=theme,
     )
+    system_prompt_sections: tuple[RenderableType, ...] = ()
+    if session.system_prompt_files:
+        system_prompt_files = _limited_bullet_list(
+            [_context_file_label(path, cwd=session.cwd) for path in session.system_prompt_files],
+            empty="No system prompt files",
+            theme=theme,
+        )
+        system_prompt_sections = (
+            _sidebar_section("system prompt", system_prompt_files, theme=theme),
+        )
     tools = _comma_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
     return _SidebarContent(
         summary_sections=(
@@ -1853,6 +1867,7 @@ def _build_sidebar_content(
             _sidebar_section("usage", usage, theme=theme),
             _sidebar_section("compaction", compaction, theme=theme),
             _sidebar_section("context", context, theme=theme),
+            *system_prompt_sections,
             _sidebar_section("tools", tools, theme=theme),
         ),
         skills=_grouped_skill_list(session.skills, cwd=session.cwd, theme=theme),

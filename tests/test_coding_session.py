@@ -3179,6 +3179,10 @@ async def test_session_loads_tau_native_system_prompt_files(tmp_path: Path) -> N
     assert "Project instructions" in session.system_prompt
     assert "Current date:" in session.system_prompt
     assert f"Current working directory: {tmp_path}" in session.system_prompt
+    assert session.system_prompt_files == (
+        project_tau / "SYSTEM.md",
+        tau_home / "APPEND_SYSTEM.md",
+    )
     prompt_diagnostics = [
         item for item in session.resource_diagnostics if item.kind == "system-prompt"
     ]
@@ -3205,6 +3209,7 @@ async def test_explicit_system_prompt_values_override_discovered_files(tmp_path:
     )
 
     assert session.system_prompt.startswith("Explicit base\n\nExplicit append")
+    assert session.system_prompt_files == ()
     assert all(
         "explicit startup value" in item.message
         for item in session.resource_diagnostics

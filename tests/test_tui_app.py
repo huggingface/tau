@@ -215,6 +215,7 @@ class FakeSession:
         self.context_files = (
             ProjectContextFile(path=str(self.cwd / "AGENTS.md"), content="Follow rules."),
         )
+        self.system_prompt_files: tuple[Path, ...] = ()
         self.context_token_estimate = 12034
         self.has_provider_context_usage = True
         self.auto_compact_token_threshold = 200000
@@ -682,6 +683,30 @@ def test_session_sidebar_limits_context_files_to_five() -> None:
     assert "context-6.md" not in output
     assert "context-7.md" not in output
     assert "...(2 more)" in output
+
+
+def test_session_sidebar_lists_active_system_prompt_files() -> None:
+    session = FakeSession()
+    session.system_prompt_files = (
+        session.cwd / ".tau" / "SYSTEM.md",
+        Path.home() / ".tau" / "APPEND_SYSTEM.md",
+    )
+    console = Console(record=True, width=80)
+
+    console.print(render_session_sidebar(session))
+
+    output = console.export_text()
+    assert "system prompt" in output
+    assert "• .tau/SYSTEM.md" in output
+    assert "• ~/.tau/APPEND_SYSTEM.md" in output
+
+
+def test_session_sidebar_omits_system_prompt_section_without_active_files() -> None:
+    console = Console(record=True, width=80)
+
+    console.print(render_session_sidebar(FakeSession()))
+
+    assert "system prompt" not in console.export_text()
 
 
 def test_comma_list_limits_by_rendered_lines_instead_of_item_count() -> None:
