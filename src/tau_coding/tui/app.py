@@ -4129,8 +4129,24 @@ class TauTuiApp(App[None]):
             return
         prompt = self.query_one("#prompt", PromptInput)
         prompt.sync_pending_paste()
-        self._sync_prompt_shell_mode(event.text_area.text)
-        self._completion_state = self._build_completion_state(event.text_area.text)
+        # Read text and cursor from the widget so both come from one snapshot.
+        text = prompt.text
+        self._sync_prompt_shell_mode(text)
+        self._completion_state = self._build_completion_state(text, cursor=prompt.cursor_position)
+        self._refresh_completions()
+
+    def on_text_area_selection_changed(self, event: TextArea.SelectionChanged) -> None:
+        """Rebuild prompt autocomplete when the caret moves without an edit."""
+        if event.text_area.id != "prompt":
+            return
+        # Only typing opens the popup; a caret move may update or clear it.
+        if not self._completion_state.items:
+            return
+        # Runs after queued edits and accepts, so it is the last writer of the state.
+        prompt = self.query_one("#prompt", PromptInput)
+        self._completion_state = self._build_completion_state(
+            prompt.text, cursor=prompt.cursor_position
+        )
         self._refresh_completions()
 
     async def action_submit_prompt(self) -> None:
@@ -4148,12 +4164,18 @@ class TauTuiApp(App[None]):
     ) -> None:
         prompt = self.query_one("#prompt", PromptInput)
         raw_text = prompt.text_for_submission()
+        selected_item = self._completion_state.selected
         applied_completion = self._apply_selected_completion(raw_text)
-        if applied_completion is not None and applied_completion != raw_text:
+        if (
+            applied_completion is not None
+            and selected_item is not None
+            and applied_completion != raw_text
+        ):
             prompt.text = applied_completion
             prompt._clear_pending_paste()
-            prompt.move_cursor(_text_end_location(applied_completion))
-            self._completion_state = self._build_completion_state(applied_completion)
+            cursor = selected_item.cursor_after_apply()
+            prompt.cursor_position = cursor
+            self._completion_state = self._build_completion_state(applied_completion, cursor=cursor)
             self._refresh_completions()
             return
 
@@ -5548,12 +5570,14 @@ class TauTuiApp(App[None]):
             self.screen.action_select_cursor()
             return
         prompt = self.query_one("#prompt", PromptInput)
+        item = self._completion_state.selected
         applied = self._apply_selected_completion(prompt.text)
-        if applied is None:
+        if applied is None or item is None:
             return
         prompt.text = applied
-        prompt.move_cursor(_text_end_location(applied))
-        self._completion_state = self._build_completion_state(prompt.text)
+        cursor = item.cursor_after_apply()
+        prompt.cursor_position = cursor
+        self._completion_state = self._build_completion_state(prompt.text, cursor=cursor)
         self._refresh_completions()
 
     def action_completion_next(self) -> None:
@@ -6696,10 +6720,11 @@ class TauTuiApp(App[None]):
         if pos == "off":
             self.add_class("-hide-sidebar")
 
-    def _build_completion_state(self, text: str) -> CompletionState:
+    def _build_completion_state(self, text: str, *, cursor: int | None = None) -> CompletionState:
         registry = _session_command_registry(self.session)
         return build_completion_state(
             text,
+            cursor=cursor,
             command_registry=registry,
             skills=self.session.skills,
             prompt_templates=self.session.prompt_templates,
