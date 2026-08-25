@@ -19,7 +19,7 @@ command palette with **Ctrl+K**.
 | `/name <new name>` | Rename the current session and, in supported terminals, the terminal tab title |
 | `/model` | Open the model picker |
 | `/tools` | Browse active tools and open their full descriptions |
-| `/scoped-models` | Choose favorite models for the Ctrl+P quick-cycle |
+| `/scoped-models` | Choose favorite models for the Ctrl+P / Shift+Ctrl+P quick-cycle |
 | `/theme [name]` | Show or set the TUI theme |
 | `/login [provider]` | Connect a built-in provider with OAuth or an API key; Anthropic uses `anthropic-subscription` or `anthropic-api` |
 | `/local` | Choose and manage a registered local backend; interactive-only. Compatible llama.cpp routers add explicit load/unload, Hugging Face GGUF search, and server-side download actions with confirmation and reconciliation. |

@@ -504,6 +504,8 @@ class CompletionActionTarget(Protocol):
 
     def action_cycle_model(self) -> None: ...
 
+    def action_cycle_model_reverse(self) -> None: ...
+
     def action_toggle_tool_results(self) -> None: ...
 
     def action_toggle_thinking(self) -> None: ...
@@ -625,8 +627,12 @@ class PromptInput(TextArea):
         self._completion_target().action_cycle_thinking()
 
     def action_cycle_model(self) -> None:
-        """Cycle the app-level scoped model."""
+        """Cycle the app-level scoped model forward."""
         self._completion_target().action_cycle_model()
+
+    def action_cycle_model_reverse(self) -> None:
+        """Cycle the app-level scoped model backward."""
+        self._completion_target().action_cycle_model_reverse()
 
     def action_toggle_tool_results(self) -> None:
         """Toggle app-level tool result display."""
@@ -816,6 +822,9 @@ class PromptInput(TextArea):
         elif event.key == keybindings.model_cycle:
             event.stop()
             self._completion_target().action_cycle_model()
+        elif event.key == keybindings.model_cycle_reverse:
+            event.stop()
+            self._completion_target().action_cycle_model_reverse()
         elif event.key == keybindings.toggle_tool_results:
             event.stop()
             self._completion_target().action_toggle_tool_results()
@@ -5796,11 +5805,18 @@ class TauTuiApp(App[None]):
         self.run_worker(self._cycle_thinking_level(), exclusive=False)
 
     def action_cycle_model(self) -> None:
-        """Cycle through scoped models."""
+        """Cycle forward through scoped models."""
+        self._cycle_model(reverse=False)
+
+    def action_cycle_model_reverse(self) -> None:
+        """Cycle backward through scoped models."""
+        self._cycle_model(reverse=True)
+
+    def _cycle_model(self, *, reverse: bool) -> None:
         if self.state.running:
             self._notify("Tau is already working. Press Escape to cancel.")
             return
-        self.run_worker(self._cycle_scoped_model(), exclusive=False)
+        self.run_worker(self._cycle_scoped_model(reverse=reverse), exclusive=False)
 
     def action_toggle_tool_results(self) -> None:
         """Toggle inline tool result details without rebuilding unrelated history."""
@@ -6445,13 +6461,13 @@ class TauTuiApp(App[None]):
             return
         self._refresh_chrome()
 
-    async def _cycle_scoped_model(self) -> None:
+    async def _cycle_scoped_model(self, *, reverse: bool = False) -> None:
         cycler = getattr(self.session, "cycle_scoped_model", None)
         if cycler is None:
             self._notify("Scoped model controls are not available.", severity="warning")
             return
         try:
-            result = cycler()
+            result = cycler(reverse=reverse)
             if isawaitable(result):
                 result = await result
         except Exception as exc:  # noqa: BLE001 - surface session state failures in the TUI
@@ -7220,6 +7236,12 @@ def _app_bindings(keybindings: TuiKeybindings) -> list[Binding]:
         Binding(keybindings.thinking_cycle, "cycle_thinking", "Thinking"),
         Binding(keybindings.model_cycle, "cycle_model", "Model"),
         Binding(
+            keybindings.model_cycle_reverse,
+            "cycle_model_reverse",
+            "Previous model",
+            show=False,
+        ),
+        Binding(
             keybindings.accept_completion,
             "accept_completion",
             "Complete",
@@ -7304,6 +7326,13 @@ def _prompt_bindings(
         Binding(keybindings.thinking_cycle, "cycle_thinking", "Thinking", priority=True),
         Binding(keybindings.model_cycle, "cycle_model", "Model", priority=True),
         Binding(
+            keybindings.model_cycle_reverse,
+            "cycle_model_reverse",
+            "Previous model",
+            show=False,
+            priority=True,
+        ),
+        Binding(
             keybindings.copy_message,
             "clear_prompt",
             "Clear",
@@ -7326,6 +7355,7 @@ def _hidden_prompt_bindings(
         (keybindings.queue_follow_up, "submit_follow_up"),
         (keybindings.thinking_cycle, "cycle_thinking"),
         (keybindings.model_cycle, "cycle_model"),
+        (keybindings.model_cycle_reverse, "cycle_model_reverse"),
         (keybindings.toggle_tool_results, "toggle_tool_results"),
         (keybindings.toggle_thinking, "toggle_thinking"),
         (keybindings.copy_message, "clear_prompt"),

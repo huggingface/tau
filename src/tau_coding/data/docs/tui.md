@@ -2,7 +2,8 @@
 
 Tau's interactive interface uses Textual behind an adapter boundary. The
 portable `tau_agent` harness emits provider-neutral events; the TUI renders
-them and owns interaction.
+them and owns interaction. Ctrl+P cycles forward through scoped models;
+Shift+Ctrl+P cycles backward.
 
 ## `/model`
 

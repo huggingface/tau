@@ -33,7 +33,8 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 
 | Key | Action |
 | --- | --- |
-| `Ctrl+P` | Cycle scoped (favorite) models |
+| `Ctrl+P` | Cycle scoped (favorite) models forward |
+| `Shift+Ctrl+P` | Cycle scoped (favorite) models backward |
 | `Shift+Tab` | Cycle the thinking mode |
 | `Ctrl+T` | Toggle display of thinking/reasoning tokens |
 

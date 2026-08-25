@@ -286,7 +286,8 @@ provider/model access varies by plan and policy.
   choosing one can switch the active provider too).
 - **`tau -m <model>`** or **`tau --provider <name> -m <model>`** — choose at
   launch.
-- **Ctrl+P** — cycle your *scoped* (favorite) models without opening the picker.
+- **Ctrl+P** / **Shift+Ctrl+P** — cycle your *scoped* (favorite) models
+  forward / backward without opening the picker.
   Build the list with `/scoped-models`, or press `Space` on a model in the
   `/model` picker.
 

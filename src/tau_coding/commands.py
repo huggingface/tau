@@ -504,6 +504,7 @@ def _hotkeys_command(context: CommandContext) -> CommandResult:
         "- Esc: cancel active run",
         "- Ctrl+K: open slash-command completions",
         "- Ctrl+R: open session picker",
+        "- Ctrl+P / Shift+Ctrl+P: cycle scoped models forward / backward",
         "- Shift+Tab: cycle thinking mode",
         "- Ctrl+T: toggle thinking tokens",
         "- Ctrl+O: collapse or expand tool output",

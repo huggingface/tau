@@ -203,9 +203,9 @@ when you want to reduce what is sent to the model.
   refreshes catalogs in the background, and updates the open list. Selecting a
   model from another provider switches the active provider too. Use
   `tau update --models` to force refresh or `TAU_OFFLINE=1` to disable it.
-- **Ctrl+P** quickly cycles through your *scoped* (favorite) models without
-  opening the picker. Manage that list with `/scoped-models` or by pressing
-  `Space` on a model in the `/model` picker.
+- **Ctrl+P** quickly cycles forward through your *scoped* (favorite) models;
+  **Shift+Ctrl+P** cycles backward. Neither opens the picker. Manage that list
+  with `/scoped-models` or by pressing `Space` on a model in the `/model` picker.
 - **`/theme`** switches between `tau-dark`, `tau-light`, `high-contrast`, and
   any custom themes you have installed. Each theme uses one shared selection
   palette for prompt autocomplete and modal lists such as `/resume`. In
