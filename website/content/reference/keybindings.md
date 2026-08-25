@@ -43,6 +43,7 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 | --- | --- |
 | `Ctrl+O` | Toggle exact tool commands and full output (vs. compact previews) |
 | `Ctrl+C` | Clear the prompt input |
+| `Ctrl+V` | Paste a macOS clipboard image as a temporary path, or paste clipboard text |
 | `Ctrl+D` | Quit |
 
 {{% note title="Remapping" %}}

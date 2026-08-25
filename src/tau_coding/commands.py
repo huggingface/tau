@@ -508,6 +508,7 @@ def _hotkeys_command(context: CommandContext) -> CommandResult:
         "- Ctrl+T: toggle thinking tokens",
         "- Ctrl+O: collapse or expand tool output",
         "- Ctrl+C: clear prompt input",
+        "- Ctrl+V: paste clipboard image or text",
         "- Ctrl+D: quit",
     ]
     return CommandResult(handled=True, message="\n".join(lines))
