@@ -26,7 +26,7 @@ def test_load_tui_settings_returns_defaults_when_file_is_missing(tmp_path: Path)
     paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
 
     assert load_tui_settings(paths) == TuiSettings()
-    assert load_tui_settings(paths).keybindings.model_cycle_reverse == "shift+ctrl+p"
+    assert load_tui_settings(paths).keybindings.model_cycle_reverse == "ctrl+shift+p"
     assert load_tui_settings(paths).keybindings.quit == "ctrl+d"
 
 

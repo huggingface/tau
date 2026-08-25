@@ -59,7 +59,7 @@ class TuiKeybindings:
     completion_previous: str = "up"
     thinking_cycle: str = "shift+tab"
     model_cycle: str = "ctrl+p"
-    model_cycle_reverse: str = "shift+ctrl+p"
+    model_cycle_reverse: str = "ctrl+shift+p"
     toggle_thinking: str = "ctrl+t"
     toggle_tool_results: str = "ctrl+o"
     copy_message: str = "ctrl+c"

@@ -8398,7 +8398,7 @@ async def test_tui_app_cycles_scoped_model_backward_from_keybinding() -> None:
     app = TauTuiApp(session)
 
     async with app.run_test() as pilot:
-        await pilot.press("shift+ctrl+p")
+        await pilot.press("ctrl+shift+p")
         await pilot.pause()
 
     assert session.provider_name == "anthropic"
