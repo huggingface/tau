@@ -675,9 +675,9 @@ class CodingSession:
             # failure path has exactly one closer for the candidate.
             session._owned_providers.append(config.provider)  # type: ignore[arg-type]
         await session._persist_active_tool_history_repairs()
-        session._apply_thinking_level_override()
-        session._sync_thinking_level_to_active_model()
         try:
+            session._apply_thinking_level_override()
+            session._sync_thinking_level_to_active_model()
             if not config.owns_initial_provider and config.provider is not None:
                 session._refresh_runtime_provider()
             await session._refresh_runtime_model_limits()
@@ -1754,13 +1754,28 @@ class CodingSession:
 
         Runs once during :meth:`load`, after session state is replayed and
         before the level is synced to the active model, so the override wins
-        over both remembered defaults and the resumed transcript state. When
-        the active provider configuration is known the override is validated
-        strictly; for dynamic providers it is applied best-effort and later
-        coerced by :meth:`_sync_thinking_level_to_active_model` if needed.
+        over both remembered defaults and the resumed transcript state. The
+        override is validated strictly against either the active dynamic model
+        or the durable provider configuration when its capabilities are known.
         """
         override = self._config.thinking_level_override
         if override is None:
+            return
+        dynamic = self._active_dynamic_provider
+        if dynamic is not None:
+            model = self._active_dynamic_model
+            levels = model.thinking_levels if model is not None else None
+            if not levels:
+                raise ProviderConfigError(
+                    f"Thinking modes are unavailable for {dynamic.id}:{self.model}"
+                )
+            if override not in levels:
+                allowed = ", ".join(levels)
+                raise ProviderConfigError(
+                    f'Thinking mode "{override}" is not available for '
+                    f"{dynamic.id}:{self.model}. Available modes: {allowed}"
+                )
+            self._thinking_level = override
             return
         provider = self._active_provider_config()
         if provider is None:
