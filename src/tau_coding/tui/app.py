@@ -139,6 +139,7 @@ from tau_coding.session_manager import CodingSessionRecord, SessionManager
 from tau_coding.session_preparation import prepare_coding_session
 from tau_coding.shell_config import load_shell_settings
 from tau_coding.skills import Skill
+from tau_coding.thinking import ThinkingLevel
 from tau_coding.tui.adapter import TuiEventAdapter
 from tau_coding.tui.autocomplete import (
     CompletionItem,
@@ -7593,6 +7594,7 @@ async def run_tui_app(
     custom_system_prompt: str | None = None,
     append_system_prompt: str | None = None,
     trust_override: TrustOverride | None = None,
+    thinking_level_override: ThinkingLevel | None = None,
 ) -> str | None:
     """Run the Textual app and return the active id when its session is persisted."""
     if new_session and session_id is not None:
@@ -7662,6 +7664,7 @@ async def run_tui_app(
                 thinking_level=resolve_startup_thinking_level(
                     selection.provider,
                     selection.model,
+                    cli_override=thinking_level_override,
                 ),
             )
         except RuntimeError as exc:
@@ -7729,6 +7732,7 @@ async def run_tui_app(
                 project_extensions_enabled=project_extensions_enabled,
                 custom_system_prompt=custom_system_prompt,
                 append_system_prompt=append_system_prompt,
+                thinking_level_override=thinking_level_override,
                 trust_override=trust_override,
                 trust_default=shell_settings.default_project_trust,
                 trust_interactive=True,

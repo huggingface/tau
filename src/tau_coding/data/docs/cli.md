@@ -35,6 +35,10 @@ tau [OPTIONS] [PROMPT]
 - `--mode text|json|transcript`: choose print output and imply print mode.
 - `--provider NAME`: select an explicit provider.
 - `-m, --model ID`: select an explicit model.
+- `-t, --thinking LEVEL`: set the initial thinking level for this run
+  (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Overrides
+  remembered and catalog defaults without persisting them; an unsupported level
+  for the selected model is an error listing the available modes.
 - `--session ID`: resume a session in the TUI or print mode.
 - `--cwd PATH`: set the coding-session working directory.
 - `-e, --extension PATH`: load an explicit extension.

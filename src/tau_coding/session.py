@@ -335,6 +335,14 @@ class CodingSessionConfig:
     auto_compact_token_threshold: int | None = None
     auto_compact_enabled: bool = True
     thinking_level: ThinkingLevel = DEFAULT_THINKING_LEVEL
+    thinking_level_override: ThinkingLevel | None = None
+    """One-shot startup override (e.g. ``--thinking``) for the session's level.
+
+    Takes precedence over remembered per-model defaults and replayed session
+    state, is validated strictly against the active model's available levels
+    when the provider configuration is known, and is never persisted as a new
+    remembered default.
+    """
     index_on_first_persist: bool = False
     shell_command_prefix: str | None = None
     skills_enabled: bool = True
@@ -667,6 +675,7 @@ class CodingSession:
             # failure path has exactly one closer for the candidate.
             session._owned_providers.append(config.provider)  # type: ignore[arg-type]
         await session._persist_active_tool_history_repairs()
+        session._apply_thinking_level_override()
         session._sync_thinking_level_to_active_model()
         try:
             if not config.owns_initial_provider and config.provider is not None:
@@ -1739,6 +1748,27 @@ class CodingSession:
             return self._provider_settings.get_provider(self._provider_name)
         except ProviderConfigError:
             return None
+
+    def _apply_thinking_level_override(self) -> None:
+        """Apply the one-shot startup thinking override to the loaded session.
+
+        Runs once during :meth:`load`, after session state is replayed and
+        before the level is synced to the active model, so the override wins
+        over both remembered defaults and the resumed transcript state. When
+        the active provider configuration is known the override is validated
+        strictly; for dynamic providers it is applied best-effort and later
+        coerced by :meth:`_sync_thinking_level_to_active_model` if needed.
+        """
+        override = self._config.thinking_level_override
+        if override is None:
+            return
+        provider = self._active_provider_config()
+        if provider is None:
+            self._thinking_level = override
+            return
+        resolved = resolve_startup_thinking_level(provider, self.model, cli_override=override)
+        if resolved is not None:
+            self._thinking_level = resolved
 
     def _sync_thinking_level_to_active_model(self) -> None:
         provider = self._active_provider_config()
@@ -4074,6 +4104,16 @@ def _initial_thinking_level_for_config(
     model: str,
 ) -> ThinkingLevel:
     provider = _provider_config_for_name(config, config.provider_name)
+    if config.thinking_level_override is not None:
+        if provider is None:
+            return config.thinking_level_override
+        resolved = resolve_startup_thinking_level(
+            provider,
+            model,
+            cli_override=config.thinking_level_override,
+        )
+        if resolved is not None:
+            return resolved
     if provider is None:
         return config.thinking_level
     return _preferred_thinking_level_for_model(

@@ -1975,3 +1975,101 @@ async def test_headless_ask_declines_without_corrupting_structured_stdout(
     assert "PROTECTED-STRUCTURED-SECRET" not in provider.calls[0][1]
     assert "Project inputs" not in captured.out
     assert "Project inputs" in captured.err
+
+
+def test_thinking_flag_forwards_to_tui_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+
+    async def fake_run_openai_tui(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs.get("thinking_level_override"))
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, ["--thinking", "high", "--new-session"])
+
+    assert result.exit_code == 0
+    assert calls == ["high"]
+
+
+def test_thinking_flag_forwards_to_print_mode_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+
+    async def fake_run_openai_print_mode(*args: object, **kwargs: object) -> bool:
+        calls.append(kwargs.get("thinking_level_override"))
+        return True
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(app, ["--print", "-t", "low", "hello"])
+
+    assert result.exit_code == 0
+    assert calls == ["low"]
+
+
+def test_thinking_flag_forwards_to_rpc_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+
+    async def fake_run_openai_rpc_mode(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs.get("thinking_level_override"))
+
+    monkeypatch.setattr(cli, "run_openai_rpc_mode", fake_run_openai_rpc_mode)
+
+    result = CliRunner().invoke(app, ["--mode", "rpc", "--thinking", "xhigh"])
+
+    assert result.exit_code == 0
+    assert calls == ["xhigh"]
+
+
+def test_thinking_flag_rejects_invalid_level(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run_openai_tui(*args: object, **kwargs: object) -> None:
+        raise AssertionError("TUI must not start for an invalid thinking level")
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, ["--thinking", "maximum", "--new-session"])
+
+    assert result.exit_code == 2
+    assert "Unknown thinking mode: maximum" in _panel_text(result.output)
+
+
+def test_thinking_flag_accepts_case_insensitive_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+
+    async def fake_run_openai_tui(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs.get("thinking_level_override"))
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, ["-t", "HIGH", "--new-session"])
+
+    assert result.exit_code == 0
+    assert calls == ["high"]
+
+
+def test_thinking_flag_absent_forwards_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+
+    async def fake_run_openai_tui(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs.get("thinking_level_override"))
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, ["--new-session"])
+
+    assert result.exit_code == 0
+    assert calls == [None]
+
+
+def test_help_lists_thinking_option() -> None:
+    result = CliRunner().invoke(app, ["--help"], env={"COLUMNS": "160"})
+
+    output = re.sub(r"\s+", "", _strip_ansi(result.output))
+    assert result.exit_code == 0
+    assert "--thinking" in output
