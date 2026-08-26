@@ -571,7 +571,7 @@ class _ResponsesStreamParser:
         self._content_parts: list[str] = []
         self._thinking_parts: list[str] = []
         self._reasoning_items: dict[str, dict[str, JSONValue]] = {}
-        self._tool_call_builders: dict[str, _ResponsesToolCallBuilder] = {}
+        self._tool_call_builders: dict[tuple[str, str | int], _ResponsesToolCallBuilder] = {}
         self._status: str | None = None
         self._usage: Usage | None = None
 
@@ -622,16 +622,15 @@ class _ResponsesStreamParser:
             )
 
         elif chunk_type == "response.function_call_arguments.delta":
-            item_id = chunk.get("item_id")
-            if isinstance(item_id, str):
-                builder = self._tool_call_builders.setdefault(item_id, _ResponsesToolCallBuilder())
-                builder.add_arguments_delta(chunk.get("delta"))
+            builder = _responses_tool_builder_for_event(self._tool_call_builders, chunk)
+            delta = chunk.get("delta")
+            if builder is not None and isinstance(delta, str):
+                builder.add_arguments_delta(delta)
                 self.emitted_content = True
 
         elif chunk_type == "response.function_call_arguments.done":
-            item_id = chunk.get("item_id")
-            if isinstance(item_id, str):
-                builder = self._tool_call_builders.setdefault(item_id, _ResponsesToolCallBuilder())
+            builder = _responses_tool_builder_for_event(self._tool_call_builders, chunk)
+            if builder is not None:
                 builder.set_final(arguments=chunk.get("arguments"))
 
         elif chunk_type == "response.output_item.done":
@@ -1022,7 +1021,7 @@ def _register_reasoning_item(
 
 
 def _register_responses_item(
-    builders: dict[str, _ResponsesToolCallBuilder],
+    builders: dict[tuple[str, str | int], _ResponsesToolCallBuilder],
     item: object,
     *,
     output_index: object,
@@ -1032,18 +1031,35 @@ def _register_responses_item(
     item_id = item.get("id")
     if not isinstance(item_id, str):
         return
+    call_id = _str_or_none(item.get("call_id"))
+    resolved_output_index = _int_or_none(output_index)
     raw_arguments = item.get("arguments")
-    builder = builders.setdefault(item_id, _ResponsesToolCallBuilder())
+    builder = _responses_tool_builder(
+        builders,
+        item_id=item_id,
+        call_id=call_id,
+        output_index=resolved_output_index,
+        sole_fallback=False,
+    )
+    if builder is None:
+        builder = _ResponsesToolCallBuilder()
+    _track_responses_tool_builder(
+        builders,
+        builder,
+        item_id=item_id,
+        call_id=call_id,
+        output_index=resolved_output_index,
+    )
     builder.set_final(
-        call_id=_str_or_none(item.get("call_id")),
+        call_id=call_id,
         name=_str_or_none(item.get("name")),
         arguments=raw_arguments if isinstance(raw_arguments, str) and raw_arguments else None,
-        output_index=_int_or_none(output_index),
+        output_index=resolved_output_index,
     )
 
 
 def _finalize_responses_item(
-    builders: dict[str, _ResponsesToolCallBuilder],
+    builders: dict[tuple[str, str | int], _ResponsesToolCallBuilder],
     item: object,
     *,
     output_index: object,
@@ -1053,21 +1069,96 @@ def _finalize_responses_item(
     item_id = item.get("id")
     if not isinstance(item_id, str):
         return
-    builder = builders.setdefault(item_id, _ResponsesToolCallBuilder())
+    call_id = _str_or_none(item.get("call_id"))
+    resolved_output_index = _int_or_none(output_index)
+    builder = _responses_tool_builder(
+        builders,
+        item_id=item_id,
+        call_id=call_id,
+        output_index=resolved_output_index,
+    )
+    if builder is None:
+        builder = _ResponsesToolCallBuilder()
+    _track_responses_tool_builder(
+        builders,
+        builder,
+        item_id=item_id,
+        call_id=call_id,
+        output_index=resolved_output_index,
+    )
     builder.set_final(
-        call_id=_str_or_none(item.get("call_id")),
+        call_id=call_id,
         name=_str_or_none(item.get("name")),
         arguments=item.get("arguments"),
-        output_index=_int_or_none(output_index),
+        output_index=resolved_output_index,
     )
 
 
-def _ordered_builders(
-    builders: dict[str, _ResponsesToolCallBuilder],
+def _responses_tool_builder_for_event(
+    builders: dict[tuple[str, str | int], _ResponsesToolCallBuilder],
+    event: Mapping[str, Any],
+) -> _ResponsesToolCallBuilder | None:
+    return _responses_tool_builder(
+        builders,
+        item_id=_str_or_none(event.get("item_id")),
+        call_id=_str_or_none(event.get("call_id")),
+        output_index=_int_or_none(event.get("output_index")),
+    )
+
+
+def _responses_tool_builder(
+    builders: dict[tuple[str, str | int], _ResponsesToolCallBuilder],
+    *,
+    item_id: str | None,
+    call_id: str | None,
+    output_index: int | None,
+    sole_fallback: bool = True,
+) -> _ResponsesToolCallBuilder | None:
+    keys: list[tuple[str, str | int]] = []
+    if item_id is not None:
+        keys.append(("item_id", item_id))
+    if call_id is not None:
+        keys.append(("call_id", call_id))
+    if output_index is not None:
+        keys.append(("output_index", output_index))
+    for key in keys:
+        if key in builders:
+            return builders[key]
+    unique_builders = _unique_responses_tool_builders(builders)
+    if sole_fallback and len(unique_builders) == 1:
+        return unique_builders[0]
+    return None
+
+
+def _track_responses_tool_builder(
+    builders: dict[tuple[str, str | int], _ResponsesToolCallBuilder],
+    builder: _ResponsesToolCallBuilder,
+    *,
+    item_id: str | None,
+    call_id: str | None,
+    output_index: int | None,
+) -> None:
+    if item_id is not None:
+        builders[("item_id", item_id)] = builder
+    if call_id is not None:
+        builders[("call_id", call_id)] = builder
+    if output_index is not None:
+        builders[("output_index", output_index)] = builder
+
+
+def _unique_responses_tool_builders(
+    builders: dict[tuple[str, str | int], _ResponsesToolCallBuilder],
 ) -> list[_ResponsesToolCallBuilder]:
-    return [
-        builder for _, builder in sorted(builders.items(), key=lambda pair: pair[1].output_index)
-    ]
+    return list(dict.fromkeys(builders.values()))
+
+
+def _ordered_builders(
+    builders: dict[tuple[str, str | int], _ResponsesToolCallBuilder],
+) -> list[_ResponsesToolCallBuilder]:
+    return sorted(
+        _unique_responses_tool_builders(builders),
+        key=lambda builder: builder.output_index,
+    )
 
 
 def _responses_finish_reason(chunk: Mapping[str, Any]) -> str | None:
