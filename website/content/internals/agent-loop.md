@@ -59,6 +59,10 @@ payload table.
 The final `AssistantMessage` is authoritative: it persists text, thinking, and tool
 calls as ordered content blocks. Nested update events provide responsive rendering,
 while saved sessions and provider history replay use the finalized structured message.
+It also carries optional monotonic response timing: total request duration and time
+from request start to the first text, thinking, or tool-call output. Tau captures
+these around the provider-neutral stream, so saved usage and timing remain paired
+for effective output-speed and TTFT statistics.
 Its `provider` field names Tau's configured provider. When a gateway reports a
 more specific backend, `response_provider` records the backend that served that
 request. For example, Hugging Face responses expose the selected Inference

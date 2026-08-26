@@ -1867,6 +1867,14 @@ def _build_sidebar_content(
     if cache_rates:
         usage.append("\ncache: ", style=theme.completion_description)
         usage.append(" · ".join(cache_rates), style=theme.completion_description)
+    speeds: list[str] = []
+    if (latest_speed := stats.latest_output_tokens_per_second) is not None:
+        speeds.append(f"{latest_speed:.1f} latest")
+    if (session_speed := stats.output_tokens_per_second) is not None:
+        speeds.append(f"{session_speed:.1f} session")
+    if speeds:
+        usage.append("\nspeed: ", style=theme.completion_description)
+        usage.append(f"{' · '.join(speeds)} tok/s", style=theme.completion_description)
 
     threshold = session.auto_compact_token_threshold
     compaction = Text(

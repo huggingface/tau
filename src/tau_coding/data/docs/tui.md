@@ -5,6 +5,11 @@ portable `tau_agent` harness emits provider-neutral events; the TUI renders
 them and owns interaction. Ctrl+P cycles forward through scoped models;
 Shift+Ctrl+P cycles backward.
 
+The sidebar usage section shows effective output speed for the latest timed
+provider response and the token-weighted timed session history. Effective speed
+includes request startup, prefill, and TTFT. Older assistant messages without persisted timing still count toward token
+usage but not speed.
+
 ## `/model`
 
 The picker renders cached/bundled choices immediately, then refreshes remote

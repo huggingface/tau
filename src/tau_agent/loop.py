@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from time import monotonic_ns
 
 from tau_agent.events import (
     AgentEndEvent,
@@ -21,6 +22,7 @@ from tau_agent.events import (
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    ResponseTiming,
     TextContent,
     ToolCall,
     ToolResultMessage,
@@ -31,6 +33,11 @@ from tau_agent.provider_events import (
     AssistantErrorEvent,
     AssistantMessageEvent,
     AssistantStartEvent,
+    TextDeltaEvent,
+    ThinkingDeltaEvent,
+    ToolCallDeltaEvent,
+    ToolCallEndEvent,
+    ToolCallStartEvent,
 )
 from tau_agent.tool_history import repair_tool_history
 from tau_agent.tools import AgentTool, AgentToolResult
@@ -204,6 +211,7 @@ async def _assistant_events(
     signal: CancellationToken | None,
     session_id: str | None,
 ) -> AsyncIterator[AgentEvent]:
+    request_started_ns = monotonic_ns()
     source: AsyncIterator[AssistantMessageEvent] = provider.stream_response(
         model=model,
         system=system,
@@ -213,15 +221,49 @@ async def _assistant_events(
         session_id=session_id,
     )
     started = False
+    first_output_ns: int | None = None
     async for event in source:
+        if first_output_ns is None and isinstance(
+            event,
+            (
+                TextDeltaEvent,
+                ThinkingDeltaEvent,
+                ToolCallStartEvent,
+                ToolCallDeltaEvent,
+                ToolCallEndEvent,
+            ),
+        ):
+            first_output_ns = monotonic_ns()
         if isinstance(event, AssistantStartEvent):
             started = True
             yield MessageStartEvent(message=event.partial)
         elif isinstance(event, AssistantDoneEvent):
+            completed_ns = monotonic_ns()
+            terminal_first_output_ns = (
+                first_output_ns
+                if first_output_ns is not None or not event.message.content
+                else completed_ns
+            )
+            event.message.timing = _response_timing(
+                request_started_ns,
+                terminal_first_output_ns,
+                completed_ns,
+            )
             if not started:
                 yield MessageStartEvent(message=event.message)
             yield MessageEndEvent(message=event.message)
         elif isinstance(event, AssistantErrorEvent):
+            completed_ns = monotonic_ns()
+            terminal_first_output_ns = (
+                first_output_ns
+                if first_output_ns is not None or not event.error.content
+                else completed_ns
+            )
+            event.error.timing = _response_timing(
+                request_started_ns,
+                terminal_first_output_ns,
+                completed_ns,
+            )
             if not started:
                 yield MessageStartEvent(message=event.error)
             yield MessageEndEvent(message=event.error)
@@ -230,6 +272,22 @@ async def _assistant_events(
                 message=event.partial,
                 assistant_message_event=event,
             )
+
+
+def _response_timing(
+    request_started_ns: int,
+    first_output_ns: int | None,
+    completed_ns: int,
+) -> ResponseTiming:
+    """Build persistable durations from monotonic response boundaries."""
+    return ResponseTiming(
+        time_to_first_output_ms=(
+            max(0, first_output_ns - request_started_ns) // 1_000_000
+            if first_output_ns is not None
+            else None
+        ),
+        total_duration_ms=max(0, completed_ns - request_started_ns) // 1_000_000,
+    )
 
 
 async def _execute_tool_call(

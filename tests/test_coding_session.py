@@ -97,7 +97,7 @@ def _assert_messages(actual: object, expected: object) -> None:
     def dump(message: object) -> object:
         model_dump = getattr(message, "model_dump", None)
         if callable(model_dump):
-            return model_dump(exclude={"timestamp"})
+            return model_dump(exclude={"timestamp", "timing"})
         return message
 
     assert [dump(message) for message in actual] == [dump(message) for message in expected]  # type: ignore[union-attr]

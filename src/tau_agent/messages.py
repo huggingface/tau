@@ -55,6 +55,20 @@ class Usage(WireModel):
     cost: UsageCost = UsageCost()
 
 
+class ResponseTiming(WireModel):
+    """Monotonic request durations for one assistant response."""
+
+    time_to_first_output_ms: int | None = Field(default=None, ge=0)
+    total_duration_ms: int = Field(ge=0)
+
+    @property
+    def generation_duration_ms(self) -> int | None:
+        """Return elapsed time from first output through response completion."""
+        if self.time_to_first_output_ms is None:
+            return None
+        return max(0, self.total_duration_ms - self.time_to_first_output_ms)
+
+
 class TextContent(WireModel):
     type: Literal["text"] = "text"
     text: str
@@ -129,6 +143,7 @@ class AssistantMessage(WireModel):
     response_id: str | None = None
     diagnostics: list[AssistantMessageDiagnostic] | None = None
     usage: Usage = Usage()
+    timing: ResponseTiming | None = None
     stop_reason: StopReason = "stop"
     error_message: str | None = None
     timestamp: int = Field(default_factory=current_timestamp_ms)

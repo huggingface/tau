@@ -1,6 +1,7 @@
 from tau_agent.messages import (
     AssistantMessage,
     CustomMessage,
+    ResponseTiming,
     TextContent,
     ToolCall,
     ToolResultMessage,
@@ -115,6 +116,53 @@ def test_latest_cache_hit_rate_reports_miss_after_earlier_cache_activity() -> No
     )
 
     assert stats.latest_cache_hit_rate == 0.0
+
+
+def test_calculate_session_stats_aggregates_effective_output_speed() -> None:
+    first = MessageEntry(
+        message=AssistantMessage(
+            usage=Usage(output=100),
+            timing=ResponseTiming(time_to_first_output_ms=500, total_duration_ms=2000),
+        )
+    )
+    second = MessageEntry(
+        parent_id=first.id,
+        message=AssistantMessage(
+            usage=Usage(output=300),
+            timing=ResponseTiming(time_to_first_output_ms=1000, total_duration_ms=3000),
+        ),
+    )
+
+    stats = calculate_session_stats(
+        [first, second],
+        pricing=lambda _provider, _model, _input: {},
+    )
+
+    assert stats.latest_output_tokens_per_second == 100.0
+    assert stats.output_tokens_per_second == 80.0
+    assert stats.latest_time_to_first_output_ms == 1000
+
+
+def test_calculate_session_stats_ignores_untimed_history_for_speed() -> None:
+    timed = MessageEntry(
+        message=AssistantMessage(
+            usage=Usage(output=100),
+            timing=ResponseTiming(time_to_first_output_ms=500, total_duration_ms=2000),
+        )
+    )
+    legacy = MessageEntry(
+        parent_id=timed.id,
+        message=AssistantMessage(usage=Usage(output=300)),
+    )
+
+    stats = calculate_session_stats(
+        [timed, legacy],
+        pricing=lambda _provider, _model, _input: {},
+    )
+
+    assert stats.latest_output_tokens_per_second is None
+    assert stats.output_tokens_per_second == 50.0
+    assert stats.latest_time_to_first_output_ms is None
 
 
 def test_calculate_session_stats_keeps_compacted_active_branch_usage() -> None:

@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator, Mapping
 
 import pytest
 
+import tau_agent.loop as loop_module
 from pi_event_helpers import (
     assistant_done,
     assistant_error,
@@ -81,6 +82,32 @@ async def test_agent_loop_streams_canonical_nested_events() -> None:
     updates = [event for event in events if isinstance(event, MessageUpdateEvent)]
     assert [event.assistant_message_event.delta for event in updates] == ["Hel", "lo"]  # type: ignore[union-attr]
     assert messages == [messages[0], assistant]
+
+
+@pytest.mark.anyio
+async def test_agent_loop_records_monotonic_response_timing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ticks = iter([1_000_000_000, 2_250_000_000, 6_000_000_000])
+    monkeypatch.setattr(loop_module, "monotonic_ns", lambda: next(ticks))
+    messages: list[AgentMessage] = [UserMessage(content="Say hello")]
+    assistant = AssistantMessage(content="Hello", model="fake")
+    assistant.usage.output = 100
+    provider = FakeProvider([[assistant_start(), text_delta("Hello"), assistant_done(assistant)]])
+
+    await _collect(
+        run_agent_loop(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            messages=messages,
+            tools=[],
+        )
+    )
+
+    assert assistant.timing is not None
+    assert assistant.timing.time_to_first_output_ms == 1250
+    assert assistant.timing.total_duration_ms == 5000
 
 
 @pytest.mark.anyio
