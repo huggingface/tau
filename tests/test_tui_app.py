@@ -235,9 +235,6 @@ class FakeSession:
             latest_cached_input_tokens=1_188_000,
             timed_output_tokens=48_000,
             response_duration_ms=1_200_000,
-            latest_timed_output_tokens=1_000,
-            latest_response_duration_ms=20_000,
-            latest_time_to_first_output_ms=1_200,
             estimated_cost=1.24,
         )
         self.system_prompt = "You are Tau."
@@ -551,7 +548,7 @@ def test_session_sidebar_renders_session_metadata() -> None:
     assert "cumulative usage" not in output
     assert "1.2m in, 48k out · ~$1.24" in output
     assert "cache: 99% latest · 95% session" in output
-    assert "speed: 50.0 latest · 40.0 session tok/s" in output
+    assert "average speed: 40.0 tok/s" in output
     assert "auto at 200k" in output
     assert "read, write, edit, bash" in output
     assert re.search(r"\./\.tau/skills\s+• review", output)

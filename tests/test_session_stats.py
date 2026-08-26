@@ -138,9 +138,7 @@ def test_calculate_session_stats_aggregates_effective_output_speed() -> None:
         pricing=lambda _provider, _model, _input: {},
     )
 
-    assert stats.latest_output_tokens_per_second == 100.0
     assert stats.output_tokens_per_second == 80.0
-    assert stats.latest_time_to_first_output_ms == 1000
 
 
 def test_calculate_session_stats_ignores_untimed_history_for_speed() -> None:
@@ -160,9 +158,7 @@ def test_calculate_session_stats_ignores_untimed_history_for_speed() -> None:
         pricing=lambda _provider, _model, _input: {},
     )
 
-    assert stats.latest_output_tokens_per_second is None
     assert stats.output_tokens_per_second == 50.0
-    assert stats.latest_time_to_first_output_ms is None
 
 
 def test_calculate_session_stats_keeps_compacted_active_branch_usage() -> None:

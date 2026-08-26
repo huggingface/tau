@@ -253,12 +253,12 @@ and terminal tab title; `/hotkeys` lists shortcuts when needed. The sidebar hide
 automatically when the terminal is small, while the tab title continues to
 identify the session.
 
-Effective output speed divides provider-reported output tokens by the full
-response duration, including request startup, prefill, and time to first output.
-The latest figure describes the most recent timed response; the session figure
-is token-weighted across timed responses rather than an average of per-response
-rates. Timing is persisted on new assistant messages. Older history still counts
-toward cumulative token usage and cost but is omitted from speed calculations.
+Average effective output speed divides provider-reported output tokens by the
+full response duration, including request startup, prefill, and time to first
+output. The session figure is token-weighted across timed responses rather than
+an average of per-response rates. Timing is persisted on new assistant messages.
+Older history still counts toward cumulative token usage and cost but is omitted
+from speed calculations.
 
 Cumulative usage and cost cover the active branch, including history replaced by
 compaction. Input usage counts tokens processed on every

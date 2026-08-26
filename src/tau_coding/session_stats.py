@@ -27,9 +27,6 @@ class SessionStats:
     latest_cached_input_tokens: int = 0
     timed_output_tokens: int = 0
     response_duration_ms: int = 0
-    latest_timed_output_tokens: int = 0
-    latest_response_duration_ms: int = 0
-    latest_time_to_first_output_ms: int | None = None
     estimated_cost: float | None = None
 
     @property
@@ -61,13 +58,6 @@ class SessionStats:
             return None
         return self.timed_output_tokens * 1000 / self.response_duration_ms
 
-    @property
-    def latest_output_tokens_per_second(self) -> float | None:
-        """Effective output speed for the latest timed response."""
-        if self.latest_timed_output_tokens <= 0 or self.latest_response_duration_ms <= 0:
-            return None
-        return self.latest_timed_output_tokens * 1000 / self.latest_response_duration_ms
-
 
 def calculate_session_stats(
     entries: Sequence[SessionEntry],
@@ -85,9 +75,6 @@ def calculate_session_stats(
     latest_cached_input_tokens = 0
     timed_output_tokens = 0
     response_duration_ms = 0
-    latest_timed_output_tokens = 0
-    latest_response_duration_ms = 0
-    latest_time_to_first_output_ms: int | None = None
     estimated_cost = 0.0
     has_billable_usage = False
     has_complete_pricing = True
@@ -112,17 +99,9 @@ def calculate_session_stats(
         cache_write_tokens += usage.cache_write
         output_tokens += usage.output
         timing = message.timing
-        if timing is not None:
-            latest_timed_output_tokens = usage.output
-            latest_response_duration_ms = timing.total_duration_ms
-            latest_time_to_first_output_ms = timing.time_to_first_output_ms
-            if usage.output > 0 and timing.total_duration_ms > 0:
-                timed_output_tokens += usage.output
-                response_duration_ms += timing.total_duration_ms
-        else:
-            latest_timed_output_tokens = 0
-            latest_response_duration_ms = 0
-            latest_time_to_first_output_ms = None
+        if timing is not None and usage.output > 0 and timing.total_duration_ms > 0:
+            timed_output_tokens += usage.output
+            response_duration_ms += timing.total_duration_ms
         if prompt_tokens == 0 and usage.output == 0:
             continue
 
@@ -154,9 +133,6 @@ def calculate_session_stats(
         latest_cached_input_tokens=latest_cached_input_tokens,
         timed_output_tokens=timed_output_tokens,
         response_duration_ms=response_duration_ms,
-        latest_timed_output_tokens=latest_timed_output_tokens,
-        latest_response_duration_ms=latest_response_duration_ms,
-        latest_time_to_first_output_ms=latest_time_to_first_output_ms,
         estimated_cost=(estimated_cost if has_billable_usage and has_complete_pricing else None),
     )
 
