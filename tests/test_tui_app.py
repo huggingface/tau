@@ -367,15 +367,16 @@ class FakeSession:
         self.scoped_model_choices = tuple(scoped)
         return self.scoped_model_choices
 
-    def cycle_scoped_model(self) -> ModelChoice:
+    def cycle_scoped_model(self, *, reverse: bool = False) -> ModelChoice:
         if not self.scoped_model_choices:
             raise ValueError("No scoped models configured.")
         current = ModelChoice(provider_name=self.provider_name, model=self.model)
         try:
             index = self.scoped_model_choices.index(current)
         except ValueError:
-            index = -1
-        choice = self.scoped_model_choices[(index + 1) % len(self.scoped_model_choices)]
+            index = -1 if not reverse else 0
+        delta = -1 if reverse else 1
+        choice = self.scoped_model_choices[(index + delta) % len(self.scoped_model_choices)]
         self.set_model_choice(choice)
         return choice
 
@@ -8384,6 +8385,24 @@ async def test_tui_app_cycles_scoped_model_from_keybinding() -> None:
     assert session.provider_name == "openai"
     assert session.model == "other-model"
     assert notifications == []
+
+
+@pytest.mark.anyio
+async def test_tui_app_cycles_scoped_model_backward_from_keybinding() -> None:
+    session = FakeSession()
+    session.scoped_model_choices = (
+        ModelChoice(provider_name="openai", model="fake-model"),
+        ModelChoice(provider_name="openai", model="other-model"),
+        ModelChoice(provider_name="anthropic", model="third-model"),
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+shift+p")
+        await pilot.pause()
+
+    assert session.provider_name == "anthropic"
+    assert session.model == "third-model"
 
 
 @pytest.mark.anyio
