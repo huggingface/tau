@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
-from typing import ClassVar, Literal, cast
+from typing import ClassVar, cast
 
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.style import StyleType
