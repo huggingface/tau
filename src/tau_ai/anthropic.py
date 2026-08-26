@@ -734,11 +734,14 @@ def _usage_from_message_start(raw: object) -> Usage:
         if isinstance(cache_creation, Mapping)
         else None
     )
+    input_tokens = _int_or_none(data.get("input_tokens")) or 0
+    cache_read = _int_or_none(data.get("cache_read_input_tokens")) or 0
+    cache_write = _int_or_none(data.get("cache_creation_input_tokens")) or 0
     usage = Usage(
-        input=_int_or_none(data.get("input_tokens")) or 0,
+        input=max(0, input_tokens - cache_read - cache_write),
         output=_int_or_none(data.get("output_tokens")) or 0,
-        cache_read=_int_or_none(data.get("cache_read_input_tokens")) or 0,
-        cache_write=_int_or_none(data.get("cache_creation_input_tokens")) or 0,
+        cache_read=cache_read,
+        cache_write=cache_write,
         cache_write_1h=cache_write_1h,
     )
     usage.total_tokens = usage.input + usage.output + usage.cache_read + usage.cache_write
@@ -755,7 +758,7 @@ def _apply_message_delta_usage(usage: Usage | None, raw: object) -> Usage | None
         return usage
     usage = usage or Usage()
     if (value := _int_or_none(raw.get("input_tokens"))) is not None:
-        usage.input = value
+        usage.input = max(0, value - usage.cache_read - usage.cache_write)
     if (value := _int_or_none(raw.get("output_tokens"))) is not None:
         usage.output = value
     if (value := _int_or_none(raw.get("cache_read_input_tokens"))) is not None:

@@ -3372,12 +3372,12 @@ async def test_anthropic_provider_reports_usage() -> None:
     assert isinstance(events[-1], AssistantDoneEvent)
     usage = events[-1].message.usage
     assert usage is not None
-    assert usage.input == 100
+    assert usage.input == 35  # fresh input: 100 - 40 - 25
     assert usage.output == 7  # updated by message_delta
     assert usage.cache_read == 40
     assert usage.cache_write == 25
     assert usage.cache_write_1h == 10
-    assert usage.total_tokens == 172  # 100 + 7 + 40 + 25
+    assert usage.total_tokens == 107  # 35 + 7 + 40 + 25
     assert usage.cost.total == 0
 
 
