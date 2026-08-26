@@ -639,9 +639,7 @@ class LocalBackendScreen(ModalScreen[None]):
                 )
             elif action in {"load_model", "unload_model", "download_model"}:
                 assert model_id is not None
-                manage_action = cast(
-                    Literal["load_model", "unload_model", "download_model"], action
-                )
+                manage_action = action
                 result = await self.registry.manage_model(
                     self.backend_id,
                     manage_action,
