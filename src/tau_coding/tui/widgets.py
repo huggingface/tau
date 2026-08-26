@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import re
+import sys
+import tempfile
 import time
+import traceback
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -384,6 +389,30 @@ _HIDDEN_THINKING_PLACEHOLDER = "Thinking… Press Ctrl+T to show thinking tokens
 TRANSCRIPT_WINDOW_ITEMS = 200
 TRANSCRIPT_WINDOW_PAGE_ITEMS = 80
 TRANSCRIPT_WINDOW_OVERSCAN_ITEMS = 40
+
+# Issue #426 (temporary diagnostics): when TAU_DEBUG_TRANSCRIPT_DUP is set,
+# TranscriptView logs whenever the same canonical ChatItem is rendered by more
+# than one visible widget, including window bounds and the trigger that preceded
+# the redraw. No effect unless the variable is set, so production behavior is
+# unchanged. Remove once issue #426 is resolved.
+_TAU_DEBUG_TRANSCRIPT_DUP = os.environ.get("TAU_DEBUG_TRANSCRIPT_DUP") == "1"
+_TRANSCRIPT_DUP_LOGGER = logging.getLogger("tau.tui.transcript_dup")
+if _TAU_DEBUG_TRANSCRIPT_DUP:
+    # Route diagnostics to a file so they survive Textual owning the terminal,
+    # and announce the path once so the operator knows where to look.
+    _TRANSCRIPT_DUP_LOG_PATH = os.path.join(tempfile.gettempdir(), "tau_transcript_dup.log")
+    _TRANSCRIPT_DUP_HANDLER = logging.FileHandler(_TRANSCRIPT_DUP_LOG_PATH, encoding="utf-8")
+    _TRANSCRIPT_DUP_HANDLER.setLevel(logging.WARNING)
+    _TRANSCRIPT_DUP_HANDLER.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    )
+    _TRANSCRIPT_DUP_LOGGER.addHandler(_TRANSCRIPT_DUP_HANDLER)
+    _TRANSCRIPT_DUP_LOGGER.setLevel(logging.WARNING)
+    _TRANSCRIPT_DUP_LOGGER.propagate = False
+    print(
+        f"[tau] transcript duplicate diagnostics enabled -> {_TRANSCRIPT_DUP_LOG_PATH}",
+        file=sys.stderr,
+    )
 
 
 class TranscriptWindowBoundary(Static):
@@ -809,7 +838,7 @@ class TranscriptView(VerticalScroll):
 
         self._window_start = new_start
         self._window_end = new_end
-        self._redraw(scroll_end=False, preserve_window=True)
+        self._redraw(scroll_end=False, preserve_window=True, reason="window_shift")
 
         def restore_anchor() -> None:
             try:
@@ -865,6 +894,7 @@ class TranscriptView(VerticalScroll):
         self._redraw(
             scroll_end=should_follow,
             preserve_window=retained_projection and not should_follow,
+            reason="state_update",
         )
 
     def update_thinking_visibility(
@@ -957,7 +987,13 @@ class TranscriptView(VerticalScroll):
                 lambda: self.scroll_to(y=previous_scroll_y, animate=False, immediate=True)
             )
 
-    def _redraw(self, *, scroll_end: bool, preserve_window: bool = False) -> None:
+    def _redraw(
+        self,
+        *,
+        scroll_end: bool,
+        preserve_window: bool = False,
+        reason: str = "unknown",
+    ) -> None:
         state = self._render_state
         if state is None:
             return
@@ -1045,6 +1081,60 @@ class TranscriptView(VerticalScroll):
         self.refresh(layout=True)
         if scroll_end:
             self._request_follow_scroll()
+        if _TAU_DEBUG_TRANSCRIPT_DUP:
+            self._schedule_duplicate_diagnostic(reason)
+
+    def _schedule_duplicate_diagnostic(self, reason: str) -> None:
+        """Log (post-refresh) when one canonical ChatItem has >1 visible widget.
+
+        Serves issue #426's diagnostics ask: detect duplicate assistant rendering
+        that can follow async Textual pruning of removed transcript rows. Runs only
+        when TAU_DEBUG_TRANSCRIPT_DUP is set; never alters the DOM or control flow.
+        """
+        trigger_stack = "".join(traceback.format_stack())
+
+        def _inspect() -> None:
+            counts: dict[int, list[Widget]] = {}
+            for child in self.children:
+                item = getattr(child, "item", None)
+                if item is None:
+                    continue
+                counts.setdefault(id(item), []).append(child)
+            dupes = {iid: ws for iid, ws in counts.items() if len(ws) > 1}
+            if not dupes:
+                return
+            total = len(self._render_state.items) if self._render_state is not None else -1
+            active = None
+            if self._active_assistant_widget is not None:
+                active_item = getattr(self._active_assistant_widget, "item", None)
+                if active_item is not None:
+                    active = f"{id(active_item):#x}"
+            details: list[str] = []
+            for iid, ws in dupes.items():
+                roles: set[str] = set()
+                for w in ws:
+                    w_item = getattr(w, "item", None)
+                    if w_item is not None:
+                        roles.add(getattr(w_item, "role", "?"))
+                details.append(
+                    f"  item_id={iid:#x} roles={sorted(roles)} widget_count={len(ws)} "
+                    f"types={[type(w).__name__ for w in ws]}"
+                )
+            _TRANSCRIPT_DUP_LOGGER.warning(
+                "TranscriptView: %d canonical ChatItem(s) rendered by duplicate visible "
+                "widgets [issue #426]. reason=%s window=%s..%s total_items=%s "
+                "active_streaming_item_id=%s\n%s\ntrigger_stack:\n%s",
+                len(dupes),
+                reason,
+                self._window_start,
+                self._window_end,
+                total,
+                active if active is not None else "none",
+                "\n".join(details),
+                trigger_stack,
+            )
+
+        self.call_after_refresh(_inspect)
 
     async def append_item(
         self,
@@ -1068,7 +1158,7 @@ class TranscriptView(VerticalScroll):
         if state is not None and item_index is not None and self._window_end < item_index:
             if should_follow:
                 self._window_end = 0
-                self._redraw(scroll_end=True)
+                self._redraw(scroll_end=True, reason="append_page_to_latest")
                 mounted = self._item_widgets.get(id(item))
                 if mounted is not None:
                     return mounted
@@ -1108,7 +1198,11 @@ class TranscriptView(VerticalScroll):
         ):
             self._window_end = len(state.items)
             self._window_start = max(0, self._window_end - TRANSCRIPT_WINDOW_ITEMS)
-            self._redraw(scroll_end=should_follow, preserve_window=True)
+            self._redraw(
+                scroll_end=should_follow,
+                preserve_window=True,
+                reason="append_overscan_shift",
+            )
             widget = self._item_widgets.get(id(item), widget)
         elif self._top_boundary is not None:
             self._top_boundary.update_count(self._window_start)
@@ -1349,7 +1443,11 @@ class TranscriptView(VerticalScroll):
             > TRANSCRIPT_WINDOW_ITEMS + TRANSCRIPT_WINDOW_OVERSCAN_ITEMS
         ):
             self._window_start = max(0, self._window_end - TRANSCRIPT_WINDOW_ITEMS)
-            self._redraw(scroll_end=should_follow, preserve_window=True)
+            self._redraw(
+                scroll_end=should_follow,
+                preserve_window=True,
+                reason="structured_finalization",
+            )
         elif should_follow:
             self._request_follow_scroll()
 
