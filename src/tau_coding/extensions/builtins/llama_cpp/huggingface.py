@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-import httpx
+import httpx2
 
 HF_API_ROOT = "https://huggingface.co/api"
 HF_TOKEN_ENV = "HF_TOKEN"
@@ -67,7 +67,7 @@ def discover_hf_token(
 
 
 async def search_gguf_repositories(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     query: str,
     *,
     token: str | None,
@@ -105,7 +105,7 @@ async def search_gguf_repositories(
 
 
 async def repository_details(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     repository: str,
     *,
     token: str | None,
@@ -167,14 +167,14 @@ def _headers(token: str | None) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
-def _json(response: httpx.Response) -> object:
+def _json(response: httpx2.Response) -> object:
     try:
         return response.json()
     except ValueError as exc:
         raise HuggingFaceSearchError("Hugging Face returned malformed JSON.") from exc
 
 
-def _raise_http(response: httpx.Response, operation: str) -> None:
+def _raise_http(response: httpx2.Response, operation: str) -> None:
     if response.status_code in {401, 403}:
         raise HuggingFaceSearchError(
             "Hugging Face denied access. Accept the repository terms and provide HF_TOKEN "

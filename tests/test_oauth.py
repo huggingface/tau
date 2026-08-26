@@ -3,7 +3,7 @@ from json import dumps
 from time import time
 from urllib.parse import parse_qs, urlparse
 
-import httpx
+import httpx2
 import pytest
 
 from tau_coding.oauth import (
@@ -52,11 +52,11 @@ def test_account_id_from_access_token_reads_openai_auth_claim() -> None:
 
 @pytest.mark.anyio
 async def test_refresh_openai_codex_token_returns_oauth_credential() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         body = request.content.decode()
         assert "grant_type=refresh_token" in body
         assert "client_id=" in body
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "access_token": _jwt("account-2"),
@@ -65,7 +65,7 @@ async def test_refresh_openai_codex_token_returns_oauth_credential() -> None:
             },
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         credential = await refresh_openai_codex_token("old-refresh", client=client)
 
     assert credential.access == _jwt("account-2")
@@ -79,12 +79,12 @@ async def test_refresh_openai_codex_token_preserves_refresh_and_reads_jwt_expiry
     expires = int(time()) + 3600
     access_token = _jwt("account-3", expires=expires)
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         body = request.content.decode()
         assert "grant_type=refresh_token" in body
-        return httpx.Response(200, json={"access_token": access_token})
+        return httpx2.Response(200, json={"access_token": access_token})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         credential = await refresh_openai_codex_token("old-refresh", client=client)
 
     assert credential.access == access_token

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-import httpx
+import httpx2
 import pytest
 
 from fixtures.ollama_adapter_spike import OllamaAdapterSpike, context
@@ -18,13 +18,13 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-def _client() -> tuple[httpx.AsyncClient, list[httpx.Request]]:
-    requests: list[httpx.Request] = []
+def _client() -> tuple[httpx2.AsyncClient, list[httpx2.Request]]:
+    requests: list[httpx2.Request] = []
 
-    def dispatch(request: httpx.Request) -> httpx.Response:
+    def dispatch(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         if request.url.path == "/v1/models":
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "object": "list",
@@ -35,15 +35,15 @@ def _client() -> tuple[httpx.AsyncClient, list[httpx.Request]]:
                 },
             )
         if request.url.path == "/api/tags":
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={"models": [{"name": "qwen3:8b"}, {"name": "code:latest"}]},
             )
         if request.url.path == "/api/ps":
-            return httpx.Response(200, json={"models": [{"name": "qwen3:8b"}]})
+            return httpx2.Response(200, json={"models": [{"name": "qwen3:8b"}]})
         raise AssertionError(f"unexpected Ollama spike request: {request.url}")
 
-    return httpx.AsyncClient(transport=httpx.MockTransport(dispatch)), requests
+    return httpx2.AsyncClient(transport=httpx2.MockTransport(dispatch)), requests
 
 
 async def test_official_ollama_shapes_fit_without_llama_concepts() -> None:
@@ -92,11 +92,11 @@ async def test_ollama_openai_compatibility_uses_no_auth_and_offline_cache() -> N
 
 
 async def test_ollama_spike_rejects_malformed_native_state() -> None:
-    async def dispatch(request: httpx.Request) -> httpx.Response:
+    async def dispatch(request: httpx2.Request) -> httpx2.Response:
         del request
-        return httpx.Response(200, content=json.dumps({"models": {}}).encode())
+        return httpx2.Response(200, content=json.dumps({"models": {}}).encode())
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(dispatch))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(dispatch))
     adapter = OllamaAdapterSpike(client)
     with pytest.raises(ValueError, match="models list"):
         await adapter.status(context())

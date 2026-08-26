@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Mapping
 from json import JSONDecodeError, dumps, loads
 from typing import Any, Protocol
 
-import httpx
+import httpx2
 
 from tau_agent.messages import (
     AgentMessage,
@@ -51,7 +51,7 @@ class MistralConversationsProvider:
         self,
         config: OpenAICompatibleConfig,
         *,
-        client: httpx.AsyncClient | None = None,
+        client: httpx2.AsyncClient | None = None,
     ) -> None:
         self._config = config
         self._client = client
@@ -174,7 +174,7 @@ class MistralConversationsProvider:
                         for parser_event in parser.finalize():
                             yield parser_event
                         return
-                except httpx.HTTPError as exc:
+                except httpx2.HTTPError as exc:
                     if not parser.emitted_content and self._should_retry(attempt):
                         delay = retry_delay_seconds(
                             attempt,
@@ -196,7 +196,7 @@ class MistralConversationsProvider:
 
         return iterator()
 
-    def _get_client(self) -> httpx.AsyncClient:
+    def _get_client(self) -> httpx2.AsyncClient:
         if self._client is None:
             self._client = create_async_client(timeout=self._config.timeout_seconds)
         return self._client

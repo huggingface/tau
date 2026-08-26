@@ -15,7 +15,7 @@ from contextlib import suppress
 from json import JSONDecodeError, dumps, loads
 from typing import Any, Protocol
 
-import httpx
+import httpx2
 
 from tau_agent.messages import (
     AgentMessage,
@@ -79,7 +79,7 @@ class OpenAICompatibleProvider:
         self,
         config: OpenAICompatibleConfig,
         *,
-        client: httpx.AsyncClient | None = None,
+        client: httpx2.AsyncClient | None = None,
     ) -> None:
         self._config = config
         self._client = client
@@ -347,7 +347,7 @@ class OpenAICompatibleProvider:
                         for parser_event in final_events:
                             yield parser_event
                         return
-                except httpx.HTTPError as exc:
+                except httpx2.HTTPError as exc:
                     if not parser.emitted_content and self._should_retry(attempt):
                         delay = retry_delay_seconds(
                             attempt,
@@ -392,7 +392,7 @@ class OpenAICompatibleProvider:
         value = self._config.compat.get("sessionAffinityFormat")
         return value if isinstance(value, str) else "openai"
 
-    def _get_client(self) -> httpx.AsyncClient:
+    def _get_client(self) -> httpx2.AsyncClient:
         if self._client is None:
             self._client = create_async_client(timeout=self._config.timeout_seconds)
         return self._client
@@ -403,7 +403,7 @@ class OpenAICompatibleProvider:
         return status_code is None or _is_transient_status(status_code)
 
 
-def _response_header_value(response: httpx.Response, header_name: str | None) -> str | None:
+def _response_header_value(response: httpx2.Response, header_name: str | None) -> str | None:
     """Return one normalized response metadata header when configured."""
     if header_name is None:
         return None

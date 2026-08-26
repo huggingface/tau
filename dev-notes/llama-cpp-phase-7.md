@@ -74,7 +74,7 @@ search metadata.
 
 ## How to test
 
-All HTTP behavior is deterministic through `httpx.MockTransport`:
+All HTTP behavior is deterministic through `httpx2.MockTransport`:
 
 ```bash
 uv run pytest tests/test_llama_cpp_extension.py -q

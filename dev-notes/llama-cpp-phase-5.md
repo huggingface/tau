@@ -63,7 +63,7 @@ stale; Tau does not silently select the remaining model.
 
 ## How to test
 
-The deterministic suite uses `httpx.MockTransport` and fake credential/state
+The deterministic suite uses `httpx2.MockTransport` and fake credential/state
 stores. It covers endpoint safety, auth headers, cache/offline behavior,
 malformed discovery, metadata allowlisting, stale model handling, atomic state
 writes, orphan cleanup, reset, Doctor, real runtime registration, generation

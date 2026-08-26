@@ -1,6 +1,6 @@
 import os
 
-import httpx
+import httpx2
 import pytest
 
 from tau_ai.http import create_async_client, normalize_proxy_url, normalized_proxy_environment
@@ -38,7 +38,7 @@ async def test_create_async_client_accepts_generic_socks_proxy_env(
 
     client = create_async_client(timeout=1)
     try:
-        assert isinstance(client, httpx.AsyncClient)
+        assert isinstance(client, httpx2.AsyncClient)
     finally:
         await client.aclose()
 

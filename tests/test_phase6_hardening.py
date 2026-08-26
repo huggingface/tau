@@ -6,7 +6,7 @@ import asyncio
 import json
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 
 from tau_agent.harness import SimpleCancellationToken
@@ -238,9 +238,9 @@ async def test_missing_model_reference_survives_refresh_and_restart(tmp_path: Pa
         )
     )
     credentials = FileCredentialStore(paths.home / "credentials.json")
-    client = httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(
+    client = httpx2.AsyncClient(
+        transport=httpx2.MockTransport(
+            lambda request: httpx2.Response(
                 200,
                 json={"status": "ok"}
                 if request.url.path == "/health"
@@ -285,10 +285,10 @@ async def test_secret_state_and_diagnostics_never_contain_key(tmp_path: Path) ->
     state_store = LlamaCppStateStore(paths=paths)
     credentials = FileCredentialStore(paths.home / "credentials.json")
 
-    async def dispatch(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("offline", request=request)
+    async def dispatch(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("offline", request=request)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(dispatch))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(dispatch))
     service = LlamaCppService(
         state_store=state_store,
         credential_store=credentials,

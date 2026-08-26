@@ -12,7 +12,7 @@ from types import MappingProxyType
 from typing import Literal, cast
 from urllib.parse import urlsplit, urlunsplit
 
-import httpx
+import httpx2
 
 from tau_agent.harness import SimpleCancellationToken
 from tau_agent.messages import TextContent, UserMessage
@@ -163,7 +163,7 @@ class LlamaCppService:
         state_store: LlamaCppStateStore | None = None,
         credential_store: CredentialStore | None = None,
         environment: Mapping[str, str] | None = None,
-        client: httpx.AsyncClient | None = None,
+        client: httpx2.AsyncClient | None = None,
         timeout_seconds: float = DEFAULT_LLAMA_CPP_TIMEOUT_SECONDS,
         register_provider: Callable[[DynamicProvider], None] | None = None,
         update_provider: Callable[[DynamicProvider], bool] | None = None,
@@ -337,14 +337,14 @@ class LlamaCppService:
             error = LlamaCppError(str(exc))
             self._last_error = error
             raise error from exc
-        except httpx.TimeoutException as exc:
+        except httpx2.TimeoutException as exc:
             error = LlamaCppError(
                 f"Timed out connecting to llama.cpp at {self.endpoint.server_root}. "
                 f"Check the server and retry. Router setup: {LLAMA_CPP_SERVER_GUIDE_URL}"
             )
             self._last_error = error
             raise error from exc
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             error = LlamaCppError(
                 f"Could not connect to llama.cpp at {self.endpoint.server_root}. "
                 f"Start llama-server and retry. Router setup: {LLAMA_CPP_SERVER_GUIDE_URL}"
@@ -650,7 +650,7 @@ class LlamaCppService:
             if cancel_target is not None:
                 return await self._cancel_router_mutation(client, headers, cancel_target)
             return await self._reconcile_cancelled(client, headers)
-        except (httpx.HTTPError, LlamaCppRouterError, TimeoutError) as exc:
+        except (httpx2.HTTPError, LlamaCppRouterError, TimeoutError) as exc:
             return await self._reconcile_after_router_failure(client, headers, exc)
         finally:
             if owned:
@@ -696,7 +696,7 @@ class LlamaCppService:
             return await self._publish_router_models(models, message=f"Unloaded {model_id}.")
         except asyncio.CancelledError:
             return await self._reconcile_cancelled(client, headers)
-        except (httpx.HTTPError, LlamaCppRouterError, TimeoutError) as exc:
+        except (httpx2.HTTPError, LlamaCppRouterError, TimeoutError) as exc:
             return await self._reconcile_after_router_failure(client, headers, exc)
         finally:
             if owned:
@@ -780,7 +780,7 @@ class LlamaCppService:
             if mutation_started:
                 return await self._cancel_router_mutation(client, headers, model_id)
             return await self._reconcile_cancelled(client, headers)
-        except (httpx.HTTPError, LlamaCppRouterError, TimeoutError) as exc:
+        except (httpx2.HTTPError, LlamaCppRouterError, TimeoutError) as exc:
             return await self._reconcile_after_router_failure(client, headers, exc)
         finally:
             if progress_task is not None:
@@ -800,7 +800,7 @@ class LlamaCppService:
         token = discover_hf_token(self.environment)
         try:
             repositories = await search_gguf_repositories(client, query, token=token)
-        except (httpx.HTTPError, HuggingFaceSearchError) as exc:
+        except (httpx2.HTTPError, HuggingFaceSearchError) as exc:
             return LocalOperationResult(diagnostics=(LocalDiagnostic(str(exc), "error", "search"),))
         finally:
             if owned:
@@ -846,7 +846,7 @@ class LlamaCppService:
 
     async def _prepare_router_operation(
         self, context: LocalOperationContext
-    ) -> tuple[httpx.AsyncClient, bool, Mapping[str, str]] | LocalOperationResult:
+    ) -> tuple[httpx2.AsyncClient, bool, Mapping[str, str]] | LocalOperationResult:
         if context.cancelled:
             return LocalOperationResult(cancelled=True)
         if not self._router_capability.compatible:
@@ -860,7 +860,7 @@ class LlamaCppService:
 
     async def _wait_for_router_state(
         self,
-        client: httpx.AsyncClient,
+        client: httpx2.AsyncClient,
         headers: Mapping[str, str],
         model_id: str,
         terminal: set[str],
@@ -910,7 +910,7 @@ class LlamaCppService:
 
     async def _cancel_router_mutation(
         self,
-        client: httpx.AsyncClient,
+        client: httpx2.AsyncClient,
         headers: Mapping[str, str],
         model_id: str,
     ) -> LocalOperationResult:
@@ -927,7 +927,7 @@ class LlamaCppService:
         return await self._reconcile_cancelled(client, headers)
 
     async def _reconcile_cancelled(
-        self, client: httpx.AsyncClient, headers: Mapping[str, str]
+        self, client: httpx2.AsyncClient, headers: Mapping[str, str]
     ) -> LocalOperationResult:
         try:
             models = await asyncio.shield(
@@ -953,7 +953,7 @@ class LlamaCppService:
 
     async def _reconcile_after_router_failure(
         self,
-        client: httpx.AsyncClient,
+        client: httpx2.AsyncClient,
         headers: Mapping[str, str],
         error: BaseException,
     ) -> LocalOperationResult:
@@ -1358,7 +1358,7 @@ class LlamaCppService:
                     return True, "Streaming chat completions accepted."
                 if isinstance(event, AssistantErrorEvent):
                     return False, f"Streaming chat completions failed: {event.error.text}"
-        except httpx.HTTPError:
+        except httpx2.HTTPError:
             return False, "Streaming chat completions could not be reached."
         finally:
             if owned_client:
@@ -1413,7 +1413,7 @@ class LlamaCppService:
                     return True, "Tool calls supported."
                 if isinstance(event, AssistantErrorEvent):
                     return False, f"Tool-call probe failed: {event.error.text}"
-        except httpx.HTTPError:
+        except httpx2.HTTPError:
             return False, "Tool-call compatibility could not be checked."
         finally:
             if owned_client:
@@ -1425,7 +1425,7 @@ class LlamaCppService:
 
     async def _detect_router_safely(
         self,
-        client: httpx.AsyncClient,
+        client: httpx2.AsyncClient,
         headers: Mapping[str, str],
     ) -> RouterCapability:
         try:
@@ -1441,18 +1441,18 @@ class LlamaCppService:
 
     async def _get(
         self,
-        client: httpx.AsyncClient,
+        client: httpx2.AsyncClient,
         url: str,
         headers: Mapping[str, str],
         signal: CancellationToken | None,
-    ) -> httpx.Response:
+    ) -> httpx2.Response:
         if signal is not None and signal.is_cancelled():
             raise asyncio.CancelledError
         try:
             response = await client.get(url, headers=dict(headers))
         except asyncio.CancelledError:
             raise
-        except httpx.TimeoutException:
+        except httpx2.TimeoutException:
             raise
         if response.status_code in {401, 403}:
             raise _HttpFailure(
@@ -1518,14 +1518,14 @@ async def _resolve_auth_for_backend(service: LlamaCppService) -> ResolvedProvide
     )
 
 
-def _safe_json(response: httpx.Response) -> object:
+def _safe_json(response: httpx2.Response) -> object:
     try:
         return response.json()
     except ValueError:
         return None
 
 
-def _json_object(response: httpx.Response, endpoint: str) -> Mapping[str, object]:
+def _json_object(response: httpx2.Response, endpoint: str) -> Mapping[str, object]:
     payload = _safe_json(response)
     if not isinstance(payload, Mapping):
         raise LlamaCppError(f"llama.cpp {endpoint} returned malformed JSON.")

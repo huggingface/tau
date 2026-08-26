@@ -98,7 +98,7 @@ the short-lived token.
 
 ## Validation and release process
 
-Deterministic tests use `httpx.MockTransport` and fake credentials. They cover:
+Deterministic tests use `httpx2.MockTransport` and fake credentials. They cover:
 
 - Anthropic refresh success and error redaction
 - Copilot device login, token exchange, Enterprise routing, untrusted URL

@@ -9,7 +9,7 @@ from inspect import isawaitable
 from types import MappingProxyType
 from typing import Protocol
 
-import httpx
+import httpx2
 
 from tau_agent.provider import CancellationToken, ModelProvider
 from tau_agent.types import JSONPrimitive, JSONValue
@@ -255,7 +255,7 @@ class OpenAICompatibleTransport:
     timeout_seconds: float = DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS
     max_retries: int = DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES
     max_retry_delay_seconds: float = DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS
-    client: httpx.AsyncClient | None = field(default=None, repr=False, compare=False)
+    client: httpx2.AsyncClient | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _require_non_empty(self.base_url, "Transport base URL")
