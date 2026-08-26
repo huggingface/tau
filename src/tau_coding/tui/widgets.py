@@ -2539,9 +2539,10 @@ def _styled_cwd(cwd: Path, *, theme: TuiTheme) -> Text:
 
 
 def _format_milliseconds(value: float) -> str:
-    if value < 1000:
-        return f"{value:.0f}ms"
-    return f"{value / 1000:.1f}s"
+    rounded = round(value)
+    if rounded < 1000:
+        return f"{rounded}ms"
+    return f"{rounded / 1000:.1f}s"
 
 
 def _compact_token_count(value: int) -> str:

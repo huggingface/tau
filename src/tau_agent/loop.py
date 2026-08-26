@@ -211,7 +211,6 @@ async def _assistant_events(
     signal: CancellationToken | None,
     session_id: str | None,
 ) -> AsyncIterator[AgentEvent]:
-    request_started_ns = monotonic_ns()
     source: AsyncIterator[AssistantMessageEvent] = provider.stream_response(
         model=model,
         system=system,
@@ -221,9 +220,17 @@ async def _assistant_events(
         session_id=session_id,
     )
     started = False
-    first_output_ns: int | None = None
-    async for event in source:
-        if first_output_ns is None and isinstance(
+    provider_elapsed_ns = 0
+    first_output_elapsed_ns: int | None = None
+    source_iterator = source.__aiter__()
+    while True:
+        wait_started_ns = monotonic_ns()
+        try:
+            event = await anext(source_iterator)
+        except StopAsyncIteration:
+            break
+        provider_elapsed_ns += max(0, monotonic_ns() - wait_started_ns)
+        if first_output_elapsed_ns is None and isinstance(
             event,
             (
                 TextDeltaEvent,
@@ -233,36 +240,22 @@ async def _assistant_events(
                 ToolCallEndEvent,
             ),
         ):
-            first_output_ns = monotonic_ns()
+            first_output_elapsed_ns = provider_elapsed_ns
         if isinstance(event, AssistantStartEvent):
             started = True
             yield MessageStartEvent(message=event.partial)
         elif isinstance(event, AssistantDoneEvent):
-            completed_ns = monotonic_ns()
-            terminal_first_output_ns = (
-                first_output_ns
-                if first_output_ns is not None or not event.message.content
-                else completed_ns
-            )
             event.message.timing = _response_timing(
-                request_started_ns,
-                terminal_first_output_ns,
-                completed_ns,
+                first_output_elapsed_ns,
+                provider_elapsed_ns,
             )
             if not started:
                 yield MessageStartEvent(message=event.message)
             yield MessageEndEvent(message=event.message)
         elif isinstance(event, AssistantErrorEvent):
-            completed_ns = monotonic_ns()
-            terminal_first_output_ns = (
-                first_output_ns
-                if first_output_ns is not None or not event.error.content
-                else completed_ns
-            )
             event.error.timing = _response_timing(
-                request_started_ns,
-                terminal_first_output_ns,
-                completed_ns,
+                first_output_elapsed_ns,
+                provider_elapsed_ns,
             )
             if not started:
                 yield MessageStartEvent(message=event.error)
@@ -275,18 +268,15 @@ async def _assistant_events(
 
 
 def _response_timing(
-    request_started_ns: int,
-    first_output_ns: int | None,
-    completed_ns: int,
+    first_output_elapsed_ns: int | None,
+    total_elapsed_ns: int,
 ) -> ResponseTiming:
-    """Build persistable durations from monotonic response boundaries."""
+    """Build persistable durations from time spent awaiting provider events."""
     return ResponseTiming(
         time_to_first_output_ms=(
-            max(0, first_output_ns - request_started_ns) // 1_000_000
-            if first_output_ns is not None
-            else None
+            first_output_elapsed_ns // 1_000_000 if first_output_elapsed_ns is not None else None
         ),
-        total_duration_ms=max(0, completed_ns - request_started_ns) // 1_000_000,
+        total_duration_ms=total_elapsed_ns // 1_000_000,
     )
 
 

@@ -152,6 +152,7 @@ from tau_coding.tui.widgets import (
     TranscriptWindowBoundary,
     _comma_list,
     _compact_token_count,
+    _format_milliseconds,
     _sidebar_brand,
     _split_rich_style_colors,
     _styled_cwd,
@@ -524,6 +525,17 @@ def _visible_footer_bindings(app: TauTuiApp) -> dict[str, str]:
         for _, binding, _enabled, _tooltip in app.screen.active_bindings.values()
         if binding.show
     }
+
+
+@pytest.mark.parametrize(
+    ("milliseconds", "expected"),
+    [(999, "999ms"), (1000, "1.0s"), (999.6, "1.0s")],
+)
+def test_format_milliseconds_handles_unit_boundary(
+    milliseconds: float,
+    expected: str,
+) -> None:
+    assert _format_milliseconds(milliseconds) == expected
 
 
 def test_session_sidebar_renders_session_metadata() -> None:

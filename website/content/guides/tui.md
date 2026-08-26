@@ -253,13 +253,15 @@ and terminal tab title; `/hotkeys` lists shortcuts when needed. The sidebar hide
 automatically when the terminal is small, while the tab title continues to
 identify the session.
 
-`avg TPS` divides provider-reported output tokens by the full response duration,
-including request startup, prefill, and time to first output. It is
-token-weighted across timed responses rather than an average of per-response
-rates. `avg TTFT` is the arithmetic mean from request start to Tau's first text,
-thinking, or tool-call output event. Timing is persisted on new assistant
-messages. Older history still counts toward cumulative token usage and cost but
-is omitted from both performance metrics.
+`avg TPS` divides provider-reported output tokens by the accumulated time Tau
+spends awaiting provider stream events. That includes provider queueing, network
+waits, prefill, and time to first output, but excludes Tau's rendering and
+persistence work between stream pulls. TPS is token-weighted across timed
+responses rather than an average of per-response rates. `avg TTFT` is the
+arithmetic mean of provider-wait time through Tau's first text, thinking, or
+tool-call output event. Timing is persisted on new assistant messages. Older
+history still counts toward cumulative token usage and cost but is omitted from
+both performance metrics.
 
 Cumulative usage and cost cover the active branch, including history replaced by
 compaction. Input usage counts tokens processed on every

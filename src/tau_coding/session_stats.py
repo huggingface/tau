@@ -111,6 +111,9 @@ def calculate_session_stats(
         output_tokens += usage.output
         timing = message.timing
         if timing is not None:
+            # TPS is token-weighted and requires usable output usage. TTFT is a
+            # per-call arithmetic mean whenever output was observed, even if a
+            # later error left that response without billed output tokens.
             if usage.output > 0 and timing.total_duration_ms > 0:
                 timed_output_tokens += usage.output
                 response_duration_ms += timing.total_duration_ms

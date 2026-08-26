@@ -77,7 +77,6 @@ def test_assistant_message_serializes_response_timing() -> None:
         "totalDurationMs": 5000,
     }
     assert message.timing is not None
-    assert message.timing.generation_duration_ms == 3800
 
 
 def test_assistant_message_persists_thinking_blocks_and_signatures() -> None:

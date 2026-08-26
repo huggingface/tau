@@ -61,13 +61,6 @@ class ResponseTiming(WireModel):
     time_to_first_output_ms: int | None = Field(default=None, ge=0)
     total_duration_ms: int = Field(ge=0)
 
-    @property
-    def generation_duration_ms(self) -> int | None:
-        """Return elapsed time from first output through response completion."""
-        if self.time_to_first_output_ms is None:
-            return None
-        return max(0, self.total_duration_ms - self.time_to_first_output_ms)
-
 
 class TextContent(WireModel):
     type: Literal["text"] = "text"

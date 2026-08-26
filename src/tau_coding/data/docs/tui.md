@@ -6,10 +6,12 @@ them and owns interaction. Ctrl+P cycles forward through scoped models;
 Shift+Ctrl+P cycles backward.
 
 The sidebar usage section shows `avg TPS` and `avg TTFT` across timed session
-history. Effective TPS includes request startup, prefill, and TTFT, and is
-token-weighted. TTFT is the arithmetic mean from request start to Tau's first
-text, thinking, or tool-call output event. Older assistant messages without
-persisted timing still count toward token usage but not these metrics.
+history. Effective TPS uses the accumulated time Tau spends awaiting provider
+events, including provider queueing, network waits, prefill, and TTFT; it
+excludes Tau's rendering and persistence between stream pulls. TPS is
+token-weighted. TTFT is the arithmetic mean of provider-wait time through Tau's
+first text, thinking, or tool-call output event. Older assistant messages
+without persisted timing still count toward token usage but not these metrics.
 
 ## `/model`
 

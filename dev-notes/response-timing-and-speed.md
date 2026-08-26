@@ -5,9 +5,13 @@
 Tau now measures every provider response at three boundaries in the portable
 agent loop:
 
-1. request stream consumption starts;
+1. waiting for provider stream events starts;
 2. the first text, thinking, or tool-call output arrives;
 3. the response completes or fails.
+
+Only time spent awaiting the provider iterator is accumulated. Time spent by an
+upstream consumer rendering, persisting, or diagnosing an event before requesting
+the next event is excluded.
 
 The loop uses a monotonic clock and stores two compact durations on the final
 `AssistantMessage`: `timeToFirstOutputMs` and `totalDurationMs`. Because session
@@ -28,8 +32,8 @@ Tau calls the sidebar metric **effective output speed**:
 output tokens / total response duration
 ```
 
-It intentionally includes request startup, provider queueing, prefill, and time
-to first output. The session value is token-weighted:
+It includes provider queueing, network waits, prefill, and time to first output,
+but excludes Tau's work between stream pulls. The session value is token-weighted:
 
 ```text
 sum(timed output tokens) / sum(timed response durations)
@@ -41,10 +45,10 @@ usage and cost totals but do not enter the speed denominator.
 ## Architecture mapping
 
 - `tau_agent.messages.ResponseTiming` owns the provider-neutral wire shape.
-- `tau_agent.loop` captures monotonic boundaries and attaches timing to the
-  final assistant message.
+- `tau_agent.loop` accumulates monotonic provider-await durations and attaches
+  timing to the final assistant message.
 - `tau_coding.session_stats` aggregates token-weighted TPS and arithmetic-mean TTFT.
-- `tau_coding.tui.widgets` renders speed and latest time to first output.
+- `tau_coding.tui.widgets` renders average TPS and average TTFT.
 
 No Textual dependency enters `tau_agent`, and provider adapters need no custom
 timing implementation.
