@@ -32,6 +32,15 @@ The export contains two coordinated views:
   results, compactions, labels, model changes, thinking changes, and custom
   entries
 
+The export header also includes a compact summary of the visible session data:
+total entries, messages, tools, session events, and elapsed duration. A
+timestamp timeline groups message, tool, and event markers into separate lanes;
+selecting a marker jumps to that entry. These summaries give readers an
+immediate sense of the session before they inspect the tree or expand any
+accordions. Because session entries currently record timestamps rather than
+independent end times, the timeline shows event positions and session elapsed
+time, not per-entry execution bars.
+
 The generated file is self-contained HTML, CSS, and JavaScript, so it can be
 opened without running Tau or the Textual app. Transcript entries render as
 compact, collapsed accordion rows (icon, title, one-line preview, timestamp),

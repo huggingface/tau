@@ -487,7 +487,8 @@ def render_usage_dashboard(usage: SessionUsage) -> str:
         '<p class="usage-note">Costs use Tau\'s provider catalog rates. OAuth subscription '
         "estimates are API-rate equivalents, not actual subscription charges. Hover a request "
         "for exact values, select a legend item to hide a series, and use PNG to save a "
-        "chart. Event markers show compactions, model or thinking changes, and branch summaries."
+        "chart. This is a snapshot of the session at export time; re-export to include later "
+        "entries. Event markers show compactions, model or thinking changes, and branch summaries."
         "</p>"
         f'<div class="usage-charts">{charts_html}</div>'
         '<div class="usage-details">'
