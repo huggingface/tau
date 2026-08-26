@@ -218,8 +218,8 @@ when you want to reduce what is sent to the model.
 
 On wide-enough terminals Tau shows the session name prominently without a
 redundant section label, followed by active-branch
-turn and tool-call totals, provider-reported token usage, effective output
-speed, latest-request and session prompt-cache hit rates, estimated cost,
+turn and tool-call totals, provider-reported token usage, average effective
+output speed and TTFT, latest-request and session prompt-cache hit rates, estimated cost,
 automatic-compaction threshold,
 and loaded tools, skills, prompt templates, extensions, and context files such as
 `AGENTS.md`. Tool and extension names use compact comma-separated lists limited
@@ -253,12 +253,13 @@ and terminal tab title; `/hotkeys` lists shortcuts when needed. The sidebar hide
 automatically when the terminal is small, while the tab title continues to
 identify the session.
 
-Average effective output speed divides provider-reported output tokens by the
-full response duration, including request startup, prefill, and time to first
-output. The session figure is token-weighted across timed responses rather than
-an average of per-response rates. Timing is persisted on new assistant messages.
-Older history still counts toward cumulative token usage and cost but is omitted
-from speed calculations.
+`avg TPS` divides provider-reported output tokens by the full response duration,
+including request startup, prefill, and time to first output. It is
+token-weighted across timed responses rather than an average of per-response
+rates. `avg TTFT` is the arithmetic mean from request start to Tau's first text,
+thinking, or tool-call output event. Timing is persisted on new assistant
+messages. Older history still counts toward cumulative token usage and cost but
+is omitted from both performance metrics.
 
 Cumulative usage and cost cover the active branch, including history replaced by
 compaction. Input usage counts tokens processed on every

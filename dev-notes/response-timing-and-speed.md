@@ -43,7 +43,7 @@ usage and cost totals but do not enter the speed denominator.
 - `tau_agent.messages.ResponseTiming` owns the provider-neutral wire shape.
 - `tau_agent.loop` captures monotonic boundaries and attaches timing to the
   final assistant message.
-- `tau_coding.session_stats` aggregates the active branch's token-weighted average.
+- `tau_coding.session_stats` aggregates token-weighted TPS and arithmetic-mean TTFT.
 - `tau_coding.tui.widgets` renders speed and latest time to first output.
 
 No Textual dependency enters `tau_agent`, and provider adapters need no custom

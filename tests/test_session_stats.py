@@ -27,7 +27,10 @@ def test_cache_hit_rate_is_zero_when_a_write_happened_but_nothing_was_read() -> 
 
 
 def test_cache_hit_rate_is_none_without_billed_input() -> None:
-    assert SessionStats().cache_hit_rate is None
+    stats = SessionStats()
+
+    assert stats.cache_hit_rate is None
+    assert stats.average_time_to_first_output_ms is None
 
 
 def test_cache_hit_rate_divides_reads_by_total_prompt_tokens() -> None:
@@ -139,6 +142,7 @@ def test_calculate_session_stats_aggregates_effective_output_speed() -> None:
     )
 
     assert stats.output_tokens_per_second == 80.0
+    assert stats.average_time_to_first_output_ms == 750.0
 
 
 def test_calculate_session_stats_ignores_untimed_history_for_speed() -> None:
@@ -159,6 +163,7 @@ def test_calculate_session_stats_ignores_untimed_history_for_speed() -> None:
     )
 
     assert stats.output_tokens_per_second == 50.0
+    assert stats.average_time_to_first_output_ms == 500.0
 
 
 def test_calculate_session_stats_keeps_compacted_active_branch_usage() -> None:
