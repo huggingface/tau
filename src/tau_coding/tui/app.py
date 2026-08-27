@@ -1416,17 +1416,36 @@ class SessionPickerScreen(ModalScreen[str | None]):
         Binding("enter", "select_cursor", "Select", show=False),
     ]
 
+    CSS = """
+    #session-picker {
+        width: 100;
+        max-width: 94%;
+        height: auto;
+        max-height: 85%;
+    }
+
+    .-session-picker-divider > Label {
+        color: $tau-muted-text;
+        text-style: bold;
+        margin-top: 1;
+        padding-left: 2;
+    }
+    """
+
     def __init__(
         self,
         records: Sequence[SessionCompletionRecord],
         *,
+        local_cwd: Path,
         theme: TuiTheme,
     ) -> None:
         super().__init__()
         self.records = tuple(records)
         self.visible_records = self.records
+        self.local_cwd = local_cwd.resolve()
         self.theme = theme
         self.search_value = ""
+        self._row_records: list[SessionCompletionRecord | None] = []
 
     def compose(self) -> ComposeResult:
         """Compose the session picker."""
@@ -1436,13 +1455,7 @@ class SessionPickerScreen(ModalScreen[str | None]):
                 placeholder="Search sessions",
                 id="session-picker-search",
             )
-            yield ListView(
-                *[
-                    ListItem(Label(_session_picker_label(record), markup=False))
-                    for record in self.records
-                ],
-                id="session-picker-list",
-            )
+            yield ListView(id="session-picker-list")
             yield Static("Enter selects - Escape closes", id="session-picker-help")
 
     def on_mount(self) -> None:
@@ -1479,17 +1492,40 @@ class SessionPickerScreen(ModalScreen[str | None]):
             self.action_select_cursor()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Dismiss with the selected session id."""
+        """Dismiss with the selected session id; ignore clicks on the divider."""
         event.stop()
+        if (
+            event.index is not None
+            and 0 <= event.index < len(self._row_records)
+            and self._row_records[event.index] is None
+        ):
+            return
         self._select_visible_record()
 
     def action_cursor_up(self) -> None:
-        """Move to the previous session."""
-        self.query_one("#session-picker-list", ListView).action_cursor_up()
+        """Move to the previous selectable session, skipping the divider row."""
+        session_list = self.query_one("#session-picker-list", ListView)
+        current = session_list.index
+        if current is None or not self._row_records:
+            session_list.index = 0 if self._row_records else None
+            return
+        start = min(current - 1, len(self._row_records) - 1)
+        for index in range(start, -1, -1):
+            if self._row_records[index] is not None:
+                session_list.index = index
+                return
 
     def action_cursor_down(self) -> None:
-        """Move to the next session."""
-        self.query_one("#session-picker-list", ListView).action_cursor_down()
+        """Move to the next selectable session, skipping the divider row."""
+        session_list = self.query_one("#session-picker-list", ListView)
+        current = session_list.index
+        if current is None or not self._row_records:
+            session_list.index = 0 if self._row_records else None
+            return
+        for index in range(current + 1, len(self._row_records)):
+            if self._row_records[index] is not None:
+                session_list.index = index
+                return
 
     def action_select_cursor(self) -> None:
         """Select the highlighted session."""
@@ -1500,31 +1536,74 @@ class SessionPickerScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
     def _select_visible_record(self) -> None:
-        if not self.visible_records:
-            return
         session_list = self.query_one("#session-picker-list", ListView)
         index = session_list.index
-        if index is None:
+        if index is None or index >= len(self._row_records):
             return
-        self.dismiss(self.visible_records[index].id)
+        target = (
+            index if self._row_records[index] is not None else self._nearest_selectable_index(index)
+        )
+        if target is None:
+            return
+        record = self._row_records[target]
+        if record is None:
+            # No selectable row nearby (e.g. a lone divider); nothing to dismiss.
+            return
+        if target != index:
+            # Cursor was on the "Other Directories" divider; move it onto the row
+            # we are actually selecting before dismissing.
+            session_list.index = target
+        self.dismiss(record.id)
+
+    def _nearest_selectable_index(self, index: int) -> int | None:
+        for offset in range(1, len(self._row_records)):
+            forward = index + offset
+            if forward < len(self._row_records) and self._row_records[forward] is not None:
+                return forward
+            backward = index - offset
+            if backward >= 0 and self._row_records[backward] is not None:
+                return backward
+        return None
 
     def _refresh_session_list(self) -> None:
         self.visible_records = _filter_session_records(self.records, self.search_value)
         session_list = self.query_one("#session-picker-list", ListView)
         session_list.clear()
-        session_list.extend(
-            [
-                ListItem(Label(_session_picker_label(record), markup=False))
-                for record in self.visible_records
-            ]
-        )
-        session_list.index = 0 if self.visible_records else None
+
+        items: list[ListItem] = []
+        rows: list[SessionCompletionRecord | None] = []
+        local_visible = sum(1 for record in self.visible_records if self._is_local(record))
+        seen_other = False
+        for record in self.visible_records:
+            is_local = self._is_local(record)
+            if not is_local and not seen_other and local_visible > 0:
+                items.append(self._directory_divider())
+                rows.append(None)
+                seen_other = True
+            label = _session_picker_label(record, show_cwd=not is_local)
+            items.append(ListItem(Label(label, markup=False)))
+            rows.append(record)
+
+        if items:
+            session_list.extend(items)
+        self._row_records = rows
+        session_list.index = 0 if rows else None
         help_text = (
             "Enter selects - Escape closes"
             if self.visible_records
             else "No matching sessions - Escape closes"
         )
         self.query_one("#session-picker-help", Static).update(help_text)
+
+    def _is_local(self, record: SessionCompletionRecord) -> bool:
+        return Path(record.cwd).resolve() == self.local_cwd
+
+    @staticmethod
+    def _directory_divider() -> ListItem:
+        return ListItem(
+            Label("Other Directories", markup=False),
+            classes="-session-picker-divider",
+        )
 
 
 class SkillPickerSearchInput(Input):
@@ -5713,7 +5792,11 @@ class TauTuiApp(App[None]):
             self._notify("No sessions found.")
             return
         self.push_screen(
-            SessionPickerScreen(records, theme=self.tui_settings.resolved_theme),
+            SessionPickerScreen(
+                records,
+                local_cwd=Path(self.session.cwd),
+                theme=self.tui_settings.resolved_theme,
+            ),
             callback=self._handle_session_picker_result,
         )
 
@@ -5847,11 +5930,15 @@ class TauTuiApp(App[None]):
 
     async def _resume_session(self, session_id: str) -> None:
         try:
+            previous_cwd = Path(self.session.cwd).resolve()
             resume_message = await self.session.resume(session_id)
             self._reload_session_themes()
             self.state.clear()
             self.state.set_skills(self.session.skills)
             self._load_session_messages_from_session()
+            current_cwd = Path(self.session.cwd).resolve()
+            if current_cwd != previous_cwd:
+                resume_message = f"{resume_message} ({_short_path(current_cwd)})"
             self._notify(resume_message)
         except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
             self._notify(f"Error: {exc}", severity="error")
@@ -6984,14 +7071,24 @@ def _session_options(session: CodingSession) -> tuple[CompletionOption, ...]:
 
 
 def _session_records(session: CodingSession) -> tuple[SessionCompletionRecord, ...]:
+    """Return indexed sessions for resume, current directory first.
+
+    Sessions from the session's working directory are listed newest-first,
+    followed by sessions from every other directory (also newest-first), so a
+    session from another project is visible in the picker without leaving it.
+    """
     manager = getattr(session, "session_manager", None)
     if manager is None:
         return ()
     try:
-        records = manager.list_sessions(session.cwd)
+        records = list(manager.list_sessions())
     except TypeError:
-        records = manager.list_sessions()
-    return tuple(records)
+        # Older managers only accept an explicit cwd argument.
+        records = list(manager.list_sessions(session.cwd))
+    local_cwd = Path(session.cwd).resolve()
+    local = [record for record in records if Path(record.cwd).resolve() == local_cwd]
+    other = [record for record in records if Path(record.cwd).resolve() != local_cwd]
+    return tuple(local) + tuple(other)
 
 
 def _session_option(record: SessionCompletionRecord) -> CompletionOption:
@@ -7005,19 +7102,29 @@ def _session_option(record: SessionCompletionRecord) -> CompletionOption:
 def _short_path(path: Path) -> str:
     home = Path.home()
     try:
-        return f"~/{path.relative_to(home)}"
+        relative = path.relative_to(home)
+        return "~" if relative == Path(".") else f"~/{relative}"
     except ValueError:
         return str(path)
 
 
-def _session_picker_label(record: SessionCompletionRecord) -> str:
-    parts = [_session_updated_at_label(record.updated_at)]
-    if record.model:
-        parts.append(record.model)
+def _session_picker_label(
+    record: SessionCompletionRecord,
+    *,
+    show_cwd: bool = False,
+) -> str:
+    # Row layout: a slim directory key (other directories only), a compact
+    # relative age, the title, and the model last (so it truncates first).
+    parts: list[str] = []
+    if show_cwd:
+        parts.append(_short_path(record.cwd))
+    parts.append(_session_updated_at_label(record.updated_at))
     title = _named_session_title(record.title)
     if title is not None:
         parts.append(title)
-    return " - ".join(parts)
+    if record.model:
+        parts.append(record.model)
+    return "  ".join(parts)
 
 
 def _filter_session_records(
@@ -7072,7 +7179,22 @@ def _tree_choice_index(choices: Sequence[SessionTreeChoice], entry_id: str | Non
 
 
 def _session_updated_at_label(timestamp: float) -> str:
-    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
+    """Return a compact relative age label for a session (e.g. ``2h ago``)."""
+    delta = (datetime.now() - datetime.fromtimestamp(timestamp)).total_seconds()
+    minutes = int(delta // 60)
+    if minutes < 1:
+        return "now"
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    if days == 1:
+        return "yesterday"
+    if days < 7:
+        return f"{days}d ago"
+    return datetime.fromtimestamp(timestamp).strftime("%b %d")
 
 
 def _named_session_title(title: str | None) -> str | None:
