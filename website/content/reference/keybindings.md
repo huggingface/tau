@@ -11,7 +11,7 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 
 | Key | Action |
 | --- | --- |
-| `Enter` | Submit the prompt (or apply a highlighted completion) |
+| `Enter` | Submit the prompt |
 | `Shift+Enter` | Insert a newline |
 | `Esc` | Cancel the active run |
 | `Enter` (while running) | Queue text as steering for the current run |

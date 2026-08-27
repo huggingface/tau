@@ -3114,7 +3114,7 @@ async def test_tui_app_footer_hints_update_for_completions() -> None:
 
         assert _visible_footer_bindings(app) == {
             "Choose": "Up/Down",
-            "Complete": "Tab/Enter",
+            "Complete": "Tab",
             "Close": "escape",
         }
 
@@ -5621,7 +5621,7 @@ async def test_tui_app_completes_registered_slash_command() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_app_enter_accepts_completion_without_submitting() -> None:
+async def test_tui_app_enter_submits_without_accepting_completion() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
@@ -5631,13 +5631,14 @@ async def test_tui_app_enter_accepts_completion_without_submitting() -> None:
         app._refresh_completions()
 
         await pilot.press("enter")
+        await pilot.pause()
 
-        assert prompt.value == "/session"
-        assert app.state.items == []
+        assert prompt.value == ""
+        assert app.session.prompt_texts == ["/se"]
 
 
 @pytest.mark.anyio
-async def test_tui_app_enter_accepts_arrow_selected_completion() -> None:
+async def test_tui_app_enter_ignores_arrow_selected_completion() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
@@ -5650,9 +5651,10 @@ async def test_tui_app_enter_accepts_arrow_selected_completion() -> None:
         assert selected is not None
 
         await pilot.press("enter")
+        await pilot.pause()
 
-        assert prompt.value == selected.replacement
-        assert app.state.items == []
+        assert prompt.value == ""
+        assert app.session.prompt_texts == ["/s"]
 
 
 @pytest.mark.anyio

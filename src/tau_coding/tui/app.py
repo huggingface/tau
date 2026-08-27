@@ -4156,16 +4156,11 @@ class TauTuiApp(App[None]):
         *,
         streaming_behavior: Literal["steer", "follow_up"],
     ) -> None:
+        # Enter always submits the prompt text as typed; accepting the
+        # selected completion is reserved for the accept-completion key
+        # (Tab by default).
         prompt = self.query_one("#prompt", PromptInput)
         raw_text = prompt.text_for_submission()
-        applied_completion = self._apply_selected_completion(raw_text)
-        if applied_completion is not None and applied_completion != raw_text:
-            prompt.text = applied_completion
-            prompt._clear_pending_paste()
-            prompt.move_cursor(_text_end_location(applied_completion))
-            self._completion_state = self._build_completion_state(applied_completion)
-            self._refresh_completions()
-            return
 
         text = raw_text.strip()
         if not text:
@@ -7284,7 +7279,7 @@ def _prompt_bindings(
                 keybindings.accept_completion,
                 "accept_completion",
                 "Complete",
-                key_display=f"{_key_hint(keybindings.accept_completion)}/Enter",
+                key_display=_key_hint(keybindings.accept_completion),
                 priority=True,
             ),
             Binding(
