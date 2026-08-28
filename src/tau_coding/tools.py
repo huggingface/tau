@@ -40,6 +40,7 @@ from tau_coding.image_processing import (
 
 DEFAULT_MAX_OUTPUT_BYTES = 50 * 1024
 DEFAULT_MAX_OUTPUT_LINES = 2_000
+DEFAULT_MAX_TURN_IMAGE_ENCODED_BYTES = 4 * 1024 * 1024
 IMAGE_SNIFF_BYTES = 64 * 1024
 UTF8_BOM = "\ufeff"
 
@@ -53,6 +54,29 @@ class ImageSupportState:
     """Mutable active-model image capability shared with built-in tools."""
 
     supported: bool | None = None
+
+
+@dataclass(slots=True)
+class ImageAttachmentBudgetState:
+    """Mutable base64 payload budget for images attached during one model turn."""
+
+    max_encoded_bytes: int = DEFAULT_MAX_TURN_IMAGE_ENCODED_BYTES
+    used_encoded_bytes: int = 0
+
+    def reserve(self, encoded_bytes: int) -> bool:
+        """Reserve encoded payload bytes, returning False when the turn is full."""
+        if encoded_bytes < 0:
+            raise ValueError("encoded_bytes must be non-negative")
+        if self.used_encoded_bytes + encoded_bytes > self.max_encoded_bytes:
+            return False
+        self.used_encoded_bytes += encoded_bytes
+        return True
+
+    def reset(self, *, used_encoded_bytes: int = 0) -> None:
+        """Start a new turn or synchronize the budget to restored context."""
+        if used_encoded_bytes < 0:
+            raise ValueError("used_encoded_bytes must be non-negative")
+        self.used_encoded_bytes = used_encoded_bytes
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +190,7 @@ def create_coding_tools(
     cwd: str | Path | None = None,
     shell_command_prefix: str | None = None,
     image_support: ImageSupportState | None = None,
+    image_attachment_budget: ImageAttachmentBudgetState | None = None,
 ) -> list[AgentTool]:
     """Create the default coding-tool set for a local project.
 
@@ -178,7 +203,11 @@ def create_coding_tools(
     """
     root = Path.cwd() if cwd is None else Path(cwd)
     return [
-        create_read_tool(cwd=root, image_support=image_support),
+        create_read_tool(
+            cwd=root,
+            image_support=image_support,
+            image_attachment_budget=image_attachment_budget,
+        ),
         create_write_tool(cwd=root),
         create_edit_tool(cwd=root),
         create_bash_tool(cwd=root, shell_command_prefix=shell_command_prefix),
@@ -190,6 +219,7 @@ def create_read_tool_definition(
     cwd: str | Path | None = None,
     operations: ReadOperations | None = None,
     image_support: ImageSupportState | None = None,
+    image_attachment_budget: ImageAttachmentBudgetState | None = None,
 ) -> ToolDefinition:
     """Create a definition for the `read` tool.
 
@@ -285,6 +315,21 @@ def create_read_tool_definition(
                     details=image_details,
                 )
 
+            encoded = _base64_text(processed.data)
+            if image_attachment_budget is not None and not image_attachment_budget.reserve(
+                len(encoded)
+            ):
+                return _omitted_image_result(
+                    path=path,
+                    source_mime_type=source_mime_type,
+                    source_bytes=len(data),
+                    reason=(
+                        "inline image attachments for this turn would exceed the "
+                        f"{format_size(image_attachment_budget.max_encoded_bytes)} request "
+                        "budget. Resize or compress the image to a smaller file, then read "
+                        "that file. Do not retry the unchanged file"
+                    ),
+                )
             image_details.update(
                 {
                     "mime_type": processed.mime_type,
@@ -297,7 +342,7 @@ def create_read_tool_definition(
             return AgentToolResult(
                 content=[
                     TextContent(text=f"Read image file [{processed.mime_type}]{note_lines}"),
-                    ImageContent(data=_base64_text(processed.data), mime_type=processed.mime_type),
+                    ImageContent(data=encoded, mime_type=processed.mime_type),
                 ],
                 details=image_details,
             )
@@ -364,8 +409,9 @@ def create_read_tool_definition(
         description=(
             "Read the contents of a file. Supports text files and images "
             "(jpg, png, gif, webp, bmp). "
-            "Images are sent to vision-capable models as attachments. For text files, output is "
-            "truncated to "
+            "Images are sent to vision-capable models as attachments and share a 4MB encoded "
+            "request budget per turn; resize or compress an image when the returned omission "
+            "notice says that budget is exhausted. For text files, output is truncated to "
             f"{DEFAULT_MAX_OUTPUT_LINES} lines or {DEFAULT_MAX_OUTPUT_BYTES // 1024}KB "
             "(whichever is hit first). Use offset/limit for large files. When you need the "
             "full file, continue with offset until complete."
@@ -409,12 +455,14 @@ def create_read_tool(
     cwd: str | Path | None = None,
     operations: ReadOperations | None = None,
     image_support: ImageSupportState | None = None,
+    image_attachment_budget: ImageAttachmentBudgetState | None = None,
 ) -> AgentTool:
     """Create an `AgentTool` for reading UTF-8 text files and supported images."""
     return create_read_tool_definition(
         cwd=cwd,
         operations=operations,
         image_support=image_support,
+        image_attachment_budget=image_attachment_budget,
     ).to_agent_tool()
 
 

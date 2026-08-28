@@ -10,6 +10,7 @@ from PIL import Image
 
 from tau_agent import ImageContent
 from tau_coding import (
+    ImageAttachmentBudgetState,
     ImageSupportState,
     ReadOperations,
     create_bash_tool,
@@ -167,6 +168,45 @@ async def test_read_tool_explicitly_omits_images_for_text_only_model(tmp_path: P
     attached = await tool.execute("test-call", {"path": "galaxy.png"})
 
     assert any(isinstance(block, ImageContent) for block in attached.content)
+
+
+@pytest.mark.anyio
+async def test_read_tool_omits_image_when_turn_attachment_budget_is_exhausted(
+    tmp_path: Path,
+) -> None:
+    first_data = image_bytes(size=(20, 20))
+    second_data = image_bytes(size=(20, 20))
+    (tmp_path / "first.png").write_bytes(first_data)
+    (tmp_path / "second.png").write_bytes(second_data)
+    encoded_size = len(base64.b64encode(first_data))
+    budget = ImageAttachmentBudgetState(max_encoded_bytes=encoded_size)
+    tool = create_read_tool(cwd=tmp_path, image_attachment_budget=budget)
+
+    attached = await tool.execute("call-1", {"path": "first.png"})
+    omitted = await tool.execute("call-2", {"path": "second.png"})
+
+    assert any(isinstance(block, ImageContent) for block in attached.content)
+    assert "Image omitted: inline image attachments for this turn would exceed" in omitted.text
+    assert "Resize or compress the image to a smaller file" in omitted.text
+    assert "Do not retry the unchanged file" in omitted.text
+    assert not any(isinstance(block, ImageContent) for block in omitted.content)
+
+
+@pytest.mark.anyio
+async def test_read_tool_attachment_budget_can_be_reset_after_model_response(
+    tmp_path: Path,
+) -> None:
+    image_data = image_bytes(size=(20, 20))
+    (tmp_path / "frame.png").write_bytes(image_data)
+    budget = ImageAttachmentBudgetState(max_encoded_bytes=len(base64.b64encode(image_data)))
+    tool = create_read_tool(cwd=tmp_path, image_attachment_budget=budget)
+
+    first = await tool.execute("call-1", {"path": "frame.png"})
+    budget.reset()
+    second = await tool.execute("call-2", {"path": "frame.png"})
+
+    assert any(isinstance(block, ImageContent) for block in first.content)
+    assert any(isinstance(block, ImageContent) for block in second.content)
 
 
 @pytest.mark.anyio
