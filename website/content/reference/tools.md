@@ -43,11 +43,13 @@ unsupported-format notices. If decoding, conversion, or resizing cannot produce
 a safe attachment, Tau returns a clear omission notice.
 
 Image attachments produced between model responses share a 4 MB base64 request
-budget. If another image would exceed that budget, `read` returns a regular
-text-only tool result telling the agent to resize or compress the file instead
-of allowing the next provider request to fail. After a successful model response,
-Tau omits the already-consumed image bytes from later request replays while
-retaining the complete attachment in durable session history.
+budget. If an image would exceed the remaining space, `read` automatically
+resizes and re-encodes it to fit and reports that transformation to the agent.
+Only when safe automatic compression cannot fit the image does `read` return a
+text-only result telling the agent to resize or compress the file. After a
+successful model response, Tau omits the already-consumed image bytes from later
+request replays while retaining the complete attachment in durable session
+history.
 
 When the active model does not accept images, `read` returns an explicit
 text-only notice that says the image contents are unavailable and recommends

@@ -68,10 +68,12 @@ because tool-result image placement differs across APIs.
    textual status. A custom widget or third-party integration can be evaluated
    separately without changing the tool-result contract.
 7. Bound cumulative request payloads separately from per-image processing. If a
-   processed image would exceed the current turn's 4 MB base64 budget, return a
-   text-only tool result that tells the agent to resize or compress the file.
-   Images already consumed by a successful assistant response remain durable but
-   are omitted from later provider replays.
+   processed image would exceed the remaining portion of the current turn's 4 MB
+   base64 budget, dynamically lower the processing byte target and resize or
+   re-encode the image to fit. Report that transformation to the model. Return a
+   text-only resize/compress instruction only when automatic processing cannot
+   fit safely. Images already consumed by a successful assistant response remain
+   durable but are omitted from later provider replays.
 8. Keep live credential checks outside CI. `TODO.md` retains the provider/model
    validation matrix follow-up.
 

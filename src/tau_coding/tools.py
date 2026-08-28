@@ -30,6 +30,7 @@ from tau_agent.tools import (
 )
 from tau_agent.types import JSONValue
 from tau_coding.image_processing import (
+    DEFAULT_MAX_IMAGE_BYTES,
     DEFAULT_MAX_SOURCE_IMAGE_BYTES,
     ImageProcessingFailure,
     detect_image_family_mime_type,
@@ -63,11 +64,16 @@ class ImageAttachmentBudgetState:
     max_encoded_bytes: int = DEFAULT_MAX_TURN_IMAGE_ENCODED_BYTES
     used_encoded_bytes: int = 0
 
+    @property
+    def remaining_encoded_bytes(self) -> int:
+        """Return encoded bytes still available in the current turn."""
+        return max(0, self.max_encoded_bytes - self.used_encoded_bytes)
+
     def reserve(self, encoded_bytes: int) -> bool:
         """Reserve encoded payload bytes, returning False when the turn is full."""
         if encoded_bytes < 0:
             raise ValueError("encoded_bytes must be non-negative")
-        if self.used_encoded_bytes + encoded_bytes > self.max_encoded_bytes:
+        if encoded_bytes > self.remaining_encoded_bytes:
             return False
         self.used_encoded_bytes += encoded_bytes
         return True
@@ -296,13 +302,43 @@ def create_read_tool_definition(
                         "to a vision-capable model"
                     ),
                 )
-            processed = await asyncio.to_thread(process_image, data, source_mime_type)
+            max_processed_bytes = DEFAULT_MAX_IMAGE_BYTES
+            compacted_for_turn_budget = False
+            if image_attachment_budget is not None:
+                max_processed_bytes = min(
+                    max_processed_bytes,
+                    _max_binary_bytes_for_base64_budget(
+                        image_attachment_budget.remaining_encoded_bytes
+                    ),
+                )
+                if max_processed_bytes < 1:
+                    return _turn_image_budget_omission(
+                        path=path,
+                        source_mime_type=source_mime_type,
+                        source_bytes=len(data),
+                        budget=image_attachment_budget,
+                    )
+                compacted_for_turn_budget = len(data) > max_processed_bytes
+
+            processed = await asyncio.to_thread(
+                process_image,
+                data,
+                source_mime_type,
+                max_bytes=max_processed_bytes,
+            )
             image_details: dict[str, JSONValue] = {
                 "path": str(path),
                 "source_mime_type": source_mime_type,
                 "bytes": len(data),
             }
             if isinstance(processed, ImageProcessingFailure):
+                if compacted_for_turn_budget and image_attachment_budget is not None:
+                    return _turn_image_budget_omission(
+                        path=path,
+                        source_mime_type=source_mime_type,
+                        source_bytes=len(data),
+                        budget=image_attachment_budget,
+                    )
                 return AgentToolResult(
                     content=[
                         TextContent(
@@ -319,16 +355,11 @@ def create_read_tool_definition(
             if image_attachment_budget is not None and not image_attachment_budget.reserve(
                 len(encoded)
             ):
-                return _omitted_image_result(
+                return _turn_image_budget_omission(
                     path=path,
                     source_mime_type=source_mime_type,
                     source_bytes=len(data),
-                    reason=(
-                        "inline image attachments for this turn would exceed the "
-                        f"{format_size(image_attachment_budget.max_encoded_bytes)} request "
-                        "budget. Resize or compress the image to a smaller file, then read "
-                        "that file. Do not retry the unchanged file"
-                    ),
+                    budget=image_attachment_budget,
                 )
             image_details.update(
                 {
@@ -338,7 +369,12 @@ def create_read_tool_definition(
                     "height": processed.height,
                 }
             )
-            note_lines = "".join(f"\n[{note}]" for note in processed.notes)
+            notes = list(processed.notes)
+            if compacted_for_turn_budget:
+                notes.append(
+                    "Image automatically compressed to fit the remaining turn request budget."
+                )
+            note_lines = "".join(f"\n[{note}]" for note in notes)
             return AgentToolResult(
                 content=[
                     TextContent(text=f"Read image file [{processed.mime_type}]{note_lines}"),
@@ -410,8 +446,9 @@ def create_read_tool_definition(
             "Read the contents of a file. Supports text files and images "
             "(jpg, png, gif, webp, bmp). "
             "Images are sent to vision-capable models as attachments and share a 4MB encoded "
-            "request budget per turn; resize or compress an image when the returned omission "
-            "notice says that budget is exhausted. For text files, output is truncated to "
+            "request budget per turn. Images are automatically compressed to fit remaining "
+            "space; resize or compress the file yourself only when an omission notice says "
+            "automatic compression could not fit it. For text files, output is truncated to "
             f"{DEFAULT_MAX_OUTPUT_LINES} lines or {DEFAULT_MAX_OUTPUT_BYTES // 1024}KB "
             "(whichever is hit first). Use offset/limit for large files. When you need the "
             "full file, continue with offset until complete."
@@ -428,6 +465,32 @@ def create_read_tool_definition(
             "required": ["path"],
         },
         executor=execute,
+    )
+
+
+def _max_binary_bytes_for_base64_budget(encoded_bytes: int) -> int:
+    """Return the largest raw payload whose base64 fits in encoded_bytes."""
+    return max(0, encoded_bytes // 4 * 3)
+
+
+def _turn_image_budget_omission(
+    *,
+    path: Path,
+    source_mime_type: str,
+    source_bytes: int,
+    budget: ImageAttachmentBudgetState,
+) -> AgentToolResult:
+    return _omitted_image_result(
+        path=path,
+        source_mime_type=source_mime_type,
+        source_bytes=source_bytes,
+        reason=(
+            "inline image attachments for this turn would exceed the "
+            f"{format_size(budget.max_encoded_bytes)} request budget. Automatic "
+            "compression could not fit the image in the remaining "
+            f"{format_size(budget.remaining_encoded_bytes)}. Resize or compress the image "
+            "to a smaller file, then read that file. Do not retry the unchanged file"
+        ),
     )
 
 

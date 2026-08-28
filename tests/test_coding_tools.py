@@ -38,6 +38,12 @@ def animated_png_bytes() -> bytes:
     return png[:idat_offset] + animated_chunk + png[idat_offset:]
 
 
+def noisy_png_bytes(*, size: tuple[int, int] = (400, 400)) -> bytes:
+    output = BytesIO()
+    Image.effect_noise(size, 100).convert("RGB").save(output, format="PNG")
+    return output.getvalue()
+
+
 class FakeCancellationToken:
     def __init__(self) -> None:
         self.cancelled = False
@@ -171,6 +177,24 @@ async def test_read_tool_explicitly_omits_images_for_text_only_model(tmp_path: P
 
 
 @pytest.mark.anyio
+async def test_read_tool_automatically_compacts_image_to_remaining_turn_budget(
+    tmp_path: Path,
+) -> None:
+    image_data = noisy_png_bytes()
+    path = tmp_path / "large.png"
+    path.write_bytes(image_data)
+    budget = ImageAttachmentBudgetState(max_encoded_bytes=50 * 1024)
+    tool = create_read_tool(cwd=tmp_path, image_attachment_budget=budget)
+
+    result = await tool.execute("call-1", {"path": "large.png"})
+
+    image = next(block for block in result.content if isinstance(block, ImageContent))
+    assert len(image.data) <= budget.max_encoded_bytes
+    assert len(base64.b64decode(image.data)) < len(image_data)
+    assert "automatically compressed to fit the remaining turn request budget" in result.text
+
+
+@pytest.mark.anyio
 async def test_read_tool_omits_image_when_turn_attachment_budget_is_exhausted(
     tmp_path: Path,
 ) -> None:
@@ -187,6 +211,8 @@ async def test_read_tool_omits_image_when_turn_attachment_budget_is_exhausted(
 
     assert any(isinstance(block, ImageContent) for block in attached.content)
     assert "Image omitted: inline image attachments for this turn would exceed" in omitted.text
+    assert f"{encoded_size}B request budget" in omitted.text
+    assert "remaining 0B" in omitted.text
     assert "Resize or compress the image to a smaller file" in omitted.text
     assert "Do not retry the unchanged file" in omitted.text
     assert not any(isinstance(block, ImageContent) for block in omitted.content)
