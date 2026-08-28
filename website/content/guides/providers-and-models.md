@@ -280,6 +280,17 @@ Copilot Chat's model selector or ask your organization administrator;
 provider/model access varies by plan and policy.
 {{% /note %}}
 
+### Provider connection troubleshooting
+
+When OpenAI Codex encounters a recognized TLS failure, Tau identifies it as a
+provider connection error instead of showing only the opaque OpenSSL text. The
+failure may come from the upstream provider or an intermediary such as a proxy
+or VPN. Retry first; if it persists, check provider usage and network settings.
+
+A TLS failure cannot prove that usage is exhausted, even when the next request
+returns a quota error, so Tau does not guess that cause. The original exception
+type and message remain available in `~/.tau/logs/agent-calls.jsonl`.
+
 ## Choosing and switching models
 
 - **`/model`** — open the picker (lists models across configured providers;

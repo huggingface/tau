@@ -497,6 +497,53 @@ async def test_prompt_logs_safe_provider_stream_error_details(tmp_path: Path) ->
     assert "Hello" not in log_path.read_text(encoding="utf-8")
 
 
+@pytest.mark.anyio
+async def test_prompt_logs_safe_provider_transport_error_details(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    tau_paths = TauPaths(home=tmp_path / "tau-home", agents_home=tmp_path / "agents-home")
+    error = AssistantMessage(
+        stop_reason="error",
+        error_message="Provider connection failed: TLS transport error.",
+        diagnostics=[
+            AssistantMessageDiagnostic(
+                type="provider_error",
+                details={
+                    "attempts": 2,
+                    "transport_error": {
+                        "type": "ReadError",
+                        "message": "[SSL: SSLV3_ALERT_BAD_RECORD_MAC] bad record mac",
+                        "ignored": "not copied",
+                    },
+                },
+            )
+        ],
+    )
+    provider = FakeProvider([[AssistantErrorEvent(reason="error", error=error)]])
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            provider_name="openai-codex",
+            session_id="session-1",
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    await _collect_session_events(session.prompt("Hello"))
+
+    entry = json.loads(tau_paths.agent_calls_log_path.read_text().splitlines()[-1])
+    assert entry["error"]["provider"] == {
+        "attempts": 2,
+        "transport_error": {
+            "type": "ReadError",
+            "message": "[SSL: SSLV3_ALERT_BAD_RECORD_MAC] bad record mac",
+        },
+    }
+
+
 class _CountingStorage:
     def __init__(self) -> None:
         self.entries: list[SessionEntry] = []

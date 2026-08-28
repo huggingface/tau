@@ -87,6 +87,15 @@ A configured or extension-selected provider is fixed and never silently
 overridden. The external Hugging Face extension controls these modes with
 `/hf route`; core owns safe continuation, persistence, and reroute diagnostics.
 
+## Provider connection troubleshooting
+
+For recognized OpenAI Codex TLS failures, Tau explains that the connection may
+have failed at the upstream provider or an intermediary such as a proxy or VPN.
+Retry first. If the failure persists, check provider usage and network settings.
+Tau does not label a TLS failure as exhausted usage because the transport error
+cannot establish that cause; the raw exception remains in
+`~/.tau/logs/agent-calls.jsonl`.
+
 ## Changing the built-in catalog
 
 Tau follows Pi's build-time model-generation design. Provider transports,

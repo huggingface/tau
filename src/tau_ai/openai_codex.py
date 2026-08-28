@@ -53,6 +53,19 @@ from tau_ai.stream import canonicalize_provider_stream
 
 DEFAULT_OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api"
 
+_TLS_TRANSPORT_ERROR_MESSAGE = (
+    "Provider connection failed: TLS transport error. This may be caused by the upstream "
+    "provider or an intermediary such as a proxy or VPN. Retry the request; if it persists, "
+    "check provider usage and network settings."
+)
+_TLS_ERROR_MARKERS = (
+    "[ssl:",
+    "ssl error",
+    "sslerror",
+    "tls alert",
+    "bad record mac",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class OpenAICodexCredentials:
@@ -301,8 +314,14 @@ class OpenAICodexProvider:
                             return
                         continue
                     yield ProviderErrorEvent(
-                        message=str(exc),
-                        data={"attempts": attempt + 1},
+                        message=_transport_error_message(exc),
+                        data={
+                            "attempts": attempt + 1,
+                            "transport_error": {
+                                "type": type(exc).__name__,
+                                "message": str(exc),
+                            },
+                        },
                     )
                     return
                 except Exception as exc:  # noqa: BLE001 - provider errors are surfaced as events
@@ -326,6 +345,17 @@ class OpenAICodexProvider:
         if attempt >= self._config.max_retries:
             return False
         return status_code is None or _is_retryable_status(status_code, body)
+
+
+def _transport_error_message(exc: httpx.HTTPError) -> str:
+    """Add actionable context to opaque TLS failures while preserving other errors."""
+    current: BaseException | None = exc
+    while current is not None:
+        normalized = str(current).lower()
+        if any(marker in normalized for marker in _TLS_ERROR_MARKERS):
+            return _TLS_TRANSPORT_ERROR_MESSAGE
+        current = current.__cause__ or current.__context__
+    return str(exc)
 
 
 class _ToolCallBuilder:

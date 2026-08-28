@@ -1,3 +1,4 @@
+import ssl
 from collections.abc import AsyncIterator, Mapping
 from json import loads
 
@@ -1291,6 +1292,81 @@ async def test_openai_compatible_provider_includes_plain_http_error_body_in_mess
         "body": "bad request details",
         "attempts": 1,
     }
+
+
+@pytest.mark.anyio
+async def test_openai_codex_provider_explains_tls_transport_error() -> None:
+    async def credentials() -> OpenAICodexCredentials:
+        return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
+
+    raw_error = "[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac (_ssl.c:2713)"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadError(raw_error, request=request) from ssl.SSLError(1, raw_error)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICodexProvider(
+            OpenAICodexConfig(
+                credential_resolver=credentials,
+                base_url="https://chatgpt.test/backend-api",
+                max_retries=0,
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hello")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.error_message == (
+        "Provider connection failed: TLS transport error. This may be caused by the upstream "
+        "provider or an intermediary such as a proxy or VPN. Retry the request; if it persists, "
+        "check provider usage and network settings."
+    )
+    assert events[-1].error.diagnostics[0].details == {
+        "attempts": 1,
+        "transport_error": {
+            "type": "ReadError",
+            "message": "[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac "
+            "(_ssl.c:2713)",
+        },
+    }
+
+
+@pytest.mark.anyio
+async def test_openai_codex_provider_preserves_non_tls_transport_error_message() -> None:
+    async def credentials() -> OpenAICodexCredentials:
+        return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadError("stream dropped", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICodexProvider(
+            OpenAICodexConfig(
+                credential_resolver=credentials,
+                base_url="https://chatgpt.test/backend-api",
+                max_retries=0,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say hello")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.error_message == "stream dropped"
 
 
 @pytest.mark.anyio

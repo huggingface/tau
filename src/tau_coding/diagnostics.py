@@ -125,6 +125,9 @@ def _provider_error_details(message: AssistantMessage) -> dict[str, Any]:
         attempts = diagnostic.details.get("attempts")
         if isinstance(attempts, int) and not isinstance(attempts, bool):
             details["attempts"] = attempts
+        transport_error = _safe_transport_error(diagnostic.details.get("transport_error"))
+        if transport_error:
+            details["transport_error"] = transport_error
         event = diagnostic.details.get("event")
         if isinstance(event, dict):
             event_details = _safe_stream_event_details(event)
@@ -132,6 +135,17 @@ def _provider_error_details(message: AssistantMessage) -> dict[str, Any]:
                 details["event"] = event_details
         return details
     return {}
+
+
+def _safe_transport_error(value: object) -> dict[str, str]:
+    """Copy the bounded type and message from a provider transport failure."""
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: field[:2_000]
+        for key in ("type", "message")
+        if isinstance((field := value.get(key)), str) and field
+    }
 
 
 def _safe_stream_event_details(event: dict[str, Any]) -> dict[str, Any]:
