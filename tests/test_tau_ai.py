@@ -1295,14 +1295,29 @@ async def test_openai_compatible_provider_includes_plain_http_error_body_in_mess
 
 
 @pytest.mark.anyio
-async def test_openai_codex_provider_explains_tls_transport_error() -> None:
+@pytest.mark.parametrize(
+    ("raw_error", "cause"),
+    [
+        (
+            "[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac (_ssl.c:2713)",
+            ssl.SSLError(1, "bad record mac"),
+        ),
+        ("connection failed", ssl.SSLError("handshake failed")),
+        ("TLS handshake failed", None),
+    ],
+)
+async def test_openai_codex_provider_explains_tls_transport_error(
+    raw_error: str,
+    cause: BaseException | None,
+) -> None:
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    raw_error = "[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac (_ssl.c:2713)"
-
     def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ReadError(raw_error, request=request) from ssl.SSLError(1, raw_error)
+        error = httpx.ReadError(raw_error, request=request)
+        if cause is None:
+            raise error
+        raise error from cause
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
@@ -1333,8 +1348,7 @@ async def test_openai_codex_provider_explains_tls_transport_error() -> None:
         "attempts": 1,
         "transport_error": {
             "type": "ReadError",
-            "message": "[SSL: SSLV3_ALERT_BAD_RECORD_MAC] ssl/tls alert bad record mac "
-            "(_ssl.c:2713)",
+            "message": raw_error,
         },
     }
 

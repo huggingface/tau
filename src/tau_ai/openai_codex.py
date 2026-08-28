@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from json import JSONDecodeError, dumps, loads
 from platform import machine, release, system
+from ssl import SSLError
 from typing import Any
 
 import httpx
@@ -63,6 +64,7 @@ _TLS_ERROR_MARKERS = (
     "ssl error",
     "sslerror",
     "tls alert",
+    "tls handshake",
     "bad record mac",
 )
 
@@ -352,7 +354,9 @@ def _transport_error_message(exc: httpx.HTTPError) -> str:
     current: BaseException | None = exc
     while current is not None:
         normalized = str(current).lower()
-        if any(marker in normalized for marker in _TLS_ERROR_MARKERS):
+        if isinstance(current, SSLError) or any(
+            marker in normalized for marker in _TLS_ERROR_MARKERS
+        ):
             return _TLS_TRANSPORT_ERROR_MESSAGE
         current = current.__cause__ or current.__context__
     return str(exc)
