@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.4.1",
+    "date": "2026-08-28",
+    "sections": {
+      "New": [
+        "Set the startup thinking level with a new --thinking/-t CLI flag; it overrides remembered per-model defaults and resumed transcript state without being persisted, and validates against the selected model's supported levels.",
+        "See per-response performance in the TUI sidebar: average tokens per second and average time to first output, measured from provider stream timing and persisted on assistant messages."
+      ],
+      "Changed": [
+        "Accept autocomplete completions with Tab only; Enter now always submits the prompt unchanged.",
+        "Cycle backward through scoped (favorite) models with Shift+Ctrl+P (remappable via model_cycle_reverse), complementing the existing Ctrl+P forward cycling."
+      ]
+    }
+  },
+  {
     "version": "0.4.0",
     "date": "2026-08-24",
     "sections": {
