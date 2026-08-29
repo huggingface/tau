@@ -16,9 +16,10 @@ a third, most-compact display mode and turns `Ctrl+O` into a three-way cycle.
    (e.g. after a cancel) shows `Running… 2/5 tool calls` instead, and failures
    are counted (`· 1 failed`). Assistant text, thinking, user messages, terminal
    `!` commands, and extension-rendered tool cards are never collapsed. Starting
-   a new turn expands the rows again. Thinking blocks interleaved with a
-   summarized burst are swallowed into its summary line; standalone thinking
-   stays under Ctrl+T control.
+   a new turn expands the rows again. Thinking blocks and tool-driven skill
+   loads interleaved with a summarized burst are swallowed into its summary line
+   (skill loads count toward the call total); standalone thinking and
+   user-invoked skill rows stay under their own controls.
 2. **Calls** — the previous default: compact per-call lines and batch groups
    without result contents.
 3. **Expanded** — call lines plus exact commands and result previews.

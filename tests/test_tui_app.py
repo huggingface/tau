@@ -8028,6 +8028,41 @@ def test_tool_run_summary_item_renders_in_status_color() -> None:
 
 
 @pytest.mark.anyio
+async def test_summary_mode_swallows_skill_loads_into_run_summaries() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        state = app.state
+        state.add_item("skill", "Using skill: delivery")
+        state.add_item("skill", "Loading skill: explore", tool_call_id="call-skill")
+        state.record_tool_result("call-skill", "read", AgentToolResult(content="skill"), False)
+        state.add_tool_call(ToolCall(id="call-1", name="read", arguments={"path": "a.py"}))
+        state.record_tool_result("call-1", "read", AgentToolResult(content="one"), False)
+        state.add_tool_call(ToolCall(id="call-2", name="read", arguments={"path": "b.py"}))
+        state.record_tool_result("call-2", "read", AgentToolResult(content="two"), False)
+
+        state.tool_display = "summary"
+        transcript = app.query_one("#transcript", TranscriptView)
+        await transcript.set_tool_display(state, theme=app.tui_settings.resolved_theme)
+        await pilot.pause()
+
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("3 tool calls" in text for text in texts)
+        assert any("Using skill: delivery" in text for text in texts)
+        assert not any("Loading skill" in text for text in texts)
+        assert not any("→ read a.py" in text for text in texts)
+
+        # Calls mode restores the skill rows.
+        state.tool_display = "calls"
+        await transcript.set_tool_display(state, theme=app.tui_settings.resolved_theme)
+        await pilot.pause()
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("Loading skill: explore" in text for text in texts)
+        assert any("→ read a.py" in text for text in texts)
+
+
+@pytest.mark.anyio
 async def test_summary_mode_swallows_thinking_into_run_summaries() -> None:
     app = TauTuiApp(
         FakeSession(

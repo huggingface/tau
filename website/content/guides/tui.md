@@ -187,11 +187,12 @@ and result.
    works; once the turn settles, each burst of two or more tool calls compacts
    into one line such as `Worked for 1m 23s · 5 tool calls` (or a live `Running…
    2/5 tool calls` progress line for bursts left pending, e.g. after a cancel).
-   A single tool call keeps its own row. Thinking blocks interleaved with a
-   summarized burst are swallowed into its summary line too; standalone thinking
-   stays under Ctrl+T control. Restored sessions without timing data
-   show the call count only. Terminal `!` commands and extension-rendered tool
-   cards never collapse.
+   A single tool call keeps its own row. Thinking blocks and tool-driven skill
+   loads interleaved with a summarized burst are swallowed into its summary line
+   too (skill loads count toward the call total); standalone thinking and
+   user-invoked skill rows stay under their own controls. Restored sessions
+   without timing data show the call count only. Terminal `!` commands and
+   extension-rendered tool cards never collapse.
 2. **Calls** — the default: one compact line per tool call or grouped file
    batch, without result contents.
 3. **Expanded** — call lines plus exact commands and result previews.

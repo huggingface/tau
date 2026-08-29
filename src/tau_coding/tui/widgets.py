@@ -1026,20 +1026,20 @@ class TranscriptView(VerticalScroll):
             nonlocal run
             if not run:
                 return
-            tools = [item for item in run if item.role == "tool"]
-            if tools and len(tool_run_leaves(tools)) > 1:
+            if len(tool_run_leaves(run)) > 1:
                 # Multi-call runs compact into one summary line that also
-                # swallows the thinking blocks interleaved with the calls; a
-                # single tool call keeps its own row (and its thinking).
+                # swallows the thinking blocks and skill loads interleaved
+                # with the calls; a single tool call keeps its own row (and
+                # its thinking).
                 rows.append(run)
             else:
                 rows.extend(run)
             run = []
 
         for item in window:
-            if item.role == "thinking":
-                # Held inside the open run: swallowed when tools follow,
-                # rendered normally when the run ends without a summary.
+            if item.role == "thinking" or (item.role == "skill" and item.tool_call_id is not None):
+                # Held inside the open run: swallowed when the run compacts,
+                # rendered normally when it ends without a summary.
                 run.append(item)
                 continue
             if self._is_collapsible_tool(item, state):
@@ -1348,19 +1348,18 @@ class TranscriptView(VerticalScroll):
     ) -> bool:
         """Update a mounted item in O(1); off-screen state is rendered when paged in."""
         state = self._render_state
-        if (
-            state is not None
-            and self._tool_display == "summary"
-            and self._is_collapsible_tool(item, state)
-        ):
+        if state is not None and self._tool_display == "summary":
             widget = self._run_summary_widget(item)
             if widget is not None:
-                if not self._collapsing(state):
-                    # The turn is running: rows render normally, and any stale
-                    # collapsed widget from the settled view is replaced
-                    # through append_item on the next render request.
-                    return False
-                self._refresh_run_summary(widget)
+                if self._is_collapsible_tool(item, state):
+                    if not self._collapsing(state):
+                        # The turn is running: rows render normally, and any
+                        # stale collapsed widget from the settled view is
+                        # replaced through append_item on the next request.
+                        return False
+                    self._refresh_run_summary(widget)
+                    return True
+                # Thinking/skill members are represented by the summary line.
                 return True
             # No summary widget: single-call rows use the normal path below.
         child = self._item_widgets.get(id(item))

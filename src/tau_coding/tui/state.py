@@ -798,11 +798,16 @@ def format_elapsed(seconds: float) -> str:
 def tool_run_leaves(items: Sequence[ChatItem]) -> list[ChatItem | GroupedToolCall]:
     """Flatten batch heads and grouped file calls into the calls a run represents.
 
-    Non-tool members (e.g. thinking blocks swallowed by a run) contribute no
-    leaves: only actual tool calls are counted and timed.
+    Tool-driven skill loads (``role == "skill"`` rows backed by a tool call id)
+    count as calls since they are re-labeled reads; thinking blocks and
+    user-invoked skill rows contribute no leaves.
     """
     leaves: list[ChatItem | GroupedToolCall] = []
     for item in items:
+        if item.role == "skill":
+            if item.tool_call_id is not None:
+                leaves.append(item)
+            continue
         if item.role != "tool":
             continue
         if item.tool_batch_items is not None:
