@@ -184,11 +184,12 @@ and result.
 **Ctrl+O** cycles through three display modes rather than toggling two states:
 
 1. **Summary** — tool activity renders as live compact call rows while the agent
-   works; once the turn settles, each burst of tool calls compacts into one line
-   such as `Worked for 1m 23s · 5 tool calls` (or a live `Running… 2/5 tool
-   calls` progress line for bursts left pending, e.g. after a cancel). Restored
-   sessions without timing data show the call count only. Terminal `!` commands
-   and extension-rendered tool cards never collapse.
+   works; once the turn settles, each burst of two or more tool calls compacts
+   into one line such as `Worked for 1m 23s · 5 tool calls` (or a live `Running…
+   2/5 tool calls` progress line for bursts left pending, e.g. after a cancel).
+   A single tool call keeps its own row. Restored sessions without timing data
+   show the call count only. Terminal `!` commands and extension-rendered tool
+   cards never collapse.
 2. **Calls** — the default: one compact line per tool call or grouped file
    batch, without result contents.
 3. **Expanded** — call lines plus exact commands and result previews.

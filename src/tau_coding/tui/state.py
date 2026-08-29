@@ -792,14 +792,8 @@ def format_elapsed(seconds: float) -> str:
     return f"{hours}h {minutes}m"
 
 
-def format_tool_run_summary(items: Sequence[ChatItem], *, now: float | None = None) -> str:
-    """Summarize a contiguous run of collapsed tool rows into one line.
-
-    Completed runs report total wall time and call count, e.g. ``Worked for
-    1m 23s · 5 tool calls``; a run with pending calls reports live progress
-    instead. Runs restored from session history without timing data fall back
-    to the call count alone.
-    """
+def tool_run_leaves(items: Sequence[ChatItem]) -> list[ChatItem | GroupedToolCall]:
+    """Flatten batch heads and grouped file calls into the calls a run represents."""
     leaves: list[ChatItem | GroupedToolCall] = []
     for item in items:
         if item.tool_batch_items is not None:
@@ -812,6 +806,18 @@ def format_tool_run_summary(items: Sequence[ChatItem], *, now: float | None = No
             leaves.extend(item.grouped_tool_calls)
         else:
             leaves.append(item)
+    return leaves
+
+
+def format_tool_run_summary(items: Sequence[ChatItem], *, now: float | None = None) -> str:
+    """Summarize a contiguous run of collapsed tool rows into one line.
+
+    Completed runs report total wall time and call count, e.g. ``Worked for
+    1m 23s · 5 tool calls``; a run with pending calls reports live progress
+    instead. Runs restored from session history without timing data fall back
+    to the call count alone.
+    """
+    leaves = tool_run_leaves(items)
     total = len(leaves)
     completed = [leaf for leaf in leaves if leaf.tool_result_text is not None]
     failures = [leaf for leaf in completed if (leaf.tool_result_text or "").startswith("✗")]

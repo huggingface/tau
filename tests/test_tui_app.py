@@ -8003,6 +8003,99 @@ async def test_tool_display_cycle_collapses_tool_runs_into_summaries() -> None:
 
 
 @pytest.mark.anyio
+async def test_summary_mode_keeps_single_tool_call_rows() -> None:
+    app = TauTuiApp(
+        FakeSession(
+            messages=[
+                AssistantMessage(
+                    content=[
+                        ToolCall(
+                            id="call-1",
+                            name="bash",
+                            arguments={"command": "seq 3", "description": "Counting"},
+                        )
+                    ]
+                ),
+                ToolResultMessage(tool_call_id="call-1", tool_name="bash", content="1\n2\n3"),
+            ]
+        )
+    )
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.tool_display = "summary"
+        transcript = app.query_one("#transcript", TranscriptView)
+        await transcript.set_tool_display(app.state, theme=app.tui_settings.resolved_theme)
+        await pilot.pause()
+
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("Counting" in text for text in texts)
+        assert not any("tool call" in text for text in texts)
+
+        # A second call turns the run into a summary line.
+        app.state.add_tool_call(ToolCall(id="call-2", name="read", arguments={"path": "b.py"}))
+        app.state.record_tool_result(
+            "call-2",
+            "read",
+            AgentToolResult(content="contents"),
+            False,
+        )
+        await transcript.append_item(
+            app.state.items[-1],
+            theme=app.tui_settings.resolved_theme,
+        )
+        await pilot.pause()
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("2 tool calls" in text for text in texts)
+        assert not any("Counting" in text for text in texts)
+        assert not any("→ read b.py" in text for text in texts)
+
+
+@pytest.mark.anyio
+async def test_summary_mode_keeps_single_live_call_after_settle() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async def stream(event: AgentEvent) -> None:
+        app.adapter.apply(event)
+        await app._apply_streaming_transcript_event(event)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.tool_display = "summary"
+        transcript = app.query_one("#transcript", TranscriptView)
+        await transcript.set_tool_display(app.state, theme=app.tui_settings.resolved_theme)
+
+        await stream(AgentStartEvent())
+        await stream(
+            MessageEndEvent(
+                message=AssistantMessage(
+                    content=[ToolCall(id="call-1", name="read", arguments={"path": "a.py"})]
+                )
+            )
+        )
+        await stream(
+            ToolExecutionStartEvent(tool_call_id="call-1", tool_name="read", args={"path": "a.py"})
+        )
+        await stream(
+            ToolExecutionEndEvent(
+                tool_call_id="call-1",
+                tool_name="read",
+                result=AgentToolResult(content="done"),
+                is_error=False,
+            )
+        )
+        await pilot.pause()
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("→ read a.py" in text for text in texts)
+
+        await stream(AgentSettledEvent())
+        await pilot.pause()
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("→ read a.py" in text for text in texts)
+        assert not any("tool call" in text for text in texts)
+
+
+@pytest.mark.anyio
 async def test_summary_mode_shows_live_rows_then_compacts_on_settle() -> None:
     app = TauTuiApp(FakeSession())
 
@@ -8059,7 +8152,7 @@ async def test_summary_mode_shows_live_rows_then_compacts_on_settle() -> None:
             )
         )
         await pilot.pause()
-        assert any("→ Reading 2 files" in text for text in widget_texts())
+        assert any("→ Read 2 files" in text for text in widget_texts())
 
         # The turn settles: the run compacts into one summary line.
         await stream(AgentSettledEvent())

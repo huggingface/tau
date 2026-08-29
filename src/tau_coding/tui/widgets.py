@@ -50,6 +50,7 @@ from tau_coding.tui.state import (
     format_elapsed,
     format_tool_call_invocation,
     format_tool_run_summary,
+    tool_run_leaves,
 )
 from tau_coding.version import current_version
 
@@ -1017,16 +1018,26 @@ class TranscriptView(VerticalScroll):
             return list(window)
         rows: list[ChatItem | list[ChatItem]] = []
         run: list[ChatItem] = []
+
+        def flush_run() -> None:
+            nonlocal run
+            if not run:
+                return
+            if len(tool_run_leaves(run)) > 1:
+                # Only multi-call runs compact; a single tool call keeps its
+                # own row.
+                rows.append(run)
+            else:
+                rows.extend(run)
+            run = []
+
         for item in window:
             if self._is_collapsible_tool(item, state):
                 run.append(item)
                 continue
-            if run:
-                rows.append(run)
-                run = []
+            flush_run()
             rows.append(item)
-        if run:
-            rows.append(run)
+        flush_run()
         return rows
 
     def _run_summary_widget(self, item: ChatItem) -> TranscriptMessageWidget | None:
@@ -1049,28 +1060,39 @@ class TranscriptView(VerticalScroll):
         item_index: int,
         state: TuiState,
         theme: TuiTheme,
-    ) -> TranscriptMessageWidget:
-        """Fold a new tool item into its run summary, starting one when needed."""
+    ) -> TranscriptMessageWidget | None:
+        """Fold a tool item into its run summary when one exists or is now needed.
+
+        Returns ``None`` when the item starts a single-call run, which renders
+        as its own row instead of a summary.
+        """
         previous = state.items[item_index - 1] if item_index > 0 else None
-        widget = self._run_summary_widget(previous) if previous is not None else None
+        if previous is None or not self._is_collapsible_tool(previous, state):
+            return None
+        widget = self._run_summary_widget(previous)
         if widget is not None:
             self._summary_members[id(widget)].append(item)
             self._item_widgets[id(item)] = widget
             self._refresh_run_summary(widget)
             return widget
-        widget = TranscriptMessageWidget(
-            ChatItem(role="tool", text=format_tool_run_summary([item])),
+        # The previous call was rendered as its own row (a single-call run):
+        # a second call turns the run into a summary.
+        members = [previous, item]
+        summary = TranscriptMessageWidget(
+            ChatItem(role="tool", text=format_tool_run_summary(members)),
             theme=theme,
             show_tool_results=False,
         )
-        self._summary_members[id(widget)] = [item]
-        self._item_widgets[id(item)] = widget
-        await self.mount(widget, before=self._bottom_boundary)
-        self._active_assistant_widget = None
-        self._active_thinking_widget = None
-        self._active_message_widgets = []
-        self._hidden_thinking_placeholder_visible = False
-        return widget
+        previous_widget = self._item_widgets.get(id(previous))
+        self._summary_members[id(summary)] = members
+        for member in members:
+            self._item_widgets[id(member)] = summary
+        if isinstance(previous_widget, TranscriptMessageWidget):
+            await self.mount(summary, before=previous_widget)
+            await previous_widget.remove()
+        else:
+            await self.mount(summary, before=self._bottom_boundary)
+        return summary
 
     async def set_tool_display(
         self,
@@ -1248,12 +1270,16 @@ class TranscriptView(VerticalScroll):
             and self._collapsing(state)
             and self._is_collapsible_tool(item, state)
         ):
-            return await self._append_run_member(
+            joined = await self._append_run_member(
                 item,
                 item_index=item_index,
                 state=state,
                 theme=theme,
             )
+            if joined is not None:
+                return joined
+            # A single-call run renders as its own row: fall through to the
+            # normal mount below.
         await self.mount(widget, before=self._bottom_boundary)
         self._item_widgets[id(item)] = widget
         self._active_assistant_widget = None
@@ -1315,16 +1341,16 @@ class TranscriptView(VerticalScroll):
             and self._tool_display == "summary"
             and self._is_collapsible_tool(item, state)
         ):
-            if not self._collapsing(state):
-                # The turn is running: rows render normally, and any stale
-                # collapsed widget from the settled view is replaced through
-                # append_item on the next render request.
-                return False
             widget = self._run_summary_widget(item)
-            if widget is None:
-                return False
-            self._refresh_run_summary(widget)
-            return True
+            if widget is not None:
+                if not self._collapsing(state):
+                    # The turn is running: rows render normally, and any stale
+                    # collapsed widget from the settled view is replaced
+                    # through append_item on the next render request.
+                    return False
+                self._refresh_run_summary(widget)
+                return True
+            # No summary widget: single-call rows use the normal path below.
         child = self._item_widgets.get(id(item))
         if not isinstance(child, TranscriptMessageWidget) or child.item is not item:
             return False
