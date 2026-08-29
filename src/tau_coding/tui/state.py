@@ -76,6 +76,9 @@ class ChatItem:
     grouped_tool_calls: list[GroupedToolCall] | None = None
     tool_batch_items: list[ChatItem] | None = None
     always_show_tool_result: bool = False
+    # Marks the synthetic one-line summary that replaces a collapsed run of
+    # tool rows in summary display mode.
+    tool_run_summary: bool = False
     custom_type: str | None = None
     details: dict[str, JSONValue] | None = None
     system_prompt: bool = False

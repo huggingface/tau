@@ -1051,7 +1051,9 @@ class TranscriptView(VerticalScroll):
         """Recompute a collapsed run summary line from its member items."""
         members = self._summary_members.get(id(widget))
         if members:
-            widget.update_tool_run_text(format_tool_run_summary(members))
+            fresh = _tool_run_summary_item(members)
+            widget.item.tool_result_text = fresh.tool_result_text
+            widget.update_tool_run_text(fresh.text)
 
     async def _append_run_member(
         self,
@@ -1079,7 +1081,7 @@ class TranscriptView(VerticalScroll):
         # a second call turns the run into a summary.
         members = [previous, item]
         summary = TranscriptMessageWidget(
-            ChatItem(role="tool", text=format_tool_run_summary(members)),
+            _tool_run_summary_item(members),
             theme=theme,
             show_tool_results=False,
         )
@@ -1159,7 +1161,7 @@ class TranscriptView(VerticalScroll):
         for row in self._display_rows(state):
             if isinstance(row, list):
                 summary_widget = TranscriptMessageWidget(
-                    ChatItem(role="tool", text=format_tool_run_summary(row)),
+                    _tool_run_summary_item(row),
                     theme=theme,
                     show_tool_results=False,
                 )
@@ -1590,6 +1592,27 @@ def _last_transcript_child_is_hidden_thinking_placeholder(children: Sequence[Wid
     return False
 
 
+def _tool_run_summary_item(members: list[ChatItem]) -> ChatItem:
+    """Build the synthetic one-line summary item for a collapsed tool run.
+
+    The status marker colors the line like any tool row: green when every call
+    succeeded, red when any failed, and neutral while calls are pending.
+    """
+    leaves = tool_run_leaves(members)
+    if any((leaf.tool_result_text or "").startswith("✗") for leaf in leaves):
+        marker = "✗"
+    elif any(leaf.tool_result_text is None for leaf in leaves):
+        marker = "…"
+    else:
+        marker = "✓"
+    return ChatItem(
+        role="tool",
+        text=format_tool_run_summary(members),
+        tool_result_text=marker,
+        tool_run_summary=True,
+    )
+
+
 def _transcript_widget(
     item: ChatItem,
     *,
@@ -1693,6 +1716,14 @@ def _transcript_plain_body_text(
     """Return styled transcript text for selectable plain rows."""
     if item.role != "tool":
         return Text(text, style=body_style, overflow="fold", no_wrap=False)
+    if item.tool_run_summary:
+        # Collapsed run summaries render fully in the tool status color.
+        status_style = (
+            theme.tool_error_text
+            if (item.tool_result_text or "").startswith("✗")
+            else theme.tool_success_text
+        )
+        return Text(text, style=status_style, overflow="fold", no_wrap=False)
     if item.tool_batch_items is not None:
         return _render_transcript_tool_batch(
             item,

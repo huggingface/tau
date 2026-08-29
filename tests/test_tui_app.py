@@ -158,6 +158,7 @@ from tau_coding.tui.widgets import (
     _styled_cwd,
     _syntax_language,
     _system_prompt_markdown,
+    _tool_run_summary_item,
     _transcript_plain_body_text,
     render_chat_item,
     render_compact_session_info,
@@ -8002,6 +8003,30 @@ async def test_tool_display_cycle_collapses_tool_runs_into_summaries() -> None:
         assert not any("tool calls" in text for text in texts)
 
 
+def test_tool_run_summary_item_renders_in_status_color() -> None:
+    ok = _tool_run_summary_item(
+        [ChatItem(role="tool", text="→ read a.py", tool_name="read", tool_result_text="✓ read")]
+    )
+    assert ok.tool_run_summary is True
+    assert ok.tool_result_text == "✓"
+    rendered = _transcript_plain_body_text(ok, text=ok.text, body_style="", theme=TAU_DARK_THEME)
+    assert isinstance(rendered, Text)
+    assert rendered.style == TAU_DARK_THEME.tool_success_text
+
+    failed = _tool_run_summary_item(
+        [ChatItem(role="tool", text="→ bash", tool_name="bash", tool_result_text="✗ bash")]
+    )
+    assert failed.tool_result_text == "✗"
+    rendered = _transcript_plain_body_text(
+        failed, text=failed.text, body_style="", theme=TAU_DARK_THEME
+    )
+    assert isinstance(rendered, Text)
+    assert rendered.style == TAU_DARK_THEME.tool_error_text
+
+    pending = _tool_run_summary_item([ChatItem(role="tool", text="→ bash", tool_name="bash")])
+    assert pending.tool_result_text == "…"
+
+
 @pytest.mark.anyio
 async def test_summary_mode_keeps_single_tool_call_rows() -> None:
     app = TauTuiApp(
@@ -8157,7 +8182,13 @@ async def test_summary_mode_shows_live_rows_then_compacts_on_settle() -> None:
         # The turn settles: the run compacts into one summary line.
         await stream(AgentSettledEvent())
         await pilot.pause()
-        assert any("→ Worked for 0s · 2 tool calls" in text for text in widget_texts())
+        summaries = [
+            w
+            for w in app.query(TranscriptMessageWidget)
+            if w.item.tool_run_summary and "Worked for" in w.selection_text
+        ]
+        assert len(summaries) == 1
+        assert summaries[0].item.tool_result_text == "✓"
         assert not any("→ Reading 2 files" in text for text in widget_texts())
 
         # The next turn expands the rows again.
