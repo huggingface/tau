@@ -60,8 +60,6 @@ from tau_agent.provider import CancellationToken
 from tau_agent.provider_events import (
     AssistantErrorEvent,
     AssistantMessageEvent,
-    TextDeltaEvent,
-    ThinkingDeltaEvent,
 )
 from tau_agent.tools import AgentTool
 from tau_agent.types import JSONValue
@@ -5331,6 +5329,7 @@ class TauTuiApp(App[None]):
             if active_run_id != self._prompt_run_id:
                 return
             message = _format_prompt_error(exc, self.session)
+            self.state.interrupt_assistant()
             self.state.error = message
             self.state.add_item("error", message)
             self.state.running = False
@@ -5356,18 +5355,28 @@ class TauTuiApp(App[None]):
             self._refresh_chrome()
             return
         if isinstance(event, AgentEndEvent):
-            await transcript.finish_assistant_message()
-            self._refresh_chrome()
+            # Fallback cleanup only: a genuinely unfinished draft was flushed
+            # into durable items by the adapter, so rebuild once to show it.
+            if transcript.has_stale_active_tail(self.state.active_assistant):
+                self._refresh()
+            else:
+                self._refresh_chrome()
             return
         if isinstance(event, MessageStartEvent):
+            if isinstance(event.message, AssistantMessage) and transcript.has_stale_active_tail(
+                self.state.active_assistant
+            ):
+                # A replacement stream interrupted the previous draft; rebuild
+                # so the projected partial turn and the fresh tail cannot
+                # double-mount.
+                self._refresh()
             return
         if isinstance(event, MessageUpdateEvent):
-            nested = event.assistant_message_event
-            if isinstance(nested, TextDeltaEvent):
-                await transcript.append_assistant_delta(nested.delta, theme=theme)
-            elif isinstance(nested, ThinkingDeltaEvent):
-                await transcript.append_thinking_delta(
-                    nested.delta,
+            if isinstance(event.message, AssistantMessage):
+                nested = event.assistant_message_event
+                await transcript.sync_active_assistant(
+                    self.state.active_assistant,
+                    changed_content_index=getattr(nested, "content_index", None),
                     theme=theme,
                     show_thinking=self.state.show_thinking,
                 )
@@ -5395,28 +5404,20 @@ class TauTuiApp(App[None]):
                     )
                 ]
                 canonical_items = self.state.items[-len(visible_blocks) :] if visible_blocks else []
-                if (
-                    any(isinstance(block, ThinkingContent) for block in visible_blocks)
-                    or len(visible_blocks) > 1
-                ):
-                    # Replace only this message's provisional streaming widgets;
-                    # unrelated history remains mounted and selectable.
-                    await transcript.finish_structured_assistant_message(
-                        canonical_items,
-                        theme=theme,
-                        show_thinking=self.state.show_thinking,
-                    )
-                else:
-                    canonical_item = canonical_items[-1] if canonical_items else None
-                    await transcript.finish_assistant_message(
-                        event.message.text,
-                        item=canonical_item,
-                    )
+                # The adapter already cleared the draft and appended the
+                # canonical items; one idempotent completion path replaces the
+                # active tail while unrelated history keeps its identity.
+                await transcript.finish_active_assistant(
+                    canonical_items,
+                    theme=theme,
+                    show_thinking=self.state.show_thinking,
+                )
                 self._refresh_chrome()
                 return
             return
         if isinstance(event, ToolExecutionStartEvent):
-            await transcript.finish_assistant_message()
+            if transcript.has_stale_active_tail(self.state.active_assistant):
+                self._refresh()
             item = self.state.find_tool_item(event.tool_call_id)
             if item is not None:
                 expanded = self.state.show_tool_results or item.always_show_tool_result
@@ -5437,7 +5438,6 @@ class TauTuiApp(App[None]):
             self._refresh_chrome()
             return
         if isinstance(event, ToolExecutionUpdateEvent):
-            await transcript.finish_assistant_message()
             updated_item = self.state.find_tool_item(event.tool_call_id)
             if updated_item is not None:
                 expanded = self.state.show_tool_results or updated_item.always_show_tool_result
@@ -5451,7 +5451,8 @@ class TauTuiApp(App[None]):
             self._refresh_chrome()
             return
         if isinstance(event, (AutoRetryStartEvent, CompactionStartEvent)):
-            await transcript.finish_assistant_message()
+            if transcript.has_stale_active_tail(self.state.active_assistant):
+                self._refresh()
             if self.state.items and (
                 isinstance(event, AutoRetryStartEvent) or event.reason == "overflow"
             ):
@@ -5483,6 +5484,10 @@ class TauTuiApp(App[None]):
             return
         if isinstance(event, QueueUpdateEvent):
             self._refresh_chrome()
+            return
+        if transcript.has_stale_active_tail(self.state.active_assistant):
+            # Session settlement flushed an unfinished draft into durable items.
+            self._refresh()
             return
         self._refresh_chrome()
 
@@ -5527,7 +5532,9 @@ class TauTuiApp(App[None]):
             worker.cancel()
         self._prompt_worker = None
         self.state.running = False
-        self.state.assistant_buffer = ""
+        # Retain the whole partial turn (thinking and text alike), matching the
+        # aborted assistant message the session records.
+        self.state.interrupt_assistant()
         self._sync_text_selection_state()
         self._refresh()
         if notify:
