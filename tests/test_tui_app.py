@@ -8003,7 +8003,7 @@ async def test_tool_display_cycle_collapses_tool_runs_into_summaries() -> None:
 
 
 @pytest.mark.anyio
-async def test_summary_mode_streams_tool_runs_into_one_progress_line() -> None:
+async def test_summary_mode_shows_live_rows_then_compacts_on_settle() -> None:
     app = TauTuiApp(FakeSession())
 
     async def stream(event: AgentEvent) -> None:
@@ -8016,6 +8016,10 @@ async def test_summary_mode_streams_tool_runs_into_one_progress_line() -> None:
         transcript = app.query_one("#transcript", TranscriptView)
         await transcript.set_tool_display(app.state, theme=app.tui_settings.resolved_theme)
 
+        def widget_texts() -> list[str]:
+            return [w.selection_text for w in app.query(TranscriptMessageWidget)]
+
+        await stream(AgentStartEvent())
         await stream(
             MessageEndEvent(
                 message=AssistantMessage(
@@ -8034,14 +8038,9 @@ async def test_summary_mode_streams_tool_runs_into_one_progress_line() -> None:
         )
         await pilot.pause()
 
-        def summary_texts() -> list[str]:
-            return [
-                w.selection_text
-                for w in app.query(TranscriptMessageWidget)
-                if "tool call" in w.selection_text
-            ]
-
-        assert summary_texts() == ["→ Running… 0/2 tool calls"]
+        # While the agent works, live call rows stay visible.
+        assert any("→ Reading 2 files" in text for text in widget_texts())
+        assert not any("tool calls" in text for text in widget_texts())
 
         await stream(
             ToolExecutionEndEvent(
@@ -8051,9 +8050,6 @@ async def test_summary_mode_streams_tool_runs_into_one_progress_line() -> None:
                 is_error=False,
             )
         )
-        await pilot.pause()
-        assert summary_texts() == ["→ Running… 1/2 tool calls"]
-
         await stream(
             ToolExecutionEndEvent(
                 tool_call_id="call-2",
@@ -8063,7 +8059,19 @@ async def test_summary_mode_streams_tool_runs_into_one_progress_line() -> None:
             )
         )
         await pilot.pause()
-        assert summary_texts() == ["→ Worked for 0s · 2 tool calls"]
+        assert any("→ Reading 2 files" in text for text in widget_texts())
+
+        # The turn settles: the run compacts into one summary line.
+        await stream(AgentSettledEvent())
+        await pilot.pause()
+        assert any("→ Worked for 0s · 2 tool calls" in text for text in widget_texts())
+        assert not any("→ Reading 2 files" in text for text in widget_texts())
+
+        # The next turn expands the rows again.
+        await stream(AgentStartEvent())
+        await pilot.pause()
+        assert any("→ Read 2 files" in text for text in widget_texts())
+        assert not any("tool calls" in text for text in widget_texts())
 
 
 @pytest.mark.anyio

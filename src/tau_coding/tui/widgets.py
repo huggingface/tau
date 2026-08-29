@@ -990,6 +990,14 @@ class TranscriptView(VerticalScroll):
         """Return the tool display mode the mounted transcript was built with."""
         return self._tool_display
 
+    def _collapsing(self, state: TuiState) -> bool:
+        """Return whether summary mode is currently collapsing tool runs.
+
+        Summary mode shows live tool rows while the agent works so progress
+        stays visible; runs collapse into summary lines once the turn settles.
+        """
+        return self._tool_display == "summary" and not state.running
+
     def _is_collapsible_tool(self, item: ChatItem, state: TuiState) -> bool:
         """Return whether summary mode collapses this row into its tool run."""
         return (
@@ -1005,7 +1013,7 @@ class TranscriptView(VerticalScroll):
         of contiguous collapsible tool items that one run summary replaces.
         """
         window = state.items[self._window_start : self._window_end]
-        if self._tool_display != "summary":
+        if not self._collapsing(state):
             return list(window)
         rows: list[ChatItem | list[ChatItem]] = []
         run: list[ChatItem] = []
@@ -1235,9 +1243,9 @@ class TranscriptView(VerticalScroll):
         if state is not None and item_index is not None:
             self._window_end = max(self._window_end, item_index + 1)
         if (
-            self._tool_display == "summary"
-            and state is not None
+            state is not None
             and item_index is not None
+            and self._collapsing(state)
             and self._is_collapsible_tool(item, state)
         ):
             return await self._append_run_member(
@@ -1303,10 +1311,15 @@ class TranscriptView(VerticalScroll):
         """Update a mounted item in O(1); off-screen state is rendered when paged in."""
         state = self._render_state
         if (
-            self._tool_display == "summary"
-            and state is not None
+            state is not None
+            and self._tool_display == "summary"
             and self._is_collapsible_tool(item, state)
         ):
+            if not self._collapsing(state):
+                # The turn is running: rows render normally, and any stale
+                # collapsed widget from the settled view is replaced through
+                # append_item on the next render request.
+                return False
             widget = self._run_summary_widget(item)
             if widget is None:
                 return False

@@ -5344,10 +5344,15 @@ class TauTuiApp(App[None]):
             self._refresh()
             return
         if isinstance(event, AgentStartEvent):
+            # Summary mode shows live tool rows while the agent works.
+            if self.state.tool_display == "summary":
+                await transcript.set_tool_display(self.state, theme=theme)
             self._refresh_chrome()
             return
         if isinstance(event, AgentEndEvent):
             await transcript.finish_assistant_message()
+            if self.state.tool_display == "summary" and not self.state.running:
+                await transcript.set_tool_display(self.state, theme=theme)
             self._refresh_chrome()
             return
         if isinstance(event, MessageStartEvent):
@@ -5470,6 +5475,12 @@ class TauTuiApp(App[None]):
                     invocation=self.state.resolve_tool_invocation(updated_item, expanded=expanded),
                     result_markup=self.state.resolve_tool_result(updated_item, expanded=expanded),
                 )
+            self._refresh_chrome()
+            return
+        if isinstance(event, AgentSettledEvent):
+            # The turn is over: summary mode compacts completed tool runs.
+            if self.state.tool_display == "summary":
+                await transcript.set_tool_display(self.state, theme=theme)
             self._refresh_chrome()
             return
         if isinstance(event, QueueUpdateEvent):
