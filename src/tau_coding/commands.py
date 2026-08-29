@@ -507,7 +507,7 @@ def _hotkeys_command(context: CommandContext) -> CommandResult:
         "- Ctrl+P / Shift+Ctrl+P: cycle scoped models forward / backward",
         "- Shift+Tab: cycle thinking mode",
         "- Ctrl+T: toggle thinking tokens",
-        "- Ctrl+O: collapse or expand tool output",
+        "- Ctrl+O: cycle tool display (summary / calls / results)",
         "- Ctrl+C: clear prompt input",
         "- Ctrl+D: quit",
     ]

@@ -42,7 +42,7 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 
 | Key | Action |
 | --- | --- |
-| `Ctrl+O` | Toggle exact tool commands and full output (vs. compact previews) |
+| `Ctrl+O` | Cycle tool display: collapsed run summaries → compact call lines → expanded results |
 | `Ctrl+C` | Clear the prompt input |
 | `Ctrl+D` | Quit |
 

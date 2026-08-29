@@ -181,6 +181,21 @@ output for other tools. Compaction and grouping affect only the TUI display;
 execution, session history, and print-mode transcripts retain every complete call
 and result.
 
+**Ctrl+O** cycles through three display modes rather than toggling two states:
+
+1. **Summary** — each contiguous burst of tool activity collapses into one line
+   such as `Worked for 1m 23s · 5 tool calls` (with a live `Running… 2/5 tool
+   calls` progress line while tools execute). Restored sessions without timing
+   data show the call count only. Terminal `!` commands and extension-rendered
+   tool cards never collapse.
+2. **Calls** — the default: one compact line per tool call or grouped file
+   batch, without result contents.
+3. **Expanded** — call lines plus exact commands and result previews.
+
+Each burst of tool calls becomes a summary line independently, so assistant text
+between tool activity stays in place. Cycling back to **Calls** restores the
+exact transcript structure.
+
 Markdown link hover styling underlines only the linked text, never the rest of its
 row. User message blocks use the same theme background as the prompt field and sidebar,
 with light vertical padding so they read as blocks rather than highlighted lines.

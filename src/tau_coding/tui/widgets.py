@@ -45,9 +45,11 @@ from tau_coding.tui.state import (
     RESULTFUL_FILE_GROUP_NAMES,
     TOOL_TIMER_MIN_SECONDS,
     ChatItem,
+    ToolDisplayMode,
     TuiState,
     format_elapsed,
     format_tool_call_invocation,
+    format_tool_run_summary,
 )
 from tau_coding.version import current_version
 
@@ -603,6 +605,27 @@ class TranscriptMessageWidget(Horizontal):
             body.styles.background = background
         return True
 
+    def update_tool_run_text(self, text: str) -> bool:
+        """Rewrite a collapsed tool-run summary row in place; False when unsupported."""
+        if not _use_plain_transcript_body(self.item):
+            return False
+        self.item.text = text
+        self.selection_text = text
+        self._markdown_text = text
+        try:
+            body = self.query_one(".transcript-plain-body", Static)
+        except NoMatches:
+            return False
+        body.update(
+            _transcript_plain_body_text(
+                self.item,
+                text=text,
+                body_style=self._role_style.body,
+                theme=self._theme,
+            )
+        )
+        return True
+
 
 class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
     """One assistant or thinking Markdown block that accepts streamed fragments."""
@@ -725,6 +748,10 @@ class TranscriptView(VerticalScroll):
         self._item_widgets: dict[
             int, TranscriptMessageWidget | StreamingTranscriptMessageWidget
         ] = {}
+        self._tool_display: ToolDisplayMode = "calls"
+        # Widgets that summarize a collapsed run of tool rows, keyed by widget
+        # id, mapped to the transcript items the run replaces.
+        self._summary_members: dict[int, list[ChatItem]] = {}
         self._top_boundary: TranscriptWindowBoundary | None = None
         self._bottom_boundary: TranscriptWindowBoundary | None = None
 
@@ -856,6 +883,7 @@ class TranscriptView(VerticalScroll):
         retained_projection = same_state and any(
             id(item) in self._item_widgets for item in state.items
         )
+        self._tool_display = state.tool_display
         should_follow = self._should_follow_output
         if not retained_projection:
             self._follow_output = True
@@ -957,6 +985,105 @@ class TranscriptView(VerticalScroll):
                 lambda: self.scroll_to(y=previous_scroll_y, animate=False, immediate=True)
             )
 
+    @property
+    def tool_display(self) -> ToolDisplayMode:
+        """Return the tool display mode the mounted transcript was built with."""
+        return self._tool_display
+
+    def _is_collapsible_tool(self, item: ChatItem, state: TuiState) -> bool:
+        """Return whether summary mode collapses this row into its tool run."""
+        return (
+            item.role == "tool"
+            and not item.always_show_tool_result
+            and not state.has_custom_tool_rendering(item)
+        )
+
+    def _display_rows(self, state: TuiState) -> list[ChatItem | list[ChatItem]]:
+        """Project window items into widget rows, collapsing tool runs in summary mode.
+
+        Each row is either a transcript item or, only in summary mode, the list
+        of contiguous collapsible tool items that one run summary replaces.
+        """
+        window = state.items[self._window_start : self._window_end]
+        if self._tool_display != "summary":
+            return list(window)
+        rows: list[ChatItem | list[ChatItem]] = []
+        run: list[ChatItem] = []
+        for item in window:
+            if self._is_collapsible_tool(item, state):
+                run.append(item)
+                continue
+            if run:
+                rows.append(run)
+                run = []
+            rows.append(item)
+        if run:
+            rows.append(run)
+        return rows
+
+    def _run_summary_widget(self, item: ChatItem) -> TranscriptMessageWidget | None:
+        """Return the collapsed run summary widget covering this item, if any."""
+        widget = self._item_widgets.get(id(item))
+        if isinstance(widget, TranscriptMessageWidget) and id(widget) in self._summary_members:
+            return widget
+        return None
+
+    def _refresh_run_summary(self, widget: TranscriptMessageWidget) -> None:
+        """Recompute a collapsed run summary line from its member items."""
+        members = self._summary_members.get(id(widget))
+        if members:
+            widget.update_tool_run_text(format_tool_run_summary(members))
+
+    async def _append_run_member(
+        self,
+        item: ChatItem,
+        *,
+        item_index: int,
+        state: TuiState,
+        theme: TuiTheme,
+    ) -> TranscriptMessageWidget:
+        """Fold a new tool item into its run summary, starting one when needed."""
+        previous = state.items[item_index - 1] if item_index > 0 else None
+        widget = self._run_summary_widget(previous) if previous is not None else None
+        if widget is not None:
+            self._summary_members[id(widget)].append(item)
+            self._item_widgets[id(item)] = widget
+            self._refresh_run_summary(widget)
+            return widget
+        widget = TranscriptMessageWidget(
+            ChatItem(role="tool", text=format_tool_run_summary([item])),
+            theme=theme,
+            show_tool_results=False,
+        )
+        self._summary_members[id(widget)] = [item]
+        self._item_widgets[id(item)] = widget
+        await self.mount(widget, before=self._bottom_boundary)
+        self._active_assistant_widget = None
+        self._active_thinking_widget = None
+        self._active_message_widgets = []
+        self._hidden_thinking_placeholder_visible = False
+        return widget
+
+    async def set_tool_display(
+        self,
+        state: TuiState,
+        *,
+        theme: TuiTheme = TAU_DARK_THEME,
+    ) -> None:
+        """Switch tool display mode and rebuild the mounted transcript window."""
+        self._render_state = state
+        self._render_theme = theme
+        self._tool_display = state.tool_display
+        should_follow = self._should_follow_output
+        previous_scroll_y = self.scroll_y
+        self._redraw(scroll_end=should_follow, preserve_window=True)
+        if should_follow:
+            self._request_follow_scroll()
+        else:
+            self.call_after_refresh(
+                lambda: self.scroll_to(y=previous_scroll_y, animate=False, immediate=True)
+            )
+
     def _redraw(self, *, scroll_end: bool, preserve_window: bool = False) -> None:
         state = self._render_state
         if state is None:
@@ -989,6 +1116,7 @@ class TranscriptView(VerticalScroll):
         self._active_message_widgets = []
         self._hidden_thinking_placeholder_visible = False
         self._item_widgets.clear()
+        self._summary_members.clear()
         self._top_boundary = None
         self._bottom_boundary = None
 
@@ -998,7 +1126,19 @@ class TranscriptView(VerticalScroll):
             widgets.append(self._top_boundary)
 
         hidden_thinking_widget: TranscriptMessageWidget | None = None
-        for item in state.items[self._window_start : self._window_end]:
+        for row in self._display_rows(state):
+            if isinstance(row, list):
+                summary_widget = TranscriptMessageWidget(
+                    ChatItem(role="tool", text=format_tool_run_summary(row)),
+                    theme=theme,
+                    show_tool_results=False,
+                )
+                self._summary_members[id(summary_widget)] = row
+                for member in row:
+                    self._item_widgets[id(member)] = summary_widget
+                widgets.append(summary_widget)
+                continue
+            item = row
             if item.role == "thinking" and not state.show_thinking:
                 if hidden_thinking_widget is None:
                     hidden_thinking_widget = TranscriptMessageWidget(
@@ -1094,6 +1234,18 @@ class TranscriptView(VerticalScroll):
             return widget
         if state is not None and item_index is not None:
             self._window_end = max(self._window_end, item_index + 1)
+        if (
+            self._tool_display == "summary"
+            and state is not None
+            and item_index is not None
+            and self._is_collapsible_tool(item, state)
+        ):
+            return await self._append_run_member(
+                item,
+                item_index=item_index,
+                state=state,
+                theme=theme,
+            )
         await self.mount(widget, before=self._bottom_boundary)
         self._item_widgets[id(item)] = widget
         self._active_assistant_widget = None
@@ -1149,6 +1301,17 @@ class TranscriptView(VerticalScroll):
         result_markup: str | None = None,
     ) -> bool:
         """Update a mounted item in O(1); off-screen state is rendered when paged in."""
+        state = self._render_state
+        if (
+            self._tool_display == "summary"
+            and state is not None
+            and self._is_collapsible_tool(item, state)
+        ):
+            widget = self._run_summary_widget(item)
+            if widget is None:
+                return False
+            self._refresh_run_summary(widget)
+            return True
         child = self._item_widgets.get(id(item))
         if not isinstance(child, TranscriptMessageWidget) or child.item is not item:
             return False

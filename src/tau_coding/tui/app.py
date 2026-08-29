@@ -5815,12 +5815,27 @@ class TauTuiApp(App[None]):
         self.run_worker(self._cycle_scoped_model(reverse=reverse), exclusive=False)
 
     def action_toggle_tool_results(self) -> None:
-        """Toggle inline tool result details without rebuilding unrelated history."""
-        self.state.toggle_tool_results()
-        self.run_worker(self._update_tool_results_visibility(), exclusive=False)
+        """Cycle collapsed summaries, call lines, and expanded tool results."""
+        mode = self.state.cycle_tool_display()
+        self._notify(f"Tool display: {mode}")
+        self.run_worker(self._apply_tool_display_mode(), exclusive=False)
 
-    async def _update_tool_results_visibility(self) -> None:
+    async def _apply_tool_display_mode(self) -> None:
         transcript = self.query_one("#transcript", TranscriptView)
+        needs_rebuild = "summary" in (
+            self.state.tool_display,
+            transcript.tool_display,
+        )
+        if needs_rebuild:
+            # Entering or leaving summary mode changes the row structure, so
+            # the mounted window rebuilds.
+            await transcript.set_tool_display(
+                self.state,
+                theme=self.tui_settings.resolved_theme,
+            )
+            return
+        # Calls/expanded only change per-row rendering; update rows in place to
+        # avoid remounting unrelated history.
         await transcript.update_tool_results_visibility(
             self.state,
             theme=self.tui_settings.resolved_theme,
