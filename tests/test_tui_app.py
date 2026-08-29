@@ -8028,6 +8028,45 @@ def test_tool_run_summary_item_renders_in_status_color() -> None:
 
 
 @pytest.mark.anyio
+async def test_summary_mode_swallows_thinking_into_run_summaries() -> None:
+    app = TauTuiApp(
+        FakeSession(
+            messages=[
+                AssistantMessage(
+                    content=[
+                        ThinkingContent(thinking="weighing options"),
+                        ToolCall(id="call-1", name="read", arguments={"path": "a.py"}),
+                        ToolCall(id="call-2", name="read", arguments={"path": "b.py"}),
+                    ]
+                ),
+                ToolResultMessage(tool_call_id="call-1", tool_name="read", content="one"),
+                ToolResultMessage(tool_call_id="call-2", tool_name="read", content="two"),
+            ]
+        )
+    )
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.show_thinking = True
+        app.state.tool_display = "summary"
+        transcript = app.query_one("#transcript", TranscriptView)
+        await transcript.set_tool_display(app.state, theme=app.tui_settings.resolved_theme)
+        await pilot.pause()
+
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("2 tool calls" in text for text in texts)
+        assert not any("weighing options" in text for text in texts)
+        assert not any("Thinking" in text for text in texts)
+
+        # Calls mode restores the thinking block under Ctrl+T control.
+        app.state.tool_display = "calls"
+        await transcript.set_tool_display(app.state, theme=app.tui_settings.resolved_theme)
+        await pilot.pause()
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("weighing options" in text for text in texts)
+
+
+@pytest.mark.anyio
 async def test_summary_mode_keeps_single_tool_call_rows() -> None:
     app = TauTuiApp(
         FakeSession(

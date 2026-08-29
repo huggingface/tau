@@ -939,6 +939,9 @@ class TranscriptView(VerticalScroll):
 
         for item in window_items:
             if item.role == "thinking":
+                if self._tool_display == "summary" and self._run_summary_widget(item) is not None:
+                    # Swallowed by a collapsed tool run in summary mode.
+                    continue
                 if state.show_thinking:
                     pending.append(
                         (
@@ -1023,15 +1026,22 @@ class TranscriptView(VerticalScroll):
             nonlocal run
             if not run:
                 return
-            if len(tool_run_leaves(run)) > 1:
-                # Only multi-call runs compact; a single tool call keeps its
-                # own row.
+            tools = [item for item in run if item.role == "tool"]
+            if tools and len(tool_run_leaves(tools)) > 1:
+                # Multi-call runs compact into one summary line that also
+                # swallows the thinking blocks interleaved with the calls; a
+                # single tool call keeps its own row (and its thinking).
                 rows.append(run)
             else:
                 rows.extend(run)
             run = []
 
         for item in window:
+            if item.role == "thinking":
+                # Held inside the open run: swallowed when tools follow,
+                # rendered normally when the run ends without a summary.
+                run.append(item)
+                continue
             if self._is_collapsible_tool(item, state):
                 run.append(item)
                 continue

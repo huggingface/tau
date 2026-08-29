@@ -796,9 +796,15 @@ def format_elapsed(seconds: float) -> str:
 
 
 def tool_run_leaves(items: Sequence[ChatItem]) -> list[ChatItem | GroupedToolCall]:
-    """Flatten batch heads and grouped file calls into the calls a run represents."""
+    """Flatten batch heads and grouped file calls into the calls a run represents.
+
+    Non-tool members (e.g. thinking blocks swallowed by a run) contribute no
+    leaves: only actual tool calls are counted and timed.
+    """
     leaves: list[ChatItem | GroupedToolCall] = []
     for item in items:
+        if item.role != "tool":
+            continue
         if item.tool_batch_items is not None:
             for row in item.tool_batch_items:
                 if row.grouped_tool_calls is not None:
