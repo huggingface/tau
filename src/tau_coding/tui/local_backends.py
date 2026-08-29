@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
-from typing import ClassVar, Literal, cast
+from typing import ClassVar, cast
 
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.style import StyleType
@@ -639,9 +639,7 @@ class LocalBackendScreen(ModalScreen[None]):
                 )
             elif action in {"load_model", "unload_model", "download_model"}:
                 assert model_id is not None
-                manage_action = cast(
-                    Literal["load_model", "unload_model", "download_model"], action
-                )
+                manage_action = action
                 result = await self.registry.manage_model(
                     self.backend_id,
                     manage_action,

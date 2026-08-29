@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-import httpx
+import httpx2
 
 from tau_agent.harness import SimpleCancellationToken
 from tau_coding.extensions import (
@@ -34,7 +34,7 @@ from tau_coding.extensions import (
 class OllamaAdapterSpike:
     """Small adapter exercising only generic provider/backend seams."""
 
-    client: httpx.AsyncClient
+    client: httpx2.AsyncClient
     endpoint: str = "http://ollama.test:11434"
 
     def __post_init__(self) -> None:

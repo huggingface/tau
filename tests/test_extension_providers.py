@@ -7,7 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
-import httpx
+import httpx2
 import pytest
 
 from tau_agent import UserMessage
@@ -1462,17 +1462,17 @@ async def test_dynamic_transport_merges_headers_and_supports_custom_auth() -> No
         credential_store=MemoryCredentials(),  # type: ignore[arg-type]
         environment={},
     )
-    observed: list[httpx.Request] = []
+    observed: list[httpx2.Request] = []
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         observed.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"choices":[{"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
             headers={"content-type": "text/event-stream"},
         )
 
-    runtime._client = httpx.AsyncClient(transport=httpx.MockTransport(handle))  # type: ignore[attr-defined]
+    runtime._client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))  # type: ignore[attr-defined]
     runtime._owns_client = True  # type: ignore[attr-defined]
     _ = [
         event
@@ -1522,11 +1522,11 @@ async def test_dynamic_openai_transport_emits_conditional_authorization(with_key
         environment={},
     )
     assert isinstance(runtime, OpenAICompatibleProvider)
-    observed: list[httpx.Request] = []
+    observed: list[httpx2.Request] = []
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         observed.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
             'data: {"choices":[{"finish_reason":"stop"}]}\n\n'
@@ -1534,7 +1534,7 @@ async def test_dynamic_openai_transport_emits_conditional_authorization(with_key
             headers={"content-type": "text/event-stream"},
         )
 
-    runtime._client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    runtime._client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
     runtime._owns_client = True
     events = [
         event
@@ -1564,15 +1564,15 @@ async def test_dynamic_transport_does_not_infer_endpoint_from_model_name(model_i
     assert isinstance(runtime, OpenAICompatibleProvider)
     urls: list[str] = []
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         urls.append(str(request.url))
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"choices":[{"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
             headers={"content-type": "text/event-stream"},
         )
 
-    runtime._client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    runtime._client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
     runtime._owns_client = True
     _ = [
         event

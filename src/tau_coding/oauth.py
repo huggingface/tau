@@ -17,7 +17,7 @@ from os import environ
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
-import httpx
+import httpx2
 
 from tau_ai.http import create_async_client
 from tau_coding.credentials import OAuthCredential
@@ -203,7 +203,7 @@ async def login_openai_codex(
     on_progress: ProgressCallback | None = None,
     open_browser: bool = True,
     originator: str = "tau",
-    client: httpx.AsyncClient | None = None,
+    client: httpx2.AsyncClient | None = None,
 ) -> OAuthCredential:
     """Run OpenAI Codex OAuth and return refreshable credentials."""
     flow = create_openai_codex_authorization_flow(originator=originator)
@@ -257,7 +257,7 @@ async def exchange_openai_codex_authorization_code(
     code: str,
     verifier: str,
     *,
-    client: httpx.AsyncClient | None = None,
+    client: httpx2.AsyncClient | None = None,
 ) -> TokenResponse:
     """Exchange an OpenAI Codex authorization code for OAuth tokens."""
     raw = await _post_openai_codex_token(
@@ -283,7 +283,7 @@ async def exchange_openai_codex_authorization_code(
 async def refresh_openai_codex_token(
     refresh_token: str,
     *,
-    client: httpx.AsyncClient | None = None,
+    client: httpx2.AsyncClient | None = None,
 ) -> OAuthCredential:
     """Refresh OpenAI Codex OAuth credentials."""
     raw = await _post_openai_codex_token(
@@ -348,7 +348,7 @@ def _access_token_payload(access_token: str) -> dict[str, Any] | None:
 async def _post_openai_codex_token(
     data: dict[str, str],
     *,
-    client: httpx.AsyncClient | None,
+    client: httpx2.AsyncClient | None,
     action: str,
 ) -> dict[str, Any]:
     owns_client = client is None

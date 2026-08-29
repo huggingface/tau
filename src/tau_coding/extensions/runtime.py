@@ -11,7 +11,7 @@ from pathlib import Path
 from time import time_ns
 from typing import Literal, Protocol, cast
 
-import httpx
+import httpx2
 
 import tau_coding.built_in_extensions as built_in_extension_registry
 from tau_agent.events import AgentEvent, AgentStartEvent
@@ -195,7 +195,7 @@ class ExtensionRuntime:
         built_in_extensions: Sequence[BuiltInExtension] | None = None,
         paths: TauPaths | None = None,
         built_in_credentials: CredentialStore | None = None,
-        built_in_http_client: httpx.AsyncClient | None = None,
+        built_in_http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         self._generation = ExtensionGeneration()
         self._built_in_extensions = tuple(
@@ -798,7 +798,7 @@ class ExtensionRuntime:
         return self._built_in_context.credential_store
 
     @property
-    def built_in_http_client(self) -> httpx.AsyncClient | None:
+    def built_in_http_client(self) -> httpx2.AsyncClient | None:
         """Return the externally owned HTTP client used by trusted built-ins."""
         return self._built_in_context.http_client
 

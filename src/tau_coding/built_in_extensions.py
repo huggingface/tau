@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from inspect import iscoroutinefunction
 from typing import TYPE_CHECKING
 
-import httpx
+import httpx2
 
 from tau_coding.credentials import CredentialStore
 from tau_coding.paths import TauPaths
@@ -29,7 +29,7 @@ class BuiltInExtensionContext:
     paths: TauPaths
     credential_store: CredentialStore
     environment: Mapping[str, str]
-    http_client: httpx.AsyncClient | None = None
+    http_client: httpx2.AsyncClient | None = None
 
 
 BuiltInExtensionSetup = Callable[["ExtensionAPI"], None]

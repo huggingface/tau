@@ -11,7 +11,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, cast
 
-import httpx
+import httpx2
 
 from tau_coding.models_dev import (
     MODELS_DEV_URL,
@@ -68,7 +68,7 @@ async def refresh_models_dev_catalog(
     *,
     paths: TauPaths | None = None,
     force: bool = False,
-    client: httpx.AsyncClient | None = None,
+    client: httpx2.AsyncClient | None = None,
     now: float | None = None,
 ) -> ModelsDevRefreshResult:
     """Refresh models.dev plus Pi's NVIDIA filter and atomically cache the result."""
@@ -97,7 +97,7 @@ async def refresh_models_dev_catalog(
         )
 
     owned_client = client is None
-    http = client or httpx.AsyncClient(timeout=MODELS_REFRESH_TIMEOUT_SECONDS)
+    http = client or httpx2.AsyncClient(timeout=MODELS_REFRESH_TIMEOUT_SECONDS)
     try:
         headers = {"Accept": "application/json", "User-Agent": "tau-model-catalog-refresh"}
         if cache is not None and cache.get("etag"):
@@ -146,7 +146,7 @@ async def refresh_models_dev_catalog(
             model_count=_model_count(document),
             cache_path=path,
         )
-    except (httpx.HTTPError, TypeError, ValueError, json.JSONDecodeError) as error:
+    except (httpx2.HTTPError, TypeError, ValueError, json.JSONDecodeError) as error:
         raise ModelsDevRefreshError(f"Could not refresh model catalogs: {error}") from error
     finally:
         if owned_client:

@@ -1,7 +1,7 @@
 import asyncio
 from typing import cast
 
-import httpx
+import httpx2
 import pytest
 
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
@@ -59,14 +59,14 @@ def _callbacks(
 
 @pytest.mark.anyio
 async def test_refresh_anthropic_token_uses_json_and_redacts_failed_response() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.url == ANTHROPIC_TOKEN_URL
         assert request.headers["content-type"] == "application/json"
         assert request.content
         assert ANTHROPIC_CLIENT_ID.encode() in request.content
-        return httpx.Response(401, text="secret-token-body")
+        return httpx2.Response(401, text="secret-token-body")
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         with pytest.raises(OAuthError) as error:
             await refresh_anthropic_token("refresh-secret", client=client)
 
@@ -79,8 +79,8 @@ async def test_refresh_anthropic_token_uses_json_and_redacts_failed_response() -
 async def test_refresh_anthropic_token_reports_structured_oauth_error() -> None:
     """A dead refresh token should say so, not just report a status code."""
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             400,
             json={
                 "error": "invalid_grant",
@@ -88,7 +88,7 @@ async def test_refresh_anthropic_token_reports_structured_oauth_error() -> None:
             },
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         with pytest.raises(OAuthError) as error:
             await refresh_anthropic_token("refresh-secret", client=client)
 
@@ -100,8 +100,8 @@ async def test_refresh_anthropic_token_reports_structured_oauth_error() -> None:
 async def test_refresh_anthropic_token_reports_nested_error_without_echoing_token() -> None:
     """Anthropic's nested envelope still yields detail, minus anything we sent."""
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             400,
             json={
                 "type": "error",
@@ -112,7 +112,7 @@ async def test_refresh_anthropic_token_reports_nested_error_without_echoing_toke
             },
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         with pytest.raises(OAuthError) as error:
             await refresh_anthropic_token("refresh-secret", client=client)
 
@@ -127,14 +127,14 @@ async def test_refresh_anthropic_token_scrubs_a_token_before_truncating() -> Non
     """Scrub then truncate: the other order leaks the surviving prefix."""
     secret = "refresh-" + "s" * 40
 
-    def handler(_request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx2.Request) -> httpx2.Response:
         # Place the token so it straddles the 200-character truncation point.
-        return httpx.Response(
+        return httpx2.Response(
             400,
             json={"error": "invalid_grant", "error_description": "y" * 175 + secret},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         with pytest.raises(OAuthError) as error:
             await refresh_anthropic_token(secret, client=client)
 
@@ -146,8 +146,8 @@ async def test_refresh_anthropic_token_scrubs_a_token_before_truncating() -> Non
 
 @pytest.mark.anyio
 async def test_refresh_anthropic_token_returns_provider_neutral_credential() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={
                 "access_token": "anthropic-access",
@@ -156,7 +156,7 @@ async def test_refresh_anthropic_token_returns_provider_neutral_credential() -> 
             },
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         credential = await refresh_anthropic_token("old-refresh", client=client)
 
     assert credential.access == "anthropic-access"
@@ -169,10 +169,10 @@ async def test_refresh_anthropic_token_returns_provider_neutral_credential() -> 
 async def test_github_copilot_device_login_and_token_exchange() -> None:
     device_codes: list[OAuthDeviceCodeInfo] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == "/login/device/code":
             assert f"client_id={GITHUB_COPILOT_CLIENT_ID}" in request.content.decode()
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "device_code": "device-secret",
@@ -183,10 +183,10 @@ async def test_github_copilot_device_login_and_token_exchange() -> None:
                 },
             )
         if request.url.path == "/login/oauth/access_token":
-            return httpx.Response(200, json={"access_token": "github-token"})
+            return httpx2.Response(200, json={"access_token": "github-token"})
         if request.url.path == "/copilot_internal/v2/token":
             assert request.headers["authorization"] == "Bearer github-token"
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "token": "tid=1;exp=9999999999;proxy-ep=proxy.business.githubcopilot.com",
@@ -195,7 +195,7 @@ async def test_github_copilot_device_login_and_token_exchange() -> None:
             )
         raise AssertionError(f"Unexpected request: {request.url}")
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         credential = await login_github_copilot(
             _callbacks(device_codes=device_codes),
             client=client,
@@ -216,8 +216,8 @@ async def test_github_copilot_device_login_and_token_exchange() -> None:
 
 @pytest.mark.anyio
 async def test_github_copilot_rejects_untrusted_device_verification_uri() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={
                 "device_code": "device",
@@ -228,16 +228,16 @@ async def test_github_copilot_rejects_untrusted_device_verification_uri() -> Non
             },
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         with pytest.raises(OAuthError, match="Untrusted verification_uri"):
             await login_github_copilot(_callbacks(), client=client)
 
 
 @pytest.mark.anyio
 async def test_refresh_github_copilot_preserves_enterprise_metadata() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.url.host == "api.ghe.example.com"
-        return httpx.Response(200, json={"token": "copilot", "expires_at": 9999999999})
+        return httpx2.Response(200, json={"token": "copilot", "expires_at": 9999999999})
 
     original = OAuthCredential(
         access="old",
@@ -245,7 +245,7 @@ async def test_refresh_github_copilot_preserves_enterprise_metadata() -> None:
         expires=1,
         metadata={"enterprise_domain": "ghe.example.com"},
     )
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         refreshed = await refresh_github_copilot_token(original, client=client)
 
     assert refreshed.metadata == original.metadata

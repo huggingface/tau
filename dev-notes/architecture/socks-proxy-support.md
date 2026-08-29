@@ -1,6 +1,6 @@
 # SOCKS proxy support
 
-Tau uses `httpx` for provider requests, OAuth token refreshes, and startup update checks. `httpx` reads standard proxy environment variables such as `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY`.
+Tau uses `httpx2` for provider requests, OAuth token refreshes, and startup update checks. `httpx2` reads standard proxy environment variables such as `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY`.
 
 ## What changed
 
@@ -10,33 +10,33 @@ Issue #221 reported failures when the environment contained a generic SOCKS prox
 ALL_PROXY=socks://127.0.0.1:1080
 ```
 
-`httpx` does not accept the generic `socks://` scheme. It accepts explicit SOCKS schemes such as `socks5://` and `socks5h://`, and those require the optional SOCKS dependency.
+`httpx2` does not accept the generic `socks://` scheme. It accepts explicit SOCKS schemes such as `socks5://` and `socks5h://`, and those require the optional SOCKS dependency.
 
 Tau now:
 
-- installs `httpx[socks]` in the base package so `socksio` is available;
+- installs `httpx2[socks]` in the base package so `socksio` is available;
 - normalizes `socks://...` to `socks5://...` before constructing Tau-owned HTTP clients;
 - routes provider clients, OAuth token refresh clients, and update-check fetches through shared helpers in `tau_ai.http`.
 
 ## Why `socks://` maps to `socks5://`
 
-The generic scheme does not specify whether DNS lookup should happen locally or through the proxy. Tau treats it as SOCKS5 with local DNS resolution because that is the closest explicit `httpx` scheme and avoids silently changing DNS behavior beyond making the previously invalid URL usable.
+The generic scheme does not specify whether DNS lookup should happen locally or through the proxy. Tau treats it as SOCKS5 with local DNS resolution because that is the closest explicit `httpx2` scheme and avoids silently changing DNS behavior beyond making the previously invalid URL usable.
 
 Users who need proxy-side DNS resolution should set an explicit `socks5h://` URL.
 
 ## Future improvement: avoid temporary environment mutation
 
-The current helper temporarily normalizes proxy environment variables while constructing Tau-owned `httpx` clients. For the synchronous update-check helper, the normalization currently wraps the full `httpx.get(...)` call because `httpx.get` constructs and uses a short-lived client internally.
+The current helper temporarily normalizes proxy environment variables while constructing Tau-owned `httpx2` clients. For the synchronous update-check helper, the normalization currently wraps the full `httpx2.get(...)` call because `httpx2.get` constructs and uses a short-lived client internally.
 
 This is acceptable for the current low-concurrency startup update-check path, but environment variables are process-global state. If Tau later performs more concurrent networking around this helper, another thread or task could observe the normalized proxy value while the request is in progress.
 
 If this becomes a concern, prefer avoiding process environment mutation for request execution:
 
 1. normalize proxy values into local data;
-2. construct an explicit `httpx.Client` or `httpx.AsyncClient` with equivalent proxy configuration;
+2. construct an explicit `httpx2.Client` or `httpx2.AsyncClient` with equivalent proxy configuration;
 3. perform requests through that client without changing `os.environ` during request execution.
 
-When implementing that, preserve `NO_PROXY` semantics. `httpx` currently handles environment proxy discovery and no-proxy matching internally, so replacing it with explicit mounts/proxy configuration should include tests for:
+When implementing that, preserve `NO_PROXY` semantics. `httpx2` currently handles environment proxy discovery and no-proxy matching internally, so replacing it with explicit mounts/proxy configuration should include tests for:
 
 - `ALL_PROXY=socks://...` normalization;
 - `HTTP_PROXY` and `HTTPS_PROXY` handling;

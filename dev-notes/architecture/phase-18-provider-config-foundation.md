@@ -109,7 +109,7 @@ variable is not currently set.
 
 Provider HTTP timeouts are configurable through `timeout_seconds` in
 `~/.tau/providers.json`. The default OpenAI-compatible provider can also read
-`OPENAI_TIMEOUT_SECONDS`. The configured value is passed to the HTTPX streaming
+`OPENAI_TIMEOUT_SECONDS`. The configured value is passed to the HTTPX2 streaming
 client instead of keeping timeout behavior hardcoded in the provider adapter.
 
 Transient retry behavior is configurable through `max_retries` and

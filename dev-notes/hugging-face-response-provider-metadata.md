@@ -24,7 +24,7 @@ not expose provider selection or pinning controls in this change.
 
 ## Validation
 
-Focused tests use an `httpx.MockTransport` to simulate one failed response from
+Focused tests use an `httpx2.MockTransport` to simulate one failed response from
 one Inference Provider followed by a successful response from another. They
 verify that only the provider from the successful request becomes the final
 message's `response_provider`, while `provider` remains `huggingface`.

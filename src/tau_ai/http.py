@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-import httpx
+import httpx2
 
 _PROXY_ENV_VARS = (
     "HTTP_PROXY",
@@ -20,9 +20,9 @@ _PROXY_ENV_VARS = (
 
 
 def normalize_proxy_url(proxy_url: str) -> str:
-    """Return an httpx-compatible proxy URL.
+    """Return an httpx2-compatible proxy URL.
 
-    Some environments use ``socks://`` as a generic SOCKS proxy scheme. httpx
+    Some environments use ``socks://`` as a generic SOCKS proxy scheme. httpx2
     accepts explicit SOCKS versions (for example ``socks5://`` and
     ``socks5h://``), but rejects the generic scheme before it can make a
     request. Treat the generic form as SOCKS5 so Tau can honor these proxy
@@ -36,7 +36,7 @@ def normalize_proxy_url(proxy_url: str) -> str:
 
 @contextmanager
 def normalized_proxy_environment() -> Iterator[None]:
-    """Temporarily normalize proxy environment variables for httpx construction."""
+    """Temporarily normalize proxy environment variables for httpx2 construction."""
 
     original: dict[str, str | None] = {}
     changed = False
@@ -62,18 +62,18 @@ def normalized_proxy_environment() -> Iterator[None]:
                     os.environ[name] = value
 
 
-def create_async_client(**kwargs: Any) -> httpx.AsyncClient:
-    """Create an ``httpx.AsyncClient`` with Tau's proxy normalization applied."""
+def create_async_client(**kwargs: Any) -> httpx2.AsyncClient:
+    """Create an ``httpx2.AsyncClient`` with Tau's proxy normalization applied."""
 
     with normalized_proxy_environment():
-        return httpx.AsyncClient(**kwargs)
+        return httpx2.AsyncClient(**kwargs)
 
 
 def get_json(url: str, *, timeout: float, follow_redirects: bool = False) -> dict[str, object]:
     """Fetch a JSON object with Tau's proxy normalization applied."""
 
     with normalized_proxy_environment():
-        response = httpx.get(url, timeout=timeout, follow_redirects=follow_redirects)
+        response = httpx2.get(url, timeout=timeout, follow_redirects=follow_redirects)
     response.raise_for_status()
     data = response.json()
     if not isinstance(data, dict):

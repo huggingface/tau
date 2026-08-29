@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal, TypeGuard, cast
 
-import httpx
+import httpx2
 
 LLAMA_CPP_ROUTER_MIN_BUILD = 9688
 LLAMA_CPP_ROUTER_MAX_BUILD = 10595
@@ -51,7 +51,7 @@ class RouterModel:
 
 
 async def detect_router(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     server_root: str,
     headers: Mapping[str, str],
 ) -> RouterCapability:
@@ -88,7 +88,7 @@ async def detect_router(
 
 
 async def list_router_models(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     server_root: str,
     headers: Mapping[str, str],
     *,
@@ -190,7 +190,7 @@ def _is_non_negative_number(value: object) -> TypeGuard[int | float]:
 
 
 async def watch_router_download_progress(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     server_root: str,
     headers: Mapping[str, str],
     model_id: str,
@@ -241,7 +241,7 @@ def _forward_download_progress(
 
 
 async def mutate_router_model(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     server_root: str,
     headers: Mapping[str, str],
     *,
@@ -260,7 +260,7 @@ async def mutate_router_model(
         raise LlamaCppRouterError(f"llama.cpp did not accept the model {action} request.")
 
 
-def _object(response: httpx.Response, endpoint: str) -> Mapping[str, object]:
+def _object(response: httpx2.Response, endpoint: str) -> Mapping[str, object]:
     try:
         payload = response.json()
     except ValueError as exc:
@@ -270,7 +270,7 @@ def _object(response: httpx.Response, endpoint: str) -> Mapping[str, object]:
     return payload
 
 
-def _raise_http(response: httpx.Response, operation: str) -> None:
+def _raise_http(response: httpx2.Response, operation: str) -> None:
     if response.status_code in {401, 403}:
         raise LlamaCppRouterError(
             "llama.cpp rejected the router request. Check the optional API key or LLAMA_API_KEY."
@@ -283,7 +283,7 @@ def _raise_http(response: httpx.Response, operation: str) -> None:
         )
 
 
-def _server_error_detail(response: httpx.Response) -> str | None:
+def _server_error_detail(response: httpx2.Response) -> str | None:
     """Extract one bounded, user-actionable message from a router error."""
     try:
         payload = response.json()

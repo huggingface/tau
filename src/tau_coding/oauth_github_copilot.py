@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
-import httpx
+import httpx2
 
 from tau_ai.http import create_async_client
 from tau_coding.credentials import OAuthCredential
@@ -72,7 +72,7 @@ def github_copilot_base_url(token: str | None, enterprise_domain: str | None = N
 async def login_github_copilot(
     callbacks: OAuthLoginCallbacks,
     *,
-    client: httpx.AsyncClient | None = None,
+    client: httpx2.AsyncClient | None = None,
     cancel_event: asyncio.Event | None = None,
 ) -> OAuthCredential:
     """Run GitHub's device flow and exchange its token for Copilot auth."""
@@ -127,7 +127,7 @@ async def login_github_copilot(
 async def refresh_github_copilot_token(
     credential: OAuthCredential,
     *,
-    client: httpx.AsyncClient | None = None,
+    client: httpx2.AsyncClient | None = None,
 ) -> OAuthCredential:
     """Exchange a long-lived GitHub token for a short-lived Copilot token."""
     enterprise_domain = oauth_metadata_string(credential.metadata, "enterprise_domain")
@@ -160,7 +160,7 @@ async def refresh_github_copilot_token(
     )
 
 
-async def _start_device_flow(domain: str, client: httpx.AsyncClient) -> GitHubDeviceCode:
+async def _start_device_flow(domain: str, client: httpx2.AsyncClient) -> GitHubDeviceCode:
     response = await client.post(
         f"https://{domain}/login/device/code",
         data={"client_id": GITHUB_COPILOT_CLIENT_ID, "scope": "read:user"},
@@ -193,7 +193,7 @@ async def _start_device_flow(domain: str, client: httpx.AsyncClient) -> GitHubDe
 async def _poll_github_access_token(
     domain: str,
     device: GitHubDeviceCode,
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     *,
     cancel_event: asyncio.Event | None,
 ) -> str:
@@ -238,7 +238,7 @@ async def _poll_github_access_token(
 
 
 def _response_object(
-    response: httpx.Response,
+    response: httpx2.Response,
     label: str,
     *,
     accept_oauth_error: bool = False,

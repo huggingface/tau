@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 from urllib.parse import urlencode
 
-import httpx
+import httpx2
 
 from tau_ai.http import create_async_client
 from tau_coding.credentials import OAuthCredential
@@ -50,7 +50,7 @@ async def login_anthropic(
     on_manual_code_input: Callable[[], Awaitable[str]] | None = None,
     on_progress: Callable[[str], None] | None = None,
     open_browser: bool = True,
-    client: httpx.AsyncClient | None = None,
+    client: httpx2.AsyncClient | None = None,
 ) -> OAuthCredential:
     """Run Anthropic's authorization-code + PKCE login flow."""
     verifier, challenge = create_pkce_pair()
@@ -118,7 +118,7 @@ async def login_anthropic(
 async def refresh_anthropic_token(
     refresh_token: str,
     *,
-    client: httpx.AsyncClient | None = None,
+    client: httpx2.AsyncClient | None = None,
 ) -> OAuthCredential:
     """Refresh Anthropic OAuth credentials."""
     return await _anthropic_token_request(
@@ -136,7 +136,7 @@ async def refresh_anthropic_token(
 async def _anthropic_token_request(
     data: dict[str, str],
     *,
-    client: httpx.AsyncClient | None,
+    client: httpx2.AsyncClient | None,
     action: str,
     previous_refresh: str | None = None,
 ) -> OAuthCredential:
@@ -174,7 +174,7 @@ async def _anthropic_token_request(
     )
 
 
-def _error_detail(response: httpx.Response, *, secrets: Iterable[str] = ()) -> str:
+def _error_detail(response: httpx2.Response, *, secrets: Iterable[str] = ()) -> str:
     """Summarize a token-endpoint failure body.
 
     The endpoint explains itself ("invalid_grant: Refresh token not found or

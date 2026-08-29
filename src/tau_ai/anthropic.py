@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Mapping
 from json import loads
 from typing import Any, cast
 
-import httpx
+import httpx2
 
 from tau_agent.messages import (
     AgentMessage,
@@ -77,7 +77,7 @@ class AnthropicProvider:
         self,
         config: AnthropicConfig,
         *,
-        client: httpx.AsyncClient | None = None,
+        client: httpx2.AsyncClient | None = None,
     ) -> None:
         self._config = config
         self._client = client
@@ -341,7 +341,7 @@ class AnthropicProvider:
                             finish_reason=finish_reason,
                         )
                         return
-                except httpx.HTTPError as exc:
+                except httpx2.HTTPError as exc:
                     if not emitted_content and self._should_retry(attempt):
                         delay = retry_delay_seconds(
                             attempt,
@@ -369,7 +369,7 @@ class AnthropicProvider:
 
         return iterator()
 
-    def _get_client(self) -> httpx.AsyncClient:
+    def _get_client(self) -> httpx2.AsyncClient:
         if self._client is None:
             self._client = create_async_client(timeout=self._config.timeout_seconds)
         return self._client

@@ -10,7 +10,7 @@ from os import environ
 from pathlib import Path
 from shutil import copy2
 from tempfile import NamedTemporaryFile
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 from tau_ai.env import (
@@ -2342,7 +2342,7 @@ def _optional_provider_api(value: object, field_name: str) -> ProviderApi | None
         "google-generative-ai",
         "mistral-conversations",
     }:
-        return cast(ProviderApi, value)
+        return value
     raise ProviderConfigError(f"Provider field has unsupported API: {field_name}")
 
 

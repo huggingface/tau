@@ -7,7 +7,7 @@ import stat
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 
 from conftest import isolate_home
@@ -89,31 +89,31 @@ def _state(
 
 
 def _client(
-    handler: Callable[[httpx.Request], httpx.Response | Exception],
-) -> tuple[httpx.AsyncClient, list[httpx.Request]]:
-    requests: list[httpx.Request] = []
+    handler: Callable[[httpx2.Request], httpx2.Response | Exception],
+) -> tuple[httpx2.AsyncClient, list[httpx2.Request]]:
+    requests: list[httpx2.Request] = []
 
-    def dispatch(request: httpx.Request) -> httpx.Response:
+    def dispatch(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         result = handler(request)
         if isinstance(result, Exception):
             raise result
         return result
 
-    return httpx.AsyncClient(transport=httpx.MockTransport(dispatch)), requests
+    return httpx2.AsyncClient(transport=httpx2.MockTransport(dispatch)), requests
 
 
 def _healthy_handler(
     models: list[Mapping[str, object]] | None = None,
-) -> Callable[[httpx.Request], httpx.Response]:
+) -> Callable[[httpx2.Request], httpx2.Response]:
     payload = models if models is not None else [{"id": "qwen-local", "name": "Qwen local"}]
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == "/health":
-            return httpx.Response(200, json={"status": "ok"})
+            return httpx2.Response(200, json={"status": "ok"})
         if request.url.path == "/v1/models":
-            return httpx.Response(200, json={"object": "list", "data": payload})
-        return httpx.Response(404)
+            return httpx2.Response(200, json={"object": "list", "data": payload})
+        return httpx2.Response(404)
 
     return handler
 
@@ -121,7 +121,7 @@ def _healthy_handler(
 def _service(
     tmp_path: Path,
     *,
-    client: httpx.AsyncClient | None = None,
+    client: httpx2.AsyncClient | None = None,
     credentials: object | None = None,
     environment: Mapping[str, str] | None = None,
 ) -> tuple[LlamaCppService, LlamaCppStateStore, FileCredentialStore]:
@@ -140,7 +140,7 @@ def _service(
 def _runtime(
     tmp_path: Path,
     *,
-    client: httpx.AsyncClient | None = None,
+    client: httpx2.AsyncClient | None = None,
     environment: Mapping[str, str] | None = None,
 ) -> tuple[ExtensionRuntime, TauPaths, FileCredentialStore]:
     paths = TauPaths(home=tmp_path / "tau", agents_home=tmp_path / "agents")
@@ -291,7 +291,7 @@ async def test_auth_headers_cover_stored_environment_fallback_and_no_auth(tmp_pa
 async def test_discovery_reports_authentication_http_failures(
     tmp_path: Path, status_code: int
 ) -> None:
-    client, _ = _client(lambda request: httpx.Response(status_code, text="denied"))
+    client, _ = _client(lambda request: httpx2.Response(status_code, text="denied"))
     service, state_store, _ = _service(tmp_path, client=client)
     state_store.save(_state())
     service = LlamaCppService(
@@ -308,8 +308,8 @@ async def test_discovery_reports_authentication_http_failures(
 
 @pytest.mark.anyio
 async def test_discovery_timeout_and_health_loading_are_actionable(tmp_path: Path) -> None:
-    def timeout(request: httpx.Request) -> Exception:
-        return httpx.ReadTimeout("timed out", request=request)
+    def timeout(request: httpx2.Request) -> Exception:
+        return httpx2.ReadTimeout("timed out", request=request)
 
     client, _ = _client(timeout)
     service, state_store, _ = _service(tmp_path, client=client)
@@ -327,7 +327,7 @@ async def test_discovery_timeout_and_health_loading_are_actionable(tmp_path: Pat
     assert "github.com/ggml-org/llama.cpp" in result.backend_status.diagnostics[0].message
     await client.aclose()
 
-    loading_client, _ = _client(lambda request: httpx.Response(503, json={"status": "loading"}))
+    loading_client, _ = _client(lambda request: httpx2.Response(503, json={"status": "loading"}))
     loading_service, _, _ = _service(tmp_path / "loading", client=loading_client)
     with pytest.raises(LlamaCppError, match="still loading"):
         await loading_service.discover(ResolvedProviderAuth())
@@ -348,12 +348,12 @@ async def test_discovery_timeout_and_health_loading_are_actionable(tmp_path: Pat
 async def test_malformed_empty_and_multiple_model_responses(
     tmp_path: Path, payload: object
 ) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == "/health":
-            return httpx.Response(200, json={"status": "ok"})
+            return httpx2.Response(200, json={"status": "ok"})
         if payload is None:
-            return httpx.Response(200, text="")
-        return httpx.Response(200, json=payload)
+            return httpx2.Response(200, text="")
+        return httpx2.Response(200, json=payload)
 
     client, _ = _client(handler)
     service, _, _ = _service(tmp_path, client=client)
@@ -368,10 +368,10 @@ async def test_malformed_empty_and_multiple_model_responses(
 
 @pytest.mark.anyio
 async def test_malformed_model_payloads_raise_without_guessing_metadata(tmp_path: Path) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == "/health":
-            return httpx.Response(200, json={"status": "ok"})
-        return httpx.Response(
+            return httpx2.Response(200, json={"status": "ok"})
+        return httpx2.Response(
             200,
             json={
                 "data": [
@@ -413,7 +413,7 @@ async def test_dormant_cache_and_offline_refresh_are_network_free(tmp_path: Path
     assert dormant.provider().models == ()
     assert (await dormant.status(_context("refresh"))).state == "unconfigured"
 
-    client, requests = _client(lambda request: httpx.Response(500))
+    client, requests = _client(lambda request: httpx2.Response(500))
     cached, state_store, credentials = _service(tmp_path / "cached", client=client)
     state_store.save(_state())
     cached = LlamaCppService(
@@ -573,11 +573,11 @@ async def test_setup_status_refresh_use_doctor_and_reset_through_real_runtime(
 ) -> None:
     current_models = [{"id": "qwen-local", "name": "Qwen local"}]
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == "/health":
-            return httpx.Response(200, json={"status": "ok"})
+            return httpx2.Response(200, json={"status": "ok"})
         if request.url.path == "/v1/models":
-            return httpx.Response(200, json={"data": current_models})
+            return httpx2.Response(200, json={"data": current_models})
         if request.method == "POST" and request.url.path == "/v1/chat/completions":
             payload = json.loads(request.content)
             if payload.get("tools"):
@@ -592,8 +592,8 @@ async def test_setup_status_refresh_use_doctor_and_reset_through_real_runtime(
                     'data: {"choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}]}'
                     "\n\ndata: [DONE]\n\n"
                 )
-            return httpx.Response(200, text=text, headers={"content-type": "text/event-stream"})
-        return httpx.Response(404)
+            return httpx2.Response(200, text=text, headers={"content-type": "text/event-stream"})
+        return httpx2.Response(404)
 
     client, requests = _client(handler)
     runtime, paths, credentials = _runtime(tmp_path, client=client)
@@ -749,13 +749,13 @@ async def test_print_mode_explicit_dynamic_startup_uses_cached_state(
     LlamaCppStateStore(paths=paths).save(_state())
     project = tmp_path / "project"
     project.mkdir()
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response | Exception:
+    def handler(request: httpx2.Request) -> httpx2.Response | Exception:
         requests.append(request)
         if request.method == "GET":
-            return httpx.ConnectError("server is down", request=request)
-        return httpx.Response(
+            return httpx2.ConnectError("server is down", request=request)
+        return httpx2.Response(
             200,
             text=(
                 'data: {"choices":[{"delta":{"content":"hello"},"finish_reason":"stop"}]}\n'
@@ -764,8 +764,8 @@ async def test_print_mode_explicit_dynamic_startup_uses_cached_state(
             headers={"content-type": "text/event-stream"},
         )
 
-    def fake_client(*, timeout: float) -> httpx.AsyncClient:
-        return httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=timeout)
+    def fake_client(*, timeout: float) -> httpx2.AsyncClient:
+        return httpx2.AsyncClient(transport=httpx2.MockTransport(handler), timeout=timeout)
 
     monkeypatch.setattr(llama_service, "create_async_client", fake_client)
     import tau_ai.openai_compatible as compatible
@@ -813,11 +813,11 @@ async def test_tui_explicit_dynamic_startup_uses_cached_state_during_downtime(
         async def run_async(self) -> None:
             return None
 
-    def unavailable_client(*, timeout: float) -> httpx.AsyncClient:
-        def handler(request: httpx.Request) -> Exception:
-            raise httpx.ConnectError("server is down", request=request)
+    def unavailable_client(*, timeout: float) -> httpx2.AsyncClient:
+        def handler(request: httpx2.Request) -> Exception:
+            raise httpx2.ConnectError("server is down", request=request)
 
-        return httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=timeout)
+        return httpx2.AsyncClient(transport=httpx2.MockTransport(handler), timeout=timeout)
 
     monkeypatch.setattr(tui_app, "TauTuiApp", HeadlessTui)
     monkeypatch.setattr(llama_service, "create_async_client", unavailable_client)
@@ -856,19 +856,19 @@ async def test_builtin_source_lifecycle_is_generation_local(tmp_path: Path) -> N
 
 @pytest.mark.anyio
 async def test_router_capability_version_gate_falls_back_without_mutations(tmp_path: Path) -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         if request.url.path == "/health":
-            return httpx.Response(200, json={"status": "ok"})
+            return httpx2.Response(200, json={"status": "ok"})
         if request.url.path == "/props":
-            return httpx.Response(200, json={"role": "router", "build_info": "b20000-new"})
+            return httpx2.Response(200, json={"role": "router", "build_info": "b20000-new"})
         if request.url.path == "/v1/models":
-            return httpx.Response(200, json={"data": [{"id": "fallback"}]})
-        return httpx.Response(500)
+            return httpx2.Response(200, json={"data": [{"id": "fallback"}]})
+        return httpx2.Response(500)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     service, state_store, credentials = _service(tmp_path, client=client)
     state_store.save(_state(selected_model=None, models=()))
     service = LlamaCppService(
@@ -897,24 +897,24 @@ async def test_router_load_requires_explicit_confirmation_without_active_peers(
     state = "unloaded"
     posts = 0
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal state, posts
         if request.url.path == "/health":
-            return httpx.Response(200, json={"status": "ok"})
+            return httpx2.Response(200, json={"status": "ok"})
         if request.url.path == "/props":
-            return httpx.Response(200, json={"role": "router", "build_info": "b10000-test"})
+            return httpx2.Response(200, json={"role": "router", "build_info": "b10000-test"})
         if request.url.path == "/models" and request.method == "GET":
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={"data": [{"id": "target", "status": {"value": state}}]},
             )
         if request.url.path == "/models/load":
             posts += 1
             state = "loaded"
-            return httpx.Response(200, json={"success": True})
-        return httpx.Response(404)
+            return httpx2.Response(200, json={"success": True})
+        return httpx2.Response(404)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     service, state_store, credentials = _service(tmp_path, client=client)
     state_store.save(_state(selected_model=None, models=()))
     service = LlamaCppService(
@@ -946,11 +946,11 @@ async def test_router_load_unload_download_confirm_reconcile_and_publish(tmp_pat
     transitions: dict[str, int] = {}
     mutations: list[tuple[str, str]] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == "/health":
-            return httpx.Response(200, json={"status": "ok"})
+            return httpx2.Response(200, json={"status": "ok"})
         if request.url.path == "/props":
-            return httpx.Response(200, json={"role": "router", "build_info": "b10000-test"})
+            return httpx2.Response(200, json={"role": "router", "build_info": "b10000-test"})
         if request.url.path == "/models" and request.method == "GET":
             for model_id, remaining in tuple(transitions.items()):
                 if remaining <= 0:
@@ -958,7 +958,7 @@ async def test_router_load_unload_download_confirm_reconcile_and_publish(tmp_pat
                     transitions.pop(model_id)
                 else:
                     transitions[model_id] = remaining - 1
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "data": [
@@ -984,10 +984,10 @@ async def test_router_load_unload_download_confirm_reconcile_and_publish(tmp_pat
                 mutations.append(("download", model_id))
                 states[model_id] = "downloading"
                 transitions[model_id] = 1
-            return httpx.Response(200, json={"success": True})
-        return httpx.Response(404)
+            return httpx2.Response(200, json={"success": True})
+        return httpx2.Response(404)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     published = []
     service, state_store, credentials = _service(tmp_path, client=client)
     state_store.save(_state(selected_model=None, models=()))
@@ -1045,23 +1045,23 @@ async def test_fast_router_download_finishes_without_observing_intermediate_stat
 ) -> None:
     downloaded = False
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal downloaded
         if request.url.path == "/health":
-            return httpx.Response(200, json={"status": "ok"})
+            return httpx2.Response(200, json={"status": "ok"})
         if request.url.path == "/props":
-            return httpx.Response(200, json={"role": "router", "build_info": "b10000-test"})
+            return httpx2.Response(200, json={"role": "router", "build_info": "b10000-test"})
         if request.url.path == "/models" and request.method == "GET":
             models = (
                 [{"id": "owner/repo:Q4_K_M", "status": {"value": "unloaded"}}] if downloaded else []
             )
-            return httpx.Response(200, json={"data": models})
+            return httpx2.Response(200, json={"data": models})
         if request.url.path == "/models" and request.method == "POST":
             downloaded = True
-            return httpx.Response(200, json={"success": True})
-        return httpx.Response(404)
+            return httpx2.Response(200, json={"success": True})
+        return httpx2.Response(404)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     service, state_store, credentials = _service(tmp_path, client=client)
     state_store.save(_state(selected_model=None, models=()))
     service = LlamaCppService(
@@ -1096,9 +1096,9 @@ async def test_router_sse_reports_aggregate_download_progress() -> None:
             "",
         )
     )
-    client = httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(200, text=payload, request=request)
+    client = httpx2.AsyncClient(
+        transport=httpx2.MockTransport(
+            lambda request: httpx2.Response(200, text=payload, request=request)
         )
     )
     progress: list[tuple[int, int]] = []
@@ -1120,21 +1120,21 @@ async def test_router_download_reports_aggregate_byte_progress(tmp_path: Path) -
     download_poll = 0
     started = False
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal download_poll, started
         if request.url.path == "/health":
-            return httpx.Response(200, json={"status": "ok"})
+            return httpx2.Response(200, json={"status": "ok"})
         if request.url.path == "/props":
-            return httpx.Response(200, json={"role": "router", "build_info": "b10000-test"})
+            return httpx2.Response(200, json={"role": "router", "build_info": "b10000-test"})
         if request.url.path == "/models" and request.method == "POST":
             started = True
-            return httpx.Response(200, json={"success": True})
+            return httpx2.Response(200, json={"success": True})
         if request.url.path == "/models" and request.method == "GET":
             if not started:
-                return httpx.Response(200, json={"data": []})
+                return httpx2.Response(200, json={"data": []})
             download_poll += 1
             if download_poll >= 3:
-                return httpx.Response(
+                return httpx2.Response(
                     200,
                     json={
                         "data": [
@@ -1146,7 +1146,7 @@ async def test_router_download_reports_aggregate_byte_progress(tmp_path: Path) -
                     },
                 )
             done = 25 if download_poll == 1 else 75
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "data": [
@@ -1163,9 +1163,9 @@ async def test_router_download_reports_aggregate_byte_progress(tmp_path: Path) -
                     ]
                 },
             )
-        return httpx.Response(404)
+        return httpx2.Response(404)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     service, state_store, credentials = _service(tmp_path, client=client)
     state_store.save(_state(selected_model=None, models=()))
     service = LlamaCppService(
@@ -1196,15 +1196,15 @@ async def test_router_download_reports_aggregate_byte_progress(tmp_path: Path) -
 
 @pytest.mark.anyio
 async def test_router_download_rejection_surfaces_server_message(tmp_path: Path) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == "/health":
-            return httpx.Response(200, json={"status": "ok"})
+            return httpx2.Response(200, json={"status": "ok"})
         if request.url.path == "/props":
-            return httpx.Response(200, json={"role": "router", "build_info": "b10000-test"})
+            return httpx2.Response(200, json={"role": "router", "build_info": "b10000-test"})
         if request.url.path == "/models" and request.method == "GET":
-            return httpx.Response(200, json={"data": []})
+            return httpx2.Response(200, json={"data": []})
         if request.url.path == "/models" and request.method == "POST":
-            return httpx.Response(
+            return httpx2.Response(
                 500,
                 json={
                     "error": {
@@ -1214,9 +1214,9 @@ async def test_router_download_rejection_surfaces_server_message(tmp_path: Path)
                     }
                 },
             )
-        return httpx.Response(404)
+        return httpx2.Response(404)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     service, state_store, credentials = _service(tmp_path, client=client)
     state_store.save(_state(selected_model=None, models=()))
     service = LlamaCppService(
@@ -1245,25 +1245,25 @@ async def test_router_connection_loss_reconciles_without_replaying_mutation(tmp_
     posts = 0
     list_calls = 0
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal posts, list_calls
         if request.url.path == "/health":
-            return httpx.Response(200, json={"status": "ok"})
+            return httpx2.Response(200, json={"status": "ok"})
         if request.url.path == "/props":
-            return httpx.Response(200, json={"role": "router", "build_info": "b10000-test"})
+            return httpx2.Response(200, json={"role": "router", "build_info": "b10000-test"})
         if request.url.path == "/models" and request.method == "GET":
             list_calls += 1
             if list_calls > 2:
-                raise httpx.ConnectError("lost", request=request)
-            return httpx.Response(
+                raise httpx2.ConnectError("lost", request=request)
+            return httpx2.Response(
                 200, json={"data": [{"id": "target", "status": {"value": "unloaded"}}]}
             )
         if request.url.path == "/models/load":
             posts += 1
-            return httpx.Response(200, json={"success": True})
-        return httpx.Response(404)
+            return httpx2.Response(200, json={"success": True})
+        return httpx2.Response(404)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     service, state_store, credentials = _service(tmp_path, client=client)
     state_store.save(_state(selected_model=None, models=()))
     service = LlamaCppService(
@@ -1289,28 +1289,28 @@ async def test_router_cancellation_requests_documented_cancel_and_reconciles(
     load_started = asyncio.Event()
     mutations: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal state
         if request.url.path == "/health":
-            return httpx.Response(200, json={"status": "ok"})
+            return httpx2.Response(200, json={"status": "ok"})
         if request.url.path == "/props":
-            return httpx.Response(200, json={"role": "router", "build_info": "b10000-test"})
+            return httpx2.Response(200, json={"role": "router", "build_info": "b10000-test"})
         if request.url.path == "/models" and request.method == "GET":
-            return httpx.Response(
+            return httpx2.Response(
                 200, json={"data": [{"id": "target", "status": {"value": state}}]}
             )
         if request.url.path == "/models/load":
             mutations.append("load")
             state = "loading"
             load_started.set()
-            return httpx.Response(200, json={"success": True})
+            return httpx2.Response(200, json={"success": True})
         if request.url.path == "/models/unload":
             mutations.append("unload")
             state = "unloaded"
-            return httpx.Response(200, json={"success": True})
-        return httpx.Response(404)
+            return httpx2.Response(200, json={"success": True})
+        return httpx2.Response(404)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     service, state_store, credentials = _service(tmp_path, client=client)
     state_store.save(_state(selected_model=None, models=()))
     service = LlamaCppService(
@@ -1338,14 +1338,14 @@ async def test_router_cancellation_requests_documented_cancel_and_reconciles(
 
 @pytest.mark.anyio
 async def test_hugging_face_search_details_token_and_gating_are_search_only(tmp_path: Path) -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         if request.url.path == "/api/models":
-            return httpx.Response(200, json=[{"id": "owner/repo-GGUF"}])
+            return httpx2.Response(200, json=[{"id": "owner/repo-GGUF"}])
         if request.url.path == "/api/models/owner/repo-GGUF":
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "id": "owner/repo-GGUF",
@@ -1360,7 +1360,7 @@ async def test_hugging_face_search_details_token_and_gating_are_search_only(tmp_
             )
         return _healthy_handler()(request)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     service, _, _ = _service(
         tmp_path,
         client=client,

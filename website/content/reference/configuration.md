@@ -82,7 +82,7 @@ can replace or extend the model's highest-priority instructions.
 
 ## Network proxies
 
-Tau uses `httpx` for provider requests, OAuth token refreshes, and startup update
+Tau uses `httpx2` for provider requests, OAuth token refreshes, and startup update
 checks, so it honors standard proxy environment variables such as `HTTP_PROXY`,
 `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY`.
 
@@ -97,7 +97,7 @@ export ALL_PROXY=socks5h://127.0.0.1:1080
 
 Tau also accepts the generic `socks://` form that some systems and tools set in
 the environment. Before creating its own HTTP clients, Tau normalizes
-`socks://...` to `socks5://...` because `httpx` does not recognize the generic
+`socks://...` to `socks5://...` because `httpx2` does not recognize the generic
 scheme directly.
 
 This matters for users behind corporate proxies, VPNs, local tunnels, or

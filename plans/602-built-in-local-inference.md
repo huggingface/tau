@@ -1333,7 +1333,7 @@ Test:
 
 ### 15.5 llama.cpp fake HTTP server
 
-Use `httpx.MockTransport` or the transport injection already used by Tau. Cover:
+Use `httpx2.MockTransport` or the transport injection already used by Tau. Cover:
 
 - root URL normalization;
 - `/v1` normalization;

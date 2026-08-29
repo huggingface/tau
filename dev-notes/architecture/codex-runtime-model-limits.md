@@ -118,7 +118,7 @@ rare.
 
 ## Testing
 
-Deterministic tests use `httpx.MockTransport` and a fake model-limit provider.
+Deterministic tests use `httpx2.MockTransport` and a fake model-limit provider.
 They cover:
 
 - authenticated Codex model-catalog URL and headers

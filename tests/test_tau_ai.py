@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator, Mapping
 from json import loads
 
-import httpx
+import httpx2
 import pytest
 
 from tau_agent import (
@@ -148,11 +148,11 @@ async def test_openai_compatible_provider_uses_configured_timeout() -> None:
 
 @pytest.mark.anyio
 async def test_openai_compatible_provider_formats_request_and_streams_text() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n'
@@ -162,7 +162,7 @@ async def test_openai_compatible_provider_formats_request_and_streams_text() -> 
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -214,17 +214,17 @@ async def test_openai_compatible_provider_formats_request_and_streams_text() -> 
 
 @pytest.mark.anyio
 async def test_openai_compatible_provider_uses_wire_model_alias_but_reports_logical_model() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -250,16 +250,16 @@ async def test_openai_compatible_provider_uses_wire_model_alias_but_reports_logi
 @pytest.mark.anyio
 async def test_openai_compatible_provider_observes_headers_after_success() -> None:
     observed: list[dict[str, str]] = []
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         if len(requests) == 1:
-            return httpx.Response(
+            return httpx2.Response(
                 500,
                 headers={"x-inference-provider": "failed-provider"},
             )
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
             headers={
@@ -268,7 +268,7 @@ async def test_openai_compatible_provider_observes_headers_after_success() -> No
             },
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -299,9 +299,9 @@ async def test_openai_compatible_provider_observes_headers_after_success() -> No
 
 @pytest.mark.anyio
 async def test_openai_compatible_provider_observer_failure_keeps_completed_response() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         del request
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
             headers={
@@ -314,7 +314,7 @@ async def test_openai_compatible_provider_observer_failure_keeps_completed_respo
         del headers
         raise PermissionError("session index is read-only")
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -343,22 +343,22 @@ async def test_openai_compatible_provider_observer_failure_keeps_completed_respo
 
 @pytest.mark.anyio
 async def test_openai_compatible_provider_does_not_retry_after_partial_output() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    class FailingStream(httpx.AsyncByteStream):
+    class FailingStream(httpx2.AsyncByteStream):
         async def __aiter__(self) -> AsyncIterator[bytes]:
             yield b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
-            raise httpx.ReadError("stream dropped")
+            raise httpx2.ReadError("stream dropped")
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             stream=FailingStream(),
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -385,17 +385,17 @@ async def test_openai_compatible_provider_does_not_retry_after_partial_output() 
 
 @pytest.mark.anyio
 async def test_openai_chat_completions_sends_prompt_cache_key_without_affinity_headers() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -420,17 +420,17 @@ async def test_openai_chat_completions_sends_prompt_cache_key_without_affinity_h
 
 @pytest.mark.anyio
 async def test_openai_compatible_provider_includes_configured_reasoning_effort() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -455,17 +455,17 @@ async def test_openai_compatible_provider_includes_configured_reasoning_effort()
 
 @pytest.mark.anyio
 async def test_openai_compatible_provider_includes_openrouter_provider_routing() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -489,17 +489,17 @@ async def test_openai_compatible_provider_includes_openrouter_provider_routing()
 
 @pytest.mark.anyio
 async def test_openai_compatible_provider_supports_nested_reasoning_effort_parameter() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -528,11 +528,11 @@ async def test_openai_compatible_provider_supports_nested_reasoning_effort_param
 
 @pytest.mark.anyio
 async def test_google_provider_sends_system_instruction_at_top_level() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},'
@@ -541,7 +541,7 @@ async def test_google_provider_sends_system_instruction_at_top_level() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = GoogleGenerativeAIProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -571,11 +571,11 @@ async def test_google_provider_sends_system_instruction_at_top_level() -> None:
 
 @pytest.mark.anyio
 async def test_google_provider_round_trips_thought_signature() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"candidates":[{"content":{"parts":[{"functionCall":'
@@ -585,7 +585,7 @@ async def test_google_provider_round_trips_thought_signature() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = GoogleGenerativeAIProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -628,11 +628,11 @@ async def test_google_provider_round_trips_thought_signature() -> None:
 
 @pytest.mark.anyio
 async def test_google_provider_strips_unsupported_schema_keywords_from_tools() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},'
@@ -657,7 +657,7 @@ async def test_google_provider_strips_unsupported_schema_keywords_from_tools() -
         },
     )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = GoogleGenerativeAIProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -684,11 +684,11 @@ async def test_google_provider_strips_unsupported_schema_keywords_from_tools() -
 
 @pytest.mark.anyio
 async def test_google_provider_errors_when_stream_ends_during_thinking() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"candidates":[{"content":{"parts":['
@@ -697,7 +697,7 @@ async def test_google_provider_errors_when_stream_ends_during_thinking() -> None
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = GoogleGenerativeAIProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -745,8 +745,8 @@ async def test_google_provider_does_not_execute_tool_from_incomplete_stream() ->
         execute_fn=execute,  # type: ignore[arg-type]
     )
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"candidates":[{"content":{"parts":['
@@ -758,7 +758,7 @@ async def test_google_provider_does_not_execute_tool_from_incomplete_stream() ->
         )
 
     messages = [UserMessage(content="Read README.md")]
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = GoogleGenerativeAIProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -785,17 +785,17 @@ async def test_google_provider_does_not_execute_tool_from_incomplete_stream() ->
 
 @pytest.mark.anyio
 async def test_google_provider_retries_empty_clean_close_then_errors() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text="",
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = GoogleGenerativeAIProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -821,8 +821,8 @@ async def test_google_provider_retries_empty_clean_close_then_errors() -> None:
 
 @pytest.mark.anyio
 async def test_google_provider_accepts_explicit_stop_finish_reason() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},'
@@ -831,7 +831,7 @@ async def test_google_provider_accepts_explicit_stop_finish_reason() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = GoogleGenerativeAIProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -855,8 +855,8 @@ async def test_google_provider_accepts_explicit_stop_finish_reason() -> None:
 
 @pytest.mark.anyio
 async def test_google_provider_maps_max_tokens_finish_reason_to_length() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"candidates":[{"content":{"parts":[{"text":"partial"}]},'
@@ -865,7 +865,7 @@ async def test_google_provider_maps_max_tokens_finish_reason_to_length() -> None
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = GoogleGenerativeAIProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -889,17 +889,17 @@ async def test_google_provider_maps_max_tokens_finish_reason_to_length() -> None
 
 @pytest.mark.anyio
 async def test_google_provider_errors_on_truncated_json_chunk() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"candidates":[\n\n',
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = GoogleGenerativeAIProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -925,8 +925,8 @@ async def test_google_provider_errors_on_truncated_json_chunk() -> None:
 
 @pytest.mark.anyio
 async def test_openai_compatible_provider_streams_reasoning_content() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"choices":[{"delta":{"reasoning_content":"plan "}}]}\n\n'
@@ -937,7 +937,7 @@ async def test_openai_compatible_provider_streams_reasoning_content() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
             client=client,
@@ -976,11 +976,11 @@ async def test_openai_compatible_provider_streams_reasoning_content() -> None:
 
 @pytest.mark.anyio
 async def test_openai_compatible_provider_replays_persisted_reasoning() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"choices":[{"delta":{"content":"next"},"finish_reason":"stop"}]}\n\n'
@@ -995,7 +995,7 @@ async def test_openai_compatible_provider_replays_persisted_reasoning() -> None:
             TextContent(text="prior answer"),
         ]
     )
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
             client=client,
@@ -1023,7 +1023,7 @@ async def test_openai_compatible_provider_streams_tool_calls() -> None:
         {"type": "object", "properties": {"path": {"type": "string"}}},
     )
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         payload = loads(request.content)
         assert payload["tools"] == [
             {
@@ -1035,7 +1035,7 @@ async def test_openai_compatible_provider_streams_tool_calls() -> None:
                 },
             }
         ]
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1",'
@@ -1047,7 +1047,7 @@ async def test_openai_compatible_provider_streams_tool_calls() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
             client=client,
@@ -1078,16 +1078,16 @@ async def test_openai_compatible_provider_streams_tool_calls() -> None:
 async def test_openai_compatible_provider_reports_resolved_response_provider() -> None:
     attempts = 0
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal attempts
         attempts += 1
         if attempts == 1:
-            return httpx.Response(
+            return httpx2.Response(
                 503,
                 text="temporarily unavailable",
                 headers={"x-inference-provider": "provider-before-failover"},
             )
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n'
@@ -1099,7 +1099,7 @@ async def test_openai_compatible_provider_reports_resolved_response_provider() -
             },
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -1130,13 +1130,13 @@ async def test_openai_compatible_provider_reports_resolved_response_provider() -
 
 @pytest.mark.anyio
 async def test_openai_compatible_provider_retries_transient_status() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         if len(requests) == 1:
-            return httpx.Response(500, text="try again")
-        return httpx.Response(
+            return httpx2.Response(500, text="try again")
+        return httpx2.Response(
             200,
             text=(
                 'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n'
@@ -1145,7 +1145,7 @@ async def test_openai_compatible_provider_retries_transient_status() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -1177,14 +1177,14 @@ async def test_openai_compatible_provider_retries_transient_status() -> None:
 
 @pytest.mark.anyio
 async def test_openai_compatible_provider_cancellation_stops_retry_backoff() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
     signal = SimpleCancellationToken()
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(503, text="try later")
+        return httpx2.Response(503, text="try later")
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -1214,16 +1214,16 @@ async def test_openai_compatible_provider_cancellation_stops_retry_backoff() -> 
 
 @pytest.mark.anyio
 async def test_openai_compatible_provider_does_not_retry_non_transient_status() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             400,
             json={"error": {"message": "The selected model is unavailable."}},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -1259,10 +1259,10 @@ async def test_openai_compatible_provider_does_not_retry_non_transient_status() 
 
 @pytest.mark.anyio
 async def test_openai_compatible_provider_includes_plain_http_error_body_in_message() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(400, text="bad request details")
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(400, text="bad request details")
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -1295,14 +1295,14 @@ async def test_openai_compatible_provider_includes_plain_http_error_body_in_mess
 
 @pytest.mark.anyio
 async def test_openai_codex_provider_discovers_and_caches_live_model_limits() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "models": [
@@ -1319,7 +1319,7 @@ async def test_openai_codex_provider_discovers_and_caches_live_model_limits() ->
             },
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
             OpenAICodexConfig(
                 credential_resolver=credentials,
@@ -1353,13 +1353,13 @@ async def test_openai_codex_provider_includes_http_error_detail_in_message() -> 
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             400,
             json={"error": {"message": "The requested model does not exist."}},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
             OpenAICodexConfig(
                 credential_resolver=credentials,
@@ -1396,10 +1396,10 @@ async def test_openai_codex_provider_includes_plain_http_error_body_in_message()
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(400, text="bad request details")
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(400, text="bad request details")
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
             OpenAICodexConfig(
                 credential_resolver=credentials,
@@ -1447,14 +1447,14 @@ async def test_openai_codex_provider_surfaces_nested_stream_error_message() -> N
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=_CODEX_OVERLOAD_ERROR_SSE,
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
             OpenAICodexConfig(
                 credential_resolver=credentials,
@@ -1494,21 +1494,21 @@ async def test_openai_codex_provider_surfaces_nested_stream_error_message() -> N
 
 @pytest.mark.anyio
 async def test_openai_codex_provider_retries_transient_stream_error() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         body = _CODEX_OVERLOAD_ERROR_SSE if len(requests) == 1 else _CODEX_TEXT_SSE
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=body,
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
             OpenAICodexConfig(
                 credential_resolver=credentials,
@@ -1541,12 +1541,12 @@ async def test_openai_codex_provider_retries_transient_stream_error() -> None:
 
 @pytest.mark.anyio
 async def test_openai_codex_provider_retries_transient_response_failed() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         body = (
             'data: {"type":"response.failed","response":{"status":"failed",'
@@ -1555,13 +1555,13 @@ async def test_openai_codex_provider_retries_transient_response_failed() -> None
             if len(requests) == 1
             else _CODEX_TEXT_SSE
         )
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=body,
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
             OpenAICodexConfig(
                 credential_resolver=credentials,
@@ -1594,20 +1594,20 @@ async def test_openai_codex_provider_retries_transient_response_failed() -> None
 
 @pytest.mark.anyio
 async def test_openai_codex_provider_surfaces_stream_error_after_retry_exhaustion() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=_CODEX_OVERLOAD_ERROR_SSE,
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
             OpenAICodexConfig(
                 credential_resolver=credentials,
@@ -1637,14 +1637,14 @@ async def test_openai_codex_provider_surfaces_stream_error_after_retry_exhaustio
 
 @pytest.mark.anyio
 async def test_openai_codex_provider_does_not_retry_non_transient_stream_error() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"error","error":{"type":"invalid_request_error",'
@@ -1654,7 +1654,7 @@ async def test_openai_codex_provider_does_not_retry_non_transient_stream_error()
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
             OpenAICodexConfig(
                 credential_resolver=credentials,
@@ -1682,12 +1682,12 @@ async def test_openai_codex_provider_does_not_retry_non_transient_stream_error()
 
 @pytest.mark.anyio
 async def test_openai_codex_provider_formats_request_and_streams_text() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         payload = loads(request.content)
         assert payload["model"] == "gpt-5.5"
@@ -1700,7 +1700,7 @@ async def test_openai_codex_provider_formats_request_and_streams_text() -> None:
                 "content": [{"type": "input_text", "text": "Say hello"}],
             }
         ]
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"response.output_text.delta","delta":"Hel"}\n\n'
@@ -1710,7 +1710,7 @@ async def test_openai_codex_provider_formats_request_and_streams_text() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
             OpenAICodexConfig(
                 credential_resolver=credentials,
@@ -1752,20 +1752,20 @@ async def test_openai_codex_provider_formats_request_and_streams_text() -> None:
 
 @pytest.mark.anyio
 async def test_openai_codex_provider_includes_configured_reasoning_effort() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"type":"response.completed","response":{"status":"completed"}}\n\n',
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
             OpenAICodexConfig(
                 credential_resolver=credentials,
@@ -1792,20 +1792,20 @@ async def test_openai_codex_provider_includes_configured_reasoning_effort() -> N
 
 @pytest.mark.anyio
 async def test_openai_codex_provider_omits_reasoning_when_unset() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"type":"response.completed","response":{"status":"completed"}}\n\n',
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
             OpenAICodexConfig(
                 credential_resolver=credentials,
@@ -1831,8 +1831,8 @@ async def test_openai_codex_provider_streams_reasoning_deltas() -> None:
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"response.reasoning.delta","delta":"trace "}\n\n'
@@ -1843,7 +1843,7 @@ async def test_openai_codex_provider_streams_reasoning_deltas() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
             OpenAICodexConfig(
                 credential_resolver=credentials,
@@ -1883,8 +1883,8 @@ async def test_openai_codex_provider_preserves_reasoning_summary_part_boundaries
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"response.reasoning_summary_text.delta",'
@@ -1899,7 +1899,7 @@ async def test_openai_codex_provider_preserves_reasoning_summary_part_boundaries
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
             OpenAICodexConfig(
                 credential_resolver=credentials,
@@ -1942,7 +1942,7 @@ async def test_openai_codex_provider_streams_tool_calls() -> None:
         {"type": "object", "properties": {"path": {"type": "string"}}},
     )
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         payload = loads(request.content)
         assert payload["tools"] == [
             {
@@ -1953,7 +1953,7 @@ async def test_openai_codex_provider_streams_tool_calls() -> None:
                 "strict": None,
             }
         ]
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"response.output_item.added",'
@@ -1969,7 +1969,7 @@ async def test_openai_codex_provider_streams_tool_calls() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
             OpenAICodexConfig(
                 credential_resolver=credentials,
@@ -2003,8 +2003,8 @@ async def test_openai_codex_provider_routes_parallel_tool_argument_streams() -> 
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"response.output_item.added","output_index":0,'
@@ -2028,7 +2028,7 @@ async def test_openai_codex_provider_routes_parallel_tool_argument_streams() -> 
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
             OpenAICodexConfig(
                 credential_resolver=credentials,
@@ -2061,11 +2061,11 @@ async def test_openai_codex_provider_routes_parallel_tool_argument_streams() -> 
 
 @pytest.mark.anyio
 async def test_anthropic_provider_formats_request_and_streams_text() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"message_start","message":{"content":[]}}\n\n'
@@ -2079,7 +2079,7 @@ async def test_anthropic_provider_formats_request_and_streams_text() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = AnthropicProvider(
             AnthropicConfig(
                 api_key="test-key",
@@ -2149,17 +2149,17 @@ async def test_anthropic_provider_sends_configured_max_tokens(
     configured_max_tokens: int | None,
     expected_max_tokens: int,
 ) -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"type":"message_stop"}\n\n',
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = AnthropicProvider(
             AnthropicConfig(
                 api_key="test-key",
@@ -2184,17 +2184,17 @@ async def test_anthropic_provider_sends_configured_max_tokens(
 
 @pytest.mark.anyio
 async def test_anthropic_provider_includes_configured_thinking_budget() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"type":"message_stop"}\n\n',
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = AnthropicProvider(
             AnthropicConfig(
                 api_key="test-key",
@@ -2220,17 +2220,17 @@ async def test_anthropic_provider_includes_configured_thinking_budget() -> None:
 
 @pytest.mark.anyio
 async def test_anthropic_provider_explicitly_disables_default_adaptive_thinking() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"type":"message_stop"}\n\n',
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = AnthropicProvider(
             AnthropicConfig(
                 api_key="test-key",
@@ -2256,8 +2256,8 @@ async def test_anthropic_provider_explicitly_disables_default_adaptive_thinking(
 
 @pytest.mark.anyio
 async def test_anthropic_provider_streams_thinking_deltas() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"message_start","message":{"content":[]}}\n\n'
@@ -2273,7 +2273,7 @@ async def test_anthropic_provider_streams_thinking_deltas() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = AnthropicProvider(
             AnthropicConfig(api_key="test-key", base_url="https://api.anthropic.test/v1"),
             client=client,
@@ -2307,13 +2307,13 @@ async def test_anthropic_provider_streams_thinking_deltas() -> None:
 
 @pytest.mark.anyio
 async def test_anthropic_provider_retries_transient_status_with_event() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         if len(requests) == 1:
-            return httpx.Response(503, text="overloaded")
-        return httpx.Response(
+            return httpx2.Response(503, text="overloaded")
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"content_block_delta","index":0,'
@@ -2324,7 +2324,7 @@ async def test_anthropic_provider_retries_transient_status_with_event() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = AnthropicProvider(
             AnthropicConfig(
                 api_key="test-key",
@@ -2356,13 +2356,13 @@ async def test_anthropic_provider_retries_transient_status_with_event() -> None:
 
 @pytest.mark.anyio
 async def test_anthropic_provider_retries_overloaded_529() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         if len(requests) == 1:
-            return httpx.Response(529, text="overloaded")
-        return httpx.Response(
+            return httpx2.Response(529, text="overloaded")
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"content_block_delta","index":0,'
@@ -2373,7 +2373,7 @@ async def test_anthropic_provider_retries_overloaded_529() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = AnthropicProvider(
             AnthropicConfig(
                 api_key="test-key",
@@ -2405,12 +2405,12 @@ async def test_anthropic_provider_retries_overloaded_529() -> None:
 
 @pytest.mark.anyio
 async def test_anthropic_provider_retries_transient_stream_error() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         if len(requests) == 1:
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 text=(
                     'data: {"type":"error","error":{"type":"overloaded_error",'
@@ -2418,7 +2418,7 @@ async def test_anthropic_provider_retries_transient_stream_error() -> None:
                 ),
                 headers={"content-type": "text/event-stream"},
             )
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"content_block_delta","index":0,'
@@ -2429,7 +2429,7 @@ async def test_anthropic_provider_retries_transient_stream_error() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = AnthropicProvider(
             AnthropicConfig(
                 api_key="test-key",
@@ -2460,15 +2460,15 @@ async def test_anthropic_provider_retries_transient_stream_error() -> None:
 
 @pytest.mark.anyio
 async def test_anthropic_provider_surfaces_stream_error_after_retry_exhaustion() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
     error_event = {
         "type": "error",
         "error": {"type": "overloaded_error", "message": "Overloaded"},
     }
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"error","error":{"type":"overloaded_error",'
@@ -2477,7 +2477,7 @@ async def test_anthropic_provider_surfaces_stream_error_after_retry_exhaustion()
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = AnthropicProvider(
             AnthropicConfig(
                 api_key="test-key",
@@ -2507,11 +2507,11 @@ async def test_anthropic_provider_surfaces_stream_error_after_retry_exhaustion()
 
 @pytest.mark.anyio
 async def test_anthropic_provider_does_not_retry_non_transient_stream_error() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"error","error":{"type":"authentication_error",'
@@ -2520,7 +2520,7 @@ async def test_anthropic_provider_does_not_retry_non_transient_stream_error() ->
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = AnthropicProvider(
             AnthropicConfig(
                 api_key="test-key",
@@ -2546,11 +2546,11 @@ async def test_anthropic_provider_does_not_retry_non_transient_stream_error() ->
 
 @pytest.mark.anyio
 async def test_anthropic_provider_does_not_retry_stream_error_after_content() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"content_block_delta","index":0,'
@@ -2561,7 +2561,7 @@ async def test_anthropic_provider_does_not_retry_stream_error_after_content() ->
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = AnthropicProvider(
             AnthropicConfig(
                 api_key="test-key",
@@ -2588,7 +2588,7 @@ async def test_anthropic_provider_does_not_retry_stream_error_after_content() ->
 
 @pytest.mark.anyio
 async def test_anthropic_provider_cancellation_stops_stream_error_retry_backoff() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
     class CancelDuringBackoff(SimpleCancellationToken):
         def __init__(self) -> None:
@@ -2601,9 +2601,9 @@ async def test_anthropic_provider_cancellation_stops_stream_error_retry_backoff(
 
     signal = CancelDuringBackoff()
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"error","error":{"type":"overloaded_error",'
@@ -2612,7 +2612,7 @@ async def test_anthropic_provider_cancellation_stops_stream_error_retry_backoff(
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = AnthropicProvider(
             AnthropicConfig(
                 api_key="test-key",
@@ -2639,13 +2639,13 @@ async def test_anthropic_provider_cancellation_stops_stream_error_retry_backoff(
 
 @pytest.mark.anyio
 async def test_anthropic_provider_includes_http_error_detail_in_message() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             400,
             json={"error": {"message": "model: invalid-model is not supported"}},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = AnthropicProvider(
             AnthropicConfig(
                 api_key="test-key",
@@ -2701,11 +2701,11 @@ def test_use_responses_api_routes_only_restricted_models() -> None:
 
 @pytest.mark.anyio
 async def test_responses_api_formats_request_for_restricted_model() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"response.output_text.delta","delta":"Sun"}\n\n'
@@ -2730,7 +2730,7 @@ async def test_responses_api_formats_request_for_restricted_model() -> None:
         UserMessage(content="summarize"),
     ]
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -2799,8 +2799,8 @@ async def test_responses_api_formats_request_for_restricted_model() -> None:
 
 @pytest.mark.anyio
 async def test_responses_api_parses_streamed_tool_call() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"response.output_item.added","output_index":0,'
@@ -2820,7 +2820,7 @@ async def test_responses_api_parses_streamed_tool_call() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
             client=client,
@@ -2851,8 +2851,8 @@ async def test_responses_api_parses_streamed_tool_call() -> None:
 
 @pytest.mark.anyio
 async def test_responses_api_streams_refusal_as_text() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"response.refusal.delta","delta":"I can"}\n\n'
@@ -2864,7 +2864,7 @@ async def test_responses_api_streams_refusal_as_text() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
             client=client,
@@ -2897,8 +2897,8 @@ async def test_responses_api_streams_refusal_as_text() -> None:
 
 @pytest.mark.anyio
 async def test_responses_api_streams_reasoning_summary_as_thinking() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"response.reasoning_summary_text.delta",'
@@ -2909,7 +2909,7 @@ async def test_responses_api_streams_reasoning_summary_as_thinking() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -2944,8 +2944,8 @@ async def test_responses_api_streams_reasoning_summary_as_thinking() -> None:
 
 @pytest.mark.anyio
 async def test_responses_api_preserves_reasoning_summary_part_boundaries() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"response.reasoning_summary_text.delta",'
@@ -2960,7 +2960,7 @@ async def test_responses_api_preserves_reasoning_summary_part_boundaries() -> No
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -2995,17 +2995,17 @@ async def test_responses_api_preserves_reasoning_summary_part_boundaries() -> No
 
 @pytest.mark.anyio
 async def test_responses_api_omits_reasoning_when_effort_is_none() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"type":"response.completed","response":{"status":"completed"}}\n\n',
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -3033,8 +3033,8 @@ async def test_responses_api_omits_reasoning_when_effort_is_none() -> None:
 
 @pytest.mark.anyio
 async def test_responses_api_surfaces_stream_failure() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"response.failed","response":{"status":"failed",'
@@ -3043,7 +3043,7 @@ async def test_responses_api_surfaces_stream_failure() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
             client=client,
@@ -3068,8 +3068,8 @@ async def test_responses_api_surfaces_stream_failure() -> None:
 
 @pytest.mark.anyio
 async def test_responses_api_orders_parallel_tool_calls_by_output_index() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"response.output_item.added","output_index":0,'
@@ -3090,7 +3090,7 @@ async def test_responses_api_orders_parallel_tool_calls_by_output_index() -> Non
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
             client=client,
@@ -3113,14 +3113,14 @@ async def test_responses_api_orders_parallel_tool_calls_by_output_index() -> Non
 
 @pytest.mark.anyio
 async def test_responses_api_surfaces_top_level_error_event() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text='data: {"type":"error","message":"rate limited"}\n\n',
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
             client=client,
@@ -3142,8 +3142,8 @@ async def test_responses_api_surfaces_top_level_error_event() -> None:
 
 @pytest.mark.anyio
 async def test_responses_api_maps_incomplete_status_to_length() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"response.output_text.delta","delta":"partial"}\n\n'
@@ -3152,7 +3152,7 @@ async def test_responses_api_maps_incomplete_status_to_length() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
             client=client,
@@ -3175,11 +3175,11 @@ async def test_responses_api_maps_incomplete_status_to_length() -> None:
 
 @pytest.mark.anyio
 async def test_openai_compatible_provider_reports_usage() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":"stop"}]}\n\n'
@@ -3191,7 +3191,7 @@ async def test_openai_compatible_provider_reports_usage() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -3226,14 +3226,14 @@ async def test_openai_compatible_provider_reports_usage() -> None:
 
 @pytest.mark.anyio
 async def test_openai_codex_provider_reports_usage_and_sends_cache_affinity() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"response.output_text.delta","delta":"Hi"}\n\n'
@@ -3245,7 +3245,7 @@ async def test_openai_codex_provider_reports_usage_and_sends_cache_affinity() ->
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
             OpenAICodexConfig(
                 credential_resolver=credentials,
@@ -3282,11 +3282,11 @@ async def test_openai_codex_provider_reports_usage_and_sends_cache_affinity() ->
 
 @pytest.mark.anyio
 async def test_openai_compatible_responses_reports_usage_and_sends_cache_affinity() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"response.output_text.delta","delta":"Hi"}\n\n'
@@ -3298,7 +3298,7 @@ async def test_openai_compatible_responses_reports_usage_and_sends_cache_affinit
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -3334,8 +3334,8 @@ async def test_openai_compatible_responses_reports_usage_and_sends_cache_affinit
 
 @pytest.mark.anyio
 async def test_anthropic_provider_reports_usage() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"message_start","message":{"content":[],"usage":'
@@ -3351,7 +3351,7 @@ async def test_anthropic_provider_reports_usage() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = AnthropicProvider(
             AnthropicConfig(
                 api_key="test-key",
@@ -3383,11 +3383,11 @@ async def test_anthropic_provider_reports_usage() -> None:
 
 @pytest.mark.anyio
 async def test_openai_compatible_provider_can_disable_usage_in_streaming() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=(
                 'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n'
@@ -3396,7 +3396,7 @@ async def test_openai_compatible_provider_can_disable_usage_in_streaming() -> No
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -3423,8 +3423,8 @@ async def test_openai_compatible_provider_can_disable_usage_in_streaming() -> No
 @pytest.mark.anyio
 async def test_openai_compatible_provider_reads_usage_from_choice_fallback() -> None:
     # Moonshot-style: usage lives on the choice, not at the chunk top level.
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":"stop",'
@@ -3434,7 +3434,7 @@ async def test_openai_compatible_provider_reads_usage_from_choice_fallback() -> 
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -3465,8 +3465,8 @@ async def test_openai_compatible_provider_reads_usage_from_choice_fallback() -> 
 async def test_openai_compatible_provider_falls_back_to_prompt_cache_hit_tokens() -> None:
     # DeepSeek-style: cache reads come via prompt_cache_hit_tokens, and there
     # is no prompt_tokens_details.cached_tokens to prefer.
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":"stop"}]}\n\n'
@@ -3477,7 +3477,7 @@ async def test_openai_compatible_provider_falls_back_to_prompt_cache_hit_tokens(
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -3509,8 +3509,8 @@ async def test_openai_compatible_provider_reported_zero_cached_tokens_wins() -> 
     # Nullish semantics (Pi: cached_tokens ?? prompt_cache_hit_tokens ?? 0):
     # an explicitly reported cached_tokens of 0 must not fall through to
     # prompt_cache_hit_tokens.
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":"stop"}]}\n\n'
@@ -3522,7 +3522,7 @@ async def test_openai_compatible_provider_reported_zero_cached_tokens_wins() -> 
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -3551,8 +3551,8 @@ async def test_openai_compatible_provider_reported_zero_cached_tokens_wins() -> 
 async def test_anthropic_provider_reports_usage_from_message_delta_only() -> None:
     # No usage on message_start: the message_delta usage alone must still
     # produce a Usage (the `usage or Usage()` branch).
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"message_start","message":{"content":[]}}\n\n'
@@ -3565,7 +3565,7 @@ async def test_anthropic_provider_reports_usage_from_message_delta_only() -> Non
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = AnthropicProvider(
             AnthropicConfig(
                 api_key="test-key",
@@ -3599,8 +3599,8 @@ async def test_openai_codex_provider_leaves_reasoning_none_when_unreported() -> 
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=(
                 'data: {"type":"response.output_text.delta","delta":"Hi"}\n\n'
@@ -3610,7 +3610,7 @@ async def test_openai_codex_provider_leaves_reasoning_none_when_unreported() -> 
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICodexProvider(
             OpenAICodexConfig(
                 credential_resolver=credentials,
@@ -3638,11 +3638,11 @@ async def test_openai_codex_provider_leaves_reasoning_none_when_unreported() -> 
 
 @pytest.mark.anyio
 async def test_github_copilot_sends_vision_header_for_tool_result_images() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"type":"response.completed","response":{"status":"completed"}}\n\n',
             headers={"content-type": "text/event-stream"},
@@ -3653,7 +3653,7 @@ async def test_github_copilot_sends_vision_header_for_tool_result_images() -> No
         tool_name="read",
         content=[ImageContent(data="aW1hZ2U=", mime_type="image/png")],
     )
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
             OpenAICompatibleConfig(
                 api_key="test-key",
@@ -3678,11 +3678,11 @@ async def test_github_copilot_sends_vision_header_for_tool_result_images() -> No
 
 @pytest.mark.anyio
 async def test_github_copilot_anthropic_sends_vision_header() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text='data: {"type":"message_stop"}\n\n',
             headers={"content-type": "text/event-stream"},
@@ -3693,7 +3693,7 @@ async def test_github_copilot_anthropic_sends_vision_header() -> None:
         tool_name="read",
         content=[ImageContent(data="aW1hZ2U=", mime_type="image/png")],
     )
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         provider = AnthropicProvider(
             AnthropicConfig(
                 api_key="test-key",
