@@ -39,7 +39,9 @@ from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.session_stats import SessionStats
 from tau_coding.skills import Skill
 from tau_coding.system_prompt import ProjectContextFile, format_skills_for_prompt
-from tau_coding.tui.autocomplete import CompletionState
+from tau_coding.tui.completion_widgets import (
+    render_completion_suggestions as render_completion_suggestions,
+)
 from tau_coding.tui.config import TAU_DARK_THEME, TuiRoleStyle, TuiTheme
 from tau_coding.tui.state import (
     RESULTFUL_FILE_GROUP_NAMES,
@@ -2625,38 +2627,6 @@ def _syntax_language(raw: str) -> str:
     except ClassNotFound:
         return "text"
     return language
-
-
-def render_completion_suggestions(
-    state: CompletionState,
-    *,
-    theme: TuiTheme = TAU_DARK_THEME,
-) -> RenderableType:
-    """Render prompt completion suggestions in aligned command/description columns."""
-    table = Table.grid(expand=True)
-    table.add_column(no_wrap=True)
-    table.add_column(ratio=1)
-
-    previous_category: str | None = None
-    for index, item in enumerate(state.items):
-        if item.category != previous_category:
-            if index:
-                table.add_row(Text(""), Text(""))
-            if item.category:
-                table.add_row(Text(item.category, style=theme.completion_description), Text(""))
-            previous_category = item.category
-
-        selected = index == state.selected_index
-        prefix = "› " if selected else "  "
-        style = theme.completion_selected if selected else theme.prompt_text
-        description_style = (
-            theme.completion_selected_description if selected else theme.completion_description
-        )
-        command = Text(prefix, style=style)
-        command.append(item.display, style=style)
-        command.append("  ", style=style)
-        table.add_row(command, Text(item.description or "", style=description_style))
-    return table
 
 
 @dataclass(frozen=True, slots=True)
