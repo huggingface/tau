@@ -1842,6 +1842,7 @@ def test_providers_command_lists_default_provider(
     assert " \topenai-codex\topenai-codex\tgpt-5.5" in result.stdout
     assert " \tanthropic\tanthropic\tclaude-sonnet-4-6" in result.stdout
     assert " \topenrouter\topenai-compatible\tqwen/qwen3.7-max" in result.stdout
+    assert " \torcarouter\topenai-compatible\topenai/gpt-5.4" in result.stdout
     assert " \thuggingface\topenai-compatible\tmoonshotai/Kimi-K2.6" in result.stdout
 
 
