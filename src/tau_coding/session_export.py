@@ -188,6 +188,9 @@ def render_session_html(
     details_html = _render_entry_details(visible_entries, active_path_ids, active_leaf_id)
     source_html = f'<p class="source">Source: <code>{_escape(source)}</code></p>' if source else ""
     system_prompt_html = _render_system_prompt(system_prompt)
+    message_count = sum(1 for entry in visible_entries if _entry_filter_kind(entry) == "message")
+    duration = _format_session_duration(visible_entries)
+    timeline_html = _render_session_timeline(visible_entries)
     generated_at = datetime.now(UTC).replace(microsecond=0).isoformat()
     jsonl_b64 = base64.b64encode(_session_jsonl_text(entry_list).encode("utf-8")).decode("ascii")
     jsonl_filename = _jsonl_filename(title, source)
@@ -330,6 +333,107 @@ def render_session_html(
       flex-wrap: wrap;
       gap: 4px 18px;
       margin-top: 8px;
+    }}
+    .session-summary {{
+      display: grid;
+      grid-template-columns: repeat(5, minmax(88px, 1fr));
+      gap: 8px;
+      max-width: 680px;
+      margin-top: 18px;
+    }}
+    .summary-card {{
+      display: flex;
+      min-height: 58px;
+      flex-direction: column;
+      justify-content: center;
+      gap: 2px;
+      padding: 8px 10px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+    }}
+    .summary-card strong {{
+      color: var(--bright);
+      font-size: 1rem;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }}
+    .summary-card span {{
+      color: var(--muted);
+      font-size: 0.64rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }}
+    .timeline-overview {{
+      margin-top: 18px;
+      padding: 12px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+    }}
+    .timeline-heading {{
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }}
+    .timeline-heading h2 {{ margin: 0; }}
+    .timeline-heading p {{ color: var(--muted); font-size: 0.68rem; }}
+    .timeline-lane {{
+      display: grid;
+      grid-template-columns: 58px minmax(0, 1fr);
+      align-items: center;
+      gap: 10px;
+      min-height: 24px;
+    }}
+    .timeline-lane + .timeline-lane {{ margin-top: 3px; }}
+    .timeline-lane-label {{
+      color: var(--muted);
+      font-size: 0.64rem;
+      text-transform: uppercase;
+    }}
+    .timeline-track {{
+      position: relative;
+      height: 18px;
+      background: var(--surface-2);
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }}
+    .timeline-track::before, .timeline-track::after {{
+      position: absolute;
+      top: 3px;
+      bottom: 3px;
+      width: 1px;
+      background: var(--line-strong);
+      content: "";
+    }}
+    .timeline-track::before {{ left: 0; }}
+    .timeline-track::after {{ right: 0; }}
+    .timeline-marker {{
+      position: absolute;
+      top: 3px;
+      width: 10px;
+      height: 10px;
+      margin-left: -5px;
+      border: 2px solid var(--bg);
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent);
+    }}
+    .timeline-marker:hover {{ transform: scale(1.35); z-index: 1; }}
+    .timeline-marker--tool {{
+      background: var(--success, var(--accent));
+      box-shadow: 0 0 0 1px var(--success, var(--accent));
+    }}
+    .timeline-marker--event {{ background: var(--muted); box-shadow: 0 0 0 1px var(--muted); }}
+    .timeline-axis {{
+      display: flex;
+      justify-content: space-between;
+      margin: 6px 0 0 68px;
+      color: var(--muted);
+      font-size: 0.62rem;
+    }}
+    @media (max-width: 560px) {{
+      .session-summary {{ grid-template-columns: repeat(2, minmax(88px, 1fr)); }}
     }}
     details.system-prompt {{
       margin-top: 16px;
@@ -787,6 +891,14 @@ def render_session_html(
         Generated: <time datetime="{_attr(generated_at)}">{_escape(generated_at)}</time>
       </p>
     </div>
+    <section class="session-summary" aria-label="Session summary">
+      <div class="summary-card"><strong>{len(visible_entries)}</strong><span>Entries</span></div>
+      <div class="summary-card"><strong>{message_count}</strong><span>Messages</span></div>
+      <div class="summary-card"><strong>{tool_count}</strong><span>Tools</span></div>
+      <div class="summary-card"><strong>{event_count}</strong><span>Events</span></div>
+      <div class="summary-card"><strong>{_escape(duration)}</strong><span>Duration</span></div>
+    </section>
+    {timeline_html}
     {system_prompt_html}
     <nav class="tab-bar" role="tablist" aria-label="Export views">
       <button
@@ -1653,6 +1765,64 @@ def _summarize_text(text: str, *, limit: int = 110) -> str:
     if len(summary) <= limit:
         return summary
     return summary[: limit - 3].rstrip() + "..."
+
+
+def _format_session_duration(entries: Sequence[SessionEntry]) -> str:
+    """Format elapsed time between the first and last visible entries."""
+    if not entries:
+        return "-"
+    seconds = max(
+        0,
+        round(
+            max(entry.timestamp for entry in entries) - min(entry.timestamp for entry in entries)
+        ),
+    )
+    minutes, remainder = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m"
+    if minutes:
+        return f"{minutes}m {remainder:02d}s"
+    return f"{remainder}s"
+
+
+def _render_session_timeline(entries: Sequence[SessionEntry]) -> str:
+    """Render timestamp markers grouped into message, tool, and event lanes."""
+    if not entries:
+        return ""
+    start = min(entry.timestamp for entry in entries)
+    end = max(entry.timestamp for entry in entries)
+    duration = end - start
+    lanes: dict[str, list[str]] = {"message": [], "tool": [], "event": []}
+    for entry in entries:
+        kind = _entry_filter_kind(entry)
+        if kind not in lanes:
+            continue
+        position = 50.0 if duration <= 0 else ((entry.timestamp - start) / duration) * 100
+        title = _entry_title(entry)
+        marker = (
+            f'<a class="timeline-marker timeline-marker--{_attr(kind)}" '
+            f'data-timeline-kind="{_attr(kind)}" href="#entry-{_attr(entry.id)}" '
+            f'style="left: {position:.2f}%" title="{_attr(title)}" '
+            f'aria-label="{_attr(title)} at {_attr(_format_time_short(entry.timestamp))}"></a>'
+        )
+        lanes[kind].append(marker)
+    rendered_lanes = "".join(
+        f'<div class="timeline-lane"><span class="timeline-lane-label">{label}</span>'
+        f'<div class="timeline-track">{"".join(lanes[kind])}</div></div>'
+        for kind, label in (("message", "Messages"), ("tool", "Tools"), ("event", "Events"))
+        if lanes[kind]
+    )
+    return (
+        '<section class="timeline-overview" aria-label="Session timeline">'
+        '<div class="timeline-heading"><h2>Timeline</h2>'
+        f"<p>{_escape(_format_session_duration(entries))} elapsed · "
+        "select a marker to jump</p></div>"
+        f"{rendered_lanes}"
+        f'<div class="timeline-axis"><span>{_escape(_format_time_short(start))}</span>'
+        f"<span>{_escape(_format_time_short(end))}</span></div>"
+        "</section>"
+    )
 
 
 def _json_dump(value: dict[str, JSONValue]) -> str:
