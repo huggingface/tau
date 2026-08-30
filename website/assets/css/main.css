@@ -846,3 +846,21 @@ section{ padding:88px 0; }
   font-family:var(--math); font-style:italic; font-size:clamp(60px,14vw,120px);
   color:var(--accent); display:block; line-height:.9;
 }
+
+/* ---- Copy button for docs code blocks (issue #343) ---- */
+.docs-content pre{ position:relative; padding-top:2rem; }
+.copy-btn{
+  position:absolute; top:.5rem; right:.5rem;
+  padding:.15rem .5rem;
+  font:500 .75rem/1 var(--grotesk, ui-sans-serif, system-ui, sans-serif);
+  color:var(--ink-soft, #54607A);
+  background:var(--paper, #fff);
+  border:1px solid var(--grid-strong, #C9D6EE);
+  border-radius:4px;
+  cursor:pointer;
+  opacity:0;
+  transition:opacity .15s ease;
+}
+.docs-content pre:hover .copy-btn,
+.copy-btn:focus-visible{ opacity:1; }
+.copy-btn.copied{ color:var(--green, #1F8A5F); border-color:var(--green, #1F8A5F); }
