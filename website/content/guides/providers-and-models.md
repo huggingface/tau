@@ -163,10 +163,11 @@ For a new session without an explicit preference, Hugging Face initially routes
 the model automatically. After the first successful response, Tau reads Hugging
 Face's `x-inference-provider` response header and keeps that backing provider as
 a sticky automatic route. If that route later exhausts its normal retries with a
-retryable HTTP failure before producing output, Tau retries the interrupted turn
-once through unsuffixed automatic routing and makes the successful replacement
-the new sticky route. To choose a fixed provider instead, add a per-model
-`inference_providers` preference to `~/.tau/providers.json`:
+retryable HTTP failure before producing output, or rejects the request payload
+with HTTP 413, Tau retries the interrupted turn once through unsuffixed automatic
+routing and makes the successful replacement the new sticky route. To choose a
+fixed provider instead, add a per-model `inference_providers` preference to
+`~/.tau/providers.json`:
 
 ```json
 {
@@ -203,9 +204,11 @@ configured fixed route or starts automatic resolution again. `/session` reports
 `automatic (currently <provider>)` for a sticky automatic route and
 `<provider> (fixed)` for an explicit route.
 
-Transient failures first retry on the same wire model, and stream failures are
-not retried or rerouted after model output has started. After those retries are
-exhausted, only sticky routes selected in automatic mode fail over; routes chosen
+Transient failures first retry on the same wire model. An HTTP 413 from a sticky
+automatic route skips futile same-route retries and lets the Hugging Face router
+choose another backend. Stream failures are not retried or rerouted after model
+output has started. After those retries are exhausted, only sticky routes
+selected in automatic mode fail over; routes chosen
 through `/hf route <provider>` or the `inference_providers` preference remain
 fixed so Tau never overrides explicit user intent. Automatic failover emits
 visible retry progress and durable provider diagnostics. Pinning can reduce cold

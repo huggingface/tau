@@ -157,6 +157,7 @@ from tau_coding.thinking import (
     reasoning_effort_for_level,
 )
 from tau_coding.tools import (
+    ImageAttachmentBudgetState,
     ImageSupportState,
     ReadOperations,
     ToolDefinition,
@@ -191,6 +192,7 @@ __all__ = [
     "EventRenderer",
     "FinalTextRenderer",
     "JsonEventRenderer",
+    "ImageAttachmentBudgetState",
     "ImageSupportState",
     "ModelChoice",
     "SessionTreeBranchResult",

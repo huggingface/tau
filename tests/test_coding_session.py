@@ -4018,6 +4018,7 @@ async def test_huggingface_session_pins_successful_automatic_route(
     [
         (429, [], True),
         (503, [], True),
+        (413, [], True),
         (400, [], False),
         (429, [TextContent(text="partial")], False),
     ],
@@ -4042,8 +4043,11 @@ def test_huggingface_route_failover_requires_retryable_pre_output_error(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("failure_status", [413, 429])
 async def test_huggingface_automatic_pin_fails_over_and_repins(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure_status: int,
 ) -> None:
     model = "moonshotai/Kimi-K3"
     created: list[tuple[str | None, FakeProvider]] = []
@@ -4059,7 +4063,7 @@ async def test_huggingface_automatic_pin_fails_over_and_repins(
     ) -> FakeProvider:
         del provider_config, credential_store, model, thinking_level
         if inference_provider == "deepinfra":
-            provider: FakeProvider = FakeProvider([[_provider_http_error(429)]])
+            provider: FakeProvider = FakeProvider([[_provider_http_error(failure_status)]])
         elif inference_provider is None:
             provider = HeaderObservingFakeProvider(
                 [

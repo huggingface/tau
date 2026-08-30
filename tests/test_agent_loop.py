@@ -19,6 +19,7 @@ from tau_agent import (
     AgentTool,
     AgentToolResult,
     AssistantMessage,
+    ImageContent,
     MessageEndEvent,
     MessageUpdateEvent,
     SimpleCancellationToken,
@@ -335,6 +336,44 @@ async def test_agent_loop_converts_provider_error_to_assistant_error_message() -
     assert isinstance(error, AssistantMessage)
     assert error.stop_reason == "error"
     assert error.error_message == "provider failed"
+
+
+def test_provider_context_omits_images_already_consumed_by_assistant() -> None:
+    old_call = ToolCall(id="call-old", name="read", arguments={"path": "old.png"})
+    current_call = ToolCall(id="call-current", name="read", arguments={"path": "current.png"})
+    old_result = ToolResultMessage(
+        tool_call_id=old_call.id,
+        tool_name="read",
+        content=[TextContent(text="old"), ImageContent(data="b2xk", mime_type="image/png")],
+    )
+    current_result = ToolResultMessage(
+        tool_call_id=current_call.id,
+        tool_name="read",
+        content=[TextContent(text="current"), ImageContent(data="bmV3", mime_type="image/png")],
+    )
+    messages: list[AgentMessage] = [
+        AssistantMessage(content=[old_call]),
+        old_result,
+        AssistantMessage(content=[current_call]),
+        current_result,
+    ]
+
+    context = loop_module._provider_context(messages)
+
+    replayed_old = next(
+        message
+        for message in context
+        if isinstance(message, ToolResultMessage) and message.tool_call_id == old_call.id
+    )
+    replayed_current = next(
+        message
+        for message in context
+        if isinstance(message, ToolResultMessage) and message.tool_call_id == current_call.id
+    )
+    assert not any(isinstance(block, ImageContent) for block in replayed_old.content)
+    assert "image omitted from replay after the model processed it" in replayed_old.text
+    assert any(isinstance(block, ImageContent) for block in replayed_current.content)
+    assert any(isinstance(block, ImageContent) for block in old_result.content)
 
 
 @pytest.mark.anyio
