@@ -34,6 +34,7 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    OptionList,
     Select,
     Static,
     TextArea,
@@ -2823,6 +2824,18 @@ class CustomProviderLoginScreen(ModalScreen[CustomProviderLoginResult | _LoginFl
     def _focus_next(self, field_id: str) -> None:
         index = self._FIELD_ORDER.index(field_id)
         self.query_one(f"#{self._FIELD_ORDER[index + 1]}").focus()
+
+    def action_cursor_down(self) -> None:
+        """Move down through the open protocol choices."""
+        protocol = self.query_one("#custom-provider-api", Select)
+        if protocol.expanded:
+            protocol.query_one(OptionList).action_cursor_down()
+
+    def action_cursor_up(self) -> None:
+        """Move up through the open protocol choices."""
+        protocol = self.query_one("#custom-provider-api", Select)
+        if protocol.expanded:
+            protocol.query_one(OptionList).action_cursor_up()
 
     def _collect_result(self) -> CustomProviderLoginResult | None:
         provider_name = self._field("custom-provider-name", "Provider name")
@@ -5654,7 +5667,8 @@ class TauTuiApp(App[None]):
             | LocalChoiceConfirmScreen
             | LocalConfirmScreen
             | LocalSearchResultsScreen
-            | ProjectTrustScreen,
+            | ProjectTrustScreen
+            | CustomProviderLoginScreen,
         ):
             self.screen.action_cursor_down()
             return
@@ -5690,7 +5704,8 @@ class TauTuiApp(App[None]):
             | LocalChoiceConfirmScreen
             | LocalConfirmScreen
             | LocalSearchResultsScreen
-            | ProjectTrustScreen,
+            | ProjectTrustScreen
+            | CustomProviderLoginScreen,
         ):
             self.screen.action_cursor_up()
             return

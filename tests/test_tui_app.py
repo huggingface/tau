@@ -7167,7 +7167,9 @@ async def test_tui_login_custom_provider_protocol_field_supports_keyboard_traver
         await pilot.press("space")
         await pilot.pause()
         assert protocol.expanded
-        await pilot.press("r", "enter")
+        await pilot.press("down")
+        await pilot.pause()
+        await pilot.press("enter")
         await pilot.pause()
 
         assert protocol.value == "openai-responses"
