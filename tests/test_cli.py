@@ -1969,7 +1969,7 @@ def test_setup_command_materializes_api_for_existing_api_less_provider(
                 kind="openai-compatible",
                 base_url="https://api.openai.com/v1",
                 api_key_env="OPENAI_API_KEY",
-                credential_name=None,
+                credential_name="local-credential",
                 models=("gpt-5.4",),
                 default_model="gpt-5.4",
                 docs_url="https://example.test/local",
@@ -1987,6 +1987,8 @@ def test_setup_command_materializes_api_for_existing_api_less_provider(
     assert f'api = "{api}"' in catalog
     assert 'display_name = "Local gateway"' in catalog
     assert 'docs_url = "https://example.test/local"' in catalog
+    assert 'credential_name = "local-credential"' in catalog
+    assert provider.credential_name == "local-credential"
 
 
 def test_setup_command_rejects_unsupported_api_without_writing_config(

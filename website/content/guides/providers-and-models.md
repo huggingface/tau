@@ -449,17 +449,18 @@ qwen-coder = 64000
 ```
 
 The exact supported OpenAI-compatible protocol names are
-`openai-completions` and `openai-responses`. A model can override its provider:
+`openai-completions` and `openai-responses`. A model can override its provider.
+The example below changes `qwen-coder`.
 
 ```toml
 [providers.model_metadata."qwen-coder"]
 api = "openai-responses"
 ```
 
-Tau resolves the model override first, then the provider default. Legacy custom
-entries with neither value use `openai-completions`; Tau never guesses from the
-model name. If an older entry relied on a `gpt-5` or `codex` name to reach the
-Responses endpoint, add `api = "openai-responses"` explicitly.
+Tau resolves the model override first, then the provider default. Older custom
+entries with neither value use `openai-completions`. If an older entry relied on
+a `gpt-5` or `codex` name to reach the Responses endpoint, add
+`api = "openai-responses"` explicitly.
 
 Tau loads its bundled `src/tau_coding/data/catalog.toml` first, then overlays
 `~/.tau/catalog.toml`. A user entry with the same `name` can extend or override a

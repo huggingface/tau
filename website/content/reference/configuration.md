@@ -156,11 +156,9 @@ qwen-coder = 64000
 
 OpenAI-compatible entries accept `api = "openai-completions"` or
 `api = "openai-responses"`. The provider value is the default for every model;
-model metadata can override it:
+model metadata can override it. The example below changes `qwen-coder`.
 
 ```toml
-api = "openai-completions"
-
 [providers.model_metadata."qwen-coder"]
 api = "openai-responses"
 ```
