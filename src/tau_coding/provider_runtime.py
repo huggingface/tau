@@ -148,9 +148,6 @@ async def create_dynamic_model_provider(
         compat=json_compatible_mapping(selected_model.compat),
         provider_name=provider.id,
         omit_authorization_header=auth.omit_authorization_header,
-        # Dynamic providers explicitly own their API choice. A local model id
-        # resembling gpt-* or *codex* must not reroute to /responses.
-        infer_api_from_model=False,
     )
     return OpenAICompatibleProvider(config, client=transport.client)
 

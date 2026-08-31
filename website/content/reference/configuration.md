@@ -148,10 +148,24 @@ credential_name = "local-gateway"
 models = ["qwen-coder"]
 default_model = "qwen-coder"
 docs_url = "https://example.test/local-gateway"
+api = "openai-completions"
 
 [providers.context_windows]
 qwen-coder = 64000
 ```
+
+OpenAI-compatible entries accept `api = "openai-completions"` or
+`api = "openai-responses"`. The provider value is the default for every model;
+model metadata can override it. The example below changes `qwen-coder`.
+
+```toml
+[providers.model_metadata."qwen-coder"]
+api = "openai-responses"
+```
+
+Tau checks the model-level API first and then the provider-level API. Existing
+OpenAI-compatible entries without either field use `openai-completions`.
+Configure `openai-responses` explicitly when the server requires it.
 
 Catalog entries support `kind` values of `openai-compatible`, `anthropic`, and
 `openai-codex`. For most custom services, start with `openai-compatible`.

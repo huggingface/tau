@@ -532,6 +532,16 @@ def save_provider_settings(settings: ProviderSettings, paths: TauPaths | None = 
     return path
 
 
+def save_provider_definition(provider: ProviderConfig, paths: TauPaths | None = None) -> Path:
+    """Write one complete provider definition to the user catalog."""
+    existing = next(
+        (entry for entry in effective_catalog(paths) if entry.name == provider.name),
+        None,
+    )
+    entry = _catalog_entry_from_provider(provider, existing=existing)
+    return save_user_catalog_entries((entry,), paths=paths)
+
+
 def save_default_provider_model(
     *,
     provider_name: str,
@@ -1539,7 +1549,8 @@ def _metadata_for_model(provider: ProviderConfig, model: str) -> ProviderModelMe
     return getattr(provider, "model_metadata", {}).get(model)
 
 
-def _provider_api(provider: ProviderConfig, model: str | None = None) -> ProviderApi | str:
+def provider_api(provider: ProviderConfig, model: str | None = None) -> ProviderApi | str:
+    """Resolve the API for a model, with model metadata taking precedence."""
     selected_model = model or provider.default_model
     metadata = _metadata_for_model(provider, selected_model)
     if metadata is not None and metadata.api is not None:
@@ -1583,7 +1594,7 @@ def _detected_compat(provider: ProviderConfig, model: str) -> dict[str, Any]:
     is_openai_api = (
         urlsplit(base_url).hostname == urlsplit(DEFAULT_OPENAI_COMPATIBLE_BASE_URL).hostname
     )
-    is_openai_responses = _provider_api(provider, model) == "openai-responses"
+    is_openai_responses = provider_api(provider, model) == "openai-responses"
     is_nonstandard = is_cerebras or is_grok or is_together or is_deepseek or is_zai or is_moonshot
     use_max_tokens = is_moonshot or is_together
     is_anthropic_api = urlsplit(base_url).hostname == urlsplit(DEFAULT_ANTHROPIC_BASE_URL).hostname
@@ -1714,7 +1725,7 @@ def openai_compatible_config_from_provider(
     return OpenAICompatibleConfig(
         api_key=api_key,
         provider_name=provider.name,
-        api=str(_provider_api(provider, selected_model)),
+        api=str(provider_api(provider, selected_model)),
         base_url=base_url.rstrip("/"),
         headers=_model_headers(provider, selected_model),
         timeout_seconds=provider.timeout_seconds,

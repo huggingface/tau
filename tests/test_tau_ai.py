@@ -106,6 +106,54 @@ def test_openai_compatible_config_from_env(monkeypatch: pytest.MonkeyPatch) -> N
     assert config.timeout_seconds == 12.5
     assert config.max_retries == 2
     assert config.max_retry_delay_seconds == 0.25
+    assert config.api == "openai-completions"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("api", "model", "endpoint"),
+    [
+        ("openai-completions", "gpt-5.5-proxy", "/chat/completions"),
+        ("openai-responses", "company/openai/gpt-5.6", "/responses"),
+    ],
+)
+async def test_openai_compatible_routes_only_from_configured_api(
+    api: str,
+    model: str,
+    endpoint: str,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        body = (
+            'data: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+            if endpoint == "/responses"
+            else 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+        )
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+                api=api,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model=model,
+                system="You are Tau.",
+                messages=[UserMessage(content="hi")],
+                tools=[],
+            )
+        )
+
+    assert requests[0].url.path == f"/v1{endpoint}"
+    assert isinstance(events[-1], AssistantDoneEvent)
+    assert events[-1].message.api == api
 
 
 def test_openai_compatible_config_from_env_rejects_invalid_timeout(
@@ -2685,20 +2733,6 @@ def _weather_tool() -> AgentTool:
     )
 
 
-def test_use_responses_api_routes_only_restricted_models() -> None:
-    from tau_ai.openai_compatible import _use_responses_api
-
-    assert _use_responses_api("gpt-5.5") is True
-    assert _use_responses_api("gpt-5.5-pro") is True
-    assert _use_responses_api("gpt-5.4") is True
-    assert _use_responses_api("gpt-5.3-codex") is True
-    assert _use_responses_api("GPT-5.5") is True
-    assert _use_responses_api("gpt-5.1") is False
-    assert _use_responses_api("gpt-5") is False
-    assert _use_responses_api("gpt-4o") is False
-    assert _use_responses_api("test-model") is False
-
-
 @pytest.mark.anyio
 async def test_responses_api_formats_request_for_restricted_model() -> None:
     requests: list[httpx.Request] = []
@@ -2735,6 +2769,7 @@ async def test_responses_api_formats_request_for_restricted_model() -> None:
             OpenAICompatibleConfig(
                 api_key="test-key",
                 base_url="https://example.test/v1",
+                api="openai-responses",
                 reasoning_effort="medium",
             ),
             client=client,
@@ -2822,7 +2857,11 @@ async def test_responses_api_parses_streamed_tool_call() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
-            OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+                api="openai-responses",
+            ),
             client=client,
         )
 
@@ -2866,7 +2905,11 @@ async def test_responses_api_streams_refusal_as_text() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
-            OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+                api="openai-responses",
+            ),
             client=client,
         )
 
@@ -2914,6 +2957,7 @@ async def test_responses_api_streams_reasoning_summary_as_thinking() -> None:
             OpenAICompatibleConfig(
                 api_key="test-key",
                 base_url="https://example.test/v1",
+                api="openai-responses",
                 reasoning_effort="high",
             ),
             client=client,
@@ -2965,6 +3009,7 @@ async def test_responses_api_preserves_reasoning_summary_part_boundaries() -> No
             OpenAICompatibleConfig(
                 api_key="test-key",
                 base_url="https://example.test/v1",
+                api="openai-responses",
                 reasoning_effort="high",
             ),
             client=client,
@@ -3010,6 +3055,7 @@ async def test_responses_api_omits_reasoning_when_effort_is_none() -> None:
             OpenAICompatibleConfig(
                 api_key="test-key",
                 base_url="https://example.test/v1",
+                api="openai-responses",
                 reasoning_effort="none",
             ),
             client=client,
@@ -3045,7 +3091,11 @@ async def test_responses_api_surfaces_stream_failure() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
-            OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+                api="openai-responses",
+            ),
             client=client,
         )
 
@@ -3092,7 +3142,11 @@ async def test_responses_api_orders_parallel_tool_calls_by_output_index() -> Non
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
-            OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+                api="openai-responses",
+            ),
             client=client,
         )
 
@@ -3122,7 +3176,11 @@ async def test_responses_api_surfaces_top_level_error_event() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
-            OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+                api="openai-responses",
+            ),
             client=client,
         )
 
@@ -3154,7 +3212,11 @@ async def test_responses_api_maps_incomplete_status_to_length() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = OpenAICompatibleProvider(
-            OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+                api="openai-responses",
+            ),
             client=client,
         )
 
@@ -3303,6 +3365,7 @@ async def test_openai_compatible_responses_reports_usage_and_sends_cache_affinit
             OpenAICompatibleConfig(
                 api_key="test-key",
                 base_url="https://api.openai.com/v1",
+                api="openai-responses",
             ),
             client=client,
         )

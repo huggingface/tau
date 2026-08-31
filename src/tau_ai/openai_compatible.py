@@ -1,12 +1,4 @@
-"""OpenAI-compatible chat completions provider.
-
-Most OpenAI-compatible models are served over `/chat/completions`. Newer
-reasoning models (e.g. ``gpt-5.5``/``gpt-5.4`` and the ``*-codex`` family)
-reject the combination of function tools and ``reasoning_effort`` on that
-endpoint and require ``/v1/responses`` instead. This adapter routes those
-models to the Responses API at request time while leaving every other model on
-the original chat-completions path unchanged.
-"""
+"""OpenAI-compatible chat completions and Responses provider."""
 
 from __future__ import annotations
 
@@ -56,24 +48,9 @@ from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_ret
 from tau_ai.stream import canonicalize_provider_stream
 from tau_ai.tool_call_ids import portable_tool_call_id
 
-# Models that reject function tools + reasoning_effort on /chat/completions and
-# must use the /v1/responses endpoint instead.
-_RESPONSES_ONLY_PREFIXES: tuple[str, ...] = ("gpt-5.5", "gpt-5.4")
-
-
-def _use_responses_api(model: str) -> bool:
-    """Return whether ``model`` must be served over the Responses API."""
-    normalized = model.strip().lower()
-    if "codex" in normalized:
-        return True
-    return any(normalized.startswith(prefix) for prefix in _RESPONSES_ONLY_PREFIXES)
-
 
 class OpenAICompatibleProvider:
-    """Provider adapter for OpenAI-compatible `/chat/completions` APIs.
-
-    Models that require it are transparently served over `/v1/responses`.
-    """
+    """Provider adapter for explicitly configured OpenAI-compatible APIs."""
 
     def __init__(
         self,
@@ -128,9 +105,7 @@ class OpenAICompatibleProvider:
         session_id: str | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Stream one model response as provider-neutral events."""
-        if self._config.api == "openai-responses" or (
-            self._config.infer_api_from_model and _use_responses_api(model)
-        ):
+        if self._config.api == "openai-responses":
             return self._stream_responses(
                 model=model,
                 system=system,

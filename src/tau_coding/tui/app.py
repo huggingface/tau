@@ -23,6 +23,7 @@ from textual.binding import Binding, BindingsMap
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.events import Key, Resize
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.strip import Strip
 from textual.timer import Timer
@@ -33,6 +34,8 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    OptionList,
+    Select,
     Static,
     TextArea,
 )
@@ -2194,10 +2197,26 @@ class CustomProviderLoginResult:
     provider_name: str
     display_name: str
     base_url: str
+    api: Literal["openai-completions", "openai-responses"]
     api_key_env: str
     models: tuple[str, ...]
     default_model: str
     api_key: str
+
+
+class _CustomProviderApiSelect(Select[str]):
+    """Protocol selector whose current value can be accepted with Enter."""
+
+    BINDINGS = [
+        Binding("enter", "accept_value", "Accept", show=False),
+        Binding("space", "show_overlay", "Show menu", show=False),
+    ]
+
+    class Accepted(Message):
+        """The current protocol value was accepted."""
+
+    def action_accept_value(self) -> None:
+        self.post_message(self.Accepted())
 
 
 class LoginMethodPickerScreen(ModalScreen[str | None]):
@@ -2702,10 +2721,11 @@ class CustomProviderLoginScreen(ModalScreen[CustomProviderLoginResult | _LoginFl
         Binding("ctrl+d", "close", "Close", priority=True),
     ]
 
-    _INPUT_ORDER: ClassVar[tuple[str, ...]] = (
+    _FIELD_ORDER: ClassVar[tuple[str, ...]] = (
         "custom-provider-name",
         "custom-provider-display-name",
         "custom-provider-base-url",
+        "custom-provider-api",
         "custom-provider-api-key-env",
         "custom-provider-models",
         "custom-provider-default-model",
@@ -2715,6 +2735,7 @@ class CustomProviderLoginScreen(ModalScreen[CustomProviderLoginResult | _LoginFl
     def __init__(self, *, theme: TuiTheme) -> None:
         super().__init__()
         self.theme = theme
+        self._api_selection_ready = False
 
     def compose(self) -> ComposeResult:
         """Compose the custom provider prompt."""
@@ -2732,6 +2753,18 @@ class CustomProviderLoginScreen(ModalScreen[CustomProviderLoginResult | _LoginFl
             yield Input(
                 placeholder="OpenAI-compatible base URL, e.g. https://api.studio.nebius.ai/v1",
                 id="custom-provider-base-url",
+            )
+            yield _CustomProviderApiSelect(
+                (
+                    (
+                        "OpenAI Chat Completions (/chat/completions)",
+                        "openai-completions",
+                    ),
+                    ("OpenAI Responses (/responses)", "openai-responses"),
+                ),
+                value="openai-completions",
+                allow_blank=False,
+                id="custom-provider-api",
             )
             yield Input(
                 placeholder="API key environment variable fallback, e.g. NEBIUS_API_KEY",
@@ -2751,30 +2784,58 @@ class CustomProviderLoginScreen(ModalScreen[CustomProviderLoginResult | _LoginFl
                 id="custom-provider-api-key",
             )
             yield Static(
-                "Enter advances/saves - Escape goes back - Ctrl+D closes",
+                "Enter advances/saves - Space opens API choices - Escape goes back - Ctrl+D closes",
                 id="login-footer",
             )
 
     def on_mount(self) -> None:
         """Focus the first provider-detail field."""
         self.query_one("#custom-provider-name", Input).focus()
+        self.call_after_refresh(self._enable_api_selection_events)
+
+    def _enable_api_selection_events(self) -> None:
+        self._api_selection_ready = True
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Advance through fields, then dismiss with provider details."""
         input_id = event.input.id
-        if input_id not in self._INPUT_ORDER:
+        if input_id not in self._FIELD_ORDER:
             return
         event.stop()
-        if input_id != self._INPUT_ORDER[-1]:
+        if input_id != self._FIELD_ORDER[-1]:
             self._focus_next(input_id)
             return
         result = self._collect_result()
         if result is not None:
             self.dismiss(result)
 
-    def _focus_next(self, input_id: str) -> None:
-        index = self._INPUT_ORDER.index(input_id)
-        self.query_one(f"#{self._INPUT_ORDER[index + 1]}", Input).focus()
+    @on(Select.Changed, "#custom-provider-api")
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Advance after choosing a different protocol."""
+        if self._api_selection_ready:
+            self._focus_next("custom-provider-api")
+
+    @on(_CustomProviderApiSelect.Accepted)
+    def on_custom_provider_api_accepted(self, event: _CustomProviderApiSelect.Accepted) -> None:
+        """Advance after accepting the current protocol."""
+        event.stop()
+        self._focus_next("custom-provider-api")
+
+    def _focus_next(self, field_id: str) -> None:
+        index = self._FIELD_ORDER.index(field_id)
+        self.query_one(f"#{self._FIELD_ORDER[index + 1]}").focus()
+
+    def action_cursor_down(self) -> None:
+        """Move down through the open protocol choices."""
+        protocol = self.query_one("#custom-provider-api", Select)
+        if protocol.expanded:
+            protocol.query_one(OptionList).action_cursor_down()
+
+    def action_cursor_up(self) -> None:
+        """Move up through the open protocol choices."""
+        protocol = self.query_one("#custom-provider-api", Select)
+        if protocol.expanded:
+            protocol.query_one(OptionList).action_cursor_up()
 
     def _collect_result(self) -> CustomProviderLoginResult | None:
         provider_name = self._field("custom-provider-name", "Provider name")
@@ -2783,6 +2844,14 @@ class CustomProviderLoginScreen(ModalScreen[CustomProviderLoginResult | _LoginFl
         base_url = self._field("custom-provider-base-url", "Base URL")
         if base_url is None:
             return None
+        selected_api = cast(Select[str], self.query_one("#custom-provider-api")).value
+        if selected_api not in {"openai-completions", "openai-responses"}:
+            self.query_one("#custom-provider-help", Static).update(
+                "An OpenAI API protocol is required."
+            )
+            self.query_one("#custom-provider-api", Select).focus()
+            return None
+        api = cast(Literal["openai-completions", "openai-responses"], selected_api)
         api_key_env = self._field("custom-provider-api-key-env", "API key environment variable")
         if api_key_env is None:
             return None
@@ -2815,6 +2884,7 @@ class CustomProviderLoginScreen(ModalScreen[CustomProviderLoginResult | _LoginFl
             provider_name=provider_name,
             display_name=display_name or provider_name,
             base_url=base_url,
+            api=api,
             api_key_env=api_key_env,
             models=models,
             default_model=default_model,
@@ -3760,6 +3830,7 @@ class TauTuiApp(App[None]):
     #custom-provider-name,
     #custom-provider-display-name,
     #custom-provider-base-url,
+    #custom-provider-api,
     #custom-provider-api-key-env,
     #custom-provider-models,
     #custom-provider-default-model,
@@ -5596,7 +5667,8 @@ class TauTuiApp(App[None]):
             | LocalChoiceConfirmScreen
             | LocalConfirmScreen
             | LocalSearchResultsScreen
-            | ProjectTrustScreen,
+            | ProjectTrustScreen
+            | CustomProviderLoginScreen,
         ):
             self.screen.action_cursor_down()
             return
@@ -5632,7 +5704,8 @@ class TauTuiApp(App[None]):
             | LocalChoiceConfirmScreen
             | LocalConfirmScreen
             | LocalSearchResultsScreen
-            | ProjectTrustScreen,
+            | ProjectTrustScreen
+            | CustomProviderLoginScreen,
         ):
             self.screen.action_cursor_up()
             return
@@ -6046,6 +6119,7 @@ class TauTuiApp(App[None]):
             name=result.provider_name,
             base_url=result.base_url.rstrip("/"),
             api_key_env=result.api_key_env,
+            api=result.api,
             credential_name=result.provider_name,
             models=result.models,
             default_model=result.default_model,
@@ -6060,6 +6134,7 @@ class TauTuiApp(App[None]):
             models=provider.models,
             default_model=provider.default_model,
             docs_url=provider.base_url,
+            api=result.api,
         )
         try:
             save_user_catalog_entries((catalog_entry,))

@@ -51,6 +51,21 @@ Explicit `--provider` and `--model` overrides take precedence over a resumed
 provider-aware transcript entry. Print mode reports actionable errors instead of
 opening an interactive login or local setup flow.
 
+## Custom provider setup
+
+```bash
+tau --provider company-ai \
+  --base-url https://ai.company.example/v1 \
+  --model company/openai/gpt-5.6 \
+  --api openai-responses \
+  setup
+```
+
+`--api` accepts the exact protocol names `openai-completions` (the default) and
+`openai-responses`. Setup saves the capability to `~/.tau/catalog.toml`;
+`~/.tau/providers.json` remains preference-only. `/login custom` exposes the
+same choice interactively.
+
 ## Model catalog refresh
 
 ```bash

@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 
@@ -12,8 +13,10 @@ from tau_ai import (
     FakeProvider,
 )
 from tau_coding import CodingSessionRecord, SessionManager, cli
+from tau_coding.catalog_loader import save_user_catalog_entries
 from tau_coding.cli import app, run_print_mode
 from tau_coding.paths import TauPaths
+from tau_coding.provider_catalog import ProviderCatalogEntry
 from tau_coding.provider_config import (
     OpenAICompatibleProviderConfig,
     ProviderSettings,
@@ -1902,6 +1905,8 @@ def test_setup_command_writes_provider_settings(
             "http://localhost:11434/v1/",
             "--api-key-env",
             "LOCAL_API_KEY",
+            "--api",
+            "openai-responses",
             "--timeout-seconds",
             "120",
             "--max-retries",
@@ -1921,10 +1926,83 @@ def test_setup_command_writes_provider_settings(
     assert settings.default_provider == "local"
     assert provider.base_url == "http://localhost:11434/v1"
     assert provider.api_key_env == "LOCAL_API_KEY"
+    assert provider.api == "openai-responses"
     assert provider.default_model == "qwen"
     assert provider.timeout_seconds == 120
     assert provider.max_retries == 2
     assert provider.max_retry_delay_seconds == 0.5
+    catalog = (tmp_path / ".tau" / "catalog.toml").read_text(encoding="utf-8")
+    preferences = json.loads((tmp_path / ".tau" / "providers.json").read_text(encoding="utf-8"))
+    assert 'api = "openai-responses"' in catalog
+    assert "api" not in preferences["provider_preferences"]["local"]
+
+
+def test_setup_command_defaults_to_chat_completions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(app, ["--provider", "local", "setup"])
+
+    assert result.exit_code == 0
+    provider = load_provider_settings(TauPaths(home=tmp_path / ".tau")).get_provider("local")
+    assert provider.api == "openai-completions"
+    assert 'api = "openai-completions"' in (tmp_path / ".tau" / "catalog.toml").read_text(
+        encoding="utf-8"
+    )
+
+
+@pytest.mark.parametrize("api", ["openai-completions", "openai-responses"])
+def test_setup_command_materializes_api_for_existing_api_less_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    api: str,
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    paths = TauPaths(home=tmp_path / ".tau")
+    save_user_catalog_entries(
+        (
+            ProviderCatalogEntry(
+                name="local",
+                display_name="Local gateway",
+                kind="openai-compatible",
+                base_url="https://api.openai.com/v1",
+                api_key_env="OPENAI_API_KEY",
+                credential_name="local-credential",
+                models=("gpt-5.4",),
+                default_model="gpt-5.4",
+                docs_url="https://example.test/local",
+            ),
+        ),
+        paths,
+    )
+
+    result = CliRunner().invoke(app, ["--provider", "local", "--api", api, "setup"])
+
+    assert result.exit_code == 0
+    provider = load_provider_settings(paths).get_provider("local")
+    assert provider.api == api
+    catalog = (paths.home / "catalog.toml").read_text(encoding="utf-8")
+    assert f'api = "{api}"' in catalog
+    assert 'display_name = "Local gateway"' in catalog
+    assert 'docs_url = "https://example.test/local"' in catalog
+    assert 'credential_name = "local-credential"' in catalog
+    assert provider.credential_name == "local-credential"
+
+
+def test_setup_command_rejects_unsupported_api_without_writing_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(app, ["--api", "automatic", "setup"])
+
+    assert result.exit_code == 2
+    assert "Invalid value" in result.stderr
+    assert not (tmp_path / ".tau" / "catalog.toml").exists()
+    assert not (tmp_path / ".tau" / "providers.json").exists()
 
 
 def test_setup_command_warns_when_api_key_env_is_missing(

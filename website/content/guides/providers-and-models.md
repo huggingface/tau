@@ -356,6 +356,9 @@ Ollama. The easiest interactive path is:
 
 Tau prompts for the provider details, saves the API key, writes the provider
 metadata to `~/.tau/catalog.toml`, and makes the provider available immediately.
+Choose **OpenAI Chat Completions** for `/chat/completions` servers (the default),
+or **OpenAI Responses** for `/responses` servers. The selected option controls
+the protocol for every model ID.
 
 ### Built-in llama.cpp backend
 
@@ -415,6 +418,7 @@ tau --provider local \
   --base-url http://localhost:11434/v1 \
   --api-key-env LOCAL_API_KEY \
   --model qwen \
+  --api openai-completions \
   setup
 ```
 
@@ -438,10 +442,25 @@ credential_name = "local-gateway"
 models = ["qwen-coder"]
 default_model = "qwen-coder"
 docs_url = "https://example.test/local-gateway"
+api = "openai-completions"
 
 [providers.context_windows]
 qwen-coder = 64000
 ```
+
+The exact supported OpenAI-compatible protocol names are
+`openai-completions` and `openai-responses`. A model can override its provider.
+The example below changes `qwen-coder`.
+
+```toml
+[providers.model_metadata."qwen-coder"]
+api = "openai-responses"
+```
+
+Tau resolves the model override first, then the provider default. Older custom
+entries with neither value use `openai-completions`. If an older entry relied on
+a `gpt-5` or `codex` name to reach the Responses endpoint, add
+`api = "openai-responses"` explicitly.
 
 Tau loads its bundled `src/tau_coding/data/catalog.toml` first, then overlays
 `~/.tau/catalog.toml`. A user entry with the same `name` can extend or override a
