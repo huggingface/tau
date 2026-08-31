@@ -1161,11 +1161,7 @@ def _catalog_entry_from_provider(
         base_url=provider.base_url,
         api_key_env=provider.api_key_env,
         api=getattr(provider, "api", None),
-        credential_name=(
-            existing.credential_name
-            if existing is not None and provider.credential_name is None
-            else provider.credential_name
-        ),
+        credential_name=provider.credential_name,
         models=provider.models,
         default_model=(
             existing.default_model
