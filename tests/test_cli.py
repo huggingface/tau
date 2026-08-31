@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 
@@ -1902,6 +1903,8 @@ def test_setup_command_writes_provider_settings(
             "http://localhost:11434/v1/",
             "--api-key-env",
             "LOCAL_API_KEY",
+            "--api",
+            "openai-responses",
             "--timeout-seconds",
             "120",
             "--max-retries",
@@ -1921,10 +1924,45 @@ def test_setup_command_writes_provider_settings(
     assert settings.default_provider == "local"
     assert provider.base_url == "http://localhost:11434/v1"
     assert provider.api_key_env == "LOCAL_API_KEY"
+    assert provider.api == "openai-responses"
     assert provider.default_model == "qwen"
     assert provider.timeout_seconds == 120
     assert provider.max_retries == 2
     assert provider.max_retry_delay_seconds == 0.5
+    catalog = (tmp_path / ".tau" / "catalog.toml").read_text(encoding="utf-8")
+    preferences = json.loads((tmp_path / ".tau" / "providers.json").read_text(encoding="utf-8"))
+    assert 'api = "openai-responses"' in catalog
+    assert "api" not in preferences["provider_preferences"]["local"]
+
+
+def test_setup_command_defaults_to_chat_completions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(app, ["--provider", "local", "setup"])
+
+    assert result.exit_code == 0
+    provider = load_provider_settings(TauPaths(home=tmp_path / ".tau")).get_provider("local")
+    assert provider.api == "openai-completions"
+    assert 'api = "openai-completions"' in (tmp_path / ".tau" / "catalog.toml").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_setup_command_rejects_unsupported_api_without_writing_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(app, ["--api", "automatic", "setup"])
+
+    assert result.exit_code == 2
+    assert "Invalid value" in result.stderr
+    assert not (tmp_path / ".tau" / "catalog.toml").exists()
+    assert not (tmp_path / ".tau" / "providers.json").exists()
 
 
 def test_setup_command_warns_when_api_key_env_is_missing(

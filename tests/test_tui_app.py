@@ -17,7 +17,7 @@ from textual.content import Content
 from textual.content import Style as TextualStyle
 from textual.geometry import Offset
 from textual.selection import SELECT_ALL, Selection
-from textual.widgets import Collapsible, Input, Label, ListItem, ListView, Static, TextArea
+from textual.widgets import Collapsible, Input, Label, ListItem, ListView, Select, Static, TextArea
 from textual.widgets import Markdown as TextualMarkdown
 from textual.widgets.markdown import MarkdownStream
 
@@ -7104,6 +7104,7 @@ async def test_tui_login_custom_provider_writes_catalog_and_preferences(
                 provider_name="nebius",
                 display_name="Nebius AI Studio",
                 base_url="https://api.studio.nebius.ai/v1/",
+                api="openai-responses",
                 api_key_env="NEBIUS_API_KEY",
                 models=("deepseek-ai/DeepSeek-V4-Pro", "Qwen/Qwen3-Coder"),
                 default_model="deepseek-ai/DeepSeek-V4-Pro",
@@ -7118,8 +7119,10 @@ async def test_tui_login_custom_provider_writes_catalog_and_preferences(
     assert 'name = "nebius"' in catalog
     assert 'display_name = "Nebius AI Studio"' in catalog
     assert 'base_url = "https://api.studio.nebius.ai/v1"' in catalog
+    assert 'api = "openai-responses"' in catalog
     assert 'models = ["deepseek-ai/DeepSeek-V4-Pro", "Qwen/Qwen3-Coder"]' in catalog
     assert settings.get_provider("nebius").default_model == "deepseek-ai/DeepSeek-V4-Pro"
+    assert settings.get_provider("nebius").api == "openai-responses"
     assert FileCredentialStore(tmp_path / ".tau" / "credentials.json").get("nebius") == (
         "stored-nebius-key"
     )
@@ -7139,6 +7142,75 @@ async def test_tui_login_custom_provider_opens_from_slash_command() -> None:
 
         assert isinstance(app.screen, CustomProviderLoginScreen)
         assert app.screen.query_one("#custom-provider-name", Input).has_focus
+        protocol = app.screen.query_one("#custom-provider-api", Select)
+        assert protocol.value == "openai-completions"
+
+
+@pytest.mark.anyio
+async def test_tui_login_custom_provider_protocol_field_supports_keyboard_traversal() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/login custom"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, CustomProviderLoginScreen)
+        base_url = app.screen.query_one("#custom-provider-base-url", Input)
+        base_url.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        protocol = app.screen.query_one("#custom-provider-api", Select)
+        assert protocol.has_focus
+        protocol.value = "openai-responses"
+        await pilot.press("enter", "enter")
+        await pilot.pause()
+
+        assert protocol.value == "openai-responses"
+        assert app.screen.query_one("#custom-provider-api-key-env", Input).has_focus
+        values = {
+            "custom-provider-name": "company-ai",
+            "custom-provider-display-name": "Company AI",
+            "custom-provider-base-url": "https://ai.company.example/v1",
+            "custom-provider-api-key-env": "COMPANY_AI_API_KEY",
+            "custom-provider-models": "company/openai/gpt-5.6",
+            "custom-provider-default-model": "company/openai/gpt-5.6",
+            "custom-provider-api-key": "secret",
+        }
+        for field_id, value in values.items():
+            app.screen.query_one(f"#{field_id}", Input).value = value
+
+        result = app.screen._collect_result()
+        assert result is not None
+        assert result.api == "openai-responses"
+
+
+@pytest.mark.anyio
+async def test_tui_login_custom_provider_accepts_default_protocol_with_enter() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/login custom"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, CustomProviderLoginScreen)
+        base_url = app.screen.query_one("#custom-provider-base-url", Input)
+        base_url.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        protocol = app.screen.query_one("#custom-provider-api", Select)
+        assert protocol.has_focus
+        assert protocol.value == "openai-completions"
+        await pilot.press("enter", "enter")
+        await pilot.pause()
+
+        assert protocol.value == "openai-completions"
+        assert app.screen.query_one("#custom-provider-api-key-env", Input).has_focus
 
 
 @pytest.mark.anyio

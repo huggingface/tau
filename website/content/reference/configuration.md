@@ -148,10 +148,26 @@ credential_name = "local-gateway"
 models = ["qwen-coder"]
 default_model = "qwen-coder"
 docs_url = "https://example.test/local-gateway"
+api = "openai-completions"
 
 [providers.context_windows]
 qwen-coder = 64000
 ```
+
+OpenAI-compatible entries accept `api = "openai-completions"` or
+`api = "openai-responses"`. The provider value is the default for every model;
+model metadata can override it:
+
+```toml
+api = "openai-completions"
+
+[providers.model_metadata."responses-only-model"]
+api = "openai-responses"
+```
+
+This matches Pi's resolved-model rule: model API, then provider API. Model IDs
+never choose a wire protocol. API-less legacy OpenAI-compatible entries resolve
+to `openai-completions`; configure Responses explicitly when required.
 
 Catalog entries support `kind` values of `openai-compatible`, `anthropic`, and
 `openai-codex`. For most custom services, start with `openai-compatible`.
