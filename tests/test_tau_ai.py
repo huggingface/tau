@@ -1075,6 +1075,58 @@ async def test_openai_compatible_provider_streams_tool_calls() -> None:
 
 
 @pytest.mark.anyio
+async def test_openai_compatible_provider_responses_api_correlates_by_output_index() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.output_item.added","output_index":1,'
+                '"item":{"id":"added-id","type":"function_call",'
+                '"call_id":"call_abc","name":"bash","arguments":""}}\n\n'
+                'data: {"type":"response.function_call_arguments.delta",'
+                '"item_id":"delta-id-1","output_index":1,"delta":"{\\"command\\":"}\n\n'
+                'data: {"type":"response.function_call_arguments.delta",'
+                '"item_id":"delta-id-2","output_index":1,"delta":"\\"df -h .\\"}"}\n\n'
+                'data: {"type":"response.function_call_arguments.done",'
+                '"item_id":"arguments-done-id","output_index":1,'
+                '"arguments":"{\\"command\\":\\"df -h .\\"}"}\n\n'
+                'data: {"type":"response.output_item.done","output_index":1,'
+                '"item":{"id":"output-done-id","type":"function_call",'
+                '"call_id":"call_abc","name":"bash",'
+                '"arguments":"{\\"command\\":\\"df -h .\\"}"}}\n\n'
+                'data: {"type":"response.completed",'
+                '"response":{"status":"completed"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="drive size?")],
+                tools=[],
+            )
+        )
+
+    tool_call_events = [event for event in events if isinstance(event, ToolCallEndEvent)]
+    assert len(tool_call_events) == 1
+    assert tool_call_events[0].tool_call.id == "call_abc"
+    assert tool_call_events[0].tool_call.name == "bash"
+    assert tool_call_events[0].tool_call.arguments == {"command": "df -h ."}
+
+    end = events[-1]
+    assert isinstance(end, AssistantDoneEvent)
+    assert len(end.message.tool_calls) == 1
+
+
+@pytest.mark.anyio
 async def test_openai_compatible_provider_reports_resolved_response_provider() -> None:
     attempts = 0
 
