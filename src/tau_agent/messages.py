@@ -199,7 +199,7 @@ class ToolResultMessage(WireModel):
 
     @property
     def text(self) -> str:
-        return content_text(self.content)
+        return "".join(block.text for block in self.content if isinstance(block, TextContent))
 
 
 class BashExecutionMessage(WireModel):
