@@ -44,6 +44,7 @@ from tau_coding.provider_config import (
     provider_kind,
     resolve_provider_selection,
     resolve_startup_thinking_level,
+    save_provider_definition,
     save_provider_settings,
     upsert_openai_compatible_provider,
 )
@@ -182,6 +183,7 @@ def setup_command(
         max_retry_delay_seconds=max_retry_delay_seconds,
     )
     updated = upsert_openai_compatible_provider(settings, provider, set_default=set_default)
+    save_provider_definition(provider)
     path = save_provider_settings(updated)
     typer.echo(
         f"Saved provider '{provider.name}' to {user_catalog_path()} and preferences to {path}"

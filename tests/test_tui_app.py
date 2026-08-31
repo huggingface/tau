@@ -7164,8 +7164,10 @@ async def test_tui_login_custom_provider_protocol_field_supports_keyboard_traver
 
         protocol = app.screen.query_one("#custom-provider-api", Select)
         assert protocol.has_focus
-        protocol.value = "openai-responses"
-        await pilot.press("enter", "enter")
+        await pilot.press("space")
+        await pilot.pause()
+        assert protocol.expanded
+        await pilot.press("r", "enter")
         await pilot.pause()
 
         assert protocol.value == "openai-responses"
@@ -7206,7 +7208,7 @@ async def test_tui_login_custom_provider_accepts_default_protocol_with_enter() -
         protocol = app.screen.query_one("#custom-provider-api", Select)
         assert protocol.has_focus
         assert protocol.value == "openai-completions"
-        await pilot.press("enter", "enter")
+        await pilot.press("enter")
         await pilot.pause()
 
         assert protocol.value == "openai-completions"

@@ -357,8 +357,8 @@ Ollama. The easiest interactive path is:
 Tau prompts for the provider details, saves the API key, writes the provider
 metadata to `~/.tau/catalog.toml`, and makes the provider available immediately.
 Choose **OpenAI Chat Completions** for `/chat/completions` servers (the default),
-or **OpenAI Responses** for `/responses` servers. The model ID does not select
-the protocol.
+or **OpenAI Responses** for `/responses` servers. The selected option controls
+the protocol for every model ID.
 
 ### Built-in llama.cpp backend
 
@@ -452,7 +452,7 @@ The exact supported OpenAI-compatible protocol names are
 `openai-completions` and `openai-responses`. A model can override its provider:
 
 ```toml
-[providers.model_metadata."responses-only-model"]
+[providers.model_metadata."qwen-coder"]
 api = "openai-responses"
 ```
 

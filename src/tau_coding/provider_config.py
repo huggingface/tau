@@ -532,6 +532,16 @@ def save_provider_settings(settings: ProviderSettings, paths: TauPaths | None = 
     return path
 
 
+def save_provider_definition(provider: ProviderConfig, paths: TauPaths | None = None) -> Path:
+    """Write one complete provider definition to the user catalog."""
+    existing = next(
+        (entry for entry in effective_catalog(paths) if entry.name == provider.name),
+        None,
+    )
+    entry = _catalog_entry_from_provider(provider, existing=existing)
+    return save_user_catalog_entries((entry,), paths=paths)
+
+
 def save_default_provider_model(
     *,
     provider_name: str,

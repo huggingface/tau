@@ -161,13 +161,13 @@ model metadata can override it:
 ```toml
 api = "openai-completions"
 
-[providers.model_metadata."responses-only-model"]
+[providers.model_metadata."qwen-coder"]
 api = "openai-responses"
 ```
 
-This matches Pi's resolved-model rule: model API, then provider API. Model IDs
-never choose a wire protocol. API-less legacy OpenAI-compatible entries resolve
-to `openai-completions`; configure Responses explicitly when required.
+Tau checks the model-level API first and then the provider-level API. Existing
+OpenAI-compatible entries without either field use `openai-completions`.
+Configure `openai-responses` explicitly when the server requires it.
 
 Catalog entries support `kind` values of `openai-compatible`, `anthropic`, and
 `openai-codex`. For most custom services, start with `openai-compatible`.

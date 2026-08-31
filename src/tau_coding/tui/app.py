@@ -38,7 +38,6 @@ from textual.widgets import (
     Static,
     TextArea,
 )
-from textual.widgets._select import SelectOverlay
 from textual.worker import Worker
 
 from tau_agent.events import (
@@ -2205,14 +2204,17 @@ class CustomProviderLoginResult:
 
 
 class _CustomProviderApiSelect(Select[str]):
-    """Protocol select that reports accepting an unchanged default value."""
+    """Protocol selector whose current value can be accepted with Enter."""
+
+    BINDINGS = [
+        Binding("enter", "accept_value", "Accept", show=False),
+        Binding("space", "show_overlay", "Show menu", show=False),
+    ]
 
     class Accepted(Message):
-        """A protocol choice was accepted from the open overlay."""
+        """The current protocol value was accepted."""
 
-    @on(SelectOverlay.UpdateSelection)
-    def _update_selection(self, event: SelectOverlay.UpdateSelection) -> None:
-        super()._update_selection(event)
+    def action_accept_value(self) -> None:
         self.post_message(self.Accepted())
 
 
@@ -2732,6 +2734,7 @@ class CustomProviderLoginScreen(ModalScreen[CustomProviderLoginResult | _LoginFl
     def __init__(self, *, theme: TuiTheme) -> None:
         super().__init__()
         self.theme = theme
+        self._api_selection_ready = False
 
     def compose(self) -> ComposeResult:
         """Compose the custom provider prompt."""
@@ -2787,6 +2790,10 @@ class CustomProviderLoginScreen(ModalScreen[CustomProviderLoginResult | _LoginFl
     def on_mount(self) -> None:
         """Focus the first provider-detail field."""
         self.query_one("#custom-provider-name", Input).focus()
+        self.call_after_refresh(self._enable_api_selection_events)
+
+    def _enable_api_selection_events(self) -> None:
+        self._api_selection_ready = True
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Advance through fields, then dismiss with provider details."""
@@ -2801,9 +2808,15 @@ class CustomProviderLoginScreen(ModalScreen[CustomProviderLoginResult | _LoginFl
         if result is not None:
             self.dismiss(result)
 
+    @on(Select.Changed, "#custom-provider-api")
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Advance after choosing a different protocol."""
+        if self._api_selection_ready:
+            self._focus_next("custom-provider-api")
+
     @on(_CustomProviderApiSelect.Accepted)
     def on_custom_provider_api_accepted(self, event: _CustomProviderApiSelect.Accepted) -> None:
-        """Advance after accepting either the default or alternate protocol."""
+        """Advance after accepting the current protocol."""
         event.stop()
         self._focus_next("custom-provider-api")
 

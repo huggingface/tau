@@ -62,12 +62,12 @@ Ollama, gateways, and older manually configured local providers. An existing
 provider named `llama-cpp` remains distinct from the built-in `llama.cpp`; Tau
 does not migrate or overwrite it.
 
-Custom providers choose one exact Pi-compatible API protocol:
-`openai-completions` for `/chat/completions` (the setup default), or
-`openai-responses` for `/responses`. The provider-level `api` is the default and
-`model_metadata.<model>.api` overrides it for one model. Tau dispatches from that
-resolved metadata only; a model name containing `gpt-5` or `codex` has no routing
-meaning. API-less legacy entries use `openai-completions` deterministically.
+Choose the API used by each custom OpenAI-compatible provider.
+`openai-completions` selects `/chat/completions` and is the setup default.
+`openai-responses` selects `/responses`. The provider-level `api` is the default,
+and `model_metadata.<model>.api` can override it for one model. Model names do not
+change the selected API. Existing entries without the field use
+`openai-completions`.
 
 ## Metadata and selection rules
 

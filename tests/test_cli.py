@@ -13,8 +13,10 @@ from tau_ai import (
     FakeProvider,
 )
 from tau_coding import CodingSessionRecord, SessionManager, cli
+from tau_coding.catalog_loader import save_user_catalog_entries
 from tau_coding.cli import app, run_print_mode
 from tau_coding.paths import TauPaths
+from tau_coding.provider_catalog import ProviderCatalogEntry
 from tau_coding.provider_config import (
     OpenAICompatibleProviderConfig,
     ProviderSettings,
@@ -1949,6 +1951,42 @@ def test_setup_command_defaults_to_chat_completions(
     assert 'api = "openai-completions"' in (tmp_path / ".tau" / "catalog.toml").read_text(
         encoding="utf-8"
     )
+
+
+@pytest.mark.parametrize("api", ["openai-completions", "openai-responses"])
+def test_setup_command_materializes_api_for_existing_api_less_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    api: str,
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    paths = TauPaths(home=tmp_path / ".tau")
+    save_user_catalog_entries(
+        (
+            ProviderCatalogEntry(
+                name="local",
+                display_name="Local gateway",
+                kind="openai-compatible",
+                base_url="https://api.openai.com/v1",
+                api_key_env="OPENAI_API_KEY",
+                credential_name=None,
+                models=("gpt-5.4",),
+                default_model="gpt-5.4",
+                docs_url="https://example.test/local",
+            ),
+        ),
+        paths,
+    )
+
+    result = CliRunner().invoke(app, ["--provider", "local", "--api", api, "setup"])
+
+    assert result.exit_code == 0
+    provider = load_provider_settings(paths).get_provider("local")
+    assert provider.api == api
+    catalog = (paths.home / "catalog.toml").read_text(encoding="utf-8")
+    assert f'api = "{api}"' in catalog
+    assert 'display_name = "Local gateway"' in catalog
+    assert 'docs_url = "https://example.test/local"' in catalog
 
 
 def test_setup_command_rejects_unsupported_api_without_writing_config(
