@@ -3490,7 +3490,7 @@ class CustomProviderLoginScreen(ModalScreen[CustomProviderLoginResult | _LoginFl
                 id="custom-provider-api-key",
             )
             yield Static(
-                "Enter advances/saves - Escape goes back - Ctrl+D closes",
+                "Enter advances/saves - Space opens API choices - Escape goes back - Ctrl+D closes",
                 id="login-footer",
             )
 
