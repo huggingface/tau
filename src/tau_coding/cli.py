@@ -171,11 +171,20 @@ def setup_command(
 ) -> None:
     """Create or update an OpenAI-compatible provider entry."""
     settings = load_provider_settings()
+    existing = next(
+        (item for item in settings.providers if item.name == provider_name),
+        None,
+    )
     provider = OpenAICompatibleProviderConfig(
         name=provider_name,
         base_url=base_url.rstrip("/"),
         api_key_env=api_key_env,
         api=api,
+        credential_name=(
+            existing.credential_name
+            if isinstance(existing, OpenAICompatibleProviderConfig)
+            else None
+        ),
         models=(model,),
         default_model=model,
         timeout_seconds=timeout_seconds,
