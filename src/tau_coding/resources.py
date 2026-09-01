@@ -20,7 +20,7 @@ class SystemPromptResources:
     custom_prompt: str | None = None
     custom_prompt_path: Path | None = None
     append_prompt: str | None = None
-    append_prompt_path: Path | None = None
+    append_prompt_paths: tuple[Path, ...] = ()
     diagnostics: tuple[ResourceDiagnostic, ...] = ()
 
 
@@ -151,10 +151,9 @@ def discover_system_prompt_resources(
     paths: TauResourcePaths,
     *,
     custom_prompt_explicit: bool = False,
-    append_prompt_explicit: bool = False,
     enabled: bool = True,
 ) -> SystemPromptResources:
-    """Discover Tau-native prompt files with CLI/project/user precedence."""
+    """Discover a precedence-selected base and cumulative append prompt files."""
     if not enabled:
         return SystemPromptResources()
 
@@ -166,18 +165,15 @@ def discover_system_prompt_resources(
         explicit=custom_prompt_explicit,
         diagnostics=diagnostics,
     )
-    append_prompt, append_path = _discover_system_prompt_file(
+    append_prompt, append_paths = _discover_append_system_prompt_files(
         paths,
-        filename="APPEND_SYSTEM.md",
-        label="append",
-        explicit=append_prompt_explicit,
         diagnostics=diagnostics,
     )
     return SystemPromptResources(
         custom_prompt=custom_prompt,
         custom_prompt_path=custom_path,
         append_prompt=append_prompt,
-        append_prompt_path=append_path,
+        append_prompt_paths=append_paths,
         diagnostics=tuple(diagnostics),
     )
 
@@ -247,6 +243,55 @@ def _discover_system_prompt_file(
             )
         )
     return content, selected_path
+
+
+def _discover_append_system_prompt_files(
+    paths: TauResourcePaths,
+    *,
+    diagnostics: list[ResourceDiagnostic],
+) -> tuple[str | None, tuple[Path, ...]]:
+    """Read every append file in broad-to-specific order."""
+    candidates: list[tuple[str, Path]] = [("user", paths.root / "APPEND_SYSTEM.md")]
+    if paths.cwd is not None and paths.project_resources_enabled:
+        candidates.append(("project", paths.cwd / ".tau" / "APPEND_SYSTEM.md"))
+
+    contents: list[str] = []
+    selected_paths: list[Path] = []
+    seen_paths: set[Path] = set()
+    for scope, path in candidates:
+        try:
+            resolved_path = path.expanduser().resolve()
+            if resolved_path in seen_paths:
+                continue
+            seen_paths.add(resolved_path)
+            exists = path.exists()
+        except OSError as exc:
+            raise ResourceError(
+                f"Could not inspect append system prompt file {path}: {exc}"
+            ) from exc
+        if not exists:
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise ResourceError(
+                f"Could not read append system prompt file {path} as UTF-8: {exc}"
+            ) from exc
+        contents.append(content)
+        selected_paths.append(path)
+        diagnostics.append(
+            ResourceDiagnostic(
+                kind="system-prompt",
+                name="append",
+                path=path,
+                severity="info",
+                message=f"selected {scope} system prompt file",
+            )
+        )
+
+    if not contents:
+        return None, ()
+    return "\n\n".join(contents), tuple(selected_paths)
 
 
 def resource_paths_with_cwd(

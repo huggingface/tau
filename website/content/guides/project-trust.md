@@ -13,12 +13,20 @@ saved parent decision is inherited.
 Tau gates project `.tau` and `.agents` skills and prompts, `.tau` themes,
 `SYSTEM.md` and `APPEND_SYSTEM.md`, plain and scoped `AGENTS.md`, project
 extension candidates, and project `settings.json` reserved for future support.
+
+Built-in local backends are trusted package code. They load independently of
+project trust and do not make an ambient endpoint, model snapshot, or credential
+into project input. Their provider/backend registrations remain owned by the
+active runtime generation; project extensions cannot reset them without the
+normal source and trust rules.
 Detection checks names and metadata only; Tau does not read, parse, or import a
 candidate before deciding.
 
 User resources under `~/.tau` and `~/.agents`, built-ins, and paths explicitly
-passed on the CLI remain eligible. Trusted project extensions still require the
-additional `--project-extensions` opt-in.
+passed on the CLI remain eligible. Trusted built-in extensions are installed Tau
+package code rather than cwd discovery: they load before the decision, even with
+`--no-extensions`, and their presence alone never creates a trust prompt. Trusted
+project extensions still require the additional `--project-extensions` opt-in.
 
 ## Decisions
 
@@ -66,6 +74,28 @@ requires a new decision; Tau never infers durable trust from the earlier empty
 state. Resource preparation is coherent: decline builds a global/explicit-only
 snapshot. Resume and replacement resolve the destination record's canonical cwd
 instead of reusing the source project's outcome.
+
+## Built-in local-backend security
+
+The bundled `llama.cpp` backend is trusted Tau package code. It loads before the
+project-trust decision, including with `--no-extensions`, and never creates a
+trust prompt. After backend confirmation, `/local` probes only its entered,
+saved, `LLAMA_BASE_URL`, or default endpoint; it does not scan ports, processes,
+or the local network. Tau never starts/stops the external server or deletes
+model files. Explicit downloads are performed by the independent llama.cpp
+router, not Tau's filesystem code.
+
+The safe integration snapshot at `~/.tau/state/extensions/llama.cpp.json`
+contains only the normalized endpoint, exact model IDs, allowlisted metadata,
+and a timestamp. API keys are kept separately in `~/.tau/credentials.json` or
+read from `LLAMA_API_KEY`; no key means no `Authorization` header. Secrets do
+not enter snapshots, sessions, exports, or diagnostics. Resetting settings and
+deleting a stored credential are separate confirmations. See the [local
+inference guide]({{< relref "./local-inference.md" >}}) for troubleshooting.
+
+The built-in integration does not import or rewrite an existing `llama-cpp`
+catalog entry. Configure `llama.cpp` separately through `/local`; Ollama and
+other local servers remain on the manual custom-provider path.
 
 ## Security boundary
 

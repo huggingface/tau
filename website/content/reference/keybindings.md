@@ -11,7 +11,7 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 
 | Key | Action |
 | --- | --- |
-| `Enter` | Submit the prompt (or apply a highlighted completion) |
+| `Enter` | Submit the prompt |
 | `Shift+Enter` | Insert a newline |
 | `Esc` | Cancel the active run |
 | `Enter` (while running) | Queue text as steering for the current run |
@@ -26,12 +26,15 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 | `Ctrl+R` | Open the session picker |
 | `Tab` | Accept the highlighted completion |
 | `Down` / `Up` | Move through completions |
+| `Ctrl+E` (in `/prompts`) | Edit the selected prompt template |
+| `Ctrl+S` (while editing a prompt template) | Save and reload resources |
 
 ## Models & thinking
 
 | Key | Action |
 | --- | --- |
-| `Ctrl+P` | Cycle scoped (favorite) models |
+| `Ctrl+P` | Cycle scoped (favorite) models forward |
+| `Shift+Ctrl+P` | Cycle scoped (favorite) models backward |
 | `Shift+Tab` | Cycle the thinking mode |
 | `Ctrl+T` | Toggle display of thinking/reasoning tokens |
 
@@ -39,7 +42,7 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 
 | Key | Action |
 | --- | --- |
-| `Ctrl+O` | Toggle full tool output (vs. compact preview) |
+| `Ctrl+O` | Toggle exact tool commands and full output (vs. compact previews) |
 | `Ctrl+C` | Clear the prompt input |
 | `Ctrl+D` | Quit |
 

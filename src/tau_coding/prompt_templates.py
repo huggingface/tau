@@ -16,6 +16,9 @@ from tau_coding.resources import (
 )
 
 _TEMPLATE_VARIABLE_RE = re.compile(r"{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}")
+_PROMPT_ARGUMENT_RE = re.compile(
+    r"\$\{(\d+|ARGUMENTS|@):-([^}]*)\}|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)"
+)
 _ARGUMENT_TEMPLATE_VARIABLES = {"arguments", "args"}
 _RESERVED_TEMPLATE_NAMES = frozenset({"prompts", "skills", "tools", "reload"})
 
@@ -72,6 +75,64 @@ def load_prompt_templates_with_diagnostics(
     return sorted(templates_by_name.values(), key=lambda template: template.name), diagnostics
 
 
+def parse_prompt_template_arguments(text: str) -> list[str]:
+    """Parse prompt invocation arguments using Pi's simple quote rules."""
+    arguments: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+
+    for character in text:
+        if quote is not None:
+            if character == quote:
+                quote = None
+            else:
+                current.append(character)
+        elif character in {"'", '"'}:
+            quote = character
+        elif character.isspace():
+            if current:
+                arguments.append("".join(current))
+                current = []
+        else:
+            current.append(character)
+
+    if current:
+        arguments.append("".join(current))
+    return arguments
+
+
+def substitute_prompt_template_args(content: str, arguments: Sequence[str]) -> str:
+    """Substitute Pi-compatible positional and aggregate prompt arguments."""
+    all_arguments = " ".join(arguments)
+
+    def replace(match: re.Match[str]) -> str:
+        default_target = match.group(1)
+        if default_target is not None:
+            default_value = match.group(2) or ""
+            if default_target in {"@", "ARGUMENTS"}:
+                value = all_arguments
+            else:
+                index = int(default_target) - 1
+                value = arguments[index] if 0 <= index < len(arguments) else ""
+            return value or default_value
+
+        slice_start = match.group(3)
+        if slice_start is not None:
+            start = max(int(slice_start) - 1, 0)
+            slice_length = match.group(4)
+            if slice_length is None:
+                return " ".join(arguments[start:])
+            return " ".join(arguments[start : start + int(slice_length)])
+
+        simple = match.group(5) or ""
+        if simple in {"@", "ARGUMENTS"}:
+            return all_arguments
+        index = int(simple) - 1
+        return arguments[index] if 0 <= index < len(arguments) else ""
+
+    return _PROMPT_ARGUMENT_RE.sub(replace, content)
+
+
 def render_prompt_template(
     template: PromptTemplate,
     variables: Mapping[str, str],
@@ -103,9 +164,11 @@ def expand_prompt_template_command(
 ) -> str | None:
     """Expand `/name [arguments]` text with a loaded prompt template.
 
-    Template names are matched by markdown filename stem. Invocation arguments are
-    available to templates as `{{ arguments }}` or `{{ args }}`. If a template has
-    no placeholders, arguments are appended after a blank line.
+    Template names are matched by markdown filename stem. Invocation arguments use
+    Pi-compatible `$1`, `$2`, `$@`, and `$ARGUMENTS` placeholders, including default
+    values and simple slices. Legacy `{{ arguments }}` and `{{ args }}` placeholders
+    remain supported. If a template has no argument placeholder, arguments are
+    appended after a blank line.
     """
     stripped = text.strip()
     if not stripped.startswith("/") or stripped.startswith("//") or stripped.startswith("/skill:"):
@@ -119,18 +182,21 @@ def expand_prompt_template_command(
     if template is None:
         return None
 
+    arguments = parse_prompt_template_arguments(args)
+    argument_text = " ".join(arguments)
+    rendered = substitute_prompt_template_args(template.content, arguments)
     rendered = render_prompt_template(
-        template,
-        {"arguments": args, "args": args},
+        PromptTemplate(template.name, template.path, rendered, template.description),
+        {"arguments": argument_text, "args": argument_text},
         missing="",
     )
-    if args and not _template_references_arguments(template.content):
+    if arguments and not _template_references_arguments(template.content):
         return f"{rendered.rstrip()}\n\n{args}"
     return rendered
 
 
 def _template_references_arguments(content: str) -> bool:
-    return any(
+    return bool(_PROMPT_ARGUMENT_RE.search(content)) or any(
         match.group(1) in _ARGUMENT_TEMPLATE_VARIABLES
         for match in _TEMPLATE_VARIABLE_RE.finditer(content)
     )
@@ -148,8 +214,10 @@ def _find_prompt_template(
 
 
 def _parse_prompt_template_command(text: str) -> tuple[str, str]:
-    command, separator, args = text[1:].partition(" ")
-    return command.strip().lower(), args.strip() if separator else ""
+    match = re.match(r"^/([^\s]+)(?:\s+([\s\S]*))?$", text)
+    if match is None:
+        return "", ""
+    return match.group(1).lower(), (match.group(2) or "").strip()
 
 
 def _load_prompt_templates_from_dir(prompts_dir: Path) -> list[PromptTemplate]:

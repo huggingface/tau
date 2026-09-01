@@ -14,6 +14,7 @@ class PrintOutputMode(StrEnum):
     text = "text"
     json = "json"
     transcript = "transcript"
+    rpc = "rpc"
 
 
 class EventRenderer(Protocol):

@@ -1,6 +1,7 @@
 from tau_agent.messages import (
     AssistantMessage,
     CustomMessage,
+    ResponseTiming,
     TextContent,
     ToolCall,
     ToolResultMessage,
@@ -26,7 +27,10 @@ def test_cache_hit_rate_is_zero_when_a_write_happened_but_nothing_was_read() -> 
 
 
 def test_cache_hit_rate_is_none_without_billed_input() -> None:
-    assert SessionStats().cache_hit_rate is None
+    stats = SessionStats()
+
+    assert stats.cache_hit_rate is None
+    assert stats.average_time_to_first_output_ms is None
 
 
 def test_cache_hit_rate_divides_reads_by_total_prompt_tokens() -> None:
@@ -115,6 +119,51 @@ def test_latest_cache_hit_rate_reports_miss_after_earlier_cache_activity() -> No
     )
 
     assert stats.latest_cache_hit_rate == 0.0
+
+
+def test_calculate_session_stats_aggregates_effective_output_speed() -> None:
+    first = MessageEntry(
+        message=AssistantMessage(
+            usage=Usage(output=100),
+            timing=ResponseTiming(time_to_first_output_ms=500, total_duration_ms=2000),
+        )
+    )
+    second = MessageEntry(
+        parent_id=first.id,
+        message=AssistantMessage(
+            usage=Usage(output=300),
+            timing=ResponseTiming(time_to_first_output_ms=1000, total_duration_ms=3000),
+        ),
+    )
+
+    stats = calculate_session_stats(
+        [first, second],
+        pricing=lambda _provider, _model, _input: {},
+    )
+
+    assert stats.output_tokens_per_second == 80.0
+    assert stats.average_time_to_first_output_ms == 750.0
+
+
+def test_calculate_session_stats_ignores_untimed_history_for_speed() -> None:
+    timed = MessageEntry(
+        message=AssistantMessage(
+            usage=Usage(output=100),
+            timing=ResponseTiming(time_to_first_output_ms=500, total_duration_ms=2000),
+        )
+    )
+    legacy = MessageEntry(
+        parent_id=timed.id,
+        message=AssistantMessage(usage=Usage(output=300)),
+    )
+
+    stats = calculate_session_stats(
+        [timed, legacy],
+        pricing=lambda _provider, _model, _input: {},
+    )
+
+    assert stats.output_tokens_per_second == 50.0
+    assert stats.average_time_to_first_output_ms == 500.0
 
 
 def test_calculate_session_stats_keeps_compacted_active_branch_usage() -> None:

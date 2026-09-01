@@ -24,6 +24,7 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.events import Key, Resize
 from textual.screen import ModalScreen
+from textual.strip import Strip
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import (
@@ -85,6 +86,7 @@ from tau_coding.extensions.api import (
     MainViewFactory,
     MainViewHandle,
     Placement,
+    SidebarContent,
     SlotWidgetContent,
     SlotWidgetFactory,
 )
@@ -105,8 +107,11 @@ from tau_coding.provider_catalog import (
     builtin_provider_entry,
 )
 from tau_coding.provider_config import (
+    DEFAULT_MODEL,
+    DEFAULT_PROVIDER_NAME,
     OpenAICompatibleProviderConfig,
     ProviderConfig,
+    ProviderConfigError,
     ProviderSelection,
     load_provider_settings,
     provider_config_from_catalog_entry,
@@ -117,8 +122,8 @@ from tau_coding.provider_config import (
     upsert_openai_compatible_provider,
     upsert_saved_provider,
 )
-from tau_coding.provider_runtime import create_model_provider
-from tau_coding.resources import TauResourcePaths
+from tau_coding.provider_runtime import ClosableModelProvider, create_model_provider
+from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
 from tau_coding.session import (
     TREE_RUNNING_MESSAGE,
     CodingSession,
@@ -131,8 +136,10 @@ from tau_coding.session import (
     parse_terminal_command,
 )
 from tau_coding.session_manager import CodingSessionRecord, SessionManager
+from tau_coding.session_preparation import prepare_coding_session
 from tau_coding.shell_config import load_shell_settings
 from tau_coding.skills import Skill
+from tau_coding.thinking import ThinkingLevel
 from tau_coding.tui.adapter import TuiEventAdapter
 from tau_coding.tui.autocomplete import (
     CompletionItem,
@@ -150,6 +157,13 @@ from tau_coding.tui.config import (
     save_tui_settings,
 )
 from tau_coding.tui.file_drop import normalize_dropped_paths
+from tau_coding.tui.local_backends import (
+    LocalBackendPickerScreen,
+    LocalBackendScreen,
+    LocalChoiceConfirmScreen,
+    LocalConfirmScreen,
+    LocalSearchResultsScreen,
+)
 from tau_coding.tui.project_trust import ProjectTrustScreen, prompt_project_trust
 from tau_coding.tui.state import TuiState, format_terminal_command_result_block
 from tau_coding.tui.terminal_notification import TerminalNotificationController
@@ -166,6 +180,7 @@ from tau_coding.tui.widgets import (
     SessionSidebar,
     TranscriptView,
     _custom_markup_to_text,
+    _sidebar_separator,
     render_completion_suggestions,
 )
 
@@ -223,6 +238,14 @@ class LoginRequiredProvider:
 
 
 _DialogResult = TypeVar("_DialogResult")
+
+
+@dataclass(frozen=True, slots=True)
+class _SidebarContribution:
+    """One extension-owned sidebar section retained for theme rebuilds."""
+
+    title: str
+    content: SidebarContent
 
 
 class _TuiExtensionUiBridge:
@@ -334,6 +357,31 @@ class _TuiExtensionUiBridge:
         picker, command palette) is on top.
         """
         return self._app._register_extension_key_interceptor(handler)
+
+    @property
+    def supports_sidebar(self) -> bool:
+        """Return whether the configured TUI sidebar can host sections."""
+        return self._app.tui_settings.sidebar_position != "off"
+
+    def set_sidebar_section(
+        self,
+        extension_name: str,
+        key: str,
+        *,
+        title: str,
+        content: SidebarContent,
+    ) -> None:
+        """Add or replace one host-framed extension sidebar section."""
+        self._app._set_extension_sidebar_section(
+            extension_name,
+            key,
+            title=title,
+            content=content,
+        )
+
+    def remove_sidebar_section(self, extension_name: str, key: str) -> None:
+        """Remove one extension-owned sidebar section."""
+        self._app._remove_extension_sidebar_section(extension_name, key)
 
     def clear_components(self) -> None:
         """Tear down all extension-owned UI (runtime-driven: /reload, rebind)."""
@@ -457,6 +505,8 @@ class CompletionActionTarget(Protocol):
 
     def action_cycle_model(self) -> None: ...
 
+    def action_cycle_model_reverse(self) -> None: ...
+
     def action_toggle_tool_results(self) -> None: ...
 
     def action_toggle_thinking(self) -> None: ...
@@ -578,8 +628,12 @@ class PromptInput(TextArea):
         self._completion_target().action_cycle_thinking()
 
     def action_cycle_model(self) -> None:
-        """Cycle the app-level scoped model."""
+        """Cycle the app-level scoped model forward."""
         self._completion_target().action_cycle_model()
+
+    def action_cycle_model_reverse(self) -> None:
+        """Cycle the app-level scoped model backward."""
+        self._completion_target().action_cycle_model_reverse()
 
     def action_toggle_tool_results(self) -> None:
         """Toggle app-level tool result display."""
@@ -597,6 +651,17 @@ class PromptInput(TextArea):
             self.text = ""
             self.move_cursor((0, 0))
             self._clear_pending_paste()
+
+    def render_line(self, y: int) -> Strip:
+        """Render safely while a narrow terminal leaves no content width.
+
+        Textual's placeholder wrapping currently raises when the content width
+        is zero. This can happen briefly while a narrow terminal pane is
+        switching from the sidebar layout to compact mode.
+        """
+        if self.content_size.width <= 0:
+            return Strip.blank(0, self.visual_style.rich_style)
+        return super().render_line(y)
 
     def get_line(self, line_index: int) -> Text:
         """Retrieve one prompt line, coloring terminal commands like a running tool."""
@@ -758,6 +823,9 @@ class PromptInput(TextArea):
         elif event.key == keybindings.model_cycle:
             event.stop()
             self._completion_target().action_cycle_model()
+        elif event.key == keybindings.model_cycle_reverse:
+            event.stop()
+            self._completion_target().action_cycle_model_reverse()
         elif event.key == keybindings.toggle_tool_results:
             event.stop()
             self._completion_target().action_toggle_tool_results()
@@ -1197,7 +1265,15 @@ class SessionPickerSearchInput(Input):
         self._picker().action_cancel()
 
 
-class PromptTemplatePickerScreen(ModalScreen[str | None]):
+@dataclass(frozen=True, slots=True)
+class PromptTemplatePickerResult:
+    """Action selected from the prompt-template picker."""
+
+    action: Literal["insert", "edit"]
+    template: PromptTemplate
+
+
+class PromptTemplatePickerScreen(ModalScreen[PromptTemplatePickerResult | None]):
     """Searchable picker for loaded prompt templates."""
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
@@ -1205,6 +1281,7 @@ class PromptTemplatePickerScreen(ModalScreen[str | None]):
         Binding("up", "cursor_up", "Up", show=False),
         Binding("down", "cursor_down", "Down", show=False),
         Binding("enter", "select_cursor", "Select", show=False),
+        Binding("ctrl+e", "edit_cursor", "Edit", show=False, priority=True),
     ]
 
     def __init__(self, templates: Sequence[PromptTemplate]) -> None:
@@ -1253,12 +1330,25 @@ class PromptTemplatePickerScreen(ModalScreen[str | None]):
         self.query_one("#prompt-template-picker-list", ListView).action_cursor_down()
 
     def action_select_cursor(self) -> None:
-        picker_list = self.query_one("#prompt-template-picker-list", ListView)
-        if self.visible_templates and picker_list.index is not None:
-            self.dismiss(self.visible_templates[picker_list.index].name)
+        template = self._selected_template()
+        if template is not None:
+            self.dismiss(PromptTemplatePickerResult(action="insert", template=template))
+
+    def action_edit_cursor(self) -> None:
+        """Open the selected template in Tau's prompt editor."""
+        template = self._selected_template()
+        if template is not None:
+            self.dismiss(PromptTemplatePickerResult(action="edit", template=template))
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+    def _selected_template(self) -> PromptTemplate | None:
+        picker_list = self.query_one("#prompt-template-picker-list", ListView)
+        index = picker_list.index
+        if index is None or index >= len(self.visible_templates):
+            return None
+        return self.visible_templates[index]
 
     def _refresh_list(self) -> None:
         picker_list = self.query_one("#prompt-template-picker-list", ListView)
@@ -1274,12 +1364,46 @@ class PromptTemplatePickerScreen(ModalScreen[str | None]):
         )
         picker_list.index = 0 if self.visible_templates else None
         if self.visible_templates:
-            help_text = "Enter selects - Escape closes"
+            help_text = "Enter inserts - Ctrl+E edits - Escape closes"
         elif self.templates:
             help_text = "No matching prompt templates - Escape closes"
         else:
             help_text = "No prompt templates loaded - Escape closes"
         self.query_one("#prompt-template-picker-help", Static).update(help_text)
+
+
+class PromptTemplateEditorScreen(ModalScreen[str | None]):
+    """Edit one prompt-template Markdown file inside the TUI."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("ctrl+s", "save", "Save", show=False, priority=True),
+    ]
+
+    def __init__(self, template: PromptTemplate, source: str) -> None:
+        super().__init__()
+        self.template = template
+        self.source = source
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="prompt-template-editor"):
+            yield Static(f"Edit /{self.template.name}", id="prompt-template-editor-title")
+            yield Static(str(self.template.path), id="prompt-template-editor-path")
+            yield TextArea(self.source, id="prompt-template-editor-input")
+            yield Static(
+                "Ctrl+S saves - Escape returns without saving",
+                id="prompt-template-editor-help",
+            )
+
+    def on_mount(self) -> None:
+        self.query_one("#prompt-template-editor-input", TextArea).focus()
+
+    def action_save(self) -> None:
+        source = self.query_one("#prompt-template-editor-input", TextArea).text
+        self.dismiss(source)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class SessionPickerScreen(ModalScreen[str | None]):
@@ -2351,8 +2475,10 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         picker_kind: Literal["model", "scoped"] = "model",
     ) -> None:
         super().__init__()
-        self.choices = tuple(dict.fromkeys(choices))
+        available = tuple(dict.fromkeys(choices))
         self.scoped_choices = tuple(dict.fromkeys(scoped_choices))
+        self.unavailable_choices = frozenset(self.scoped_choices) - frozenset(available)
+        self.choices = tuple(dict.fromkeys((*available, *self.scoped_choices)))
         self.visible_choices = self.choices
         self.current_model = current_model
         self.provider_name = provider_name
@@ -2380,6 +2506,7 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
                                 current_model=self.current_model,
                                 current_provider=self.provider_name,
                                 scoped=choice in self.scoped_choices,
+                                unavailable=choice in self.unavailable_choices,
                             ),
                             markup=False,
                         )
@@ -2458,8 +2585,6 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
 
     def action_toggle_mode(self) -> None:
         """Toggle between all models and scoped models."""
-        if self.picker_kind != "model":
-            return
         self.mode = "scoped" if self.mode == "all" else "all"
         self._refresh_model_list()
 
@@ -2479,6 +2604,18 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         """Close without selecting a model."""
         self.dismiss(None)
 
+    def update_choices(
+        self,
+        choices: Sequence[ModelChoice],
+        scoped_choices: Sequence[ModelChoice],
+    ) -> None:
+        """Publish a refreshed catalog without replacing the open picker."""
+        available = tuple(dict.fromkeys(choices))
+        self.scoped_choices = tuple(dict.fromkeys(scoped_choices))
+        self.unavailable_choices = frozenset(self.scoped_choices) - frozenset(available)
+        self.choices = tuple(dict.fromkeys((*available, *self.scoped_choices)))
+        self._refresh_model_list()
+
     def _select_visible_choice(self) -> None:
         if not self.visible_choices:
             return
@@ -2489,6 +2626,8 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         choice = self.visible_choices[index]
         if self.picker_kind == "scoped":
             self.action_toggle_scoped()
+            return
+        if choice in self.unavailable_choices:
             return
         self.dismiss(choice)
 
@@ -2506,6 +2645,7 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
                             current_model=self.current_model,
                             current_provider=self.provider_name,
                             scoped=choice in self.scoped_choices,
+                            unavailable=choice in self.unavailable_choices,
                         ),
                         markup=False,
                     )
@@ -2517,12 +2657,23 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         scope_count = len(self.scoped_choices)
         tabs = self.query_one("#model-picker-tabs", Static)
         if self.picker_kind == "scoped":
-            tabs.update("Scoped models setup — Enter toggles membership; active model is unchanged")
-            help_text = (
-                "No matching models - Enter toggles scoped model"
-                if not self.visible_choices
-                else f"Enter toggles scoped model - {scope_count} scoped"
-            )
+            if self.mode == "all":
+                tabs.update("Tabs: ● All models  ○ Scoped models")
+                help_text = (
+                    "all models: no matching models - Tab switches to scoped models"
+                    if not self.visible_choices
+                    else (
+                        "All models - Enter toggles scoped model - Tab switches tabs - "
+                        f"{scope_count} scoped - active model is unchanged"
+                    )
+                )
+            else:
+                tabs.update("Tabs: ○ All models  ● Scoped models")
+                help_text = (
+                    "scoped models: no scoped models - Tab switches to all models"
+                    if not self.visible_choices
+                    else "Scoped models - Enter removes scoped model - Tab switches tabs"
+                )
         elif self.mode == "all":
             tabs.update("Tabs: ● All models  ○ Scoped models")
             help_text = (
@@ -2918,8 +3069,64 @@ class TauTuiApp(App[None]):
         border: none;
     }
 
-    #sidebar-content {
+    #sidebar-scroll {
         height: 1fr;
+        scrollbar-size-vertical: 1;
+    }
+
+    #sidebar-content {
+        height: auto;
+    }
+
+    #sidebar .sidebar-separator {
+        height: auto;
+    }
+
+    #sidebar .sidebar-resource-section {
+        width: 1fr;
+        height: auto;
+        padding: 0;
+        background: transparent;
+        border: none;
+    }
+
+    #sidebar .sidebar-resource-section:focus-within {
+        background-tint: transparent;
+    }
+
+    #sidebar .sidebar-resource-section CollapsibleTitle {
+        width: 1fr;
+        padding: 0 0 0 1;
+        color: $tau-prompt-text;
+        text-style: none;
+        background: transparent;
+    }
+
+    #sidebar .sidebar-resource-section CollapsibleTitle:hover,
+    #sidebar .sidebar-resource-section CollapsibleTitle:focus {
+        color: $tau-prompt-text;
+        text-style: none;
+        background: transparent;
+    }
+
+    #sidebar .sidebar-resource-section Contents {
+        padding: 1 0 0 1;
+    }
+
+    #sidebar-extension-sections,
+    #sidebar .extension-sidebar-section,
+    #sidebar .extension-sidebar-body {
+        width: 1fr;
+        height: auto;
+    }
+
+    #sidebar .extension-sidebar-title {
+        height: auto;
+        padding: 0 0 0 1;
+    }
+
+    #sidebar .extension-sidebar-body {
+        padding: 1 0 0 1;
     }
 
     #sidebar-brand {
@@ -3047,6 +3254,7 @@ class TauTuiApp(App[None]):
 
     SessionPickerScreen,
     PromptTemplatePickerScreen,
+    PromptTemplateEditorScreen,
     SkillPickerScreen,
     TreePickerScreen,
     ToolsReferenceScreen,
@@ -3056,6 +3264,7 @@ class TauTuiApp(App[None]):
 
     #session-picker,
     #prompt-template-picker,
+    #prompt-template-editor,
     #skill-picker,
     #tree-picker,
     #tools-reference {
@@ -3070,6 +3279,7 @@ class TauTuiApp(App[None]):
 
     #session-picker-title,
     #prompt-template-picker-title,
+    #prompt-template-editor-title,
     #skill-picker-title,
     #tree-picker-title,
     #tools-reference-title {
@@ -3094,6 +3304,23 @@ class TauTuiApp(App[None]):
         height: 1;
         color: $tau-muted-text;
         text-style: bold;
+    }
+
+    #prompt-template-editor {
+        height: 80%;
+    }
+
+    #prompt-template-editor-path {
+        height: 1;
+        margin-bottom: 1;
+        color: $tau-muted-text;
+    }
+
+    #prompt-template-editor-input {
+        height: 1fr;
+        background: $tau-prompt-background;
+        color: $tau-prompt-text;
+        border: tall $tau-prompt-border;
     }
 
     #session-picker-list,
@@ -3137,6 +3364,7 @@ class TauTuiApp(App[None]):
 
     #session-picker-help,
     #prompt-template-picker-help,
+    #prompt-template-editor-help,
     #skill-picker-help,
     #tree-picker-help,
     #tools-reference-help {
@@ -3148,6 +3376,13 @@ class TauTuiApp(App[None]):
     ExtensionSelectScreen,
     ExtensionConfirmScreen,
     ExtensionInputScreen,
+    LocalBackendPickerScreen,
+    LocalBackendScreen,
+    LocalChoiceConfirmScreen,
+    LocalConfigureScreen,
+    LocalConfirmScreen,
+    LocalModelActionScreen,
+    LocalSearchResultsScreen,
     ProjectTrustScreen {
         align: center middle;
     }
@@ -3201,6 +3436,125 @@ class TauTuiApp(App[None]):
     #extension-input-help {
         height: 1;
         margin-top: 1;
+        color: $tau-muted-text;
+    }
+
+    #local-backend-picker,
+    #local-backend-screen,
+    #local-configure-screen,
+    #local-confirm-screen,
+    #local-model-action-screen,
+    #local-search-results-screen {
+        width: 82;
+        max-width: 92%;
+        height: auto;
+        max-height: 82%;
+        padding: 1 2;
+        background: $tau-chrome-background;
+        border: tall $tau-border;
+    }
+
+    #local-backend-picker-title,
+    #local-backend-title,
+    #local-configure-title,
+    #local-confirm-title,
+    #local-model-action-title,
+    #local-search-results-title {
+        height: auto;
+        color: $tau-chrome-text;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #local-backend-picker-help,
+    #local-backend-help,
+    #local-configure-screen Label,
+    #local-confirm-message,
+    #local-search-results-help {
+        color: $tau-muted-text;
+    }
+
+    #local-backend-list,
+    #local-backend-status,
+    #local-backend-progress,
+    #local-model-list,
+    #local-action-menu,
+    #local-confirm-list,
+    #local-choice-list,
+    #local-search-results-list,
+    #local-configure-screen Input,
+    #local-configure-screen Select,
+    #local-model-action-input {
+        background: $tau-transcript-background;
+        border: tall $tau-border;
+        margin-top: 1;
+    }
+
+    #local-backend-list,
+    #local-model-list,
+    #local-action-menu,
+    #local-confirm-list,
+    #local-choice-list,
+    #local-search-results-list {
+        height: auto;
+        max-height: 16;
+    }
+
+    #local-model-list,
+    #local-action-menu {
+        max-height: 10;
+    }
+
+    #local-model-list:focus,
+    #local-action-menu:focus {
+        border: tall $tau-accent;
+    }
+
+    #local-model-list.local-section-inactive > ListItem.-highlight,
+    #local-action-menu.local-section-inactive > ListItem.-highlight,
+    #local-model-list.local-section-inactive > ListItem.-highlight Label,
+    #local-action-menu.local-section-inactive > ListItem.-highlight Label {
+        background: $tau-transcript-background;
+        color: $tau-chrome-text;
+    }
+
+    #local-model-section-title,
+    #local-action-section-title {
+        height: 1;
+        margin-top: 1;
+        color: $tau-chrome-text;
+        text-style: bold;
+    }
+
+    #local-backend-progress-bar {
+        width: 100%;
+        margin-top: 1;
+    }
+
+    #local-backend-progress-bar Bar {
+        width: 1fr;
+    }
+
+    #local-backend-progress-bar Bar > .bar--bar,
+    #local-backend-progress-bar Bar > .bar--complete,
+    #local-backend-progress-bar Bar > .bar--indeterminate {
+        color: $tau-accent;
+        background: $tau-border;
+    }
+
+    #local-backend-picker-footer,
+    #local-backend-footer,
+    #local-configure-footer,
+    #local-confirm-footer,
+    #local-model-action-footer,
+    #local-search-results-footer {
+        height: 1;
+        margin-top: 1;
+        color: $tau-muted-text;
+    }
+
+    #local-backend-progress {
+        min-height: 1;
         color: $tau-muted-text;
     }
 
@@ -3441,6 +3795,7 @@ class TauTuiApp(App[None]):
         startup_message: str | None = None,
         startup_notice: str | None = None,
         startup_update_notice: str | None = None,
+        startup_alerts: Sequence[str] = (),
         startup_notices: Sequence[str] = (),
         initial_prompt: str | None = None,
     ) -> None:
@@ -3463,6 +3818,8 @@ class TauTuiApp(App[None]):
         self.state = TuiState(skills=session.skills)
         if startup_update_notice is not None:
             self.state.add_item("status", startup_update_notice, highlight="update")
+        for alert in startup_alerts:
+            self.state.add_item("status", alert, highlight="alert")
         for notice in self.startup_notices:
             self.state.add_item("status", notice)
         if self.tui_settings.theme != self.tui_settings.resolved_theme.name:
@@ -3488,6 +3845,11 @@ class TauTuiApp(App[None]):
         self._extension_slot_slot_ids: dict[str, str] = {}
         self._extension_slot_locks: dict[str, asyncio.Lock] = {}
         self._extension_key_interceptors: list[KeyInterceptor] = []
+        self._extension_sidebar_contributions: dict[tuple[str, str], _SidebarContribution] = {}
+        self._extension_sidebar_widgets: dict[tuple[str, str], Widget] = {}
+        self._extension_sidebar_mounted: dict[tuple[str, str], Widget] = {}
+        self._extension_sidebar_lock = asyncio.Lock()
+        self._extension_sidebar_theme: TuiTheme | None = None
         self._extension_main_view: _MainViewHandle | None = None
         self._extension_main_view_mounted: Widget | None = None
         self._extension_main_view_lock = asyncio.Lock()
@@ -3803,16 +4165,11 @@ class TauTuiApp(App[None]):
         *,
         streaming_behavior: Literal["steer", "follow_up"],
     ) -> None:
+        # Enter always submits the prompt text as typed; accepting the
+        # selected completion is reserved for the accept-completion key
+        # (Tab by default).
         prompt = self.query_one("#prompt", PromptInput)
         raw_text = prompt.text_for_submission()
-        applied_completion = self._apply_selected_completion(raw_text)
-        if applied_completion is not None and applied_completion != raw_text:
-            prompt.text = applied_completion
-            prompt._clear_pending_paste()
-            prompt.move_cursor(_text_end_location(applied_completion))
-            self._completion_state = self._build_completion_state(applied_completion)
-            self._refresh_completions()
-            return
 
         text = raw_text.strip()
         if not text:
@@ -3911,12 +4268,25 @@ class TauTuiApp(App[None]):
                 self._open_login_picker()
             if command.custom_provider_login_requested:
                 self._open_custom_provider_login()
+            if command.local_requested:
+                self._open_local_backend_picker()
             if command.login_provider is not None:
                 self._open_login(command.login_provider, method=command.login_method)
             if command.logout_picker_requested:
                 self._open_logout_picker()
             if command.logout_provider is not None:
                 self._logout(command.logout_provider)
+            if command.model_selection_model is not None:
+                self.run_worker(
+                    self._switch_model(
+                        ModelChoice(
+                            provider_name=command.model_selection_provider
+                            or self.session.provider_name,
+                            model=command.model_selection_model,
+                        )
+                    ),
+                    exclusive=False,
+                )
             if command.model_picker_requested:
                 self._open_model_picker()
             if command.tools_picker_requested:
@@ -3927,6 +4297,14 @@ class TauTuiApp(App[None]):
                 self._open_skills_picker()
             if command.theme_picker_requested:
                 self._open_theme_picker()
+            if command.session_name is not None:
+                try:
+                    await self.session.set_session_name(command.session_name)
+                except ValueError as exc:
+                    self._notify(f"Could not rename session: {exc}", severity="error")
+                    self._refresh()
+                    return
+                self._sync_session_title()
             if command.thinking_level is not None:
                 await self._set_thinking_level(command.thinking_level)
             if command.theme is not None:
@@ -4323,6 +4701,175 @@ class TauTuiApp(App[None]):
                 return
             self._extension_slot_mounted[key] = target
 
+    def _build_extension_sidebar_widget(
+        self,
+        owner: tuple[str, str],
+        contribution: _SidebarContribution,
+        *,
+        theme: TuiTheme,
+    ) -> Widget | None:
+        """Build one host-framed sidebar section, isolating its body factory."""
+        content = contribution.content
+        try:
+            if callable(content):
+                body = content(theme)
+            else:
+                lines = [content] if isinstance(content, str) else list(content)
+                body = self._string_slot_widget(lines)
+            if not isinstance(body, Widget):
+                raise TypeError("sidebar factory must return a Textual Widget")
+            header = Text(contribution.title, style=f"bold {theme.prompt_text}")
+            return Vertical(
+                Static(_sidebar_separator(theme=theme), classes="sidebar-separator"),
+                Static(header, classes="extension-sidebar-title"),
+                Container(body, classes="extension-sidebar-body"),
+                classes="extension-sidebar-section",
+            )
+        except Exception as exc:  # noqa: BLE001 - isolation boundary
+            extension_name, key = owner
+            self._record_extension_component_failure(
+                f"sidebar:{extension_name}:{key}",
+                exc,
+                notify=True,
+                extension_name=extension_name,
+            )
+            return None
+
+    def _set_extension_sidebar_section(
+        self,
+        extension_name: str,
+        key: str,
+        *,
+        title: str,
+        content: SidebarContent,
+    ) -> None:
+        """Add or update a sidebar contribution while preserving key order."""
+        if self.tui_settings.sidebar_position == "off":
+            return
+        owner = (extension_name, key)
+        normalized_content: SidebarContent
+        if callable(content):
+            normalized_content = content
+        elif isinstance(content, str):
+            normalized_content = (content,)
+        else:
+            normalized_content = tuple(content)
+        contribution = _SidebarContribution(title=title, content=normalized_content)
+        theme = self.tui_settings.resolved_theme
+        previous = self._extension_sidebar_contributions.get(owner)
+        if previous == contribution and self._extension_sidebar_theme == theme:
+            return
+        mounted = self._extension_sidebar_mounted.get(owner)
+        target = self._extension_sidebar_widgets.get(owner)
+        if (
+            previous is not None
+            and not callable(previous.content)
+            and not callable(normalized_content)
+            and mounted is not None
+            and mounted is target
+            and self._extension_sidebar_theme == theme
+        ):
+            try:
+                header = Text(title, style=f"bold {theme.prompt_text}")
+                mounted.query_one(".extension-sidebar-title", Static).update(header)
+                body = mounted.query_one(".extension-sidebar-body", Container).query_one(Static)
+                body.update(_custom_markup_to_text("\n".join(normalized_content)))
+            except Exception as exc:  # noqa: BLE001 - isolation boundary
+                self._record_extension_component_failure(
+                    f"sidebar:{extension_name}:{key}",
+                    exc,
+                    notify=True,
+                    extension_name=extension_name,
+                )
+                return
+            self._extension_sidebar_contributions[owner] = contribution
+            return
+        widget = self._build_extension_sidebar_widget(owner, contribution, theme=theme)
+        if widget is None:
+            return
+        self._extension_sidebar_contributions[owner] = contribution
+        self._extension_sidebar_widgets[owner] = widget
+        self._extension_sidebar_theme = theme
+        self._schedule_extension_swap(self._reconcile_sidebar())
+
+    def _remove_extension_sidebar_section(self, extension_name: str, key: str) -> None:
+        """Forget and unmount one extension-owned sidebar contribution."""
+        owner = (extension_name, key)
+        if owner not in self._extension_sidebar_contributions:
+            return
+        self._extension_sidebar_contributions.pop(owner, None)
+        self._extension_sidebar_widgets.pop(owner, None)
+        self._schedule_extension_swap(self._reconcile_sidebar())
+
+    def _rebuild_extension_sidebar_sections(self, *, theme: TuiTheme) -> None:
+        """Recreate sidebar factories for a changed live theme."""
+        if self.tui_settings.sidebar_position == "off":
+            return
+        changed = False
+        for owner, contribution in tuple(self._extension_sidebar_contributions.items()):
+            widget = self._build_extension_sidebar_widget(owner, contribution, theme=theme)
+            if widget is not None:
+                self._extension_sidebar_widgets[owner] = widget
+                changed = True
+        self._extension_sidebar_theme = theme
+        if changed:
+            self._schedule_extension_swap(self._reconcile_sidebar())
+
+    async def _reconcile_sidebar(self) -> None:
+        """Mount sidebar sections in registration order after removals drain."""
+        async with self._extension_sidebar_lock:
+            target_items = tuple(self._extension_sidebar_widgets.items())
+            mounted_items = tuple(self._extension_sidebar_mounted.items())
+            if mounted_items == target_items:
+                return
+            try:
+                slot = self.query_one("#sidebar-extension-sections", Container)
+            except NoMatches:
+                return
+            # Remove only stale roots. An unchanged Textual widget cannot be
+            # removed and mounted again: removal prunes its composed children.
+            # Keeping unchanged roots also avoids rerunning unrelated factories.
+            for owner, mounted in mounted_items:
+                if self._extension_sidebar_widgets.get(owner) is mounted:
+                    continue
+                with suppress(Exception):
+                    await mounted.remove()
+                if self._extension_sidebar_mounted.get(owner) is mounted:
+                    self._extension_sidebar_mounted.pop(owner, None)
+            # Re-read after awaits: rapid updates collapse to the latest target.
+            target_items = tuple(self._extension_sidebar_widgets.items())
+            for index, (owner, target) in enumerate(target_items):
+                if self._extension_sidebar_mounted.get(owner) is target:
+                    continue
+                later_mounted = next(
+                    (
+                        self._extension_sidebar_mounted.get(later_owner)
+                        for later_owner, _ in target_items[index + 1 :]
+                        if self._extension_sidebar_mounted.get(later_owner) is not None
+                    ),
+                    None,
+                )
+                try:
+                    await slot.mount(target, before=later_mounted)
+                except Exception as exc:  # noqa: BLE001 - isolation boundary
+                    extension_name, key = owner
+                    if self._extension_sidebar_widgets.get(owner) is target:
+                        self._extension_sidebar_widgets.pop(owner, None)
+                        self._extension_sidebar_contributions.pop(owner, None)
+                    self._record_extension_component_failure(
+                        f"sidebar:{extension_name}:{key}",
+                        exc,
+                        notify=True,
+                        extension_name=extension_name,
+                    )
+                    continue
+                self._extension_sidebar_mounted[owner] = target
+            self._extension_sidebar_mounted = {
+                owner: target
+                for owner, target in target_items
+                if self._extension_sidebar_mounted.get(owner) is target
+            }
+
     def _open_extension_main_view(self, factory: MainViewFactory) -> MainViewHandle:
         """Open a display-toggled main-area view mounting ``factory(handle, theme)``.
 
@@ -4426,7 +4973,10 @@ class TauTuiApp(App[None]):
 
     def _refresh_extension_components(self) -> None:
         """Re-render all mounted extension widgets (analog of requestRender)."""
-        for widget in tuple(self._extension_slot_widgets.values()):
+        for widget in (
+            *self._extension_slot_widgets.values(),
+            *self._extension_sidebar_widgets.values(),
+        ):
             with suppress(Exception):
                 widget.refresh()
         handle = self._extension_main_view
@@ -4452,6 +5002,10 @@ class TauTuiApp(App[None]):
         self._extension_slot_slot_ids.clear()
         for key in slot_keys:
             self._schedule_extension_swap(self._reconcile_slot(key))
+        self._extension_sidebar_contributions.clear()
+        self._extension_sidebar_widgets.clear()
+        self._extension_sidebar_theme = None
+        self._schedule_extension_swap(self._reconcile_sidebar())
         handle = self._extension_main_view
         self._extension_main_view = None
         self._release_main_view_handle(handle)
@@ -4467,6 +5021,8 @@ class TauTuiApp(App[None]):
         for widget in (
             *self._extension_slot_widgets.values(),
             *self._extension_slot_mounted.values(),
+            *self._extension_sidebar_widgets.values(),
+            *self._extension_sidebar_mounted.values(),
         ):
             if id(widget) not in seen:
                 seen.add(id(widget))
@@ -4525,6 +5081,7 @@ class TauTuiApp(App[None]):
             culprit.display = False
         with suppress(Exception):
             culprit.disabled = True
+        sidebar_owner: tuple[str, str] | None = None
         if (
             self._extension_main_view is not None and self._extension_main_view.widget is culprit
         ) or self._extension_main_view_mounted is culprit:
@@ -4537,13 +5094,40 @@ class TauTuiApp(App[None]):
                 culprit.remove()
             self._restore_main_transcript()
         else:
-            for tracker in (self._extension_slot_widgets, self._extension_slot_mounted):
-                key = next((k for k, w in tracker.items() if w is culprit), None)
-                if key is not None:
-                    tracker.pop(key, None)
+            sidebar_owner = next(
+                (
+                    owner
+                    for owner, widget in (
+                        *self._extension_sidebar_widgets.items(),
+                        *self._extension_sidebar_mounted.items(),
+                    )
+                    if widget is culprit
+                ),
+                None,
+            )
+            if sidebar_owner is not None:
+                self._extension_sidebar_widgets.pop(sidebar_owner, None)
+                self._extension_sidebar_mounted.pop(sidebar_owner, None)
+                self._extension_sidebar_contributions.pop(sidebar_owner, None)
+            else:
+                for tracker in (self._extension_slot_widgets, self._extension_slot_mounted):
+                    key = next((k for k, w in tracker.items() if w is culprit), None)
+                    if key is not None:
+                        tracker.pop(key, None)
             with suppress(Exception):
                 culprit.remove()
-        self._record_extension_component_failure(f"render:{id(culprit)}", error, notify=True)
+        extension_name = sidebar_owner[0] if sidebar_owner else None
+        context = (
+            f"sidebar:{sidebar_owner[0]}:{sidebar_owner[1]}"
+            if sidebar_owner
+            else f"render:{id(culprit)}"
+        )
+        self._record_extension_component_failure(
+            context,
+            error,
+            notify=True,
+            extension_name=extension_name,
+        )
         return True
 
     def _handle_exception(self, error: Exception) -> None:
@@ -4561,7 +5145,12 @@ class TauTuiApp(App[None]):
         super()._handle_exception(error)
 
     def _record_extension_component_failure(
-        self, context: str, error: BaseException, *, notify: bool = False
+        self,
+        context: str,
+        error: BaseException,
+        *,
+        notify: bool = False,
+        extension_name: str | None = None,
     ) -> None:
         """Diagnose an extension-component failure once per context.
 
@@ -4580,6 +5169,10 @@ class TauTuiApp(App[None]):
         if context in self._extension_component_failures_reported:
             return
         self._extension_component_failures_reported.add(context)
+        if extension_name is not None:
+            runtime = getattr(self.session, "extension_runtime", None)
+            if runtime is not None:
+                runtime.record_ui_failure(extension_name, context, error)
         if notify:
             summary = f"{type(error).__name__}: {error}"
             if len(summary) > 120:
@@ -4722,7 +5315,9 @@ class TauTuiApp(App[None]):
                     and event.message.stop_reason == "error"
                 ):
                     _attach_diagnostic_log_path_to_error(self.state, self.session)
-                    _attach_retry_hint_to_error(self.state, event.message)
+                    will_auto_retry = getattr(self.session, "will_auto_retry", None)
+                    if not (callable(will_auto_retry) and will_auto_retry(event.message)):
+                        _attach_retry_hint_to_error(self.state, event.message)
                 elif (
                     isinstance(event, CompactionEndEvent)
                     and event.reason == "overflow"
@@ -4822,13 +5417,23 @@ class TauTuiApp(App[None]):
             return
         if isinstance(event, ToolExecutionStartEvent):
             await transcript.finish_assistant_message()
-            item = self.state.items[-1]
-            await transcript.append_item(
-                item,
-                theme=theme,
-                show_tool_results=self.state.show_tool_results,
-                invocation=self.state.resolve_tool_invocation(item),
-            )
+            item = self.state.find_tool_item(event.tool_call_id)
+            if item is not None:
+                expanded = self.state.show_tool_results or item.always_show_tool_result
+                updated = await transcript.update_item(
+                    item,
+                    theme=theme,
+                    show_tool_results=expanded,
+                    invocation=self.state.resolve_tool_invocation(item, expanded=expanded),
+                    result_markup=self.state.resolve_tool_result(item, expanded=expanded),
+                )
+                if not updated:
+                    await transcript.append_item(
+                        item,
+                        theme=theme,
+                        show_tool_results=expanded,
+                        invocation=self.state.resolve_tool_invocation(item, expanded=expanded),
+                    )
             self._refresh_chrome()
             return
         if isinstance(event, ToolExecutionUpdateEvent):
@@ -4840,7 +5445,7 @@ class TauTuiApp(App[None]):
                     updated_item,
                     theme=theme,
                     show_tool_results=expanded,
-                    invocation=self.state.resolve_tool_invocation(updated_item),
+                    invocation=self.state.resolve_tool_invocation(updated_item, expanded=expanded),
                     result_markup=self.state.resolve_tool_result(updated_item, expanded=expanded),
                 )
             self._refresh_chrome()
@@ -4871,7 +5476,7 @@ class TauTuiApp(App[None]):
                     updated_item,
                     theme=theme,
                     show_tool_results=expanded,
-                    invocation=self.state.resolve_tool_invocation(updated_item),
+                    invocation=self.state.resolve_tool_invocation(updated_item, expanded=expanded),
                     result_markup=self.state.resolve_tool_result(updated_item, expanded=expanded),
                 )
             self._refresh_chrome()
@@ -4947,6 +5552,11 @@ class TauTuiApp(App[None]):
             | ThemePickerScreen
             | ExtensionSelectScreen
             | ExtensionConfirmScreen
+            | LocalBackendPickerScreen
+            | LocalBackendScreen
+            | LocalChoiceConfirmScreen
+            | LocalConfirmScreen
+            | LocalSearchResultsScreen
             | ProjectTrustScreen,
         ):
             self.screen.action_select_cursor()
@@ -4962,6 +5572,9 @@ class TauTuiApp(App[None]):
 
     def action_completion_next(self) -> None:
         """Select the next prompt completion or move down in the prompt."""
+        if isinstance(self.screen, PromptTemplateEditorScreen):
+            self.screen.query_one("#prompt-template-editor-input", TextArea).action_cursor_down()
+            return
         if isinstance(self.screen, CommandOutputScreen):
             self.screen.action_scroll_down()
             return
@@ -4978,6 +5591,11 @@ class TauTuiApp(App[None]):
             | ToolsReferenceScreen
             | ExtensionSelectScreen
             | ExtensionConfirmScreen
+            | LocalBackendPickerScreen
+            | LocalBackendScreen
+            | LocalChoiceConfirmScreen
+            | LocalConfirmScreen
+            | LocalSearchResultsScreen
             | ProjectTrustScreen,
         ):
             self.screen.action_cursor_down()
@@ -4990,6 +5608,9 @@ class TauTuiApp(App[None]):
 
     def action_completion_previous(self) -> None:
         """Select the previous prompt completion or move up in the prompt."""
+        if isinstance(self.screen, PromptTemplateEditorScreen):
+            self.screen.query_one("#prompt-template-editor-input", TextArea).action_cursor_up()
+            return
         if isinstance(self.screen, CommandOutputScreen):
             self.screen.action_scroll_up()
             return
@@ -5006,6 +5627,11 @@ class TauTuiApp(App[None]):
             | ToolsReferenceScreen
             | ExtensionSelectScreen
             | ExtensionConfirmScreen
+            | LocalBackendPickerScreen
+            | LocalBackendScreen
+            | LocalChoiceConfirmScreen
+            | LocalConfirmScreen
+            | LocalSearchResultsScreen
             | ProjectTrustScreen,
         ):
             self.screen.action_cursor_up()
@@ -5101,16 +5727,60 @@ class TauTuiApp(App[None]):
             callback=self._handle_prompt_template_picker_result,
         )
 
-    def _handle_prompt_template_picker_result(self, name: str | None) -> None:
+    def _handle_prompt_template_picker_result(
+        self, result: PromptTemplatePickerResult | None
+    ) -> None:
         prompt = self.query_one("#prompt", PromptInput)
         prompt.focus()
-        if name is None:
+        if result is None:
             return
-        invocation = f"/{name}"
+        if result.action == "edit":
+            try:
+                source = result.template.path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                self._notify(f"Could not read /{result.template.name}: {exc}", severity="error")
+                self._open_prompt_template_picker()
+                return
+            self.push_screen(
+                PromptTemplateEditorScreen(result.template, source),
+                callback=lambda edited: self._handle_prompt_template_edit(result.template, edited),
+            )
+            return
+        invocation = f"/{result.template.name}"
         prompt.text = invocation
         prompt.move_cursor(_text_end_location(invocation))
         self._completion_state = self._build_completion_state(invocation)
         self._refresh_completions()
+
+    def _handle_prompt_template_edit(self, template: PromptTemplate, source: str | None) -> None:
+        if source is None:
+            self._open_prompt_template_picker()
+            return
+        self.run_worker(self._save_prompt_template_edit(template, source), exclusive=False)
+
+    async def _save_prompt_template_edit(self, template: PromptTemplate, source: str) -> None:
+        try:
+            template.path.write_text(source, encoding="utf-8")
+        except OSError as exc:
+            self._notify(f"Could not save /{template.name}: {exc}", severity="error")
+            self._open_prompt_template_picker()
+            return
+
+        try:
+            reload_result = self.session.reload()
+            if isawaitable(reload_result):
+                await reload_result
+        except Exception as exc:  # noqa: BLE001 - saved file remains valid; surface reload errors
+            self._notify(
+                f"Saved /{template.name}, but could not reload resources: {exc}",
+                severity="error",
+            )
+        else:
+            self.state.set_skills(self.session.skills)
+            self._completion_state = self._build_completion_state("")
+            self._refresh()
+            self._notify(f"Saved /{template.name} and reloaded resources.")
+        self._open_prompt_template_picker()
 
     def _open_skills_picker(self) -> None:
         """Open loaded-skill discovery."""
@@ -5140,17 +5810,23 @@ class TauTuiApp(App[None]):
         self.run_worker(self._cycle_thinking_level(), exclusive=False)
 
     def action_cycle_model(self) -> None:
-        """Cycle through scoped models."""
+        """Cycle forward through scoped models."""
+        self._cycle_model(reverse=False)
+
+    def action_cycle_model_reverse(self) -> None:
+        """Cycle backward through scoped models."""
+        self._cycle_model(reverse=True)
+
+    def _cycle_model(self, *, reverse: bool) -> None:
         if self.state.running:
             self._notify("Tau is already working. Press Escape to cancel.")
             return
-        self.run_worker(self._cycle_scoped_model(), exclusive=False)
+        self.run_worker(self._cycle_scoped_model(reverse=reverse), exclusive=False)
 
     def action_toggle_tool_results(self) -> None:
         """Toggle inline tool result details without rebuilding unrelated history."""
-        expanded = self.state.toggle_tool_results()
+        self.state.toggle_tool_results()
         self.run_worker(self._update_tool_results_visibility(), exclusive=False)
-        self._notify("Tool results expanded." if expanded else "Tool results collapsed.")
 
     async def _update_tool_results_visibility(self) -> None:
         transcript = self.query_one("#transcript", TranscriptView)
@@ -5285,7 +5961,16 @@ class TauTuiApp(App[None]):
 
     def _append_command_message(self, command_text: str, message: str) -> None:
         """Append non-persistent command output to the visible transcript."""
-        self.state.add_item("status", f"{_command_output_title(command_text)}\n{message}")
+        is_system_prompt = command_text.split(maxsplit=1)[0].casefold() == "/system"
+        separator = "\n\n" if is_system_prompt else "\n"
+        title = _command_output_title(command_text)
+        if is_system_prompt:
+            title = f"### {title}"
+        self.state.add_item(
+            "status",
+            f"{title}{separator}{message}",
+            system_prompt=is_system_prompt,
+        )
 
     def _show_command_message(self, command_text: str, message: str) -> None:
         self.push_screen(
@@ -5562,6 +6247,65 @@ class TauTuiApp(App[None]):
             )
         )
 
+    def _open_local_backend_picker(self) -> None:
+        """Open the generic local-backend chooser and require confirmation."""
+        runtime = getattr(self.session, "extension_runtime", None)
+        registry = getattr(runtime, "local_backend_registry", None)
+        if registry is None:
+            self._notify("Local backend controls are unavailable.", severity="warning")
+            return
+        self.push_screen(
+            LocalBackendPickerScreen(registry, theme=self.tui_settings.resolved_theme),
+            callback=self._handle_local_backend_picker_result,
+        )
+
+    def _handle_local_backend_picker_result(self, backend_id: str | None) -> None:
+        # Screen.dismiss() invokes its result callback before popping the screen.
+        # Defer the transition so the picker cannot pop the backend screen that
+        # this callback opens.
+        self.call_later(self._finish_local_backend_picker, backend_id)
+
+    def _finish_local_backend_picker(self, backend_id: str | None) -> None:
+        self._restore_prompt_focus()
+        if backend_id is None:
+            return
+        runtime = getattr(self.session, "extension_runtime", None)
+        registry = getattr(runtime, "local_backend_registry", None)
+        if registry is None or registry.effective(backend_id) is None:
+            self._notify("The selected local backend is no longer available.", severity="warning")
+            return
+        self.push_screen(
+            LocalBackendScreen(
+                registry,
+                backend_id,
+                theme=self.tui_settings.resolved_theme,
+                on_use=self._use_local_model,
+                notify_callback=self._notify_local_backend,
+                is_idle=lambda: not self._is_agent_or_queue_active(),
+            )
+        )
+
+    def _restore_prompt_focus(self) -> None:
+        with suppress(NoMatches):
+            self.query_one("#prompt", PromptInput).focus()
+
+    def _notify_local_backend(self, message: str, level: str) -> None:
+        severity: Literal["information", "warning", "error"] = {
+            "info": "information",
+            "warning": "warning",
+            "error": "error",
+        }.get(level, "information")  # type: ignore[assignment]
+        self._notify(message, severity=severity)
+
+    async def _use_local_model(self, provider_id: str, model_id: str) -> None:
+        if self._is_agent_or_queue_active():
+            self._notify(
+                "Tau is still working. Press Escape to interrupt before switching models.",
+                severity="warning",
+            )
+            return
+        await self._switch_model(ModelChoice(provider_name=provider_id, model=model_id))
+
     def _open_tools_reference(self) -> None:
         """Open a read-only view of tools from the active session."""
         self.push_screen(
@@ -5574,7 +6318,8 @@ class TauTuiApp(App[None]):
 
     def _open_model_picker(self) -> None:
         choices = self._available_model_choices()
-        if not choices:
+        scoped = tuple(getattr(self.session, "scoped_model_choices", ()))
+        if not choices and not scoped:
             self._notify(
                 "No configured providers are usable. Run /login to set up a provider.",
                 severity="warning",
@@ -5583,7 +6328,7 @@ class TauTuiApp(App[None]):
         self.push_screen(
             ModelPickerScreen(
                 choices,
-                scoped_choices=tuple(getattr(self.session, "scoped_model_choices", ())),
+                scoped_choices=scoped,
                 current_model=self.session.model,
                 provider_name=self.session.provider_name,
                 theme=self.tui_settings.resolved_theme,
@@ -5592,10 +6337,34 @@ class TauTuiApp(App[None]):
             ),
             callback=self._handle_model_picker_result,
         )
+        self.run_worker(self._refresh_open_model_picker(), exclusive=False)
+
+    async def _refresh_open_model_picker(self) -> None:
+        refresh = getattr(self.session, "refresh_model_catalogs", None)
+        if not callable(refresh):
+            return
+        try:
+            await refresh()
+        except Exception as error:
+            if isinstance(self.screen, ModelPickerScreen):
+                self._notify(f"Could not refresh model catalogs: {error}", severity="warning")
+            return
+        if not isinstance(self.screen, ModelPickerScreen):
+            return
+        picker = self.screen
+        while not picker.is_mounted:
+            await asyncio.sleep(0)
+            if self.screen is not picker:
+                return
+        picker.update_choices(
+            self._available_model_choices(),
+            tuple(getattr(self.session, "scoped_model_choices", ())),
+        )
 
     def _open_scoped_models_picker(self) -> None:
         choices = self._available_model_choices()
-        if not choices:
+        scoped = tuple(getattr(self.session, "scoped_model_choices", ()))
+        if not choices and not scoped:
             self._notify(
                 "No configured providers are usable. Run /login to set up a provider.",
                 severity="warning",
@@ -5604,7 +6373,7 @@ class TauTuiApp(App[None]):
         self.push_screen(
             ModelPickerScreen(
                 choices,
-                scoped_choices=tuple(getattr(self.session, "scoped_model_choices", ())),
+                scoped_choices=scoped,
                 current_model=self.session.model,
                 provider_name=self.session.provider_name,
                 theme=self.tui_settings.resolved_theme,
@@ -5632,14 +6401,23 @@ class TauTuiApp(App[None]):
     def _handle_model_picker_result(self, choice: ModelChoice | None) -> None:
         if choice is None:
             return
+        self.run_worker(self._switch_model(choice), exclusive=False)
+
+    async def _switch_model(self, choice: ModelChoice) -> None:
         try:
-            set_model_choice = getattr(self.session, "set_model_choice", None)
-            if set_model_choice is None:
-                if choice.provider_name != self.session.provider_name:
-                    self.session.set_provider(choice.provider_name)
-                self.session.set_model(choice.model)
+            select = getattr(self.session, "select_provider_model", None)
+            if select is not None:
+                result = select(choice)
+                if isawaitable(result):
+                    await result
             else:
-                set_model_choice(choice)
+                set_model_choice = getattr(self.session, "set_model_choice", None)
+                if set_model_choice is None:
+                    if choice.provider_name != self.session.provider_name:
+                        self.session.set_provider(choice.provider_name)
+                    self.session.set_model(choice.model)
+                else:
+                    set_model_choice(choice)
         except Exception as exc:  # noqa: BLE001 - surface model switch failures in the TUI
             self._notify(f"Could not switch model: {exc}", severity="error")
             return
@@ -5688,13 +6466,13 @@ class TauTuiApp(App[None]):
             return
         self._refresh_chrome()
 
-    async def _cycle_scoped_model(self) -> None:
+    async def _cycle_scoped_model(self, *, reverse: bool = False) -> None:
         cycler = getattr(self.session, "cycle_scoped_model", None)
         if cycler is None:
             self._notify("Scoped model controls are not available.", severity="warning")
             return
         try:
-            result = cycler()
+            result = cycler(reverse=reverse)
             if isawaitable(result):
                 result = await result
         except Exception as exc:  # noqa: BLE001 - surface session state failures in the TUI
@@ -5733,6 +6511,8 @@ class TauTuiApp(App[None]):
         self._sync_queue_state()
         sidebar = self.query_one("#sidebar", SessionSidebar)
         sidebar.update_from_session(self.session, theme=theme)
+        if self._extension_sidebar_theme != theme:
+            self._rebuild_extension_sidebar_sections(theme=theme)
         compact_info = self.query_one("#compact-session-info", CompactSessionInfo)
         compact_info.update_from_session(self.session, theme=theme)
         queued_messages = self.query_one("#queued-messages", Static)
@@ -5814,7 +6594,7 @@ class TauTuiApp(App[None]):
             item,
             theme=self.tui_settings.resolved_theme,
             show_tool_results=expanded,
-            invocation=self.state.resolve_tool_invocation(item),
+            invocation=self.state.resolve_tool_invocation(item, expanded=expanded),
             result_markup=self.state.resolve_tool_result(item, expanded=expanded),
         )
 
@@ -6358,13 +7138,14 @@ def _model_picker_label(
     current_model: str,
     current_provider: str,
     scoped: bool = False,
+    unavailable: bool = False,
 ) -> str:
     marker = (
         "* "
         if (choice.provider_name == current_provider and choice.model == current_model)
         else "  "
     )
-    suffix = " [scoped]" if scoped else ""
+    suffix = (" [scoped]" if scoped else "") + (" [unavailable]" if unavailable else "")
     return f"{marker}{choice.provider_name}:{choice.model}{suffix}"
 
 
@@ -6460,6 +7241,12 @@ def _app_bindings(keybindings: TuiKeybindings) -> list[Binding]:
         Binding(keybindings.thinking_cycle, "cycle_thinking", "Thinking"),
         Binding(keybindings.model_cycle, "cycle_model", "Model"),
         Binding(
+            keybindings.model_cycle_reverse,
+            "cycle_model_reverse",
+            "Previous model",
+            show=False,
+        ),
+        Binding(
             keybindings.accept_completion,
             "accept_completion",
             "Complete",
@@ -6501,7 +7288,7 @@ def _prompt_bindings(
                 keybindings.accept_completion,
                 "accept_completion",
                 "Complete",
-                key_display=f"{_key_hint(keybindings.accept_completion)}/Enter",
+                key_display=_key_hint(keybindings.accept_completion),
                 priority=True,
             ),
             Binding(
@@ -6544,6 +7331,13 @@ def _prompt_bindings(
         Binding(keybindings.thinking_cycle, "cycle_thinking", "Thinking", priority=True),
         Binding(keybindings.model_cycle, "cycle_model", "Model", priority=True),
         Binding(
+            keybindings.model_cycle_reverse,
+            "cycle_model_reverse",
+            "Previous model",
+            show=False,
+            priority=True,
+        ),
+        Binding(
             keybindings.copy_message,
             "clear_prompt",
             "Clear",
@@ -6566,6 +7360,7 @@ def _hidden_prompt_bindings(
         (keybindings.queue_follow_up, "submit_follow_up"),
         (keybindings.thinking_cycle, "cycle_thinking"),
         (keybindings.model_cycle, "cycle_model"),
+        (keybindings.model_cycle_reverse, "cycle_model_reverse"),
         (keybindings.toggle_tool_results, "toggle_tool_results"),
         (keybindings.toggle_thinking, "toggle_thinking"),
         (keybindings.copy_message, "clear_prompt"),
@@ -6661,13 +7456,22 @@ def _create_startup_session_record(
             model=selection.model,
             provider_name=selection.provider.name,
             inference_provider=inference_provider,
+            inference_provider_mode="fixed",
         )
     except TypeError:
-        return manager.prepare_session(
-            cwd=cwd,
-            model=selection.model,
-            provider_name=selection.provider.name,
-        )
+        try:
+            return manager.prepare_session(
+                cwd=cwd,
+                model=selection.model,
+                provider_name=selection.provider.name,
+                inference_provider=inference_provider,
+            )
+        except TypeError:
+            return manager.prepare_session(
+                cwd=cwd,
+                model=selection.model,
+                provider_name=selection.provider.name,
+            )
 
 
 def _resolve_tui_startup_selection(
@@ -6757,6 +7561,33 @@ def _usable_scoped_startup_choices(settings: Any) -> tuple[ModelChoice, ...]:
     return tuple(choices)
 
 
+def _resource_conflict_alert(
+    diagnostics: Sequence[ResourceDiagnostic],
+) -> str | None:
+    """Format skill and prompt precedence conflicts as one startup alert."""
+    prefix = "overrides lower-precedence resource at "
+    conflicts = [
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic.kind in {"skill", "prompt"}
+        and diagnostic.name is not None
+        and diagnostic.path is not None
+        and diagnostic.message.startswith(prefix)
+    ]
+    if not conflicts:
+        return None
+
+    lines = ["Conflicting skills/prompts detected:"]
+    for diagnostic in conflicts:
+        resource_kind = "skill" if diagnostic.kind == "skill" else "prompt template"
+        shadowed_path = diagnostic.message.removeprefix(prefix)
+        lines.append(
+            f"- {resource_kind} '{diagnostic.name}': {diagnostic.path} overrides {shadowed_path}"
+        )
+    lines.append("Rename or remove duplicate resources to clear this alert.")
+    return "\n".join(lines)
+
+
 def _startup_inference_provider(
     selection: ProviderSelection,
     record: CodingSessionRecord | None,
@@ -6767,6 +7598,15 @@ def _startup_inference_provider(
     if record is not None and record.model == selection.model:
         return record.inference_provider
     return provider.inference_providers.get(selection.model)
+
+
+def _startup_inference_provider_mode(
+    selection: ProviderSelection,
+    record: CodingSessionRecord | None,
+) -> Literal["automatic", "fixed"]:
+    if record is not None and record.model == selection.model:
+        return record.inference_provider_mode
+    return "fixed" if _startup_inference_provider(selection, None) is not None else "automatic"
 
 
 async def run_tui_app(
@@ -6788,6 +7628,7 @@ async def run_tui_app(
     custom_system_prompt: str | None = None,
     append_system_prompt: str | None = None,
     trust_override: TrustOverride | None = None,
+    thinking_level_override: ThinkingLevel | None = None,
 ) -> str | None:
     """Run the Textual app and return the active id when its session is persisted."""
     if new_session and session_id is not None:
@@ -6800,63 +7641,121 @@ async def run_tui_app(
         manager,
         session_id=session_id,
     )
-    selection = _resolve_tui_startup_selection(
-        provider_settings,
-        record=record,
-        provider_name=provider_name,
-        model=model,
-        explicit_resume=session_id is not None,
-    )
+    selection: ProviderSelection | None = None
+    try:
+        selection = _resolve_tui_startup_selection(
+            provider_settings,
+            record=record,
+            provider_name=provider_name,
+            model=model,
+            explicit_resume=session_id is not None,
+        )
+    except ProviderConfigError:
+        # A resumed record may point at a process-local provider that is not in
+        # durable settings. Let the staged loader resolve it after trusted
+        # built-in/project extensions are loaded.
+        dynamic_resume = (
+            session_id is not None
+            and record is not None
+            and record.provider_name is not None
+            and provider_name is None
+            and model is None
+        )
+        explicit_dynamic = provider_name is not None and model is not None
+        if not dynamic_resume and not explicit_dynamic:
+            raise
     startup_message: str | None = None
     startup_error_notice: str | None = None
-    runtime_provider_config: ProviderConfig | None = selection.provider
-    inference_provider = _startup_inference_provider(selection, record)
-    try:
-        provider = create_model_provider(
-            selection.provider,
-            model=selection.model,
-            inference_provider=inference_provider,
-            thinking_level=resolve_startup_thinking_level(
+    explicit_selection = provider_name is not None or model is not None
+    selected_provider_name: str = (
+        provider_name
+        if provider_name is not None
+        else (record.provider_name if record is not None else None)
+        or (selection.provider.name if selection is not None else DEFAULT_PROVIDER_NAME)
+    )
+    selected_model = (
+        model
+        if explicit_selection and model is not None
+        else (record.model if record is not None else None)
+        or (selection.model if selection is not None else DEFAULT_MODEL)
+    )
+    # Keep static-provider construction compatible with embedded TUI callers,
+    # while dynamic providers are deliberately left for CodingSession.load()
+    # after trusted extension setup. The provider passed below is owned by the
+    # prepared session when the real loader is used.
+    initial_provider: ClosableModelProvider | None = None
+    runtime_provider_config: ProviderConfig | None = selection.provider if selection else None
+    inference_provider = _startup_inference_provider(selection, record) if selection else None
+    inference_provider_mode: Literal["automatic", "fixed"] = (
+        _startup_inference_provider_mode(selection, record) if selection else "automatic"
+    )
+    if selection is not None:
+        try:
+            initial_provider = create_model_provider(
                 selection.provider,
-                selection.model,
-            ),
-        )
-    except RuntimeError as exc:
-        # Most startup RuntimeErrors are missing credentials, but surface the real
-        # cause so a non-auth failure is not silently misreported as "Login required".
-        login_required_message = (
+                model=selection.model,
+                inference_provider=inference_provider,
+                thinking_level=resolve_startup_thinking_level(
+                    selection.provider,
+                    selection.model,
+                    cli_override=thinking_level_override,
+                ),
+            )
+        except RuntimeError as exc:
+            login_required_message = (
+                "Login required. Run /login to choose a provider, "
+                f"or /login {selected_provider_name} to continue with the current provider."
+            )
+            startup_message = f"{login_required_message}\n\nStartup error: {exc}"
+            startup_error_notice = (
+                f"Startup provider creation failed for "
+                f"{selection.provider.name}:{selection.model}: {exc}"
+            )
+            initial_provider = LoginRequiredProvider(startup_message)
+            runtime_provider_config = None
+    elif not explicit_selection:
+        startup_message = (
             "Login required. Run /login to choose a provider, "
-            f"or /login {selection.provider.name} to continue with the current provider."
+            f"or /login {selected_provider_name} to continue with the current provider."
         )
-        startup_message = f"{login_required_message}\n\nStartup error: {exc}"
-        startup_error_notice = (
-            f"Startup provider creation failed for "
-            f"{selection.provider.name}:{selection.model}: {exc}"
-        )
-        provider = LoginRequiredProvider(startup_message)
-        runtime_provider_config = None
+        initial_provider = LoginRequiredProvider(startup_message)
     session: CodingSession | None = None
     try:
         index_on_first_persist = False
         if record is None:
-            record = _create_startup_session_record(
-                manager,
-                cwd=cwd,
-                selection=selection,
-                inference_provider=inference_provider,
-            )
+            if selection is not None:
+                record = _create_startup_session_record(
+                    manager,
+                    cwd=cwd,
+                    selection=selection,
+                    inference_provider=inference_provider,
+                )
+            else:
+                if provider_name is None or model is None:
+                    raise ProviderConfigError(
+                        "An explicit provider and model are required for this startup."
+                    )
+                record = manager.prepare_session(
+                    cwd=cwd,
+                    model=model,
+                    provider_name=provider_name,
+                )
             index_on_first_persist = manager.get_session(record.id) is None
 
-        session = await CodingSession.load(
+        prepared = await prepare_coding_session(
             CodingSessionConfig(
-                provider=provider,
-                model=record.model or selection.model,
+                provider=initial_provider,
+                model=record.model or selected_model,
                 cwd=record.cwd,
                 storage=jsonl_session_storage(record.path),
                 session_id=record.id,
                 session_manager=manager,
-                provider_name=selection.provider.name,
+                provider_name=selected_provider_name,
                 inference_provider=inference_provider,
+                inference_provider_mode=inference_provider_mode,
+                requested_provider=provider_name if explicit_selection else None,
+                requested_model=model if explicit_selection else None,
+                session_provider_name=record.provider_name,
                 provider_settings=provider_settings,
                 runtime_provider_config=runtime_provider_config,
                 auto_compact_token_threshold=auto_compact_token_threshold,
@@ -6867,12 +7766,27 @@ async def run_tui_app(
                 project_extensions_enabled=project_extensions_enabled,
                 custom_system_prompt=custom_system_prompt,
                 append_system_prompt=append_system_prompt,
+                thinking_level_override=thinking_level_override,
                 trust_override=trust_override,
                 trust_default=shell_settings.default_project_trust,
                 trust_interactive=True,
                 trust_prompt=prompt_project_trust,
-            )
+                defer_authoritative_writes=True,
+                owns_initial_provider=initial_provider is not None,
+            ),
+            session_loader=CodingSession,
         )
+        try:
+            session = await prepared.adopt()
+        except ValueError:
+            candidate = prepared.session
+            trust_resolution = getattr(candidate, "project_trust_resolution", None)
+            if trust_resolution is None or not trust_resolution.cancelled:
+                raise
+            # The preparation object already closed the unpublished candidate.
+            # Do not close that candidate again from the outer finally block.
+            del candidate
+            return None
         trust_resolution = getattr(session, "project_trust_resolution", None)
         if trust_resolution is not None and trust_resolution.cancelled:
             return None
@@ -6892,24 +7806,39 @@ async def run_tui_app(
         all_startup_notices = tuple(
             (*error_notices, *startup_notices, *legacy_notices, *theme_notices)
         )
+        resource_conflict_alert = _resource_conflict_alert(
+            getattr(session, "resource_diagnostics", ())
+        )
+        startup_alerts = (resource_conflict_alert,) if resource_conflict_alert is not None else ()
         app = TauTuiApp(
             session,
             tui_settings=load_tui_settings(),
             startup_message=startup_message,
             startup_update_notice=startup_update_notice,
+            startup_alerts=startup_alerts,
             startup_notices=all_startup_notices,
             initial_prompt=initial_prompt,
         )
         set_trust_prompt = getattr(session, "set_project_trust_prompt", None)
         if set_trust_prompt is not None:
-            set_trust_prompt(app.prompt_project_trust)
+            prompt_trust = getattr(app, "prompt_project_trust", None)
+            if prompt_trust is not None:
+                set_trust_prompt(prompt_trust)
         await app.run_async()
     finally:
         if session is not None:
             close_session = getattr(session, "aclose", None)
             if close_session is not None:
                 await close_session()
-        await provider.aclose()
+        # Compatibility for lightweight test/embedded session loaders that do
+        # not expose ownership. A real CodingSession owns the exact candidate,
+        # so this branch does not double-close it.
+        if (
+            initial_provider is not None
+            and getattr(session, "provider", None) is not initial_provider
+        ):
+            with suppress(Exception):
+                await initial_provider.aclose()
 
     active_session_id: str | None = getattr(session, "session_id", None)
     if active_session_id is None or manager.get_session(active_session_id) is None:

@@ -128,7 +128,9 @@ class OpenAICompatibleProvider:
         session_id: str | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Stream one model response as provider-neutral events."""
-        if self._config.api == "openai-responses" or _use_responses_api(model):
+        if self._config.api == "openai-responses" or (
+            self._config.infer_api_from_model and _use_responses_api(model)
+        ):
             return self._stream_responses(
                 model=model,
                 system=system,
@@ -603,6 +605,12 @@ class _ResponsesStreamParser:
                 self.emitted_content = True
                 self._thinking_parts.append(delta)
                 return [ProviderThinkingDeltaEvent(delta=delta)], False
+
+        elif chunk_type == "response.reasoning_summary_part.done":
+            if self._thinking_parts:
+                separator = "\n\n"
+                self._thinking_parts.append(separator)
+                return [ProviderThinkingDeltaEvent(delta=separator)], False
 
         elif chunk_type == "response.output_item.added":
             item = chunk.get("item")

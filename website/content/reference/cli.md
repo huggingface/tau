@@ -12,6 +12,7 @@ tau [OPTIONS] [PROMPT] [COMMAND] [ARGS]
 
 - With no arguments, `tau` opens the interactive [TUI]({{< relref "../guides/tui.md" >}}).
 - A positional `PROMPT` opens the TUI and submits it as the first turn.
+- `/local` is available in the TUI for registered local backends; print mode reports that setup is interactive-only.
 - `-p/--print` (or `--mode`) runs that same positional prompt in [print mode]({{< relref "../guides/print-mode.md" >}}) instead of the TUI.
 - Put flags before the prompt — Tau treats everything after the last recognized flag as prompt text, including tokens that look like flags.
 
@@ -30,6 +31,8 @@ features and fixes.
 | `tau` | Open the interactive TUI |
 | `tau "<prompt>"` | Open the TUI with an initial prompt |
 | `tau update` | Upgrade Tau with the installer that owns its environment. Windows uv-tool updates are handed off and begin after Tau exits; follow the printed log path for the final result. |
+| `tau update --models` | Force-refresh models.dev catalogs and cache them in `~/.tau/models-store.json` without upgrading Tau. |
+| `tau install <source> [--force]` | Install a trusted local or Git extension under `~/.tau/extensions/`; `--force` replaces an existing install. |
 | `tau sessions` | List indexed sessions (id, title, model, cwd) |
 | `tau export <ref> [dest] [--format html\|jsonl]` | Export a session id or JSONL path (HTML default) |
 | `tau --export <ref> [dest]` | Same as `tau export`, as a top-level flag |
@@ -43,9 +46,10 @@ features and fixes.
 | `-p, --print` | Run the positional prompt in non-interactive print mode |
 | `-m, --model TEXT` | Model to request from the provider |
 | `--provider TEXT` | Configured provider name to use |
+| `-t, --thinking LEVEL` | Initial [thinking level]({{< relref "../guides/context.md#thinking-modes" >}}) for this run (`off`…`max`); overrides remembered defaults without persisting, errors if the model doesn't support it |
 | `--cwd PATH` | Working directory for the built-in tools |
-| `--mode [text\|json\|transcript]` | Output mode for print mode (default `text`); also triggers print mode on its own |
-| `--session TEXT` | Resume a session id in the TUI |
+| `--mode [text\|json\|transcript\|rpc]` | Select headless output; `rpc` starts the JSONL subprocess protocol |
+| `--session TEXT` | Resume a session id in the TUI or print mode |
 | `--new-session` | Start a new session instead of resuming the default |
 | `--session-id TEXT` | Set the exact id for a newly created print-mode session; errors if it already exists |
 | `--system-prompt TEXT_OR_PATH` | Replace Tau's default system-prompt base with literal text or an existing UTF-8 file |
@@ -57,6 +61,11 @@ features and fixes.
 | `-a, --approve` | Trust protected project inputs for this invocation only |
 | `-na, --no-approve` | Decline protected project inputs for this invocation only |
 | `-v, --version` | Print the version and exit |
+
+`tau install` accepts local Python files, local package directories, Pi-style
+`git:github.com/owner/repository[@ref]` sources, and normal HTTP/SSH Git URLs.
+See [Extensions]({{< relref "../guides/extensions.md#install-an-extension" >}})
+for package-layout, dependency, and security details.
 
 `--approve` and `--no-approve` are mutually exclusive and never write the
 trust store. See [Project trust]({{< relref "../guides/project-trust.md" >}})
@@ -90,12 +99,38 @@ when used with `--session`, they configure the resumed session's next provider
 request. They are startup controls and are not stored in session history, so
 pass them again on a later resume when needed.
 
-Without flags, Tau also discovers `SYSTEM.md` and `APPEND_SYSTEM.md` under the
-project or user `.tau` directory. CLI values win over trusted project files, and
-project files win over user files. Use `/reload` after changing a file. These are
-Tau-specific configuration files, not `.agents` resources. See
+Tau also discovers `SYSTEM.md` and `APPEND_SYSTEM.md` under the project or user
+`.tau` directory. A CLI replacement wins over trusted project and user
+`SYSTEM.md` files. Append content is cumulative: user `APPEND_SYSTEM.md`, then
+trusted project `APPEND_SYSTEM.md`, then repeated CLI values. Use `/reload` after
+changing a file. These are Tau-specific configuration files, not `.agents`
+resources. See
 [Configuration & files]({{< relref "./configuration.md#system-prompt-files" >}})
 for paths, precedence, diagnostics, and the project-resource security warning.
+
+### Resume in print mode
+
+Use `--print` and `--session` together to append a non-interactive follow-up to
+an existing conversation. Tau loads the session's saved working directory,
+provider, model, and conversation history:
+
+```bash
+tau --print --session <session-id> "Follow-up message"
+```
+
+Explicit `--provider`, `--model`, and system-prompt options override the saved
+startup choices for this invocation. After configuring a local backend in the
+TUI, pass its provider and exact discovered model explicitly in print mode:
+
+```bash
+tau --provider llama.cpp --model <model-id> --print "summarize this project"
+```
+
+Tau does not run `/local` setup or select a model implicitly headlessly. An
+endpoint-keyed safe snapshot can let an explicit local startup continue while
+llama.cpp is temporarily down; a first-time explicit model still needs discovery.
+`--session` cannot be combined with
+`--new-session` or `--session-id`. An unknown session id exits with an error.
 
 `--resume`, `--prompt`, `-o/--output`, and `-x` are removed; each now exits
 with an error naming its replacement (`--session`, `--print`, `--mode`, and
@@ -126,5 +161,5 @@ tau --provider local \
   setup
 ```
 
-See also: [Slash commands]({{< relref "./slash-commands.md" >}}) (in-session) and
+See also: [RPC protocol]({{< relref "./rpc.md" >}}), [Slash commands]({{< relref "./slash-commands.md" >}}) (in-session), and
 [Keyboard shortcuts]({{< relref "./keybindings.md" >}}).

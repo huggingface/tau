@@ -18,8 +18,8 @@ For example, the harness and persisted assistant messages continue to use
 catalog and keeps context windows, capabilities, pricing, thinking controls, and
 model selection keyed by the logical model.
 
-`/session` and `/route` report the pin. `/route <provider>` changes it and
-`/route automatic` resets resolution. Switching logical models selects the new
+`/session` reports the pin. Route changes belong to the external Hugging Face
+extension, which uses the public extension API. Switching logical models selects the new
 model's configured pin or returns to automatic Hugging Face routing when none
 exists. Existing records without the optional field remain compatible and pin
 after their next successful automatic response.
@@ -54,7 +54,7 @@ The first version deliberately does not automatically fail over a stale explicit
 pin or send provider-specific cache-affinity fields. Safe failover also needs a
 user-visible reroute event plus durable retry/reroute telemetry; silently falling
 back would hide temporary cache-locality loss. Users can explicitly reset with
-`/route automatic`. Backing providers differ in accepted affinity fields, so no
+the Hugging Face extension. Backing providers differ in accepted affinity fields, so no
 unknown field is enabled for the entire gateway.
 
 ## Configure and validate
@@ -73,7 +73,7 @@ unknown field is enabled for the entire gateway.
 }
 ```
 
-Use `/session` or `/route` to confirm the selected route. For opt-in live
+Use `/session` to confirm the selected route. For opt-in live
 validation, start a new session, issue repeated requests that append to the same
 long prefix, and compare cache-read counts before and after automatic resolution.
 Do not commit credentials or generated session artifacts.

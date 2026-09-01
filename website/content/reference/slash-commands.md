@@ -11,7 +11,7 @@ command palette with **Ctrl+K**.
 | `/quit` | Exit the session |
 | `/new` | Start a new session |
 | `/session` | Show session info and stats (model, cwd, tools, skills, context) |
-| `/system` | Show the active system prompt without adding it to context or session history |
+| `/system` | Show the active system prompt with Markdown formatting without adding it to context or session history |
 | `/compact [instructions]` | Summarize and compact the active context |
 | `/export [--format html\|jsonl] [dest]` | Export the current session |
 | `/resume [session-id]` | Resume a previous session, or open the picker |
@@ -19,12 +19,13 @@ command palette with **Ctrl+K**.
 | `/name <new name>` | Rename the current session and, in supported terminals, the terminal tab title |
 | `/model` | Open the model picker |
 | `/tools` | Browse active tools and open their full descriptions |
-| `/scoped-models` | Choose favorite models for the Ctrl+P quick-cycle |
+| `/scoped-models` | Choose favorite models for the Ctrl+P / Shift+Ctrl+P quick-cycle |
 | `/theme [name]` | Show or set the TUI theme |
 | `/login [provider]` | Connect a built-in provider with OAuth or an API key; Anthropic uses `anthropic-subscription` or `anthropic-api` |
+| `/local` | Choose and manage a registered local backend; interactive-only. Compatible llama.cpp routers add explicit load/unload, Hugging Face GGUF search, and server-side download actions with confirmation and reconciliation. |
 | `/logout [provider]` | Remove saved credentials for a provider |
 | `/reload` | Reload local skills, prompts, extensions, and project context |
-| `/prompts` | Search loaded prompt templates and insert an invocation for editing |
+| `/prompts` | Search loaded prompt templates; press Enter to insert an invocation or Ctrl+E to edit the file |
 | `/hotkeys` | Show the keyboard shortcuts |
 | `/skills` | Open a searchable picker of loaded skills and insert a selection into the prompt |
 | `/skill:<name> [request]` | Expand a loaded skill into your prompt |
@@ -34,6 +35,9 @@ command palette with **Ctrl+K**.
 creates HTML. Review it before sharing because it may expose project
 instructions or other local context. JSONL exports do not include the prompt.
 Offline `tau export` from stored JSONL cannot recover it and omits the section.
+The HTML export's **Usage** view charts token and cache activity. Its prompt-input
+chart marks compactions, model and thinking-level changes, and branch summaries
+against the next model request so cache changes have session context.
 {{% /note %}}
 
 {{% note title="`/skill:` is special" %}}
@@ -51,4 +55,4 @@ Related:
 
 - **Thinking mode** is keyboard-driven, not a slash command — see
   [Keyboard shortcuts]({{< relref "./keybindings.md" >}}) and [Managing context]({{< relref "../guides/context.md#thinking-modes" >}}).
-- **Prompt templates** use slash invocations (for example, `/wt …`). Use `/prompts` to search loaded templates and insert an invocation without submitting it.
+- **Prompt templates** use slash invocations (for example, `/wt …`). Use `/prompts` to search loaded templates, insert an invocation without submitting it, or edit a selected template with **Ctrl+E**.

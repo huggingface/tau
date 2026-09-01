@@ -12,7 +12,11 @@ from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG, builtin_provider_entry
 from tau_coding.reload import CodingReloadSummary, ReloadCategorySummary
 from tau_coding.resources import ResourceDiagnostic
-from tau_coding.session_manager import CodingSessionRecord, SessionManager
+from tau_coding.session_manager import (
+    CodingSessionRecord,
+    SessionManager,
+    normalize_session_name,
+)
 from tau_coding.skills import Skill
 from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.thinking import normalize_thinking_level
@@ -34,9 +38,6 @@ class CommandSession(Protocol):
 
     @property
     def provider_name(self) -> str: ...
-
-    @property
-    def inference_provider(self) -> str | None: ...
 
     @property
     def available_models(self) -> Sequence[str]: ...
@@ -90,8 +91,6 @@ class CommandSession(Protocol):
 
     def set_model(self, model: str) -> None: ...
 
-    def set_inference_provider(self, route: str | None) -> str: ...
-
     def reload_provider_settings(self) -> None: ...
 
 
@@ -114,11 +113,14 @@ class CommandResult:
     tree_picker_requested: bool = False
     login_picker_requested: bool = False
     custom_provider_login_requested: bool = False
+    local_requested: bool = False
     login_provider: str | None = None
     login_method: str | None = None
     logout_picker_requested: bool = False
     logout_provider: str | None = None
     model_picker_requested: bool = False
+    model_selection_provider: str | None = None
+    model_selection_model: str | None = None
     tools_picker_requested: bool = False
     scoped_models_picker_requested: bool = False
     skills_picker_requested: bool = False
@@ -126,6 +128,7 @@ class CommandResult:
     thinking_level: str | None = None
     theme: str | None = None
     message: str | None = None
+    session_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,15 +260,6 @@ def create_default_command_registry() -> CommandRegistry:
     )
     registry.register(
         SlashCommand(
-            name="route",
-            usage="/route [automatic|<inference-provider>]",
-            description="Show or change Hugging Face session routing.",
-            handler=_route_command,
-            search_terms=("huggingface", "inference provider", "pin"),
-        )
-    )
-    registry.register(
-        SlashCommand(
             name="system",
             usage="/system",
             description="Show the active system prompt without saving it.",
@@ -381,6 +375,15 @@ def create_default_command_registry() -> CommandRegistry:
     )
     registry.register(
         SlashCommand(
+            name="local",
+            usage="/local",
+            description="Configure and manage local backends.",
+            handler=_local_command,
+            search_terms=("backends", "inference"),
+        )
+    )
+    registry.register(
+        SlashCommand(
             name="login",
             usage="/login [provider]",
             description="Connect a provider with OAuth or an API key.",
@@ -433,18 +436,6 @@ def _export_command(context: CommandContext) -> CommandResult:
     )
 
 
-def _route_command(context: CommandContext) -> CommandResult:
-    if context.session.provider_name != "huggingface":
-        return CommandResult(handled=True, message="/route requires the huggingface provider")
-    value = context.args.strip()
-    if not value:
-        route = context.session.inference_provider or "automatic"
-        return CommandResult(handled=True, message=f"Hugging Face route: {route}")
-    selected_route = None if value.casefold() in {"automatic", "auto", "reset"} else value
-    selected = context.session.set_inference_provider(selected_route)
-    return CommandResult(handled=True, message=f"Hugging Face route: {selected}")
-
-
 def _status_command(context: CommandContext) -> CommandResult:
     session = context.session
     context_usage = getattr(session, "context_usage", None)
@@ -460,8 +451,13 @@ def _status_command(context: CommandContext) -> CommandResult:
         f"Context window: {session.context_window_tokens}",
     ]
     if session.provider_name == "huggingface":
-        route = getattr(session, "inference_provider", None) or "automatic"
-        lines.append(f"Hugging Face inference provider: {route}")
+        route = getattr(session, "inference_provider", None)
+        mode = getattr(session, "inference_provider_mode", "fixed" if route else "automatic")
+        if mode == "automatic":
+            route_status = f"automatic (currently {route})" if route else "automatic"
+        else:
+            route_status = f"{route} (fixed)" if route else "fixed"
+        lines.append(f"Hugging Face inference provider: {route_status}")
     context_window_source = getattr(session, "context_window_source", None)
     if context_window_source:
         lines.append(f"Context window source: {context_window_source}")
@@ -508,6 +504,7 @@ def _hotkeys_command(context: CommandContext) -> CommandResult:
         "- Esc: cancel active run",
         "- Ctrl+K: open slash-command completions",
         "- Ctrl+R: open session picker",
+        "- Ctrl+P / Shift+Ctrl+P: cycle scoped models forward / backward",
         "- Shift+Tab: cycle thinking mode",
         "- Ctrl+T: toggle thinking tokens",
         "- Ctrl+O: collapse or expand tool output",
@@ -616,18 +613,11 @@ def _name_command(context: CommandContext) -> CommandResult:
     except ValueError as exc:
         return CommandResult(handled=True, message=str(exc))
 
-    if manager.get_session(session_id) is None:
-        context.session.ensure_session_indexed()
-
-    updated = manager.touch_session(
-        session_id,
-        model=context.session.model,
-        provider_name=context.session.provider_name,
-        title=name,
+    return CommandResult(
+        handled=True,
+        session_name=name,
+        message=f"Session renamed: {name}",
     )
-    if updated is None:
-        return CommandResult(handled=True, message=f"Unknown current session: {session_id}")
-    return CommandResult(handled=True, message=f"Session renamed: {updated.title}")
 
 
 def _format_sessions(context: CommandContext) -> str:
@@ -663,6 +653,12 @@ def _model_command(context: CommandContext) -> CommandResult:
                 handled=True,
                 message=f"Unknown model for provider {context.session.provider_name}: {model}\n"
                 f"Available models: {models}",
+            )
+        if callable(getattr(context.session, "select_provider_model", None)):
+            return CommandResult(
+                handled=True,
+                model_selection_provider=context.session.provider_name,
+                model_selection_model=model,
             )
         context.session.set_model(model)
         return CommandResult(handled=True, message=f"Current model: {model}")
@@ -749,6 +745,12 @@ def _theme_command(context: CommandContext) -> CommandResult:
             message=f"Unknown theme: {theme_name}\nAvailable themes: {themes}",
         )
     return CommandResult(handled=True, theme=theme_name)
+
+
+def _local_command(context: CommandContext) -> CommandResult:
+    if context.args:
+        return CommandResult(handled=True, message="Usage: /local")
+    return CommandResult(handled=True, local_requested=True)
 
 
 def _login_command(context: CommandContext) -> CommandResult:
@@ -890,12 +892,9 @@ def _parse_export_args(args: str) -> tuple[str | None, Path | None]:
 
 
 def _validated_session_name(value: str) -> str:
-    name = value.strip()
-    if not name:
+    if not value.strip():
         raise ValueError("Usage: /name <new name>")
-    if any(char in name for char in "\r\n\t"):
-        raise ValueError("Session name must be a single line.")
-    return name
+    return normalize_session_name(value)
 
 
 def _normalize_name(name: str) -> str:

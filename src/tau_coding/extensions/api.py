@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
+from uuid import uuid4
 
 from tau_agent.messages import AgentMessage, ToolResultMessage
 from tau_agent.tools import AgentTool, AgentToolResult
@@ -16,7 +17,9 @@ if TYPE_CHECKING:
     from textual import events
     from textual.widget import Widget
 
+    from tau_coding.extensions.providers import DynamicProvider
     from tau_coding.extensions.runtime import ExtensionRuntime
+    from tau_coding.local_backends import LocalBackend
     from tau_coding.tui.config import TuiTheme
 
 AGENT_EVENT_TYPES: frozenset[str] = frozenset(
@@ -126,6 +129,11 @@ SlotWidgetFactory = Callable[["TuiTheme"], "Widget"]
 # ``setWidget``). Strings are rendered as Rich markup, with a literal-text
 # fallback if the markup is malformed.
 SlotWidgetContent = Sequence[str] | SlotWidgetFactory
+# Sidebar bodies use the same data-first shape: simple sections provide Rich
+# display lines without importing Textual; advanced sections provide a widget
+# factory receiving the live theme.
+SidebarWidgetFactory = Callable[["TuiTheme"], "Widget"]
+SidebarContent = Sequence[str] | SidebarWidgetFactory
 # The main-view factory also receives the handle so the widget can close itself.
 MainViewFactory = Callable[["MainViewHandle", "TuiTheme"], "Widget"]
 
@@ -269,6 +277,64 @@ class ComponentBridge(Protocol):
         ...
 
 
+class ExtensionSidebar:
+    """Extension-owned facade for host-framed TUI sidebar sections.
+
+    Sections are isolated by extension name and stable key. Re-setting a key
+    updates it without changing its position; removing and re-adding it appends
+    it after the remaining extension sections. The host owns headings,
+    separators, width, scrolling, sidebar placement, and lifecycle cleanup.
+    """
+
+    def __init__(
+        self,
+        runtime: ExtensionRuntime,
+        extension_name: str,
+        generation: ExtensionGeneration,
+    ) -> None:
+        self._runtime = runtime
+        self._extension_name = extension_name
+        self._generation = generation
+
+    @property
+    def supported(self) -> bool:
+        """Return whether the active frontend can display sidebar sections."""
+        self._generation.assert_active()
+        return bool(getattr(self._runtime.ui, "supports_sidebar", False))
+
+    def set_section(self, key: str, *, title: str, content: SidebarContent) -> None:
+        """Add or replace a host-framed sidebar section under stable ``key``."""
+        self._generation.assert_active()
+        normalized_key = key.strip()
+        normalized_title = title.strip()
+        if not normalized_key:
+            raise ExtensionError("sidebar section key must not be empty")
+        if not normalized_title:
+            raise ExtensionError("sidebar section title must not be empty")
+        if not self.supported:
+            return
+        setter = getattr(self._runtime.ui, "set_sidebar_section", None)
+        if setter is not None:
+            setter(
+                self._extension_name,
+                normalized_key,
+                title=normalized_title,
+                content=content,
+            )
+
+    def remove_section(self, key: str) -> None:
+        """Remove this extension's sidebar section under ``key``, if present."""
+        self._generation.assert_active()
+        normalized_key = key.strip()
+        if not normalized_key:
+            raise ExtensionError("sidebar section key must not be empty")
+        if not self.supported:
+            return
+        remover = getattr(self._runtime.ui, "remove_sidebar_section", None)
+        if remover is not None:
+            remover(self._extension_name, normalized_key)
+
+
 class ExtensionError(RuntimeError):
     """Raised when an extension misuses the API (e.g. actions before binding)."""
 
@@ -292,10 +358,16 @@ class ExtensionGeneration:
     the phase-21 lifecycle Ruling).
     """
 
-    __slots__ = ("_stale_message",)
+    __slots__ = ("_id", "_stale_message")
 
     def __init__(self) -> None:
+        self._id = uuid4().hex
         self._stale_message: str | None = None
+
+    @property
+    def id(self) -> str:
+        """Return this generation's stable process-local identity."""
+        return self._id
 
     @property
     def active(self) -> bool:
@@ -538,6 +610,26 @@ class UiBridge(Protocol):
         """
         ...
 
+    @property
+    def supports_sidebar(self) -> bool:
+        """Return whether this frontend can host extension sidebar sections."""
+        ...
+
+    def set_sidebar_section(
+        self,
+        extension_name: str,
+        key: str,
+        *,
+        title: str,
+        content: SidebarContent,
+    ) -> None:
+        """Add or replace one extension-owned, host-framed sidebar section."""
+        ...
+
+    def remove_sidebar_section(self, extension_name: str, key: str) -> None:
+        """Remove one extension-owned sidebar section, if present."""
+        ...
+
     def clear_components(self) -> None:
         """Tear down all extension-owned UI (host-driven, not for extensions).
 
@@ -643,6 +735,24 @@ class NullUiBridge:
         """Return a no-op unsubscribe: no key stream to intercept."""
         return lambda: None
 
+    @property
+    def supports_sidebar(self) -> bool:
+        """Return False: print mode has no interactive sidebar."""
+        return False
+
+    def set_sidebar_section(
+        self,
+        extension_name: str,
+        key: str,
+        *,
+        title: str,
+        content: SidebarContent,
+    ) -> None:
+        """Do nothing: there is no sidebar in print mode."""
+
+    def remove_sidebar_section(self, extension_name: str, key: str) -> None:
+        """Do nothing: there is no sidebar in print mode."""
+
     def clear_components(self) -> None:
         """Do nothing: no components were ever mounted."""
 
@@ -683,9 +793,12 @@ class ExtensionUi:
         self,
         runtime: ExtensionRuntime,
         generation: ExtensionGeneration | None = None,
+        *,
+        extension_name: str = "",
     ) -> None:
         self._runtime = runtime
         self._generation = generation if generation is not None else ExtensionGeneration()
+        self._sidebar = ExtensionSidebar(runtime, extension_name, self._generation)
 
     @property
     def has_ui(self) -> bool:
@@ -727,6 +840,12 @@ class ExtensionUi:
         return await self._runtime.ui.input(title, placeholder, timeout=timeout)
 
     @property
+    def sidebar(self) -> ExtensionSidebar:
+        """Return this extension's host-framed sidebar capability."""
+        self._generation.assert_active()
+        return self._sidebar
+
+    @property
     def components(self) -> ComponentBridge:
         """Return the host widget-hosting capability.
 
@@ -758,10 +877,12 @@ class ExtensionContext:
         self,
         runtime: ExtensionRuntime,
         generation: ExtensionGeneration | None = None,
+        *,
+        extension_name: str = "",
     ) -> None:
         self._runtime = runtime
         self._generation = generation if generation is not None else ExtensionGeneration()
-        self._ui = ExtensionUi(runtime, self._generation)
+        self._ui = ExtensionUi(runtime, self._generation, extension_name=extension_name)
 
     @property
     def cwd(self) -> Path:
@@ -782,10 +903,34 @@ class ExtensionContext:
         return self._runtime.session_view.provider_name
 
     @property
+    def inference_provider(self) -> str | None:
+        """Return the active Hugging Face inference-provider pin, if any."""
+        self._generation.assert_active()
+        return self._runtime.session_view.inference_provider
+
+    @property
+    def inference_provider_mode(self) -> str:
+        """Return whether Hugging Face routing is automatic or explicitly fixed."""
+        self._generation.assert_active()
+        return self._runtime.session_view.inference_provider_mode
+
+    @property
     def session_id(self) -> str | None:
         """Return the current session id, if the session is indexed."""
         self._generation.assert_active()
         return self._runtime.session_view.session_id
+
+    @property
+    def session_name(self) -> str | None:
+        """Return the session's human-friendly name, if it has one."""
+        self._generation.assert_active()
+        return self._runtime.session_view.session_name
+
+    @property
+    def thinking_level(self) -> str:
+        """Return the active thinking mode for future turns."""
+        self._generation.assert_active()
+        return self._runtime.session_view.thinking_level
 
     @property
     def system_prompt(self) -> str:
@@ -847,11 +992,18 @@ class ExtensionAPI:
         runtime: ExtensionRuntime,
         extension_name: str,
         generation: ExtensionGeneration | None = None,
+        *,
+        source_id: str | None = None,
     ) -> None:
         self._runtime = runtime
         self._extension_name = extension_name
+        self._source_id = source_id or f"extension-name:{extension_name}"
         self._generation = generation if generation is not None else ExtensionGeneration()
-        self._context = ExtensionContext(runtime, self._generation)
+        self._context = ExtensionContext(
+            runtime,
+            self._generation,
+            extension_name=extension_name,
+        )
 
     @property
     def name(self) -> str:
@@ -865,10 +1017,30 @@ class ExtensionAPI:
         self._generation.assert_active()
         return self._context
 
+    def set_inference_provider(self, route: str | None) -> str:
+        """Select or reset the active Hugging Face session route."""
+        self._generation.assert_active()
+        return self._runtime.session_view.set_inference_provider(route)
+
     def register_tool(self, tool: AgentTool) -> None:
         """Register an agent tool (first registration per name wins)."""
         self._generation.assert_active()
-        self._runtime.register_tool(self._extension_name, tool)
+        self._runtime.register_tool(self._source_id, self._extension_name, tool)
+
+    def register_provider(self, provider: DynamicProvider) -> None:
+        """Register or atomically replace this source's dynamic provider layer."""
+        self._generation.assert_active()
+        self._runtime.register_provider(self._source_id, provider)
+
+    def update_provider(self, provider: DynamicProvider) -> bool:
+        """Update this source's provider snapshot while preserving its layer token."""
+        self._generation.assert_active()
+        return self._runtime.update_provider(self._source_id, provider)
+
+    def register_local_backend(self, backend: LocalBackend) -> None:
+        """Register a backend paired with this source's provider layer."""
+        self._generation.assert_active()
+        self._runtime.register_local_backend(self._source_id, backend)
 
     def register_command(
         self,
@@ -882,6 +1054,7 @@ class ExtensionAPI:
         """Register a slash command backed by this extension."""
         self._generation.assert_active()
         self._runtime.register_command(
+            self._source_id,
             self._extension_name,
             name,
             handler,
@@ -898,7 +1071,22 @@ class ExtensionAPI:
         any tool. Duplicate lines are de-duplicated at prompt build time.
         """
         self._generation.assert_active()
-        self._runtime.register_prompt_guideline(self._extension_name, guideline)
+        self._runtime.register_prompt_guideline(self._source_id, self._extension_name, guideline)
+
+    def add_prompt_section(self, title: str | None, body: str) -> None:
+        """Append a free-form, optionally titled section to the system prompt.
+
+        Use this for structured, always-on extension context such as procedures,
+        paragraphs, and code blocks. Use :meth:`add_prompt_guideline` for one
+        behavioral bullet instead.
+        """
+        self._generation.assert_active()
+        self._runtime.register_prompt_section(
+            self._source_id,
+            self._extension_name,
+            title,
+            body,
+        )
 
     def on(
         self,
@@ -908,12 +1096,12 @@ class ExtensionAPI:
         """Subscribe to an event, directly or as a decorator."""
         self._generation.assert_active()
         if handler is not None:
-            self._runtime.subscribe(self._extension_name, event, handler)
+            self._runtime.subscribe(self._source_id, event, handler)
             return handler
 
         def decorator(decorated: ExtensionHandler) -> ExtensionHandler:
             self._generation.assert_active()
-            self._runtime.subscribe(self._extension_name, event, decorated)
+            self._runtime.subscribe(self._source_id, event, decorated)
             return decorated
 
         return decorator
@@ -941,7 +1129,9 @@ class ExtensionAPI:
         must not return a Textual widget (that keeps extensions TUI-free).
         """
         self._generation.assert_active()
-        self._runtime.register_message_renderer(self._extension_name, custom_type, renderer)
+        self._runtime.register_message_renderer(
+            self._source_id, self._extension_name, custom_type, renderer
+        )
 
     def send_custom_message(
         self,
@@ -985,6 +1175,9 @@ class RegisteredExtension:
     """Book-keeping for one loaded extension inside the runtime."""
 
     name: str
-    path: Path
+    source_id: str
+    path: Path | None
     api: ExtensionAPI
+    source: Literal["built-in", "user", "explicit", "project"] = "explicit"
+    hidden: bool = False
     handlers: dict[str, list[ExtensionHandler]] = field(default_factory=dict)

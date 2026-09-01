@@ -16,6 +16,7 @@ from tau_agent import (
     ToolResultMessage,
     UserMessage,
 )
+from tau_agent.loop import run_agent_loop
 from tau_agent.messages import assistant_content
 from tau_agent.types import JSONValue
 from tau_ai import (
@@ -679,6 +680,247 @@ async def test_google_provider_strips_unsupported_schema_keywords_from_tools() -
     assert "additionalProperties" not in parameters
     assert "additionalProperties" not in parameters["properties"]["env"]["items"]
     assert parameters["properties"]["command"] == {"type": "string"}
+
+
+@pytest.mark.anyio
+async def test_google_provider_errors_when_stream_ends_during_thinking() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"candidates":[{"content":{"parts":['
+                '{"text":"partial thought","thought":true}]}}]}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = GoogleGenerativeAIProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://generativelanguage.googleapis.com/v1beta",
+                max_retries=2,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="gemini-2.5-flash",
+                system="",
+                messages=[UserMessage(content="Think")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 1
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.thinking_text == "partial thought"
+    assert events[-1].error.error_message == "Google stream ended without finishReason"
+
+
+@pytest.mark.anyio
+async def test_google_provider_does_not_execute_tool_from_incomplete_stream() -> None:
+    executed = False
+
+    async def execute(
+        tool_call_id: str,
+        arguments: Mapping[str, JSONValue],
+        signal: object | None = None,
+        on_update: object | None = None,
+    ) -> AgentToolResult:
+        nonlocal executed
+        del tool_call_id, arguments, signal, on_update
+        executed = True
+        return AgentToolResult(content="unexpected")
+
+    tool = AgentTool(
+        name="read",
+        label="read",
+        description="Read a file.",
+        parameters={"type": "object"},
+        execute_fn=execute,  # type: ignore[arg-type]
+    )
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"candidates":[{"content":{"parts":['
+                '{"text":"I will inspect it."},'
+                '{"functionCall":{"id":"call-1","name":"read",'
+                '"args":{"path":"README.md"}}}]}}]}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    messages = [UserMessage(content="Read README.md")]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = GoogleGenerativeAIProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://generativelanguage.googleapis.com/v1beta",
+            ),
+            client=client,
+        )
+        await _collect(
+            run_agent_loop(
+                provider=provider,
+                model="gemini-2.5-flash",
+                system="",
+                messages=messages,
+                tools=[tool],
+            )
+        )
+
+    assert executed is False
+    assert isinstance(messages[-1], AssistantMessage)
+    assert messages[-1].stop_reason == "error"
+    assert messages[-1].text == "I will inspect it."
+    assert [call.name for call in messages[-1].tool_calls] == ["read"]
+
+
+@pytest.mark.anyio
+async def test_google_provider_retries_empty_clean_close_then_errors() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text="",
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = GoogleGenerativeAIProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://generativelanguage.googleapis.com/v1beta",
+                max_retries=2,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="gemini-2.5-flash",
+                system="",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 3
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.error_message == "Google stream ended without finishReason"
+
+
+@pytest.mark.anyio
+async def test_google_provider_accepts_explicit_stop_finish_reason() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},'
+                '"finishReason":"STOP"}]}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = GoogleGenerativeAIProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://generativelanguage.googleapis.com/v1beta",
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="gemini-2.5-flash",
+                system="",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], AssistantDoneEvent)
+    assert events[-1].reason == "stop"
+    assert events[-1].message.text == "ok"
+
+
+@pytest.mark.anyio
+async def test_google_provider_maps_max_tokens_finish_reason_to_length() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"candidates":[{"content":{"parts":[{"text":"partial"}]},'
+                '"finishReason":"MAX_TOKENS"}]}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = GoogleGenerativeAIProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://generativelanguage.googleapis.com/v1beta",
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="gemini-2.5-flash",
+                system="",
+                messages=[UserMessage(content="Write a lot")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], AssistantDoneEvent)
+    assert events[-1].reason == "length"
+    assert events[-1].message.stop_reason == "length"
+
+
+@pytest.mark.anyio
+async def test_google_provider_errors_on_truncated_json_chunk() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"candidates":[\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = GoogleGenerativeAIProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://generativelanguage.googleapis.com/v1beta",
+                max_retries=2,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="gemini-2.5-flash",
+                system="",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 1
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.error_message == "Google returned an invalid JSON stream chunk"
 
 
 @pytest.mark.anyio
@@ -1634,6 +1876,59 @@ async def test_openai_codex_provider_streams_reasoning_deltas() -> None:
     assert [event.delta for event in thinking_events] == ["trace ", "details"]
     assert isinstance(events[-1], AssistantDoneEvent)
     assert events[-1].message.text == "Done"
+
+
+@pytest.mark.anyio
+async def test_openai_codex_provider_preserves_reasoning_summary_part_boundaries() -> None:
+    async def credentials() -> OpenAICodexCredentials:
+        return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.reasoning_summary_text.delta",'
+                '"delta":"**First step**"}\n\n'
+                'data: {"type":"response.reasoning_summary_part.done"}\n\n'
+                'data: {"type":"response.reasoning_summary_text.delta",'
+                '"delta":"**Second step**"}\n\n'
+                'data: {"type":"response.reasoning_summary_part.done"}\n\n'
+                'data: {"type":"response.output_text.delta","delta":"Done"}\n\n'
+                'data: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICodexProvider(
+            OpenAICodexConfig(
+                credential_resolver=credentials,
+                base_url="https://chatgpt.test/backend-api",
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say done")],
+                tools=[],
+            )
+        )
+
+    thinking_events = [event for event in events if isinstance(event, ThinkingDeltaEvent)]
+    assert [event.delta for event in thinking_events] == [
+        "**First step**",
+        "\n\n",
+        "**Second step**",
+        "\n\n",
+    ]
+    end = events[-1]
+    assert isinstance(end, AssistantDoneEvent)
+    thinking = end.message.content[0]
+    assert isinstance(thinking, ThinkingContent)
+    assert thinking.thinking == "**First step**\n\n**Second step**\n\n"
 
 
 @pytest.mark.anyio
@@ -2645,6 +2940,57 @@ async def test_responses_api_streams_reasoning_summary_as_thinking() -> None:
     ]
     thinking = next(e for e in events if isinstance(e, ThinkingDeltaEvent))
     assert thinking.delta == "Considering"
+
+
+@pytest.mark.anyio
+async def test_responses_api_preserves_reasoning_summary_part_boundaries() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"response.reasoning_summary_text.delta",'
+                '"delta":"**First step**"}\n\n'
+                'data: {"type":"response.reasoning_summary_part.done"}\n\n'
+                'data: {"type":"response.reasoning_summary_text.delta",'
+                '"delta":"**Second step**"}\n\n'
+                'data: {"type":"response.reasoning_summary_part.done"}\n\n'
+                'data: {"type":"response.output_text.delta","delta":"Answer"}\n\n'
+                'data: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+                reasoning_effort="high",
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="gpt-5.5",
+                system="You are Tau.",
+                messages=[UserMessage(content="think")],
+                tools=[],
+            )
+        )
+
+    thinking_events = [event for event in events if isinstance(event, ThinkingDeltaEvent)]
+    assert [event.delta for event in thinking_events] == [
+        "**First step**",
+        "\n\n",
+        "**Second step**",
+        "\n\n",
+    ]
+    end = events[-1]
+    assert isinstance(end, AssistantDoneEvent)
+    thinking = end.message.content[0]
+    assert isinstance(thinking, ThinkingContent)
+    assert thinking.thinking == "**First step**\n\n**Second step**\n\n"
 
 
 @pytest.mark.anyio

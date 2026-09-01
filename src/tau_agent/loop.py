@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from inspect import isawaitable
+from time import monotonic_ns
+
 
 from tau_agent.events import (
     AgentEndEvent,
@@ -23,6 +25,7 @@ from tau_agent.events import (
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    ResponseTiming,
     TextContent,
     ToolCall,
     ToolResultMessage,
@@ -33,6 +36,11 @@ from tau_agent.provider_events import (
     AssistantErrorEvent,
     AssistantMessageEvent,
     AssistantStartEvent,
+    TextDeltaEvent,
+    ThinkingDeltaEvent,
+    ToolCallDeltaEvent,
+    ToolCallEndEvent,
+    ToolCallStartEvent,
 )
 from tau_agent.tool_history import repair_tool_history
 from tau_agent.tools import AgentTool, AgentToolResult
@@ -248,15 +256,43 @@ async def _assistant_events(
         session_id=session_id,
     )
     started = False
-    async for event in source:
+    provider_elapsed_ns = 0
+    first_output_elapsed_ns: int | None = None
+    source_iterator = source.__aiter__()
+    while True:
+        wait_started_ns = monotonic_ns()
+        try:
+            event = await anext(source_iterator)
+        except StopAsyncIteration:
+            break
+        provider_elapsed_ns += max(0, monotonic_ns() - wait_started_ns)
+        if first_output_elapsed_ns is None and isinstance(
+            event,
+            (
+                TextDeltaEvent,
+                ThinkingDeltaEvent,
+                ToolCallStartEvent,
+                ToolCallDeltaEvent,
+                ToolCallEndEvent,
+            ),
+        ):
+            first_output_elapsed_ns = provider_elapsed_ns
         if isinstance(event, AssistantStartEvent):
             started = True
             yield MessageStartEvent(message=event.partial)
         elif isinstance(event, AssistantDoneEvent):
+            event.message.timing = _response_timing(
+                first_output_elapsed_ns,
+                provider_elapsed_ns,
+            )
             if not started:
                 yield MessageStartEvent(message=event.message)
             yield MessageEndEvent(message=event.message)
         elif isinstance(event, AssistantErrorEvent):
+            event.error.timing = _response_timing(
+                first_output_elapsed_ns,
+                provider_elapsed_ns,
+            )
             if not started:
                 yield MessageStartEvent(message=event.error)
             yield MessageEndEvent(message=event.error)
@@ -265,6 +301,19 @@ async def _assistant_events(
                 message=event.partial,
                 assistant_message_event=event,
             )
+
+
+def _response_timing(
+    first_output_elapsed_ns: int | None,
+    total_elapsed_ns: int,
+) -> ResponseTiming:
+    """Build persistable durations from time spent awaiting provider events."""
+    return ResponseTiming(
+        time_to_first_output_ms=(
+            first_output_elapsed_ns // 1_000_000 if first_output_elapsed_ns is not None else None
+        ),
+        total_duration_ms=total_elapsed_ns // 1_000_000,
+    )
 
 
 async def _execute_tool_call(

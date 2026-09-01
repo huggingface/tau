@@ -140,20 +140,32 @@ needed. Available models and plan limits change over time; consult the
 
 ### Hugging Face Inference Providers
 
-Log in with `/login huggingface` or set `HF_TOKEN`. Tau's built-in Hugging Face
-catalog includes 47 coding-capable models routed through
-`https://router.huggingface.co/v1`, including DeepSeek, Gemma, GLM, GPT OSS,
-Kimi, Llama, MiniMax, MiMo, Qwen, and Step families. This includes
-`moonshotai/Kimi-K3`, with text and image input, a 1,048,576-token context
-window, and `low`, `high`, and `max` reasoning effort. Tau exposes `max` as its
-`xhigh` thinking level. Use `/model` to search the full list; model availability
-and the inference provider selected by Hugging Face can vary over time and by
-account.
+Log in with `/login huggingface` or set `HF_TOKEN`. Tau's Hugging Face model
+list is generated at build time from [models.dev](https://models.dev) and routed
+through `https://router.huggingface.co/v1`. It includes tool-capable models from
+DeepSeek, Gemma, GLM, GPT OSS, Kimi, Llama, MiniMax, MiMo, Qwen, Step, and other
+families. Use `/model` to search the generated list; availability and the backing
+inference provider can vary over time and by account.
+
+Like Pi, Tau's released snapshot includes model names, limits, costs, modalities,
+reasoning support, and verified effort values. Thinking levels are `off`,
+`minimal`, `low`, `medium`, `high`, `xhigh`, and `max`; `max` is distinct from
+`xhigh`. Empty or toggle-only reasoning options do not replace provider/manual
+behavior. Hugging Face `zai-org/GLM-5.2` currently uses a narrow verified
+correction exposing `off`, `high`, and `max`, so Tau never sends its unsupported
+`medium` value. A bundled snapshot keeps startup offline. Opening `/model`
+refreshes catalogs in the background and caches them in
+`~/.tau/models-store.json`; run `tau update --models` to force revalidation.
+New models and capability changes can therefore arrive without upgrading Tau.
+Set `TAU_OFFLINE=1` to use cached/bundled data without catalog network access.
 
 For a new session without an explicit preference, Hugging Face initially routes
 the model automatically. After the first successful response, Tau reads Hugging
-Face's `x-inference-provider` response header and pins that backing provider for
-the rest of the session. To choose the initial provider instead, add a per-model
+Face's `x-inference-provider` response header and keeps that backing provider as
+a sticky automatic route. If that route later exhausts its normal retries with a
+retryable HTTP failure before producing output, Tau retries the interrupted turn
+once through unsuffixed automatic routing and makes the successful replacement
+the new sticky route. To choose a fixed provider instead, add a per-model
 `inference_providers` preference to `~/.tau/providers.json`:
 
 ```json
@@ -173,18 +185,35 @@ the rest of the session. To choose the initial provider instead, add a per-model
 Use the exact provider suffix advertised for that model by Hugging Face. Tau
 sends `zai-org/GLM-5.2:deepinfra` on the wire and continues to display and store
 the logical `zai-org/GLM-5.2` model. The pin survives resume; changing the
-preference does not rewrite existing sessions. `/session` and `/route` show the
-active pin. Use `/route <provider>` to reselect it or `/route automatic` to reset
-it; automatic routing pins again after the next successful response. Switching
-models uses that model's configured pin or starts automatic resolution again.
+preference does not rewrite existing sessions. `/session` shows the active pin.
+Route selection is available through the external
+[`alejandro-ao/tau-huggingface`](https://github.com/alejandro-ao/tau-huggingface)
+extension rather than a built-in command. It requires Tau 0.3.10 or newer. Clone
+and load it explicitly:
 
-Transient failures retry on the same wire model, and stream failures are not
-retried after model output has started. Pinning can reduce cold prefix-cache
-misses caused by cross-provider routing, but cannot prevent eviction, TTL expiry,
-or load balancing among workers within the chosen provider. Tau does not yet
-fall back automatically from an unavailable pinned route: doing so also requires
-a user-visible reroute event and durable reroute telemetry. Reset with `/route
-automatic` to resolve another route. See [Configuration]({{< relref "../reference/configuration.md#provider-preferences" >}}).
+```bash
+git clone https://github.com/alejandro-ao/tau-huggingface.git
+tau -e ./tau-huggingface
+```
+
+Then use `/hf route` to pick from the model's currently live routes,
+`/hf route <provider>` to select a fixed route, or `/hf route automatic` to
+return to recoverable automatic routing. Switching models uses that model's
+configured fixed route or starts automatic resolution again. `/session` reports
+`automatic (currently <provider>)` for a sticky automatic route and
+`<provider> (fixed)` for an explicit route.
+
+Transient failures first retry on the same wire model, and stream failures are
+not retried or rerouted after model output has started. After those retries are
+exhausted, only sticky routes selected in automatic mode fail over; routes chosen
+through `/hf route <provider>` or the `inference_providers` preference remain
+fixed so Tau never overrides explicit user intent. Automatic failover emits
+visible retry progress and durable provider diagnostics. Pinning can reduce cold
+prefix-cache misses caused by cross-provider routing, but cannot prevent eviction,
+TTL expiry, or load balancing among workers within the chosen provider. A reroute
+may require a cold prefix prefill, and account-wide rate limits may still fail on
+the automatic retry. See
+[Configuration]({{< relref "../reference/configuration.md#provider-preferences" >}}).
 
 ### Moonshot AI API vs. Kimi Code
 
@@ -200,8 +229,8 @@ different endpoints, and charge against different billing plans:
 Kimi K3 uses the `k3` model ID, accepts text and image input, and supports up to
 a 1,048,576-token context window on eligible plans. It supports three
 reasoning-effort levels via the `reasoning_effort` field: `low`, `high`, and
-`max` (default). Tau exposes these as the `low`, `high`, and `xhigh` thinking
-levels respectively, and starts new K3 sessions at `xhigh` unless a remembered
+`max` (default). Tau exposes these as the distinct `low`, `high`, and `max`
+thinking levels, and starts new K3 sessions at `max` unless a remembered
 per-model choice exists. Start a new session when switching to K3 so the
 previous model's context cache is not re-prefilled. See
 [Kimi's model documentation](https://www.kimi.com/code/docs/en/kimi-code/models)
@@ -257,9 +286,11 @@ provider/model access varies by plan and policy.
   choosing one can switch the active provider too).
 - **`tau -m <model>`** or **`tau --provider <name> -m <model>`** — choose at
   launch.
-- **Ctrl+P** — cycle your *scoped* (favorite) models without opening the picker.
+- **Ctrl+P** / **Shift+Ctrl+P** — cycle your *scoped* (favorite) models
+  forward / backward without opening the picker.
   Build the list with `/scoped-models`, or press `Space` on a model in the
-  `/model` picker.
+  `/model` picker. In the `/scoped-models` modal, press `Tab` to switch to a
+  scoped-only view where `Enter` removes models from the list.
 
 Tau validates the selected model against the active provider's configured model
 list before creating or refreshing a runtime provider. This prevents accidental
@@ -278,14 +309,41 @@ exposing users to provider validation errors or rewriting the saved JSONL histor
 Tau supports Anthropic's `claude-opus-5` through the direct `anthropic`
 provider. The model has a 1M-token context window, accepts text and images,
 generates up to 128k tokens, and costs $5 / $25 per million input/output tokens.
-Anthropic enables adaptive thinking by default. Tau maps its `low` through
-`high` modes directly, maps `xhigh` to Anthropic's maximum effort, and sends an
-explicit disabled-thinking request for `off`.
+Anthropic enables adaptive thinking by default. Tau exposes models.dev's
+verified `low`, `medium`, `high`, `xhigh`, and `max` efforts as distinct modes.
 
 Use `/login anthropic-api` or `/login anthropic-subscription`, then select
 **Claude Opus 5** in `/model`. See Anthropic's
 [Claude Opus 5 guide](https://platform.claude.com/docs/en/about-claude/models/whats-new-opus-5)
 for current behavior and availability.
+
+## Dynamic extension providers
+
+Tau's extension API has a process-local `DynamicProvider` contract validated
+by a permanent second fake backend and a test-only Ollama adapter. Unlike
+providers created by `/login custom` or `tau setup`, these definitions are
+source/generation-owned overlays and are never copied into `catalog.toml`,
+`providers.json`, sessions, or generic disk storage. Source ownership is a stable
+host identity derived from the canonical extension entry path—not the display
+name. Tau freezes every discovered identity before importing extension code, so
+symlink retargeting cannot change registration or cleanup ownership; separate
+same-name extension files cannot remove one another's providers. They support
+dormant model sets, deeply immutable compatibility metadata, atomic
+model-snapshot refresh, per-caller refresh deadlines, retry-safe coalescing, and
+required/optional/no authentication without fake keys or exposed auth provenance.
+Custom auth-resolution exceptions are reduced to a categorical host error during
+runtime creation; Tau's required-key guidance remains actionable.
+
+Phase 1 established the contracts and registry mechanics. The `/local` host now
+provides the generic TUI flow for registered dynamic local backends. Dynamic
+providers still do not become durable catalog entries or automatic startup
+fallbacks: configure a backend, then choose its provider/model explicitly. The
+trusted built-in llama.cpp provider is the narrow scoped-model exception: Tau
+may persist only its stable provider ID plus exact model ID. An unloaded/stale
+reference remains visible as unavailable and cannot trigger load or download.
+User and project dynamic providers cannot opt into durable references. See
+the [local backends guide]({{< relref "./local-inference.md" >}}) and
+[Extensions]({{< relref "./extensions.md#dynamic-providers" >}}).
 
 ## Adding a custom / local provider
 
@@ -299,43 +357,54 @@ Ollama. The easiest interactive path is:
 Tau prompts for the provider details, saves the API key, writes the provider
 metadata to `~/.tau/catalog.toml`, and makes the provider available immediately.
 
-### llama.cpp quickstart
+### Built-in llama.cpp backend
 
-Tau works with llama.cpp through its OpenAI-compatible server. Start a local
-server with a GGUF model from Hugging Face:
-
-```bash
-llama-server -hf ggml-org/Qwen3.6-35B-A3B-GGUF:Q8_0
-```
-
-Some installs expose the same server as `llama serve`:
+Tau's first-class llama.cpp integration is configured through the provider-neutral
+`/local` command. For download/load/unload management, start llama.cpp
+independently in router mode without a model argument:
 
 ```bash
-llama serve -hf ggml-org/Qwen3.6-35B-A3B-GGUF:Q8_0
+llama-server --models-max 1 --parallel 1 --flash-attn auto
 ```
 
-Then register it with Tau:
+See the [official router guide](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#using-multiple-models)
+and Tau's complete guide below before adding hardware- or model-specific flags.
+
+Then open Tau and run:
+
+```text
+/local
+```
+
+Choose and confirm the recommended `llama.cpp` backend. Tau automatically
+checks the saved, environment, or default endpoint; use **Configure** for a
+server elsewhere and an optional API key. Tau discovers exact loaded model IDs
+through OpenAI-compatible or compatible router discovery; it does not use a
+fake key or fake model. Compatible b9688–b10595 routers show arrow-key
+navigable model states plus explicitly confirmed load, unload, Hugging Face GGUF
+search, and server-side download actions. Load/download confirmations preselect
+Cancel as an unlabelled safety default. Closing `/local` leaves an active
+server-side download running; reopen it to cancel explicitly. No key means no
+`Authorization` header. A saved key takes precedence over `LLAMA_API_KEY`.
+
+Use the discovered ID explicitly from the TUI or print mode:
 
 ```bash
-export LLAMA_API_KEY=local # any non-empty value unless you started llama.cpp with --api-key
-
-tau --provider llama-cpp \
-  --base-url http://localhost:8080/v1 \
-  --api-key-env LLAMA_API_KEY \
-  --model local \
-  setup
+tau --provider llama.cpp --model <model-id>
+tau --provider llama.cpp --model <model-id> --print "summarize this project"
 ```
 
-Run Tau against the local model:
+The configured endpoint and safe model snapshot are stored under
+`~/.tau/state/extensions/llama.cpp.json`; secrets stay in the credential store.
+A cached snapshot allows explicit startup during temporary server downtime.
+`/local` never scans ports or processes, stops the external server, or deletes
+model files. See the [complete llama.cpp guide]({{< relref "./local-inference.md" >}})
+for endpoint precedence, Doctor, reset, and troubleshooting.
 
-```bash
-tau --provider llama-cpp
-tau --provider llama-cpp "summarize this project"    # TUI with an initial prompt
-tau --provider llama-cpp -p "summarize this project" # one-shot print mode
-```
-
-`llama-server` listens on port `8080` by default and only enforces the bearer
-token if you launch it with `--api-key`.
+An older manually configured provider named `llama-cpp` remains separate and is
+not migrated. Configure the built-in `llama.cpp` layer through `/local`, and use
+the custom-provider flow below for Ollama and other OpenAI-compatible servers.
+Tau does not ship an Ollama backend.
 
 For scripted or one-off setup with another OpenAI-compatible server, use the
 same `tau setup` flow. For example, Ollama's OpenAI-compatible endpoint usually

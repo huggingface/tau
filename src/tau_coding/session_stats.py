@@ -25,6 +25,10 @@ class SessionStats:
     cache_write_tokens: int = 0
     latest_prompt_tokens: int = 0
     latest_cached_input_tokens: int = 0
+    timed_output_tokens: int = 0
+    response_duration_ms: int = 0
+    time_to_first_output_ms: int = 0
+    timed_first_output_count: int = 0
     estimated_cost: float | None = None
 
     @property
@@ -49,6 +53,20 @@ class SessionStats:
             return None
         return self.latest_cached_input_tokens / self.latest_prompt_tokens
 
+    @property
+    def output_tokens_per_second(self) -> float | None:
+        """Token-weighted effective output speed across timed responses."""
+        if self.timed_output_tokens <= 0 or self.response_duration_ms <= 0:
+            return None
+        return self.timed_output_tokens * 1000 / self.response_duration_ms
+
+    @property
+    def average_time_to_first_output_ms(self) -> float | None:
+        """Mean time from request start to the first output event."""
+        if self.timed_first_output_count <= 0:
+            return None
+        return self.time_to_first_output_ms / self.timed_first_output_count
+
 
 def calculate_session_stats(
     entries: Sequence[SessionEntry],
@@ -64,6 +82,10 @@ def calculate_session_stats(
     cache_write_tokens = 0
     latest_prompt_tokens = 0
     latest_cached_input_tokens = 0
+    timed_output_tokens = 0
+    response_duration_ms = 0
+    time_to_first_output_ms = 0
+    timed_first_output_count = 0
     estimated_cost = 0.0
     has_billable_usage = False
     has_complete_pricing = True
@@ -87,6 +109,17 @@ def calculate_session_stats(
         cached_input_tokens += usage.cache_read
         cache_write_tokens += usage.cache_write
         output_tokens += usage.output
+        timing = message.timing
+        if timing is not None:
+            # TPS is token-weighted and requires usable output usage. TTFT is a
+            # per-call arithmetic mean whenever output was observed, even if a
+            # later error left that response without billed output tokens.
+            if usage.output > 0 and timing.total_duration_ms > 0:
+                timed_output_tokens += usage.output
+                response_duration_ms += timing.total_duration_ms
+            if timing.time_to_first_output_ms is not None:
+                time_to_first_output_ms += timing.time_to_first_output_ms
+                timed_first_output_count += 1
         if prompt_tokens == 0 and usage.output == 0:
             continue
 
@@ -116,6 +149,10 @@ def calculate_session_stats(
         cache_write_tokens=cache_write_tokens,
         latest_prompt_tokens=latest_prompt_tokens,
         latest_cached_input_tokens=latest_cached_input_tokens,
+        timed_output_tokens=timed_output_tokens,
+        response_duration_ms=response_duration_ms,
+        time_to_first_output_ms=time_to_first_output_ms,
+        timed_first_output_count=timed_first_output_count,
         estimated_cost=(estimated_cost if has_billable_usage and has_complete_pricing else None),
     )
 

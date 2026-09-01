@@ -15,6 +15,7 @@ class FakeSession:
         self.cwd = tmp_path
         self.provider_name = "openai"
         self.inference_provider: str | None = None
+        self.inference_provider_mode = "automatic"
         self.model = "fake-model"
         self.available_models = ("fake-model", "other-model")
         self.available_model_choices = (
@@ -67,6 +68,7 @@ class FakeSession:
 
     def set_inference_provider(self, route: str | None) -> str:
         self.inference_provider = route
+        self.inference_provider_mode = "fixed" if route is not None else "automatic"
         return route or "automatic (will pin after the next successful response)"
 
     def set_provider(self, provider_name: str) -> None:
@@ -126,6 +128,7 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
         "compact",
         "export",
         "hotkeys",
+        "local",
         "login",
         "logout",
         "model",
@@ -135,7 +138,6 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
         "quit",
         "reload",
         "resume",
-        "route",
         "scoped-models",
         "session",
         "skill",
@@ -145,6 +147,14 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
         "tools",
         "tree",
     ]
+
+
+def test_local_command_requests_host_action(tmp_path: Path) -> None:
+    registry = create_default_command_registry()
+    session = FakeSession(tmp_path)
+
+    assert registry.execute(session, "/local").local_requested is True
+    assert registry.execute(session, "/local extra").message == "Usage: /local"
 
 
 def test_prompts_command_requests_picker(tmp_path: Path) -> None:
@@ -252,20 +262,27 @@ def test_session_command_includes_session_details(tmp_path: Path) -> None:
     )
 
 
-def test_route_command_inspects_selects_and_resets_huggingface_route(tmp_path: Path) -> None:
+def test_session_command_distinguishes_automatic_and_fixed_huggingface_routes(
+    tmp_path: Path,
+) -> None:
     session = FakeSession(tmp_path)
     session.provider_name = "huggingface"
-    registry = create_default_command_registry()
+    session.inference_provider = "baseten"
 
-    assert registry.execute(session, "/route").message == "Hugging Face route: automatic"
-    assert registry.execute(session, "/route deepinfra").message == (
-        "Hugging Face route: deepinfra"
-    )
-    assert session.inference_provider == "deepinfra"
-    assert registry.execute(session, "/route reset").message == (
-        "Hugging Face route: automatic (will pin after the next successful response)"
-    )
-    assert session.inference_provider is None
+    automatic = create_default_command_registry().execute(session, "/session")
+    session.inference_provider_mode = "fixed"
+    fixed = create_default_command_registry().execute(session, "/session")
+
+    assert automatic.message is not None
+    assert "Hugging Face inference provider: automatic (currently baseten)" in automatic.message
+    assert fixed.message is not None
+    assert "Hugging Face inference provider: baseten (fixed)" in fixed.message
+
+
+def test_route_command_is_not_built_in(tmp_path: Path) -> None:
+    result = create_default_command_registry().execute(FakeSession(tmp_path), "/route deepinfra")
+
+    assert result.handled is False
 
 
 def test_session_command_includes_named_session_title(tmp_path: Path) -> None:
@@ -299,6 +316,7 @@ def test_hotkeys_command_lists_common_tui_shortcuts(tmp_path: Path) -> None:
     assert "Common keyboard shortcuts:" in result.message
     assert "Ctrl+K: open slash-command completions" in result.message
     assert "Ctrl+R: open session picker" in result.message
+    assert "Ctrl+P / Shift+Ctrl+P: cycle scoped models forward / backward" in result.message
     assert "Shift+Tab: cycle thinking mode" in result.message
 
 
@@ -523,7 +541,7 @@ def test_name_command_shows_current_name_and_usage(tmp_path: Path) -> None:
     assert result.message == "Current session name: Test session\nUsage: /name <new name>"
 
 
-def test_name_command_renames_current_session(tmp_path: Path) -> None:
+def test_name_command_requests_session_rename(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake-model", title="Old name")
     session = FakeSession(tmp_path, manager=manager)
@@ -532,14 +550,13 @@ def test_name_command_renames_current_session(tmp_path: Path) -> None:
     result = create_default_command_registry().execute(session, "/name Customer bugfix")
 
     assert result.message == "Session renamed: Customer bugfix"
-    renamed = manager.get_session(record.id)
-    assert renamed is not None
-    assert renamed.title == "Customer bugfix"
-    assert renamed.model == "fake-model"
-    assert renamed.updated_at >= record.updated_at
+    assert result.session_name == "Customer bugfix"
+    unchanged = manager.get_session(record.id)
+    assert unchanged is not None
+    assert unchanged.title == "Old name"
 
 
-def test_name_command_indexes_pending_session_before_renaming(tmp_path: Path) -> None:
+def test_name_command_defers_indexing_pending_session(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     session = FakeSession(tmp_path, manager=manager)
     session.session_id = "pending-session"
@@ -547,10 +564,9 @@ def test_name_command_indexes_pending_session_before_renaming(tmp_path: Path) ->
     result = create_default_command_registry().execute(session, "/name Customer bugfix")
 
     assert result.message == "Session renamed: Customer bugfix"
-    assert session.ensure_session_indexed_called is True
-    record = manager.get_session("pending-session")
-    assert record is not None
-    assert record.title == "Customer bugfix"
+    assert result.session_name == "Customer bugfix"
+    assert session.ensure_session_indexed_called is False
+    assert manager.get_session("pending-session") is None
 
 
 def test_name_command_reports_missing_session_manager(tmp_path: Path) -> None:
