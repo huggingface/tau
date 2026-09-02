@@ -41,6 +41,7 @@ from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 from tau_ai.stream import canonicalize_provider_stream
+from tau_ai.tool_call_ids import portable_tool_call_id
 
 
 class GoogleGenerativeAIProvider:
@@ -70,8 +71,10 @@ class GoogleGenerativeAIProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[AssistantMessageEvent]:
         """Stream one response as Pi-compatible assistant message events."""
+        del session_id
         raw = self._stream_provider_events(
             model=model, system=system, messages=messages, tools=tools, signal=signal
         )
@@ -157,6 +160,27 @@ class GoogleGenerativeAIProvider:
                                 continue
                             for parser_event in parser.feed(event):
                                 yield parser_event
+                            if parser.fatal:
+                                return
+                        if (
+                            not parser.has_finish_reason
+                            and not parser.emitted_content
+                            and self._should_retry(attempt)
+                        ):
+                            delay = retry_delay_seconds(
+                                attempt,
+                                max_delay_seconds=self._config.max_retry_delay_seconds,
+                            )
+                            yield provider_retry_event(
+                                attempt=attempt,
+                                max_retries=self._config.max_retries,
+                                delay_seconds=delay,
+                                reason="stream ended without finishReason",
+                            )
+                            attempt += 1
+                            if not await wait_for_retry(delay, signal=signal):
+                                return
+                            continue
                         for parser_event in parser.finalize():
                             yield parser_event
                         return
@@ -196,15 +220,21 @@ class GoogleGenerativeAIProvider:
 class _GoogleStreamParser:
     def __init__(self) -> None:
         self.emitted_content = False
+        self.fatal = False
         self._content_parts: list[str] = []
         self._thinking_parts: list[str] = []
         self._tool_calls: list[ToolCall] = []
         self._finish_reason: str | None = None
 
+    @property
+    def has_finish_reason(self) -> bool:
+        return self._finish_reason is not None
+
     def feed(self, event: str) -> list[ProviderEvent]:
         chunk = _loads_object(event)
         if chunk is None:
-            return []
+            self.fatal = True
+            return [ProviderErrorEvent(message="Google returned an invalid JSON stream chunk")]
         events: list[ProviderEvent] = []
         candidates = chunk.get("candidates")
         if not isinstance(candidates, list) or not candidates:
@@ -251,6 +281,8 @@ class _GoogleStreamParser:
         return events
 
     def finalize(self) -> list[ProviderEvent]:
+        if self._finish_reason is None:
+            return [ProviderErrorEvent(message="Google stream ended without finishReason")]
         content = assistant_content("".join(self._content_parts), self._tool_calls)
         if self._thinking_parts:
             content.insert(0, ThinkingContent(thinking="".join(self._thinking_parts)))
@@ -387,7 +419,7 @@ def _messages_to_google(
             elif isinstance(block, ToolCall):
                 part = {
                     "functionCall": {
-                        "id": block.id,
+                        "id": portable_tool_call_id(block.id),
                         "name": block.name,
                         "args": dict(block.arguments),
                     }
@@ -407,7 +439,7 @@ def _messages_to_google(
             "response": {"output" if not message.is_error else "error": text},
         }
         if message.tool_call_id:
-            response["id"] = message.tool_call_id
+            response["id"] = portable_tool_call_id(message.tool_call_id)
         image_parts: list[JSONValue] = [_google_image(image) for image in images]
         if image_parts and _supports_multimodal_function_response(model):
             response["parts"] = image_parts

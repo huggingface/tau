@@ -89,6 +89,7 @@ class ProviderCatalogEntry:
     thinking_models: tuple[str, ...] = ()
     thinking_default: ThinkingLevel | None = None
     thinking_parameter: ThinkingParameter | None = None
+    removed_models: tuple[str, ...] = ()
     auth_methods: tuple[AuthMethod, ...] = ("api_key",)
 
 

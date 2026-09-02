@@ -20,6 +20,7 @@ from rich.errors import StyleSyntaxError
 from rich.style import Style
 from textual.color import Color as TextualColor
 from textual.color import ColorParseError as TextualColorParseError
+from textual.theme import Theme
 
 from tau_coding.resources import ResourceDiagnostic
 
@@ -400,6 +401,62 @@ def get_tui_theme(name: TuiThemeName = "tau-dark") -> TuiTheme:
     if name in _BUILTIN_THEMES:
         return _BUILTIN_THEMES[name]
     return _custom_themes[name]
+
+
+def textual_theme_for_tui_theme(theme_name: TuiThemeName) -> Theme:
+    """Map a Tau theme to Textual's native theme type."""
+    theme = get_tui_theme(theme_name)
+    return Theme(
+        name=theme.name,
+        primary=theme.accent,
+        secondary=theme.prompt_border,
+        warning=theme.markdown_bullet,
+        error=theme.error,
+        success=theme.success,
+        accent=theme.accent,
+        foreground=theme.screen_text,
+        background=theme.screen_background,
+        surface=theme.chrome_background,
+        panel=theme.sidebar_background,
+        dark=theme.dark,
+        variables=theme_css_variables(theme),
+    )
+
+
+def theme_css_variables(theme: TuiTheme) -> dict[str, str]:
+    """Return Textual CSS variables for a resolved Tau theme."""
+    return {
+        "tau-screen-background": theme.screen_background,
+        "tau-screen-text": theme.screen_text,
+        "tau-chrome-background": theme.chrome_background,
+        "tau-chrome-text": theme.chrome_text,
+        "tau-muted-text": theme.muted_text,
+        "tau-sidebar-background": theme.sidebar_background,
+        "tau-border": theme.border,
+        "tau-transcript-background": theme.transcript_background,
+        "tau-prompt-background": theme.prompt_background,
+        "tau-prompt-text": theme.prompt_text,
+        "tau-prompt-border": theme.prompt_border,
+        "tau-autocomplete-background": theme.autocomplete_background,
+        "tau-accent": theme.accent,
+        "tau-tool-running": theme.role_styles["tool"].border,
+        "tau-highlight-background": theme.highlight_background,
+        "tau-highlight-text": theme.highlight_text,
+        "tau-markdown-highlight": theme.markdown_heading,
+        "tau-markdown-table-header": theme.markdown_table_header,
+        "tau-markdown-table-border": theme.markdown_table_border,
+        "tau-markdown-inline-code": theme.markdown_inline_code,
+        "tau-markdown-code-block-background": theme.markdown_code_block_background,
+        "tau-markdown-link": theme.markdown_link,
+        "tau-markdown-bullet": theme.markdown_bullet,
+        "footer-background": theme.chrome_background,
+        "footer-foreground": theme.chrome_text,
+        "footer-description-background": theme.chrome_background,
+        "footer-description-foreground": theme.chrome_text,
+        "footer-key-background": theme.chrome_background,
+        "footer-key-foreground": theme.accent,
+        "footer-item-background": theme.chrome_background,
+    }
 
 
 def load_custom_tui_themes(

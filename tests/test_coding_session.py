@@ -13,6 +13,7 @@ from pi_event_helpers import assistant_done, assistant_error, assistant_start
 from tau_agent import (
     AgentMessage,
     AgentTool,
+    AgentToolResult,
     AssistantMessage,
     ImageContent,
     MessageEndEvent,
@@ -20,16 +21,19 @@ from tau_agent import (
     ThinkingContent,
     ToolCall,
     ToolResultMessage,
+    Usage,
     UserMessage,
 )
 from tau_agent.messages import AssistantMessageDiagnostic, assistant_content
 from tau_agent.provider_events import AssistantErrorEvent
 from tau_agent.session import (
     CompactionEntry,
+    CustomEntry,
     JsonlSessionStorage,
     LeafEntry,
     MessageEntry,
     ModelChangeEntry,
+    SessionEntry,
     SessionInfoEntry,
     ThinkingLevelChangeEntry,
 )
@@ -54,21 +58,46 @@ from tau_coding import (
     save_provider_settings,
 )
 from tau_coding import session as coding_session_module
-from tau_coding.events import QueueUpdateEvent
+from tau_coding.events import AgentSettledEvent, QueueUpdateEvent
+from tau_coding.extensions import (
+    DynamicProvider,
+    OpenAICompatibleTransport,
+    ProviderModel,
+)
+from tau_coding.extensions.runtime import InputHookOutcome
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_config import ProviderModelMetadata
-from tau_coding.session import _ordered_tree_entries, parse_terminal_command
+from tau_coding.session import (
+    _ordered_tree_entries,
+    is_retryable_huggingface_route_error,
+    parse_terminal_command,
+)
 
 
 async def _collect_session_events(session_stream: object) -> list[object]:
     return [event async for event in session_stream]  # type: ignore[attr-defined]
 
 
+def _record_extension_events(
+    session: CodingSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[object]:
+    events: list[object] = []
+    emit_event = session.extension_runtime.emit_event
+
+    async def record(event: object) -> None:
+        events.append(event)
+        await emit_event(event)
+
+    monkeypatch.setattr(session.extension_runtime, "emit_event", record)
+    return events
+
+
 def _assert_messages(actual: object, expected: object) -> None:
     def dump(message: object) -> object:
         model_dump = getattr(message, "model_dump", None)
         if callable(model_dump):
-            return model_dump(exclude={"timestamp"})
+            return model_dump(exclude={"timestamp", "timing"})
         return message
 
     assert [dump(message) for message in actual] == [dump(message) for message in expected]  # type: ignore[union-attr]
@@ -86,13 +115,76 @@ def _config(
     )
 
 
+def _provider_http_error(
+    status_code: int,
+    message: str = "Rate limit exceeded",
+) -> AssistantErrorEvent:
+    return AssistantErrorEvent(
+        reason="error",
+        error=AssistantMessage(
+            stop_reason="error",
+            error_message=message,
+            diagnostics=[
+                AssistantMessageDiagnostic(
+                    type="provider_error",
+                    details={"status_code": status_code},
+                )
+            ],
+        ),
+    )
+
+
 class SwitchableFakeProvider:
     def __init__(self, config: object) -> None:
         self.config = config
         self.closed = False
+        self.close_calls = 0
 
     async def aclose(self) -> None:
         self.closed = True
+        self.close_calls += 1
+
+
+class HeaderObservingFakeProvider(FakeProvider):
+    def __init__(
+        self,
+        scripts: list[list[AssistantMessageEvent]],
+        observer: object | None,
+        route: str,
+    ) -> None:
+        super().__init__(scripts)
+        self._observer = observer
+        self._route = route
+
+    def stream_response(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[AgentMessage],
+        tools: list[AgentTool],
+        signal: CancellationToken | None = None,
+        session_id: str | None = None,
+    ) -> AsyncIterator[AssistantMessageEvent]:
+        source = super().stream_response(
+            model=model,
+            system=system,
+            messages=messages,
+            tools=tools,
+            signal=signal,
+            session_id=session_id,
+        )
+
+        async def iterator() -> AsyncIterator[AssistantMessageEvent]:
+            if callable(self._observer):
+                self._observer({"x-inference-provider": self._route})
+            async for event in source:
+                yield event
+
+        return iterator()
+
+    async def aclose(self) -> None:
+        return None
 
 
 class ModelLimitsFakeProvider(FakeProvider):
@@ -128,8 +220,9 @@ class RaisingProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[AssistantMessageEvent]:
-        del model, system, messages, tools, signal
+        del model, system, messages, tools, signal, session_id
         self.call_count += 1
         should_fail = self.call_count == self.fail_on_call
 
@@ -157,8 +250,9 @@ class WaitingProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[AssistantMessageEvent]:
-        del model, system, tools, signal
+        del model, system, tools, signal, session_id
         call_index = self.call_count
         self.call_count += 1
         self.calls.append(list(messages))
@@ -190,8 +284,9 @@ class CancellableWaitingProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[AssistantMessageEvent]:
-        del model, system, tools
+        del model, system, tools, session_id
         self.calls.append(list(messages))
 
         async def iterator() -> AsyncIterator[AssistantMessageEvent]:
@@ -218,7 +313,15 @@ async def test_load_empty_session_defers_transcript_file(tmp_path: Path) -> None
     assert session.messages == ()
     assert session.state.model == "fake"
     assert session.thinking_level == "medium"
-    assert session.available_thinking_levels == ("off", "minimal", "low", "medium", "high", "xhigh")
+    assert session.available_thinking_levels == (
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    )
     assert session.cwd == tmp_path
     assert session.model == "fake"
     assert [tool.name for tool in session.tools] == ["read", "write", "edit", "bash"]
@@ -236,6 +339,8 @@ async def test_session_export_defaults_to_cwd(tmp_path: Path) -> None:
     html = output_path.read_text(encoding="utf-8")
     assert "Export me" in html
     assert str(storage.path) in html
+    assert '<details class="system-prompt">' in html
+    assert "You are Tau." in html
 
 
 @pytest.mark.anyio
@@ -247,7 +352,10 @@ async def test_session_export_writes_jsonl_to_destination_directory(tmp_path: Pa
     output_path = await session.export(Path("exports"), format="jsonl")
 
     assert output_path == tmp_path / "exports" / "session-1.jsonl"
-    assert "Export me" in output_path.read_text(encoding="utf-8")
+    jsonl = output_path.read_text(encoding="utf-8")
+    assert "Export me" in jsonl
+    assert "You are Tau." not in jsonl
+    assert "system_prompt" not in jsonl
 
 
 @pytest.mark.anyio
@@ -314,6 +422,7 @@ async def test_prompt_logs_error_event_diagnostic_data(tmp_path: Path) -> None:
 
     await _collect_session_events(session.prompt("Hello"))
 
+    assert provider.session_ids == ["session-1"]
     log_path = tau_paths.agent_calls_log_path
     assert session.last_diagnostic_log_path == log_path
     entry = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])
@@ -388,6 +497,409 @@ async def test_prompt_logs_safe_provider_stream_error_details(tmp_path: Path) ->
     assert "Hello" not in log_path.read_text(encoding="utf-8")
 
 
+class _CountingStorage:
+    def __init__(self) -> None:
+        self.entries: list[SessionEntry] = []
+        self.reads = 0
+
+    async def append(self, entry: SessionEntry) -> None:
+        self.entries.append(entry)
+
+    async def read_all(self) -> list[SessionEntry]:
+        self.reads += 1
+        return list(self.entries)
+
+
+class _FaultInjectingStorage:
+    def __init__(self, phase: str) -> None:
+        self.entries: list[SessionEntry] = []
+        self.phase = phase
+        self.failed = False
+        self.failures_remaining = 2 if phase == "message_twice" else 1
+
+    async def append(self, entry: SessionEntry) -> None:
+        target = (
+            self.phase.startswith("message")
+            and isinstance(entry, MessageEntry)
+            or self.phase.startswith("leaf")
+            and isinstance(entry, LeafEntry)
+        )
+        if target and (self.failures_remaining > 0 or self.phase == "message_always"):
+            self.failed = True
+            self.failures_remaining -= 1
+            if self.phase.endswith("after"):
+                self.entries.append(entry)
+            raise OSError(f"simulated {self.phase} failure")
+        self.entries.append(entry)
+
+    async def read_all(self) -> list[SessionEntry]:
+        if (
+            self.phase == "refresh"
+            and not self.failed
+            and any(isinstance(entry, LeafEntry) for entry in self.entries)
+        ):
+            self.failed = True
+            raise OSError("simulated refresh failure")
+        return list(self.entries)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "phase",
+    ["message_before", "message_after", "leaf_before", "leaf_after", "refresh"],
+)
+async def test_message_persistence_retry_is_idempotent(tmp_path: Path, phase: str) -> None:
+    storage = _FaultInjectingStorage(phase)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    with pytest.raises(OSError, match="simulated"):
+        await _collect_session_events(session.prompt("go"))
+
+    messages = [entry for entry in storage.entries if isinstance(entry, MessageEntry)]
+    assert len(messages) == 1
+    assert messages[0].message.text == "go"
+    leaves = [
+        entry
+        for entry in storage.entries
+        if isinstance(entry, LeafEntry) and entry.entry_id == messages[0].id
+    ]
+    assert len(leaves) == 1
+    restored = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+    _assert_messages(restored.messages, [UserMessage(content="go")])
+
+
+@pytest.mark.anyio
+async def test_next_prompt_flushes_a_repair_that_failed_twice(tmp_path: Path) -> None:
+    storage = _FaultInjectingStorage("message_twice")
+    provider = FakeProvider(
+        [[assistant_start(), assistant_done(AssistantMessage(content="Recovered."))]]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    with pytest.raises(OSError, match="simulated message_twice failure"):
+        await _collect_session_events(session.prompt("go"))
+    await _collect_session_events(session.prompt("continue"))
+
+    persisted_texts = [
+        entry.message.text for entry in storage.entries if isinstance(entry, MessageEntry)
+    ]
+    assert persisted_texts == ["go", "continue", "Recovered."]
+    _model, _system, sent, _tools = provider.calls[-1]
+    assert [message.text for message in sent] == ["go", "continue"]
+
+
+@pytest.mark.anyio
+async def test_clean_persist_reads_storage_once_per_message(tmp_path: Path) -> None:
+    storage = _CountingStorage()
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider(
+                [[assistant_start(), assistant_done(AssistantMessage(content="Hi."))]]
+            ),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    reads_before = storage.reads
+    await _collect_session_events(session.prompt("go"))
+
+    persisted = [entry for entry in storage.entries if isinstance(entry, MessageEntry)]
+    assert len(persisted) == 2
+    # One deferred-metadata read plus one state refresh per message. A first
+    # attempt must not also read to check ids it just minted.
+    assert storage.reads - reads_before == len(persisted) + 1
+
+
+@pytest.mark.anyio
+async def test_reconcile_persistence_failure_is_logged(tmp_path: Path) -> None:
+    storage = _FaultInjectingStorage("message_always")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    with pytest.raises(OSError, match="simulated message_always failure"):
+        await _collect_session_events(session.prompt("go"))
+
+    assert session.last_diagnostic_log_path is not None
+    diagnostics = [
+        json.loads(line)
+        for line in session.last_diagnostic_log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert diagnostics[-1]["phase"] == "session_persistence_reconcile"
+    assert diagnostics[-1]["exception"]["message"] == "simulated message_always failure"
+
+
+def _hang_tool(tool_started: asyncio.Event, release: asyncio.Event) -> AgentTool:
+    async def hang(
+        tool_call_id: object,
+        arguments: object,
+        signal: object = None,
+        on_update: object = None,
+    ) -> AgentToolResult:
+        tool_started.set()
+        await release.wait()
+        return AgentToolResult(content=[TextContent(text="done")])
+
+    return AgentTool(
+        name="hang",
+        label="Hang",
+        description="Block until released.",
+        parameters={"type": "object"},
+        execute_fn=hang,
+    )
+
+
+@pytest.mark.anyio
+async def test_cancelled_prompt_teardown_persists_interrupted_tool_result(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Regression: Esc mid-tool-call cancels the consumer, and the synthetic
+    # interrupted tool result never reached the session file, leaving a
+    # dangling tool_use that providers reject with a 400 on later replays.
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    tool_started = asyncio.Event()
+    release = asyncio.Event()
+    tool_call = ToolCall(id="call-1", name="hang", arguments={})
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(
+                    message=AssistantMessage(
+                        content=assistant_content("Running.", [tool_call]),
+                        stop_reason="toolUse",
+                    )
+                ),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Recovered.")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            tools=[_hang_tool(tool_started, release)],
+        )
+    )
+    extension_events = _record_extension_events(session, monkeypatch)
+
+    async def consume() -> None:
+        async for _event in session.prompt("go"):
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(tool_started.wait(), timeout=5)
+    # Mirror the TUI interrupt: cancel the session, then the worker, with no
+    # await in between.
+    session.cancel()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    settled = [event for event in extension_events if isinstance(event, AgentSettledEvent)]
+    interrupted_result_index = next(
+        index
+        for index, event in enumerate(extension_events)
+        if isinstance(event, MessageEndEvent)
+        and isinstance(event.message, ToolResultMessage)
+        and event.message.is_error
+    )
+    assert len(settled) == 1
+    assert interrupted_result_index < extension_events.index(settled[0])
+
+    expected_repair = ToolResultMessage(
+        tool_call_id="call-1",
+        tool_name="hang",
+        content=[TextContent(text="Tool call interrupted by user")],
+        is_error=True,
+    )
+    entries = await storage.read_all()
+    message_entries = [entry for entry in entries if entry.type == "message"]
+    by_id = {entry.id: entry for entry in message_entries}
+    repairs = [entry for entry in message_entries if isinstance(entry.message, ToolResultMessage)]
+    assert len(repairs) == 1
+    _assert_messages([repairs[0].message], [expected_repair])
+    parent = by_id[repairs[0].parent_id]
+    assert isinstance(parent.message, AssistantMessage)
+    assert parent.message.tool_calls
+
+    _ = await _collect_session_events(session.prompt("continue"))
+
+    _model, _system, sent, _tools = provider.calls[-1]
+    call_index = next(
+        index
+        for index, message in enumerate(sent)
+        if isinstance(message, AssistantMessage) and message.tool_calls
+    )
+    _assert_messages([sent[call_index + 1]], [expected_repair])
+    assert sum(isinstance(message, ToolResultMessage) for message in sent) == 1
+
+
+@pytest.mark.anyio
+async def test_completed_prompt_dispatches_and_yields_same_agent_settled_event(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done.")),
+            ]
+        ]
+    )
+    session = await CodingSession.load(
+        _config(tmp_path, provider, JsonlSessionStorage(tmp_path / "session.jsonl"))
+    )
+    extension_events = _record_extension_events(session, monkeypatch)
+
+    stream_events = await _collect_session_events(session.prompt("go"))
+
+    extension_settled = [
+        event for event in extension_events if isinstance(event, AgentSettledEvent)
+    ]
+    stream_settled = [event for event in stream_events if isinstance(event, AgentSettledEvent)]
+    assert len(extension_settled) == 1
+    assert len(stream_settled) == 1
+    assert extension_settled[0] is stream_settled[0]
+    assert isinstance(extension_events[-1], AgentSettledEvent)
+    assert isinstance(stream_events[-1], AgentSettledEvent)
+
+
+@pytest.mark.anyio
+async def test_cancellation_during_settled_dispatch_does_not_redispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done.")),
+            ]
+        ]
+    )
+    session = await CodingSession.load(
+        _config(tmp_path, provider, JsonlSessionStorage(tmp_path / "session.jsonl"))
+    )
+    extension_events: list[object] = []
+    emit_event = session.extension_runtime.emit_event
+
+    async def cancel_during_settled(event: object) -> None:
+        extension_events.append(event)
+        if isinstance(event, AgentSettledEvent):
+            raise asyncio.CancelledError
+        await emit_event(event)
+
+    monkeypatch.setattr(session.extension_runtime, "emit_event", cancel_during_settled)
+
+    with pytest.raises(asyncio.CancelledError):
+        await _collect_session_events(session.prompt("go"))
+
+    assert sum(isinstance(event, AgentSettledEvent) for event in extension_events) == 1
+    assert session.is_running is False
+
+
+@pytest.mark.anyio
+async def test_cancelled_continue_dispatches_agent_settled_after_teardown(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    provider = CancellableWaitingProvider()
+    session = await CodingSession.load(
+        _config(tmp_path, provider, JsonlSessionStorage(tmp_path / "session.jsonl"))
+    )
+    extension_events: list[object] = []
+    running_when_settled: list[bool] = []
+    emit_event = session.extension_runtime.emit_event
+
+    async def record_extension_event(event: object) -> None:
+        extension_events.append(event)
+        if isinstance(event, AgentSettledEvent):
+            running_when_settled.append(session.is_running)
+        await emit_event(event)
+
+    monkeypatch.setattr(session.extension_runtime, "emit_event", record_extension_event)
+
+    async def consume() -> None:
+        async for _event in session.continue_():
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(provider.started.wait(), timeout=5)
+    session.cancel()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert sum(isinstance(event, AgentSettledEvent) for event in extension_events) == 1
+    assert isinstance(extension_events[-1], AgentSettledEvent)
+    assert running_when_settled == [False]
+
+
+@pytest.mark.anyio
+async def test_handled_input_does_not_dispatch_agent_settled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    session = await CodingSession.load(
+        _config(tmp_path, FakeProvider([]), JsonlSessionStorage(tmp_path / "session.jsonl"))
+    )
+    extension_events = _record_extension_events(session, monkeypatch)
+
+    async def handle_input(*args: object, **kwargs: object) -> InputHookOutcome:
+        del args, kwargs
+        return InputHookOutcome(handled=True, text="handled")
+
+    monkeypatch.setattr(session.extension_runtime, "run_input_hooks", handle_input)
+
+    stream_events = await _collect_session_events(session.prompt("do not run"))
+
+    assert stream_events == []
+    assert not any(isinstance(event, AgentSettledEvent) for event in extension_events)
+    assert session.is_running is False
+
+
 @pytest.mark.anyio
 async def test_load_persists_repair_for_session_with_interrupted_tail_tool_call(
     tmp_path: Path,
@@ -447,6 +959,90 @@ async def test_load_persists_repair_for_session_with_interrupted_tail_tool_call(
             expected_repair,
         ],
     )
+
+
+@pytest.mark.anyio
+async def test_load_persists_branch_without_orphaned_tool_result(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    user_entry = MessageEntry(message=UserMessage(content="what remains?"))
+    await storage.append(user_entry)
+    orphan_entry = MessageEntry(
+        parent_id=user_entry.id,
+        message=ToolResultMessage(
+            tool_call_id="call-missing",
+            tool_name="bash",
+            content="Tool call interrupted by user",
+            is_error=True,
+        ),
+    )
+    await storage.append(orphan_entry)
+    custom_entry = CustomEntry(
+        parent_id=orphan_entry.id,
+        namespace="example.state",
+        data={"kept": True},
+    )
+    await storage.append(custom_entry)
+    model_entry = ModelChangeEntry(
+        parent_id=custom_entry.id,
+        model="recovered-model",
+    )
+    await storage.append(model_entry)
+    continued_entry = MessageEntry(
+        parent_id=model_entry.id,
+        message=UserMessage(content="continue"),
+    )
+    await storage.append(continued_entry)
+    await storage.append(LeafEntry(parent_id=continued_entry.id, entry_id=continued_entry.id))
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    _assert_messages(
+        session.messages,
+        [UserMessage(content="what remains?"), UserMessage(content="continue")],
+    )
+    assert session.state.model == "recovered-model"
+    assert any(
+        entry.namespace == "example.state" and entry.data == {"kept": True}
+        for entry in session.state.custom_entries
+    )
+    diagnostics = [
+        entry
+        for entry in (await storage.read_all())
+        if isinstance(entry, CustomEntry) and entry.namespace == "tau.session-history-repair"
+    ]
+    assert len(diagnostics) == 1
+    assert diagnostics[0].data == {
+        "version": 1,
+        "synthesizedResults": 0,
+        "droppedOrphanResults": 1,
+        "droppedDuplicateResults": 0,
+        "reorderedResults": 0,
+    }
+
+    restored = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+    _assert_messages(restored.messages, session.messages)
+    diagnostics = [
+        entry
+        for entry in (await storage.read_all())
+        if isinstance(entry, CustomEntry) and entry.namespace == "tau.session-history-repair"
+    ]
+    assert len(diagnostics) == 1
 
 
 @pytest.mark.anyio
@@ -539,7 +1135,11 @@ async def test_prompt_persists_user_assistant_and_leaf_entries(tmp_path: Path) -
     assert isinstance(entries[0], SessionInfoEntry)
     assert entries[0].cwd == str(tmp_path)
     assert entries[1] == ModelChangeEntry(
-        id=entries[1].id, parent_id=entries[0].id, model="fake", timestamp=entries[1].timestamp
+        id=entries[1].id,
+        parent_id=entries[0].id,
+        model="fake",
+        provider="openai",
+        timestamp=entries[1].timestamp,
     )
     assert entries[2] == ThinkingLevelChangeEntry(
         id=entries[2].id,
@@ -835,6 +1435,47 @@ def test_ordered_tree_entries_terminates_on_parent_cycle() -> None:
 
 
 @pytest.mark.anyio
+async def test_branch_to_entry_repairs_orphaned_tool_result(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    root = MessageEntry(id="root", message=UserMessage(content="start"))
+    orphan = MessageEntry(
+        id="orphan",
+        parent_id=root.id,
+        message=ToolResultMessage(tool_call_id="call-missing", tool_name="bash", content="orphan"),
+    )
+    answer = MessageEntry(
+        id="answer",
+        parent_id=orphan.id,
+        message=AssistantMessage(content="answer"),
+    )
+    for entry in (root, orphan, answer, LeafEntry(parent_id=root.id, entry_id=root.id)):
+        await storage.append(entry)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    result = await session.branch_to_entry(answer.id)
+
+    assert result.message.endswith("and repaired malformed tool history.")
+    _assert_messages(
+        session.messages,
+        [UserMessage(content="start"), AssistantMessage(content="answer")],
+    )
+    diagnostics = [
+        entry
+        for entry in (await storage.read_all())
+        if isinstance(entry, CustomEntry) and entry.namespace == "tau.session-history-repair"
+    ]
+    assert len(diagnostics) == 1
+
+
+@pytest.mark.anyio
 async def test_tree_branching_preserves_active_model(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     await storage.append(MessageEntry(id="first", message=UserMessage(content="Earlier")))
@@ -1048,6 +1689,53 @@ async def test_session_uses_active_model_thinking_capabilities(
     assert session.available_thinking_levels == ("off", "low", "high")
     assert session.thinking_level == "high"
     assert session.thinking_unavailable_reason is None
+
+
+@pytest.mark.anyio
+async def test_session_reports_dynamic_model_thinking_controls_separately_from_output(
+    tmp_path: Path,
+) -> None:
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="reasoner",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "dynamic-session.jsonl"),
+            cwd=tmp_path,
+            provider_name="local",
+            provider_settings=ProviderSettings(),
+        )
+    )
+    runtime = session.extension_runtime
+    runtime.provider_registry.register(
+        "test",
+        DynamicProvider(
+            id="local",
+            display_name="Local",
+            models=(ProviderModel("reasoner", reasoning=True),),
+            default_model="reasoner",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+        ),
+    )
+
+    assert session.available_thinking_levels == ()
+    assert session.thinking_unavailable_reason == (
+        "local:reasoner does not declare configurable thinking levels"
+    )
+
+    runtime.provider_registry.register(
+        "test",
+        DynamicProvider(
+            id="local",
+            display_name="Local",
+            models=(ProviderModel("reasoner", reasoning=True, thinking_levels=("off", "high")),),
+            default_model="reasoner",
+            transport=OpenAICompatibleTransport("http://localhost:8080/v1"),
+        ),
+    )
+    assert session.available_thinking_levels == ("off", "high")
+    assert session.thinking_unavailable_reason is None
+    await session.aclose()
 
 
 @pytest.mark.anyio
@@ -1855,6 +2543,7 @@ async def test_session_builds_system_prompt_when_system_is_omitted(tmp_path: Pat
         model="fake",
         storage=storage,
         cwd=tmp_path,
+        trust_default="always",
         resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
     )
     session = await CodingSession.load(config)
@@ -2111,6 +2800,49 @@ async def test_session_auto_name_does_not_overwrite_manual_name(tmp_path: Path) 
 
 
 @pytest.mark.anyio
+async def test_manual_name_wins_while_auto_name_is_in_flight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(cwd=tmp_path, model="fake")
+    provider = WaitingProvider()
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+        )
+    )
+    metadata_names: list[str | None] = []
+    original_emit = session.extension_runtime.emit_event
+
+    async def record_metadata_event(event: object) -> None:
+        if getattr(event, "type", None) == "session_info_changed":
+            metadata_names.append(getattr(event, "name", None))
+        await original_emit(event)
+
+    monkeypatch.setattr(session.extension_runtime, "emit_event", record_metadata_event)
+    prompt_task = asyncio.create_task(
+        _collect_session_events(session.prompt("Generate a session name"))
+    )
+    await provider.started.wait()
+
+    assert await session.set_session_name("Manual name") == "Manual name"
+    provider.release.set()
+    await prompt_task
+
+    updated = manager.get_session(record.id)
+    assert updated is not None
+    assert updated.title == "Manual name"
+    assert metadata_names == ["Manual name"]
+
+
+@pytest.mark.anyio
 async def test_session_auto_name_does_not_index_new_session_before_first_persist(
     tmp_path: Path,
 ) -> None:
@@ -2208,6 +2940,7 @@ async def test_session_skills_disabled_suppresses_skill_index(tmp_path: Path) ->
         model="fake",
         storage=storage,
         cwd=tmp_path,
+        trust_default="always",
         skills_enabled=False,
         resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
     )
@@ -2463,6 +3196,200 @@ async def test_session_loads_with_resource_diagnostics_instead_of_failing(
 
 
 @pytest.mark.anyio
+async def test_session_loads_tau_native_system_prompt_files(tmp_path: Path) -> None:
+    tau_home = tmp_path / "tau-home"
+    project_tau = tmp_path / ".tau"
+    tau_home.mkdir()
+    project_tau.mkdir()
+    (tau_home / "SYSTEM.md").write_text("User base", encoding="utf-8")
+    (project_tau / "SYSTEM.md").write_text("Project base", encoding="utf-8")
+    (tau_home / "APPEND_SYSTEM.md").write_text("User append", encoding="utf-8")
+    (project_tau / "APPEND_SYSTEM.md").write_text("Project append", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("Project instructions", encoding="utf-8")
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            trust_default="always",
+            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+        )
+    )
+
+    assert session.system_prompt.startswith("Project base\n\nUser append\n\nProject append")
+    assert "User base" not in session.system_prompt
+    assert "Project instructions" in session.system_prompt
+    assert "Current date:" in session.system_prompt
+    assert f"Current working directory: {tmp_path}" in session.system_prompt
+    assert session.system_prompt_files == (
+        project_tau / "SYSTEM.md",
+        tau_home / "APPEND_SYSTEM.md",
+        project_tau / "APPEND_SYSTEM.md",
+    )
+    prompt_diagnostics = [
+        item for item in session.resource_diagnostics if item.kind == "system-prompt"
+    ]
+    assert [item.severity for item in prompt_diagnostics] == [
+        "info",
+        "warning",
+        "info",
+        "info",
+    ]
+
+
+@pytest.mark.anyio
+async def test_explicit_base_overrides_file_while_explicit_append_composes(
+    tmp_path: Path,
+) -> None:
+    tau_home = tmp_path / "tau-home"
+    project_tau = tmp_path / ".tau"
+    tau_home.mkdir()
+    project_tau.mkdir()
+    (tau_home / "SYSTEM.md").write_bytes(b"\xff")
+    (tau_home / "APPEND_SYSTEM.md").write_text("User append", encoding="utf-8")
+    (project_tau / "APPEND_SYSTEM.md").write_text("Project append", encoding="utf-8")
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+            trust_default="always",
+            custom_system_prompt="Explicit base",
+            append_system_prompt="Explicit append",
+        )
+    )
+
+    assert session.system_prompt.startswith(
+        "Explicit base\n\nUser append\n\nProject append\n\nExplicit append"
+    )
+    assert session.system_prompt_files == (
+        tau_home / "APPEND_SYSTEM.md",
+        project_tau / "APPEND_SYSTEM.md",
+    )
+    prompt_diagnostics = [
+        item for item in session.resource_diagnostics if item.kind == "system-prompt"
+    ]
+    assert "explicit startup value" in prompt_diagnostics[0].message
+    assert "selected user" in prompt_diagnostics[1].message
+
+
+@pytest.mark.anyio
+async def test_session_reload_tracks_system_prompt_file_precedence(tmp_path: Path) -> None:
+    tau_home = tmp_path / "tau-home"
+    project_tau = tmp_path / ".tau"
+    tau_home.mkdir()
+    project_tau.mkdir()
+    user_prompt = tau_home / "SYSTEM.md"
+    project_prompt = project_tau / "SYSTEM.md"
+    append_prompt = tau_home / "APPEND_SYSTEM.md"
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            trust_default="always",
+            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+        )
+    )
+    assert "You are an expert coding assistant operating inside Tau" in session.system_prompt
+
+    user_prompt.write_text("User base", encoding="utf-8")
+    summary = await session.reload()
+    assert summary.system_prompt_rebuilt is True
+    assert session.system_prompt.startswith("User base")
+
+    append_prompt.write_text("Reloaded append", encoding="utf-8")
+    summary = await session.reload()
+    assert summary.system_prompt_rebuilt is True
+    assert session.system_prompt.startswith("User base\n\nReloaded append")
+
+    project_prompt.write_text("Project base", encoding="utf-8")
+    summary = await session.reload()
+    assert summary.system_prompt_rebuilt is True
+    assert session.system_prompt.startswith("Project base")
+
+    project_prompt.write_text("Changed project base", encoding="utf-8")
+    await session.reload()
+    assert session.system_prompt.startswith("Changed project base")
+
+    project_prompt.unlink()
+    await session.reload()
+    assert session.system_prompt.startswith("User base\n\nReloaded append")
+
+    user_prompt.unlink()
+    await session.reload()
+    assert session.system_prompt.startswith(
+        "You are an expert coding assistant operating inside Tau"
+    )
+    assert "Reloaded append" in session.system_prompt
+
+    append_prompt.unlink()
+    await session.reload()
+    assert "Reloaded append" not in session.system_prompt
+
+
+@pytest.mark.anyio
+async def test_failed_system_prompt_file_reload_keeps_previous_prompt(tmp_path: Path) -> None:
+    tau_home = tmp_path / "tau-home"
+    tau_home.mkdir()
+    prompt_path = tau_home / "SYSTEM.md"
+    prompt_path.write_text("Valid base", encoding="utf-8")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+        )
+    )
+    previous = session.system_prompt
+
+    prompt_path.write_bytes(b"\xff")
+    with pytest.raises(ResourceError, match="Could not read replacement system prompt file"):
+        await session.reload()
+
+    assert session.system_prompt == previous
+
+
+@pytest.mark.anyio
+async def test_new_session_adopts_system_prompt_resource_tracking(tmp_path: Path) -> None:
+    tau_home = tmp_path / "tau-home"
+    tau_home.mkdir()
+    prompt_path = tau_home / "SYSTEM.md"
+    prompt_path.write_text("Base A", encoding="utf-8")
+    manager = SessionManager(TauPaths(home=tau_home, agents_home=tmp_path / "agents-home"))
+    record = manager.create_session(cwd=tmp_path, model="fake")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=JsonlSessionStorage(record.path),
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+            resource_paths=TauResourcePaths(root=tau_home, agents_root=None),
+        )
+    )
+
+    prompt_path.write_text("Base B", encoding="utf-8")
+    await session.new_session()
+    assert session.system_prompt.startswith("Base B")
+
+    prompt_path.write_text("Base A", encoding="utf-8")
+    summary = await session.reload()
+
+    assert summary.system_prompt_rebuilt is True
+    assert session.system_prompt.startswith("Base A")
+
+
+@pytest.mark.anyio
 async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Path) -> None:
     resource_root = tmp_path / "resources"
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
@@ -2480,6 +3407,7 @@ async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Pa
             model="fake",
             storage=storage,
             cwd=tmp_path,
+            trust_default="always",
             resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
         )
     )
@@ -2509,6 +3437,41 @@ async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Pa
     assert [Path(context_file.path).name for context_file in session.context_files] == ["AGENTS.md"]
     assert "Reloaded project rules." in provider.calls[0][1]
     assert "<name>testing</name>" in provider.calls[0][1]
+
+
+@pytest.mark.anyio
+async def test_session_reload_detects_disable_model_invocation_change(tmp_path: Path) -> None:
+    resource_root = tmp_path / "resources"
+    skills_dir = resource_root / "skills" / "testing"
+    skills_dir.mkdir(parents=True)
+    skill_path = skills_dir / "SKILL.md"
+    skill_path.write_text(
+        "---\ndescription: Test code\n---\n# Testing\nRun pytest.",
+        encoding="utf-8",
+    )
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            storage=storage,
+            cwd=tmp_path,
+            trust_default="always",
+            resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        )
+    )
+    assert "<name>testing</name>" in session.system_prompt
+
+    skill_path.write_text(
+        "---\ndescription: Test code\ndisable-model-invocation: true\n---\n# Testing\nRun pytest.",
+        encoding="utf-8",
+    )
+    summary = await session.reload()
+
+    assert summary.system_prompt_rebuilt is True
+    assert "<name>testing</name>" not in session.system_prompt
+    # The skill stays loaded for explicit /skill:testing invocation.
+    assert {skill.name for skill in session.skills} == {"testing"}
 
 
 @pytest.mark.anyio
@@ -2716,6 +3679,62 @@ async def test_session_auto_compacts_after_response_when_threshold_is_exceeded(
 
 
 @pytest.mark.anyio
+async def test_session_auto_compacts_from_provider_reported_usage(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(
+                    message=AssistantMessage(
+                        content="First answer",
+                        usage=Usage(total_tokens=1_000),
+                        timestamp=2_000_000_000_000,
+                    )
+                ),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(
+                    message=AssistantMessage(
+                        content="Second answer",
+                        usage=Usage(total_tokens=60_000),
+                        timestamp=2_000_000_000_001,
+                    )
+                ),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Provider-usage summary")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            auto_compact_token_threshold=50_000,
+        )
+    )
+
+    # The first turn is large enough to provide a compaction cut point, while its
+    # character estimate remains below the configured 50k threshold.
+    await _collect_session_events(session.prompt("First prompt.\n" + ("old " * 25_000)))
+    assert session.context_usage.provider_tokens == 1_000
+    assert session.has_provider_context_usage is True
+    await _collect_session_events(session.prompt("Second short prompt."))
+
+    compactions = [entry for entry in await storage.read_all() if entry.type == "compaction"]
+    assert len(compactions) == 1
+    assert compactions[0].summary == "Provider-usage summary"
+
+
+@pytest.mark.anyio
 async def test_session_auto_compacts_with_pi_style_default_threshold(
     tmp_path: Path,
 ) -> None:
@@ -2850,6 +3869,7 @@ async def test_session_falls_back_when_live_model_limit_discovery_fails(
 
 @pytest.mark.anyio
 async def test_session_compacts_and_retries_once_after_context_overflow(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
@@ -2876,8 +3896,10 @@ async def test_session_compacts_and_retries_once_after_context_overflow(
         ]
     )
     session = await CodingSession.load(_config(tmp_path, provider, storage))
+    extension_events = _record_extension_events(session, monkeypatch)
     _first_events = await _collect_session_events(session.prompt(large_prompt))
     _second_events = await _collect_session_events(session.prompt("Keep this recent turn."))
+    extension_events.clear()
 
     retry_events = await _collect_session_events(session.prompt("Trigger overflow."))
     entries = await storage.read_all()
@@ -2905,6 +3927,564 @@ async def test_session_compacts_and_retries_once_after_context_overflow(
         and entry.message.stop_reason == "error"
     ]
     assert len(overflow_errors) == 1
+    extension_event_types = [getattr(event, "type", None) for event in extension_events]
+    assert extension_event_types[-2:] == ["auto_retry_end", "agent_settled"]
+    assert extension_event_types.count("agent_settled") == 1
+    assert sum(isinstance(event, AgentSettledEvent) for event in retry_events) == 1
+
+
+@pytest.mark.anyio
+async def test_huggingface_session_pins_successful_automatic_route(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    created: list[tuple[str | None, object | None]] = []
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+        inference_provider: str | None = None,
+        response_headers_observer: object | None = None,
+    ) -> SwitchableFakeProvider:
+        del credential_store, thinking_level
+        created.append((inference_provider, response_headers_observer))
+        return SwitchableFakeProvider(provider_config)
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    provider_config = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=("zai-org/GLM-5.2",),
+        default_model="zai-org/GLM-5.2",
+    )
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(
+        cwd=tmp_path,
+        model="zai-org/GLM-5.2",
+        provider_name="huggingface",
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="zai-org/GLM-5.2",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(record.path),
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+            provider_name="huggingface",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            runtime_provider_config=provider_config,
+        )
+    )
+
+    observer = created[0][1]
+    assert callable(observer)
+    original_touch_session = manager.touch_session
+    active_provider = session._harness.config.provider
+
+    def fail_touch_session(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise PermissionError("session index is read-only")
+
+    monkeypatch.setattr(manager, "touch_session", fail_touch_session)
+    with pytest.raises(PermissionError, match="session index is read-only"):
+        observer({"X-Inference-Provider": "deepinfra"})
+
+    assert session.inference_provider is None
+    assert session._harness.config.provider is active_provider
+
+    monkeypatch.setattr(manager, "touch_session", original_touch_session)
+    observer({"X-Inference-Provider": "deepinfra"})
+
+    assert session.inference_provider == "deepinfra"
+    assert session.inference_provider_mode == "automatic"
+    assert created[-1][0] == "deepinfra"
+    assert manager.get_session(record.id).inference_provider == "deepinfra"  # type: ignore[union-attr]
+
+    assert session.set_inference_provider("fireworks-ai") == "fireworks-ai"
+    assert session.inference_provider_mode == "fixed"
+    assert manager.get_session(record.id).inference_provider_mode == "fixed"  # type: ignore[union-attr]
+    assert session.set_inference_provider(None) == (
+        "automatic (will pin after the next successful response)"
+    )
+    assert session.inference_provider_mode == "automatic"
+    assert manager.get_session(record.id).inference_provider_mode == "automatic"  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize(
+    ("status_code", "content", "expected"),
+    [
+        (429, [], True),
+        (503, [], True),
+        (400, [], False),
+        (429, [TextContent(text="partial")], False),
+    ],
+)
+def test_huggingface_route_failover_requires_retryable_pre_output_error(
+    status_code: int,
+    content: list[TextContent],
+    expected: bool,
+) -> None:
+    message = AssistantMessage(
+        content=content,
+        stop_reason="error",
+        diagnostics=[
+            AssistantMessageDiagnostic(
+                type="provider_error",
+                details={"status_code": status_code},
+            )
+        ],
+    )
+
+    assert is_retryable_huggingface_route_error(message) is expected
+
+
+@pytest.mark.anyio
+async def test_huggingface_automatic_pin_fails_over_and_repins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model = "moonshotai/Kimi-K3"
+    created: list[tuple[str | None, FakeProvider]] = []
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+        inference_provider: str | None = None,
+        response_headers_observer: object | None = None,
+    ) -> FakeProvider:
+        del provider_config, credential_store, model, thinking_level
+        if inference_provider == "deepinfra":
+            provider: FakeProvider = FakeProvider([[_provider_http_error(429)]])
+        elif inference_provider is None:
+            provider = HeaderObservingFakeProvider(
+                [
+                    [
+                        assistant_start(model="moonshotai/Kimi-K3"),
+                        assistant_done(message=AssistantMessage(content="Recovered")),
+                    ]
+                ],
+                response_headers_observer,
+                "baseten",
+            )
+        else:
+            provider = FakeProvider([])
+        created.append((inference_provider, provider))
+        return provider
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    provider_config = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=(model,),
+        default_model=model,
+    )
+    tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    manager = SessionManager(tau_paths)
+    record = manager.create_session(
+        cwd=tmp_path,
+        model=model,
+        provider_name="huggingface",
+        inference_provider="deepinfra",
+        inference_provider_mode="automatic",
+        title="Failover test",
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model=model,
+            system="You are Tau.",
+            storage=JsonlSessionStorage(record.path),
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+            provider_name="huggingface",
+            inference_provider="deepinfra",
+            inference_provider_mode="automatic",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            runtime_provider_config=provider_config,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    events = await _collect_session_events(session.prompt("Continue the task"))
+
+    assert [route for route, _provider in created] == ["deepinfra", None, "baseten"]
+    assert session.inference_provider == "baseten"
+    assert session.inference_provider_mode == "automatic"
+    persisted = manager.get_session(record.id)
+    assert persisted is not None
+    assert persisted.inference_provider == "baseten"
+    assert persisted.inference_provider_mode == "automatic"
+    agent_ends = [event for event in events if getattr(event, "type", None) == "agent_end"]
+    assert [event.will_retry for event in agent_ends] == [True, False]
+    assert any(
+        getattr(event, "type", None) == "auto_retry_start"
+        and "deepinfra failed; rerouting automatically" in event.error_message
+        for event in events
+    )
+    retry_end = next(event for event in events if getattr(event, "type", None) == "auto_retry_end")
+    assert retry_end.success is True
+    assert any(
+        isinstance(event, MessageEndEvent)
+        and isinstance(event.message, AssistantMessage)
+        and event.message.text == "Recovered"
+        for event in events
+    )
+    automatic_provider = created[1][1]
+    assert [message.text for message in automatic_provider.calls[0][2]] == ["Continue the task"]
+    diagnostic = json.loads(tau_paths.agent_calls_log_path.read_text().splitlines()[-1])
+    assert diagnostic["kind"] == "route_failover"
+    assert diagnostic["route_failover"] == {
+        "from": "deepinfra",
+        "to": "baseten",
+        "success": True,
+    }
+
+
+@pytest.mark.anyio
+async def test_huggingface_automatic_failover_stops_after_one_failed_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model = "moonshotai/Kimi-K3"
+    created: list[str | None] = []
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+        inference_provider: str | None = None,
+        response_headers_observer: object | None = None,
+    ) -> FakeProvider:
+        del provider_config, credential_store, model, thinking_level, response_headers_observer
+        created.append(inference_provider)
+        return FakeProvider(
+            [
+                [
+                    AssistantErrorEvent(
+                        reason="error",
+                        error=AssistantMessage(
+                            stop_reason="error",
+                            error_message="Rate limit exceeded",
+                            diagnostics=[
+                                AssistantMessageDiagnostic(
+                                    type="provider_error",
+                                    details={"status_code": 429},
+                                )
+                            ],
+                        ),
+                    )
+                ]
+            ]
+        )
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    provider_config = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=(model,),
+        default_model=model,
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model=model,
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="huggingface",
+            inference_provider="deepinfra",
+            inference_provider_mode="automatic",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            runtime_provider_config=provider_config,
+            resource_paths=TauResourcePaths(
+                root=tmp_path / ".tau",
+                paths=TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"),
+            ),
+        )
+    )
+
+    events = await _collect_session_events(session.prompt("Continue the task"))
+
+    assert created == ["deepinfra", None]
+    assert session.inference_provider is None
+    assert session.inference_provider_mode == "automatic"
+    [retry_end] = [event for event in events if getattr(event, "type", None) == "auto_retry_end"]
+    assert retry_end.success is False
+    assert retry_end.final_error == "Rate limit exceeded"
+
+
+@pytest.mark.anyio
+async def test_huggingface_continue_uses_automatic_route_failover(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model = "moonshotai/Kimi-K3"
+    created: list[str | None] = []
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+        inference_provider: str | None = None,
+        response_headers_observer: object | None = None,
+    ) -> FakeProvider:
+        del provider_config, credential_store, model, thinking_level, response_headers_observer
+        created.append(inference_provider)
+        if inference_provider == "deepinfra":
+            return FakeProvider([[_provider_http_error(429)]])
+        return FakeProvider(
+            [
+                [
+                    assistant_start(model="moonshotai/Kimi-K3"),
+                    assistant_done(message=AssistantMessage(content="Recovered continuation")),
+                ]
+            ]
+        )
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    provider_config = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=(model,),
+        default_model=model,
+    )
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    await storage.append(MessageEntry(message=UserMessage(content="Continue the task")))
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model=model,
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            provider_name="huggingface",
+            inference_provider="deepinfra",
+            inference_provider_mode="automatic",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            runtime_provider_config=provider_config,
+            resource_paths=TauResourcePaths(
+                root=tmp_path / ".tau",
+                paths=TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"),
+            ),
+        )
+    )
+
+    events = await _collect_session_events(session.continue_())
+
+    assert created == ["deepinfra", None]
+    assert any(
+        isinstance(event, MessageEndEvent)
+        and isinstance(event.message, AssistantMessage)
+        and event.message.text == "Recovered continuation"
+        for event in events
+    )
+    [retry_end] = [event for event in events if getattr(event, "type", None) == "auto_retry_end"]
+    assert retry_end.success is True
+
+
+@pytest.mark.anyio
+async def test_huggingface_fixed_pin_does_not_fail_over(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model = "moonshotai/Kimi-K3"
+    created: list[str | None] = []
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+        inference_provider: str | None = None,
+        response_headers_observer: object | None = None,
+    ) -> FakeProvider:
+        del provider_config, credential_store, model, thinking_level, response_headers_observer
+        created.append(inference_provider)
+        return FakeProvider(
+            [
+                [
+                    AssistantErrorEvent(
+                        reason="error",
+                        error=AssistantMessage(
+                            stop_reason="error",
+                            error_message="Rate limit exceeded",
+                            diagnostics=[
+                                AssistantMessageDiagnostic(
+                                    type="provider_error",
+                                    details={"status_code": 429},
+                                )
+                            ],
+                        ),
+                    )
+                ]
+            ]
+        )
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    provider_config = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=(model,),
+        default_model=model,
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model=model,
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="huggingface",
+            inference_provider="deepinfra",
+            inference_provider_mode="fixed",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            runtime_provider_config=provider_config,
+            resource_paths=TauResourcePaths(
+                root=tmp_path / ".tau",
+                paths=TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"),
+            ),
+        )
+    )
+
+    events = await _collect_session_events(session.prompt("Continue the task"))
+
+    assert created == ["deepinfra"]
+    assert session.inference_provider == "deepinfra"
+    assert session.inference_provider_mode == "fixed"
+    assert not any(getattr(event, "type", None) == "auto_retry_start" for event in events)
+    [agent_end] = [event for event in events if getattr(event, "type", None) == "agent_end"]
+    assert agent_end.will_retry is False
+
+
+@pytest.mark.anyio
+async def test_huggingface_session_re_resolves_pin_on_model_switch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    created: list[tuple[str | None, str | None]] = []
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+        inference_provider: str | None = None,
+        response_headers_observer: object | None = None,
+    ) -> SwitchableFakeProvider:
+        del credential_store, thinking_level, response_headers_observer
+        created.append((model, inference_provider))
+        return SwitchableFakeProvider(provider_config)
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    provider_config = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=("zai-org/GLM-5.2", "deepseek-ai/DeepSeek-V4-Flash"),
+        default_model="zai-org/GLM-5.2",
+        inference_providers={
+            "zai-org/GLM-5.2": "deepinfra",
+            "deepseek-ai/DeepSeek-V4-Flash": "fireworks-ai",
+        },
+    )
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(
+        cwd=tmp_path,
+        model="zai-org/GLM-5.2",
+        provider_name="huggingface",
+        inference_provider="deepinfra",
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="zai-org/GLM-5.2",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(record.path),
+            cwd=tmp_path,
+            session_id=record.id,
+            session_manager=manager,
+            provider_name="huggingface",
+            inference_provider="deepinfra",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            runtime_provider_config=provider_config,
+            resource_paths=TauResourcePaths(
+                root=tmp_path / ".tau",
+                paths=TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"),
+            ),
+        )
+    )
+
+    session.set_model("deepseek-ai/DeepSeek-V4-Flash")
+
+    assert created == [
+        ("zai-org/GLM-5.2", "deepinfra"),
+        ("deepseek-ai/DeepSeek-V4-Flash", "fireworks-ai"),
+    ]
+    assert session.model == "deepseek-ai/DeepSeek-V4-Flash"
+    assert session.inference_provider == "fireworks-ai"
+    assert session.inference_provider_mode == "fixed"
+    assert manager.get_session(record.id).inference_provider == "fireworks-ai"  # type: ignore[union-attr]
+
+
+@pytest.mark.anyio
+async def test_startup_model_override_rebuilds_model_dependent_runtime_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    created: list[tuple[str | None, str | None]] = []
+
+    def create_provider(
+        provider_config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+        inference_provider: str | None = None,
+        response_headers_observer: object | None = None,
+    ) -> SwitchableFakeProvider:
+        del credential_store, thinking_level, response_headers_observer
+        created.append((model, inference_provider))
+        return SwitchableFakeProvider(provider_config)
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    old_model = "zai-org/GLM-5.2"
+    override_model = "deepseek-ai/DeepSeek-V4-Flash"
+    provider_config = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        models=(old_model, override_model),
+        default_model=old_model,
+        inference_providers={old_model: "deepinfra", override_model: "fireworks-ai"},
+    )
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    await storage.append(ModelChangeEntry(model=old_model))
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model=override_model,
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+            provider_name="huggingface",
+            inference_provider="fireworks-ai",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            runtime_provider_config=provider_config,
+            resource_paths=TauResourcePaths(
+                root=tmp_path / ".tau",
+                paths=TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"),
+            ),
+        )
+    )
+
+    await session.apply_startup_model_override(override_model)
+
+    assert session.model == override_model
+    assert session.inference_provider == "fireworks-ai"
+    assert created == [
+        (old_model, "fireworks-ai"),
+        (override_model, "fireworks-ai"),
+    ]
+    assert session._harness.config.provider is session._owned_providers[-1]
 
 
 @pytest.mark.anyio
@@ -2970,8 +4550,300 @@ async def test_session_switches_configured_provider(
     assert len(created_providers) == 2
 
     await session.aclose()
+    await session.aclose()
 
     assert [provider.closed for provider in created_providers] == [True, True]
+    assert [provider.close_calls for provider in created_providers] == [1, 1]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("operation", ["new", "resume", "replacement"])
+async def test_session_adoption_transfers_all_runtime_provider_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    monkeypatch.setenv("LOCAL_API_KEY", "test-key")
+    tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    manager = SessionManager(tau_paths)
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    record = manager.create_session(cwd=cwd, model="qwen", provider_name="local")
+    resume_record = manager.create_session(cwd=cwd, model="qwen", provider_name="local")
+    provider_config = OpenAICompatibleProviderConfig(
+        name="local",
+        base_url="http://localhost:11434/v1",
+        api_key_env="LOCAL_API_KEY",
+        models=("qwen",),
+        default_model="qwen",
+    )
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(provider_config,),
+    )
+    created: list[SwitchableFakeProvider] = []
+
+    def create_provider(
+        config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+    ) -> SwitchableFakeProvider:
+        del credential_store, model, thinking_level
+        provider = SwitchableFakeProvider(config)
+        created.append(provider)
+        return provider
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="qwen",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(record.path),
+            cwd=cwd,
+            session_id=record.id,
+            session_manager=manager,
+            provider_name="local",
+            provider_settings=settings,
+            runtime_provider_config=provider_config,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    if operation == "new":
+        await session.new_session()
+    elif operation == "resume":
+        await session.resume(resume_record.id)
+    else:
+        replacement = await CodingSession.load(
+            dataclass_replace(
+                session._config,  # noqa: SLF001 - direct adoption ownership seam
+                provider=session._harness.config.provider,  # noqa: SLF001
+                storage=JsonlSessionStorage(resume_record.path),
+                session_id=resume_record.id,
+                extension_runtime=session.extension_runtime,
+            )
+        )
+        await session._adopt_replacement(replacement, reason="branch")
+
+    assert len(created) == 2
+    assert tuple(session._owned_providers) == tuple(created)
+
+    await session.aclose()
+    await session.aclose()
+
+    assert [provider.close_calls for provider in created] == [1, 1]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("operation", ["new", "resume", "replacement"])
+@pytest.mark.parametrize("seam", ["outgoing_shutdown", "incoming_start"])
+@pytest.mark.parametrize("failure", ["cancel", "error"])
+async def test_aborted_replacement_closes_only_candidate_provider_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    operation: str,
+    seam: str,
+    failure: str,
+) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    from tau_coding.extensions.runtime import ExtensionRuntime
+
+    monkeypatch.setenv("LOCAL_API_KEY", "test-key")
+    tau_paths = TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents")
+    manager = SessionManager(tau_paths)
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    record = manager.create_session(cwd=cwd, model="qwen", provider_name="local")
+    resume_record = manager.create_session(cwd=cwd, model="qwen", provider_name="local")
+    provider_config = OpenAICompatibleProviderConfig(
+        name="local",
+        base_url="http://localhost:11434/v1",
+        api_key_env="LOCAL_API_KEY",
+        models=("qwen",),
+        default_model="qwen",
+    )
+    settings = ProviderSettings(default_provider="local", providers=(provider_config,))
+    candidate_close_started = asyncio.Event()
+    release_candidate_close = asyncio.Event()
+    created: list[SwitchableFakeProvider] = []
+
+    class ControlledProvider(SwitchableFakeProvider):
+        def __init__(self, config: object, *, block_on_close: bool) -> None:
+            super().__init__(config)
+            self.block_on_close = block_on_close
+
+        async def aclose(self) -> None:
+            self.closed = True
+            self.close_calls += 1
+            if self.block_on_close:
+                candidate_close_started.set()
+                await release_candidate_close.wait()
+
+    def create_provider(
+        config: object,
+        *,
+        credential_store: FileCredentialStore | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+    ) -> ControlledProvider:
+        del credential_store, model, thinking_level
+        provider = ControlledProvider(config, block_on_close=bool(created))
+        created.append(provider)
+        return provider
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="qwen",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(record.path),
+            cwd=cwd,
+            session_id=record.id,
+            session_manager=manager,
+            provider_name="local",
+            provider_settings=settings,
+            runtime_provider_config=provider_config,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+    active_provider = created[0]
+    old_runtime = session.extension_runtime
+    replacement = None
+    reason = operation
+    if operation == "replacement":
+        reason = "branch"
+        replacement = await CodingSession.load(
+            dataclass_replace(
+                session._config,  # noqa: SLF001 - direct adoption ownership seam
+                provider=session._harness.config.provider,  # noqa: SLF001
+                storage=JsonlSessionStorage(resume_record.path),
+                session_id=resume_record.id,
+                extension_runtime=old_runtime,
+            )
+        )
+
+    seam_entered = asyncio.Event()
+    real_shutdown = old_runtime.emit_session_shutdown
+    real_start = ExtensionRuntime.emit_session_start
+
+    async def controlled_shutdown(event_reason: str) -> None:
+        if seam == "outgoing_shutdown" and event_reason == reason:
+            seam_entered.set()
+            if failure == "error":
+                raise RuntimeError("outgoing shutdown failed")
+            await asyncio.Future()
+        await real_shutdown(event_reason)  # type: ignore[arg-type]
+
+    async def controlled_start(runtime: ExtensionRuntime, event_reason: str) -> None:
+        if seam == "incoming_start" and runtime is not old_runtime and event_reason == reason:
+            seam_entered.set()
+            if failure == "error":
+                raise RuntimeError("incoming start failed")
+            await asyncio.Future()
+        await real_start(runtime, event_reason)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(old_runtime, "emit_session_shutdown", controlled_shutdown)
+    monkeypatch.setattr(ExtensionRuntime, "emit_session_start", controlled_start)
+
+    if operation == "new":
+        lifecycle = asyncio.create_task(session.new_session())
+    elif operation == "resume":
+        lifecycle = asyncio.create_task(session.resume(resume_record.id))
+    else:
+        assert replacement is not None
+        lifecycle = asyncio.create_task(session._adopt_replacement(replacement, reason="branch"))
+
+    await asyncio.wait_for(seam_entered.wait(), timeout=1.0)
+    assert len(created) == 2
+    candidate_provider = created[1]
+    if failure == "cancel":
+        assert lifecycle.cancel() is True
+    await asyncio.wait_for(candidate_close_started.wait(), timeout=1.0)
+
+    assert lifecycle.done() is False
+    assert active_provider.close_calls == 0
+    assert candidate_provider.close_calls == 1
+    assert session._harness.config.provider is active_provider  # noqa: SLF001
+    assert tuple(session._owned_providers) == (active_provider,)  # noqa: SLF001
+
+    release_candidate_close.set()
+    expected_error = asyncio.CancelledError if failure == "cancel" else RuntimeError
+    with pytest.raises(expected_error):
+        await asyncio.wait_for(lifecycle, timeout=1.0)
+
+    assert active_provider.close_calls == 0
+    assert candidate_provider.close_calls == 1
+    await session.aclose()
+    await session.aclose()
+    assert [provider.close_calls for provider in created] == [1, 1]
+
+
+@pytest.mark.anyio
+async def test_failed_cross_provider_switch_preserves_active_runtime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = ProviderSettings(
+        default_provider="openai",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="openai",
+                models=("gpt-5",),
+                default_model="gpt-5",
+            ),
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                models=("qwen",),
+                default_model="qwen",
+            ),
+        ),
+    )
+    initial_provider = FakeProvider([])
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=initial_provider,
+            model="gpt-5",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "failed-switch.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai",
+            provider_settings=settings,
+        )
+    )
+    before = (
+        session.provider_name,
+        session.model,
+        session.thinking_level,
+        session.inference_provider,
+        session._harness.config.provider,
+        tuple(session._owned_providers),
+    )
+
+    def fail_provider_creation(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise RuntimeError("candidate unavailable")
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", fail_provider_creation)
+
+    with pytest.raises(ProviderConfigError, match="candidate unavailable"):
+        session.set_model_choice(ModelChoice(provider_name="local", model="qwen"))
+
+    assert (
+        session.provider_name,
+        session.model,
+        session.thinking_level,
+        session.inference_provider,
+        session._harness.config.provider,
+        tuple(session._owned_providers),
+    ) == before
 
 
 @pytest.mark.anyio
@@ -3187,7 +5059,9 @@ async def test_session_resume_preserves_shell_command_prefix(tmp_path: Path) -> 
 @pytest.mark.anyio
 async def test_session_resumes_indexed_session(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
-    first_record = manager.create_session(cwd=tmp_path / "first", model="fake", title="First")
+    first_cwd = tmp_path / "first"
+    first_cwd.mkdir()
+    first_record = manager.create_session(cwd=first_cwd, model="fake", title="First")
     second_cwd = tmp_path / "second"
     second_cwd.mkdir(parents=True)
     second_record = manager.create_session(cwd=second_cwd, model="fake", title="Second")
@@ -3232,6 +5106,11 @@ async def test_session_resumes_indexed_session(tmp_path: Path) -> None:
             UserMessage(content="Continue."),
         ],
     )
+    # The replacement session's persistence listener must be detached on
+    # adoption, or every message after resume is persisted twice.
+    entries = await second_storage.read_all()
+    persisted_texts = [entry.message.text for entry in entries if entry.type == "message"]
+    assert persisted_texts == ["Earlier", "Restored", "Continue.", "Second answer"]
 
 
 @pytest.mark.anyio
@@ -3762,9 +5641,12 @@ async def test_session_name_indexes_pending_session_without_prompt(
     assert manager.get_session(pending_id) is None
 
     result = session.handle_command("/name Customer bugfix")
+    assert result.session_name == "Customer bugfix"
+    renamed = await session.set_session_name(result.session_name)
 
     indexed = manager.get_session(pending_id)
     assert result.message == "Session renamed: Customer bugfix"
+    assert renamed == "Customer bugfix"
     assert indexed is not None
     assert indexed.title == "Customer bugfix"
     assert indexed.provider_name == "openai"
@@ -3778,8 +5660,10 @@ async def test_session_resume_uses_target_session_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    first_cwd = tmp_path / "first"
+    first_cwd.mkdir()
     first_record = manager.create_session(
-        cwd=tmp_path / "first",
+        cwd=first_cwd,
         model="gpt-5",
         provider_name="openai",
         title="First",
@@ -3854,8 +5738,10 @@ async def test_session_resume_missing_provider_preserves_active_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    first_cwd = tmp_path / "first"
+    first_cwd.mkdir()
     first_record = manager.create_session(
-        cwd=tmp_path / "first",
+        cwd=first_cwd,
         model="gpt-5",
         provider_name="openai",
         title="First",
@@ -3930,8 +5816,10 @@ async def test_session_resume_rejects_incompatible_provider_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    first_cwd = tmp_path / "first"
+    first_cwd.mkdir()
     first_record = manager.create_session(
-        cwd=tmp_path / "first",
+        cwd=first_cwd,
         model="gpt-5",
         provider_name="openai",
         title="First",
@@ -4001,7 +5889,9 @@ async def test_session_resume_rejects_incompatible_provider_model(
 @pytest.mark.anyio
 async def test_session_context_usage_recalculates_after_resume(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
-    first_record = manager.create_session(cwd=tmp_path / "first", model="fake", title="First")
+    first_cwd = tmp_path / "first"
+    first_cwd.mkdir()
+    first_record = manager.create_session(cwd=first_cwd, model="fake", title="First")
     second_cwd = tmp_path / "second"
     second_cwd.mkdir(parents=True)
     second_record = manager.create_session(cwd=second_cwd, model="fake", title="Second")
@@ -4064,3 +5954,174 @@ def test_minimal_commands_are_handled(tmp_path: Path) -> None:
     assert session.handle_command("/quit").exit_requested is True
     assert session.handle_command("/exit").exit_requested is True
     assert session.handle_command("/unknown").handled is False
+
+
+def _thinking_override_provider_config(  # noqa: D103
+    thinking_defaults: dict[str, str] | None = None,
+) -> OpenAICompatibleProviderConfig:
+    return OpenAICompatibleProviderConfig(
+        name="openai",
+        models=("reasoner",),
+        default_model="reasoner",
+        thinking_levels=("off", "low", "high"),
+        thinking_models=("reasoner",),
+        thinking_default="low",
+        thinking_parameter="reasoning_effort",
+        thinking_defaults=thinking_defaults or {},  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.anyio
+async def test_new_session_initial_thinking_respects_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    provider_config = _thinking_override_provider_config(thinking_defaults={"reasoner": "low"})
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="reasoner",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            thinking_level_override="high",
+        )
+    )
+
+    # The override beats the remembered per-model default ("low").
+    assert session.thinking_level == "high"
+    await session._ensure_session_initialized()
+    entries = await JsonlSessionStorage(tmp_path / "session.jsonl").read_all()
+    thinking_entries = [entry for entry in entries if entry.type == "thinking_level_change"]
+    assert thinking_entries[0].thinking_level == "high"
+
+
+@pytest.mark.anyio
+async def test_resumed_session_thinking_override_is_ephemeral(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    provider_config = _thinking_override_provider_config()
+    storage_path = tmp_path / "session.jsonl"
+
+    def config(thinking_level_override: object = None) -> CodingSessionConfig:
+        return CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="reasoner",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(storage_path),
+            cwd=tmp_path,
+            provider_name="openai",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            thinking_level_override=thinking_level_override,  # type: ignore[arg-type]
+        )
+
+    first = await CodingSession.load(config())
+    assert first.thinking_level == "low"
+    await first._ensure_session_initialized()
+
+    resumed = await CodingSession.load(config(thinking_level_override="high"))
+    assert resumed.thinking_level == "high"
+
+    # The override is ephemeral: a later resume without it uses the stored level.
+    plain = await CodingSession.load(config())
+    assert plain.thinking_level == "low"
+
+    # Resuming with an unsupported override is a strict error, not a fallback.
+    with pytest.raises(ProviderConfigError, match='Thinking mode "medium" is not available'):
+        await CodingSession.load(config(thinking_level_override="medium"))
+
+
+@pytest.mark.anyio
+async def test_thinking_override_unsupported_level_raises_on_load(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    provider_config = _thinking_override_provider_config()
+
+    with pytest.raises(ProviderConfigError, match='Thinking mode "medium" is not available'):
+        await CodingSession.load(
+            CodingSessionConfig(
+                provider=FakeProvider([]),
+                model="reasoner",
+                system="You are Tau.",
+                storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+                cwd=tmp_path,
+                provider_name="openai",
+                provider_settings=ProviderSettings(providers=(provider_config,)),
+                thinking_level_override="medium",
+            )
+        )
+
+
+def _dynamic_thinking_override_config(
+    tmp_path: Path,
+    *,
+    thinking_level_override: object,
+) -> CodingSessionConfig:
+    extension = tmp_path / "dynamic_provider.py"
+    extension.write_text(
+        """
+from tau_coding.extensions import DynamicProvider, OpenAICompatibleTransport, ProviderModel
+
+
+def setup(tau):
+    tau.register_provider(DynamicProvider(
+        id="local",
+        display_name="Local",
+        models=(ProviderModel("reasoner", thinking_levels=("off", "high")),),
+        default_model="reasoner",
+        transport=OpenAICompatibleTransport(base_url="http://example.test/v1"),
+    ))
+""".lstrip(),
+        encoding="utf-8",
+    )
+    return CodingSessionConfig(
+        provider=None,
+        model="reasoner",
+        system="You are Tau.",
+        storage=JsonlSessionStorage(tmp_path / "dynamic-session.jsonl"),
+        cwd=tmp_path,
+        provider_name="local",
+        requested_provider="local",
+        requested_model="reasoner",
+        provider_settings=ProviderSettings(),
+        extension_paths=(extension,),
+        extensions_enabled=False,
+        thinking_level_override=thinking_level_override,  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.anyio
+async def test_dynamic_provider_accepts_supported_thinking_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+
+    session = await CodingSession.load(
+        _dynamic_thinking_override_config(tmp_path, thinking_level_override="high")
+    )
+
+    assert session.thinking_level == "high"
+    assert session.available_thinking_levels == ("off", "high")
+    await session.aclose()
+
+
+@pytest.mark.anyio
+async def test_dynamic_provider_rejects_unsupported_thinking_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+
+    with pytest.raises(
+        ProviderConfigError,
+        match=(
+            r'Thinking mode "max" is not available for local:reasoner\. '
+            r"Available modes: off, high"
+        ),
+    ):
+        await CodingSession.load(
+            _dynamic_thinking_override_config(tmp_path, thinking_level_override="max")
+        )

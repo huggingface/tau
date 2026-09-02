@@ -3,6 +3,7 @@
 import asyncio
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -15,20 +16,36 @@ from tau_agent.session import CustomEntry, JsonlSessionStorage, LeafEntry, Messa
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
 from tau_ai import FakeProvider
-from tau_coding import CodingSession, CodingSessionConfig, TauResourcePaths
+from tau_coding import (
+    BuiltInExtension,
+    CodingSession,
+    CodingSessionConfig,
+    ResourceError,
+    SessionManager,
+    TauPaths,
+    TauResourcePaths,
+)
 from tau_coding.extensions import (
     CustomMessageView,
+    DynamicProvider,
     ExtensionAPI,
     ExtensionError,
     ExtensionRuntime,
     InputEvent,
     InputHookResult,
     MessageRenderOptions,
+    NoAuth,
+    OpenAICompatibleTransport,
+    ProviderModelSnapshot,
+    ProviderRefreshContext,
+    RefreshModels,
     ToolCallHookResult,
     ToolResultHookResult,
     discover_extensions,
     load_extensions,
 )
+from tau_coding.project_trust import ProjectTrustRequest, TrustChoice
+from tau_coding.system_prompt import PromptSection
 
 pytestmark = pytest.mark.anyio
 
@@ -101,7 +118,11 @@ class RecordingSession:
         self.cwd = tmp_path
         self.model = "fake"
         self.provider_name = "fake"
+        self.inference_provider: str | None = None
+        self.inference_provider_mode = "automatic"
         self.session_id = "session-1"
+        self.session_name: str | None = "Test session"
+        self.thinking_level = "medium"
         self.system_prompt = "You are Tau."
         self.is_running = running
         self.messages: tuple[AgentMessage, ...] = ()
@@ -132,6 +153,11 @@ class RecordingSession:
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         self.custom_entries.append((namespace, data))
+
+    def set_inference_provider(self, route: str | None) -> str:
+        self.inference_provider = route
+        self.inference_provider_mode = "fixed" if route is not None else "automatic"
+        return route or "automatic (will pin after the next successful response)"
 
 
 # -- discovery and loading ----------------------------------------------------
@@ -482,6 +508,246 @@ def test_underscore_files_are_skipped(tmp_path: Path) -> None:
     assert discovered == ()
 
 
+def _fake_built_in(
+    setup_apis: list[ExtensionAPI],
+    *,
+    refresh_models: RefreshModels | None = None,
+) -> BuiltInExtension:
+    def command(args: str, context: object) -> str:
+        del context
+        return f"built-in: {args}"
+
+    async def execute(
+        tool_call_id: str,
+        arguments: object,
+        signal: object = None,
+        on_update: object = None,
+    ) -> AgentToolResult:
+        del tool_call_id, arguments, signal, on_update
+        return AgentToolResult(content="built-in tool")
+
+    def setup(tau: ExtensionAPI) -> None:
+        setup_apis.append(tau)
+        tau.register_tool(
+            AgentTool(
+                name="fake-built-in-tool",
+                label="Fake built-in",
+                description="Exercise built-in extension loading.",
+                parameters={},
+                execute_fn=execute,
+            )
+        )
+        tau.register_command("fake-built-in", command)
+        tau.register_provider(
+            DynamicProvider(
+                id="fake-built-in-provider",
+                display_name="Fake built-in provider",
+                transport=OpenAICompatibleTransport(
+                    base_url="http://example.test/v1",
+                    auth=NoAuth(),
+                ),
+                refresh_models=refresh_models,
+            )
+        )
+
+    return BuiltInExtension(name="fake-built-in", setup=setup)
+
+
+def test_built_in_declaration_validates_name_setup_and_hidden_flag() -> None:
+    def setup(tau: ExtensionAPI) -> None:
+        del tau
+
+    async def async_setup(tau: ExtensionAPI) -> None:
+        del tau
+
+    with pytest.raises(ValueError, match="non-empty"):
+        BuiltInExtension(name="", setup=setup)
+    with pytest.raises(ValueError, match="surrounding whitespace"):
+        BuiltInExtension(name=" spaced ", setup=setup)
+    with pytest.raises(ValueError, match="sync function"):
+        BuiltInExtension(name="async", setup=async_setup)
+    with pytest.raises(ValueError, match="hidden flag"):
+        BuiltInExtension(name="visible", setup=setup, hidden=cast(bool, "yes"))
+
+
+async def test_hidden_built_in_registers_real_runtime_surfaces_despite_no_extensions(
+    tmp_path: Path,
+) -> None:
+    setup_apis: list[ExtensionAPI] = []
+    runtime = ExtensionRuntime(built_in_extensions=(_fake_built_in(setup_apis),))
+
+    runtime.load(_paths(tmp_path), include_resource_dirs=False)
+
+    assert len(setup_apis) == 1
+    assert runtime.extension_names == ()
+    assert len(runtime.extension_metadata) == 1
+    metadata = runtime.extension_metadata[0]
+    assert metadata.name == "fake-built-in"
+    assert metadata.source_id == "built-in:fake-built-in"
+    assert metadata.source == "built-in"
+    assert metadata.hidden is True
+    assert metadata.path is None
+    tool = runtime.compose_tools([])[0]
+    assert tool.name == "fake-built-in-tool"
+    assert (await tool.execute("call-1", {})).text == "built-in tool"
+    registry = runtime.build_command_registry()
+    command = registry.get("fake-built-in")
+    assert command is not None
+    result = command.handler(_command_context(registry, "/fake-built-in ok", "fake-built-in", "ok"))
+    assert result.message == "built-in: ok"
+    provider = runtime.provider_registry.effective("fake-built-in-provider")
+    assert provider is not None
+    assert provider.source_id == "built-in:fake-built-in"
+
+
+def test_built_ins_load_once_before_user_explicit_and_project_sources(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    setup_apis: list[ExtensionAPI] = []
+    _write_extension(_user_extensions_dir(paths), "user_ext", "def setup(tau):\n    pass\n")
+    explicit = _write_extension(
+        tmp_path / "explicit", "explicit_ext", "def setup(tau):\n    pass\n"
+    )
+    _write_extension(_project_extensions_dir(paths), "project_ext", "def setup(tau):\n    pass\n")
+    runtime = ExtensionRuntime(built_in_extensions=(_fake_built_in(setup_apis),))
+
+    runtime.load(paths, extra_paths=(explicit,), include_project_dir=False)
+    runtime.load(paths, include_project_dir=True, include_user_dir=False)
+
+    assert len(setup_apis) == 1
+    assert [metadata.name for metadata in runtime.extension_metadata] == [
+        "fake-built-in",
+        "user_ext",
+        "explicit_ext",
+        "project_ext",
+    ]
+    assert [metadata.source for metadata in runtime.extension_metadata] == [
+        "built-in",
+        "user",
+        "explicit",
+        "project",
+    ]
+    assert runtime.extension_names == ("user_ext", "explicit_ext", "project_ext")
+
+
+async def test_built_in_order_preserves_tool_command_and_provider_precedence(
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    setup_apis: list[ExtensionAPI] = []
+    _write_extension(
+        _user_extensions_dir(paths),
+        "shadow",
+        """
+from tau_agent.tools import AgentTool, AgentToolResult
+from tau_coding.extensions import DynamicProvider, NoAuth, OpenAICompatibleTransport
+
+
+async def execute(tool_call_id, arguments, signal=None, on_update=None):
+    return AgentToolResult(content="user tool")
+
+
+def command(args, context):
+    return "user command"
+
+
+def setup(tau):
+    tau.register_tool(AgentTool(
+        name="fake-built-in-tool",
+        label="User",
+        description="User",
+        parameters={},
+        execute_fn=execute,
+    ))
+    tau.register_command("fake-built-in", command)
+    tau.register_provider(DynamicProvider(
+        id="fake-built-in-provider",
+        display_name="User provider",
+        transport=OpenAICompatibleTransport(
+            base_url="http://user.example.test/v1",
+            auth=NoAuth(),
+        ),
+    ))
+""",
+    )
+    runtime = ExtensionRuntime(built_in_extensions=(_fake_built_in(setup_apis),))
+
+    runtime.load(paths)
+
+    tool = runtime.compose_tools([])[0]
+    assert (await tool.execute("call-1", {})).text == "built-in tool"
+    registry = runtime.build_command_registry()
+    command = registry.get("fake-built-in")
+    assert command is not None
+    result = command.handler(_command_context(registry, "/fake-built-in", "fake-built-in", ""))
+    assert result.message == "built-in: "
+    provider = runtime.provider_registry.effective("fake-built-in-provider")
+    assert provider is not None
+    assert provider.source_id.startswith("extension:file:")
+    assert provider.definition.display_name == "User provider"
+
+
+def test_built_in_setup_failure_is_isolated_and_rolls_back_every_registration(
+    tmp_path: Path,
+) -> None:
+    setup_apis: list[ExtensionAPI] = []
+    working = BuiltInExtension(name="working", setup=lambda tau: None)
+    fake = _fake_built_in(setup_apis)
+
+    def broken_setup(tau: ExtensionAPI) -> None:
+        fake.setup(tau)
+        raise RuntimeError("broken declaration")
+
+    runtime = ExtensionRuntime(
+        built_in_extensions=(BuiltInExtension(name="broken", setup=broken_setup), working)
+    )
+
+    runtime.load(_paths(tmp_path), include_resource_dirs=False)
+
+    assert [metadata.name for metadata in runtime.extension_metadata] == ["working"]
+    assert runtime.extension_tools == ()
+    assert runtime.build_command_registry().get("fake-built-in") is None
+    assert runtime.provider_registry.effective("fake-built-in-provider") is None
+    assert any(
+        diagnostic.name == "broken"
+        and diagnostic.severity == "error"
+        and "built-in setup failed" in diagnostic.message
+        for diagnostic in runtime.diagnostics
+    )
+
+
+async def test_retiring_built_in_generation_cancels_provider_work_and_drops_registrations(
+    tmp_path: Path,
+) -> None:
+    setup_apis: list[ExtensionAPI] = []
+    entered = asyncio.Event()
+
+    async def refresh(context: ProviderRefreshContext) -> ProviderModelSnapshot:
+        del context
+        entered.set()
+        await asyncio.sleep(10)
+        return ProviderModelSnapshot()
+
+    runtime = ExtensionRuntime(
+        built_in_extensions=(_fake_built_in(setup_apis, refresh_models=refresh),)
+    )
+    runtime.load(_paths(tmp_path), include_resource_dirs=False)
+    registry = runtime.provider_registry
+    pending = asyncio.create_task(registry.refresh("fake-built-in-provider"))
+    await entered.wait()
+
+    runtime.retire()
+    close_result = await runtime.aclose()
+
+    assert close_result.drained is True
+    assert (await pending).status == "cancelled"
+    assert registry.effective("fake-built-in-provider") is None
+    assert runtime.extension_metadata == ()
+    assert runtime.extension_tools == ()
+    assert runtime.build_command_registry().get("fake-built-in") is None
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = setup_apis[0].name
+
+
 # -- runtime registration ------------------------------------------------------
 
 
@@ -564,6 +830,140 @@ def test_duplicate_tool_registration_first_wins(tmp_path: Path) -> None:
     assert any("already registered" in diag.message for diag in runtime.diagnostics)
 
 
+@pytest.mark.parametrize("second_fails", [False, True])
+async def test_separately_loaded_same_name_sources_keep_first_tool_and_command(
+    tmp_path: Path,
+    second_fails: bool,
+) -> None:
+    paths = _paths(tmp_path)
+
+    def body(marker: str, *, fail: bool = False) -> str:
+        failure = "\n    raise RuntimeError('setup exploded')" if fail else ""
+        return f"""
+from tau_agent.tools import AgentTool, AgentToolResult
+
+
+async def _run(tool_call_id, arguments, signal=None, on_update=None):
+    return AgentToolResult(content="{marker}")
+
+
+def _command(args, context):
+    return "{marker}"
+
+
+def setup(tau):
+    tau.register_tool(AgentTool(
+        name="shared-tool",
+        label="Shared",
+        description="{marker}",
+        parameters={{}},
+        execute_fn=_run,
+    ))
+    tau.register_command("shared-command", _command){failure}
+"""
+
+    first_path = _write_extension(tmp_path / "first", "shared", body("first"))
+    second_path = _write_extension(
+        tmp_path / "second",
+        "shared",
+        body("second", fail=second_fails),
+    )
+    runtime = ExtensionRuntime()
+
+    runtime.load(paths, extra_paths=(first_path,), include_resource_dirs=False)
+    runtime.load(paths, extra_paths=(second_path,), include_resource_dirs=False)
+
+    tool = runtime.compose_tools([])[0]
+    assert tool.description == "first"
+    assert (await tool.execute("call-1", {})).text == "first"
+    registry = runtime.build_command_registry()
+    command = registry.get("shared-command")
+    assert command is not None
+    result = command.handler(_command_context(registry, "/shared-command", "shared-command", ""))
+    assert result.message == "first"
+    assert any("already registered" in diag.message for diag in runtime.diagnostics)
+
+
+async def test_failed_setup_cleans_every_registration_after_entry_symlink_retarget(
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    target_a = tmp_path / "target-a.py"
+    target_b = tmp_path / "target-b.py"
+    entry = tmp_path / "shared.py"
+    handler_marker = tmp_path / "orphan-handler-ran"
+    target_a.write_text(
+        f"""
+from pathlib import Path
+
+from tau_agent.tools import AgentTool, AgentToolResult
+from tau_coding.extensions import DynamicProvider, NoAuth, OpenAICompatibleTransport
+
+
+async def _tool(tool_call_id, arguments, signal=None, on_update=None):
+    return AgentToolResult(content="orphan")
+
+
+def _command(args, context):
+    return "orphan"
+
+
+def _handler(event, context):
+    Path({str(handler_marker)!r}).write_text("ran", encoding="utf-8")
+
+
+def _renderer(message, options):
+    return "orphan"
+
+
+def setup(tau):
+    tau.register_provider(DynamicProvider(
+        id="orphan-provider",
+        display_name="Orphan",
+        transport=OpenAICompatibleTransport(
+            base_url="http://example.test/v1",
+            auth=NoAuth(),
+        ),
+    ))
+    tau.register_tool(AgentTool(
+        name="orphan-tool",
+        label="Orphan",
+        description="Orphan",
+        parameters={{}},
+        execute_fn=_tool,
+    ))
+    tau.register_command("orphan-command", _command)
+    tau.add_prompt_guideline("orphan guideline")
+    tau.add_prompt_section("Orphan section", "orphan body")
+    tau.register_message_renderer("orphan:message", _renderer)
+    tau.on("input", _handler)
+    entry = Path({str(entry)!r})
+    entry.unlink()
+    entry.symlink_to(Path({str(target_b)!r}))
+    raise RuntimeError("setup exploded")
+""",
+        encoding="utf-8",
+    )
+    target_b.write_text("def setup(tau):\n    pass\n", encoding="utf-8")
+    entry.symlink_to(target_a)
+    runtime = ExtensionRuntime()
+
+    runtime.load(paths, extra_paths=(entry,), include_resource_dirs=False)
+
+    assert entry.resolve() == target_b
+    assert runtime.extension_names == ()
+    assert runtime.provider_registry.effective("orphan-provider") is None
+    assert runtime.extension_tools == ()
+    assert runtime.build_command_registry().get("orphan-command") is None
+    assert runtime.prompt_guidelines == ()
+    assert runtime.prompt_sections == ()
+    assert runtime.render_custom_message("orphan:message", "content", None, False) is None
+    outcome = await runtime.run_input_hooks("unchanged")
+    assert outcome.text == "unchanged"
+    assert not handler_marker.exists()
+    assert any("setup failed" in diagnostic.message for diagnostic in runtime.diagnostics)
+
+
 def test_extension_commands_layer_onto_default_registry(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     _write_extension(
@@ -643,6 +1043,25 @@ def test_prompt_guideline_registration(tmp_path: Path) -> None:
 
     assert runtime.prompt_guidelines == ("Always run the tests before claiming success",)
     assert any("empty prompt guideline" in diag.message for diag in runtime.diagnostics)
+
+
+def test_prompt_section_registration(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _register_inline_extension(runtime, "structured-guidance")
+    api.add_prompt_section("  Review procedure  ", "  First step.\n\n```bash\nuv run pytest\n```  ")
+    api.add_prompt_section("   ", "Untitled context")
+    api.add_prompt_section(None, "   ")
+    api.add_prompt_section("bad\ntitle", "ignored")
+
+    assert runtime.prompt_sections == (
+        PromptSection(
+            title="Review procedure",
+            body="First step.\n\n```bash\nuv run pytest\n```",
+        ),
+        PromptSection(title=None, body="Untitled context"),
+    )
+    assert any("empty prompt section" in diag.message for diag in runtime.diagnostics)
+    assert any("title spans multiple lines" in diag.message for diag in runtime.diagnostics)
 
 
 def test_unknown_event_subscription_is_a_diagnostic(tmp_path: Path) -> None:
@@ -1110,6 +1529,8 @@ def test_transcript_is_empty_at_session_start(tmp_path: Path) -> None:
     session = RecordingSession(tmp_path)
     runtime.bind(session)
 
+    assert api.context.session_name == "Test session"  # type: ignore[attr-defined]
+    assert api.context.thinking_level == "medium"  # type: ignore[attr-defined]
     assert api.context.transcript == ()  # type: ignore[attr-defined]
 
 
@@ -1201,6 +1622,29 @@ class RecordingUiBridge:
         from tau_coding.extensions.api import _DeadMainViewHandle
 
         return _DeadMainViewHandle()
+
+    @property
+    def supports_sidebar(self) -> bool:
+        return self._has_ui
+
+    def set_sidebar_section(
+        self,
+        extension_name,
+        key,
+        *,
+        title,
+        content,  # noqa: ANN001
+    ) -> None:
+        self.calls.append(
+            (
+                "set_sidebar_section",
+                (extension_name, key),
+                {"title": title, "content": content},
+            )
+        )
+
+    def remove_sidebar_section(self, extension_name, key):  # noqa: ANN001, ANN201
+        self.calls.append(("remove_sidebar_section", (extension_name, key), {}))
 
     def clear_components(self) -> None:
         self.calls.append(("clear_components", (), {}))
@@ -1311,6 +1755,9 @@ async def test_headless_ui_bridges_component_seam_are_noops(tmp_path: Path) -> N
         assert await asyncio.wait_for(handle.wait(), timeout=1.0) is None
         unsubscribe = bridge.register_key_interceptor(lambda event, text: False)
         unsubscribe()  # must not raise
+        assert bridge.supports_sidebar is False
+        bridge.set_sidebar_section("ext", "status", title="Status", content=["ready"])
+        bridge.remove_sidebar_section("ext", "status")
 
 
 async def test_context_ui_components_pass_through(tmp_path: Path) -> None:
@@ -1334,6 +1781,60 @@ async def test_context_ui_components_pass_through(tmp_path: Path) -> None:
     assert ui.interceptors == []
 
 
+async def test_context_ui_sidebar_is_owned_and_passes_through(tmp_path: Path) -> None:
+    from typing import cast
+
+    from tau_coding.extensions.api import ExtensionAPI
+
+    ui = RecordingUiBridge()
+    runtime = ExtensionRuntime(ui=ui)
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "sidebar-owner"))
+
+    sidebar = api.context.ui.sidebar
+    assert sidebar.supported is True
+    sidebar.set_section("status", title="Status", content=["ready"])
+    sidebar.remove_section("status")
+
+    assert ui.calls == [
+        (
+            "set_sidebar_section",
+            ("sidebar-owner", "status"),
+            {"title": "Status", "content": ["ready"]},
+        ),
+        ("remove_sidebar_section", ("sidebar-owner", "status"), {}),
+    ]
+
+
+async def test_context_ui_sidebar_validates_keys_and_titles(tmp_path: Path) -> None:
+    from typing import cast
+
+    from tau_coding.extensions import ExtensionError
+    from tau_coding.extensions.api import ExtensionAPI
+
+    runtime = ExtensionRuntime(ui=RecordingUiBridge())
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "sidebar"))
+
+    with pytest.raises(ExtensionError, match="key must not be empty"):
+        api.context.ui.sidebar.set_section(" ", title="Status", content=["ready"])
+    with pytest.raises(ExtensionError, match="title must not be empty"):
+        api.context.ui.sidebar.set_section("status", title=" ", content=["ready"])
+
+
+async def test_context_ui_sidebar_degrades_on_older_host_bridge(tmp_path: Path) -> None:
+    from typing import cast
+
+    from tau_coding.extensions import UiBridge
+    from tau_coding.extensions.api import ExtensionAPI
+
+    runtime = ExtensionRuntime(ui=cast(UiBridge, object()))
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "legacy-host"))
+
+    sidebar = api.context.ui.sidebar
+    assert sidebar.supported is False
+    sidebar.set_section("status", title="Status", content=["ready"])
+    sidebar.remove_section("status")
+
+
 async def test_context_ui_components_headless_reports_unsupported(tmp_path: Path) -> None:
     from typing import cast
 
@@ -1343,6 +1844,7 @@ async def test_context_ui_components_headless_reports_unsupported(tmp_path: Path
     api = cast(ExtensionAPI, _register_inline_extension(runtime, "headless-components"))
 
     assert api.context.ui.components.supports_components is False
+    assert api.context.ui.sidebar.supported is False
 
 
 async def test_default_runtime_ui_is_headless(tmp_path: Path) -> None:
@@ -1418,7 +1920,12 @@ def _register_inline_extension(runtime: ExtensionRuntime, name: str) -> object:
         captured["api"] = api
 
     runtime._setup_extension(  # noqa: SLF001 - test seam
-        LoadedExtension(name=name, path=Path(f"/virtual/{name}.py"), setup=setup)
+        LoadedExtension(
+            name=name,
+            path=Path(f"/virtual/{name}.py"),
+            source_id=f"extension:test:{name}",
+            setup=setup,
+        )
     )
     return captured["api"]
 
@@ -1455,6 +1962,104 @@ def _session_config(
     )
 
 
+async def test_session_loads_built_in_without_extension_discovery_or_project_trust_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    import tau_coding.built_in_extensions as declarations
+
+    setup_apis: list[ExtensionAPI] = []
+    monkeypatch.setattr(
+        declarations,
+        "BUILT_IN_EXTENSIONS",
+        (_fake_built_in(setup_apis),),
+    )
+    prompt_calls = 0
+
+    async def prompt(request: ProjectTrustRequest) -> TrustChoice:
+        nonlocal prompt_calls
+        del request
+        prompt_calls += 1
+        return "decline_once"
+
+    config = dataclass_replace(
+        _session_config(
+            tmp_path,
+            FakeProvider([]),
+            extension_body=(
+                "def setup(tau):\n    tau.add_prompt_guideline('user should not load')\n"
+            ),
+        ),
+        extensions_enabled=False,
+        trust_interactive=True,
+        trust_prompt=prompt,
+    )
+
+    session = await CodingSession.load(config)
+
+    assert prompt_calls == 0
+    assert session.project_trust_resolution is not None
+    assert session.project_trust_resolution.source == "empty"
+    assert "fake-built-in-tool" in [tool.name for tool in session.tools]
+    assert "user should not load" not in session.extension_runtime.prompt_guidelines
+    assert session.extension_names == ()
+    assert session.extension_runtime.extension_metadata[0].source == "built-in"
+    await session.aclose()
+
+
+@pytest.mark.parametrize("operation", ["reload", "new", "resume"])
+async def test_session_lifecycle_recreates_built_in_in_a_fresh_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    import tau_coding.built_in_extensions as declarations
+    from tau_coding import SessionManager, TauPaths
+
+    setup_apis: list[ExtensionAPI] = []
+    monkeypatch.setattr(
+        declarations,
+        "BUILT_IN_EXTENSIONS",
+        (_fake_built_in(setup_apis),),
+    )
+    manager = SessionManager(
+        TauPaths(home=tmp_path / "home-tau", agents_home=tmp_path / "home-agents")
+    )
+    config = _session_config(tmp_path, FakeProvider([]))
+    initial = manager.create_session(cwd=config.cwd, model="fake")
+    destination = manager.create_session(cwd=config.cwd, model="fake")
+    config = dataclass_replace(
+        config,
+        extensions_enabled=False,
+        session_manager=manager,
+        session_id=initial.id,
+    )
+    session = await CodingSession.load(config)
+    old_runtime = session.extension_runtime
+    old_generation = old_runtime.provider_registry.generation_id
+    old_api = setup_apis[0]
+
+    if operation == "reload":
+        await session.reload()
+    elif operation == "resume":
+        await session.resume(destination.id)
+    else:
+        await session.new_session()
+
+    assert len(setup_apis) == 2
+    assert session.extension_runtime is not old_runtime
+    assert session.extension_runtime.provider_registry.generation_id != old_generation
+    assert old_runtime.active is False
+    assert session.extension_runtime.extension_metadata[0].source_id == "built-in:fake-built-in"
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = old_api.name
+    await session.aclose()
+
+
 async def test_session_exposes_extension_tools_and_commands(tmp_path: Path) -> None:
     body = HELLO_TOOL_EXTENSION + (
         "\n\ndef _cmd(args, context):\n"
@@ -1486,6 +2091,130 @@ async def test_extension_guideline_reaches_system_prompt(tmp_path: Path) -> None
     )
 
     assert "Never commit directly to main" in session.system_prompt
+
+
+async def test_session_metadata_changes_reach_extensions(tmp_path: Path) -> None:
+    config = _session_config(tmp_path, FakeProvider([]))
+    manager = SessionManager(
+        TauPaths(home=tmp_path / "manager-tau", agents_home=tmp_path / "manager-agents")
+    )
+    record = manager.create_session(cwd=config.cwd, model="fake", title="Old name")
+    session = await CodingSession.load(
+        replace(
+            config,
+            storage=JsonlSessionStorage(record.path),
+            session_id=record.id,
+            session_manager=manager,
+        )
+    )
+    api = cast(ExtensionAPI, _register_inline_extension(session.extension_runtime, "observer"))
+    seen: list[tuple[str, str | None, str | None, str, str]] = []
+
+    def record_event(event: object, context: object) -> None:
+        seen.append(
+            (
+                event.type,  # type: ignore[attr-defined]
+                getattr(event, "name", None),
+                getattr(event, "level", None),
+                context.session_name,  # type: ignore[attr-defined]
+                context.thinking_level,  # type: ignore[attr-defined]
+            )
+        )
+
+    api.on("session_info_changed", record_event)
+    api.on("thinking_level_changed", record_event)
+
+    with pytest.raises(ValueError, match="single line"):
+        await session.set_session_name("bad\nname")
+
+    assert await session.set_session_name("New name") == "New name"
+    assert await session.set_thinking_level("high") == "Thinking mode: high"
+    # Assigning either current value is a no-op and must not duplicate events.
+    assert await session.set_session_name("New name") == "New name"
+    assert await session.set_thinking_level("high") == "Thinking mode: high"
+
+    assert seen == [
+        ("session_info_changed", "New name", None, "New name", "medium"),
+        ("thinking_level_changed", None, "high", "New name", "high"),
+    ]
+    assert api.context.thinking_level == "high"
+
+
+async def test_auto_session_name_change_reaches_extensions(tmp_path: Path) -> None:
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Fix pane title")),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Done")),
+            ],
+        ]
+    )
+    config = _session_config(tmp_path, provider)
+    manager = SessionManager(
+        TauPaths(home=tmp_path / "manager-tau", agents_home=tmp_path / "manager-agents")
+    )
+    record = manager.create_session(cwd=config.cwd, model="fake")
+    session = await CodingSession.load(
+        replace(
+            config,
+            storage=JsonlSessionStorage(record.path),
+            session_id=record.id,
+            session_manager=manager,
+        )
+    )
+    api = cast(ExtensionAPI, _register_inline_extension(session.extension_runtime, "observer"))
+    seen: list[tuple[str | None, str | None]] = []
+    api.on(
+        "session_info_changed",
+        lambda event, context: seen.append((event.name, context.session_name)),
+    )
+
+    _ = [event async for event in session.prompt("Please fix the pane title")]
+
+    assert seen == [("Fix pane title", "Fix pane title")]
+
+
+async def test_extension_prompt_section_reaches_system_prompt_after_user_append(
+    tmp_path: Path,
+) -> None:
+    body = (
+        "def setup(tau):\n"
+        "    tau.add_prompt_section('Review procedure', "
+        "'First step.\\n\\n```bash\\nuv run pytest\\n```')\n"
+    )
+    config = _session_config(tmp_path, FakeProvider([]), extension_body=body)
+    config = replace(config, append_system_prompt="User append")
+
+    session = await CodingSession.load(config)
+
+    assert (
+        "## Review procedure\n\nFirst step.\n\n```bash\nuv run pytest\n```" in session.system_prompt
+    )
+    assert session.system_prompt.index("User append") < session.system_prompt.index(
+        "## Review procedure"
+    )
+
+
+async def test_reload_picks_up_prompt_section_changes(tmp_path: Path) -> None:
+    provider = FakeProvider([])
+    session = await CodingSession.load(_session_config(tmp_path, provider))
+    assert "## Late procedure" not in session.system_prompt
+
+    paths = _paths(tmp_path)
+    _write_extension(
+        _user_extensions_dir(paths),
+        "late_section",
+        "def setup(tau):\n    tau.add_prompt_section('Late procedure', 'Run the checks.')\n",
+    )
+
+    summary = await session.reload()
+
+    assert summary.system_prompt_rebuilt is True
+    assert "## Late procedure\n\nRun the checks." in session.system_prompt
 
 
 async def test_reload_picks_up_guideline_changes(tmp_path: Path) -> None:
@@ -1770,6 +2499,234 @@ async def test_reload_picks_up_new_extension(tmp_path: Path) -> None:
     assert "hello" in session.system_prompt
 
 
+@pytest.mark.parametrize("operation", ["reload", "replacement", "final_close"])
+async def test_session_lifecycle_awaits_outgoing_provider_cleanup(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    from tau_coding import SessionManager, TauPaths
+
+    manager = SessionManager(
+        TauPaths(home=tmp_path / "home-tau", agents_home=tmp_path / "home-agents")
+    )
+    config = _session_config(tmp_path, FakeProvider([]))
+    record = manager.create_session(cwd=config.cwd, model="fake")
+    config = dataclass_replace(config, session_manager=manager, session_id=record.id)
+    session = await CodingSession.load(config)
+    old_runtime = session.extension_runtime
+    old_registry = old_runtime.provider_registry
+    entered = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    cleanup_cancelled = False
+
+    async def refresh(context):
+        nonlocal cleanup_cancelled
+        entered.set()
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cleanup_started.set()
+            try:
+                await release_cleanup.wait()
+            except asyncio.CancelledError:
+                cleanup_cancelled = True
+                raise
+
+    old_registry.register(
+        "test-source",
+        DynamicProvider(
+            id="local",
+            display_name="Local",
+            transport=OpenAICompatibleTransport(
+                base_url="http://example.test/v1",
+                auth=NoAuth(),
+            ),
+            refresh_models=refresh,
+        ),
+    )
+    pending = asyncio.create_task(old_registry.refresh("local"))
+    await entered.wait()
+
+    if operation == "final_close":
+        old_runtime.retire()
+        lifecycle = asyncio.create_task(session.aclose())
+    elif operation == "replacement":
+        lifecycle = asyncio.create_task(session.new_session())
+    else:
+        lifecycle = asyncio.create_task(session.reload())
+
+    await asyncio.wait_for(cleanup_started.wait(), timeout=0.5)
+    await asyncio.sleep(0.15)
+
+    assert lifecycle.done() is False
+    assert cleanup_cancelled is False
+    release_cleanup.set()
+    await asyncio.wait_for(lifecycle, timeout=1.0)
+    assert (await pending).status == "cancelled"
+    assert not old_registry._discovery_tasks  # type: ignore[attr-defined]
+
+    if operation != "final_close":
+        await session.aclose()
+
+
+@pytest.mark.parametrize("operation", ["reload", "new", "resume"])
+async def test_published_lifecycle_adoption_contains_cancellation_during_outgoing_close(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    from dataclasses import replace as dataclass_replace
+
+    from tau_coding import SessionManager, TauPaths
+
+    manager = SessionManager(
+        TauPaths(home=tmp_path / "home-tau", agents_home=tmp_path / "home-agents")
+    )
+    config = _session_config(tmp_path, FakeProvider([]))
+    record = manager.create_session(cwd=config.cwd, model="fake")
+    resume_record = manager.create_session(cwd=config.cwd, model="fake")
+    config = dataclass_replace(config, session_manager=manager, session_id=record.id)
+    session = await CodingSession.load(config)
+    old_runtime = session.extension_runtime
+    old_registry = old_runtime.provider_registry
+    entered = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    cleanup_recancelled = False
+
+    async def refresh(context):
+        nonlocal cleanup_recancelled
+        entered.set()
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cleanup_started.set()
+            try:
+                await release_cleanup.wait()
+            except asyncio.CancelledError:
+                cleanup_recancelled = True
+                raise
+
+    old_registry.register(
+        "test-source",
+        DynamicProvider(
+            id="local",
+            display_name="Local",
+            transport=OpenAICompatibleTransport(
+                base_url="http://example.test/v1",
+                auth=NoAuth(),
+            ),
+            refresh_models=refresh,
+        ),
+    )
+    pending = asyncio.create_task(old_registry.refresh("local"))
+    await entered.wait()
+
+    if operation == "reload":
+        lifecycle = asyncio.create_task(session.reload())
+    elif operation == "resume":
+        lifecycle = asyncio.create_task(session.resume(resume_record.id))
+    else:
+        lifecycle = asyncio.create_task(session.new_session())
+
+    await asyncio.wait_for(cleanup_started.wait(), timeout=0.5)
+    assert session.extension_runtime is not old_runtime
+    assert old_runtime.active is False
+
+    assert lifecycle.cancel() is True
+    await asyncio.sleep(0)
+    assert lifecycle.done() is False
+    release_cleanup.set()
+    result = await asyncio.wait_for(lifecycle, timeout=1.0)
+
+    assert result is not None
+    assert lifecycle.cancelled() is False
+    assert cleanup_recancelled is False
+    assert (await pending).status == "cancelled"
+    assert not old_registry._discovery_tasks  # type: ignore[attr-defined]
+    if operation == "resume":
+        assert session.session_id == resume_record.id
+    await session.aclose()
+
+
+async def test_final_close_finishes_registry_and_each_provider_before_propagating_cancel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = await CodingSession.load(_session_config(tmp_path, FakeProvider([])))
+    runtime = session.extension_runtime
+    registry = runtime.provider_registry
+    entered = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    runtime_close_calls = 0
+
+    async def refresh(context):
+        entered.set()
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cleanup_started.set()
+            await release_cleanup.wait()
+
+    registry.register(
+        "test-source",
+        DynamicProvider(
+            id="local",
+            display_name="Local",
+            transport=OpenAICompatibleTransport(
+                base_url="http://example.test/v1",
+                auth=NoAuth(),
+            ),
+            refresh_models=refresh,
+        ),
+    )
+    pending = asyncio.create_task(registry.refresh("local"))
+    await entered.wait()
+
+    original_runtime_close = runtime.aclose
+
+    async def counted_runtime_close():
+        nonlocal runtime_close_calls
+        runtime_close_calls += 1
+        return await original_runtime_close()
+
+    monkeypatch.setattr(runtime, "aclose", counted_runtime_close)
+
+    class CountingProvider:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def aclose(self) -> None:
+            self.close_calls += 1
+            await asyncio.sleep(0)
+
+    providers = (CountingProvider(), CountingProvider())
+    session._owned_providers.extend(providers)  # type: ignore[arg-type]  # noqa: SLF001
+
+    close = asyncio.create_task(session.aclose())
+    await asyncio.wait_for(cleanup_started.wait(), timeout=0.5)
+    assert close.cancel() is True
+    await asyncio.sleep(0)
+    assert close.done() is False
+
+    release_cleanup.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(close, timeout=1.0)
+
+    assert (await pending).status == "cancelled"
+    assert runtime_close_calls == 1
+    assert [provider.close_calls for provider in providers] == [1, 1]
+    assert session._owned_providers == []  # noqa: SLF001
+    assert not registry._discovery_tasks  # type: ignore[attr-defined]
+
+    await session.aclose()
+    assert runtime_close_calls == 1
+    assert [provider.close_calls for provider in providers] == [1, 1]
+
+
 async def test_runtime_survives_new_session_swap(tmp_path: Path) -> None:
     from tau_coding import SessionManager
 
@@ -1794,13 +2751,14 @@ async def test_runtime_survives_new_session_swap(tmp_path: Path) -> None:
     config = dataclass_replace(config, session_manager=manager, session_id=record.id)
     session = await CodingSession.load(config)
     runtime_before = session.extension_runtime
+    module_before = _loaded_extension_module("integration")
 
     await session.new_session()
 
-    module = _loaded_extension_module("integration")
-    assert session.extension_runtime is runtime_before
-    assert ("stop", "new") in module.EVENTS
-    assert ("start", "new") in module.EVENTS
+    module_after = _loaded_extension_module("integration")
+    assert session.extension_runtime is not runtime_before
+    assert ("stop", "new") in module_before.EVENTS
+    assert ("start", "new") in module_after.EVENTS
 
 
 async def test_session_swap_clears_host_extension_components(tmp_path: Path) -> None:
@@ -1859,6 +2817,24 @@ def test_reset_for_reload_invalidates_only_after_component_cleanup() -> None:
         _ = api.name
 
 
+def test_extension_can_read_and_change_inference_provider(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "huggingface"))
+    session = RecordingSession(tmp_path)
+    session.provider_name = "huggingface"
+    runtime.bind(session)
+
+    assert api.context.inference_provider is None
+    assert api.context.inference_provider_mode == "automatic"
+    assert api.set_inference_provider("deepinfra") == "deepinfra"
+    assert api.context.inference_provider == "deepinfra"
+    assert api.context.inference_provider_mode == "fixed"
+    assert api.set_inference_provider(None) == (
+        "automatic (will pin after the next successful response)"
+    )
+    assert api.context.inference_provider_mode == "automatic"
+
+
 # -- reload staleness guard (Pi's assertActive/invalidate) ---------------------
 
 
@@ -1897,6 +2873,10 @@ async def test_reset_for_reload_invalidates_prior_context_and_ui(tmp_path: Path)
         _ = context.cwd
     with pytest.raises(ExtensionError, match="stale after reload"):
         _ = context.transcript
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = context.session_name
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = context.thinking_level
     # Trivial reads assert too (Pi asserts on everything).
     with pytest.raises(ExtensionError, match="stale after reload"):
         _ = context.has_ui
@@ -1904,9 +2884,11 @@ async def test_reset_for_reload_invalidates_prior_context_and_ui(tmp_path: Path)
         ui.notify("zombie")
     with pytest.raises(ExtensionError, match="stale after reload"):
         await ui.select("Pick", ("a", "b"))
-    # The component bridge is unreachable through a stale facade.
+    # Component and sidebar bridges are unreachable through a stale facade.
     with pytest.raises(ExtensionError, match="stale after reload"):
         _ = ui.components
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = ui.sidebar
 
 
 async def test_reload_invalidates_old_instance_and_new_instance_works(
@@ -1932,6 +2914,29 @@ async def test_reload_invalidates_old_instance_and_new_instance_works(
     assert new_api is not old_api
     assert new_api.context.cwd == session.cwd
     new_api.send_user_message("fresh")  # the reloaded instance works normally
+
+
+async def test_failed_resource_reload_does_not_emit_extension_shutdown(tmp_path: Path) -> None:
+    body = (
+        "EVENTS = []\n\n"
+        "def setup(tau):\n"
+        "    tau.on('session_shutdown', "
+        "lambda event, context: EVENTS.append(('stop', event.reason)))\n"
+    )
+    paths = _paths(tmp_path)
+    paths.root.mkdir(parents=True)
+    prompt_path = paths.root / "SYSTEM.md"
+    prompt_path.write_text("Valid base", encoding="utf-8")
+    session = await CodingSession.load(
+        _session_config(tmp_path, FakeProvider([]), extension_body=body)
+    )
+    module = _loaded_extension_module("integration")
+
+    prompt_path.write_bytes(b"\xff")
+    with pytest.raises(ResourceError, match="Could not read replacement system prompt file"):
+        await session.reload()
+
+    assert module.EVENTS == []  # type: ignore[attr-defined]
 
 
 async def test_reload_awaits_shutdown_before_invalidation_and_starts_new_generation(
@@ -1970,7 +2975,7 @@ async def test_reload_awaits_shutdown_before_invalidation_and_starts_new_generat
     ]
 
 
-async def test_session_rebinding_does_not_invalidate_extension_instances(
+async def test_session_replacement_rebuilds_and_invalidates_source_extensions(
     tmp_path: Path,
 ) -> None:
     from dataclasses import replace as dataclass_replace
@@ -1990,11 +2995,11 @@ async def test_session_rebinding_does_not_invalidate_extension_instances(
 
     await session.new_session()
 
-    # Same instance continues by design (setup did not re-run); its context
-    # views simply reflect the newly bound session.
-    assert len(module.APIS) == 1  # type: ignore[attr-defined]
-    assert api.context.session_id == session.session_id
-    api.send_user_message("still alive")  # must not raise
+    new_module = _loaded_extension_module("integration")
+    new_api = cast(ExtensionAPI, new_module.APIS[-1])  # type: ignore[attr-defined]
+    with pytest.raises(ExtensionError, match="stale after reload"):
+        _ = api.context
+    assert new_api.context.session_id == session.session_id
 
 
 async def test_inflight_handler_touching_stale_api_records_diagnostic(

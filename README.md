@@ -18,6 +18,10 @@
   <a href="https://github.com/huggingface/tau/issues/1">Roadmap</a>
 </p>
 
+<p align="center">
+  <strong><a href="https://link.alejandro-ao.com/tau-discord">Join the Tau Discord community →</a></strong>
+</p>
+
 ---
 
 ## What is Tau?

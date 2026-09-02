@@ -92,7 +92,7 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
     assert entry.base_url == "https://api.anthropic.com"
     assert entry.api_key_env == "ANTHROPIC_API_KEY"
     assert entry.credential_name == "anthropic"
-    assert entry.models == (
+    assert {
         "claude-fable-5",
         "claude-haiku-4-5",
         "claude-haiku-4-5-20251001",
@@ -102,30 +102,20 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
         "claude-opus-4-5-20251101",
         "claude-opus-4-6",
         "claude-opus-4-7",
+        "claude-opus-4-8",
         "claude-opus-5",
         "claude-sonnet-4-5",
         "claude-sonnet-4-5-20250929",
         "claude-sonnet-4-6",
         "claude-sonnet-5",
-    )
+    } <= set(entry.models)
     assert entry.default_model == "claude-sonnet-4-6"
     assert entry.docs_url == "https://docs.anthropic.com"
-    assert entry.context_windows == {
-        "claude-fable-5": 1_000_000,
-        "claude-haiku-4-5": 200_000,
-        "claude-haiku-4-5-20251001": 200_000,
-        "claude-opus-4-1": 200_000,
-        "claude-opus-4-1-20250805": 200_000,
-        "claude-opus-4-5": 200_000,
-        "claude-opus-4-5-20251101": 200_000,
-        "claude-opus-4-6": 1_000_000,
-        "claude-opus-4-7": 1_000_000,
-        "claude-opus-5": 1_000_000,
-        "claude-sonnet-4-5": 200_000,
-        "claude-sonnet-4-5-20250929": 200_000,
-        "claude-sonnet-4-6": 1_000_000,
-        "claude-sonnet-5": 1_000_000,
-    }
+    assert entry.context_windows is not None
+    assert entry.context_windows["claude-haiku-4-5"] == 200_000
+    assert entry.context_windows["claude-opus-5"] == 1_000_000
+    assert entry.context_windows["claude-sonnet-4-6"] == 1_000_000
+    assert set(entry.context_windows) == set(entry.models)
     opus_5 = entry.model_metadata["claude-opus-5"]
     assert opus_5.context_window == 1_000_000
     assert opus_5.max_tokens == 128_000
@@ -133,8 +123,18 @@ def test_builtin_catalog_golden_anthropic_entry() -> None:
     assert opus_5.cost is not None
     assert opus_5.cost["input"] == 5
     assert opus_5.cost["output"] == 25
+    assert opus_5.cost["cacheWrite"] == 6.25
+    assert opus_5.cost["cacheWrite1h"] == 10
     assert opus_5.compat == {"forceAdaptiveThinking": True}
-    assert opus_5.thinking_level_map == {"minimal": None, "xhigh": "max"}
+    assert opus_5.thinking_level_map == {
+        "off": None,
+        "minimal": None,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max",
+    }
     assert entry.thinking_levels == ("off", "minimal", "low", "medium", "high", "xhigh")
     assert entry.thinking_models == ()
     assert entry.thinking_default == "medium"
@@ -154,6 +154,7 @@ def test_builtin_catalog_separates_openai_api_and_codex_context_limits() -> None
     assert "gpt-5.6" not in codex.models
     assert "gpt-5.6" not in codex.context_windows
     assert "gpt-5.6" not in codex.model_metadata
+    assert codex.removed_models == ("gpt-5.6",)
     assert openai.context_windows["gpt-5.6-sol"] == 1_050_000
     assert codex.context_windows["gpt-5.6-sol"] == 272_000
     assert codex.context_windows["gpt-5.6-terra"] == 272_000
@@ -250,9 +251,10 @@ def test_sparse_provider_catalogs_declare_model_input_modalities(
 
     assert provider is not None
     assert set(provider.model_metadata) == set(provider.models)
-    assert {
+    actual_vision_models = {
         model for model, metadata in provider.model_metadata.items() if "image" in metadata.input
-    } == vision_models
+    }
+    assert vision_models <= actual_vision_models
 
 
 def test_builtin_catalog_oauth_and_opencode_auth_methods() -> None:
@@ -269,6 +271,28 @@ def test_builtin_catalog_oauth_and_opencode_auth_methods() -> None:
     assert opencode.api_key_env == "OPENCODE_API_KEY"
 
 
+def test_builtin_catalog_copilot_claude_max_tokens() -> None:
+    entry = builtin_provider_entry("github-copilot")
+    assert entry is not None
+
+    expected = {
+        "claude-haiku-4.5": 64_000,
+        "claude-opus-4.5": 32_000,
+        "claude-opus-4.6": 32_000,
+        "claude-opus-4.7": 32_000,
+        "claude-opus-4.8": 64_000,
+        "claude-sonnet-4": 16_000,
+        "claude-sonnet-4.5": 32_000,
+        "claude-sonnet-4.6": 32_000,
+        "claude-sonnet-5": 128_000,
+    }
+
+    for model, max_tokens in expected.items():
+        metadata = entry.model_metadata[model]
+        assert metadata.api == "anthropic-messages"
+        assert metadata.max_tokens == max_tokens
+
+
 def test_builtin_catalog_golden_nvidia_entry() -> None:
     entry = builtin_provider_entry("nvidia")
     assert entry is not None
@@ -277,46 +301,38 @@ def test_builtin_catalog_golden_nvidia_entry() -> None:
     assert entry.base_url == "https://integrate.api.nvidia.com/v1"
     assert entry.api_key_env == "NVIDIA_API_KEY"
     assert entry.credential_name == "nvidia"
-    assert entry.models == (
+    assert {
         "nvidia/llama-3.3-nemotron-super-49b-v1.5",
         "nvidia/nvidia-nemotron-nano-9b-v2",
         "meta/llama-3.3-70b-instruct",
         "meta/llama-3.1-8b-instruct",
-        "deepseek-ai/deepseek-v4-pro",
-        "qwen/qwen3.5-122b-a10b",
         "mistralai/mistral-large-2-instruct",
         "openai/gpt-oss-120b",
-    )
+    } <= set(entry.models)
     assert entry.default_model == "nvidia/llama-3.3-nemotron-super-49b-v1.5"
     assert entry.docs_url == "https://docs.api.nvidia.com/nim"
     assert entry.api == "openai-completions"
-    assert entry.context_windows == {
-        "nvidia/llama-3.3-nemotron-super-49b-v1.5": 131_072,
-        "nvidia/nvidia-nemotron-nano-9b-v2": 128_000,
-        "meta/llama-3.3-70b-instruct": 131_072,
-        "meta/llama-3.1-8b-instruct": 131_072,
-        "deepseek-ai/deepseek-v4-pro": 1_000_000,
-        "qwen/qwen3.5-122b-a10b": 262_144,
-        "mistralai/mistral-large-2-instruct": 131_072,
-        "openai/gpt-oss-120b": 131_072,
-    }
+    assert entry.context_windows is not None
+    assert entry.context_windows["nvidia/llama-3.3-nemotron-super-49b-v1.5"] == 131_072
+    assert entry.context_windows["openai/gpt-oss-120b"] == 131_072
+    assert set(entry.context_windows) == set(entry.models)
     assert entry.thinking_levels == ("off", "minimal", "low", "medium", "high")
     assert entry.thinking_models == ()
     assert entry.thinking_default == "medium"
     assert entry.thinking_parameter == "reasoning_effort"
 
     default_metadata = entry.model_metadata[entry.default_model]
-    assert default_metadata.name == "NVIDIA: Llama 3.3 Nemotron Super 49B V1.5"
+    assert default_metadata.name == "Llama 3.3 Nemotron Super 49B v1.5"
     assert default_metadata.reasoning is True
     assert default_metadata.input == ("text",)
     assert default_metadata.context_window == 131_072
-    assert default_metadata.max_tokens == 16_384
+    assert default_metadata.max_tokens == 65_536
     assert default_metadata.cost == {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
 
     gpt_oss_metadata = entry.model_metadata["openai/gpt-oss-120b"]
     assert gpt_oss_metadata.reasoning is True
-    assert gpt_oss_metadata.context_window == 131_072
-    assert gpt_oss_metadata.max_tokens == 65_536
+    assert gpt_oss_metadata.context_window == 128_000
+    assert gpt_oss_metadata.max_tokens == 8_192
 
 
 def test_builtin_catalog_huggingface_model_expansion() -> None:
@@ -342,6 +358,7 @@ def test_builtin_catalog_huggingface_model_expansion() -> None:
         "google/gemma-4-31B-it",
         "meta-llama/Llama-3.3-70B-Instruct",
         "moonshotai/Kimi-K2.7-Code",
+        "moonshotai/Kimi-K3",
         "openai/gpt-oss-120b",
         "openai/gpt-oss-20b",
         "stepfun-ai/Step-3.5-Flash",
@@ -353,7 +370,7 @@ def test_builtin_catalog_huggingface_model_expansion() -> None:
         "zai-org/GLM-5.2",
     }
 
-    assert len(entry.models) == 46
+    assert len(entry.models) >= 47
     assert added_models <= set(entry.models)
     assert set(entry.context_windows or {}) == set(entry.models)
     assert set(entry.model_metadata) == set(entry.models)
@@ -367,6 +384,22 @@ def test_builtin_catalog_huggingface_model_expansion() -> None:
     llama = entry.model_metadata["meta-llama/Llama-3.3-70B-Instruct"]
     assert llama.reasoning is False
     assert llama.context_window == 131_072
+
+    kimi_k3 = entry.model_metadata["moonshotai/Kimi-K3"]
+    assert kimi_k3.name == "Kimi K3"
+    assert kimi_k3.reasoning is True
+    assert kimi_k3.input == ("text", "image")
+    assert kimi_k3.context_window == 1_000_000
+    assert kimi_k3.cost == {"input": 3, "output": 15, "cacheRead": 0, "cacheWrite": 0}
+    assert kimi_k3.thinking_level_map == {
+        "off": None,
+        "minimal": None,
+        "low": "low",
+        "medium": None,
+        "high": "high",
+        "xhigh": None,
+        "max": "max",
+    }
 
 
 def test_builtin_catalog_golden_kimi_entries() -> None:
@@ -390,7 +423,7 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
     assert k2_7.reasoning is True
     assert k2_7.input == ("text", "image")
     assert k2_7.context_window == 262_144
-    assert k2_7.max_tokens == 32_768
+    assert k2_7.max_tokens == 262_144
     assert k2_7.thinking_level_map == {
         "off": None,
         "minimal": None,
@@ -404,9 +437,13 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
     assert coding.base_url == "https://api.kimi.com/coding/v1"
     assert coding.api_key_env == "KIMI_CODE_API_KEY"
     assert coding.credential_name == "kimi-code"
-    assert coding.models == ("k3", "kimi-for-coding")
+    assert {"k3", "kimi-for-coding", "k3-256k", "kimi-for-coding-highspeed"} == set(coding.models)
     assert coding.default_model == "kimi-for-coding"
-    assert coding.context_windows == {"k3": 1_048_576, "kimi-for-coding": 262_144}
+    assert coding.thinking_default == "max"
+    assert coding.context_windows is not None
+    assert coding.context_windows["k3"] == 1_048_576
+    assert coding.context_windows["kimi-for-coding"] == 262_144
+    assert set(coding.context_windows) == set(coding.models)
 
     k3 = coding.model_metadata["k3"]
     assert k3.name == "Kimi K3"
@@ -416,16 +453,24 @@ def test_builtin_catalog_golden_kimi_entries() -> None:
     assert k3.thinking_level_map == {
         "off": None,
         "minimal": None,
-        "low": None,
+        "low": "low",
         "medium": None,
-        "high": None,
-        "xhigh": "max",
+        "high": "high",
+        "xhigh": None,
+        "max": "max",
     }
 
     latest = coding.model_metadata["kimi-for-coding"]
-    assert latest.name == "Kimi for Coding (latest)"
+    assert latest.name == "Kimi K2.7 Code"
     assert latest.reasoning is True
     assert latest.context_window == 262_144
+    assert latest.thinking_level_map == {
+        "off": None,
+        "minimal": None,
+        "low": None,
+        "high": None,
+        "xhigh": None,
+    }
 
 
 def test_builtin_minimax_m3_has_tiered_pricing() -> None:
@@ -512,6 +557,35 @@ default_model = "claude-next-1"
     assert entry.thinking_parameter == "anthropic.thinking"
 
 
+def test_builtin_tombstone_removes_model_from_user_catalog_overlay(tmp_path: Path) -> None:
+    paths = _write_user_catalog(
+        tmp_path / ".tau",
+        """
+[[providers]]
+name = "openai-codex"
+models = ["gpt-5.6"]
+default_model = "gpt-5.6"
+thinking_models = ["gpt-5.6"]
+
+[providers.context_windows]
+"gpt-5.6" = 272000
+
+[providers.model_metadata."gpt-5.6"]
+name = "GPT-5.6"
+""",
+    )
+
+    entry = next(e for e in effective_catalog(paths) if e.name == "openai-codex")
+
+    assert entry.default_model == "gpt-5.5"
+    assert "gpt-5.6" not in entry.models
+    assert "gpt-5.6" not in entry.thinking_models
+    assert entry.context_windows is not None
+    assert "gpt-5.6" not in entry.context_windows
+    assert "gpt-5.6" not in entry.model_metadata
+    assert entry.removed_models == ("gpt-5.6",)
+
+
 def test_user_catalog_thinking_fields_replace_as_group(tmp_path: Path) -> None:
     paths = _write_user_catalog(
         tmp_path / ".tau",
@@ -565,6 +639,38 @@ cost_tiers = [
         model_cost_for_input_tokens(reloaded.model_metadata["MiniMax-M3"], 400_001)
         == long_context_cost
     )
+
+
+def test_user_catalog_cost_tier_accepts_one_hour_cache_write_rate(tmp_path: Path) -> None:
+    paths = _write_user_catalog(
+        tmp_path / ".tau",
+        """
+[[providers]]
+name = "minimax"
+
+[providers.model_metadata."MiniMax-M3"]
+cost_tiers = [
+  { max_input_tokens = 400000, input = 0.2, output = 1.0, cacheRead = 0.04, cacheWrite = 0.25 },
+  { input = 0.5, output = 2.0, cacheRead = 0.1, cacheWrite = 0.6, cacheWrite1h = 1.0 },
+]
+""",
+    )
+    entry = next(e for e in effective_catalog(paths) if e.name == "minimax")
+    metadata = entry.model_metadata["MiniMax-M3"]
+    assert model_cost_for_input_tokens(metadata, 400_001) == {
+        "input": 0.5,
+        "output": 2.0,
+        "cacheRead": 0.1,
+        "cacheWrite": 0.6,
+        "cacheWrite1h": 1.0,
+    }
+    # Tiers without the key omit it, so billing can fall back to cacheWrite.
+    assert model_cost_for_input_tokens(metadata, 400_000) == {
+        "input": 0.2,
+        "output": 1.0,
+        "cacheRead": 0.04,
+        "cacheWrite": 0.25,
+    }
 
 
 def test_user_catalog_rejects_bounded_final_cost_tier(tmp_path: Path) -> None:

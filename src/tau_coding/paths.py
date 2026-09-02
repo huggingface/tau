@@ -35,6 +35,21 @@ class TauPaths:
         return self.logs_dir / "agent-calls.jsonl"
 
     @property
+    def models_store_path(self) -> Path:
+        """Return the persisted remote model-catalog cache path."""
+        return self.home / "models-store.json"
+
+    @property
+    def extension_state_dir(self) -> Path:
+        """Return the user-level state directory owned by built-in extensions."""
+        return self.home / "state" / "extensions"
+
+    @property
+    def llama_cpp_state_path(self) -> Path:
+        """Return the safe built-in llama.cpp integration state path."""
+        return self.extension_state_dir / "llama.cpp.json"
+
+    @property
     def user_skills_dir(self) -> Path:
         """Return Tau's user-level skills directory."""
         return self.home / "skills"
@@ -48,6 +63,11 @@ class TauPaths:
     def user_themes_dir(self) -> Path:
         """Return Tau's user-level TUI themes directory."""
         return self.home / "themes"
+
+    @property
+    def user_extensions_dir(self) -> Path:
+        """Return Tau's user-level extension directory."""
+        return self.home / "extensions"
 
     @property
     def user_agents_skills_dir(self) -> Path:

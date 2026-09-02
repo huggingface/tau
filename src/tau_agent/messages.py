@@ -55,6 +55,13 @@ class Usage(WireModel):
     cost: UsageCost = UsageCost()
 
 
+class ResponseTiming(WireModel):
+    """Monotonic request durations for one assistant response."""
+
+    time_to_first_output_ms: int | None = Field(default=None, ge=0)
+    total_duration_ms: int = Field(ge=0)
+
+
 class TextContent(WireModel):
     type: Literal["text"] = "text"
     text: str
@@ -125,9 +132,11 @@ class AssistantMessage(WireModel):
     provider: str = "unknown"
     model: str = "unknown"
     response_model: str | None = None
+    response_provider: str | None = None
     response_id: str | None = None
     diagnostics: list[AssistantMessageDiagnostic] | None = None
     usage: Usage = Usage()
+    timing: ResponseTiming | None = None
     stop_reason: StopReason = "stop"
     error_message: str | None = None
     timestamp: int = Field(default_factory=current_timestamp_ms)

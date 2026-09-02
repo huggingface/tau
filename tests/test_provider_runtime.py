@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from tau_ai import AnthropicProvider, OpenAICodexProvider, OpenAICompatibleProvider
@@ -47,6 +49,65 @@ def test_create_model_provider_uses_codex_model_image_capability(tmp_path) -> No
     assert text_provider._config.supports_images is False
 
 
+def test_direct_openai_runtime_enables_responses_cache_affinity(tmp_path) -> None:
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key("openai", "sk-test")
+
+    provider = create_model_provider(
+        provider_config_from_catalog_entry("openai"),
+        credential_store=store,
+        model="gpt-5.4",
+    )
+
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider._config.compat["supportsPromptCacheKey"] is True
+    assert provider._config.compat["sendSessionAffinityHeaders"] is True
+    assert provider._config.compat["sessionAffinityFormat"] == "openai"
+
+
+def test_huggingface_runtime_pins_backing_provider_with_model_alias(tmp_path) -> None:
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key("huggingface", "hf-test")
+    config = provider_config_from_catalog_entry("huggingface")
+
+    provider = create_model_provider(
+        config,
+        credential_store=store,
+        model="zai-org/GLM-5.2",
+        inference_provider="deepinfra",
+    )
+
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider._config.model_aliases == {"zai-org/GLM-5.2": "zai-org/GLM-5.2:deepinfra"}
+
+
+def test_huggingface_runtime_rejects_policy_suffix(tmp_path) -> None:
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key("huggingface", "hf-test")
+
+    with pytest.raises(ProviderConfigError, match="explicit"):
+        create_model_provider(
+            provider_config_from_catalog_entry("huggingface"),
+            credential_store=store,
+            model="zai-org/GLM-5.2",
+            inference_provider="fastest",
+        )
+
+
+def test_compatible_gateway_defaults_to_no_openai_cache_affinity(tmp_path) -> None:
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key("together", "gateway-key")
+
+    provider = create_model_provider(
+        provider_config_from_catalog_entry("together"),
+        credential_store=store,
+    )
+
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider._config.compat["supportsPromptCacheKey"] is False
+    assert provider._config.compat["sendSessionAffinityHeaders"] is False
+
+
 def test_create_model_provider_uses_anthropic_oauth_runtime_auth(tmp_path) -> None:
     store = FileCredentialStore(tmp_path / "credentials.json")
     store.set_oauth(
@@ -66,6 +127,159 @@ def test_create_model_provider_uses_anthropic_oauth_runtime_auth(tmp_path) -> No
     assert provider._config.oauth_system_prompt is not None
     assert provider._config.headers is not None
     assert provider._config.headers["Authorization"] == "Bearer anthropic-oauth-access"
+    # Subscription auth is not billed per token, so ask for the 1 hour cache TTL.
+    assert provider._config.cache_retention == "long"
+
+
+def test_anthropic_api_key_auth_keeps_the_default_cache_retention(tmp_path) -> None:
+    """1h cache writes cost 2x base, so an API-key user must not get them silently."""
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key("anthropic", "sk-test")
+
+    provider = create_model_provider(AnthropicProviderConfig(), credential_store=store)
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider._config.cache_retention == "short"
+
+
+@pytest.mark.parametrize(
+    "provider_name",
+    ["minimax", "minimax-cn", "fireworks", "vercel-ai-gateway"],
+)
+def test_anthropic_protocol_gateways_disable_cache_breakpoints(
+    provider_name: str,
+    tmp_path,
+) -> None:
+    """Gateways speaking the Anthropic protocol may reject cache_control blocks."""
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key(provider_name, "gateway-key")
+    config = provider_config_from_catalog_entry(provider_name)
+
+    provider = create_model_provider(config, credential_store=store)
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider._config.cache_retention == "none"
+
+
+def test_provider_compat_can_re_enable_cache_breakpoints_on_a_gateway(tmp_path) -> None:
+    """A gateway proxying real Claude must be able to opt back in without a source edit."""
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key("minimax", "gateway-key")
+    config = provider_config_from_catalog_entry("minimax")
+    config = replace(config, compat={**config.compat, "supportsCacheControl": True})
+
+    provider = create_model_provider(config, credential_store=store)
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider._config.cache_retention == "short"
+    assert provider._config.cache_control_on_tools is True
+
+
+def test_provider_compat_can_clamp_the_one_hour_ttl_on_oauth(tmp_path) -> None:
+    """The escape hatch if Anthropic ever stops honoring ttl=1h on subscriptions."""
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_oauth(
+        "anthropic",
+        OAuthCredential(access="a", refresh="r", expires=9999999999999),
+    )
+    config = replace(AnthropicProviderConfig(), compat={"supportsLongCacheRetention": False})
+
+    provider = create_model_provider(config, credential_store=store)
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider._config.cache_retention == "short"
+
+
+def test_provider_compat_can_suppress_only_the_tools_breakpoint(tmp_path) -> None:
+    """Some gateways accept cache_control everywhere except inside tool objects."""
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_api_key("anthropic", "sk-test")
+    config = replace(AnthropicProviderConfig(), compat={"supportsCacheControlOnTools": False})
+
+    provider = create_model_provider(config, credential_store=store)
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider._config.cache_retention == "short"
+    assert provider._config.cache_control_on_tools is False
+
+
+def test_copilot_anthropic_protocol_models_disable_cache_breakpoints(tmp_path) -> None:
+    """Copilot proxies the Anthropic protocol, so it gets no cache_control either."""
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_oauth(
+        "github-copilot",
+        OAuthCredential(
+            access="tid=1;proxy-ep=proxy.business.githubcopilot.com",
+            refresh="github-token",
+            expires=9999999999999,
+        ),
+    )
+
+    provider = create_model_provider(
+        provider_config_from_catalog_entry("github-copilot"),
+        credential_store=store,
+        model="claude-haiku-4.5",
+    )
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider._config.cache_retention == "none"
+
+
+def test_copilot_model_metadata_compat_can_enable_cache_breakpoints(tmp_path) -> None:
+    """Per-model compat reaches the openai-compatible Anthropic-protocol branch."""
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_oauth(
+        "github-copilot",
+        OAuthCredential(
+            access="tid=1;proxy-ep=proxy.business.githubcopilot.com",
+            refresh="github-token",
+            expires=9999999999999,
+        ),
+    )
+    config = provider_config_from_catalog_entry("github-copilot")
+    metadata = config.model_metadata["claude-haiku-4.5"]
+    config = replace(
+        config,
+        model_metadata={
+            **config.model_metadata,
+            "claude-haiku-4.5": replace(
+                metadata, compat={**metadata.compat, "supportsCacheControl": True}
+            ),
+        },
+    )
+
+    provider = create_model_provider(config, credential_store=store, model="claude-haiku-4.5")
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider._config.cache_retention == "long"
+
+
+def test_create_model_provider_uses_model_max_tokens_for_anthropic_protocol_model(
+    tmp_path,
+) -> None:
+    store = FileCredentialStore(tmp_path / "credentials.json")
+    store.set_oauth(
+        "github-copilot",
+        OAuthCredential(
+            access="tid=1",
+            refresh="github-token",
+            expires=9999999999999,
+        ),
+    )
+    catalog_config = provider_config_from_catalog_entry("github-copilot")
+    assert isinstance(catalog_config, OpenAICompatibleProviderConfig)
+    metadata = dict(catalog_config.model_metadata)
+    metadata["claude-haiku-4.5"] = replace(metadata["claude-haiku-4.5"], max_tokens=64_000)
+    provider_config = replace(catalog_config, model_metadata=metadata)
+
+    provider = create_model_provider(
+        provider_config,
+        credential_store=store,
+        model="claude-haiku-4.5",
+    )
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider._config.max_tokens == 64_000
 
 
 def test_create_model_provider_uses_copilot_token_base_url(tmp_path) -> None:
@@ -144,7 +358,7 @@ def test_create_model_provider_coerces_unsupported_startup_thinking_level(
 ) -> None:
     # Regression: startup used to pass the global default ("medium") straight
     # to create_model_provider, which crashed for models like kimi-code:k3
-    # that only support xhigh.
+    # that only support xhigh. Now k3 also supports low and high.
     monkeypatch.setenv("TAU_TEST_KIMI_CODE_API_KEY", "test-key")
     store = FileCredentialStore(tmp_path / "credentials.json")
     provider_config = OpenAICompatibleProviderConfig(
@@ -152,8 +366,8 @@ def test_create_model_provider_coerces_unsupported_startup_thinking_level(
         api_key_env="TAU_TEST_KIMI_CODE_API_KEY",
         models=("k3",),
         default_model="k3",
-        thinking_levels=("medium", "xhigh"),
-        thinking_default="medium",
+        thinking_levels=("low", "medium", "high", "xhigh"),
+        thinking_default="xhigh",
         thinking_parameter="reasoning_effort",
         model_metadata={
             "k3": ProviderModelMetadata(
@@ -161,9 +375,9 @@ def test_create_model_provider_coerces_unsupported_startup_thinking_level(
                 thinking_level_map={
                     "off": None,
                     "minimal": None,
-                    "low": None,
+                    "low": "low",
                     "medium": None,
-                    "high": None,
+                    "high": "high",
                     "xhigh": "max",
                 },
             ),

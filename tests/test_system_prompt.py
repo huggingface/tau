@@ -6,6 +6,7 @@ from tau_coding import Skill
 from tau_coding.system_prompt import (
     BuildSystemPromptOptions,
     ProjectContextFile,
+    PromptSection,
     build_system_prompt,
     collect_prompt_guidelines,
     format_available_tools,
@@ -38,6 +39,7 @@ def test_default_prompt_includes_tools_guidelines_date_and_cwd(tmp_path: Path) -
     assert "You are an expert coding assistant operating inside Tau" in prompt
     assert "Available tools:\n- read: Read file contents" in prompt
     assert "- Use bash for file operations like ls, rg, find" in prompt
+    assert "- When using bash, include a brief present-participle description" in prompt
     assert "- Use read to examine files instead of cat or sed." in prompt
     assert "- Inspect relevant files and project instructions before editing" in prompt
     assert "- Do not overwrite or discard unrelated user changes" in prompt
@@ -89,6 +91,33 @@ def test_custom_prompt_replaces_default_but_keeps_append_context_and_date(tmp_pa
     assert "Current date: 2026-06-17" in prompt
 
 
+def test_extra_sections_follow_user_append_in_registration_order(tmp_path: Path) -> None:
+    prompt = build_system_prompt(
+        BuildSystemPromptOptions(
+            cwd=tmp_path,
+            custom_prompt="Custom base.",
+            append_system_prompt="User append.",
+            extra_sections=(
+                PromptSection(
+                    title="Extension procedure", body="First step.\n\n```bash\nuv run pytest\n```"
+                ),
+                PromptSection(title=None, body="Untitled extension context."),
+            ),
+            context_files=(ProjectContextFile(path="/repo/AGENTS.md", content="Project rules."),),
+            current_date=date(2026, 6, 17),
+        )
+    )
+
+    expected = (
+        "Custom base.\n\nUser append.\n\n## Extension procedure\n\n"
+        "First step.\n\n```bash\nuv run pytest\n```\n\n"
+        "Untitled extension context."
+    )
+    assert prompt.startswith(expected)
+    assert prompt.index("User append.") < prompt.index("## Extension procedure")
+    assert prompt.index("Untitled extension context.") < prompt.index("<project_instructions")
+
+
 def test_empty_custom_prompt_is_still_custom(tmp_path: Path) -> None:
     prompt = build_system_prompt(
         BuildSystemPromptOptions(
@@ -120,6 +149,29 @@ def test_skills_are_formatted_as_xml_and_escaped(tmp_path: Path) -> None:
     assert "<name>review&amp;check</name>" in formatted
     assert "<description>Review &lt;code&gt;</description>" in formatted
     assert f"<location>{skill_path}</location>" in formatted
+
+
+def test_format_skills_for_prompt_excludes_disabled_skills(tmp_path: Path) -> None:
+    visible = Skill(
+        name="visible",
+        path=tmp_path / "skills" / "visible" / "SKILL.md",
+        content="",
+        description="Visible skill",
+    )
+    hidden = Skill(
+        name="hidden",
+        path=tmp_path / "skills" / "hidden" / "SKILL.md",
+        content="",
+        description="Hidden skill",
+        disable_model_invocation=True,
+    )
+
+    formatted = format_skills_for_prompt([visible, hidden])
+
+    assert "<name>visible</name>" in formatted
+    assert "hidden" not in formatted
+
+    assert format_skills_for_prompt([hidden]) == ""
 
 
 def test_skills_are_included_only_when_read_tool_is_available(tmp_path: Path) -> None:

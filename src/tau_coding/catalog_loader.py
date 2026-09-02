@@ -63,6 +63,10 @@ class _CatalogCostTier(BaseModel):
     output: _NonNegativeFloat
     cacheRead: _NonNegativeFloat
     cacheWrite: _NonNegativeFloat
+    # Optional 1-hour TTL cache-write rate (Anthropic bills those above the
+    # 5-minute cacheWrite rate). Omitted from the cost dict when unset so
+    # consumers can fall back to cacheWrite.
+    cacheWrite1h: _NonNegativeFloat | None = None
 
 
 class _CatalogModelMetadata(BaseModel):
@@ -104,6 +108,7 @@ class _CatalogProvider(BaseModel):
     thinking_models: tuple[_NonEmptyString, ...] = ()
     thinking_default: ThinkingLevel | None = None
     thinking_parameter: ThinkingParameter | None = None
+    removed_models: tuple[_NonEmptyString, ...] = ()
     auth_methods: tuple[AuthMethod, ...] = ("api_key",)
 
 
@@ -121,8 +126,18 @@ def builtin_catalog_resource_text() -> str:
 
 @cache
 def builtin_catalog() -> tuple[ProviderCatalogEntry, ...]:
-    """Return Tau's built-in provider catalog from the packaged data file."""
-    return _entries_from_raw(_builtin_raw(), source="built-in catalog.toml")
+    """Return Tau's built-in catalog with generated models.dev model data."""
+    raw = _builtin_raw_with_generated_models()
+    filtered = _apply_model_tombstones(raw, base=_builtin_raw())
+    return _entries_from_raw(filtered, source="built-in catalog.toml")
+
+
+@cache
+def builtin_source_catalog() -> tuple[ProviderCatalogEntry, ...]:
+    """Return the application-owned catalog used as generator input/fallback."""
+    raw = _builtin_raw()
+    filtered = _apply_model_tombstones(raw, base=raw)
+    return _entries_from_raw(filtered, source="built-in catalog.toml")
 
 
 def user_catalog_path(paths: TauPaths | None = None) -> Path:
@@ -131,14 +146,17 @@ def user_catalog_path(paths: TauPaths | None = None) -> Path:
 
 
 def effective_catalog(paths: TauPaths | None = None) -> tuple[ProviderCatalogEntry, ...]:
-    """Return the builtin catalog with the user's ~/.tau/catalog.toml overlaid."""
+    """Return bundled, refreshed, then user-overlaid provider model data."""
+    builtin_raw = _builtin_raw_with_cached_models(paths)
     path = user_catalog_path(paths)
     if not path.exists():
-        return builtin_catalog()
+        filtered = _apply_model_tombstones(builtin_raw, base=_builtin_raw())
+        return _entries_from_raw(filtered, source="effective built-in catalog")
     overlay_raw = _parse_catalog_text(path.read_text(encoding="utf-8"), source=str(path))
     _validate_catalog_root(overlay_raw, source=str(path))
-    merged = _merge_raw_catalogs(_builtin_raw(), overlay_raw)
-    return _entries_from_raw(merged, source=str(path))
+    merged = _merge_raw_catalogs(builtin_raw, overlay_raw)
+    filtered = _apply_model_tombstones(merged, base=_builtin_raw())
+    return _entries_from_raw(filtered, source=str(path))
 
 
 def save_user_catalog_entries(
@@ -177,6 +195,45 @@ def save_user_catalog_entries(
 @cache
 def _builtin_raw() -> dict[str, Any]:
     return _parse_catalog_text(builtin_catalog_resource_text(), source="built-in catalog.toml")
+
+
+def _builtin_raw_with_cached_models(paths: TauPaths | None) -> dict[str, Any]:
+    from tau_coding.models_dev_store import cached_models_dev_catalog_overlay
+
+    raw = _builtin_raw_with_generated_models()
+    overlay = cached_models_dev_catalog_overlay(paths)
+    if overlay is None:
+        return raw
+    merged = _merge_generated_catalog(raw, overlay)
+    try:
+        _entries_from_raw(
+            _apply_model_tombstones(merged, base=_builtin_raw()),
+            source="cached models.dev catalog",
+        )
+    except CatalogError:
+        return raw
+    return merged
+
+
+@cache
+def _builtin_raw_with_generated_models() -> dict[str, Any]:
+    # Imported lazily because models_dev uses the catalog dataclasses imported by
+    # this module. Missing or invalid generated data is deliberately non-fatal.
+    from tau_coding.models_dev import bundled_models_dev_catalog_overlay
+
+    raw = _builtin_raw()
+    overlay = bundled_models_dev_catalog_overlay()
+    if overlay is None:
+        return raw
+    merged = _merge_generated_catalog(raw, overlay)
+    try:
+        _entries_from_raw(
+            _apply_model_tombstones(merged, base=raw),
+            source="generated models.dev catalog",
+        )
+    except CatalogError:
+        return raw
+    return merged
 
 
 def _parse_catalog_text(text: str, *, source: str) -> dict[str, Any]:
@@ -221,12 +278,50 @@ def _merge_raw_catalogs(base: dict[str, Any], overlay: dict[str, Any]) -> dict[s
     }
 
 
+def _merge_generated_catalog(base: dict[str, Any], generated: dict[str, Any]) -> dict[str, Any]:
+    """Replace model inventories while retaining application-owned provider config."""
+    generated_by_name = {
+        _raw_provider_name(provider): provider for provider in _raw_providers(generated)
+    }
+    providers: list[dict[str, Any]] = []
+    for provider in _raw_providers(base):
+        name = _raw_provider_name(provider)
+        overlay = generated_by_name.get(name)
+        if overlay is None:
+            providers.append(provider)
+            continue
+        merged = _merge_raw_provider(provider, overlay)
+        models = overlay.get("models")
+        if not isinstance(models, list) or not models:
+            providers.append(provider)
+            continue
+        merged["models"] = list(models)
+        allowed = set(models)
+        for field in ("context_windows", "model_metadata"):
+            values = merged.get(field)
+            if isinstance(values, dict):
+                merged[field] = {
+                    model: value for model, value in values.items() if model in allowed
+                }
+        thinking_models = merged.get("thinking_models")
+        if isinstance(thinking_models, list):
+            merged["thinking_models"] = [model for model in thinking_models if model in allowed]
+        if merged.get("default_model") not in allowed:
+            merged["default_model"] = models[0]
+        providers.append(merged)
+    return {"schema_version": base.get("schema_version"), "providers": providers}
+
+
 def _merge_raw_provider(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
     merged = {**base, **overlay}
     base_models = base.get("models", [])
     overlay_models = overlay.get("models", [])
     if isinstance(base_models, list) and isinstance(overlay_models, list):
         merged["models"] = list(dict.fromkeys([*overlay_models, *base_models]))
+    base_removed = base.get("removed_models", [])
+    overlay_removed = overlay.get("removed_models", [])
+    if isinstance(base_removed, list) and isinstance(overlay_removed, list):
+        merged["removed_models"] = list(dict.fromkeys([*base_removed, *overlay_removed]))
     for key in ("context_windows", "headers", "compat"):
         base_mapping = base.get(key)
         overlay_mapping = overlay.get(key)
@@ -245,13 +340,52 @@ def _merge_raw_provider(base: dict[str, Any], overlay: dict[str, Any]) -> dict[s
     return merged
 
 
+def _apply_model_tombstones(
+    raw: dict[str, Any],
+    *,
+    base: dict[str, Any],
+) -> dict[str, Any]:
+    """Remove provider-scoped models withdrawn by bundled or user catalogs."""
+    base_by_name = {_raw_provider_name(provider): provider for provider in _raw_providers(base)}
+    providers: list[dict[str, Any]] = []
+    for provider in _raw_providers(raw):
+        removed = {model for model in provider.get("removed_models", []) if isinstance(model, str)}
+        if not removed:
+            providers.append(provider)
+            continue
+        filtered = {**provider}
+        for field in ("models", "thinking_models"):
+            values = filtered.get(field)
+            if isinstance(values, list):
+                filtered[field] = [model for model in values if model not in removed]
+        for field in ("context_windows", "model_metadata"):
+            values = filtered.get(field)
+            if isinstance(values, dict):
+                filtered[field] = {
+                    model: value for model, value in values.items() if model not in removed
+                }
+        if filtered.get("default_model") in removed:
+            name = _raw_provider_name(provider)
+            base_default = base_by_name.get(name, {}).get("default_model")
+            remaining = filtered.get("models", [])
+            filtered["default_model"] = (
+                base_default
+                if isinstance(base_default, str) and base_default not in removed
+                else remaining[0]
+                if isinstance(remaining, list) and remaining
+                else ""
+            )
+        providers.append(filtered)
+    return {**raw, "providers": providers}
+
+
 def _merge_model_metadata(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
     merged: dict[str, Any] = {**base}
     for model, overlay_metadata in overlay.items():
         base_metadata = merged.get(model)
         if isinstance(base_metadata, dict) and isinstance(overlay_metadata, dict):
             next_metadata = {**base_metadata, **overlay_metadata}
-            for key in ("headers", "compat", "thinking_level_map"):
+            for key in ("cost", "headers", "compat", "thinking_level_map"):
                 base_mapping = base_metadata.get(key)
                 overlay_mapping = overlay_metadata.get(key)
                 if isinstance(base_mapping, dict) and isinstance(overlay_mapping, dict):
@@ -344,6 +478,7 @@ def _entry_from_provider(provider: _CatalogProvider, *, source: str) -> Provider
         thinking_models=provider.thinking_models,
         thinking_default=provider.thinking_default,
         thinking_parameter=provider.thinking_parameter,
+        removed_models=provider.removed_models,
         auth_methods=provider.auth_methods,
     )
 
@@ -382,12 +517,7 @@ def _model_metadata_from_provider(metadata: _CatalogModelMetadata) -> ModelCatal
         cost_tiers=tuple(
             ModelCostTier(
                 max_input_tokens=tier.max_input_tokens,
-                cost={
-                    "input": tier.input,
-                    "output": tier.output,
-                    "cacheRead": tier.cacheRead,
-                    "cacheWrite": tier.cacheWrite,
-                },
+                cost=_cost_tier_rates(tier),
             )
             for tier in metadata.cost_tiers
         ),
@@ -397,6 +527,18 @@ def _model_metadata_from_provider(metadata: _CatalogModelMetadata) -> ModelCatal
         compat=_json_object(metadata.compat, "model_metadata.compat"),
         thinking_level_map=thinking_level_map,
     )
+
+
+def _cost_tier_rates(tier: _CatalogCostTier) -> dict[str, float]:
+    rates = {
+        "input": tier.input,
+        "output": tier.output,
+        "cacheRead": tier.cacheRead,
+        "cacheWrite": tier.cacheWrite,
+    }
+    if tier.cacheWrite1h is not None:
+        rates["cacheWrite1h"] = tier.cacheWrite1h
+    return rates
 
 
 def _json_object(value: Mapping[str, Any], field_name: str) -> dict[str, JSONValue]:
@@ -476,6 +618,8 @@ def _raw_provider_from_entry(entry: ProviderCatalogEntry) -> dict[str, Any]:
         raw["thinking_default"] = entry.thinking_default
     if entry.thinking_parameter is not None:
         raw["thinking_parameter"] = entry.thinking_parameter
+    if entry.removed_models:
+        raw["removed_models"] = list(entry.removed_models)
     if entry.auth_methods != ("api_key",):
         raw["auth_methods"] = list(entry.auth_methods)
     return raw
@@ -547,6 +691,7 @@ def _catalog_to_toml(raw: dict[str, Any]) -> str:
             "thinking_models",
             "thinking_default",
             "thinking_parameter",
+            "removed_models",
             "auth_methods",
         ):
             if key in provider:

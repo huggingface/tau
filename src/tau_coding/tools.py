@@ -705,17 +705,27 @@ def create_bash_tool_definition(
             "full output is saved to a temp file. Optionally provide a timeout in seconds."
         ),
         prompt_snippet="Execute bash commands (ls, grep, find, etc.)",
-        prompt_guidelines=(),
+        prompt_guidelines=(
+            "When using bash, include a brief present-participle description of the "
+            "command's purpose (for example, 'Running tests').",
+        ),
         input_schema={
             "type": "object",
             "properties": {
                 "command": {"type": "string", "description": "Bash command to execute"},
+                "description": {
+                    "type": "string",
+                    "description": (
+                        "Brief present-participle summary of the command's purpose, such as "
+                        "'Running tests' or 'Validating and committing changes'"
+                    ),
+                },
                 "timeout": {
                     "type": "number",
                     "description": "Timeout in seconds (optional, no default timeout)",
                 },
             },
-            "required": ["command"],
+            "required": ["command", "description"],
         },
         executor=execute,
     )
@@ -1160,8 +1170,11 @@ def _base64_text(data: bytes) -> str:
 
 def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
     if os.name == "posix":
+        # `getattr` keeps mypy happy on the Windows stubs (see issue #513).
+        killpg = getattr(os, "killpg")  # noqa: B009
+        sigkill = getattr(signal, "SIGKILL")  # noqa: B009
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            killpg(process.pid, sigkill)
         except ProcessLookupError:
             return
     else:

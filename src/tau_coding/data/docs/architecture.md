@@ -16,4 +16,45 @@ Packages:
 
 Keep `tau_agent` independent of Typer, Rich, Textual, application resource locations, and provider-specific assumptions. Prefer typed data models, explicit async boundaries, deterministic fakes, and small abstractions.
 
+Dynamic provider contracts and composition belong to `tau_coding.extensions`.
+Every staged `ExtensionRuntime` owns a fresh source/generation/layer-aware
+`DynamicProviderRegistry`; durable `ProviderConfig` objects are immutable baseline
+inputs. Dynamic source identity is host-owned and canonical-entry-path-based, not an
+extension display name. Discovery freezes all source IDs before extension import;
+setup and cleanup use only that stored identity even if extension code retargets a
+symlink. The registry is frontend-free and process-local. Retirement
+atomically invalidates dynamic layers and removes cancelled operations from
+coalescing. Discovery receives one task cancellation; async close waits at most
+0.25 seconds from that request without cancelling `finally` cleanup again. A task
+still running is explicitly contained, not drained, and a process-owned supervisor
+keeps its task and registry reachable until completion under stale-publication guards.
+Reload and session replacement contain cancellation after publication until this
+outgoing drain/containment step finishes, then return the adopted result. Before
+publication, a replacement owns and closes its candidate providers on cancellation
+or failure without closing the active provider; successful adoption transfers that
+ledger once. Final close uses one durable task and propagates cancellation only after
+discharging its registry and every provider exactly once. OpenAI-compatible dynamic
+runtimes reuse
+`tau_ai.OpenAICompatibleProvider` through an explicit transport
+choice, so model names cannot silently select another endpoint API.
+
+The local-backend contract is another `tau_coding` boundary. A staged runtime
+owns a `LocalBackendRegistry` beside its provider registry. Each backend is
+bound to the exact source-owned provider layer and generation that registered it;
+this prevents a shadowing source from using or resetting another source's
+integration. Backends return typed configuration, status, action, diagnostic,
+and progress values. The registry supervises in-flight work and permits a new
+frontend screen to observe its latest progress without restarting the backend
+operation. The Textual adapter renders those values and owns cancellation,
+confirmation, and idle checks. No local-backend or Textual code
+belongs in `tau_agent` or `tau_ai`.
+
+Phase 6 validates the boundary with a permanent second fake backend and a
+test-only Ollama adapter. An adapter may use separate provider-discovery and
+backend-status endpoints, expose installed/running state through generic model
+state, and use `NoAuth`; none of those cases require llama.cpp concepts in the
+contract. Refresh cancellation is bounded and generation-safe, and a late
+operation cannot publish after retirement. Router mutations remain a later
+phase.
+
 In a Tau checkout, read `AGENTS.md`, `website/content/internals/architecture.md`, and relevant `dev-notes/architecture/` documents before broad architectural changes.
