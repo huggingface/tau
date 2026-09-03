@@ -3363,7 +3363,7 @@ kind = "openai-compatible"
 base_url = "https://api.z.ai/api/coding/paas/v4"
 api_key_env = "ZAI_API_KEY"
 credential_name = "zai"
-models = ["glm-4.5-air", "glm-4.7", "glm-5-turbo", "glm-5.1", "glm-5v-turbo"]
+models = ["glm-4.5-air", "glm-4.7", "glm-5-turbo", "glm-5.1", "glm-5.2", "glm-5v-turbo"]
 default_model = "glm-5.1"
 docs_url = "https://docs.z.ai"
 api = "openai-completions"
@@ -3376,6 +3376,7 @@ thinking_parameter = "reasoning_effort"
 "glm-4.7" = 204800
 glm-5-turbo = 200000
 "glm-5.1" = 200000
+"glm-5.2" = 1000000
 glm-5v-turbo = 200000
 
 [providers.model_metadata."glm-4.5-air"]
@@ -3410,6 +3411,15 @@ name = "GLM-5.1"
 reasoning = true
 input = ["text"]
 context_window = 200000
+max_tokens = 131072
+compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
+cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+
+[providers.model_metadata."glm-5.2"]
+name = "GLM-5.2"
+reasoning = true
+input = ["text"]
+context_window = 1000000
 max_tokens = 131072
 compat = { supportsDeveloperRole = false, thinkingFormat = "zai", zaiToolStream = true }
 cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
