@@ -72,6 +72,7 @@ from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_config import (
     OpenAICodexProviderConfig,
     OpenAICompatibleProviderConfig,
+    ProviderConfigError,
     ProviderSelection,
     ProviderSettings,
     ScopedModelConfig,
@@ -327,6 +328,18 @@ class FakeSession:
             return CommandResult(
                 handled=True,
                 login_provider="anthropic",
+                login_method="subscription",
+            )
+        if text == "/login xai-api":
+            return CommandResult(
+                handled=True,
+                login_provider="xai",
+                login_method="api-key",
+            )
+        if text in {"/login xai", "/login xai-subscription"}:
+            return CommandResult(
+                handled=True,
+                login_provider="xai",
                 login_method="subscription",
             )
         if text.startswith("/login "):
@@ -7048,6 +7061,74 @@ async def test_tui_anthropic_api_alias_opens_api_key_login() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_xai_login_opens_oauth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    login_started = asyncio.Event()
+
+    class FakeOAuthProvider:
+        async def login(self, _callbacks: object) -> OAuthCredential:
+            login_started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    fake_provider = FakeOAuthProvider()
+    monkeypatch.setattr(tui_app, "get_oauth_provider", lambda _name: fake_provider)
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/login xai"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, OAuthLoginScreen)
+        assert app.screen.provider.name == "xai"
+        assert login_started.is_set()
+
+
+@pytest.mark.anyio
+async def test_tui_xai_subscription_alias_opens_oauth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    login_started = asyncio.Event()
+
+    class FakeOAuthProvider:
+        async def login(self, _callbacks: object) -> OAuthCredential:
+            login_started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    fake_provider = FakeOAuthProvider()
+    monkeypatch.setattr(tui_app, "get_oauth_provider", lambda _name: fake_provider)
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/login xai-subscription"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, OAuthLoginScreen)
+        assert app.screen.provider.name == "xai"
+        assert login_started.is_set()
+
+
+@pytest.mark.anyio
+async def test_tui_xai_api_alias_opens_api_key_login() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/login xai-api"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, LoginScreen)
+        assert app.screen.provider.name == "xai"
+
+
+@pytest.mark.anyio
 async def test_tui_login_openai_codex_saves_oauth_credentials(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -7295,6 +7376,52 @@ async def test_tui_logout_removes_oauth_credential(
 
 
 @pytest.mark.anyio
+async def test_tui_logout_xai_oauth_does_not_fail_as_missing_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    credential_path = tmp_path / ".tau" / "credentials.json"
+    FileCredentialStore(credential_path).set_oauth(
+        "xai",
+        OAuthCredential(
+            access="access-token",
+            refresh="refresh-token",
+            expires=123456,
+        ),
+    )
+
+    class ReloadingSession(FakeSession):
+        def reload_provider_settings(self) -> None:
+            super().reload_provider_settings()
+            raise ProviderConfigError(
+                "Missing provider API key. Set XAI_API_KEY or run /login xai."
+            )
+
+    session = ReloadingSession()
+    session.provider_name = "xai"
+    app = TauTuiApp(session)
+    notifications: list[tuple[str, str | None]] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        severity = kwargs.get("severity")
+        notifications.append((message, severity if isinstance(severity, str) else None))
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/logout xai"
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert FileCredentialStore(credential_path).get_oauth("xai") is None
+    assert session.provider_reload_count == 1
+    assert notifications == [("Logged out of xAI.", None)]
+    assert all("API key" not in message for message, _severity in notifications)
+
+
+@pytest.mark.anyio
 async def test_tui_logout_opens_stored_credential_provider_picker(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -7430,6 +7557,7 @@ async def test_tui_login_subscription_opens_oauth_provider_picker() -> None:
         assert labels == [
             "OpenAI Codex subscription — openai-codex",
             "Anthropic — anthropic",
+            "xAI — xai",
             "GitHub Copilot — github-copilot",
         ]
         assert "gpt-5.5" not in "\n".join(labels)
@@ -7529,6 +7657,7 @@ async def test_tui_login_api_key_opens_api_provider_picker() -> None:
         labels = [str(item.query_one(Label).render()) for item in provider_list.children]
         assert labels[0] == "OpenAI — openai"
         assert "OpenAI Codex subscription — openai-codex" not in labels
+        assert "xAI — xai" in labels
 
         await pilot.press("down")
         await pilot.press("enter")

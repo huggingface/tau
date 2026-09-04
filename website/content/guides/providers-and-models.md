@@ -23,13 +23,15 @@ tau
 /login anthropic-subscription # authenticate Claude Pro/Max via OAuth
 /login anthropic-api # save an Anthropic API key
 /login github-copilot # authenticate GitHub Copilot with a device code
+/login xai          # authenticate SuperGrok/X Premium via device code
+/login xai-api      # save an xAI API key
 /login opencode-go  # save an OpenCode Go API key
 /login nvidia       # save an NVIDIA NIM API key
 /login custom       # add an OpenAI-compatible custom provider
 ```
 
 Built-in providers include **OpenAI**, **Anthropic**, **OpenAI Codex**
-(subscription), **GitHub Copilot**, **OpenCode Go**, **OpenCode Zen**,
+(subscription), **GitHub Copilot**, **xAI**, **OpenCode Go**, **OpenCode Zen**,
 **Moonshot AI (Kimi)**, **Kimi Code** (subscription), **OpenRouter**, **Hugging Face**,
 and **NVIDIA NIM**.
 
@@ -42,16 +44,24 @@ Choose **Subscription / OAuth** in `/login` for:
 | `openai-codex` | Browser callback with pasted-code fallback | A supported ChatGPT/Codex subscription |
 | `anthropic` | Browser callback with PKCE and pasted-code fallback | Claude Pro/Max with Anthropic extra usage available |
 | `github-copilot` | GitHub device code | An active Copilot plan; organization policy must allow the selected model |
+| `xai` | xAI device code | SuperGrok or X Premium; API-key login remains available |
 
 GitHub Copilot asks for a GitHub Enterprise Server URL/domain. Leave it blank
 for `github.com`. Device login also works in SSH/headless sessions: open the
-shown verification URL on any device and enter the displayed code.
+shown verification URL on any device and enter the displayed code. xAI uses the
+same device-code pattern: `/login xai` or `/login xai-subscription` shows a
+verification URL and short code. `/login xai-api` saves an `XAI_API_KEY`.
+The top-level `/login` picker still lists xAI under both **Subscription / OAuth**
+and **API key**.
 
-Anthropic uses distinct direct-login aliases so the authentication method is
-unambiguous: `/login anthropic-subscription` starts OAuth, while
-`/login anthropic-api` saves an API key. The top-level `/login` picker still
-lists Anthropic under both **Subscription / OAuth** and **API key**. OAuth
-subscription requests use Anthropic's required
+Anthropic and xAI use distinct direct-login aliases so the authentication method
+is unambiguous: `/login anthropic-subscription` and `/login xai-subscription`
+start OAuth, while `/login anthropic-api` and `/login xai-api` save an API key.
+`/login xai` defaults to the subscription device-code flow. The top-level
+`/login` picker still lists both providers under **Subscription / OAuth** and
+**API key**.
+
+Anthropic OAuth subscription requests use Anthropic's required
 Claude Code identity and may be billed as extra usage rather than consuming
 ordinary Claude plan limits. Check Anthropic's current account terms before
 using it.
@@ -273,9 +283,9 @@ port is unavailable or the browser runs on another machine. In that flow the
 login screen copies the authorization URL to your clipboard and renders it as
 a link, so paste or click it rather than selecting the wrapped text — a URL
 reassembled by hand loses characters at the line breaks and the provider
-rejects it. Copilot uses a device code instead: open the short verification
-URL and enter the code shown beneath it. A denied or expired code requires a
-new `/login`. If a Copilot model reports that it is unsupported, enable it in
+rejects it. Copilot and xAI use a device code instead: open the short
+verification URL and enter the code shown beneath it. A denied or expired code
+requires a new `/login`. If a Copilot model reports that it is unsupported, enable it in
 Copilot Chat's model selector or ask your organization administrator;
 provider/model access varies by plan and policy.
 {{% /note %}}

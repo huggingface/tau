@@ -102,6 +102,33 @@ async def test_oauth_device_code_screen_leaves_the_clipboard_alone() -> None:
 
 
 @pytest.mark.anyio
+async def test_xai_oauth_device_code_screen_shows_user_code() -> None:
+    provider = builtin_provider_entry("xai")
+    assert provider is not None
+
+    async def fake_login(callbacks):
+        callbacks.on_device_code(
+            OAuthDeviceCodeInfo(
+                user_code="WXYZ-5678",
+                verification_uri="https://auth.x.ai/activate",
+            )
+        )
+        await asyncio.Event().wait()
+
+    screen = OAuthLoginScreen(provider, theme=TAU_DARK_THEME, login=fake_login)
+    copied: list[str] = []
+    app = _themed_app(screen)
+    app.copy_to_clipboard = copied.append  # type: ignore[method-assign]
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        help_text = str(screen.query_one("#login-help", Static).render())
+
+    assert copied == []
+    assert "WXYZ-5678" in help_text
+
+
+@pytest.mark.anyio
 async def test_oauth_screen_fits_a_short_terminal() -> None:
     """Growing for the URL must not push the paste field off a small screen."""
     height = 14

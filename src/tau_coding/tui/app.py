@@ -6218,14 +6218,18 @@ class TauTuiApp(App[None]):
             self._notify(NO_STORED_CREDENTIALS_MESSAGE, severity="warning")
             return
 
+        had_oauth = credential_store.get_oauth(entry.credential_name) is not None
         try:
             credential_store.delete(entry.credential_name)
-            self.session.reload_provider_settings()
         except Exception as exc:  # noqa: BLE001 - surface logout failures in the TUI
             self._notify(f"Could not log out: {exc}", severity="error")
             return
+        with suppress(ProviderConfigError, RuntimeError):
+            # openai-compatible OAuth providers rebuild with _api_key_from_provider.
+            # After deleting the stored grant that is expected; the credential is gone.
+            self.session.reload_provider_settings()
 
-        if entry.kind == "openai-codex":
+        if had_oauth or entry.kind == "openai-codex":
             self._notify(f"Logged out of {entry.display_name}.")
         else:
             self._notify(
