@@ -24,6 +24,8 @@ from tau_coding.thinking import normalize_thinking_level
 LOGIN_PROVIDER_ALIASES = {
     "anthropic-api": ("anthropic", "api-key"),
     "anthropic-subscription": ("anthropic", "subscription"),
+    "xai-api": ("xai", "api-key"),
+    "xai-subscription": ("xai", "subscription"),
 }
 
 
@@ -761,6 +763,8 @@ def _login_command(context: CommandContext) -> CommandResult:
         aliased_provider = LOGIN_PROVIDER_ALIASES.get(provider_name)
         if aliased_provider is not None:
             provider_name, login_method = aliased_provider
+        elif provider_name == "xai":
+            login_method = "subscription"
         else:
             login_method = None
         entry = builtin_provider_entry(provider_name)

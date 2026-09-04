@@ -21,7 +21,7 @@ command palette with **Ctrl+K**.
 | `/tools` | Browse active tools and open their full descriptions |
 | `/scoped-models` | Choose favorite models for the Ctrl+P / Shift+Ctrl+P quick-cycle |
 | `/theme [name]` | Show or set the TUI theme |
-| `/login [provider]` | Connect a built-in provider with OAuth or an API key; Anthropic uses `anthropic-subscription` or `anthropic-api` |
+| `/login [provider]` | Connect a built-in provider with OAuth or an API key; Anthropic uses `anthropic-subscription` or `anthropic-api`; xAI uses `xai`/`xai-subscription` or `xai-api` |
 | `/local` | Choose and manage a registered local backend; interactive-only. Compatible llama.cpp routers add explicit load/unload, Hugging Face GGUF search, and server-side download actions with confirmation and reconciliation. |
 | `/logout [provider]` | Remove saved credentials for a provider |
 | `/reload` | Reload local skills, prompts, extensions, and project context |

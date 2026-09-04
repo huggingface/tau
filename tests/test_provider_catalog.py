@@ -267,6 +267,8 @@ def test_builtin_catalog_oauth_and_opencode_auth_methods() -> None:
     assert copilot is not None and copilot.auth_methods == ("oauth",)
     assert opencode_go is not None and opencode_go.auth_methods == ("api_key",)
     assert opencode is not None and opencode.auth_methods == ("api_key",)
+    xai = builtin_provider_entry("xai")
+    assert xai is not None and xai.auth_methods == ("api_key", "oauth")
     assert opencode_go.api_key_env == "OPENCODE_API_KEY"
     assert opencode.api_key_env == "OPENCODE_API_KEY"
 

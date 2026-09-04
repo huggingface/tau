@@ -889,6 +889,7 @@ kind = "openai-compatible"
 base_url = "https://api.x.ai/v1"
 api_key_env = "XAI_API_KEY"
 credential_name = "xai"
+auth_methods = ["api_key", "oauth"]
 models = ["grok-3", "grok-3-fast", "grok-4.20-0309-non-reasoning", "grok-4.20-0309-reasoning", "grok-4.3", "grok-build-0.1", "grok-code-fast-1"]
 default_model = "grok-4.20-0309-reasoning"
 docs_url = "https://docs.x.ai"
