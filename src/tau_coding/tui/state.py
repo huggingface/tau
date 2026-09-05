@@ -93,7 +93,7 @@ class TuiState:
     assistant_buffer: str = ""
     running: bool = False
     error: str | None = None
-    tool_display: ToolDisplayMode = "calls"
+    tool_display: ToolDisplayMode = "summary"
     show_thinking: bool = False
     queued_steering: tuple[str, ...] = ()
     queued_follow_up: tuple[str, ...] = ()

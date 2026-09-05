@@ -7,7 +7,9 @@ a third, most-compact display mode and turns `Ctrl+O` into a three-way cycle.
 
 ## What changed
 
-`Ctrl+O` now cycles through three modes, announced in a toast:
+`Ctrl+O` now cycles through three modes, announced in a toast. **Summary is
+the default**; the preference is per-session display state, not persisted
+settings.
 
 1. **Summary** — while the agent works, tool rows render as live compact call
    lines so progress stays visible; when the turn settles, each contiguous burst
@@ -20,8 +22,7 @@ a third, most-compact display mode and turns `Ctrl+O` into a three-way cycle.
    loads interleaved with a summarized burst are swallowed into its summary line
    (skill loads count toward the call total); standalone thinking and
    user-invoked skill rows stay under their own controls.
-2. **Calls** — the previous default: compact per-call lines and batch groups
-   without result contents.
+2. **Calls** — compact per-call lines and batch groups without result contents.
 3. **Expanded** — call lines plus exact commands and result previews.
 
 Cycling is global; every burst in the visible transcript collapses together.

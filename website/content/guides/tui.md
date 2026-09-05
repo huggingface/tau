@@ -193,8 +193,8 @@ and result.
    user-invoked skill rows stay under their own controls. Restored sessions
    without timing data show the call count only. Terminal `!` commands and
    extension-rendered tool cards never collapse.
-2. **Calls** — the default: one compact line per tool call or grouped file
-   batch, without result contents.
+2. **Calls** — one compact line per tool call or grouped file batch, without
+   result contents.
 3. **Expanded** — call lines plus exact commands and result previews.
 
 Each burst of tool calls becomes a summary line independently, so assistant text

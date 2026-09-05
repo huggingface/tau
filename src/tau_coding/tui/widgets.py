@@ -749,7 +749,7 @@ class TranscriptView(VerticalScroll):
         self._item_widgets: dict[
             int, TranscriptMessageWidget | StreamingTranscriptMessageWidget
         ] = {}
-        self._tool_display: ToolDisplayMode = "calls"
+        self._tool_display: ToolDisplayMode = "summary"
         # Widgets that summarize a collapsed run of tool rows, keyed by widget
         # id, mapped to the transcript items the run replaces.
         self._summary_members: dict[int, list[ChatItem]] = {}
