@@ -53,6 +53,7 @@ from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_ret
 from tau_ai.stream import canonicalize_provider_stream
 
 DEFAULT_OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api"
+DEFAULT_OPENAI_CODEX_CLIENT_VERSION = "0.153.4"
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +65,7 @@ class OpenAICodexCredentials:
 
 
 type OpenAICodexCredentialResolver = Callable[[], Awaitable[OpenAICodexCredentials]]
+type OpenAICodexClientVersionResolver = Callable[[], Awaitable[str]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,9 +83,11 @@ class OpenAICodexConfig:
     reasoning_summary: str = "auto"
     supports_images: bool = False
     provider_name: str = "OpenAI Codex"
-    # The Codex catalog filters models by the official client's compatibility
-    # version. This is the oldest known version that advertises GPT-5.6.
-    client_version: str = "0.144.3"
+    # The endpoint requires an official Codex compatibility version and filters
+    # newer models from older clients. Tau resolves the latest release at runtime;
+    # this bundled value remains the offline/error fallback.
+    client_version: str = DEFAULT_OPENAI_CODEX_CLIENT_VERSION
+    client_version_resolver: OpenAICodexClientVersionResolver | None = None
     model_catalog_timeout_seconds: float = 5.0
 
 
@@ -138,9 +142,14 @@ class OpenAICodexProvider:
         )
         headers["accept"] = "application/json"
         headers.pop("content-type", None)
+        client_version = (
+            await self._config.client_version_resolver()
+            if self._config.client_version_resolver is not None
+            else self._config.client_version
+        )
         response = await client.get(
             _resolve_codex_models_url(self._config.base_url),
-            params={"client_version": self._config.client_version},
+            params={"client_version": client_version},
             headers=headers,
             timeout=self._config.model_catalog_timeout_seconds,
         )

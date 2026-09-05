@@ -104,11 +104,15 @@ GPT-5.6 Sol API advertises a 1.05M-token window, while Codex has advertised
 substantially smaller limits through its authenticated model catalog.
 
 Tau queries that catalog when a Codex session starts and whenever `/model`
-refreshes. The authenticated result replaces the Codex model picker inventory
-for the current process, so newly enabled models appear without a Tau release
-and unavailable models are not copied from the separate public API catalog. Tau
-also uses reported context windows, compaction thresholds, input modalities, and
-reasoning efforts when present.
+refreshes. Since OpenAI filters the response by official-client version, Tau
+resolves the current stable `@openai/codex` release from the npm registry and
+caches that safe, non-secret version for four hours at
+`~/.tau/codex-version-store.json`. Failed lookups use the stale cached version or
+Tau's bundled fallback. The authenticated result replaces the Codex model picker
+inventory for the current process, so newly enabled and newly client-gated models
+appear without a Tau release. Models unavailable to the account are not copied
+from the separate public API catalog. Tau also uses reported context windows,
+compaction thresholds, input modalities, and reasoning efforts when present.
 
 If discovery is unavailable or invalid, Tau retains the checked-in Codex model
 list and its conservative Codex-specific limits; it does not reuse the public

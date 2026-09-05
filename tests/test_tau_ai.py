@@ -1400,6 +1400,46 @@ async def test_openai_codex_provider_discovers_and_caches_live_model_catalog() -
 
 
 @pytest.mark.anyio
+async def test_openai_codex_provider_uses_resolved_latest_client_version() -> None:
+    requests: list[httpx.Request] = []
+    version_calls = 0
+
+    async def credentials() -> OpenAICodexCredentials:
+        return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
+
+    async def client_version() -> str:
+        nonlocal version_calls
+        version_calls += 1
+        return "0.153.4"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"models": [{"slug": "new-model", "visibility": "list"}]},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICodexProvider(
+            OpenAICodexConfig(
+                credential_resolver=credentials,
+                base_url="https://chatgpt.test/backend-api",
+                client_version="0.144.3",
+                client_version_resolver=client_version,
+            ),
+            client=client,
+        )
+        catalog = await provider.discover_models()
+        await provider.discover_model_limits("new-model")
+
+    assert [model.id for model in catalog.models] == ["new-model"]
+    assert version_calls == 1
+    assert str(requests[0].url) == (
+        "https://chatgpt.test/backend-api/codex/models?client_version=0.153.4"
+    )
+
+
+@pytest.mark.anyio
 async def test_openai_codex_provider_includes_http_error_detail_in_message() -> None:
     async def credentials() -> OpenAICodexCredentials:
         return OpenAICodexCredentials(access_token="access-token", account_id="account-1")

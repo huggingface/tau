@@ -3863,7 +3863,10 @@ async def test_session_uses_live_provider_limits_for_compaction_threshold(
 
 
 @pytest.mark.anyio
-async def test_session_publishes_authenticated_codex_model_inventory(tmp_path: Path) -> None:
+async def test_session_publishes_authenticated_codex_model_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     tau_paths = TauPaths(home=tmp_path / ".tau")
     FileCredentialStore(tau_paths.home / "credentials.json").set_oauth(
         "openai-codex",
@@ -3926,6 +3929,20 @@ async def test_session_publishes_authenticated_codex_model_inventory(tmp_path: P
     assert live.model_metadata["astra"].name == "Astra"
     assert live.model_metadata["astra"].input == ("text", "image")
     assert provider_thinking_levels(live, model="astra") == ("low", "high")
+
+    refreshed = ModelCatalogFakeProvider(
+        [],
+        catalog=RuntimeModelCatalog((RuntimeModel(id="nova", name="Nova"),)),
+    )
+    monkeypatch.setattr(
+        coding_session_module, "create_model_provider", lambda *args, **kwargs: refreshed
+    )
+    await session._refresh_codex_model_catalog()
+
+    assert session.available_models == ("nova",)
+    assert provider.catalog_calls == 1
+    assert refreshed.catalog_calls == 1
+    assert refreshed.closed is True
 
 
 @pytest.mark.anyio

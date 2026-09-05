@@ -11,7 +11,13 @@ account but remain unselectable until Tau released a static catalog update.
 
 `tau_ai` now exposes an optional `ModelCatalogProvider` capability. The Codex
 adapter implements it and defensively parses rows that the official schema
-marks with `visibility = "list"`. It intentionally does not filter on
+marks with `visibility = "list"`. Before discovery, `tau_coding` resolves the
+current stable `@openai/codex` version from npm because the backend suppresses
+models newer than the supplied `client_version`. The safe version string is
+cached for four hours with ETag revalidation; stale cache and the bundled known
+version are fallbacks, so newly client-gated models need no Tau release.
+
+The adapter intentionally does not filter on
 `supported_in_api`: the official client applies that field to API-key mode but
 keeps subscription-visible rows in ChatGPT mode. Tau preserves provider priority
 order and reads verified names, text/image modalities,
@@ -36,7 +42,8 @@ the fallback. `TAU_OFFLINE=1` skips authenticated discovery.
 A live inventory is authoritative for picker visibility after successful
 discovery. The active session model is not silently changed when absent from a
 new snapshot. Scoped references may store only their provider/model pair; they
-do not persist discovered metadata.
+do not persist discovered metadata. `~/.tau/codex-version-store.json` contains
+only public npm release metadata, never account-specific model data or secrets.
 
 This preserves Tau's package boundary: `tau_ai` owns authenticated transport and
 wire parsing, while `tau_coding` owns model selection and the ephemeral catalog
@@ -46,6 +53,7 @@ overlay. `tau_agent` remains independent of provider catalogs and OAuth.
 
 Automated tests cover:
 
+- latest stable Codex-version lookup, validation, ETag caching, and fallbacks;
 - authenticated catalog parsing and one-request caching with runtime limits;
 - filtering hidden rows while retaining subscription-visible, non-public-API rows;
 - live names, modalities, reasoning levels, and context limits;

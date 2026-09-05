@@ -2318,34 +2318,27 @@ class CodingSession:
         if not self._provider_is_usable(provider_config):
             return
 
-        active_provider = self._harness.config.provider
-        catalog_provider: ModelCatalogProvider
-        temporary_provider: ClosableModelProvider | None = None
-        if self.provider_name == provider_config.name and isinstance(
-            active_provider, ModelCatalogProvider
-        ):
-            catalog_provider = active_provider
-        else:
-            temporary_provider = create_model_provider(
-                provider_config,
-                credential_store=self._credential_store,
-                model=None,
-                thinking_level=None,
-            )
-            if not isinstance(temporary_provider, ModelCatalogProvider):
-                await temporary_provider.aclose()
-                return
-            catalog_provider = temporary_provider
+        # Use a fresh provider even when Codex is active. The active provider caches
+        # its startup snapshot so reusing it would make `/model` unable to discover
+        # versions or models released during a long-running Tau process.
+        temporary_provider = create_model_provider(
+            provider_config,
+            credential_store=self._credential_store,
+            model=None,
+            thinking_level=None,
+        )
+        if not isinstance(temporary_provider, ModelCatalogProvider):
+            await temporary_provider.aclose()
+            return
         try:
-            catalog = await catalog_provider.discover_models()
+            catalog = await temporary_provider.discover_models()
             self._publish_runtime_model_catalog(provider_config.name, catalog)
         except Exception as exc:  # noqa: BLE001 - static catalog remains the safe fallback
             self._model_catalog_discovery_errors[provider_config.name] = (
                 f"{type(exc).__name__}: {exc}"
             )
         finally:
-            if temporary_provider is not None:
-                await temporary_provider.aclose()
+            await temporary_provider.aclose()
 
     def _publish_runtime_model_catalog(
         self,

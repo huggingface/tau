@@ -119,13 +119,20 @@ NVIDIA directly and transforms them locally.
 
 The `openai-codex` provider is different: its inventory is account-specific.
 When Codex OAuth is configured, Tau fetches the authenticated Codex `/models`
-catalog at session startup and whenever `/model` refreshes. A successful live
-snapshot replaces the checked-in Codex inventory for that process and supplies
-model names, input modalities, reasoning efforts, and runtime limits. The
-snapshot is memory-only and never enters `catalog.toml`, `providers.json`, or
-the models.dev cache. Missing credentials, malformed data, or network failures
-retain the static Codex fallback. `TAU_OFFLINE=1` disables all catalog network
-access.
+catalog at session startup and whenever `/model` refreshes. Because that endpoint
+filters models by official-client version, Tau first resolves the current stable
+`@openai/codex` release from the npm registry. The version lookup is
+ETag-revalidated, throttled to four hours, and cached at
+`~/.tau/codex-version-store.json`; a stale cached or bundled version is the
+non-fatal fallback. This lets newly gated models appear without a Tau release.
+
+A successful live snapshot replaces the checked-in Codex inventory for that
+process and supplies model names, input modalities, reasoning efforts, and
+runtime limits. The account-specific snapshot is memory-only and never enters
+`catalog.toml`, `providers.json`, or either model cache. Missing credentials,
+malformed data, or network failures retain the static Codex fallback.
+`TAU_OFFLINE=1` disables all catalog network access and permits only the cached
+or bundled client version.
 
 Startup never requires network. Missing, invalid, or incompatible generated or
 cached data falls back silently to `catalog.toml`. User `~/.tau/catalog.toml`
