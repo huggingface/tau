@@ -3946,6 +3946,128 @@ async def test_session_publishes_authenticated_codex_model_inventory(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("resume", [False, True])
+@pytest.mark.parametrize("preconstructed", [False, True])
+async def test_codex_live_only_model_is_discovered_before_startup_validation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, resume: bool, preconstructed: bool
+) -> None:
+    monkeypatch.delenv("TAU_OFFLINE", raising=False)
+    static = OpenAICodexProviderConfig(models=("static-model",), default_model="static-model")
+    settings = ProviderSettings(default_provider="openai-codex", providers=(static,))
+    providers: list[ModelCatalogFakeProvider] = []
+    initial_provider = ModelCatalogFakeProvider([], catalog=RuntimeModelCatalog(()))
+
+    def create(*args: object, **kwargs: object) -> ModelCatalogFakeProvider:
+        provider = ModelCatalogFakeProvider(
+            [], catalog=RuntimeModelCatalog((RuntimeModel(id="live-model"),))
+        )
+        providers.append(provider)
+        return provider
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create)
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    if resume:
+        info = SessionInfoEntry(cwd=str(tmp_path))
+        await storage.append(info)
+        await storage.append(
+            ModelChangeEntry(parent_id=info.id, provider="openai-codex", model="live-model")
+        )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=initial_provider if preconstructed else None,
+            owns_initial_provider=preconstructed,
+            runtime_provider_config=static if preconstructed else None,
+            model="static-model" if resume else "live-model",
+            requested_provider=None if resume else "openai-codex",
+            requested_model=None if resume else "live-model",
+            provider_name="openai-codex",
+            provider_settings=settings,
+            system="Test",
+            cwd=tmp_path,
+            storage=storage,
+            extensions_enabled=False,
+        )
+    )
+    try:
+        assert session.model == "live-model"
+        assert session._durable_provider_settings == settings
+        assert providers[0].closed
+        assert initial_provider.closed is preconstructed
+        assert session._active_provider_config() is not None
+        assert "live-model" in session._active_provider_config().models
+    finally:
+        await session.aclose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("offline", [False, True])
+async def test_codex_unknown_startup_model_is_not_silently_substituted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, offline: bool
+) -> None:
+    if offline:
+        monkeypatch.setenv("TAU_OFFLINE", "1")
+    else:
+        monkeypatch.delenv("TAU_OFFLINE", raising=False)
+    discovery = ModelCatalogFakeProvider([], catalog=RuntimeModelCatalog(()))
+    monkeypatch.setattr(coding_session_module, "create_model_provider", lambda *a, **k: discovery)
+    static = OpenAICodexProviderConfig(models=("static-model",), default_model="static-model")
+    with pytest.raises(ProviderConfigError, match="live-model"):
+        await CodingSession.load(
+            CodingSessionConfig(
+                provider=None,
+                model="live-model",
+                requested_provider="openai-codex",
+                requested_model="live-model",
+                provider_name="openai-codex",
+                provider_settings=ProviderSettings(
+                    default_provider="openai-codex", providers=(static,)
+                ),
+                system="Test",
+                cwd=tmp_path,
+                storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+                extensions_enabled=False,
+            )
+        )
+    assert discovery.catalog_calls == (0 if offline else 1)
+    assert discovery.closed is not offline
+
+
+@pytest.mark.anyio
+async def test_codex_missing_active_model_survives_settings_refresh(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    static = OpenAICodexProviderConfig(models=("static-model",), default_model="static-model")
+    settings = ProviderSettings(default_provider="openai-codex", providers=(static,))
+    provider = ModelCatalogFakeProvider(
+        [], catalog=RuntimeModelCatalog((RuntimeModel(id="live-model"),))
+    )
+    monkeypatch.setattr(coding_session_module, "create_model_provider", lambda *a, **k: provider)
+    monkeypatch.setattr(coding_session_module, "load_provider_settings", lambda *a: settings)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="static-model",
+            provider_name="openai-codex",
+            provider_settings=settings,
+            runtime_provider_config=static,
+            system="Test",
+            cwd=tmp_path,
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            extensions_enabled=False,
+        )
+    )
+    try:
+        assert session.provider_config("openai-codex").models == ("live-model",)
+        session.reload_provider_settings()
+        session.reload_provider_settings()
+        assert session.model == "static-model"
+        assert session._active_provider_config() == static
+        assert session.provider_config("openai-codex").models == ("live-model",)
+    finally:
+        await session.aclose()
+
+
+@pytest.mark.anyio
 async def test_session_skips_codex_catalog_discovery_offline(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

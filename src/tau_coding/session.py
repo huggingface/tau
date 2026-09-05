@@ -581,13 +581,30 @@ class CodingSession:
                 include_user_dir=False,
             )
 
-        if config.provider is None:
+        selected_provider_name = (
+            config.requested_provider or state.provider or config.session_provider_name
+        )
+        selected_model = config.requested_model or state.model
+        rediscover_codex = False
+        if selected_provider_name == "openai-codex" and config.provider_settings is not None:
+            selected_config = config.provider_settings.get_provider(selected_provider_name)
+            rediscover_codex = (
+                isinstance(selected_config, OpenAICodexProviderConfig)
+                and selected_model not in selected_config.models
+            )
+        if config.provider is None or rediscover_codex:
             prepared = await _prepare_provider_selection(
                 config,
                 state=state,
                 provider_registry=extension_runtime.provider_registry,
                 credential_store=credential_store,
             )
+            if config.provider is not None and config.owns_initial_provider:
+                try:
+                    await config.provider.aclose()  # type: ignore[attr-defined]
+                except BaseException:
+                    await prepared.provider.aclose()
+                    raise
             config = replace(
                 config,
                 provider=prepared.provider,
@@ -1767,9 +1784,20 @@ class CodingSession:
         if self._provider_settings is None:
             return None
         try:
-            return self._provider_settings.get_provider(self._provider_name)
+            provider = self._provider_settings.get_provider(self._provider_name)
         except ProviderConfigError:
             return None
+        runtime = self._runtime_provider_config
+        if (
+            isinstance(provider, OpenAICodexProviderConfig)
+            and self.model not in provider.models
+            and runtime is not None
+            and runtime.name == provider.name
+            and self.model in runtime.models
+        ):
+            # Picker visibility must not invalidate an already selected runtime.
+            return runtime
+        return provider
 
     def _apply_thinking_level_override(self) -> None:
         """Apply the one-shot startup thinking override to the loaded session.
@@ -2432,7 +2460,15 @@ class CodingSession:
                         dynamic_resume = True
                         runtime_provider_config = None
                     else:
-                        validate_provider_model(runtime_provider_config, model)
+                        if (
+                            isinstance(runtime_provider_config, OpenAICodexProviderConfig)
+                            and model not in runtime_provider_config.models
+                        ):
+                            # Re-discover a live-only destination model before validation.
+                            dynamic_resume = True
+                            runtime_provider_config = None
+                        else:
+                            validate_provider_model(runtime_provider_config, model)
 
         replacement = await type(self).load(
             CodingSessionConfig(
@@ -4097,10 +4133,43 @@ async def _prepare_provider_selection(
             f"Provider is not available after trusted extension loading: "
             f"{provider_name or config.model}"
         )
+    selected_model = requested_model or (state.model if state.provider == provider_name else None)
+    selected_provider = settings.get_provider(provider_name or settings.default_provider)
+    if (
+        isinstance(selected_provider, OpenAICodexProviderConfig)
+        and selected_model is not None
+        and selected_model not in selected_provider.models
+        and environ.get("TAU_OFFLINE") is None
+    ):
+        # Live-only explicit/resumed models need discovery before static validation.
+        discovery_provider = None
+        try:
+            discovery_provider = create_model_provider(
+                selected_provider,
+                credential_store=credential_store,
+                model=None,
+                thinking_level=None,
+            )
+            if isinstance(discovery_provider, ModelCatalogProvider):
+                catalog = await discovery_provider.discover_models()
+                if catalog.models:
+                    live_provider = _provider_with_runtime_model_catalog(selected_provider, catalog)
+                    settings = replace(
+                        settings,
+                        providers=tuple(
+                            live_provider if item.name == selected_provider.name else item
+                            for item in settings.providers
+                        ),
+                    )
+        except Exception:  # noqa: BLE001 - retain ordinary static validation on failure
+            pass
+        finally:
+            if discovery_provider is not None:
+                await discovery_provider.aclose()
     selection = resolve_provider_selection(
         settings,
         provider_name=provider_name,
-        model=(requested_model or (state.model if state.provider == provider_name else None)),
+        model=selected_model,
     )
     inference_provider = _session_inference_provider(
         config,
@@ -4248,6 +4317,11 @@ def _provider_config_for_name(
     config: CodingSessionConfig,
     provider_name: str,
 ) -> ProviderConfig | None:
+    if (
+        isinstance(config.runtime_provider_config, OpenAICodexProviderConfig)
+        and config.runtime_provider_config.name == provider_name
+    ):
+        return config.runtime_provider_config
     if config.provider_settings is not None:
         try:
             return config.provider_settings.get_provider(provider_name)

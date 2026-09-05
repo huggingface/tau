@@ -134,7 +134,13 @@ malformed data, or network failures retain the static Codex fallback.
 `TAU_OFFLINE=1` disables all catalog network access and permits only the cached
 or bundled client version.
 
-Startup never requires network. Missing, invalid, or incompatible generated or
+Explicit startup and resume of a Codex model absent from the static catalog
+perform authenticated discovery before model validation. Such live-only selections
+require successful discovery; offline startup still supports static models.
+If a refreshed inventory omits the active model, its existing runtime metadata
+remains usable without restoring that model to the picker.
+
+Static-model startup never requires network. Missing, invalid, or incompatible generated or
 cached data falls back silently to `catalog.toml`. User `~/.tau/catalog.toml`
 overlays are applied last. When withdrawing one provider's model, add it to that
 provider's `removed_models` list so stale user overlays cannot restore it.

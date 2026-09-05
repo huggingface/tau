@@ -49,6 +49,21 @@ This preserves Tau's package boundary: `tau_ai` owns authenticated transport and
 wire parsing, while `tau_coding` owns model selection and the ephemeral catalog
 overlay. `tau_agent` remains independent of provider catalogs and OAuth.
 
+## Lifecycle validation
+
+Explicit startup and transcript resume now discover live-only Codex IDs before
+static selection validation, including when a frontend supplied a fallback
+provider. Discovery uses a temporary, closed provider and never mutates durable
+settings. Failed/offline discovery leaves unknown IDs rejected, rather than
+silently substituting a static model. RPC startup also defers live-only validation
+to this session boundary.
+
+Picker visibility is separate from active-runtime validity: when discovery drops
+the active model, runtime rebuilds retain its previously selected Codex metadata.
+Repeated settings refresh therefore cannot invalidate an otherwise usable session.
+Regression tests cover explicit/resumed startup with and without preconstructed
+providers and repeated settings reload after the active model disappears.
+
 ## Validation
 
 Automated tests cover:
@@ -68,5 +83,6 @@ Manual validation:
 3. Wait for background refresh and confirm it updates to models visible to the
    authenticated account.
 4. Select a live-only model and send a tool-using prompt.
-5. Run `/session` and confirm live context-limit reporting.
-6. Repeat with `TAU_OFFLINE=1` and confirm the static list remains available.
+5. Restart and resume that session; confirm the exact live-only model is retained.
+6. Run `/session` and confirm live context-limit reporting.
+7. Repeat with `TAU_OFFLINE=1` and confirm the static list remains available.

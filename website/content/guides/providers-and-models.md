@@ -121,6 +121,11 @@ came from the live provider catalog or Tau's configured fallback. Live snapshots
 are account-specific and memory-only; Tau does not write them to `catalog.toml`,
 `providers.json`, or its models.dev cache.
 
+Starting or resuming a live-only Codex model discovers the account inventory
+before validating the selection. This requires successful discovery; offline
+startup remains available for static models. If a later refresh omits the active
+model, Tau preserves its runtime metadata without adding it back to the picker.
+
 Live limits can vary by account or rollout and may change independently of Tau.
 A discovery failure is non-fatal: Tau reports it in `/session` and continues with
 the fallback. Direct OpenAI API sessions retain the context limits documented on
