@@ -125,6 +125,9 @@ Starting or resuming a live-only Codex model discovers the account inventory
 before validating the selection. This requires successful discovery; offline
 startup remains available for static models. If a later refresh omits the active
 model, Tau preserves its runtime metadata without adding it back to the picker.
+Resume restores the transcript's saved model selection. If an older session
+restores a stale selection, resume it and explicitly choose the intended model
+in `/model` once to record the correction.
 
 Live limits can vary by account or rollout and may change independently of Tau.
 A discovery failure is non-fatal: Tau reports it in `/session` and continues with

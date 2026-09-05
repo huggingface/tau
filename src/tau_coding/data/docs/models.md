@@ -138,7 +138,10 @@ Explicit startup and resume of a Codex model absent from the static catalog
 perform authenticated discovery before model validation. Such live-only selections
 require successful discovery; offline startup still supports static models.
 If a refreshed inventory omits the active model, its existing runtime metadata
-remains usable without restoring that model to the picker.
+remains usable without restoring that model to the picker. Resume restores the
+transcript's model selection, not the model from the session being left. If an
+older session has a stale saved selection, resume it and explicitly select the
+intended model in `/model` to record the correction.
 
 Static-model startup never requires network. Missing, invalid, or incompatible generated or
 cached data falls back silently to `catalog.toml`. User `~/.tau/catalog.toml`

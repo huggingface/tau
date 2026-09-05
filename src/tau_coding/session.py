@@ -625,6 +625,9 @@ class CodingSession:
                     else entry
                     for entry in pending_initial_entries
                 )
+                # Initial fallback metadata was created before live discovery.
+                # Replay the corrected entries so runtime and durable selection agree.
+                state = SessionState.from_entries(list(pending_initial_entries))
         assert config.provider is not None
         active_model = _runtime_model_for_state(config, state)
         image_support = ImageSupportState(
@@ -2511,9 +2514,10 @@ class CodingSession:
             )
         )
         try:
-            if restore_record_model and runtime_provider_config is not None:
-                validate_provider_model(runtime_provider_config, replacement.model)
-            else:
+            if not restore_record_model:
+                # Only provider-less legacy records inherit the source model.
+                # The staged loader has already resolved provider-aware records
+                # against the destination's (possibly freshly discovered) catalog.
                 replacement._harness.config.model = self.model
                 replacement._sync_thinking_level_to_active_model()
                 replacement._refresh_runtime_provider()

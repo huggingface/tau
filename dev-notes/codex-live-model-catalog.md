@@ -64,6 +64,19 @@ Repeated settings refresh therefore cannot invalidate an otherwise usable sessio
 Regression tests cover explicit/resumed startup with and without preconstructed
 providers and repeated settings reload after the active model disappears.
 
+A follow-up exercises full TUI startup, picker highlighting, and indexed `/resume`,
+including a source session that has not discovered Astra and a stale session
+index. Provider-aware replacement keeps the destination loader's resolved model;
+it neither restores the source session's model nor revalidates against the
+source's stale catalog. Newly staged model metadata is replayed after discovery
+so the active runtime and initial transcript agree.
+
+Older sessions may already contain a mismatch: the index and assistant metadata
+name Astra but the authoritative model-change entry still names Sol. No automatic
+migration guesses a selection from assistant metadata (providers can report
+routed model aliases). Resume and explicitly select Astra in `/model` to append
+the correct model-change entry.
+
 ## Validation
 
 Automated tests cover:
