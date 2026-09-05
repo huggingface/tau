@@ -115,8 +115,17 @@ immediately and refreshes in the background. `tau update --models` forces a
 refresh. Results are ETag-revalidated, throttled to four hours, and cached at
 `~/.tau/models-store.json`; a cache applies only when newer than the bundled
 snapshot. Since Tau has no hosted catalog service, it fetches models.dev and
-NVIDIA directly and transforms them locally. `TAU_OFFLINE=1` disables catalog
-network access.
+NVIDIA directly and transforms them locally.
+
+The `openai-codex` provider is different: its inventory is account-specific.
+When Codex OAuth is configured, Tau fetches the authenticated Codex `/models`
+catalog at session startup and whenever `/model` refreshes. A successful live
+snapshot replaces the checked-in Codex inventory for that process and supplies
+model names, input modalities, reasoning efforts, and runtime limits. The
+snapshot is memory-only and never enters `catalog.toml`, `providers.json`, or
+the models.dev cache. Missing credentials, malformed data, or network failures
+retain the static Codex fallback. `TAU_OFFLINE=1` disables all catalog network
+access.
 
 Startup never requires network. Missing, invalid, or incompatible generated or
 cached data falls back silently to `catalog.toml`. User `~/.tau/catalog.toml`

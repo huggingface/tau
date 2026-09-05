@@ -103,12 +103,19 @@ window through Codex OAuth than through an API key. For example, the public
 GPT-5.6 Sol API advertises a 1.05M-token window, while Codex has advertised
 substantially smaller limits through its authenticated model catalog.
 
-Tau queries that catalog when a Codex session starts and uses the returned
-context window and automatic-compaction threshold for the session. If discovery
-is unavailable, Tau falls back to conservative Codex-specific values from its
-built-in catalog; it does not reuse the public API limit. `/session` reports both
-the active value and whether it came from the live provider catalog or Tau's
-configured fallback.
+Tau queries that catalog when a Codex session starts and whenever `/model`
+refreshes. The authenticated result replaces the Codex model picker inventory
+for the current process, so newly enabled models appear without a Tau release
+and unavailable models are not copied from the separate public API catalog. Tau
+also uses reported context windows, compaction thresholds, input modalities, and
+reasoning efforts when present.
+
+If discovery is unavailable or invalid, Tau retains the checked-in Codex model
+list and its conservative Codex-specific limits; it does not reuse the public
+API inventory or limits. `/session` reports whether the active context value
+came from the live provider catalog or Tau's configured fallback. Live snapshots
+are account-specific and memory-only; Tau does not write them to `catalog.toml`,
+`providers.json`, or its models.dev cache.
 
 Live limits can vary by account or rollout and may change independently of Tau.
 A discovery failure is non-fatal: Tau reports it in `/session` and continues with

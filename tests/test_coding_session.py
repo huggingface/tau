@@ -37,13 +37,21 @@ from tau_agent.session import (
     SessionInfoEntry,
     ThinkingLevelChangeEntry,
 )
-from tau_ai import CancellationToken, FakeProvider, ModelProvider, RuntimeModelLimits
+from tau_ai import (
+    CancellationToken,
+    FakeProvider,
+    ModelProvider,
+    RuntimeModel,
+    RuntimeModelCatalog,
+    RuntimeModelLimits,
+)
 from tau_ai.events import AssistantMessageEvent
 from tau_coding import (
     CodingSession,
     CodingSessionConfig,
     FileCredentialStore,
     ModelChoice,
+    OAuthCredential,
     OpenAICodexProviderConfig,
     OpenAICompatibleProviderConfig,
     ProviderConfigError,
@@ -66,7 +74,7 @@ from tau_coding.extensions import (
 )
 from tau_coding.extensions.runtime import InputHookOutcome
 from tau_coding.prompt_templates import PromptTemplate
-from tau_coding.provider_config import ProviderModelMetadata
+from tau_coding.provider_config import ProviderModelMetadata, provider_thinking_levels
 from tau_coding.session import (
     _ordered_tree_entries,
     is_retryable_huggingface_route_error,
@@ -205,6 +213,27 @@ class ModelLimitsFakeProvider(FakeProvider):
         if self.error is not None:
             raise self.error
         return self.limits
+
+
+class ModelCatalogFakeProvider(ModelLimitsFakeProvider):
+    def __init__(
+        self,
+        scripts: list[list[AssistantMessageEvent]],
+        *,
+        catalog: RuntimeModelCatalog,
+        limits: RuntimeModelLimits | None = None,
+    ) -> None:
+        super().__init__(scripts, limits=limits)
+        self.catalog = catalog
+        self.catalog_calls = 0
+        self.closed = False
+
+    async def discover_models(self) -> RuntimeModelCatalog:
+        self.catalog_calls += 1
+        return self.catalog
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 class RaisingProvider:
@@ -3831,6 +3860,164 @@ async def test_session_uses_live_provider_limits_for_compaction_threshold(
     assert session.auto_compact_token_threshold == 334_800
     assert session.context_window_source == "provider live catalog"
     assert session.model_limits_discovery_error is None
+
+
+@pytest.mark.anyio
+async def test_session_publishes_authenticated_codex_model_inventory(tmp_path: Path) -> None:
+    tau_paths = TauPaths(home=tmp_path / ".tau")
+    FileCredentialStore(tau_paths.home / "credentials.json").set_oauth(
+        "openai-codex",
+        OAuthCredential(
+            access="access-token",
+            refresh="refresh-token",
+            expires=4_000_000_000,
+            account_id="account-1",
+        ),
+    )
+    limits = RuntimeModelLimits(context_window=500_000, max_output_tokens=100_000)
+    provider = ModelCatalogFakeProvider(
+        [],
+        catalog=RuntimeModelCatalog(
+            (
+                RuntimeModel(
+                    id="astra",
+                    name="Astra",
+                    limits=limits,
+                    input_modalities=("text", "image"),
+                    thinking_levels=("low", "high"),
+                    default_thinking_level="high",
+                ),
+            )
+        ),
+    )
+    settings = ProviderSettings(
+        default_provider="openai-codex",
+        providers=(
+            OpenAICodexProviderConfig(
+                models=("static-model",),
+                default_model="static-model",
+                context_windows={"static-model": 272_000},
+                thinking_levels=("off", "low", "medium", "high"),
+                thinking_models=("static-model",),
+                thinking_default="medium",
+                thinking_parameter="reasoning.effort",
+            ),
+        ),
+    )
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="static-model",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai-codex",
+            provider_settings=settings,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    assert provider.catalog_calls == 1
+    assert session.available_models == ("astra",)
+    live = session.provider_config("openai-codex")
+    assert live is not None
+    assert live.context_windows == {"astra": 500_000}
+    assert live.model_metadata["astra"].name == "Astra"
+    assert live.model_metadata["astra"].input == ("text", "image")
+    assert provider_thinking_levels(live, model="astra") == ("low", "high")
+
+
+@pytest.mark.anyio
+async def test_session_skips_codex_catalog_discovery_offline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("TAU_OFFLINE", "1")
+    provider = ModelCatalogFakeProvider(
+        [],
+        catalog=RuntimeModelCatalog((RuntimeModel(id="astra"),)),
+    )
+    settings = ProviderSettings(
+        default_provider="openai-codex",
+        providers=(
+            OpenAICodexProviderConfig(
+                models=("static-model",),
+                default_model="static-model",
+                context_windows={"static-model": 272_000},
+            ),
+        ),
+    )
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="static-model",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai-codex",
+            provider_settings=settings,
+        )
+    )
+
+    assert provider.catalog_calls == 0
+    assert provider.discovery_calls == []
+    assert session.context_window_tokens == 272_000
+    assert session.provider_config("openai-codex") == settings.providers[0]
+
+
+@pytest.mark.anyio
+async def test_session_discovers_codex_inventory_while_another_provider_is_active(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tau_paths = TauPaths(home=tmp_path / ".tau")
+    FileCredentialStore(tau_paths.home / "credentials.json").set_oauth(
+        "openai-codex",
+        OAuthCredential(
+            access="access-token",
+            refresh="refresh-token",
+            expires=4_000_000_000,
+            account_id="account-1",
+        ),
+    )
+    discovered = ModelCatalogFakeProvider(
+        [],
+        catalog=RuntimeModelCatalog((RuntimeModel(id="astra", name="Astra"),)),
+    )
+    monkeypatch.setattr(
+        coding_session_module, "create_model_provider", lambda *args, **kwargs: discovered
+    )
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                models=("local-model",),
+                default_model="local-model",
+            ),
+            OpenAICodexProviderConfig(models=("static-model",), default_model="static-model"),
+        ),
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="local-model",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="local",
+            provider_settings=settings,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    await session._refresh_codex_model_catalog()
+
+    assert ModelChoice("openai-codex", "astra") in session.available_model_choices
+    assert discovered.catalog_calls == 1
+    assert discovered.closed is True
 
 
 @pytest.mark.anyio
