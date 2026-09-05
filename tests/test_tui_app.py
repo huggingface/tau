@@ -5,6 +5,7 @@ from datetime import datetime
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from rich.console import Console
@@ -135,7 +136,7 @@ from tau_coding.tui.config import (
     tui_settings_path,
 )
 from tau_coding.tui.local_backends import LocalBackendScreen, LocalConfirmScreen
-from tau_coding.tui.state import ChatItem, TuiState
+from tau_coding.tui.state import ChatItem, ToolDisplayMode, TuiState, format_tool_run_summary
 from tau_coding.tui.terminal_notification import TerminalNotificationController
 from tau_coding.tui.terminal_title import TerminalTitleController
 from tau_coding.tui.widgets import (
@@ -158,6 +159,7 @@ from tau_coding.tui.widgets import (
     _styled_cwd,
     _syntax_language,
     _system_prompt_markdown,
+    _tool_run_summary_item,
     _transcript_plain_body_text,
     render_chat_item,
     render_compact_session_info,
@@ -1363,6 +1365,82 @@ def test_tui_state_indexes_tool_items_and_clears_index() -> None:
     assert state.find_tool_item("call-1") is None
 
 
+def test_state_cycles_tool_display_and_maps_show_tool_results() -> None:
+    state = TuiState()
+    assert state.tool_display == "summary"
+    assert state.show_tool_results is False
+
+    state.show_tool_results = True
+    assert state.tool_display == "expanded"
+    assert state.show_tool_results is True
+
+    assert state.cycle_tool_display() == "summary"
+    assert state.show_tool_results is False
+    assert state.cycle_tool_display() == "calls"
+    assert state.cycle_tool_display() == "expanded"
+    assert state.cycle_tool_display() == "summary"
+
+
+def test_tool_run_summary_reports_duration_count_and_failures() -> None:
+    start = 100.0
+    completed = ChatItem(
+        role="tool",
+        text="→ read a.py",
+        tool_name="read",
+        tool_result_text="✓ read",
+        started_at=start,
+        finished_at=start + 61,
+    )
+    failed = ChatItem(
+        role="tool",
+        text="→ bash true",
+        tool_name="bash",
+        tool_result_text="✗ bash",
+        started_at=start + 1,
+        finished_at=start + 62,
+    )
+    assert format_tool_run_summary([completed, failed]) == (
+        "→ Worked for 1m 2s · 2 tool calls · 1 failed"
+    )
+
+
+def test_tool_run_summary_running_shows_progress_line() -> None:
+    running = ChatItem(role="tool", text="→ bash", tool_name="bash", started_at=100.0)
+    assert format_tool_run_summary([running], now=105.0) == "→ Running… 0/1 tool call · 5s"
+
+    running.tool_result_text = "✓ bash"
+    running.finished_at = 130.0
+    assert format_tool_run_summary([running]) == "→ Worked for 30s · 1 tool call"
+
+
+def test_tool_run_summary_skips_subsecond_running_elapsed() -> None:
+    running = ChatItem(role="tool", text="→ bash", tool_name="bash", started_at=100.0)
+    assert format_tool_run_summary([running], now=100.2) == "→ Running… 0/1 tool call"
+
+
+def test_tool_run_summary_without_timing_falls_back_to_call_count() -> None:
+    item = ChatItem(role="tool", text="→ read a.py", tool_name="read", tool_result_text="✓ read")
+    assert format_tool_run_summary([item]) == "→ 1 tool call"
+
+
+def test_tool_run_summary_counts_batch_members() -> None:
+    rows = [
+        ChatItem(role="tool", text="→ read a.py", tool_name="read", tool_result_text="✓ read"),
+        ChatItem(role="tool", text="→ read b.py", tool_name="read", tool_result_text="✓ read"),
+    ]
+    head = ChatItem(role="tool", text="→ Read 2 files", tool_name="read", tool_batch_items=rows)
+    assert format_tool_run_summary([head]) == "→ 2 tool calls"
+
+
+def test_state_flags_custom_rendered_tools_as_uncollapsible() -> None:
+    state = TuiState()
+    item = ChatItem(role="tool", text="→ ext", tool_name="ext_tool", tool_arguments={})
+    assert state.has_custom_tool_rendering(item) is False
+
+    state.tool_call_renderer = lambda name, arguments: "card" if name == "ext_tool" else None
+    assert state.has_custom_tool_rendering(item) is True
+
+
 def test_tui_state_compacts_branch_summary_messages() -> None:
     state = tui_app.TuiState()
 
@@ -2088,6 +2166,15 @@ async def test_tool_execution_updates_render_in_place() -> None:
         assert "turn 2 done" not in tool_widgets[0].selection_text
 
 
+async def _set_tool_display_mode(app: TauTuiApp, mode: ToolDisplayMode, pilot: Any) -> None:
+    """Pin the tool display mode for tests exercising per-row rendering."""
+    app.state.tool_display = mode
+    transcript = app.query_one("#transcript", TranscriptView)
+    await transcript.set_tool_display(app.state, theme=app.tui_settings.resolved_theme)
+    # Let Textual finish the async removal of replaced widgets before queries.
+    await pilot.pause()
+
+
 @pytest.mark.anyio
 async def test_batched_reads_share_one_live_transcript_row() -> None:
     app = TauTuiApp(FakeSession())
@@ -2098,6 +2185,7 @@ async def test_batched_reads_share_one_live_transcript_row() -> None:
 
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
+        await _set_tool_display_mode(app, "calls", pilot)
         await stream(
             MessageEndEvent(
                 message=AssistantMessage(
@@ -2181,6 +2269,7 @@ async def test_mixed_tool_batch_uses_one_widget_and_expands_each_row() -> None:
     )
 
     async with app.run_test(size=(120, 30)) as pilot:
+        await _set_tool_display_mode(app, "calls", pilot)
         widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool")
         assert len([w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool"]) == 1
         assert widget.selection_text == (
@@ -2708,6 +2797,7 @@ async def test_tui_streaming_deltas_update_active_message_without_full_refresh()
 
     try:
         async with app.run_test(size=(120, 30)) as pilot:
+            await _set_tool_display_mode(app, "calls", pilot)
             await app._run_prompt("stream")
             await pilot.pause()
 
@@ -4456,6 +4546,7 @@ async def test_tool_result_renders_via_render_result() -> None:
 
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
+        await _set_tool_display_mode(app, "calls", pilot)
         await stream(
             ToolExecutionStartEvent(
                 tool_call_id="call-1",
@@ -5409,6 +5500,7 @@ async def test_structured_assistant_finalization_preserves_existing_widget_ident
 
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
+        await _set_tool_display_mode(app, "calls", pilot)
         custom_widget = next(
             widget for widget in app.query(TranscriptMessageWidget) if widget.item.role == "custom"
         )
@@ -5446,6 +5538,7 @@ async def test_structured_assistant_ignores_empty_final_content_blocks() -> None
     app = TauTuiApp(session)
 
     async with app.run_test(size=(120, 30)) as pilot:
+        await _set_tool_display_mode(app, "calls", pilot)
         await app._run_prompt("run")
         await pilot.pause()
 
@@ -7904,14 +7997,344 @@ async def test_tui_app_toggles_tool_results_from_keybinding() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
+        assert app.state.tool_display == "summary"
         assert app.state.show_tool_results is False
         await pilot.press("ctrl+o")
         await pilot.pause()
+        assert app.state.tool_display == "calls"
+        assert app.state.show_tool_results is False
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        assert app.state.tool_display == "expanded"
         assert app.state.show_tool_results is True
         await pilot.press("ctrl+o")
         await pilot.pause()
+        assert app.state.tool_display == "summary"
 
     assert app.state.show_tool_results is False
+
+
+@pytest.mark.anyio
+async def test_tool_display_cycle_collapses_tool_runs_into_summaries() -> None:
+    app = TauTuiApp(
+        FakeSession(
+            messages=[
+                AssistantMessage(
+                    content=[
+                        ToolCall(
+                            id="call-1",
+                            name="bash",
+                            arguments={"command": "seq 3", "description": "Counting"},
+                        )
+                    ]
+                ),
+                ToolResultMessage(tool_call_id="call-1", tool_name="bash", content="1\n2\n3"),
+                AssistantMessage(
+                    content=[
+                        ToolCall(
+                            id="call-2",
+                            name="bash",
+                            arguments={"command": "seq 5", "description": "Counting more"},
+                        )
+                    ]
+                ),
+                ToolResultMessage(tool_call_id="call-2", tool_name="bash", content="1\n2\n3\n4\n5"),
+            ]
+        )
+    )
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        # The default mode is summary; the restored view starts collapsed.
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("2 tool calls" in text for text in texts)
+        assert not any("Counting" in text for text in texts)
+
+        # Cycling to calls restores the rows.
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        assert app.state.tool_display == "calls"
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("Counting" in text for text in texts)
+        assert not any("tool calls" in text for text in texts)
+
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        assert app.state.tool_display == "summary"
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("2 tool calls" in text for text in texts)
+        assert not any("Counting" in text for text in texts)
+
+
+def test_tool_run_summary_item_renders_in_status_color() -> None:
+    ok = _tool_run_summary_item(
+        [ChatItem(role="tool", text="→ read a.py", tool_name="read", tool_result_text="✓ read")]
+    )
+    assert ok.tool_run_summary is True
+    assert ok.tool_result_text == "✓"
+    rendered = _transcript_plain_body_text(ok, text=ok.text, body_style="", theme=TAU_DARK_THEME)
+    assert isinstance(rendered, Text)
+    assert rendered.style == TAU_DARK_THEME.tool_success_text
+
+    failed = _tool_run_summary_item(
+        [ChatItem(role="tool", text="→ bash", tool_name="bash", tool_result_text="✗ bash")]
+    )
+    assert failed.tool_result_text == "✗"
+    rendered = _transcript_plain_body_text(
+        failed, text=failed.text, body_style="", theme=TAU_DARK_THEME
+    )
+    assert isinstance(rendered, Text)
+    assert rendered.style == TAU_DARK_THEME.tool_error_text
+
+    pending = _tool_run_summary_item([ChatItem(role="tool", text="→ bash", tool_name="bash")])
+    assert pending.tool_result_text == "…"
+
+
+@pytest.mark.anyio
+async def test_summary_mode_swallows_skill_loads_into_run_summaries() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        state = app.state
+        state.add_item("skill", "Using skill: delivery")
+        state.add_item("skill", "Loading skill: explore", tool_call_id="call-skill")
+        state.record_tool_result("call-skill", "read", AgentToolResult(content="skill"), False)
+        state.add_tool_call(ToolCall(id="call-1", name="read", arguments={"path": "a.py"}))
+        state.record_tool_result("call-1", "read", AgentToolResult(content="one"), False)
+        state.add_tool_call(ToolCall(id="call-2", name="read", arguments={"path": "b.py"}))
+        state.record_tool_result("call-2", "read", AgentToolResult(content="two"), False)
+
+        state.tool_display = "summary"
+        transcript = app.query_one("#transcript", TranscriptView)
+        await transcript.set_tool_display(state, theme=app.tui_settings.resolved_theme)
+        await pilot.pause()
+
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("3 tool calls" in text for text in texts)
+        assert any("Using skill: delivery" in text for text in texts)
+        assert not any("Loading skill" in text for text in texts)
+        assert not any("→ read a.py" in text for text in texts)
+
+        # Calls mode restores the skill rows.
+        state.tool_display = "calls"
+        await transcript.set_tool_display(state, theme=app.tui_settings.resolved_theme)
+        await pilot.pause()
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("Loading skill: explore" in text for text in texts)
+        assert any("→ read a.py" in text for text in texts)
+
+
+@pytest.mark.anyio
+async def test_summary_mode_swallows_thinking_into_run_summaries() -> None:
+    app = TauTuiApp(
+        FakeSession(
+            messages=[
+                AssistantMessage(
+                    content=[
+                        ThinkingContent(thinking="weighing options"),
+                        ToolCall(id="call-1", name="read", arguments={"path": "a.py"}),
+                        ToolCall(id="call-2", name="read", arguments={"path": "b.py"}),
+                    ]
+                ),
+                ToolResultMessage(tool_call_id="call-1", tool_name="read", content="one"),
+                ToolResultMessage(tool_call_id="call-2", tool_name="read", content="two"),
+            ]
+        )
+    )
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.show_thinking = True
+        app.state.tool_display = "summary"
+        transcript = app.query_one("#transcript", TranscriptView)
+        await transcript.set_tool_display(app.state, theme=app.tui_settings.resolved_theme)
+        await pilot.pause()
+
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("2 tool calls" in text for text in texts)
+        assert not any("weighing options" in text for text in texts)
+        assert not any("Thinking" in text for text in texts)
+
+        # Calls mode restores the thinking block under Ctrl+T control.
+        app.state.tool_display = "calls"
+        await transcript.set_tool_display(app.state, theme=app.tui_settings.resolved_theme)
+        await pilot.pause()
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("weighing options" in text for text in texts)
+
+
+@pytest.mark.anyio
+async def test_summary_mode_keeps_single_tool_call_rows() -> None:
+    app = TauTuiApp(
+        FakeSession(
+            messages=[
+                AssistantMessage(
+                    content=[
+                        ToolCall(
+                            id="call-1",
+                            name="bash",
+                            arguments={"command": "seq 3", "description": "Counting"},
+                        )
+                    ]
+                ),
+                ToolResultMessage(tool_call_id="call-1", tool_name="bash", content="1\n2\n3"),
+            ]
+        )
+    )
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.tool_display = "summary"
+        transcript = app.query_one("#transcript", TranscriptView)
+        await transcript.set_tool_display(app.state, theme=app.tui_settings.resolved_theme)
+        await pilot.pause()
+
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("Counting" in text for text in texts)
+        assert not any("tool call" in text for text in texts)
+
+        # A second call turns the run into a summary line.
+        app.state.add_tool_call(ToolCall(id="call-2", name="read", arguments={"path": "b.py"}))
+        app.state.record_tool_result(
+            "call-2",
+            "read",
+            AgentToolResult(content="contents"),
+            False,
+        )
+        await transcript.append_item(
+            app.state.items[-1],
+            theme=app.tui_settings.resolved_theme,
+        )
+        await pilot.pause()
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("2 tool calls" in text for text in texts)
+        assert not any("Counting" in text for text in texts)
+        assert not any("→ read b.py" in text for text in texts)
+
+
+@pytest.mark.anyio
+async def test_summary_mode_keeps_single_live_call_after_settle() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async def stream(event: AgentEvent) -> None:
+        app.adapter.apply(event)
+        await app._apply_streaming_transcript_event(event)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.tool_display = "summary"
+        transcript = app.query_one("#transcript", TranscriptView)
+        await transcript.set_tool_display(app.state, theme=app.tui_settings.resolved_theme)
+
+        await stream(AgentStartEvent())
+        await stream(
+            MessageEndEvent(
+                message=AssistantMessage(
+                    content=[ToolCall(id="call-1", name="read", arguments={"path": "a.py"})]
+                )
+            )
+        )
+        await stream(
+            ToolExecutionStartEvent(tool_call_id="call-1", tool_name="read", args={"path": "a.py"})
+        )
+        await stream(
+            ToolExecutionEndEvent(
+                tool_call_id="call-1",
+                tool_name="read",
+                result=AgentToolResult(content="done"),
+                is_error=False,
+            )
+        )
+        await pilot.pause()
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("→ read a.py" in text for text in texts)
+
+        await stream(AgentSettledEvent())
+        await pilot.pause()
+        texts = [w.selection_text for w in app.query(TranscriptMessageWidget)]
+        assert any("→ read a.py" in text for text in texts)
+        assert not any("tool call" in text for text in texts)
+
+
+@pytest.mark.anyio
+async def test_summary_mode_shows_live_rows_then_compacts_on_settle() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async def stream(event: AgentEvent) -> None:
+        app.adapter.apply(event)
+        await app._apply_streaming_transcript_event(event)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.state.tool_display = "summary"
+        transcript = app.query_one("#transcript", TranscriptView)
+        await transcript.set_tool_display(app.state, theme=app.tui_settings.resolved_theme)
+
+        def widget_texts() -> list[str]:
+            return [w.selection_text for w in app.query(TranscriptMessageWidget)]
+
+        await stream(AgentStartEvent())
+        await stream(
+            MessageEndEvent(
+                message=AssistantMessage(
+                    content=[
+                        ToolCall(id="call-1", name="read", arguments={"path": "a.py"}),
+                        ToolCall(id="call-2", name="read", arguments={"path": "b.py"}),
+                    ]
+                )
+            )
+        )
+        await stream(
+            ToolExecutionStartEvent(tool_call_id="call-1", tool_name="read", args={"path": "a.py"})
+        )
+        await stream(
+            ToolExecutionStartEvent(tool_call_id="call-2", tool_name="read", args={"path": "b.py"})
+        )
+        await pilot.pause()
+
+        # While the agent works, live call rows stay visible.
+        assert any("→ Reading 2 files" in text for text in widget_texts())
+        assert not any("tool calls" in text for text in widget_texts())
+
+        await stream(
+            ToolExecutionEndEvent(
+                tool_call_id="call-1",
+                tool_name="read",
+                result=AgentToolResult(content="one"),
+                is_error=False,
+            )
+        )
+        await stream(
+            ToolExecutionEndEvent(
+                tool_call_id="call-2",
+                tool_name="read",
+                result=AgentToolResult(content="two"),
+                is_error=False,
+            )
+        )
+        await pilot.pause()
+        assert any("→ Read 2 files" in text for text in widget_texts())
+
+        # The turn settles: the run compacts into one summary line.
+        await stream(AgentSettledEvent())
+        await pilot.pause()
+        summaries = [
+            w
+            for w in app.query(TranscriptMessageWidget)
+            if w.item.tool_run_summary and "Worked for" in w.selection_text
+        ]
+        assert len(summaries) == 1
+        assert summaries[0].item.tool_result_text == "✓"
+        assert not any("→ Reading 2 files" in text for text in widget_texts())
+
+        # The next turn expands the rows again.
+        await stream(AgentStartEvent())
+        await pilot.pause()
+        assert any("→ Read 2 files" in text for text in widget_texts())
+        assert not any("tool calls" in text for text in widget_texts())
 
 
 @pytest.mark.anyio
@@ -7942,6 +8365,7 @@ async def test_tool_result_toggle_expands_full_bash_command() -> None:
     )
 
     async with app.run_test() as pilot:
+        await _set_tool_display_mode(app, "calls", pilot)
         widget = next(w for w in app.query(TranscriptMessageWidget) if w.item.role == "tool")
         assert widget.selection_text == "→ Running inline script"
 
@@ -7974,6 +8398,7 @@ async def test_tool_result_toggle_preserves_unrelated_message_widgets() -> None:
 
     async with app.run_test() as pilot:
         await pilot.pause()
+        await _set_tool_display_mode(app, "calls", pilot)
         history_widget = next(
             widget for widget in app.query(TranscriptMessageWidget) if widget.item.text == "earlier"
         )
@@ -8267,6 +8692,7 @@ async def test_tui_app_hidden_thinking_placeholder_stays_before_streamed_answer(
     app = TauTuiApp(session)
 
     async with app.run_test() as pilot:
+        await _set_tool_display_mode(app, "calls", pilot)
         await app._run_prompt("stream")
         await pilot.pause()
 

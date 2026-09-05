@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -26,6 +26,8 @@ from tau_coding.skills import Skill, parse_skill_invocation
 from tau_coding.tui.themes import TranscriptRole
 
 ChatItemRole = TranscriptRole
+ToolDisplayMode = Literal["summary", "calls", "expanded"]
+TOOL_DISPLAY_MODES: tuple[ToolDisplayMode, ...] = ("summary", "calls", "expanded")
 TOOL_RESULT_PREVIEW_LINES = 8
 TOOL_PATCH_PREVIEW_LINES = 32
 TOOL_RESULT_PREVIEW_CHARS = 2_000
@@ -50,6 +52,7 @@ class GroupedToolCall:
     tool_result: AgentToolResult | None = None
     update_text: str | None = None
     started_at: float | None = None
+    finished_at: float | None = None
 
 
 @dataclass(slots=True)
@@ -67,11 +70,15 @@ class ChatItem:
     tool_name: str | None = None
     tool_arguments: dict[str, JSONValue] | None = None
     started_at: float | None = None
+    finished_at: float | None = None
     tool_batch_id: int | None = None
     allows_file_mutation_continuation: bool = False
     grouped_tool_calls: list[GroupedToolCall] | None = None
     tool_batch_items: list[ChatItem] | None = None
     always_show_tool_result: bool = False
+    # Marks the synthetic one-line summary that replaces a collapsed run of
+    # tool rows in summary display mode.
+    tool_run_summary: bool = False
     custom_type: str | None = None
     details: dict[str, JSONValue] | None = None
     system_prompt: bool = False
@@ -86,7 +93,7 @@ class TuiState:
     assistant_buffer: str = ""
     running: bool = False
     error: str | None = None
-    show_tool_results: bool = False
+    tool_display: ToolDisplayMode = "summary"
     show_thinking: bool = False
     queued_steering: tuple[str, ...] = ()
     queued_follow_up: tuple[str, ...] = ()
@@ -113,6 +120,9 @@ class TuiState:
         compare=False,
     )
     _next_tool_batch_id: int = field(default=0, init=False, repr=False, compare=False)
+    # Set while projecting restored session history: restored tool rows have no
+    # real timing data, so they must not invent wall-clock durations.
+    _restoring: bool = field(default=False, init=False, repr=False, compare=False)
 
     def add_item(
         self,
@@ -284,7 +294,7 @@ class TuiState:
             tool_call_id=tool_call.id,
             tool_name=tool_call.name,
             tool_arguments=tool_call.arguments,
-            started_at=time.monotonic(),
+            started_at=None if self._restoring else time.monotonic(),
             tool_batch_id=batch_id,
             allows_file_mutation_continuation=allows_file_mutation_continuation,
         )
@@ -426,7 +436,7 @@ class TuiState:
     def _refresh_tool_batch(self, item: ChatItem) -> None:
         rows = item.tool_batch_items or []
         item.text = "\n".join(row.text for row in rows)
-        pending = [row for row in rows if row.started_at is not None]
+        pending = [row for row in rows if row.tool_result_text is None]
         failures = [
             row
             for row in rows
@@ -575,13 +585,15 @@ class TuiState:
                 member.tool_result_text = result_text
                 member.tool_result = result
                 member.update_text = None
-                member.started_at = None
+                if member.started_at is not None:
+                    member.finished_at = time.monotonic()
                 self._refresh_tool_group(row)
             else:
                 row.tool_result_text = result_text
                 row.tool_result = result
                 row.update_text = None
-                row.started_at = None
+                if row.started_at is not None:
+                    row.finished_at = time.monotonic()
             if item.tool_batch_items is not None:
                 self._refresh_tool_batch(item)
             return
@@ -595,10 +607,39 @@ class TuiState:
         self.items.append(item)
         self._tool_items_by_call_id[tool_call_id] = item
 
-    def toggle_tool_results(self) -> bool:
-        """Toggle expanded display for tool results and return the new state."""
-        self.show_tool_results = not self.show_tool_results
-        return self.show_tool_results
+    @property
+    def show_tool_results(self) -> bool:
+        """Return whether expanded tool result details should render."""
+        return self.tool_display == "expanded"
+
+    @show_tool_results.setter
+    def show_tool_results(self, value: bool) -> None:
+        self.tool_display = "expanded" if value else "calls"
+
+    def cycle_tool_display(self) -> ToolDisplayMode:
+        """Advance summary -> calls -> expanded -> summary and return the new mode."""
+        index = TOOL_DISPLAY_MODES.index(self.tool_display)
+        self.tool_display = TOOL_DISPLAY_MODES[(index + 1) % len(TOOL_DISPLAY_MODES)]
+        return self.tool_display
+
+    def has_custom_tool_rendering(self, item: ChatItem) -> bool:
+        """Return whether an extension renders this tool call itself.
+
+        Custom-rendered tool rows keep their dedicated widgets in every display
+        mode; collapsing them into a run summary would hide extension UI.
+        """
+        if item.role != "tool" or item.tool_name is None:
+            return False
+        if item.tool_batch_items is not None:
+            return any(self.has_custom_tool_rendering(row) for row in item.tool_batch_items)
+        if item.grouped_tool_calls is not None:
+            if self.tool_call_renderer is None:
+                return False
+            return any(
+                self.tool_call_renderer(member.tool_name, member.tool_arguments) is not None
+                for member in item.grouped_tool_calls
+            )
+        return self._has_custom_call_rendering(item.tool_name, item.tool_arguments or {})
 
     def toggle_thinking(self) -> bool:
         """Toggle thinking-token display and return the new state."""
@@ -630,6 +671,13 @@ class TuiState:
 
     def load_messages(self, messages: Iterable[AgentMessage]) -> None:
         """Populate the transcript from restored canonical session messages."""
+        self._restoring = True
+        try:
+            self._load_messages_inner(messages)
+        finally:
+            self._restoring = False
+
+    def _load_messages_inner(self, messages: Iterable[AgentMessage]) -> None:
         for message in messages:
             if isinstance(message, UserMessage):
                 self.add_user_message(message.text)
@@ -745,6 +793,70 @@ def format_elapsed(seconds: float) -> str:
         return f"{minutes}m {secs}s"
     hours, minutes = divmod(minutes, 60)
     return f"{hours}h {minutes}m"
+
+
+def tool_run_leaves(items: Sequence[ChatItem]) -> list[ChatItem | GroupedToolCall]:
+    """Flatten batch heads and grouped file calls into the calls a run represents.
+
+    Tool-driven skill loads (``role == "skill"`` rows backed by a tool call id)
+    count as calls since they are re-labeled reads; thinking blocks and
+    user-invoked skill rows contribute no leaves.
+    """
+    leaves: list[ChatItem | GroupedToolCall] = []
+    for item in items:
+        if item.role == "skill":
+            if item.tool_call_id is not None:
+                leaves.append(item)
+            continue
+        if item.role != "tool":
+            continue
+        if item.tool_batch_items is not None:
+            for row in item.tool_batch_items:
+                if row.grouped_tool_calls is not None:
+                    leaves.extend(row.grouped_tool_calls)
+                else:
+                    leaves.append(row)
+        elif item.grouped_tool_calls is not None:
+            leaves.extend(item.grouped_tool_calls)
+        else:
+            leaves.append(item)
+    return leaves
+
+
+def format_tool_run_summary(items: Sequence[ChatItem], *, now: float | None = None) -> str:
+    """Summarize a contiguous run of collapsed tool rows into one line.
+
+    Completed runs report total wall time and call count, e.g. ``Worked for
+    1m 23s · 5 tool calls``; a run with pending calls reports live progress
+    instead. Runs restored from session history without timing data fall back
+    to the call count alone.
+    """
+    leaves = tool_run_leaves(items)
+    total = len(leaves)
+    completed = [leaf for leaf in leaves if leaf.tool_result_text is not None]
+    failures = [leaf for leaf in completed if (leaf.tool_result_text or "").startswith("✗")]
+    running = len(completed) < total
+    # Running leaves carry `started_at`; completed leaves carry both it and
+    # `finished_at`, so wall time survives completion for run summaries.
+    starts = [leaf.started_at for leaf in leaves if leaf.started_at is not None]
+    ends = [leaf.finished_at for leaf in leaves if leaf.finished_at is not None]
+    duration: float | None = None
+    if starts:
+        started_at = min(starts)
+        if running:
+            duration = (now if now is not None else time.monotonic()) - started_at
+        elif ends:
+            duration = max(ends) - started_at
+    noun = "tool call" if total == 1 else "tool calls"
+    failure_suffix = f" · {len(failures)} failed" if failures else ""
+    if running:
+        done = len(completed)
+        if duration is not None and duration >= TOOL_TIMER_MIN_SECONDS:
+            return f"→ Running… {done}/{total} {noun} · {format_elapsed(duration)}"
+        return f"→ Running… {done}/{total} {noun}"
+    if duration is not None:
+        return f"→ Worked for {format_elapsed(duration)} · {total} {noun}{failure_suffix}"
+    return f"→ {total} {noun}{failure_suffix}"
 
 
 def format_tool_call_block(tool_call: ToolCall, *, compact: bool = True) -> str:
