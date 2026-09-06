@@ -116,3 +116,10 @@ supports `low`, `high`, and `xhigh`; because `medium` is unavailable, it opens
 at its `xhigh` catalog default instead of failing with "Thinking mode medium is
 not available". Picking an unsupported level explicitly (via `/think` or the
 thinking picker) still shows an error listing the available modes.
+
+You can also set the startup level from the command line with `--thinking`
+(`-t`), for example `tau -t high` or `tau -t max -p "explain this"`. The flag
+takes precedence over remembered and catalog defaults for that run but is not
+saved as a new default; requesting a level the selected model does not support
+exits with an error listing the available modes. Levels chosen interactively
+afterwards (via `/think` or Shift+Tab) persist as usual.

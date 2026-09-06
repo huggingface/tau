@@ -37,13 +37,21 @@ from tau_agent.session import (
     SessionInfoEntry,
     ThinkingLevelChangeEntry,
 )
-from tau_ai import CancellationToken, FakeProvider, ModelProvider, RuntimeModelLimits
+from tau_ai import (
+    CancellationToken,
+    FakeProvider,
+    ModelProvider,
+    RuntimeModel,
+    RuntimeModelCatalog,
+    RuntimeModelLimits,
+)
 from tau_ai.events import AssistantMessageEvent
 from tau_coding import (
     CodingSession,
     CodingSessionConfig,
     FileCredentialStore,
     ModelChoice,
+    OAuthCredential,
     OpenAICodexProviderConfig,
     OpenAICompatibleProviderConfig,
     ProviderConfigError,
@@ -66,7 +74,7 @@ from tau_coding.extensions import (
 )
 from tau_coding.extensions.runtime import InputHookOutcome
 from tau_coding.prompt_templates import PromptTemplate
-from tau_coding.provider_config import ProviderModelMetadata
+from tau_coding.provider_config import ProviderModelMetadata, provider_thinking_levels
 from tau_coding.session import (
     _ordered_tree_entries,
     is_retryable_huggingface_route_error,
@@ -97,7 +105,7 @@ def _assert_messages(actual: object, expected: object) -> None:
     def dump(message: object) -> object:
         model_dump = getattr(message, "model_dump", None)
         if callable(model_dump):
-            return model_dump(exclude={"timestamp"})
+            return model_dump(exclude={"timestamp", "timing"})
         return message
 
     assert [dump(message) for message in actual] == [dump(message) for message in expected]  # type: ignore[union-attr]
@@ -205,6 +213,27 @@ class ModelLimitsFakeProvider(FakeProvider):
         if self.error is not None:
             raise self.error
         return self.limits
+
+
+class ModelCatalogFakeProvider(ModelLimitsFakeProvider):
+    def __init__(
+        self,
+        scripts: list[list[AssistantMessageEvent]],
+        *,
+        catalog: RuntimeModelCatalog,
+        limits: RuntimeModelLimits | None = None,
+    ) -> None:
+        super().__init__(scripts, limits=limits)
+        self.catalog = catalog
+        self.catalog_calls = 0
+        self.closed = False
+
+    async def discover_models(self) -> RuntimeModelCatalog:
+        self.catalog_calls += 1
+        return self.catalog
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 class RaisingProvider:
@@ -3834,6 +3863,303 @@ async def test_session_uses_live_provider_limits_for_compaction_threshold(
 
 
 @pytest.mark.anyio
+async def test_session_publishes_authenticated_codex_model_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tau_paths = TauPaths(home=tmp_path / ".tau")
+    FileCredentialStore(tau_paths.home / "credentials.json").set_oauth(
+        "openai-codex",
+        OAuthCredential(
+            access="access-token",
+            refresh="refresh-token",
+            expires=4_000_000_000,
+            account_id="account-1",
+        ),
+    )
+    limits = RuntimeModelLimits(context_window=500_000, max_output_tokens=100_000)
+    provider = ModelCatalogFakeProvider(
+        [],
+        catalog=RuntimeModelCatalog(
+            (
+                RuntimeModel(
+                    id="astra",
+                    name="Astra",
+                    limits=limits,
+                    input_modalities=("text", "image"),
+                    thinking_levels=("low", "high"),
+                    default_thinking_level="high",
+                ),
+            )
+        ),
+    )
+    settings = ProviderSettings(
+        default_provider="openai-codex",
+        providers=(
+            OpenAICodexProviderConfig(
+                models=("static-model",),
+                default_model="static-model",
+                context_windows={"static-model": 272_000},
+                thinking_levels=("off", "low", "medium", "high"),
+                thinking_models=("static-model",),
+                thinking_default="medium",
+                thinking_parameter="reasoning.effort",
+            ),
+        ),
+    )
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="static-model",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai-codex",
+            provider_settings=settings,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    assert provider.catalog_calls == 1
+    assert session.available_models == ("astra",)
+    live = session.provider_config("openai-codex")
+    assert live is not None
+    assert live.context_windows == {"astra": 500_000}
+    assert live.model_metadata["astra"].name == "Astra"
+    assert live.model_metadata["astra"].input == ("text", "image")
+    assert provider_thinking_levels(live, model="astra") == ("low", "high")
+
+    refreshed = ModelCatalogFakeProvider(
+        [],
+        catalog=RuntimeModelCatalog((RuntimeModel(id="nova", name="Nova"),)),
+    )
+    monkeypatch.setattr(
+        coding_session_module, "create_model_provider", lambda *args, **kwargs: refreshed
+    )
+    await session._refresh_codex_model_catalog()
+
+    assert session.available_models == ("nova",)
+    assert provider.catalog_calls == 1
+    assert refreshed.catalog_calls == 1
+    assert refreshed.closed is True
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("resume", [False, True])
+@pytest.mark.parametrize("preconstructed", [False, True])
+async def test_codex_live_only_model_is_discovered_before_startup_validation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, resume: bool, preconstructed: bool
+) -> None:
+    monkeypatch.delenv("TAU_OFFLINE", raising=False)
+    static = OpenAICodexProviderConfig(models=("static-model",), default_model="static-model")
+    settings = ProviderSettings(default_provider="openai-codex", providers=(static,))
+    providers: list[ModelCatalogFakeProvider] = []
+    initial_provider = ModelCatalogFakeProvider([], catalog=RuntimeModelCatalog(()))
+
+    def create(*args: object, **kwargs: object) -> ModelCatalogFakeProvider:
+        provider = ModelCatalogFakeProvider(
+            [], catalog=RuntimeModelCatalog((RuntimeModel(id="live-model"),))
+        )
+        providers.append(provider)
+        return provider
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create)
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    if resume:
+        info = SessionInfoEntry(cwd=str(tmp_path))
+        await storage.append(info)
+        await storage.append(
+            ModelChangeEntry(parent_id=info.id, provider="openai-codex", model="live-model")
+        )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=initial_provider if preconstructed else None,
+            owns_initial_provider=preconstructed,
+            runtime_provider_config=static if preconstructed else None,
+            model="static-model" if resume else "live-model",
+            requested_provider=None if resume else "openai-codex",
+            requested_model=None if resume else "live-model",
+            provider_name="openai-codex",
+            provider_settings=settings,
+            system="Test",
+            cwd=tmp_path,
+            storage=storage,
+            extensions_enabled=False,
+        )
+    )
+    try:
+        assert session.model == "live-model"
+        assert session._durable_provider_settings == settings
+        assert providers[0].closed
+        assert initial_provider.closed is preconstructed
+        assert session._active_provider_config() is not None
+        assert "live-model" in session._active_provider_config().models
+    finally:
+        await session.aclose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("offline", [False, True])
+async def test_codex_unknown_startup_model_is_not_silently_substituted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, offline: bool
+) -> None:
+    if offline:
+        monkeypatch.setenv("TAU_OFFLINE", "1")
+    else:
+        monkeypatch.delenv("TAU_OFFLINE", raising=False)
+    discovery = ModelCatalogFakeProvider([], catalog=RuntimeModelCatalog(()))
+    monkeypatch.setattr(coding_session_module, "create_model_provider", lambda *a, **k: discovery)
+    static = OpenAICodexProviderConfig(models=("static-model",), default_model="static-model")
+    with pytest.raises(ProviderConfigError, match="live-model"):
+        await CodingSession.load(
+            CodingSessionConfig(
+                provider=None,
+                model="live-model",
+                requested_provider="openai-codex",
+                requested_model="live-model",
+                provider_name="openai-codex",
+                provider_settings=ProviderSettings(
+                    default_provider="openai-codex", providers=(static,)
+                ),
+                system="Test",
+                cwd=tmp_path,
+                storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+                extensions_enabled=False,
+            )
+        )
+    assert discovery.catalog_calls == (0 if offline else 1)
+    assert discovery.closed is not offline
+
+
+@pytest.mark.anyio
+async def test_codex_missing_active_model_survives_settings_refresh(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    static = OpenAICodexProviderConfig(models=("static-model",), default_model="static-model")
+    settings = ProviderSettings(default_provider="openai-codex", providers=(static,))
+    provider = ModelCatalogFakeProvider(
+        [], catalog=RuntimeModelCatalog((RuntimeModel(id="live-model"),))
+    )
+    monkeypatch.setattr(coding_session_module, "create_model_provider", lambda *a, **k: provider)
+    monkeypatch.setattr(coding_session_module, "load_provider_settings", lambda *a: settings)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="static-model",
+            provider_name="openai-codex",
+            provider_settings=settings,
+            runtime_provider_config=static,
+            system="Test",
+            cwd=tmp_path,
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            extensions_enabled=False,
+        )
+    )
+    try:
+        assert session.provider_config("openai-codex").models == ("live-model",)
+        session.reload_provider_settings()
+        session.reload_provider_settings()
+        assert session.model == "static-model"
+        assert session._active_provider_config() == static
+        assert session.provider_config("openai-codex").models == ("live-model",)
+    finally:
+        await session.aclose()
+
+
+@pytest.mark.anyio
+async def test_session_skips_codex_catalog_discovery_offline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("TAU_OFFLINE", "1")
+    provider = ModelCatalogFakeProvider(
+        [],
+        catalog=RuntimeModelCatalog((RuntimeModel(id="astra"),)),
+    )
+    settings = ProviderSettings(
+        default_provider="openai-codex",
+        providers=(
+            OpenAICodexProviderConfig(
+                models=("static-model",),
+                default_model="static-model",
+                context_windows={"static-model": 272_000},
+            ),
+        ),
+    )
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="static-model",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai-codex",
+            provider_settings=settings,
+        )
+    )
+
+    assert provider.catalog_calls == 0
+    assert provider.discovery_calls == []
+    assert session.context_window_tokens == 272_000
+    assert session.provider_config("openai-codex") == settings.providers[0]
+
+
+@pytest.mark.anyio
+async def test_session_discovers_codex_inventory_while_another_provider_is_active(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tau_paths = TauPaths(home=tmp_path / ".tau")
+    FileCredentialStore(tau_paths.home / "credentials.json").set_oauth(
+        "openai-codex",
+        OAuthCredential(
+            access="access-token",
+            refresh="refresh-token",
+            expires=4_000_000_000,
+            account_id="account-1",
+        ),
+    )
+    discovered = ModelCatalogFakeProvider(
+        [],
+        catalog=RuntimeModelCatalog((RuntimeModel(id="astra", name="Astra"),)),
+    )
+    monkeypatch.setattr(
+        coding_session_module, "create_model_provider", lambda *args, **kwargs: discovered
+    )
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                models=("local-model",),
+                default_model="local-model",
+            ),
+            OpenAICodexProviderConfig(models=("static-model",), default_model="static-model"),
+        ),
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="local-model",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="local",
+            provider_settings=settings,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    await session._refresh_codex_model_catalog()
+
+    assert ModelChoice("openai-codex", "astra") in session.available_model_choices
+    assert discovered.catalog_calls == 1
+    assert discovered.closed is True
+
+
+@pytest.mark.anyio
 async def test_session_falls_back_when_live_model_limit_discovery_fails(
     tmp_path: Path,
 ) -> None:
@@ -5954,3 +6280,174 @@ def test_minimal_commands_are_handled(tmp_path: Path) -> None:
     assert session.handle_command("/quit").exit_requested is True
     assert session.handle_command("/exit").exit_requested is True
     assert session.handle_command("/unknown").handled is False
+
+
+def _thinking_override_provider_config(  # noqa: D103
+    thinking_defaults: dict[str, str] | None = None,
+) -> OpenAICompatibleProviderConfig:
+    return OpenAICompatibleProviderConfig(
+        name="openai",
+        models=("reasoner",),
+        default_model="reasoner",
+        thinking_levels=("off", "low", "high"),
+        thinking_models=("reasoner",),
+        thinking_default="low",
+        thinking_parameter="reasoning_effort",
+        thinking_defaults=thinking_defaults or {},  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.anyio
+async def test_new_session_initial_thinking_respects_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    provider_config = _thinking_override_provider_config(thinking_defaults={"reasoner": "low"})
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="reasoner",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            thinking_level_override="high",
+        )
+    )
+
+    # The override beats the remembered per-model default ("low").
+    assert session.thinking_level == "high"
+    await session._ensure_session_initialized()
+    entries = await JsonlSessionStorage(tmp_path / "session.jsonl").read_all()
+    thinking_entries = [entry for entry in entries if entry.type == "thinking_level_change"]
+    assert thinking_entries[0].thinking_level == "high"
+
+
+@pytest.mark.anyio
+async def test_resumed_session_thinking_override_is_ephemeral(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    provider_config = _thinking_override_provider_config()
+    storage_path = tmp_path / "session.jsonl"
+
+    def config(thinking_level_override: object = None) -> CodingSessionConfig:
+        return CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="reasoner",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(storage_path),
+            cwd=tmp_path,
+            provider_name="openai",
+            provider_settings=ProviderSettings(providers=(provider_config,)),
+            thinking_level_override=thinking_level_override,  # type: ignore[arg-type]
+        )
+
+    first = await CodingSession.load(config())
+    assert first.thinking_level == "low"
+    await first._ensure_session_initialized()
+
+    resumed = await CodingSession.load(config(thinking_level_override="high"))
+    assert resumed.thinking_level == "high"
+
+    # The override is ephemeral: a later resume without it uses the stored level.
+    plain = await CodingSession.load(config())
+    assert plain.thinking_level == "low"
+
+    # Resuming with an unsupported override is a strict error, not a fallback.
+    with pytest.raises(ProviderConfigError, match='Thinking mode "medium" is not available'):
+        await CodingSession.load(config(thinking_level_override="medium"))
+
+
+@pytest.mark.anyio
+async def test_thinking_override_unsupported_level_raises_on_load(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    provider_config = _thinking_override_provider_config()
+
+    with pytest.raises(ProviderConfigError, match='Thinking mode "medium" is not available'):
+        await CodingSession.load(
+            CodingSessionConfig(
+                provider=FakeProvider([]),
+                model="reasoner",
+                system="You are Tau.",
+                storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+                cwd=tmp_path,
+                provider_name="openai",
+                provider_settings=ProviderSettings(providers=(provider_config,)),
+                thinking_level_override="medium",
+            )
+        )
+
+
+def _dynamic_thinking_override_config(
+    tmp_path: Path,
+    *,
+    thinking_level_override: object,
+) -> CodingSessionConfig:
+    extension = tmp_path / "dynamic_provider.py"
+    extension.write_text(
+        """
+from tau_coding.extensions import DynamicProvider, OpenAICompatibleTransport, ProviderModel
+
+
+def setup(tau):
+    tau.register_provider(DynamicProvider(
+        id="local",
+        display_name="Local",
+        models=(ProviderModel("reasoner", thinking_levels=("off", "high")),),
+        default_model="reasoner",
+        transport=OpenAICompatibleTransport(base_url="http://example.test/v1"),
+    ))
+""".lstrip(),
+        encoding="utf-8",
+    )
+    return CodingSessionConfig(
+        provider=None,
+        model="reasoner",
+        system="You are Tau.",
+        storage=JsonlSessionStorage(tmp_path / "dynamic-session.jsonl"),
+        cwd=tmp_path,
+        provider_name="local",
+        requested_provider="local",
+        requested_model="reasoner",
+        provider_settings=ProviderSettings(),
+        extension_paths=(extension,),
+        extensions_enabled=False,
+        thinking_level_override=thinking_level_override,  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.anyio
+async def test_dynamic_provider_accepts_supported_thinking_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+
+    session = await CodingSession.load(
+        _dynamic_thinking_override_config(tmp_path, thinking_level_override="high")
+    )
+
+    assert session.thinking_level == "high"
+    assert session.available_thinking_levels == ("off", "high")
+    await session.aclose()
+
+
+@pytest.mark.anyio
+async def test_dynamic_provider_rejects_unsupported_thinking_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+
+    with pytest.raises(
+        ProviderConfigError,
+        match=(
+            r'Thinking mode "max" is not available for local:reasoner\. '
+            r"Available modes: off, high"
+        ),
+    ):
+        await CodingSession.load(
+            _dynamic_thinking_override_config(tmp_path, thinking_level_override="max")
+        )

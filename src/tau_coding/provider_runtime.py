@@ -22,6 +22,7 @@ from tau_ai.openai_codex import (
     OpenAICodexProvider,
 )
 from tau_ai.openai_compatible import OpenAICompatibleProvider
+from tau_coding.codex_version import CodexClientVersionResolver
 from tau_coding.credentials import FileCredentialStore, OAuthCredential
 from tau_coding.extensions.providers import (
     CredentialReader,
@@ -43,6 +44,7 @@ from tau_coding.oauth import (
 )
 from tau_coding.oauth_registry import get_oauth_provider
 from tau_coding.oauth_types import OAuthProvider
+from tau_coding.paths import TauPaths
 from tau_coding.provider_config import (
     AnthropicProviderConfig,
     OpenAICodexProviderConfig,
@@ -269,6 +271,9 @@ def create_model_provider(
                     thinking_level=thinking_level,
                 ),
                 supports_images=provider_model_supports_images(provider, model),
+                client_version_resolver=CodexClientVersionResolver(
+                    paths=TauPaths(home=credentials.path.parent)
+                ),
             )
         )
     if isinstance(provider, OpenAICompatibleProviderConfig):

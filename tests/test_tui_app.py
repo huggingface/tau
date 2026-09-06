@@ -152,6 +152,7 @@ from tau_coding.tui.widgets import (
     TranscriptWindowBoundary,
     _comma_list,
     _compact_token_count,
+    _format_milliseconds,
     _sidebar_brand,
     _split_rich_style_colors,
     _styled_cwd,
@@ -233,6 +234,10 @@ class FakeSession:
             cached_input_tokens=1_140_000,
             latest_prompt_tokens=1_200_000,
             latest_cached_input_tokens=1_188_000,
+            timed_output_tokens=48_000,
+            response_duration_ms=1_200_000,
+            time_to_first_output_ms=18_000,
+            timed_first_output_count=15,
             estimated_cost=1.24,
         )
         self.system_prompt = "You are Tau."
@@ -367,15 +372,16 @@ class FakeSession:
         self.scoped_model_choices = tuple(scoped)
         return self.scoped_model_choices
 
-    def cycle_scoped_model(self) -> ModelChoice:
+    def cycle_scoped_model(self, *, reverse: bool = False) -> ModelChoice:
         if not self.scoped_model_choices:
             raise ValueError("No scoped models configured.")
         current = ModelChoice(provider_name=self.provider_name, model=self.model)
         try:
             index = self.scoped_model_choices.index(current)
         except ValueError:
-            index = -1
-        choice = self.scoped_model_choices[(index + 1) % len(self.scoped_model_choices)]
+            index = -1 if not reverse else 0
+        delta = -1 if reverse else 1
+        choice = self.scoped_model_choices[(index + delta) % len(self.scoped_model_choices)]
         self.set_model_choice(choice)
         return choice
 
@@ -521,6 +527,17 @@ def _visible_footer_bindings(app: TauTuiApp) -> dict[str, str]:
     }
 
 
+@pytest.mark.parametrize(
+    ("milliseconds", "expected"),
+    [(999, "999ms"), (1000, "1.0s"), (999.6, "1.0s")],
+)
+def test_format_milliseconds_handles_unit_boundary(
+    milliseconds: float,
+    expected: str,
+) -> None:
+    assert _format_milliseconds(milliseconds) == expected
+
+
 def test_session_sidebar_renders_session_metadata() -> None:
     console = Console(record=True, width=80)
 
@@ -545,6 +562,7 @@ def test_session_sidebar_renders_session_metadata() -> None:
     assert "cumulative usage" not in output
     assert "1.2m in, 48k out · ~$1.24" in output
     assert "cache: 99% latest · 95% session" in output
+    assert "avg TPS: 40.0 · avg TTFT: 1.2s" in output
     assert "auto at 200k" in output
     assert "read, write, edit, bash" in output
     assert re.search(r"\./\.tau/skills\s+• review", output)
@@ -830,7 +848,7 @@ def test_session_sidebar_brand_includes_current_version() -> None:
 
     console.print(_sidebar_brand(theme=TAU_DARK_THEME))
 
-    assert "τ = 2π  0.4.0" in console.export_text()
+    assert "τ = 2π  0.4.1" in console.export_text()
 
 
 def test_session_sidebar_uses_prominent_title_and_accented_section_headers() -> None:
@@ -3096,7 +3114,7 @@ async def test_tui_app_footer_hints_update_for_completions() -> None:
 
         assert _visible_footer_bindings(app) == {
             "Choose": "Up/Down",
-            "Complete": "Tab/Enter",
+            "Complete": "Tab",
             "Close": "escape",
         }
 
@@ -5603,7 +5621,7 @@ async def test_tui_app_completes_registered_slash_command() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_app_enter_accepts_completion_without_submitting() -> None:
+async def test_tui_app_enter_submits_without_accepting_completion() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
@@ -5613,13 +5631,14 @@ async def test_tui_app_enter_accepts_completion_without_submitting() -> None:
         app._refresh_completions()
 
         await pilot.press("enter")
+        await pilot.pause()
 
-        assert prompt.value == "/session"
-        assert app.state.items == []
+        assert prompt.value == ""
+        assert app.session.prompt_texts == ["/se"]
 
 
 @pytest.mark.anyio
-async def test_tui_app_enter_accepts_arrow_selected_completion() -> None:
+async def test_tui_app_enter_ignores_arrow_selected_completion() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
@@ -5632,9 +5651,10 @@ async def test_tui_app_enter_accepts_arrow_selected_completion() -> None:
         assert selected is not None
 
         await pilot.press("enter")
+        await pilot.pause()
 
-        assert prompt.value == selected.replacement
-        assert app.state.items == []
+        assert prompt.value == ""
+        assert app.session.prompt_texts == ["/s"]
 
 
 @pytest.mark.anyio
@@ -7584,9 +7604,7 @@ async def test_tui_scoped_models_picker_toggles_scoped_models_without_switching_
 
         assert isinstance(app.screen, ModelPickerScreen)
         tabs = app.screen.query_one("#model-picker-tabs", Static)
-        assert str(tabs.render()) == (
-            "Scoped models setup — Enter toggles membership; active model is unchanged"
-        )
+        assert str(tabs.render()) == "Tabs: ● All models  ○ Scoped models"
         await pilot.press("enter")
         await pilot.pause()
 
@@ -7605,6 +7623,52 @@ async def test_tui_scoped_models_picker_toggles_scoped_models_without_switching_
         assert session.scoped_model_choices == ()
         assert session.provider_name == "openai"
         assert session.model == "fake-model"
+
+
+@pytest.mark.anyio
+async def test_tui_scoped_models_picker_tab_shows_only_scoped_models_for_unselect() -> None:
+    session = FakeSession()
+    session.scoped_model_choices = (
+        ModelChoice(provider_name="openai", model="fake-model"),
+        ModelChoice(provider_name="openai", model="other-model"),
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/scoped-models"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ModelPickerScreen)
+        await pilot.press("tab")
+        await pilot.pause()
+
+        tabs = app.screen.query_one("#model-picker-tabs", Static)
+        assert str(tabs.render()) == "Tabs: ○ All models  ● Scoped models"
+        model_list = app.screen.query_one("#model-picker-list", ListView)
+        labels = [str(item.query_one(Label).render()) for item in model_list.children]
+        assert labels == [
+            "* openai:fake-model [scoped]",
+            "  openai:other-model [scoped]",
+        ]
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert session.scoped_model_choices == (
+            ModelChoice(provider_name="openai", model="other-model"),
+        )
+        assert session.provider_name == "openai"
+        assert session.model == "fake-model"
+        labels = [str(item.query_one(Label).render()) for item in model_list.children]
+        assert labels == ["  openai:other-model [scoped]"]
+
+        await pilot.press("tab")
+        await pilot.pause()
+
+        tabs = app.screen.query_one("#model-picker-tabs", Static)
+        assert str(tabs.render()) == "Tabs: ● All models  ○ Scoped models"
 
 
 @pytest.mark.anyio
@@ -8384,6 +8448,24 @@ async def test_tui_app_cycles_scoped_model_from_keybinding() -> None:
     assert session.provider_name == "openai"
     assert session.model == "other-model"
     assert notifications == []
+
+
+@pytest.mark.anyio
+async def test_tui_app_cycles_scoped_model_backward_from_keybinding() -> None:
+    session = FakeSession()
+    session.scoped_model_choices = (
+        ModelChoice(provider_name="openai", model="fake-model"),
+        ModelChoice(provider_name="openai", model="other-model"),
+        ModelChoice(provider_name="anthropic", model="third-model"),
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+shift+p")
+        await pilot.pause()
+
+    assert session.provider_name == "anthropic"
+    assert session.model == "third-model"
 
 
 @pytest.mark.anyio

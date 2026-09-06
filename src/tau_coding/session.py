@@ -7,6 +7,7 @@ import string
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
+from os import environ
 from pathlib import Path
 from typing import Literal
 
@@ -41,6 +42,7 @@ from tau_agent.session.tree import SessionTreeError, path_to_entry
 from tau_agent.tool_history import ToolHistoryRepair, repair_tool_history
 from tau_agent.tools import AgentTool
 from tau_agent.types import JSONValue
+from tau_ai.model_catalog import ModelCatalogProvider, RuntimeModel, RuntimeModelCatalog
 from tau_ai.model_limits import ModelLimitsProvider, RuntimeModelLimits
 from tau_coding.branch_summary import summarize_branch_messages_with_model
 from tau_coding.commands import CommandRegistry, CommandResult, create_default_command_registry
@@ -95,9 +97,11 @@ from tau_coding.prompt_templates import (
     load_prompt_templates_with_diagnostics,
 )
 from tau_coding.provider_config import (
+    OpenAICodexProviderConfig,
     OpenAICompatibleProviderConfig,
     ProviderConfig,
     ProviderConfigError,
+    ProviderModelMetadata,
     ProviderSettings,
     load_provider_settings,
     provider_default_thinking_level,
@@ -335,6 +339,14 @@ class CodingSessionConfig:
     auto_compact_token_threshold: int | None = None
     auto_compact_enabled: bool = True
     thinking_level: ThinkingLevel = DEFAULT_THINKING_LEVEL
+    thinking_level_override: ThinkingLevel | None = None
+    """One-shot startup override (e.g. ``--thinking``) for the session's level.
+
+    Takes precedence over remembered per-model defaults and replayed session
+    state, is validated strictly against the active model's available levels
+    when the provider configuration is known, and is never persisted as a new
+    remembered default.
+    """
     index_on_first_persist: bool = False
     shell_command_prefix: str | None = None
     skills_enabled: bool = True
@@ -418,6 +430,9 @@ class CodingSession:
             "fixed" if config.inference_provider is not None else "automatic"
         )
         self._provider_settings = config.provider_settings
+        self._durable_provider_settings = config.provider_settings
+        self._runtime_model_catalogs: dict[str, RuntimeModelCatalog] = {}
+        self._model_catalog_discovery_errors: dict[str, str] = {}
         self._runtime_provider_config = config.runtime_provider_config
         self._resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
         self._auto_compact_token_threshold = config.auto_compact_token_threshold
@@ -566,13 +581,30 @@ class CodingSession:
                 include_user_dir=False,
             )
 
-        if config.provider is None:
+        selected_provider_name = (
+            config.requested_provider or state.provider or config.session_provider_name
+        )
+        selected_model = config.requested_model or state.model
+        rediscover_codex = False
+        if selected_provider_name == "openai-codex" and config.provider_settings is not None:
+            selected_config = config.provider_settings.get_provider(selected_provider_name)
+            rediscover_codex = (
+                isinstance(selected_config, OpenAICodexProviderConfig)
+                and selected_model not in selected_config.models
+            )
+        if config.provider is None or rediscover_codex:
             prepared = await _prepare_provider_selection(
                 config,
                 state=state,
                 provider_registry=extension_runtime.provider_registry,
                 credential_store=credential_store,
             )
+            if config.provider is not None and config.owns_initial_provider:
+                try:
+                    await config.provider.aclose()  # type: ignore[attr-defined]
+                except BaseException:
+                    await prepared.provider.aclose()
+                    raise
             config = replace(
                 config,
                 provider=prepared.provider,
@@ -593,6 +625,9 @@ class CodingSession:
                     else entry
                     for entry in pending_initial_entries
                 )
+                # Initial fallback metadata was created before live discovery.
+                # Replay the corrected entries so runtime and durable selection agree.
+                state = SessionState.from_entries(list(pending_initial_entries))
         assert config.provider is not None
         active_model = _runtime_model_for_state(config, state)
         image_support = ImageSupportState(
@@ -667,8 +702,9 @@ class CodingSession:
             # failure path has exactly one closer for the candidate.
             session._owned_providers.append(config.provider)  # type: ignore[arg-type]
         await session._persist_active_tool_history_repairs()
-        session._sync_thinking_level_to_active_model()
         try:
+            session._apply_thinking_level_override()
+            session._sync_thinking_level_to_active_model()
             if not config.owns_initial_provider and config.provider is not None:
                 session._refresh_runtime_provider()
             await session._refresh_runtime_model_limits()
@@ -1573,6 +1609,7 @@ class CodingSession:
             raise ProviderConfigError("Provider settings are not available for this session")
         available = set(self.available_model_choices)
         existing = choice in self.scoped_model_choices
+        durable_settings = getattr(self, "_durable_provider_settings", self._provider_settings)
         effective = self._provider_registry.effective(choice.provider_name)
         if effective is not None and isinstance(effective.definition, DynamicProvider):
             if not (
@@ -1592,14 +1629,28 @@ class CodingSession:
                 raise ProviderConfigError(
                     f"Model is not available: {choice.provider_name}:{choice.model}"
                 )
-            toggle = toggle_saved_scoped_model
+            durable_provider = (
+                durable_settings.get_provider(choice.provider_name)
+                if durable_settings is not None
+                else None
+            )
+            toggle = (
+                toggle_saved_scoped_model
+                if durable_provider is not None and choice.model in durable_provider.models
+                else toggle_saved_stable_scoped_model
+            )
 
-        self._provider_settings = toggle(
+        updated_settings = toggle(
             provider_name=choice.provider_name,
             model=choice.model,
             paths=self._resource_paths.paths,
-            fallback_settings=self._provider_settings,
+            fallback_settings=durable_settings,
         )
+        if hasattr(self, "_durable_provider_settings"):
+            self._durable_provider_settings = updated_settings
+            self._apply_runtime_model_catalogs()
+        else:  # narrowly supports lightweight host/test session doubles
+            self._provider_settings = updated_settings
         self._sync_thinking_level_to_active_model()
         return self.scoped_model_choices
 
@@ -1736,9 +1787,56 @@ class CodingSession:
         if self._provider_settings is None:
             return None
         try:
-            return self._provider_settings.get_provider(self._provider_name)
+            provider = self._provider_settings.get_provider(self._provider_name)
         except ProviderConfigError:
             return None
+        runtime = self._runtime_provider_config
+        if (
+            isinstance(provider, OpenAICodexProviderConfig)
+            and self.model not in provider.models
+            and runtime is not None
+            and runtime.name == provider.name
+            and self.model in runtime.models
+        ):
+            # Picker visibility must not invalidate an already selected runtime.
+            return runtime
+        return provider
+
+    def _apply_thinking_level_override(self) -> None:
+        """Apply the one-shot startup thinking override to the loaded session.
+
+        Runs once during :meth:`load`, after session state is replayed and
+        before the level is synced to the active model, so the override wins
+        over both remembered defaults and the resumed transcript state. The
+        override is validated strictly against either the active dynamic model
+        or the durable provider configuration when its capabilities are known.
+        """
+        override = self._config.thinking_level_override
+        if override is None:
+            return
+        dynamic = self._active_dynamic_provider
+        if dynamic is not None:
+            model = self._active_dynamic_model
+            levels = model.thinking_levels if model is not None else None
+            if not levels:
+                raise ProviderConfigError(
+                    f"Thinking modes are unavailable for {dynamic.id}:{self.model}"
+                )
+            if override not in levels:
+                allowed = ", ".join(levels)
+                raise ProviderConfigError(
+                    f'Thinking mode "{override}" is not available for '
+                    f"{dynamic.id}:{self.model}. Available modes: {allowed}"
+                )
+            self._thinking_level = override
+            return
+        provider = self._active_provider_config()
+        if provider is None:
+            self._thinking_level = override
+            return
+        resolved = resolve_startup_thinking_level(provider, self.model, cli_override=override)
+        if resolved is not None:
+            self._thinking_level = resolved
 
     def _sync_thinking_level_to_active_model(self) -> None:
         provider = self._active_provider_config()
@@ -1758,14 +1856,19 @@ class CodingSession:
         )
 
     def _persist_default_model_choice(self) -> None:
-        if self._provider_settings is None:
+        if self._durable_provider_settings is None:
             return
-        self._provider_settings = save_default_provider_model(
+        durable_provider = self._durable_provider_settings.get_provider(self.provider_name)
+        if self.model not in durable_provider.models:
+            # Account-specific inventory is deliberately not written into catalog.toml.
+            return
+        self._durable_provider_settings = save_default_provider_model(
             provider_name=self.provider_name,
             model=self.model,
             paths=self._resource_paths.paths,
-            fallback_settings=self._provider_settings,
+            fallback_settings=self._durable_provider_settings,
         )
+        self._apply_runtime_model_catalogs()
         self._sync_thinking_level_to_active_model()
 
     def _persist_thinking_level_choice(self) -> None:
@@ -1778,13 +1881,14 @@ class CodingSession:
         ):
             return
         try:
-            self._provider_settings = save_provider_thinking_level(
+            self._durable_provider_settings = save_provider_thinking_level(
                 provider_name=self.provider_name,
                 model=self.model,
                 thinking_level=self._thinking_level,
                 paths=self._resource_paths.paths,
-                fallback_settings=self._provider_settings,
+                fallback_settings=self._durable_provider_settings,
             )
+            self._apply_runtime_model_catalogs()
         except ProviderConfigError:
             return
 
@@ -1992,12 +2096,23 @@ class CodingSession:
         self._runtime_model_limits_key = key
         self._model_limits_discovery_error = None
         provider = self._harness.config.provider
-        if not isinstance(provider, ModelLimitsProvider):
+        if (
+            self.provider_name == "openai-codex"
+            and isinstance(provider, ModelCatalogProvider)
+            and environ.get("TAU_OFFLINE") is not None
+        ):
             return
         try:
-            self._runtime_model_limits = await provider.discover_model_limits(self.model)
+            if isinstance(provider, ModelCatalogProvider):
+                catalog = await provider.discover_models()
+                self._publish_runtime_model_catalog(self.provider_name, catalog)
+            if isinstance(provider, ModelLimitsProvider):
+                self._runtime_model_limits = await provider.discover_model_limits(self.model)
         except Exception as exc:  # noqa: BLE001 - static catalog remains the safe fallback
-            self._model_limits_discovery_error = f"{type(exc).__name__}: {exc}"
+            error = f"{type(exc).__name__}: {exc}"
+            self._model_limits_discovery_error = error
+            if isinstance(provider, ModelCatalogProvider):
+                self._model_catalog_discovery_errors[self.provider_name] = error
 
     async def reload(self) -> CodingReloadSummary:
         """Stage and atomically publish a complete replacement snapshot."""
@@ -2212,27 +2327,91 @@ class CodingSession:
         )
 
     async def refresh_model_catalogs(self, *, force: bool = False) -> ModelsDevRefreshResult:
-        """Refresh the persisted remote catalog and publish it to this session."""
+        """Refresh public and authenticated catalogs and publish them to this session."""
         result = await refresh_models_dev_catalog(
             paths=self._resource_paths.paths,
             force=force,
         )
         self.reload_provider_settings()
+        await self._refresh_codex_model_catalog()
         return result
+
+    async def _refresh_codex_model_catalog(self) -> None:
+        """Refresh the account-specific Codex inventory without making it durable."""
+        if environ.get("TAU_OFFLINE") is not None or self._durable_provider_settings is None:
+            return
+        try:
+            provider_config = self._durable_provider_settings.get_provider("openai-codex")
+        except ProviderConfigError:
+            return
+        if not isinstance(provider_config, OpenAICodexProviderConfig):
+            return
+        if not self._provider_is_usable(provider_config):
+            return
+
+        # Use a fresh provider even when Codex is active. The active provider caches
+        # its startup snapshot so reusing it would make `/model` unable to discover
+        # versions or models released during a long-running Tau process.
+        temporary_provider = create_model_provider(
+            provider_config,
+            credential_store=self._credential_store,
+            model=None,
+            thinking_level=None,
+        )
+        if not isinstance(temporary_provider, ModelCatalogProvider):
+            await temporary_provider.aclose()
+            return
+        try:
+            catalog = await temporary_provider.discover_models()
+            self._publish_runtime_model_catalog(provider_config.name, catalog)
+        except Exception as exc:  # noqa: BLE001 - static catalog remains the safe fallback
+            self._model_catalog_discovery_errors[provider_config.name] = (
+                f"{type(exc).__name__}: {exc}"
+            )
+        finally:
+            await temporary_provider.aclose()
+
+    def _publish_runtime_model_catalog(
+        self,
+        provider_name: str,
+        catalog: RuntimeModelCatalog,
+    ) -> None:
+        if not catalog.models:
+            raise ValueError("provider returned an empty model catalog")
+        self._runtime_model_catalogs[provider_name] = catalog
+        self._model_catalog_discovery_errors.pop(provider_name, None)
+        self._apply_runtime_model_catalogs()
+
+    def _apply_runtime_model_catalogs(self) -> None:
+        settings = self._durable_provider_settings
+        if settings is None:
+            self._provider_settings = None
+            return
+        providers = tuple(
+            _provider_with_runtime_model_catalog(
+                provider,
+                self._runtime_model_catalogs.get(provider.name),
+            )
+            for provider in settings.providers
+        )
+        self._provider_settings = replace(settings, providers=providers)
 
     def reload_provider_settings(self) -> None:
         """Reload provider settings for login and model-selection flows."""
         if self._provider_settings is None:
             return
         previous_settings = self._provider_settings
+        previous_durable_settings = self._durable_provider_settings
         previous_thinking_level = self._thinking_level
-        self._provider_settings = load_provider_settings(self._resource_paths.paths)
+        self._durable_provider_settings = load_provider_settings(self._resource_paths.paths)
+        self._apply_runtime_model_catalogs()
         try:
             self._sync_thinking_level_to_active_model()
             self._refresh_runtime_provider()
             self._sync_image_support()
         except ProviderConfigError:
             self._provider_settings = previous_settings
+            self._durable_provider_settings = previous_durable_settings
             self._thinking_level = previous_thinking_level
             raise
 
@@ -2284,7 +2463,15 @@ class CodingSession:
                         dynamic_resume = True
                         runtime_provider_config = None
                     else:
-                        validate_provider_model(runtime_provider_config, model)
+                        if (
+                            isinstance(runtime_provider_config, OpenAICodexProviderConfig)
+                            and model not in runtime_provider_config.models
+                        ):
+                            # Re-discover a live-only destination model before validation.
+                            dynamic_resume = True
+                            runtime_provider_config = None
+                        else:
+                            validate_provider_model(runtime_provider_config, model)
 
         replacement = await type(self).load(
             CodingSessionConfig(
@@ -2306,7 +2493,7 @@ class CodingSession:
                 requested_provider=provider_name if dynamic_resume else None,
                 requested_model=model if dynamic_resume else None,
                 session_provider_name=record.provider_name,
-                provider_settings=self._provider_settings,
+                provider_settings=self._durable_provider_settings,
                 runtime_provider_config=runtime_provider_config,
                 auto_compact_token_threshold=self._auto_compact_token_threshold,
                 auto_compact_enabled=self._auto_compact_enabled,
@@ -2327,9 +2514,10 @@ class CodingSession:
             )
         )
         try:
-            if restore_record_model and runtime_provider_config is not None:
-                validate_provider_model(runtime_provider_config, replacement.model)
-            else:
+            if not restore_record_model:
+                # Only provider-less legacy records inherit the source model.
+                # The staged loader has already resolved provider-aware records
+                # against the destination's (possibly freshly discovered) catalog.
                 replacement._harness.config.model = self.model
                 replacement._sync_thinking_level_to_active_model()
                 replacement._refresh_runtime_provider()
@@ -2464,7 +2652,7 @@ class CodingSession:
                 requested_provider=provider_name if dynamic_provider is not None else None,
                 requested_model=model if dynamic_provider is not None else None,
                 session_provider_name=provider_name,
-                provider_settings=self._provider_settings,
+                provider_settings=self._durable_provider_settings,
                 runtime_provider_config=runtime_provider_config,
                 dynamic_provider=dynamic_provider,
                 owns_initial_provider=dynamic_provider is not None,
@@ -2541,6 +2729,9 @@ class CodingSession:
         self._inference_provider = replacement._inference_provider
         self._inference_provider_mode = replacement._inference_provider_mode
         self._provider_settings = replacement._provider_settings
+        self._durable_provider_settings = replacement._durable_provider_settings
+        self._runtime_model_catalogs = replacement._runtime_model_catalogs
+        self._model_catalog_discovery_errors = replacement._model_catalog_discovery_errors
         self._runtime_provider_config = replacement._runtime_provider_config
         self._resource_paths = replacement._resource_paths
         self._auto_compact_token_threshold = replacement._auto_compact_token_threshold
@@ -3946,10 +4137,43 @@ async def _prepare_provider_selection(
             f"Provider is not available after trusted extension loading: "
             f"{provider_name or config.model}"
         )
+    selected_model = requested_model or (state.model if state.provider == provider_name else None)
+    selected_provider = settings.get_provider(provider_name or settings.default_provider)
+    if (
+        isinstance(selected_provider, OpenAICodexProviderConfig)
+        and selected_model is not None
+        and selected_model not in selected_provider.models
+        and environ.get("TAU_OFFLINE") is None
+    ):
+        # Live-only explicit/resumed models need discovery before static validation.
+        discovery_provider = None
+        try:
+            discovery_provider = create_model_provider(
+                selected_provider,
+                credential_store=credential_store,
+                model=None,
+                thinking_level=None,
+            )
+            if isinstance(discovery_provider, ModelCatalogProvider):
+                catalog = await discovery_provider.discover_models()
+                if catalog.models:
+                    live_provider = _provider_with_runtime_model_catalog(selected_provider, catalog)
+                    settings = replace(
+                        settings,
+                        providers=tuple(
+                            live_provider if item.name == selected_provider.name else item
+                            for item in settings.providers
+                        ),
+                    )
+        except Exception:  # noqa: BLE001 - retain ordinary static validation on failure
+            pass
+        finally:
+            if discovery_provider is not None:
+                await discovery_provider.aclose()
     selection = resolve_provider_selection(
         settings,
         provider_name=provider_name,
-        model=(requested_model or (state.model if state.provider == provider_name else None)),
+        model=selected_model,
     )
     inference_provider = _session_inference_provider(
         config,
@@ -4074,6 +4298,16 @@ def _initial_thinking_level_for_config(
     model: str,
 ) -> ThinkingLevel:
     provider = _provider_config_for_name(config, config.provider_name)
+    if config.thinking_level_override is not None:
+        if provider is None:
+            return config.thinking_level_override
+        resolved = resolve_startup_thinking_level(
+            provider,
+            model,
+            cli_override=config.thinking_level_override,
+        )
+        if resolved is not None:
+            return resolved
     if provider is None:
         return config.thinking_level
     return _preferred_thinking_level_for_model(
@@ -4087,6 +4321,11 @@ def _provider_config_for_name(
     config: CodingSessionConfig,
     provider_name: str,
 ) -> ProviderConfig | None:
+    if (
+        isinstance(config.runtime_provider_config, OpenAICodexProviderConfig)
+        and config.runtime_provider_config.name == provider_name
+    ):
+        return config.runtime_provider_config
     if config.provider_settings is not None:
         try:
             return config.provider_settings.get_provider(provider_name)
@@ -4325,6 +4564,77 @@ def _system_prompt_resource_signatures(
         str(custom_system_prompt_path) if custom_system_prompt_path is not None else None,
         append_system_prompt,
         tuple(str(path) for path in append_system_prompt_paths),
+    )
+
+
+def _provider_with_runtime_model_catalog(
+    provider: ProviderConfig,
+    catalog: RuntimeModelCatalog | None,
+) -> ProviderConfig:
+    """Overlay one account-specific catalog without changing durable settings."""
+    if catalog is None or not isinstance(provider, OpenAICodexProviderConfig):
+        return provider
+
+    models = tuple(model.id for model in catalog.models)
+    metadata = {
+        model.id: _runtime_provider_model_metadata(provider, model) for model in catalog.models
+    }
+    context_windows = {
+        model.id: (
+            model.limits.context_window
+            if model.limits is not None
+            else provider.context_windows[model.id]
+        )
+        for model in catalog.models
+        if model.limits is not None or model.id in provider.context_windows
+    }
+    return replace(
+        provider,
+        models=models,
+        default_model=(provider.default_model if provider.default_model in models else models[0]),
+        context_windows=context_windows,
+        model_metadata=metadata,
+        thinking_models=tuple(model.id for model in catalog.models if model.thinking_levels),
+        thinking_defaults=_runtime_model_thinking_defaults(provider, catalog),
+    )
+
+
+def _runtime_model_thinking_defaults(
+    provider: OpenAICodexProviderConfig,
+    catalog: RuntimeModelCatalog,
+) -> dict[str, ThinkingLevel]:
+    defaults: dict[str, ThinkingLevel] = {}
+    for model in catalog.models:
+        default = provider.thinking_defaults.get(model.id) or model.default_thinking_level
+        if default is not None:
+            defaults[model.id] = default
+    return defaults
+
+
+def _runtime_provider_model_metadata(
+    provider: OpenAICodexProviderConfig,
+    model: RuntimeModel,
+) -> ProviderModelMetadata:
+    existing = provider.model_metadata.get(model.id, ProviderModelMetadata())
+    supported = set(model.thinking_levels)
+    thinking_level_map = {
+        level: ("none" if level == "off" else level) if level in supported else None
+        for level in THINKING_LEVELS
+    }
+    return replace(
+        existing,
+        name=model.name or existing.name,
+        reasoning=True if model.thinking_levels else existing.reasoning,
+        input=model.input_modalities,
+        context_window=(
+            model.limits.context_window if model.limits is not None else existing.context_window
+        ),
+        max_tokens=(
+            model.limits.max_output_tokens
+            if model.limits is not None and model.limits.max_output_tokens is not None
+            else existing.max_tokens
+        ),
+        thinking_level_map=thinking_level_map,
     )
 
 

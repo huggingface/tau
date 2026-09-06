@@ -310,7 +310,8 @@ Provider preferences live in `~/.tau/providers.json`:
 - The selected model must be present in that provider's `models` list. Add
   custom or local model names to `models` before using them as defaults,
   CLI/TUI selections, or scoped models.
-- `scoped_models` are favorites for the **Ctrl+P** quick-cycle.
+- `scoped_models` are favorites for the **Ctrl+P** / **Shift+Ctrl+P**
+  forward / backward quick-cycle.
 - `providers.json` uses `schema_version: 2` and stores preferences only. Provider
   capabilities—model lists, context windows, transports, metadata, and thinking
   support—always come from the current effective catalog.
@@ -386,6 +387,7 @@ The built-in frontend reads optional settings from `~/.tau/tui.json`:
     "completion_previous": "up",
     "thinking_cycle": "shift+tab",
     "model_cycle": "ctrl+p",
+    "model_cycle_reverse": "ctrl+shift+p",
     "toggle_thinking": "ctrl+t",
     "toggle_tool_results": "ctrl+o",
     "copy_message": "ctrl+c",

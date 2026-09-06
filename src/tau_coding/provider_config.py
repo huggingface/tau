@@ -1654,6 +1654,7 @@ def resolve_startup_thinking_level(
     model: str,
     *,
     preferred: ThinkingLevel = DEFAULT_THINKING_LEVEL,
+    cli_override: ThinkingLevel | None = None,
 ) -> ThinkingLevel | None:
     """Pick a valid startup thinking level for a provider/model pair.
 
@@ -1663,9 +1664,24 @@ def resolve_startup_thinking_level(
     the remembered per-model preference wins, then the global ``preferred``
     level, then the provider/catalog default, then the first available level.
 
+    An explicit ``cli_override`` (from ``--thinking``) takes precedence over
+    everything, and unlike the fallback chain it is strict: requesting a level
+    the model does not support raises :class:`ProviderConfigError` instead of
+    silently falling back.
+
     Returns ``None`` when the model has no configurable thinking levels.
     """
     levels = provider_thinking_levels(provider, model=model)
+    if cli_override is not None:
+        if not levels:
+            raise ProviderConfigError(f"Thinking modes are unavailable for {provider.name}:{model}")
+        if cli_override not in levels:
+            allowed = ", ".join(levels)
+            raise ProviderConfigError(
+                f'Thinking mode "{cli_override}" is not available for '
+                f"{provider.name}:{model}. Available modes: {allowed}"
+            )
+        return cli_override
     if not levels:
         return None
     remembered = provider.thinking_defaults.get(model)
