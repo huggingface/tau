@@ -1939,9 +1939,16 @@ def _make_tool(name: str, *, content: str) -> AgentTool:
     return AgentTool(name=name, label=name, description="d", parameters={}, execute_fn=executor)
 
 
-def test_context_paths_exposes_resolved_paths_from_load(tmp_path: Path) -> None:
-    runtime = ExtensionRuntime()
-    resolved = TauPaths(home=tmp_path / "custom-home")
+def test_context_paths_exposes_constructor_paths_during_extension_use(tmp_path: Path) -> None:
+    resolved = TauPaths(
+        home=tmp_path / "custom-home",
+        agents_home=tmp_path / "custom-agents",
+    )
+    runtime = ExtensionRuntime(paths=resolved)
+
+    # Constructor paths are usable before loading and remain authoritative when
+    # the resource snapshot explicitly carries the same custom paths.
+    assert runtime.paths is resolved
     runtime.load(TauResourcePaths(root=tmp_path / "unused-root", paths=resolved))
     api = cast(ExtensionAPI, _register_inline_extension(runtime, "reader"))
     runtime.bind(RecordingSession(tmp_path))
@@ -1949,13 +1956,19 @@ def test_context_paths_exposes_resolved_paths_from_load(tmp_path: Path) -> None:
     assert api.context.paths is resolved
 
 
-def test_context_paths_falls_back_to_resource_root_home(tmp_path: Path) -> None:
+def test_context_paths_falls_back_to_resource_root_and_agents_root(tmp_path: Path) -> None:
     runtime = ExtensionRuntime()
-    runtime.load(TauResourcePaths(root=tmp_path / "home-tau"))
+    runtime.load(
+        TauResourcePaths(
+            root=tmp_path / "home-tau",
+            agents_root=tmp_path / "home-agents",
+        )
+    )
     api = cast(ExtensionAPI, _register_inline_extension(runtime, "reader"))
     runtime.bind(RecordingSession(tmp_path))
 
     assert api.context.paths.home == tmp_path / "home-tau"
+    assert api.context.paths.agents_home == tmp_path / "home-agents"
 
 
 # -- coding-session integration ---------------------------------------------------

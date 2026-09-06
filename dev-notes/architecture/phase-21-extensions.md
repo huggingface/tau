@@ -183,6 +183,23 @@ class ExtensionAPI:
 over the bound `CodingSession`; action methods raise `ExtensionError` if
 called before binding (Pi's throwing-stubs-then-`bindCore` model).
 
+`context.paths -> TauPaths` is the resolved, read-only filesystem-path snapshot
+for the active extension generation. A host-supplied `TauResourcePaths.paths`
+is authoritative, preserving custom `TauPaths.home` and `TauPaths.agents_home`.
+When it is absent, the runtime derives `TauPaths(home=resource_paths.root,
+agents_home=resource_paths.agents_root or ~/.agents)`. This keeps Tau's
+`root`/`home` (user data and extension discovery) distinct from
+`agents_root`/`agents_home` (`.agents` resources) and from project `cwd`.
+`ExtensionRuntime(paths=custom_paths)` exposes its constructor value immediately;
+`load` then replaces it with the loaded resource snapshot. Consequently, a
+custom setup can intentionally use separate Tau and `.agents` roots without a
+path architecture rewrite.
+
+The snapshot is generation-scoped. `/reload` and fresh-generation session
+replacement invalidate the old context, so even reading `context.paths` from a
+captured old context raises `ExtensionError`; handlers must read the new
+context's paths after the replacement.
+
 `transcript -> tuple[AgentMessage, ...]` gives read access to the active-path
 parent conversation (`CodingSession.messages`). It is the Tau analogue of the
 only conversation surface Pi hands extensions — `ctx.sessionManager.getBranch()`
