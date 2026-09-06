@@ -1341,6 +1341,8 @@ async def run_print_mode(
                     "The /local command is interactive-only. In print mode, configure a "
                     "backend in the TUI, then use --provider and --model."
                 )
+            if command.sidebar_toggle_requested:
+                message = "The /sidebar command is interactive-only."
             if command.reload_requested:
                 try:
                     summary = await session.reload()

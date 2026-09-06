@@ -140,6 +140,7 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
         "resume",
         "scoped-models",
         "session",
+        "sidebar",
         "skill",
         "skills",
         "system",
@@ -155,6 +156,17 @@ def test_local_command_requests_host_action(tmp_path: Path) -> None:
 
     assert registry.execute(session, "/local").local_requested is True
     assert registry.execute(session, "/local extra").message == "Usage: /local"
+
+
+def test_sidebar_command_requests_host_action(tmp_path: Path) -> None:
+    registry = create_default_command_registry()
+    session = FakeSession(tmp_path)
+
+    result = registry.execute(session, "/sidebar")
+
+    assert result.handled is True
+    assert result.sidebar_toggle_requested is True
+    assert registry.execute(session, "/sidebar extra").message == "Usage: /sidebar"
 
 
 def test_prompts_command_requests_picker(tmp_path: Path) -> None:

@@ -65,6 +65,7 @@ to search and run them. Common ones:
 - `/prompts` — search prompt templates, insert an invocation, or edit the template file with **Ctrl+E**
 - `/hotkeys` — show the keyboard shortcuts
 - `/local` — choose and manage a registered local backend
+- `/sidebar` — show or hide the sidebar for this session
 
 The full list is in the [Slash commands reference]({{< relref "../reference/slash-commands.md" >}}). For local inference, see the [local backends guide]({{< relref "./local-inference.md" >}}).
 
@@ -292,6 +293,10 @@ branch, and provider use the quieter metadata color.
 The sidebar appears on the **right** by default. It can be moved to the **left**
 or turned **off** entirely by setting `sidebar_position` in `~/.tau/tui.json` —
 see [Configuration]({{< relref "../reference/configuration.md#tui-settings" >}}).
+Use `/sidebar` to toggle visibility during a session. This is temporary: it
+preserves a configured left/right position, does not change `tui.json`, and is
+forgotten when Tau restarts. A configured `off` sidebar can be shown temporarily
+on the default right side.
 
 ## Next
 

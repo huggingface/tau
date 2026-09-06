@@ -345,6 +345,8 @@ class FakeSession:
             return CommandResult(handled=True, thinking_level=text.removeprefix("/thinking "))
         if text == "/theme":
             return CommandResult(handled=True, theme_picker_requested=True)
+        if text == "/sidebar":
+            return CommandResult(handled=True, sidebar_toggle_requested=True)
         if text.startswith("/theme "):
             return CommandResult(handled=True, theme=text.removeprefix("/theme "))
         if text.startswith("/name "):
@@ -3414,6 +3416,76 @@ async def test_tui_sidebar_shows_on_left_when_configured() -> None:
         assert sidebar.display is True
         assert not app.has_class("-sidebar-right")
         assert not app.has_class("-sidebar-off")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("position", ["left", "right"])
+async def test_tui_sidebar_command_toggles_visibility_without_changing_position(
+    position: str,
+) -> None:
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(sidebar_position=position))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        sidebar = app.query_one("#sidebar")
+        assert sidebar.display is True
+        assert app.has_class("-sidebar-right") is (position == "right")
+
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/sidebar"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert sidebar.display is False
+        assert app.has_class("-sidebar-right") is (position == "right")
+        assert app.tui_settings.sidebar_position == position
+
+        prompt.value = "/sidebar"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert sidebar.display is True
+        assert app.has_class("-sidebar-right") is (position == "right")
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_command_hides_user_sidebar_across_resize() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        sidebar = app.query_one("#sidebar")
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/sidebar"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert sidebar.display is False
+
+        await pilot.resize_terminal(width=80, height=30)
+        await pilot.resize_terminal(width=120, height=40)
+        await pilot.pause()
+        assert sidebar.display is False
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_off_can_be_shown_temporarily_on_right() -> None:
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(sidebar_position="off"))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        sidebar = app.query_one("#sidebar")
+        assert sidebar.display is False
+        assert not app.has_class("-sidebar-right")
+
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/sidebar"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert sidebar.display is True
+        assert app.has_class("-sidebar-right")
+        assert app.tui_settings.sidebar_position == "off"
+        assert not tui_settings_path().exists()
+
+        prompt.value = "/sidebar"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert sidebar.display is False
+        assert not app.has_class("-sidebar-right")
 
 
 @pytest.mark.anyio
