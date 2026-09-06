@@ -3334,6 +3334,16 @@ class TauTuiApp(App[None]):
         border: tall $tau-border;
     }
 
+    ListView {
+        scrollbar-background: $tau-transcript-background;
+        scrollbar-color: $tau-border;
+        scrollbar-color-hover: $tau-highlight-background;
+        scrollbar-background-hover: $tau-transcript-background;
+        scrollbar-color-active: $tau-accent;
+        scrollbar-background-active: $tau-transcript-background;
+        scrollbar-size-vertical: 2;
+    }
+
     ListView > ListItem.-highlight {
         background: $tau-highlight-background;
         color: $tau-highlight-text;
