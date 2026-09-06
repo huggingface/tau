@@ -2,12 +2,13 @@
 
 import asyncio
 from pathlib import Path
+from unittest.mock import PropertyMock, patch
 
 import pytest
 
 from pi_event_helpers import assistant_done
 from tau_agent.messages import AssistantMessage, UserMessage
-from tau_agent.session import JsonlSessionStorage, MessageEntry
+from tau_agent.session import CustomEntry, JsonlSessionStorage, MessageEntry
 from tau_ai import FakeProvider
 from tau_coding import CodingSession, CodingSessionConfig, TauResourcePaths
 from tau_coding.events import CompactionEndEvent, CompactionStartEvent
@@ -114,6 +115,32 @@ async def test_context_summary_does_not_mutate_transcript(tmp_path: Path) -> Non
     with pytest.raises(ValueError, match="timeout"):
         await context.summarize([], instructions="", timeout=0)
     await session.aclose()
+
+
+async def test_branch_entries_reuses_isolated_session_snapshot(tmp_path: Path) -> None:
+    session = await session_with_history(tmp_path)
+    try:
+        await session.append_custom_entry("checkpoint", {"nested": {"saved": True}})
+        context = ExtensionContext(session.extension_runtime)
+        snapshot = session.active_branch_entries
+        with patch.object(
+            CodingSession, "active_branch_entries", new_callable=PropertyMock, return_value=snapshot
+        ) as snapshot_property:
+            assert context.branch_entries is snapshot
+            snapshot_property.assert_called_once_with()
+
+        entries = context.branch_entries
+        custom = next(entry for entry in entries if isinstance(entry, CustomEntry))
+        nested = custom.data["nested"]
+        assert isinstance(nested, dict)
+        nested["saved"] = False
+        message = next(entry for entry in entries if isinstance(entry, MessageEntry))
+        assert isinstance(message.message, UserMessage)
+        message.message.content = "changed"
+        assert session.active_branch_entries == snapshot
+        assert context.branch_entries == snapshot
+    finally:
+        await session.aclose()
 
 
 async def test_reference_insertion_and_branch_lifecycle(tmp_path: Path) -> None:

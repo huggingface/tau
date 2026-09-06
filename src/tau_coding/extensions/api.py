@@ -965,10 +965,8 @@ class ExtensionContext:
     def branch_entries(self) -> tuple[SessionEntry, ...]:
         """Return deep copies of persisted active-path entries, including custom data."""
         self._generation.assert_active()
-        return tuple(
-            entry.model_copy(deep=True)
-            for entry in self._runtime.session_view.active_branch_entries
-        )
+        # The session owns snapshot isolation; copying again duplicates the whole branch.
+        return self._runtime.session_view.active_branch_entries
 
     async def summarize(
         self,
