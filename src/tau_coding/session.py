@@ -959,30 +959,36 @@ class CodingSession:
             target_id = selected_entry.parent_id
             input_prefill = selected_entry.message.text
 
-        leaf = LeafEntry(parent_id=target_id, entry_id=target_id)
-        await self._append_session_entry(leaf)
-        self._last_parent_id = target_id
+        try:
+            await self._extension_runtime.emit_session_shutdown("branch")
+            leaf = LeafEntry(parent_id=target_id, entry_id=target_id)
+            await self._append_session_entry(leaf)
+            self._last_parent_id = target_id
 
-        await self._refresh_persisted_state(leaf_id=target_id)
-        history_repair = await self._persist_active_tool_history_repairs()
-        if history_repair is None:
-            self._harness.replace_messages(self._state.messages)
-        self._invalidate_context_usage_cache()
-        self._thinking_level = _state_thinking_level(
-            self._state,
-            default=_default_thinking_level_for_active_model(self),
-        )
-        self._sync_thinking_level_to_active_model()
-        self._refresh_runtime_provider()
-        suffix = " with branch summary" if summary_entry is not None else ""
-        if history_repair is not None:
-            suffix += " and repaired malformed tool history"
-        if input_prefill is not None:
-            return SessionTreeBranchResult(
-                message=f"Branched session before {entry_id}{suffix}.",
-                input_prefill=input_prefill,
+            await self._refresh_persisted_state(leaf_id=target_id)
+            history_repair = await self._persist_active_tool_history_repairs()
+            if history_repair is None:
+                self._harness.replace_messages(self._state.messages)
+            self._invalidate_context_usage_cache()
+            self._thinking_level = _state_thinking_level(
+                self._state,
+                default=_default_thinking_level_for_active_model(self),
             )
-        return SessionTreeBranchResult(message=f"Branched session at {target_id}{suffix}.")
+            self._sync_thinking_level_to_active_model()
+            self._refresh_runtime_provider()
+            suffix = " with branch summary" if summary_entry is not None else ""
+            if history_repair is not None:
+                suffix += " and repaired malformed tool history"
+            if input_prefill is not None:
+                return SessionTreeBranchResult(
+                    message=f"Branched session before {entry_id}{suffix}.",
+                    input_prefill=input_prefill,
+                )
+            return SessionTreeBranchResult(message=f"Branched session at {target_id}{suffix}.")
+        finally:
+            # Same runtime, new active path: restart branch-local resources even
+            # when a failed branch operation retained the original path.
+            await self._extension_runtime.emit_session_start("branch")
 
     @property
     def thinking_level(self) -> ThinkingLevel:
@@ -1277,6 +1283,14 @@ class CodingSession:
             else UserMessage(content=content)
         )
         self._harness.follow_up_message(message)
+
+    async def append_context_message(self, content: str, *, custom_type: str) -> None:
+        """Persist reference context before the next prompt, without queueing a turn."""
+        self._require_idle("append reference context")
+        message = CustomMessage(custom_type=custom_type, content=content)
+        await self._persist_message(message)
+        self._harness.append_message(message)
+        self._invalidate_context_usage_cache()
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         """Persist an extension-owned custom entry on the active branch path.

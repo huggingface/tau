@@ -1194,6 +1194,11 @@ class ExtensionAPI:
             trigger_turn=trigger_turn,
         )
 
+    async def append_message(self, content: str, *, custom_type: str) -> None:
+        """Persist idle-session reference context without queueing a follow-up turn."""
+        self._generation.assert_active()
+        await self._runtime.session_view.append_context_message(content, custom_type=custom_type)
+
     async def append_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         """Persist extension-owned data to the session as a custom entry."""
         self._generation.assert_active()

@@ -637,6 +637,14 @@ All other handler failures are contained: they are recorded as diagnostics
 
 ### Awaited continuity work
 
+`await tau.append_message(content, custom_type="my-extension:recall")` inserts
+and persists reference context while idle, before the next user prompt. Unlike
+`send_custom_message(..., trigger_turn=False)`, it does not queue a follow-up and
+therefore does not cause an extra agent response. It rejects active-run use.
+In-place tree branching awaits `session_shutdown(reason="branch")` before moving
+the leaf and `session_start(reason="branch")` afterward on the same runtime;
+extensions must support closing and restarting their owned resources.
+
 `context.branch_entries` returns deep-copied persisted entries on the active
 root-to-leaf path, including extension-owned custom entries. Read receipts here
 to reconcile work after reload/resume and to distinguish divergent branches;

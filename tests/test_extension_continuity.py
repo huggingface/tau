@@ -11,7 +11,7 @@ from tau_agent.session import JsonlSessionStorage, MessageEntry
 from tau_ai import FakeProvider
 from tau_coding import CodingSession, CodingSessionConfig, TauResourcePaths
 from tau_coding.events import CompactionEndEvent, CompactionStartEvent
-from tau_coding.extensions import ExtensionContext
+from tau_coding.extensions import ExtensionAPI, ExtensionContext
 
 pytestmark = pytest.mark.anyio
 
@@ -113,4 +113,28 @@ async def test_context_summary_does_not_mutate_transcript(tmp_path: Path) -> Non
     assert session.active_branch_entries[0] != entries[0]
     with pytest.raises(ValueError, match="timeout"):
         await context.summarize([], instructions="", timeout=0)
+    await session.aclose()
+
+
+async def test_reference_insertion_and_branch_lifecycle(tmp_path: Path) -> None:
+    session = await session_with_history(tmp_path)
+    api = ExtensionAPI(session.extension_runtime, "test")
+    await api.append_message("recalled decision", custom_type="reference")
+    assert session.messages[-1].role == "custom"
+    assert not session.queued_messages.follow_up
+    assert session.active_branch_entries[-1].type == "message"
+    calls: list[str] = []
+
+    async def shutdown(reason: str) -> None:
+        calls.append("shutdown:" + reason)
+
+    async def start(reason: str) -> None:
+        calls.append("start:" + reason)
+
+    session.extension_runtime.emit_session_shutdown = shutdown
+    session.extension_runtime.emit_session_start = start
+    target = next(e for e in session.active_branch_entries if isinstance(e, MessageEntry))
+    await session.branch_to_entry(target.id)
+    assert calls == ["shutdown:branch", "start:branch"]
+    assert not session.messages
     await session.aclose()
