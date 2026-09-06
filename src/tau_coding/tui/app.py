@@ -139,6 +139,7 @@ from tau_coding.session_manager import CodingSessionRecord, SessionManager
 from tau_coding.session_preparation import prepare_coding_session
 from tau_coding.shell_config import load_shell_settings
 from tau_coding.skills import Skill
+from tau_coding.thinking import ThinkingLevel
 from tau_coding.tui.adapter import TuiEventAdapter
 from tau_coding.tui.autocomplete import (
     CompletionItem,
@@ -504,6 +505,8 @@ class CompletionActionTarget(Protocol):
 
     def action_cycle_model(self) -> None: ...
 
+    def action_cycle_model_reverse(self) -> None: ...
+
     def action_toggle_tool_results(self) -> None: ...
 
     def action_toggle_thinking(self) -> None: ...
@@ -625,8 +628,12 @@ class PromptInput(TextArea):
         self._completion_target().action_cycle_thinking()
 
     def action_cycle_model(self) -> None:
-        """Cycle the app-level scoped model."""
+        """Cycle the app-level scoped model forward."""
         self._completion_target().action_cycle_model()
+
+    def action_cycle_model_reverse(self) -> None:
+        """Cycle the app-level scoped model backward."""
+        self._completion_target().action_cycle_model_reverse()
 
     def action_toggle_tool_results(self) -> None:
         """Toggle app-level tool result display."""
@@ -816,6 +823,9 @@ class PromptInput(TextArea):
         elif event.key == keybindings.model_cycle:
             event.stop()
             self._completion_target().action_cycle_model()
+        elif event.key == keybindings.model_cycle_reverse:
+            event.stop()
+            self._completion_target().action_cycle_model_reverse()
         elif event.key == keybindings.toggle_tool_results:
             event.stop()
             self._completion_target().action_toggle_tool_results()
@@ -2575,8 +2585,6 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
 
     def action_toggle_mode(self) -> None:
         """Toggle between all models and scoped models."""
-        if self.picker_kind != "model":
-            return
         self.mode = "scoped" if self.mode == "all" else "all"
         self._refresh_model_list()
 
@@ -2649,12 +2657,23 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         scope_count = len(self.scoped_choices)
         tabs = self.query_one("#model-picker-tabs", Static)
         if self.picker_kind == "scoped":
-            tabs.update("Scoped models setup — Enter toggles membership; active model is unchanged")
-            help_text = (
-                "No matching models - Enter toggles scoped model"
-                if not self.visible_choices
-                else f"Enter toggles scoped model - {scope_count} scoped"
-            )
+            if self.mode == "all":
+                tabs.update("Tabs: ● All models  ○ Scoped models")
+                help_text = (
+                    "all models: no matching models - Tab switches to scoped models"
+                    if not self.visible_choices
+                    else (
+                        "All models - Enter toggles scoped model - Tab switches tabs - "
+                        f"{scope_count} scoped - active model is unchanged"
+                    )
+                )
+            else:
+                tabs.update("Tabs: ○ All models  ● Scoped models")
+                help_text = (
+                    "scoped models: no scoped models - Tab switches to all models"
+                    if not self.visible_choices
+                    else "Scoped models - Enter removes scoped model - Tab switches tabs"
+                )
         elif self.mode == "all":
             tabs.update("Tabs: ● All models  ○ Scoped models")
             help_text = (
@@ -4146,16 +4165,11 @@ class TauTuiApp(App[None]):
         *,
         streaming_behavior: Literal["steer", "follow_up"],
     ) -> None:
+        # Enter always submits the prompt text as typed; accepting the
+        # selected completion is reserved for the accept-completion key
+        # (Tab by default).
         prompt = self.query_one("#prompt", PromptInput)
         raw_text = prompt.text_for_submission()
-        applied_completion = self._apply_selected_completion(raw_text)
-        if applied_completion is not None and applied_completion != raw_text:
-            prompt.text = applied_completion
-            prompt._clear_pending_paste()
-            prompt.move_cursor(_text_end_location(applied_completion))
-            self._completion_state = self._build_completion_state(applied_completion)
-            self._refresh_completions()
-            return
 
         text = raw_text.strip()
         if not text:
@@ -5796,11 +5810,18 @@ class TauTuiApp(App[None]):
         self.run_worker(self._cycle_thinking_level(), exclusive=False)
 
     def action_cycle_model(self) -> None:
-        """Cycle through scoped models."""
+        """Cycle forward through scoped models."""
+        self._cycle_model(reverse=False)
+
+    def action_cycle_model_reverse(self) -> None:
+        """Cycle backward through scoped models."""
+        self._cycle_model(reverse=True)
+
+    def _cycle_model(self, *, reverse: bool) -> None:
         if self.state.running:
             self._notify("Tau is already working. Press Escape to cancel.")
             return
-        self.run_worker(self._cycle_scoped_model(), exclusive=False)
+        self.run_worker(self._cycle_scoped_model(reverse=reverse), exclusive=False)
 
     def action_toggle_tool_results(self) -> None:
         """Toggle inline tool result details without rebuilding unrelated history."""
@@ -6445,13 +6466,13 @@ class TauTuiApp(App[None]):
             return
         self._refresh_chrome()
 
-    async def _cycle_scoped_model(self) -> None:
+    async def _cycle_scoped_model(self, *, reverse: bool = False) -> None:
         cycler = getattr(self.session, "cycle_scoped_model", None)
         if cycler is None:
             self._notify("Scoped model controls are not available.", severity="warning")
             return
         try:
-            result = cycler()
+            result = cycler(reverse=reverse)
             if isawaitable(result):
                 result = await result
         except Exception as exc:  # noqa: BLE001 - surface session state failures in the TUI
@@ -7220,6 +7241,12 @@ def _app_bindings(keybindings: TuiKeybindings) -> list[Binding]:
         Binding(keybindings.thinking_cycle, "cycle_thinking", "Thinking"),
         Binding(keybindings.model_cycle, "cycle_model", "Model"),
         Binding(
+            keybindings.model_cycle_reverse,
+            "cycle_model_reverse",
+            "Previous model",
+            show=False,
+        ),
+        Binding(
             keybindings.accept_completion,
             "accept_completion",
             "Complete",
@@ -7261,7 +7288,7 @@ def _prompt_bindings(
                 keybindings.accept_completion,
                 "accept_completion",
                 "Complete",
-                key_display=f"{_key_hint(keybindings.accept_completion)}/Enter",
+                key_display=_key_hint(keybindings.accept_completion),
                 priority=True,
             ),
             Binding(
@@ -7304,6 +7331,13 @@ def _prompt_bindings(
         Binding(keybindings.thinking_cycle, "cycle_thinking", "Thinking", priority=True),
         Binding(keybindings.model_cycle, "cycle_model", "Model", priority=True),
         Binding(
+            keybindings.model_cycle_reverse,
+            "cycle_model_reverse",
+            "Previous model",
+            show=False,
+            priority=True,
+        ),
+        Binding(
             keybindings.copy_message,
             "clear_prompt",
             "Clear",
@@ -7326,6 +7360,7 @@ def _hidden_prompt_bindings(
         (keybindings.queue_follow_up, "submit_follow_up"),
         (keybindings.thinking_cycle, "cycle_thinking"),
         (keybindings.model_cycle, "cycle_model"),
+        (keybindings.model_cycle_reverse, "cycle_model_reverse"),
         (keybindings.toggle_tool_results, "toggle_tool_results"),
         (keybindings.toggle_thinking, "toggle_thinking"),
         (keybindings.copy_message, "clear_prompt"),
@@ -7593,6 +7628,7 @@ async def run_tui_app(
     custom_system_prompt: str | None = None,
     append_system_prompt: str | None = None,
     trust_override: TrustOverride | None = None,
+    thinking_level_override: ThinkingLevel | None = None,
 ) -> str | None:
     """Run the Textual app and return the active id when its session is persisted."""
     if new_session and session_id is not None:
@@ -7662,6 +7698,7 @@ async def run_tui_app(
                 thinking_level=resolve_startup_thinking_level(
                     selection.provider,
                     selection.model,
+                    cli_override=thinking_level_override,
                 ),
             )
         except RuntimeError as exc:
@@ -7729,6 +7766,7 @@ async def run_tui_app(
                 project_extensions_enabled=project_extensions_enabled,
                 custom_system_prompt=custom_system_prompt,
                 append_system_prompt=append_system_prompt,
+                thinking_level_override=thinking_level_override,
                 trust_override=trust_override,
                 trust_default=shell_settings.default_project_trust,
                 trust_interactive=True,

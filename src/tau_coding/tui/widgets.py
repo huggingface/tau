@@ -1867,6 +1867,13 @@ def _build_sidebar_content(
     if cache_rates:
         usage.append("\ncache: ", style=theme.completion_description)
         usage.append(" · ".join(cache_rates), style=theme.completion_description)
+    performance: list[str] = []
+    if (session_speed := stats.output_tokens_per_second) is not None:
+        performance.append(f"avg TPS: {session_speed:.1f}")
+    if (average_ttft := stats.average_time_to_first_output_ms) is not None:
+        performance.append(f"avg TTFT: {_format_milliseconds(average_ttft)}")
+    if performance:
+        usage.append(f"\n{' · '.join(performance)}", style=theme.completion_description)
 
     threshold = session.auto_compact_token_threshold
     compaction = Text(
@@ -2529,6 +2536,13 @@ def _styled_cwd(cwd: Path, *, theme: TuiTheme) -> Text:
         text.append(short_path, style=theme.prompt_text)
     text.append(f" ({_git_branch(cwd)})", style=theme.completion_description)
     return text
+
+
+def _format_milliseconds(value: float) -> str:
+    rounded = round(value)
+    if rounded < 1000:
+        return f"{rounded}ms"
+    return f"{rounded / 1000:.1f}s"
 
 
 def _compact_token_count(value: int) -> str:

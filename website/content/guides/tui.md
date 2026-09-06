@@ -203,9 +203,9 @@ when you want to reduce what is sent to the model.
   refreshes catalogs in the background, and updates the open list. Selecting a
   model from another provider switches the active provider too. Use
   `tau update --models` to force refresh or `TAU_OFFLINE=1` to disable it.
-- **Ctrl+P** quickly cycles through your *scoped* (favorite) models without
-  opening the picker. Manage that list with `/scoped-models` or by pressing
-  `Space` on a model in the `/model` picker.
+- **Ctrl+P** quickly cycles forward through your *scoped* (favorite) models;
+  **Shift+Ctrl+P** cycles backward. Neither opens the picker. Manage that list
+  with `/scoped-models` or by pressing `Space` on a model in the `/model` picker.
 - **`/theme`** switches between `tau-dark`, `tau-light`, `high-contrast`, and
   any custom themes you have installed. Each theme uses one shared selection
   palette for prompt autocomplete and modal lists such as `/resume`. In
@@ -218,8 +218,9 @@ when you want to reduce what is sent to the model.
 
 On wide-enough terminals Tau shows the session name prominently without a
 redundant section label, followed by active-branch
-turn and tool-call totals, provider-reported token usage, latest-request and
-session prompt-cache hit rates, estimated cost, automatic-compaction threshold,
+turn and tool-call totals, provider-reported token usage, average effective
+output speed and TTFT, latest-request and session prompt-cache hit rates, estimated cost,
+automatic-compaction threshold,
 and loaded tools, skills, prompt templates, extensions, and context files such as
 `AGENTS.md`. Tool and extension names use compact comma-separated lists limited
 to three rendered lines. Skills and prompt templates are grouped under their
@@ -251,6 +252,16 @@ top-header or shortcut-footer rows. Named sessions remain visible in the sidebar
 and terminal tab title; `/hotkeys` lists shortcuts when needed. The sidebar hides
 automatically when the terminal is small, while the tab title continues to
 identify the session.
+
+`avg TPS` divides provider-reported output tokens by the accumulated time Tau
+spends awaiting provider stream events. That includes provider queueing, network
+waits, prefill, and time to first output, but excludes Tau's rendering and
+persistence work between stream pulls. TPS is token-weighted across timed
+responses rather than an average of per-response rates. `avg TTFT` is the
+arithmetic mean of provider-wait time through Tau's first text, thinking, or
+tool-call output event. Timing is persisted on new assistant messages. Older
+history still counts toward cumulative token usage and cost but is omitted from
+both performance metrics.
 
 Cumulative usage and cost cover the active branch, including history replaced by
 compaction. Input usage counts tokens processed on every
