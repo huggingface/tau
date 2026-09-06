@@ -864,3 +864,7 @@ section{ padding:88px 0; }
 .docs-content pre:hover .copy-btn,
 .copy-btn:focus-visible{ opacity:1; }
 .copy-btn.copied{ color:var(--green, #1F8A5F); border-color:var(--green, #1F8A5F); }
+.copy-status{
+  position:absolute; width:1px; height:1px; padding:0; margin:-1px;
+  overflow:hidden; clip:rect(0, 0, 0, 0); white-space:nowrap; border:0;
+}

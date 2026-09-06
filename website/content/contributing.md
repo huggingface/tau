@@ -57,7 +57,9 @@ hugo --minify     # static output in website/public/
 
 User-facing docs live in `website/content/`; the landing and "Why Tau?" pages
 are `website/content/_index.md` and `website/content/why-tau.md`, rendered by
-templates in `website/layouts/`.
+templates in `website/layouts/`. Code blocks on documentation pages include a
+keyboard-focusable **Copy** button. Copy success or clipboard failures are also
+announced to assistive technology.
 
 ## Documentation expectations
 
