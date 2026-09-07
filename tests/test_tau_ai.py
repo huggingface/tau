@@ -456,6 +456,91 @@ async def test_openai_compatible_provider_includes_configured_reasoning_effort()
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("reasoning_effort", "supports_reasoning_effort", "expected_thinking", "expected_effort"),
+    [
+        ("high", False, {"type": "enabled"}, None),
+        ("none", False, {"type": "disabled"}, None),
+        ("high", True, {"type": "enabled"}, "high"),
+    ],
+)
+async def test_zai_provider_serializes_thinking_protocol(
+    reasoning_effort: str,
+    supports_reasoning_effort: bool,
+    expected_thinking: dict[str, str],
+    expected_effort: str | None,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://api.z.ai/api/paas/v4",
+                reasoning_effort=reasoning_effort,
+                thinking_format="zai",
+                compat={"supportsReasoningEffort": supports_reasoning_effort},
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="glm-5.1",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    payload = loads(requests[0].content)
+    assert payload["thinking"] == expected_thinking
+    assert payload.get("reasoning_effort") == expected_effort
+    assert "enable_thinking" not in payload
+
+
+@pytest.mark.anyio
+async def test_unsupported_reasoning_effort_guard_remains_for_openai_format() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+                reasoning_effort="high",
+                compat={"supportsReasoningEffort": False},
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="test-model",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert "reasoning_effort" not in loads(requests[0].content)
+
+
+@pytest.mark.anyio
 async def test_openai_compatible_provider_includes_openrouter_provider_routing() -> None:
     requests: list[httpx.Request] = []
 

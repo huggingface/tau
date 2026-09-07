@@ -1076,6 +1076,23 @@ def test_openai_compatible_config_from_provider_sets_reasoning_effort(
     assert plain.reasoning_effort is None
 
 
+def test_zai_config_preserves_logical_effort_for_provider_serialization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ZAI_API_KEY", "test-key")
+    provider = load_provider_settings(TauPaths(home=Path("/missing"))).get_provider("zai")
+
+    config = openai_compatible_config_from_provider(
+        provider,
+        model="glm-5.1",
+        thinking_level="high",
+    )
+
+    assert config.reasoning_effort == "high"
+    assert config.thinking_format == "zai"
+    assert config.compat["supportsReasoningEffort"] is False
+
+
 @pytest.mark.parametrize(
     ("level", "expected_effort"),
     [("low", "low"), ("high", "high"), ("max", "max")],

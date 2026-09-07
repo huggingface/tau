@@ -157,6 +157,23 @@ needed. Available models and plan limits change over time; consult the
 [OpenCode Go](https://opencode.ai/docs/go) and
 [OpenCode Zen](https://opencode.ai/docs/zen) pages for the current list.
 
+### Z.AI
+
+Log in with `/login zai` or set `ZAI_API_KEY`. Tau sends Z.AI's provider-specific
+thinking object rather than an OpenAI `reasoning_effort` field:
+`{"thinking": {"type": "enabled"}}` for an enabled logical mode and
+`{"thinking": {"type": "disabled"}}` for `off`. This keeps configured
+thinking enabled for GLM models whose endpoint does not accept the raw effort
+field.
+
+Z.AI documents `reasoning_effort` only for GLM-5.2 and newer, with model-specific
+values. Tau therefore emits that additional field only when the selected model's
+compatibility metadata explicitly supports it; unsupported providers and models
+continue to omit it. See the [Z.AI deep-thinking
+reference](https://docs.z.ai/guides/capabilities/thinking) and [chat-completion
+schema](https://docs.z.ai/api-reference/llm/chat-completion) for the authoritative
+wire contract.
+
 ### Hugging Face Inference Providers
 
 Log in with `/login huggingface` or set `HF_TOKEN`. Tau's Hugging Face model
