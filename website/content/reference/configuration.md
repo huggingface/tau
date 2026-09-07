@@ -409,7 +409,10 @@ Tau rejects invalid values, empty keys, and duplicate assignments.
 
 - `sidebar_position`: `"right"` (default), `"left"`, or `"off"`. Controls
   placement of the session metadata sidebar. `"off"` hides the sidebar entirely;
-  the compact session info row below the prompt still works.
+  the compact session info row below the prompt still works. In a running TUI,
+  `/sidebar` temporarily toggles visibility without writing this setting; a
+  temporarily shown `"off"` sidebar uses the default right position and the
+  saved setting is honored again after restart.
 - `turn_notification`: `"desktop"` (default), `"bell"`, or `"off"`. When Tau's
   terminal surface is unfocused and the agent becomes fully idle, `"desktop"`
   selects OSC 9 for Ghostty, iTerm2, and MinTTY, or Kitty's OSC 99 protocol for

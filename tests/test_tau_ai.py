@@ -32,6 +32,8 @@ from tau_ai import (
     OpenAICodexProvider,
     OpenAICompatibleConfig,
     OpenAICompatibleProvider,
+    RuntimeModel,
+    RuntimeModelCatalog,
     RuntimeModelLimits,
     TextDeltaEvent,
     ThinkingDeltaEvent,
@@ -451,6 +453,91 @@ async def test_openai_compatible_provider_includes_configured_reasoning_effort()
 
     assert isinstance(events[-1], AssistantDoneEvent)
     assert loads(requests[0].content)["reasoning_effort"] == "high"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("reasoning_effort", "supports_reasoning_effort", "expected_thinking", "expected_effort"),
+    [
+        ("high", False, {"type": "enabled"}, None),
+        ("none", False, {"type": "disabled"}, None),
+        ("high", True, {"type": "enabled"}, "high"),
+    ],
+)
+async def test_zai_provider_serializes_thinking_protocol(
+    reasoning_effort: str,
+    supports_reasoning_effort: bool,
+    expected_thinking: dict[str, str],
+    expected_effort: str | None,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://api.z.ai/api/paas/v4",
+                reasoning_effort=reasoning_effort,
+                thinking_format="zai",
+                compat={"supportsReasoningEffort": supports_reasoning_effort},
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="glm-5.1",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    payload = loads(requests[0].content)
+    assert payload["thinking"] == expected_thinking
+    assert payload.get("reasoning_effort") == expected_effort
+    assert "enable_thinking" not in payload
+
+
+@pytest.mark.anyio
+async def test_unsupported_reasoning_effort_guard_remains_for_openai_format() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://example.test/v1",
+                reasoning_effort="high",
+                compat={"supportsReasoningEffort": False},
+            ),
+            client=client,
+        )
+        await _collect(
+            provider.stream_response(
+                model="test-model",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert "reasoning_effort" not in loads(requests[0].content)
 
 
 @pytest.mark.anyio
@@ -1294,7 +1381,7 @@ async def test_openai_compatible_provider_includes_plain_http_error_body_in_mess
 
 
 @pytest.mark.anyio
-async def test_openai_codex_provider_discovers_and_caches_live_model_limits() -> None:
+async def test_openai_codex_provider_discovers_and_caches_live_model_catalog() -> None:
     requests: list[httpx.Request] = []
 
     async def credentials() -> OpenAICodexCredentials:
@@ -1308,11 +1395,35 @@ async def test_openai_codex_provider_discovers_and_caches_live_model_limits() ->
                 "models": [
                     {
                         "slug": "gpt-5.6-sol",
+                        "display_name": "GPT-5.6 Sol",
+                        "visibility": "list",
+                        "supported_in_api": True,
+                        "priority": 10,
                         "context_window": 372_000,
                         "max_context_window": 372_000,
                         "effective_context_window_percent": 95,
                         "auto_compact_token_limit": 330_000,
                         "max_output_tokens": 128_000,
+                        "input_modalities": ["text", "image"],
+                        "default_reasoning_level": "high",
+                        "supported_reasoning_levels": [
+                            {"effort": "low", "description": "Fast"},
+                            {"effort": "high", "description": "Deep"},
+                        ],
+                    },
+                    {
+                        "slug": "subscription-only",
+                        "display_name": "Subscription only",
+                        "visibility": "list",
+                        "supported_in_api": False,
+                        "priority": 5,
+                        "supported_reasoning_levels": [],
+                    },
+                    {
+                        "slug": "hidden",
+                        "visibility": "hide",
+                        "supported_in_api": True,
+                        "context_window": 100_000,
                     },
                     {"slug": "invalid", "context_window": -1},
                 ]
@@ -1329,16 +1440,41 @@ async def test_openai_codex_provider_discovers_and_caches_live_model_limits() ->
             client=client,
         )
 
+        catalog = await provider.discover_models()
+        cached_catalog = await provider.discover_models()
         limits = await provider.discover_model_limits("gpt-5.6-sol")
-        cached = await provider.discover_model_limits("gpt-5.6-sol")
 
+    expected_limits = RuntimeModelLimits(
+        context_window=372_000,
+        max_output_tokens=128_000,
+        effective_context_window_percent=95,
+        auto_compact_token_limit=330_000,
+    )
+    assert catalog == RuntimeModelCatalog(
+        (
+            RuntimeModel(
+                id="gpt-5.6-sol",
+                name="GPT-5.6 Sol",
+                limits=expected_limits,
+                input_modalities=("text", "image"),
+                thinking_levels=("low", "high"),
+                default_thinking_level="high",
+            ),
+            RuntimeModel(
+                id="subscription-only",
+                name="Subscription only",
+                input_modalities=("text", "image"),
+            ),
+        )
+    )
+    assert cached_catalog == catalog
+    assert limits == expected_limits
     assert limits == RuntimeModelLimits(
         context_window=372_000,
         max_output_tokens=128_000,
         effective_context_window_percent=95,
         auto_compact_token_limit=330_000,
     )
-    assert cached == limits
     assert len(requests) == 1
     assert str(requests[0].url) == (
         "https://chatgpt.test/backend-api/codex/models?client_version=0.2.0"
@@ -1346,6 +1482,46 @@ async def test_openai_codex_provider_discovers_and_caches_live_model_limits() ->
     assert requests[0].headers["authorization"] == "Bearer access-token"
     assert requests[0].headers["chatgpt-account-id"] == "account-1"
     assert requests[0].headers["accept"] == "application/json"
+
+
+@pytest.mark.anyio
+async def test_openai_codex_provider_uses_resolved_latest_client_version() -> None:
+    requests: list[httpx.Request] = []
+    version_calls = 0
+
+    async def credentials() -> OpenAICodexCredentials:
+        return OpenAICodexCredentials(access_token="access-token", account_id="account-1")
+
+    async def client_version() -> str:
+        nonlocal version_calls
+        version_calls += 1
+        return "0.153.4"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"models": [{"slug": "new-model", "visibility": "list"}]},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICodexProvider(
+            OpenAICodexConfig(
+                credential_resolver=credentials,
+                base_url="https://chatgpt.test/backend-api",
+                client_version="0.144.3",
+                client_version_resolver=client_version,
+            ),
+            client=client,
+        )
+        catalog = await provider.discover_models()
+        await provider.discover_model_limits("new-model")
+
+    assert [model.id for model in catalog.models] == ["new-model"]
+    assert version_calls == 1
+    assert str(requests[0].url) == (
+        "https://chatgpt.test/backend-api/codex/models?client_version=0.153.4"
+    )
 
 
 @pytest.mark.anyio

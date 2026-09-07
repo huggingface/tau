@@ -345,6 +345,8 @@ class FakeSession:
             return CommandResult(handled=True, thinking_level=text.removeprefix("/thinking "))
         if text == "/theme":
             return CommandResult(handled=True, theme_picker_requested=True)
+        if text == "/sidebar":
+            return CommandResult(handled=True, sidebar_toggle_requested=True)
         if text.startswith("/theme "):
             return CommandResult(handled=True, theme=text.removeprefix("/theme "))
         if text.startswith("/name "):
@@ -3417,6 +3419,76 @@ async def test_tui_sidebar_shows_on_left_when_configured() -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("position", ["left", "right"])
+async def test_tui_sidebar_command_toggles_visibility_without_changing_position(
+    position: str,
+) -> None:
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(sidebar_position=position))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        sidebar = app.query_one("#sidebar")
+        assert sidebar.display is True
+        assert app.has_class("-sidebar-right") is (position == "right")
+
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/sidebar"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert sidebar.display is False
+        assert app.has_class("-sidebar-right") is (position == "right")
+        assert app.tui_settings.sidebar_position == position
+
+        prompt.value = "/sidebar"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert sidebar.display is True
+        assert app.has_class("-sidebar-right") is (position == "right")
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_command_hides_user_sidebar_across_resize() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        sidebar = app.query_one("#sidebar")
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/sidebar"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert sidebar.display is False
+
+        await pilot.resize_terminal(width=80, height=30)
+        await pilot.resize_terminal(width=120, height=40)
+        await pilot.pause()
+        assert sidebar.display is False
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_off_can_be_shown_temporarily_on_right() -> None:
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(sidebar_position="off"))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        sidebar = app.query_one("#sidebar")
+        assert sidebar.display is False
+        assert not app.has_class("-sidebar-right")
+
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/sidebar"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert sidebar.display is True
+        assert app.has_class("-sidebar-right")
+        assert app.tui_settings.sidebar_position == "off"
+        assert not tui_settings_path().exists()
+
+        prompt.value = "/sidebar"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert sidebar.display is False
+        assert not app.has_class("-sidebar-right")
+
+
+@pytest.mark.anyio
 async def test_tui_sidebar_is_hidden_when_off() -> None:
     app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(sidebar_position="off"))
 
@@ -3672,6 +3744,34 @@ def test_tui_app_uses_light_theme_css_variables() -> None:
     assert variables["footer-description-foreground"] == "#111827"
     assert variables["footer-key-foreground"] == "#0f766e"
     assert app.current_theme.dark is False
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "theme",
+    [TAU_DARK_THEME, TAU_LIGHT_THEME, HIGH_CONTRAST_THEME],
+    ids=lambda theme: theme.name,
+)
+async def test_list_view_scrollbars_use_theme_colors(theme: TuiTheme) -> None:
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(theme=theme.name))
+
+    async with app.run_test() as pilot:
+        await app.push_screen(SessionPickerScreen([], theme=theme))
+        await pilot.pause()
+
+        list_view = app.screen.query_one("#session-picker-list", ListView)
+
+        assert list_view.styles.scrollbar_background == Color.parse(theme.transcript_background)
+        assert list_view.styles.scrollbar_color == Color.parse(theme.border)
+        assert list_view.styles.scrollbar_background_hover == Color.parse(
+            theme.transcript_background
+        )
+        assert list_view.styles.scrollbar_color_hover == Color.parse(theme.highlight_background)
+        assert list_view.styles.scrollbar_background_active == Color.parse(
+            theme.transcript_background
+        )
+        assert list_view.styles.scrollbar_color_active == Color.parse(theme.accent)
+        assert list_view.styles.scrollbar_size_vertical == 2
 
 
 def test_tui_app_registers_only_tau_themes_with_textual() -> None:

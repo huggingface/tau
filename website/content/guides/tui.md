@@ -65,6 +65,7 @@ to search and run them. Common ones:
 - `/prompts` — search prompt templates, insert an invocation, or edit the template file with **Ctrl+E**
 - `/hotkeys` — show the keyboard shortcuts
 - `/local` — choose and manage a registered local backend
+- `/sidebar` — show or hide the sidebar for this session
 
 The full list is in the [Slash commands reference]({{< relref "../reference/slash-commands.md" >}}). For local inference, see the [local backends guide]({{< relref "./local-inference.md" >}}).
 
@@ -101,6 +102,9 @@ You can run a shell command yourself without asking the model:
 - `!<command>` runs it in the session's working directory **and** records the
   command and output in the conversation context.
 - `!!<command>` runs it and shows the output **without** adding it to context.
+
+Shell commands are non-interactive: their stdin is disconnected from the TUI.
+Programs that require an interactive terminal should be run in a separate terminal.
 
 As soon as the input starts with `!`, the whole input and its left border turn
 the same amber/orange color as a tool while it is running, and the `τ` prompt
@@ -292,6 +296,10 @@ branch, and provider use the quieter metadata color.
 The sidebar appears on the **right** by default. It can be moved to the **left**
 or turned **off** entirely by setting `sidebar_position` in `~/.tau/tui.json` —
 see [Configuration]({{< relref "../reference/configuration.md#tui-settings" >}}).
+Use `/sidebar` to toggle visibility during a session. This is temporary: it
+preserves a configured left/right position, does not change `tui.json`, and is
+forgotten when Tau restarts. A configured `off` sidebar can be shown temporarily
+on the default right side.
 
 ## Next
 

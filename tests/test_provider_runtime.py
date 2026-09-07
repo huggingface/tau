@@ -26,6 +26,7 @@ def test_create_model_provider_returns_openai_codex_provider(tmp_path) -> None:
     )
 
     assert isinstance(provider, OpenAICodexProvider)
+    assert provider._config.client_version_resolver is not None
 
 
 def test_create_model_provider_uses_codex_model_image_capability(tmp_path) -> None:
