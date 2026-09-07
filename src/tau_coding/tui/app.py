@@ -62,6 +62,7 @@ from tau_agent.provider_events import (
     AssistantMessageEvent,
     TextDeltaEvent,
     ThinkingDeltaEvent,
+    ThinkingEndEvent,
 )
 from tau_agent.tools import AgentTool
 from tau_agent.types import JSONValue
@@ -5380,6 +5381,8 @@ class TauTuiApp(App[None]):
             nested = event.assistant_message_event
             if isinstance(nested, TextDeltaEvent):
                 await transcript.append_assistant_delta(nested.delta, theme=theme)
+            elif isinstance(nested, ThinkingEndEvent):
+                await transcript.finish_thinking_message()
             elif isinstance(nested, ThinkingDeltaEvent):
                 await transcript.append_thinking_delta(
                     nested.delta,

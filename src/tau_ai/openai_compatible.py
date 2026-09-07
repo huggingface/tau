@@ -115,6 +115,10 @@ class OpenAICompatibleProvider:
             api=self._config.api,
             provider=getattr(self._config, "provider_name", "openai-compatible"),
             model=model,
+            independent_channels=not (
+                self._config.api == "openai-responses"
+                or (self._config.infer_api_from_model and _use_responses_api(model))
+            ),
         )
 
     def _stream_provider_events(

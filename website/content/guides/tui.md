@@ -27,6 +27,11 @@ to disable notifications. BEL and operating-system desktop notifications may
 produce sounds according to the user's terminal and system settings; see
 [Configuration]({{< relref "../reference/configuration.md#tui-settings" >}}).
 
+Chat Completions providers can interleave reasoning and answer fragments (for
+example, DeepSeek through Hugging Face). Tau keeps each channel in one continuous
+block while streaming and saving the reply, rather than splitting sentences at
+channel switches. Previously saved replies retain their original block layout.
+
 Clicking anywhere in the window returns focus to the prompt, so you can scroll
 the transcript and keep typing without tabbing back.
 

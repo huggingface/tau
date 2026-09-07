@@ -829,6 +829,10 @@ class TranscriptView(VerticalScroll):
 
         self.call_after_refresh(restore_anchor)
 
+    async def finish_thinking_message(self) -> None:
+        """Close a thinking block at its explicit stream boundary."""
+        await self._finalize_active_thinking_message()
+
     async def _finalize_active_thinking_message(self) -> None:
         """Stop streaming for a completed thinking block before another block starts."""
         widget = self._active_thinking_widget
@@ -1180,11 +1184,13 @@ class TranscriptView(VerticalScroll):
         *,
         theme: TuiTheme = TAU_DARK_THEME,
         scroll_end: bool = False,
+        preserve_thinking: bool = False,
     ) -> StreamingTranscriptMessageWidget:
         """Create the active assistant message widget if needed."""
         if self._active_assistant_widget is not None:
             return self._active_assistant_widget
-        await self._finalize_active_thinking_message()
+        if not preserve_thinking:
+            await self._finalize_active_thinking_message()
         should_follow = self._should_follow_output if not scroll_end else True
         widget = StreamingTranscriptMessageWidget(
             ChatItem(role="assistant", text=""),
@@ -1209,7 +1215,9 @@ class TranscriptView(VerticalScroll):
         if not self._window_is_latest:
             return
         should_follow = self._should_follow_output if not scroll_end else True
-        widget = await self.start_assistant_message(theme=theme, scroll_end=scroll_end)
+        widget = await self.start_assistant_message(
+            theme=theme, scroll_end=scroll_end, preserve_thinking=True
+        )
         await widget.append_fragment(delta)
         if should_follow:
             self._request_follow_scroll(force=scroll_end)

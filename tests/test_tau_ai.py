@@ -1044,9 +1044,9 @@ async def test_openai_compatible_provider_streams_reasoning_content() -> None:
         "thinking_start",
         "thinking_delta",
         "thinking_delta",
-        "thinking_end",
         "text_start",
         "text_delta",
+        "thinking_end",
         "text_end",
         "done",
     ]
