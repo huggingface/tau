@@ -33,6 +33,7 @@ from textual.widgets import Collapsible, Static
 from textual.widgets import Markdown as TextualMarkdown
 from textual.widgets.markdown import MarkdownBlock, MarkdownFence, MarkdownStream
 
+from tau_agent.messages import AssistantMessage, TextContent, ThinkingContent
 from tau_agent.tools import AgentTool, ToolCall
 from tau_coding.context_window import estimate_text_tokens
 from tau_coding.prompt_templates import PromptTemplate
@@ -44,6 +45,7 @@ from tau_coding.tui.config import TAU_DARK_THEME, TuiRoleStyle, TuiTheme
 from tau_coding.tui.state import (
     RESULTFUL_FILE_GROUP_NAMES,
     TOOL_TIMER_MIN_SECONDS,
+    ActiveAssistantDraft,
     ChatItem,
     TuiState,
     format_elapsed,
@@ -386,6 +388,107 @@ TRANSCRIPT_WINDOW_PAGE_ITEMS = 80
 TRANSCRIPT_WINDOW_OVERSCAN_ITEMS = 40
 
 
+@dataclass(frozen=True, slots=True)
+class ActiveAssistantBlock:
+    """One visible block projected from the in-flight assistant draft.
+
+    ``key`` is stable for the lifetime of one assistant stream: it combines the
+    stream id with the source content index (or the index of the first thinking
+    block in a hidden run), so views can match mounted widgets to blocks across
+    redraws and cumulative snapshot updates.
+    """
+
+    key: tuple[str, int, int]
+    role: Literal["assistant", "thinking"]
+    text: str
+    content_index: int | None
+
+
+def project_active_assistant_blocks(
+    message: AssistantMessage,
+    *,
+    show_thinking: bool,
+    stream_id: int,
+) -> tuple[ActiveAssistantBlock, ...]:
+    """Project a cumulative assistant snapshot into ordered visible blocks.
+
+    Provider content order is preserved (``thinking -> text -> thinking`` stays
+    interleaved), empty blocks are omitted, tool calls are ignored (they render
+    through tool execution rows), and each contiguous run of thinking blocks
+    collapses to one placeholder when thinking is hidden, matching Pi.
+    """
+    blocks: list[ActiveAssistantBlock] = []
+    content = message.content
+    index = 0
+    while index < len(content):
+        block = content[index]
+        if isinstance(block, TextContent):
+            if block.text:
+                blocks.append(
+                    ActiveAssistantBlock(
+                        key=("text", stream_id, index),
+                        role="assistant",
+                        text=block.text,
+                        content_index=index,
+                    )
+                )
+            index += 1
+            continue
+        if isinstance(block, ThinkingContent):
+            run_start = index
+            visible: list[tuple[int, str]] = []
+            while index < len(content):
+                candidate = content[index]
+                if not isinstance(candidate, ThinkingContent):
+                    break
+                if candidate.thinking:
+                    visible.append((index, candidate.thinking))
+                index += 1
+            if not visible:
+                continue
+            if show_thinking:
+                for content_index, thinking in visible:
+                    blocks.append(
+                        ActiveAssistantBlock(
+                            key=("thinking", stream_id, content_index),
+                            role="thinking",
+                            text=thinking,
+                            content_index=content_index,
+                        )
+                    )
+            else:
+                blocks.append(
+                    ActiveAssistantBlock(
+                        key=("hidden", stream_id, run_start),
+                        role="thinking",
+                        text=_HIDDEN_THINKING_PLACEHOLDER,
+                        content_index=None,
+                    )
+                )
+            continue
+        index += 1
+    return tuple(blocks)
+
+
+@dataclass(slots=True)
+class _ActiveAssistantRender:
+    """Owner of every mounted widget belonging to one in-flight assistant turn."""
+
+    stream_id: int
+    blocks: tuple[ActiveAssistantBlock, ...]
+    widgets: dict[
+        tuple[str, int, int],
+        TranscriptMessageWidget | StreamingTranscriptMessageWidget,
+    ]
+
+    def ordered_widgets(
+        self,
+    ) -> list[TranscriptMessageWidget | StreamingTranscriptMessageWidget]:
+        return [
+            self.widgets[block.key] for block in self.blocks if block.key in self.widgets
+        ]
+
+
 class TranscriptWindowBoundary(Static):
     """Small paging sentinel shown when transcript items are outside the DOM window."""
 
@@ -658,7 +761,12 @@ class StreamingTranscriptMessageWidget(ThemedMarkdownWidget):
             return
         self.item.text += fragment
         self.selection_text += fragment
-        await self.stream.write(fragment)
+        try:
+            await self.stream.write(fragment)
+        except RuntimeError:
+            # An unmount stopped the stream while this write was in flight; the
+            # widget is detached and any replacement renders the full text.
+            self._stream = None
 
     async def _stop_stream(self) -> None:
         """Stop the Textual markdown stream, flushing pending fragments first."""
@@ -713,14 +821,15 @@ class TranscriptView(VerticalScroll):
             self.styles.min_width = min_width
         self._render_state: TuiState | None = None
         self._render_theme: TuiTheme = TAU_DARK_THEME
-        self._active_assistant_widget: StreamingTranscriptMessageWidget | None = None
-        self._active_thinking_widget: StreamingTranscriptMessageWidget | None = None
-        self._active_message_widgets: list[Widget] = []
-        self._hidden_thinking_placeholder_visible = False
+        self._active_render: _ActiveAssistantRender | None = None
+        self._render_generation = 0
         self._follow_output = True
         self._follow_scroll_pending = False
         self._window_start = 0
         self._window_end = 0
+        # True while the user has paged the bounded window into history so its
+        # lower edge is detached from the latest transcript item.
+        self._window_detached = False
         self._window_shift_pending = False
         self._item_widgets: dict[
             int, TranscriptMessageWidget | StreamingTranscriptMessageWidget
@@ -735,6 +844,7 @@ class TranscriptView(VerticalScroll):
     def follow_output(self) -> None:
         """Return to follow mode for a user-driven turn or explicit jump to bottom."""
         self._follow_output = True
+        self._window_detached = False
         self.anchor(True)
         self._request_follow_scroll(force=True)
 
@@ -809,6 +919,7 @@ class TranscriptView(VerticalScroll):
 
         self._window_start = new_start
         self._window_end = new_end
+        self._window_detached = new_end < len(state.items)
         self._redraw(scroll_end=False, preserve_window=True)
 
         def restore_anchor() -> None:
@@ -829,21 +940,81 @@ class TranscriptView(VerticalScroll):
 
         self.call_after_refresh(restore_anchor)
 
-    async def _finalize_active_thinking_message(self) -> None:
-        """Stop streaming for a completed thinking block before another block starts."""
-        widget = self._active_thinking_widget
-        if widget is None:
-            return
-        await widget.finalize()
-        self._active_thinking_widget = None
+    def has_stale_active_tail(self, draft: ActiveAssistantDraft | None) -> bool:
+        """Return whether mounted active widgets belong to a superseded stream."""
+        render = self._active_render
+        if render is None:
+            return False
+        return draft is None or draft.stream_id != render.stream_id
 
-    async def _finalize_active_assistant_message(self) -> None:
-        """Stop streaming for a completed assistant block before another block starts."""
-        widget = self._active_assistant_widget
-        if widget is None:
+    def _drop_active_render(self) -> None:
+        """Remove all widgets owned by the in-flight assistant tail, if any."""
+        self._render_generation += 1
+        render = self._active_render
+        self._active_render = None
+        if render is None:
             return
-        await widget.finalize()
-        self._active_assistant_widget = None
+        stale = [widget for widget in render.ordered_widgets() if widget.parent is self]
+        if stale:
+            self.remove_children(stale)
+
+    def _first_active_widget(
+        self,
+    ) -> TranscriptMessageWidget | StreamingTranscriptMessageWidget | None:
+        """Return the first mounted widget of the active tail, if any."""
+        render = self._active_render
+        if render is None:
+            return None
+        for widget in render.ordered_widgets():
+            if widget.parent is self:
+                return widget
+        return None
+
+    def _active_block_widget(
+        self,
+        block: ActiveAssistantBlock,
+        *,
+        theme: TuiTheme,
+        with_text: bool,
+    ) -> TranscriptMessageWidget | StreamingTranscriptMessageWidget:
+        """Create the widget for one projected active block.
+
+        Streaming blocks may start empty (``with_text=False``) so their content
+        arrives through one incremental ``MarkdownStream`` write instead of a
+        full parse; synchronous rebuild paths pass the full text instead.
+        """
+        if block.content_index is None:
+            return TranscriptMessageWidget(
+                ChatItem(role="thinking", text=_HIDDEN_THINKING_PLACEHOLDER),
+                theme=theme,
+                show_tool_results=False,
+            )
+        return StreamingTranscriptMessageWidget(
+            ChatItem(role=block.role, text=block.text if with_text else ""),
+            theme=theme,
+        )
+
+    def _build_active_tail(
+        self,
+        draft: ActiveAssistantDraft,
+        *,
+        show_thinking: bool,
+        theme: TuiTheme,
+        with_text: bool,
+    ) -> tuple[_ActiveAssistantRender, list[Widget]]:
+        """Project the draft and create (but do not mount) its tail widgets."""
+        blocks = project_active_assistant_blocks(
+            draft.message,
+            show_thinking=show_thinking,
+            stream_id=draft.stream_id,
+        )
+        render = _ActiveAssistantRender(stream_id=draft.stream_id, blocks=blocks, widgets={})
+        widgets: list[Widget] = []
+        for block in blocks:
+            widget = self._active_block_widget(block, theme=theme, with_text=with_text)
+            render.widgets[block.key] = widget
+            widgets.append(widget)
+        return render, widgets
 
     def update_from_state(
         self,
@@ -878,6 +1049,9 @@ class TranscriptView(VerticalScroll):
         self._render_theme = theme
         should_follow = self._should_follow_output
         previous_scroll_y = self.scroll_y
+        # The active tail is rebuilt wholesale from the draft below; dropping it
+        # first keeps it out of the canonical reconciliation loop.
+        self._drop_active_render()
         window_items = state.items[self._window_start : self._window_end]
         message_children = [
             child
@@ -945,10 +1119,17 @@ class TranscriptView(VerticalScroll):
                 flush(target)
 
         flush(self._bottom_boundary)
-        self._active_thinking_widget = None
-        self._hidden_thinking_placeholder_visible = any(
-            widget.selection_text == _HIDDEN_THINKING_PLACEHOLDER for _, widget in pending
-        ) or _last_transcript_child_is_hidden_thinking_placeholder(self.children)
+        draft = state.active_assistant
+        if draft is not None and self._window_is_latest:
+            render, tail_widgets = self._build_active_tail(
+                draft,
+                show_thinking=state.show_thinking,
+                theme=theme,
+                with_text=True,
+            )
+            if tail_widgets:
+                self.mount(*tail_widgets, before=self._bottom_boundary)
+            self._active_render = render
         self.refresh(layout=True)
         if should_follow:
             self._request_follow_scroll()
@@ -961,14 +1142,23 @@ class TranscriptView(VerticalScroll):
         state = self._render_state
         if state is None:
             return
+        # Any async widget work started before this synchronous rebuild is now
+        # stale and must not mount or register anything when it resumes.
+        self._render_generation += 1
         theme = self._render_theme
         total = len(state.items)
         if not preserve_window or self._window_end <= self._window_start:
             self._window_end = total
             self._window_start = max(0, total - TRANSCRIPT_WINDOW_ITEMS)
+            self._window_detached = False
         else:
             self._window_start = min(self._window_start, total)
-            self._window_end = min(max(self._window_end, self._window_start), total)
+            if self._window_detached:
+                self._window_end = min(max(self._window_end, self._window_start), total)
+            else:
+                # The window is pinned to the latest end; adopt items appended
+                # since the last redraw instead of truncating them.
+                self._window_end = total
             if self._window_end - self._window_start > TRANSCRIPT_WINDOW_ITEMS:
                 self._window_start = self._window_end - TRANSCRIPT_WINDOW_ITEMS
 
@@ -984,10 +1174,7 @@ class TranscriptView(VerticalScroll):
         ]
         if removable:
             self.remove_children(removable)
-        self._active_assistant_widget = None
-        self._active_thinking_widget = None
-        self._active_message_widgets = []
-        self._hidden_thinking_placeholder_visible = False
+        self._active_render = None
         self._item_widgets.clear()
         self._top_boundary = None
         self._bottom_boundary = None
@@ -1029,19 +1216,20 @@ class TranscriptView(VerticalScroll):
         if self._window_end < total:
             self._bottom_boundary = TranscriptWindowBoundary("later", total - self._window_end)
             widgets.append(self._bottom_boundary)
-        elif state.assistant_buffer:
-            self._active_assistant_widget = StreamingTranscriptMessageWidget(
-                ChatItem(role="assistant", text=state.assistant_buffer),
+        elif state.active_assistant is not None:
+            # A redraw must reconstruct live ownership of the in-flight turn;
+            # it must never leave active blocks behind as unowned static rows.
+            render, tail_widgets = self._build_active_tail(
+                state.active_assistant,
+                show_thinking=state.show_thinking,
                 theme=theme,
+                with_text=True,
             )
-            self._active_message_widgets.append(self._active_assistant_widget)
-            widgets.append(self._active_assistant_widget)
+            widgets.extend(tail_widgets)
+            self._active_render = render
 
         if widgets:
             self.mount(*widgets)
-        self._hidden_thinking_placeholder_visible = (
-            hidden_thinking_widget is not None and self._window_end == total
-        )
         self.refresh(layout=True)
         if scroll_end:
             self._request_follow_scroll()
@@ -1057,13 +1245,25 @@ class TranscriptView(VerticalScroll):
         invocation: str | None = None,
         result_markup: str | None = None,
     ) -> TranscriptMessageWidget | StreamingTranscriptMessageWidget:
-        """Append one item, paging to the latest window only for followed output."""
+        """Append one item, paging to the latest window only for followed output.
+
+        Appending is identity-idempotent: an item that already has a mounted
+        widget is returned as-is so concurrent completion paths cannot mount a
+        second copy. Rows appended while an assistant is streaming are inserted
+        before the active tail so the in-flight turn stays last.
+        """
         should_follow = self._should_follow_output if not scroll_end else True
-        await self._finalize_active_assistant_message()
-        await self._finalize_active_thinking_message()
         self._render_theme = theme
         state = self._render_state
         item_index = _identity_index(state.items, item) if state is not None else None
+
+        existing = self._item_widgets.get(id(item))
+        if existing is not None and existing.parent is self:
+            if item_index is not None:
+                self._window_end = max(self._window_end, item_index + 1)
+            if should_follow:
+                self._request_follow_scroll(force=scroll_end)
+            return existing
 
         if state is not None and item_index is not None and self._window_end < item_index:
             if should_follow:
@@ -1094,12 +1294,8 @@ class TranscriptView(VerticalScroll):
             return widget
         if state is not None and item_index is not None:
             self._window_end = max(self._window_end, item_index + 1)
-        await self.mount(widget, before=self._bottom_boundary)
+        await self.mount(widget, before=self._first_active_widget() or self._bottom_boundary)
         self._item_widgets[id(item)] = widget
-        self._active_assistant_widget = None
-        self._active_thinking_widget = None
-        self._active_message_widgets = []
-        self._hidden_thinking_placeholder_visible = False
 
         if (
             state is not None
@@ -1175,173 +1371,240 @@ class TranscriptView(VerticalScroll):
             self._request_follow_scroll()
         return True
 
-    async def start_assistant_message(
+    async def sync_active_assistant(
         self,
+        draft: ActiveAssistantDraft | None,
         *,
-        theme: TuiTheme = TAU_DARK_THEME,
-        scroll_end: bool = False,
-    ) -> StreamingTranscriptMessageWidget:
-        """Create the active assistant message widget if needed."""
-        if self._active_assistant_widget is not None:
-            return self._active_assistant_widget
-        await self._finalize_active_thinking_message()
-        should_follow = self._should_follow_output if not scroll_end else True
-        widget = StreamingTranscriptMessageWidget(
-            ChatItem(role="assistant", text=""),
-            theme=theme,
-        )
-        self._render_theme = theme
-        await self.mount(widget, before=self._bottom_boundary)
-        self._active_assistant_widget = widget
-        self._active_message_widgets.append(widget)
-        if should_follow:
-            self._request_follow_scroll(force=scroll_end)
-        return widget
-
-    async def append_assistant_delta(
-        self,
-        delta: str,
-        *,
-        theme: TuiTheme = TAU_DARK_THEME,
-        scroll_end: bool = False,
-    ) -> None:
-        """Append streamed assistant text when the latest window is mounted."""
-        if not self._window_is_latest:
-            return
-        should_follow = self._should_follow_output if not scroll_end else True
-        widget = await self.start_assistant_message(theme=theme, scroll_end=scroll_end)
-        await widget.append_fragment(delta)
-        if should_follow:
-            self._request_follow_scroll(force=scroll_end)
-
-    async def append_thinking_delta(
-        self,
-        delta: str,
-        *,
+        changed_content_index: int | None = None,
         theme: TuiTheme = TAU_DARK_THEME,
         show_thinking: bool,
         scroll_end: bool = False,
     ) -> None:
-        """Append streamed thinking text or one hidden-thinking placeholder."""
-        state = self._render_state
-        if state is not None:
-            # The adapter adds provisional thinking items before this method runs.
-            was_latest = self._window_end >= max(0, len(state.items) - 1)
-            if was_latest:
-                self._window_end = len(state.items)
-            else:
-                if self._bottom_boundary is not None:
-                    self._bottom_boundary.update_count(len(state.items) - self._window_end)
-                return
+        """Reconcile the mounted active tail with the cumulative draft snapshot.
+
+        The cumulative block text is authoritative: the normal path writes only
+        the missing suffix of the changed block through ``MarkdownStream``, a
+        redraw that already rendered the suffix makes this a no-op, and a
+        corrected snapshot replaces the widget text outright. Any block
+        topology, visibility, or stream change rebuilds the whole tail from the
+        pure projection instead of guessing from individual widget pointers.
+        """
+        self._render_theme = theme
         should_follow = self._should_follow_output if not scroll_end else True
-        if not show_thinking:
-            if self._hidden_thinking_placeholder_visible:
-                return
-            widget = TranscriptMessageWidget(
-                ChatItem(
-                    role="thinking",
-                    text=_HIDDEN_THINKING_PLACEHOLDER,
-                ),
-                theme=theme,
-                show_tool_results=False,
-            )
-            await self.mount(widget, before=self._active_assistant_widget or self._bottom_boundary)
-            self._active_message_widgets.append(widget)
-            self._active_thinking_widget = None
-            self._hidden_thinking_placeholder_visible = True
-            self.refresh(layout=True)
+        if draft is None:
+            self._drop_active_render()
+            return
+        if not self._window_is_latest:
+            # The user is viewing an older transcript window; never mount the
+            # live tail there. It is reconstructed when the window pages back.
+            return
+        blocks = project_active_assistant_blocks(
+            draft.message,
+            show_thinking=show_thinking,
+            stream_id=draft.stream_id,
+        )
+        render = self._active_render
+        old_keys = tuple(block.key for block in render.blocks) if render is not None else ()
+        new_keys = tuple(block.key for block in blocks)
+        if (
+            render is None
+            or render.stream_id != draft.stream_id
+            or old_keys != new_keys[: len(old_keys)]
+        ):
+            # Non-additive topology change (correction, replacement stream, or
+            # visibility flip): rebuild the whole tail from the projection.
+            await self._rebuild_active_render(draft.stream_id, blocks, theme=theme)
             if should_follow:
+                # Removing the old tail can shrink content and clamp the scroll
+                # position, which would otherwise silently disable follow mode.
+                # Safe: should_follow was captured before any mutation, so a
+                # user who scrolled away is never forced back to the bottom.
+                self._follow_output = True
                 self._request_follow_scroll(force=scroll_end)
             return
-        self._hidden_thinking_placeholder_visible = False
-        if self._active_thinking_widget is None:
-            self._active_thinking_widget = StreamingTranscriptMessageWidget(
-                ChatItem(role="thinking", text=""),
+        render.blocks = blocks
+        generation = self._render_generation
+        for block in blocks[: len(old_keys)]:
+            if block.content_index is None:
+                continue
+            if changed_content_index is not None and block.content_index != changed_content_index:
+                continue
+            widget = render.widgets.get(block.key)
+            if not isinstance(widget, StreamingTranscriptMessageWidget):
+                continue
+            current = widget.selection_text
+            if block.text == current:
+                continue
+            if block.text.startswith(current):
+                await widget.append_fragment(block.text[len(current) :])
+            else:
+                # The provider corrected the partial snapshot; replacement wins
+                # over blind concatenation.
+                await widget.replace_text(block.text)
+            if self._render_generation != generation:
+                # A synchronous rebuild superseded this update; it already
+                # rendered the current draft state.
+                return
+        for block in blocks[len(old_keys) :]:
+            # Purely additive topology growth: mount only the new blocks so the
+            # already-streaming prefix keeps its widgets and scroll position.
+            widget = self._active_block_widget(
+                block,
                 theme=theme,
+                with_text=block.content_index is None,
             )
-            await self.mount(
-                self._active_thinking_widget,
-                before=self._active_assistant_widget or self._bottom_boundary,
-            )
-            self._active_message_widgets.append(self._active_thinking_widget)
-        await self._active_thinking_widget.append_fragment(delta)
+            render.widgets[block.key] = widget
+            await self.mount(widget, before=self._bottom_boundary)
+            if self._render_generation != generation:
+                if widget.parent is self:
+                    widget.remove()
+                return
+            if isinstance(widget, StreamingTranscriptMessageWidget):
+                await widget.append_fragment(block.text)
+                if self._render_generation != generation:
+                    return
         if should_follow:
             self._request_follow_scroll(force=scroll_end)
 
-    async def finish_assistant_message(
+    async def _rebuild_active_render(
         self,
-        text: str | None = None,
+        stream_id: int,
+        blocks: tuple[ActiveAssistantBlock, ...],
         *,
-        item: ChatItem | None = None,
+        theme: TuiTheme,
     ) -> None:
-        """Finalize the active assistant widget after the provider sends the full message."""
-        widget = self._active_assistant_widget
-        if widget is None:
-            if item is not None:
-                await self.append_item(item, theme=self._render_theme)
-            elif text:
-                await self.append_item(
-                    ChatItem(role="assistant", text=text),
-                    theme=self._render_theme,
-                )
-            return
-        await widget.finalize(text)
-        if item is not None:
-            widget.item = item
-            self._item_widgets[id(item)] = widget
-        self._active_assistant_widget = None
-        self._active_message_widgets = [
-            candidate for candidate in self._active_message_widgets if candidate is not widget
-        ]
-        self._hidden_thinking_placeholder_visible = False
+        """Replace the whole mounted active tail with freshly projected blocks."""
+        self._drop_active_render()
+        render = _ActiveAssistantRender(stream_id=stream_id, blocks=blocks, widgets={})
+        self._active_render = render
+        generation = self._render_generation
+        mounted: list[Widget] = []
+        for block in blocks:
+            # Streaming widgets start empty so their content arrives through
+            # one incremental MarkdownStream write below.
+            widget = self._active_block_widget(
+                block,
+                theme=theme,
+                with_text=block.content_index is None,
+            )
+            render.widgets[block.key] = widget
+            mounted.append(widget)
+        if mounted:
+            await self.mount(*mounted, before=self._bottom_boundary)
+            if self._render_generation != generation:
+                # A concurrent synchronous rebuild took ownership while these
+                # widgets were mounting; remove the late copies it cannot know.
+                for stale_widget in mounted:
+                    if stale_widget.parent is self:
+                        stale_widget.remove()
+                return
+        for block in blocks:
+            if block.content_index is None:
+                continue
+            widget = render.widgets[block.key]
+            if isinstance(widget, StreamingTranscriptMessageWidget):
+                await widget.append_fragment(block.text)
+                if self._render_generation != generation:
+                    return
+        self.refresh(layout=True)
 
-    async def finish_structured_assistant_message(
+    async def finish_active_assistant(
         self,
         items: Sequence[ChatItem],
         *,
         theme: TuiTheme = TAU_DARK_THEME,
         show_thinking: bool,
     ) -> None:
-        """Replace only the provisional assistant tail with canonical ordered blocks."""
-        should_follow = self._should_follow_output
-        for widget in tuple(self._active_message_widgets):
-            if widget.parent is self:
-                await widget.remove()
-        self._active_message_widgets.clear()
-        self._active_assistant_widget = None
-        self._active_thinking_widget = None
-        self._hidden_thinking_placeholder_visible = False
-        for item_id, widget in tuple(self._item_widgets.items()):
-            if widget.parent is None:
-                del self._item_widgets[item_id]
+        """Replace the active assistant tail with its canonical items exactly once.
 
+        When the canonical items map one-to-one onto the owned active widgets,
+        the widgets are finalized and rebound in place so unrelated history keeps
+        its identity. Otherwise only widgets owned by the claimed active render
+        are removed and canonical rows are mounted idempotently.
+        """
+        self._render_theme = theme
+        should_follow = self._should_follow_output
+        # Claim the active render before the first await so no other completion
+        # or synchronization path can operate on the same widgets.
+        render = self._active_render
+        self._active_render = None
         state = self._render_state
+        if state is not None and self._window_detached:
+            # The user is viewing an older window; canonical rows render when
+            # the window pages back. Only drop any leftover active widgets.
+            leftover = (
+                [widget for widget in render.ordered_widgets() if widget.parent is self]
+                if render is not None
+                else []
+            )
+            if leftover:
+                self.remove_children(leftover)
+            if self._bottom_boundary is not None:
+                self._bottom_boundary.update_count(len(state.items) - self._window_end)
+            return
         if state is not None:
             self._window_end = len(state.items)
-        hidden_widget: TranscriptMessageWidget | None = None
-        mounted: list[Widget] = []
-        for item in items:
-            if item.role == "thinking" and not show_thinking:
-                if hidden_widget is None:
-                    hidden_widget = TranscriptMessageWidget(
-                        ChatItem(role="thinking", text=_HIDDEN_THINKING_PLACEHOLDER),
-                        theme=theme,
-                        show_tool_results=False,
-                    )
-                    mounted.append(hidden_widget)
-                self._item_widgets[id(item)] = hidden_widget
-                continue
-            hidden_widget = None
-            widget = TranscriptMessageWidget(
-                item,
-                theme=theme,
-                show_tool_results=False,
-            )
-            self._item_widgets[id(item)] = widget
-            mounted.append(widget)
-        if mounted:
-            await self.mount(*mounted, before=self._bottom_boundary)
-        self._hidden_thinking_placeholder_visible = hidden_widget is not None
+            self._window_start = min(self._window_start, self._window_end)
+        generation = self._render_generation
+
+        entries = _canonical_assistant_entries(items, show_thinking=show_thinking)
+        if render is not None and self._entries_match_render(entries, render):
+            for entry, block in zip(entries, render.blocks, strict=True):
+                widget = render.widgets[block.key]
+                if entry.hidden:
+                    for hidden_item in entry.items:
+                        self._item_widgets[id(hidden_item)] = widget
+                    continue
+                item = entry.items[0]
+                assert isinstance(widget, StreamingTranscriptMessageWidget)
+                await widget.finalize(item.text)
+                if self._render_generation != generation:
+                    # A synchronous rebuild replaced the transcript from state;
+                    # reconcile once rather than re-registering stale widgets.
+                    self._redraw(scroll_end=should_follow, preserve_window=True)
+                    return
+                widget.item = item
+                self._item_widgets[id(item)] = widget
+        else:
+            if render is not None:
+                stale = [
+                    widget for widget in render.ordered_widgets() if widget.parent is self
+                ]
+                if stale:
+                    self.remove_children(stale)
+            for item_id, widget in tuple(self._item_widgets.items()):
+                if widget.parent is None:
+                    del self._item_widgets[item_id]
+            hidden_widget: TranscriptMessageWidget | None = None
+            mounted: list[Widget] = []
+            for item in items:
+                existing = self._item_widgets.get(id(item))
+                if existing is not None and existing.parent is self:
+                    hidden_widget = None
+                    continue
+                if item.role == "thinking" and not show_thinking:
+                    if hidden_widget is None:
+                        hidden_widget = TranscriptMessageWidget(
+                            ChatItem(role="thinking", text=_HIDDEN_THINKING_PLACEHOLDER),
+                            theme=theme,
+                            show_tool_results=False,
+                        )
+                        mounted.append(hidden_widget)
+                    self._item_widgets[id(item)] = hidden_widget
+                    continue
+                hidden_widget = None
+                widget = TranscriptMessageWidget(
+                    item,
+                    theme=theme,
+                    show_tool_results=False,
+                )
+                self._item_widgets[id(item)] = widget
+                mounted.append(widget)
+            if mounted:
+                await self.mount(*mounted, before=self._bottom_boundary)
+                if self._render_generation != generation:
+                    self._redraw(scroll_end=should_follow, preserve_window=True)
+                    return
 
         if (
             state is not None
@@ -1351,7 +1614,37 @@ class TranscriptView(VerticalScroll):
             self._window_start = max(0, self._window_end - TRANSCRIPT_WINDOW_ITEMS)
             self._redraw(scroll_end=should_follow, preserve_window=True)
         elif should_follow:
+            # Finalization can momentarily shrink content and clamp the scroll
+            # position; restore follow mode explicitly before scrolling. Safe:
+            # should_follow was captured on entry, so a user who scrolled away
+            # is never forced back to the bottom.
+            self._follow_output = True
             self._request_follow_scroll()
+        self.refresh(layout=True)
+
+    def _entries_match_render(
+        self,
+        entries: Sequence[_CanonicalAssistantEntry],
+        render: _ActiveAssistantRender,
+    ) -> bool:
+        """Return whether canonical entries map one-to-one onto owned widgets."""
+        if len(entries) != len(render.blocks):
+            return False
+        for entry, block in zip(entries, render.blocks, strict=True):
+            widget = render.widgets.get(block.key)
+            if widget is None or widget.parent is not self:
+                return False
+            if entry.hidden != (block.content_index is None):
+                return False
+            if entry.hidden:
+                if not isinstance(widget, TranscriptMessageWidget):
+                    return False
+            elif (
+                not isinstance(widget, StreamingTranscriptMessageWidget)
+                or entry.items[0].role != block.role
+            ):
+                return False
+        return True
 
     @property
     def lines(self) -> tuple[TranscriptLine, ...]:
@@ -1378,14 +1671,34 @@ def _identity_index(items: Sequence[ChatItem], target: ChatItem) -> int | None:
     return None
 
 
-def _last_transcript_child_is_hidden_thinking_placeholder(children: Sequence[Widget]) -> bool:
-    for child in reversed(children):
-        if isinstance(child, TranscriptMessageWidget | StreamingTranscriptMessageWidget):
-            return (
-                child.item.role == "thinking"
-                and child.selection_text == _HIDDEN_THINKING_PLACEHOLDER
-            )
-    return False
+@dataclass(slots=True)
+class _CanonicalAssistantEntry:
+    """One canonical row projected from finalized assistant items.
+
+    ``items`` holds several adjacent thinking items only when they collapse to
+    one hidden-thinking placeholder row.
+    """
+
+    items: list[ChatItem]
+    hidden: bool
+
+
+def _canonical_assistant_entries(
+    items: Sequence[ChatItem],
+    *,
+    show_thinking: bool,
+) -> list[_CanonicalAssistantEntry]:
+    """Group canonical assistant items into rows, coalescing hidden thinking runs."""
+    entries: list[_CanonicalAssistantEntry] = []
+    for item in items:
+        if item.role == "thinking" and not show_thinking:
+            if entries and entries[-1].hidden:
+                entries[-1].items.append(item)
+            else:
+                entries.append(_CanonicalAssistantEntry(items=[item], hidden=True))
+            continue
+        entries.append(_CanonicalAssistantEntry(items=[item], hidden=False))
+    return entries
 
 
 def _transcript_widget(
