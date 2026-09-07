@@ -123,6 +123,7 @@ def test_render_usage_dashboard_renders_charts_and_table() -> None:
     assert markup.count('class="usage-chart"') == 3
     assert markup.count('class="png-button"') == 3
     assert "Prompt input by request" in markup
+    assert "snapshot of the session at export time" in markup
     assert "Cache hit rate" in markup
     assert "claude-sonnet-4-5" in markup
 

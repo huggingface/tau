@@ -10,6 +10,7 @@ from tau_agent import (
     ModelChangeEntry,
     SessionInfoEntry,
     TextContent,
+    ThinkingContent,
     ToolCall,
     ToolResultMessage,
     UserMessage,
@@ -87,6 +88,27 @@ def test_render_session_html_uses_static_document_layout() -> None:
     assert 'id="themeToggle"' in html
     assert "<link" not in html.lower()
     assert "http://" not in html and "https://" not in html
+
+
+def test_render_session_html_includes_thinking_content_blocks() -> None:
+    entries = [
+        MessageEntry(
+            id="assistant-thinking",
+            message=AssistantMessage(
+                content=[
+                    ThinkingContent(
+                        thinking="Inspect the trace, then choose the smallest safe change."
+                    ),
+                    TextContent(text="I found the relevant path."),
+                ]
+            ),
+        )
+    ]
+
+    html = render_session_html(entries, title="Thinking Export")
+
+    assert "<span>Thinking</span>" in html
+    assert "Inspect the trace, then choose the smallest safe change." in html
 
 
 def test_render_session_html_includes_escaped_readable_system_prompt() -> None:
@@ -180,6 +202,65 @@ def test_render_session_html_includes_filter_bar_and_accordions() -> None:
     assert '<span class="node-type">read</span>' in html
     # The tool icon is a claw hammer.
     assert "m15 12-8.373" in html
+
+
+def test_render_session_html_includes_compact_session_summary() -> None:
+    entries = [
+        MessageEntry(id="user", timestamp=100.0, message=UserMessage(content="Hello")),
+        MessageEntry(
+            id="assistant",
+            parent_id="user",
+            timestamp=101.0,
+            message=AssistantMessage(
+                content=assistant_content(
+                    "Reading a file",
+                    [ToolCall(id="call-1", name="read", arguments={"path": "README.md"})],
+                )
+            ),
+        ),
+        MessageEntry(
+            id="tool",
+            parent_id="assistant",
+            timestamp=102.0,
+            message=ToolResultMessage(
+                tool_call_id="call-1",
+                tool_name="read",
+                content=[TextContent(text="File contents")],
+            ),
+        ),
+        ModelChangeEntry(id="model", parent_id="tool", timestamp=103.0, model="example/model"),
+    ]
+
+    html = render_session_html(entries, title="Summary Export")
+
+    assert '<section class="session-summary" aria-label="Session summary">' in html
+    assert "<strong>4</strong><span>Entries</span>" in html
+    assert "<strong>2</strong><span>Messages</span>" in html
+    assert "<strong>1</strong><span>Tools</span>" in html
+    assert "<strong>1</strong><span>Events</span>" in html
+    assert "<strong>3s</strong><span>Duration</span>" in html
+
+
+def test_render_session_html_includes_timestamp_timeline() -> None:
+    entries = [
+        MessageEntry(id="user", timestamp=100.0, message=UserMessage(content="Hello")),
+        MessageEntry(
+            id="assistant",
+            parent_id="user",
+            timestamp=110.0,
+            message=AssistantMessage(content="Done"),
+        ),
+        ModelChangeEntry(id="model", parent_id="assistant", timestamp=120.0, model="fake"),
+    ]
+
+    html = render_session_html(entries)
+
+    assert '<section class="timeline-overview" aria-label="Session timeline">' in html
+    assert "Timeline" in html
+    assert 'data-timeline-kind="message"' in html
+    assert 'data-timeline-kind="event"' in html
+    assert 'style="left: 0.00%"' in html
+    assert 'style="left: 100.00%"' in html
 
 
 def test_render_session_html_marks_tool_only_assistant_messages_as_tools() -> None:

@@ -115,9 +115,9 @@ This status is display-only: it is not saved to session history or sent to the
 model as context.
 
 HTML exports are self-contained and include two tabs: **Transcript** preserves
-the session tree and entries in storage order, while **Cache** summarizes the
+the session tree and entries in storage order, while **Usage** summarizes the
 active branch's model requests, prompt caching, output and reasoning tokens,
-estimated API-rate cost, tool calls, and compactions. Cache charts are
+estimated API-rate cost, tool calls, and compactions. Usage charts are
 interactive—hover for exact values and select a legend item to hide a
 series—and can be downloaded as static PNG images with white backgrounds. The
 export follows Tau's themes: tau-light in light mode and tau-dark in dark mode,
@@ -133,7 +133,10 @@ The system prompt is display-only export metadata, not a transcript entry.
 Direct JSONL exports and JSONL downloaded from the HTML remain entry-only and do
 not contain it.
 
-Every transcript entry is a compact accordion row
+The export header starts with a compact summary of total entries, messages,
+tools, session events, and elapsed duration. A timestamp timeline below the
+summary groups message, tool, and event markers into separate lanes; selecting
+a marker jumps to that entry. Every transcript entry is a compact accordion row
 (icon, title, one-line preview, timestamp) that expands to reveal the full
 content; thinking blocks, tool-call arguments, and tool-result details are
 nested accordions. The export header includes controls to:
