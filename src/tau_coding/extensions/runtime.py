@@ -18,6 +18,7 @@ from tau_agent.events import AgentEvent, AgentStartEvent
 from tau_agent.events import TurnEndEvent as AgentTurnEndEvent
 from tau_agent.events import TurnStartEvent as AgentTurnStartEvent
 from tau_agent.messages import AgentMessage, TextContent
+from tau_agent.session.entries import SessionEntry
 from tau_agent.tools import (
     AgentTool,
     AgentToolResult,
@@ -124,6 +125,11 @@ class BoundSession(Protocol):
     @property
     def messages(self) -> tuple[AgentMessage, ...]: ...
 
+    @property
+    def active_branch_entries(self) -> tuple[SessionEntry, ...]: ...
+
+    async def summarize(self, messages: tuple[AgentMessage, ...], *, instructions: str) -> str: ...
+
     def queue_steering_message(
         self,
         content: str,
@@ -139,6 +145,8 @@ class BoundSession(Protocol):
         custom_type: str | None = None,
         details: dict[str, JSONValue] | None = None,
     ) -> None: ...
+
+    async def append_context_message(self, content: str, *, custom_type: str) -> None: ...
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None: ...
 

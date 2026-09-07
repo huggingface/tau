@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -10,6 +11,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 from uuid import uuid4
 
 from tau_agent.messages import AgentMessage, ToolResultMessage
+from tau_agent.session.entries import SessionEntry
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
 
@@ -967,6 +969,37 @@ class ExtensionContext:
         return tuple(message.model_copy(deep=True) for message in messages)
 
     @property
+    def branch_entries(self) -> tuple[SessionEntry, ...]:
+        """Return deep copies of persisted active-path entries, including custom data."""
+        self._generation.assert_active()
+        # The session owns snapshot isolation; copying again duplicates the whole branch.
+        return self._runtime.session_view.active_branch_entries
+
+    async def summarize(
+        self,
+        messages: Sequence[AgentMessage],
+        *,
+        instructions: str,
+        timeout: float = 60,
+    ) -> str:
+        """Await a tool-free active-model summary without starting an agent turn.
+
+        The caller chooses the input and owns cancellation. No credentials,
+        tools, transcript mutation, retries, or detached tasks are exposed.
+        """
+        self._generation.assert_active()
+        if not 0 < timeout <= 300:
+            raise ValueError("summary timeout must be between 0 and 300 seconds")
+        session = self._runtime.session_view
+        copies = tuple(message.model_copy(deep=True) for message in messages)
+        async with asyncio.timeout(timeout):
+            summary = await session.summarize(copies, instructions=instructions)
+        self._generation.assert_active()
+        if self._runtime.session_view is not session:
+            raise ExtensionError("session changed during summary")
+        return summary
+
+    @property
     def has_ui(self) -> bool:
         """Return whether an interactive UI is attached."""
         self._generation.assert_active()
@@ -1165,6 +1198,11 @@ class ExtensionAPI:
             deliver_as=deliver_as,
             trigger_turn=trigger_turn,
         )
+
+    async def append_message(self, content: str, *, custom_type: str) -> None:
+        """Persist idle-session reference context without queueing a follow-up turn."""
+        self._generation.assert_active()
+        await self._runtime.session_view.append_context_message(content, custom_type=custom_type)
 
     async def append_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         """Persist extension-owned data to the session as a custom entry."""

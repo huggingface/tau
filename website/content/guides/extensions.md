@@ -654,6 +654,40 @@ Lifecycle and intercepting hooks:
 All other handler failures are contained: they are recorded as diagnostics
 (visible in `/session`) and never crash the session.
 
+### Awaited continuity work
+
+`await tau.append_message(content, custom_type="my-extension:recall")` inserts
+and persists reference context while idle, before the next user prompt. Unlike
+`send_custom_message(..., trigger_turn=False)`, it does not queue a follow-up and
+therefore does not cause an extra agent response. It rejects active-run use.
+In-place tree branching awaits `session_shutdown(reason="branch")` before moving
+the leaf and `session_start(reason="branch")` afterward on the same runtime;
+extensions must support closing and restarting their owned resources.
+
+`context.branch_entries` returns deep-copied persisted entries on the active
+root-to-leaf path, including extension-owned custom entries. Read receipts here
+to reconcile work after reload/resume and to distinguish divergent branches;
+do not infer durable identity from transcript positions or scrape session files.
+
+`await context.summarize(messages, instructions="...", timeout=60)` runs one
+tool-free summary through the current model/provider. It does not start an agent
+turn, modify history, or expose credentials. Pass only the messages you intend
+to summarize. It uses the active model's normal billing and network routing.
+Timeouts (up to 300 seconds), cancellation, provider failures, and empty summaries
+raise; callers own failure reporting and any external write. Retired contexts
+cannot publish a late result.
+
+Manual (`compact` and `compact_detailed`), threshold, and overflow compaction
+notify extensions through an awaited `compaction_start` before summarization or
+context replacement, then `compaction_end` after completion. No-op threshold
+checks emit nothing. Failure/cancellation emits an aborted end with a categorical
+error. Start handlers may await bounded persistence while original context is
+still available. Observation-handler exceptions remain isolated diagnostics:
+these are not veto hooks or a guarantee that an external store accepted a write.
+An instruction queued with `send_custom_message` is not an awaited checkpoint.
+These extension notifications do not add threshold/manual events to the frontend's
+async iterator; frontend compaction status is a separate concern in issue #506.
+
 ### Messages and persistence
 
 `send_user_message` delivers a user message into the conversation. During a

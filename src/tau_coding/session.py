@@ -70,6 +70,7 @@ from tau_coding.events import (
     AutoRetryStartEvent,
     CodingSessionEvent,
     CompactionEndEvent,
+    CompactionReason,
     CompactionStartEvent,
     QueueUpdateEvent,
     SessionAgentEndEvent,
@@ -884,6 +885,15 @@ class CodingSession:
         """Return the last replayed durable session state."""
         return self._state
 
+    @property
+    def active_branch_entries(self) -> tuple[SessionEntry, ...]:
+        """Return replayed entries on the active branch, including custom receipts."""
+        return tuple(entry.model_copy(deep=True) for entry in self._state.entries)
+
+    async def summarize(self, messages: tuple[AgentMessage, ...], *, instructions: str) -> str:
+        """Run a tool-free summary with the active provider, without changing history."""
+        return await self._generate_compaction_summary(messages, custom_instructions=instructions)
+
     async def session_entries(self) -> tuple[SessionEntry, ...]:
         """Return append-only entries for frontend session inspection."""
         return tuple(await self._read_session_entries())
@@ -949,30 +959,36 @@ class CodingSession:
             target_id = selected_entry.parent_id
             input_prefill = selected_entry.message.text
 
-        leaf = LeafEntry(parent_id=target_id, entry_id=target_id)
-        await self._append_session_entry(leaf)
-        self._last_parent_id = target_id
+        try:
+            await self._extension_runtime.emit_session_shutdown("branch")
+            leaf = LeafEntry(parent_id=target_id, entry_id=target_id)
+            await self._append_session_entry(leaf)
+            self._last_parent_id = target_id
 
-        await self._refresh_persisted_state(leaf_id=target_id)
-        history_repair = await self._persist_active_tool_history_repairs()
-        if history_repair is None:
-            self._harness.replace_messages(self._state.messages)
-        self._invalidate_context_usage_cache()
-        self._thinking_level = _state_thinking_level(
-            self._state,
-            default=_default_thinking_level_for_active_model(self),
-        )
-        self._sync_thinking_level_to_active_model()
-        self._refresh_runtime_provider()
-        suffix = " with branch summary" if summary_entry is not None else ""
-        if history_repair is not None:
-            suffix += " and repaired malformed tool history"
-        if input_prefill is not None:
-            return SessionTreeBranchResult(
-                message=f"Branched session before {entry_id}{suffix}.",
-                input_prefill=input_prefill,
+            await self._refresh_persisted_state(leaf_id=target_id)
+            history_repair = await self._persist_active_tool_history_repairs()
+            if history_repair is None:
+                self._harness.replace_messages(self._state.messages)
+            self._invalidate_context_usage_cache()
+            self._thinking_level = _state_thinking_level(
+                self._state,
+                default=_default_thinking_level_for_active_model(self),
             )
-        return SessionTreeBranchResult(message=f"Branched session at {target_id}{suffix}.")
+            self._sync_thinking_level_to_active_model()
+            self._refresh_runtime_provider()
+            suffix = " with branch summary" if summary_entry is not None else ""
+            if history_repair is not None:
+                suffix += " and repaired malformed tool history"
+            if input_prefill is not None:
+                return SessionTreeBranchResult(
+                    message=f"Branched session before {entry_id}{suffix}.",
+                    input_prefill=input_prefill,
+                )
+            return SessionTreeBranchResult(message=f"Branched session at {target_id}{suffix}.")
+        finally:
+            # Same runtime, new active path: restart branch-local resources even
+            # when a failed branch operation retained the original path.
+            await self._extension_runtime.emit_session_start("branch")
 
     @property
     def thinking_level(self) -> ThinkingLevel:
@@ -1267,6 +1283,14 @@ class CodingSession:
             else UserMessage(content=content)
         )
         self._harness.follow_up_message(message)
+
+    async def append_context_message(self, content: str, *, custom_type: str) -> None:
+        """Persist reference context before the next prompt, without queueing a turn."""
+        self._require_idle("append reference context")
+        message = CustomMessage(custom_type=custom_type, content=content)
+        await self._persist_message(message)
+        self._harness.append_message(message)
+        self._invalidate_context_usage_cache()
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         """Persist an extension-owned custom entry on the active branch path.
@@ -2769,18 +2793,15 @@ class CodingSession:
             raise ValueError("Not enough context to compact while preserving recent entries")
         first_kept_entry_id = rows[len(plan.replace_entry_ids)][0]
         tokens_before = self.context_token_estimate
-        summary = await self._generate_compaction_summary(
-            plan.messages_to_summarize,
-            custom_instructions=instructions,
-        )
-        compaction = await self._append_compaction(
-            summary,
-            replace_entry_ids=plan.replace_entry_ids,
+        compaction = await self._run_compaction(
+            plan,
+            reason="manual",
+            instructions=instructions,
             first_kept_entry_id=first_kept_entry_id,
             tokens_before=tokens_before,
         )
         return ManualCompactionResult(
-            summary=summary,
+            summary=compaction.summary,
             first_kept_entry_id=first_kept_entry_id,
             tokens_before=tokens_before,
             estimated_tokens_after=self.context_token_estimate,
@@ -2791,13 +2812,10 @@ class CodingSession:
         """Generate a manual compaction summary and rebuild active context."""
         await self._flush_pending_message_writes(context=self._diagnostic_context())
         plan = self._manual_compaction_plan()
-        summary = await self._generate_compaction_summary(
-            plan.messages_to_summarize,
-            custom_instructions=instructions,
-        )
-        compaction = await self._append_compaction(
-            summary,
-            replace_entry_ids=plan.replace_entry_ids,
+        compaction = await self._run_compaction(
+            plan,
+            reason="manual",
+            instructions=instructions,
             tokens_before=self.context_token_estimate,
         )
         return f"Compacted {len(compaction.replaces_entry_ids)} context entries."
@@ -3061,7 +3079,6 @@ class CodingSession:
                     await self._try_auto_name_session(auto_name_message, context=context)
             if overflow_message is not None:
                 session_event_1 = CompactionStartEvent(reason="overflow")
-                await self._extension_runtime.emit_event(session_event_1)
                 yield session_event_1
                 compacted = await self._try_overflow_compact(context=context)
                 compaction_end = CompactionEndEvent(
@@ -3071,7 +3088,6 @@ class CodingSession:
                     will_retry=compacted,
                     error_message=None if compacted else "Overflow compaction failed",
                 )
-                await self._extension_runtime.emit_event(compaction_end)
                 yield compaction_end
                 if compacted:
                     retry_start = AutoRetryStartEvent(
@@ -3550,8 +3566,7 @@ class CodingSession:
             plan = self._recent_preserving_compaction_plan()
             if plan is None:
                 return False
-            summary = await self._generate_compaction_summary(plan.messages_to_summarize)
-            await self._append_compaction(summary, replace_entry_ids=plan.replace_entry_ids)
+            await self._run_compaction(plan, reason="overflow")
             return True
         except Exception as exc:  # noqa: BLE001 - the original overflow remains visible
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
@@ -3648,9 +3663,44 @@ class CodingSession:
         plan = self._recent_preserving_compaction_plan()
         if plan is None:
             return False
-        summary = await self._generate_compaction_summary(plan.messages_to_summarize)
-        await self._append_compaction(summary, replace_entry_ids=plan.replace_entry_ids)
+        await self._run_compaction(plan, reason="threshold")
         return True
+
+    async def _run_compaction(
+        self,
+        plan: CompactionPlan,
+        *,
+        reason: CompactionReason,
+        instructions: str | None = None,
+        first_kept_entry_id: str | None = None,
+        tokens_before: int | None = None,
+    ) -> CompactionEntry:
+        # One owner covers all entry points. Await observers while original
+        # context is intact; queued model instructions are not awaited writes.
+        try:
+            await self._extension_runtime.emit_event(CompactionStartEvent(reason=reason))
+            summary = await self._generate_compaction_summary(
+                plan.messages_to_summarize, custom_instructions=instructions
+            )
+            entry = await self._append_compaction(
+                summary,
+                replace_entry_ids=plan.replace_entry_ids,
+                first_kept_entry_id=first_kept_entry_id,
+                tokens_before=tokens_before,
+            )
+        except BaseException as exc:
+            await self._extension_runtime.emit_event(
+                CompactionEndEvent(
+                    reason=reason, aborted=True, will_retry=False, error_message=type(exc).__name__
+                )
+            )
+            raise
+        await self._extension_runtime.emit_event(
+            CompactionEndEvent(
+                reason=reason, result=entry, will_retry=reason == "overflow", error_message=None
+            )
+        )
+        return entry
 
     async def _generate_compaction_summary(
         self,
