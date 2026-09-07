@@ -34,6 +34,30 @@ Owns everything that makes Tau a *coding agent you run*: the CLI, the built-in
 [sessions on disk]({{< relref "../guides/sessions.md" >}}), provider configuration, and the
 Textual TUI.
 
+### Local-backend boundary
+
+Local inference belongs to `tau_coding`, not the portable agent core. A staged
+extension runtime owns a source- and generation-aware local-backend registry
+beside its provider registry. Backends return typed configuration, status,
+progress, diagnostics, and capability values; the Textual adapter renders them
+and owns cancellation, confirmation, and idle checks. Pairing each backend with
+its exact source-owned provider layer prevents a shadowing extension from using
+or resetting another source's integration. See the [local backends
+guide]({{< relref "../guides/local-inference.md" >}}).
+
+Phase 6 validates the boundary with a permanent second fake backend and a
+test-only Ollama adapter. Provider discovery and backend status may use
+separate endpoints, installed/running state fits generic model state, and
+`NoAuth` needs no special-case backend API. Refresh cancellation is bounded and
+generation-safe; late work cannot publish after retirement. Router mutations
+remain a later phase.
+
+TUI and print startup share the same trust-aware preparation boundary: load the
+trusted built-ins and eligible extensions, restore safe dynamic snapshots,
+resolve an explicit provider/model, then construct the candidate runtime. A
+saved llama.cpp snapshot can therefore support explicit startup during server
+downtime without making the local backend an implicit fallback.
+
 ## Dependency direction
 
 Dependencies only point one way: `tau_coding → tau_agent → tau_ai`. UI code

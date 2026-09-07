@@ -137,18 +137,24 @@ named `.agents/prompts/example.md` can be invoked with:
 ```
 
 Tau expands the command before sending the prompt to the model. Invocation text
-after the command is available as `{{ arguments }}` or `{{ args }}`:
+after the command supports Pi-compatible argument variables:
+
+- `$1`, `$2`, ... for positional arguments
+- `$@` or `$ARGUMENTS` for all arguments
+- `${N:-default}` for positional defaults
+- `${@:N}` and `${@:N:L}` for simple slices
 
 ```md
-Review {{ arguments }} for correctness.
+Review $@ for correctness.
 ```
 
-If the prompt template has no `{{ arguments }}` or `{{ args }}` placeholder,
-Tau appends the invocation arguments after a blank line. Other placeholders are
-left blank during slash-command expansion so a custom prompt can include optional
-fields without crashing the TUI.
+If the prompt template has no argument placeholder, Tau appends the invocation
+arguments after a blank line. Legacy `{{ arguments }}` and `{{ args }}`
+placeholders remain supported. Other placeholders are left blank during
+slash-command expansion so a custom prompt can include optional fields without
+crashing the TUI.
 
-Template variables use simple `{{ variable }}` placeholders:
+Direct template rendering also supports simple `{{ variable }}` placeholders:
 
 ```md
 Review {{ target }} for {{ focus }}.

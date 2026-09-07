@@ -1,9 +1,11 @@
 # Multimodal read-tool results
 
 Tau's `read` tool now detects supported images from file magic and returns them
-as canonical `ImageContent` blocks alongside its short text note. Attachments
-are capped at 5 MB, and animated PNG files are not treated as supported static
-PNG attachments. The agent loop already preserves ordered
+as canonical `ImageContent` blocks alongside its short text note. Processed
+attachments are capped at 5 MB, and animated PNG files are not treated as
+supported static PNG attachments. Oversized static images are now normalized by
+the follow-up [bounded read-image processing](./read-image-processing.md). The
+agent loop already preserves ordered
 tool-result content, so image data remains provider-neutral until the `tau_ai`
 serialization boundary.
 

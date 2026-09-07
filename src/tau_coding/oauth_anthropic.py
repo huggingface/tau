@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 import webbrowser
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 from urllib.parse import urlencode
 
@@ -29,7 +29,7 @@ from tau_coding.oauth_types import (
 )
 
 ANTHROPIC_OAUTH_PROVIDER = "anthropic"
-ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944a1962f5e"
+ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 ANTHROPIC_AUTHORIZE_URL = "https://claude.ai/oauth/authorize"
 ANTHROPIC_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 ANTHROPIC_REDIRECT_URI = "http://localhost:53692/callback"
@@ -39,6 +39,8 @@ ANTHROPIC_SCOPE = (
 )
 ANTHROPIC_CALLBACK_PORT = 53692
 ANTHROPIC_TOKEN_SKEW_MS = 5 * 60 * 1000
+# Token-request fields worth scrubbing out of anything the server echoes back.
+_SECRET_REQUEST_FIELDS = ("refresh_token", "code", "code_verifier")
 
 
 async def login_anthropic(
@@ -150,7 +152,11 @@ async def _anthropic_token_request(
         if owns_client:
             await active_client.aclose()
     if response.status_code >= 400:
-        raise OAuthError(f"Anthropic token {action} failed ({response.status_code})")
+        detail = _error_detail(
+            response,
+            secrets=[data[field] for field in _SECRET_REQUEST_FIELDS if field in data],
+        )
+        raise OAuthError(f"Anthropic token {action} failed ({response.status_code}): {detail}")
     raw = response.json()
     if not isinstance(raw, dict):
         raise OAuthError(f"Anthropic token {action} response must be an object")
@@ -166,6 +172,50 @@ async def _anthropic_token_request(
         refresh=refresh,
         expires=int(time.time() * 1000 + expires_in * 1000 - ANTHROPIC_TOKEN_SKEW_MS),
     )
+
+
+def _error_detail(response: httpx.Response, *, secrets: Iterable[str] = ()) -> str:
+    """Summarize a token-endpoint failure body.
+
+    The endpoint explains itself ("invalid_grant: Refresh token not found or
+    invalid"); reporting only the status code turns a self-describing failure
+    into a guessing game. Only the structured OAuth error fields are surfaced —
+    the raw body stays out of the message because a failing request can echo
+    the token it was sent. Those fields are server-controlled too, so anything
+    we sent is scrubbed back out and the result is truncated before it reaches
+    a log or the TUI.
+    """
+    try:
+        raw = response.json()
+    except ValueError:
+        raw = None
+    detail = _error_fields(raw) if isinstance(raw, dict) else None
+    if detail is None:
+        return "no error detail"
+    for secret in secrets:
+        if len(secret) >= 8:
+            detail = detail.replace(secret, "<redacted>")
+    return detail[:200]
+
+
+def _error_fields(raw: dict[str, Any]) -> str | None:
+    """Pull the error code and message out of either error envelope.
+
+    OAuth failures arrive as flat ``error``/``error_description``, while the
+    Anthropic API's own shape nests them under ``error`` as ``type``/``message``.
+    """
+    error = raw.get("error")
+    description = raw.get("error_description") or raw.get("message")
+    if isinstance(error, dict):
+        description = description or error.get("message")
+        error = error.get("type")
+    if isinstance(error, str) and isinstance(description, str):
+        return f"{error}: {description}"
+    if isinstance(error, str):
+        return error
+    if isinstance(description, str):
+        return description
+    return None
 
 
 async def _wait_for_input(

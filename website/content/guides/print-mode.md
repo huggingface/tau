@@ -65,6 +65,46 @@ tau --provider local -p "explain this module"
 tau --cwd ./services/api -p "audit for secrets"
 ```
 
+## Resume a conversation
+
+Pass an existing session id to run a follow-up turn non-interactively:
+
+```bash
+tau --print --session <session-id> "Follow-up message"
+```
+
+Tau appends the turn to the existing transcript and sends its active conversation
+history to the model. It also uses the session's saved working directory,
+provider, and model unless explicit selection flags override them. This works
+with every output mode and keeps stdout dedicated to that mode. Unknown ids fail
+without creating a session. `--session` cannot be combined with `--new-session`
+or `--session-id`.
+
+Use `tau sessions` to find session ids.
+
+## Recording the session id
+
+Automation can choose the exact id of a new print-mode session with
+`--session-id`. This keeps stdout dedicated to the selected output format and
+avoids scanning `~/.tau/sessions/`:
+
+```bash
+worker_session_id="$(python -c 'import uuid; print(uuid.uuid4().hex)')"
+tau --print --new-session \
+  --session-id "$worker_session_id" \
+  --cwd /path/to/project \
+  "review the current changes"
+printf 'Tau session: %s\n' "$worker_session_id"
+```
+
+Ids may contain letters, numbers, `.`, `_`, and `-`, must start and end with a
+letter or number, and may be at most 128 bytes. `default` and `index` are
+reserved. Use a unique id for each worker. Tau atomically reserves the transcript
+and exits with an error rather than opening or overwriting an existing session,
+even if an unindexed transcript already uses that id or two workers start at the
+same time. The option applies to text, JSON, and transcript modes without adding
+metadata to their stdout output.
+
 ## Exit status
 
 Print mode exits non-zero if the run fails, so you can use it in scripts:

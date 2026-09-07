@@ -488,12 +488,23 @@ appending synthetic failed `ToolResultMessage` objects such as:
 Tool call interrupted by user
 ```
 
-The repair runs on cancelled cleanup and before the next prompt/continue, so even
-persisted broken sessions can recover.
+The repair runs on cancelled cleanup and before the next prompt/continue. Older
+builds kept the cancelled-cleanup repair only in memory: the TUI cancels the
+worker consuming `session.prompt()`, so consumer-side persistence never saw it,
+and session files could retain a dangling tool call that later replays (`/tree`)
+sent to providers as-is.
+
+**Update (PR #526):** persistence is now a harness event subscriber, and the
+cleanup repair is pushed to subscribers, so the synthetic result reaches the
+session file at cancellation time. Load-time repair remains the backstop for
+active branches damaged by older builds; historical malformed branches are a
+deliberate non-goal.
 
 **Future instruction:** do not delete or skip tool results in UI/session code. If
 a run is interrupted mid-tool, the transcript still needs matching tool-result
-messages for provider validity.
+messages for provider validity. Persistence must stay push-based (subscribed to
+the harness); do not move it back into an event-consuming loop that a frontend
+can tear down.
 
 ### Roadblock: provider errors were too generic to debug
 

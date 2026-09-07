@@ -368,7 +368,11 @@ def test_tool_result_accents_derive_from_theme() -> None:
     )
     console.print(
         render_chat_item(
-            ChatItem(role="tool", text="$ false", tool_result_text="✗ bash\nfailed"),
+            ChatItem(
+                role="tool",
+                text="→ Running failure · $ false",
+                tool_result_text="✗ bash\nfailed",
+            ),
             theme=theme,
             show_tool_results=True,
         )

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from inspect import isawaitable
 from typing import Literal
 
-from tau_agent.events import AgentEvent
+from tau_agent.events import AgentEvent, MessageEndEvent, MessageStartEvent
 from tau_agent.loop import AfterToolCall, BeforeToolCall, run_agent_loop
 from tau_agent.messages import (
     AgentMessage,
@@ -43,6 +43,7 @@ class AgentHarnessConfig:
     tools: list[AgentTool] = field(default_factory=list)
     max_turns: int | None = None
     queue_mode: QueueMode = "one_at_a_time"
+    session_id: str | None = None
     before_tool_call: BeforeToolCall | None = None
     after_tool_call: AfterToolCall | None = None
 
@@ -145,7 +146,6 @@ class AgentHarness:
 
     def prompt_message(self, message: AgentMessage) -> AsyncIterator[AgentEvent]:
         self._ensure_not_running()
-        self._append_interrupted_tool_results()
         self._running = True
         return self._run(prompts=(message,))
 
@@ -154,7 +154,6 @@ class AgentHarness:
 
     def continue_(self) -> AsyncIterator[AgentEvent]:
         self._ensure_not_running()
-        self._append_interrupted_tool_results()
         self._running = True
         return self._run()
 
@@ -166,15 +165,23 @@ class AgentHarness:
         signal = SimpleCancellationToken()
         self._current_signal = signal
         try:
+            # Repair dangling tool calls here, not in prompt()/continue_(),
+            # so the synthetic results flow through events and reach push
+            # subscribers (persistence) as well as the consumer.
+            repaired_from = len(self._messages)
+            self._append_interrupted_tool_results()
+            repairs = self._messages[repaired_from:]
             async for event in run_agent_loop(
                 provider=self._config.provider,
                 model=self._config.model,
                 system=self._config.system,
                 messages=self._messages,
                 prompts=prompts,
+                prelude_messages=repairs,
                 tools=self._config.tools,
                 max_turns=self._config.max_turns,
                 signal=signal,
+                session_id=self._config.session_id,
                 get_steering_messages=self._drain_steering_messages,
                 get_follow_up_messages=self._drain_follow_up_messages,
                 before_tool_call=self._config.before_tool_call,
@@ -184,7 +191,15 @@ class AgentHarness:
                 yield event
         finally:
             if signal.is_cancelled():
+                repaired_from = len(self._messages)
                 self._append_interrupted_tool_results()
+                # The consumer is usually gone here; push the repairs to
+                # subscribers. Listener errors are suppressed; cancellation
+                # itself is not.
+                for message in self._messages[repaired_from:]:
+                    with suppress(Exception):
+                        await self._notify(MessageStartEvent(message=message))
+                        await self._notify(MessageEndEvent(message=message))
             if self._current_signal is signal:
                 self._current_signal = None
             self._running = False

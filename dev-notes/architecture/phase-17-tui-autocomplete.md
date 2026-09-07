@@ -60,7 +60,8 @@ Accepting a skill completion preserves the rest of the request:
 
 The prompt input handles:
 
-- `Tab` to accept the selected completion
+- `Tab` to accept the selected completion (Enter always submits the prompt as
+  typed, without applying a highlighted completion)
 - `Down` to select the next completion
 - `Up` to select the previous completion
 

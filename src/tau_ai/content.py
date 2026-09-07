@@ -6,8 +6,14 @@ from collections.abc import Sequence
 
 from tau_agent.messages import ImageContent, TextContent, ToolResultMessage, UserMessage
 
-NON_VISION_USER_IMAGE_PLACEHOLDER = "(image omitted: model does not support images)"
-NON_VISION_TOOL_IMAGE_PLACEHOLDER = "(tool image omitted: model does not support images)"
+NON_VISION_USER_IMAGE_PLACEHOLDER = (
+    "(image omitted: current model does not support image input; image contents are "
+    "unavailable—do not infer or describe them)"
+)
+NON_VISION_TOOL_IMAGE_PLACEHOLDER = (
+    "(tool image omitted: current model does not support image input; image contents are "
+    "unavailable—do not infer or describe them; ask the user to switch to a vision-capable model)"
+)
 
 
 def messages_have_images(messages: Sequence[object]) -> bool:
