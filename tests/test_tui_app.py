@@ -3746,6 +3746,34 @@ def test_tui_app_uses_light_theme_css_variables() -> None:
     assert app.current_theme.dark is False
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "theme",
+    [TAU_DARK_THEME, TAU_LIGHT_THEME, HIGH_CONTRAST_THEME],
+    ids=lambda theme: theme.name,
+)
+async def test_list_view_scrollbars_use_theme_colors(theme: TuiTheme) -> None:
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(theme=theme.name))
+
+    async with app.run_test() as pilot:
+        await app.push_screen(SessionPickerScreen([], theme=theme))
+        await pilot.pause()
+
+        list_view = app.screen.query_one("#session-picker-list", ListView)
+
+        assert list_view.styles.scrollbar_background == Color.parse(theme.transcript_background)
+        assert list_view.styles.scrollbar_color == Color.parse(theme.border)
+        assert list_view.styles.scrollbar_background_hover == Color.parse(
+            theme.transcript_background
+        )
+        assert list_view.styles.scrollbar_color_hover == Color.parse(theme.highlight_background)
+        assert list_view.styles.scrollbar_background_active == Color.parse(
+            theme.transcript_background
+        )
+        assert list_view.styles.scrollbar_color_active == Color.parse(theme.accent)
+        assert list_view.styles.scrollbar_size_vertical == 2
+
+
 def test_tui_app_registers_only_tau_themes_with_textual() -> None:
     app = TauTuiApp(FakeSession())
 
