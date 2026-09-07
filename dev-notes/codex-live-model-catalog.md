@@ -24,20 +24,25 @@ order and reads verified names, text/image modalities,
 reasoning efforts, defaults, and limits. One in-memory fetch serves both model
 inventory and limit discovery.
 
-`tau_coding` publishes a successful snapshot as a process-local overlay on the
-durable `openai-codex` configuration. Active Codex sessions discover during
-load. Opening `/model` also discovers Codex while another provider is active by
-creating and closing a model-less provider. The picker initially renders its
-static snapshot and updates after background refresh, preserving its existing
+`tau_coding` publishes a successful snapshot as an overlay on the durable
+`openai-codex` configuration. Successful snapshots are persisted in the
+account-scoped `~/.tau/codex-models-store.json` cache, so a later session can
+render the discovered inventory immediately. Opening `/model` or
+`/scoped-models` discovers Codex while another provider is active by creating and
+closing a model-less provider. The pickers initially render their cached/static
+snapshot and update after background refresh, preserving their existing
 non-blocking behavior.
 
 ## Safety and persistence
 
-The authenticated catalog is account- and rollout-specific. Tau therefore does
-not write it into `catalog.toml`, `providers.json`, session JSONL, or the
-models.dev cache. The checked-in Codex rows remain the offline and failure
-fallback. Empty, malformed, unauthorized, or unavailable responses do not erase
-the fallback. `TAU_OFFLINE=1` skips authenticated discovery.
+The authenticated catalog is account- and rollout-specific. Tau persists only
+parsed model metadata and the account ID in `codex-models-store.json`; it does
+not write the snapshot into `catalog.toml`, `providers.json`, session JSONL, or
+the models.dev cache. A snapshot for another account is ignored. The last
+account-matched snapshot remains the fallback after a refresh failure, with the
+checked-in Codex rows used when no cache exists. Empty, malformed, unauthorized,
+or unavailable responses do not erase the fallback. `TAU_OFFLINE=1` skips
+authenticated discovery and uses the cache/static fallback.
 
 A live inventory is authoritative for picker visibility after successful
 discovery. The active session model is not silently changed when absent from a
@@ -46,8 +51,9 @@ do not persist discovered metadata. `~/.tau/codex-version-store.json` contains
 only public npm release metadata, never account-specific model data or secrets.
 
 This preserves Tau's package boundary: `tau_ai` owns authenticated transport and
-wire parsing, while `tau_coding` owns model selection and the ephemeral catalog
-overlay. `tau_agent` remains independent of provider catalogs and OAuth.
+wire parsing, while `tau_coding` owns model selection, the account-scoped
+cache, and the runtime catalog overlay. `tau_agent` remains independent of
+provider catalogs and OAuth.
 
 ## Lifecycle validation
 
@@ -86,7 +92,9 @@ Automated tests cover:
 - filtering hidden rows while retaining subscription-visible, non-public-API rows;
 - live names, modalities, reasoning levels, and context limits;
 - publication while Codex is active;
+- account-scoped cache serialization and startup reuse;
 - model-less discovery and provider cleanup while another provider is active;
+- refresh from both `/model` and `/scoped-models`;
 - existing static fallback behavior for discovery failures.
 
 Manual validation:

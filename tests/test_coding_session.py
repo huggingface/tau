@@ -66,6 +66,7 @@ from tau_coding import (
     save_provider_settings,
 )
 from tau_coding import session as coding_session_module
+from tau_coding.codex_model_store import cached_codex_model_catalog, save_codex_model_catalog
 from tau_coding.events import AgentSettledEvent, QueueUpdateEvent
 from tau_coding.extensions import (
     DynamicProvider,
@@ -3863,6 +3864,64 @@ async def test_session_uses_live_provider_limits_for_compaction_threshold(
 
 
 @pytest.mark.anyio
+async def test_session_uses_cached_codex_model_inventory_before_live_refresh(
+    tmp_path: Path,
+) -> None:
+    tau_paths = TauPaths(home=tmp_path / ".tau")
+    FileCredentialStore(tau_paths.home / "credentials.json").set_oauth(
+        "openai-codex",
+        OAuthCredential(
+            access="access-token",
+            refresh="refresh-token",
+            expires=4_000_000_000,
+            account_id="account-1",
+        ),
+    )
+    cached = RuntimeModelCatalog(
+        (
+            RuntimeModel(
+                id="cached-model",
+                limits=RuntimeModelLimits(context_window=500_000),
+            ),
+        )
+    )
+    save_codex_model_catalog(cached, account_id="account-1", paths=tau_paths)
+    provider = ModelCatalogFakeProvider([], catalog=RuntimeModelCatalog(()))
+    settings = ProviderSettings(
+        default_provider="openai-codex",
+        providers=(
+            OpenAICodexProviderConfig(
+                models=("static-model",),
+                default_model="static-model",
+                context_windows={"static-model": 272_000},
+            ),
+        ),
+    )
+
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="static-model",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai-codex",
+            provider_settings=settings,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    try:
+        assert provider.catalog_calls == 0
+        assert session.available_models == ("cached-model",)
+        live = session.provider_config("openai-codex")
+        assert live is not None
+        assert live.context_windows == {"cached-model": 500_000}
+    finally:
+        await session.aclose()
+
+
+@pytest.mark.anyio
 async def test_session_publishes_authenticated_codex_model_inventory(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3943,6 +4002,7 @@ async def test_session_publishes_authenticated_codex_model_inventory(
     assert provider.catalog_calls == 1
     assert refreshed.catalog_calls == 1
     assert refreshed.closed is True
+    assert cached_codex_model_catalog(tau_paths, account_id="account-1") == refreshed.catalog
 
 
 @pytest.mark.anyio

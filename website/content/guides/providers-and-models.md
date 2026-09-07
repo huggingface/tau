@@ -108,23 +108,27 @@ window through Codex OAuth than through an API key. For example, the public
 GPT-5.6 Sol API advertises a 1.05M-token window, while Codex has advertised
 substantially smaller limits through its authenticated model catalog.
 
-Tau queries that catalog when a Codex session starts and whenever `/model`
-refreshes. Since OpenAI filters the response by official-client version, Tau
-resolves the current stable `@openai/codex` release from the npm registry and
-caches that safe, non-secret version for four hours at
-`~/.tau/codex-version-store.json`. Failed lookups use the stale cached version or
-Tau's bundled fallback. The authenticated result replaces the Codex model picker
-inventory for the current process, so newly enabled and newly client-gated models
-appear without a Tau release. Models unavailable to the account are not copied
-from the separate public API catalog. Tau also uses reported context windows,
-compaction thresholds, input modalities, and reasoning efforts when present.
+Tau loads the last successful account-specific snapshot from
+`~/.tau/codex-models-store.json` when a session starts, so models discovered in a
+previous session are immediately available without opening a picker. It refreshes
+the authenticated catalog in the background when `/model` or `/scoped-models`
+opens. Since OpenAI filters the response by official-client version, Tau resolves
+the current stable `@openai/codex` release from the npm registry and caches that
+safe, non-secret version for four hours at `~/.tau/codex-version-store.json`.
+Failed lookups use the stale cached version or Tau's bundled fallback. A
+successful refresh replaces the Codex model picker inventory, so newly enabled
+and newly client-gated models appear without a Tau release. Models unavailable to
+the account are not copied from the separate public API catalog. Tau also uses
+reported context windows, compaction thresholds, input modalities, and reasoning
+efforts when present.
 
-If discovery is unavailable or invalid, Tau retains the checked-in Codex model
-list and its conservative Codex-specific limits; it does not reuse the public
-API inventory or limits. `/session` reports whether the active context value
-came from the live provider catalog or Tau's configured fallback. Live snapshots
-are account-specific and memory-only; Tau does not write them to `catalog.toml`,
-`providers.json`, or its models.dev cache.
+If discovery is unavailable or invalid, Tau retains the last account-matched
+snapshot, or the checked-in Codex model list when no snapshot is available; it
+does not reuse the public API inventory or limits. `/session` reports whether the
+active context value came from the live provider catalog or Tau's configured
+fallback. The model cache contains only parsed account/model metadata (no OAuth
+tokens), is scoped to the saved Codex account ID, and is never written to
+`catalog.toml`, `providers.json`, or the models.dev cache.
 
 Starting or resuming a live-only Codex model discovers the account inventory
 before validating the selection. This requires successful discovery; offline

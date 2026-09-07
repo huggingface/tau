@@ -6,7 +6,7 @@ import asyncio
 import string
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import suppress
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from os import environ
 from pathlib import Path
 from typing import Literal
@@ -45,6 +45,10 @@ from tau_agent.types import JSONValue
 from tau_ai.model_catalog import ModelCatalogProvider, RuntimeModel, RuntimeModelCatalog
 from tau_ai.model_limits import ModelLimitsProvider, RuntimeModelLimits
 from tau_coding.branch_summary import summarize_branch_messages_with_model
+from tau_coding.codex_model_store import (
+    cached_codex_model_catalog,
+    save_codex_model_catalog,
+)
 from tau_coding.commands import CommandRegistry, CommandResult, create_default_command_registry
 from tau_coding.context import discover_project_context_with_diagnostics
 from tau_coding.context_window import (
@@ -80,6 +84,7 @@ from tau_coding.extensions.provider_registry import DynamicProviderRegistry
 from tau_coding.extensions.providers import DynamicProvider, ProviderModel
 from tau_coding.extensions.runtime import ExtensionRuntime
 from tau_coding.models_dev_store import ModelsDevRefreshResult, refresh_models_dev_catalog
+from tau_coding.oauth import account_id_from_access_token
 from tau_coding.paths import TauPaths
 from tau_coding.project_trust import (
     CanonicalProjectPath,
@@ -333,6 +338,7 @@ class CodingSessionConfig:
     requested_model: str | None = None
     session_provider_name: str | None = None
     provider_settings: ProviderSettings | None = None
+    runtime_model_catalogs: Mapping[str, RuntimeModelCatalog] = field(default_factory=dict)
     runtime_provider_config: ProviderConfig | None = None
     dynamic_provider: DynamicProvider | None = None
     owns_initial_provider: bool = False
@@ -431,7 +437,7 @@ class CodingSession:
         )
         self._provider_settings = config.provider_settings
         self._durable_provider_settings = config.provider_settings
-        self._runtime_model_catalogs: dict[str, RuntimeModelCatalog] = {}
+        self._runtime_model_catalogs = dict(config.runtime_model_catalogs)
         self._model_catalog_discovery_errors: dict[str, str] = {}
         self._runtime_provider_config = config.runtime_provider_config
         self._resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
@@ -581,20 +587,51 @@ class CodingSession:
                 include_user_dir=False,
             )
 
+        runtime_model_catalogs = dict(config.runtime_model_catalogs)
+        if config.provider_settings is not None and "openai-codex" not in runtime_model_catalogs:
+            codex_config = _provider_config_or_none(config.provider_settings, "openai-codex")
+            if isinstance(codex_config, OpenAICodexProviderConfig):
+                account_id = _codex_account_id(codex_config, credential_store)
+                cached_catalog = cached_codex_model_catalog(
+                    runtime_paths,
+                    account_id=account_id,
+                )
+                if cached_catalog is not None:
+                    runtime_model_catalogs["openai-codex"] = cached_catalog
+        config = replace(config, runtime_model_catalogs=runtime_model_catalogs)
+        selection_settings = _provider_settings_with_runtime_catalogs(
+            config.provider_settings,
+            runtime_model_catalogs,
+        )
         selected_provider_name = (
             config.requested_provider or state.provider or config.session_provider_name
         )
         selected_model = config.requested_model or state.model
         rediscover_codex = False
         if selected_provider_name == "openai-codex" and config.provider_settings is not None:
-            selected_config = config.provider_settings.get_provider(selected_provider_name)
+            selected_config = _provider_config_or_none(
+                config.provider_settings,
+                selected_provider_name,
+            )
             rediscover_codex = (
                 isinstance(selected_config, OpenAICodexProviderConfig)
                 and selected_model not in selected_config.models
             )
+        preparation_settings = config.provider_settings
+        startup_catalog: RuntimeModelCatalog | None = None
+        effective_selected_config = (
+            _provider_config_or_none(selection_settings, selected_provider_name)
+            if selection_settings is not None
+            else None
+        )
+        if (
+            isinstance(effective_selected_config, OpenAICodexProviderConfig)
+            and selected_model in effective_selected_config.models
+        ):
+            preparation_settings = selection_settings
         if config.provider is None or rediscover_codex:
             prepared = await _prepare_provider_selection(
-                config,
+                replace(config, provider_settings=preparation_settings),
                 state=state,
                 provider_registry=extension_runtime.provider_registry,
                 credential_store=credential_store,
@@ -605,9 +642,13 @@ class CodingSession:
                 except BaseException:
                     await prepared.provider.aclose()
                     raise
+            startup_catalog = prepared.runtime_model_catalog
+            if startup_catalog is not None:
+                runtime_model_catalogs[prepared.provider_name] = startup_catalog
             config = replace(
                 config,
                 provider=prepared.provider,
+                runtime_model_catalogs=runtime_model_catalogs,
                 model=prepared.model,
                 provider_name=prepared.provider_name,
                 inference_provider=prepared.inference_provider,
@@ -701,8 +742,19 @@ class CodingSession:
             # Ownership starts before any repair/discovery work so every
             # failure path has exactly one closer for the candidate.
             session._owned_providers.append(config.provider)  # type: ignore[arg-type]
+        if startup_catalog is not None and config.provider_name == "openai-codex":
+            session._persist_codex_model_catalog(
+                config.provider,
+                startup_catalog,
+                (
+                    config.runtime_provider_config
+                    if isinstance(config.runtime_provider_config, OpenAICodexProviderConfig)
+                    else None
+                ),
+            )
         await session._persist_active_tool_history_repairs()
         try:
+            session._apply_runtime_model_catalogs()
             session._apply_thinking_level_override()
             session._sync_thinking_level_to_active_model()
             if not config.owns_initial_provider and config.provider is not None:
@@ -2103,9 +2155,16 @@ class CodingSession:
         ):
             return
         try:
+            cached_catalog = self._runtime_model_catalogs.get(self.provider_name)
+            if self.provider_name == "openai-codex" and cached_catalog is not None:
+                model = cached_catalog.model(self.model)
+                self._runtime_model_limits = model.limits if model is not None else None
+                return
             if isinstance(provider, ModelCatalogProvider):
                 catalog = await provider.discover_models()
                 self._publish_runtime_model_catalog(self.provider_name, catalog)
+                if self.provider_name == "openai-codex":
+                    self._persist_codex_model_catalog(provider, catalog)
             if isinstance(provider, ModelLimitsProvider):
                 self._runtime_model_limits = await provider.discover_model_limits(self.model)
         except Exception as exc:  # noqa: BLE001 - static catalog remains the safe fallback
@@ -2328,12 +2387,20 @@ class CodingSession:
 
     async def refresh_model_catalogs(self, *, force: bool = False) -> ModelsDevRefreshResult:
         """Refresh public and authenticated catalogs and publish them to this session."""
-        result = await refresh_models_dev_catalog(
-            paths=self._resource_paths.paths,
-            force=force,
-        )
-        self.reload_provider_settings()
+        public_error: Exception | None = None
+        result: ModelsDevRefreshResult | None = None
+        try:
+            result = await refresh_models_dev_catalog(
+                paths=self._resource_paths.paths,
+                force=force,
+            )
+            self.reload_provider_settings()
+        except Exception as error:  # noqa: BLE001 - authenticated refresh still runs
+            public_error = error
         await self._refresh_codex_model_catalog()
+        if public_error is not None:
+            raise public_error
+        assert result is not None
         return result
 
     async def _refresh_codex_model_catalog(self) -> None:
@@ -2364,12 +2431,39 @@ class CodingSession:
         try:
             catalog = await temporary_provider.discover_models()
             self._publish_runtime_model_catalog(provider_config.name, catalog)
+            self._persist_codex_model_catalog(temporary_provider, catalog, provider_config)
         except Exception as exc:  # noqa: BLE001 - static catalog remains the safe fallback
             self._model_catalog_discovery_errors[provider_config.name] = (
                 f"{type(exc).__name__}: {exc}"
             )
         finally:
             await temporary_provider.aclose()
+
+    def _persist_codex_model_catalog(
+        self,
+        provider: object,
+        catalog: RuntimeModelCatalog,
+        provider_config: OpenAICodexProviderConfig | None = None,
+    ) -> None:
+        config = provider_config or (
+            self._runtime_provider_config
+            if isinstance(self._runtime_provider_config, OpenAICodexProviderConfig)
+            else None
+        )
+        if config is None:
+            return
+        account_id = getattr(provider, "account_id", None) or _codex_account_id(
+            config,
+            self._credential_store,
+        )
+        if not isinstance(account_id, str) or not account_id:
+            return
+        with suppress(OSError, TypeError, ValueError):
+            save_codex_model_catalog(
+                catalog,
+                account_id=account_id,
+                paths=self._resource_paths.paths,
+            )
 
     def _publish_runtime_model_catalog(
         self,
@@ -2380,6 +2474,7 @@ class CodingSession:
             raise ValueError("provider returned an empty model catalog")
         self._runtime_model_catalogs[provider_name] = catalog
         self._model_catalog_discovery_errors.pop(provider_name, None)
+        self._invalidate_runtime_model_limits()
         self._apply_runtime_model_catalogs()
 
     def _apply_runtime_model_catalogs(self) -> None:
@@ -4061,6 +4156,7 @@ class _PreparedProvider:
     inference_provider_mode: InferenceProviderMode
     runtime_provider_config: ProviderConfig | None
     dynamic_provider: DynamicProvider | None
+    runtime_model_catalog: RuntimeModelCatalog | None = None
 
 
 async def _prepare_provider_selection(
@@ -4132,6 +4228,7 @@ async def _prepare_provider_selection(
             )
 
     settings = config.provider_settings
+    discovered_catalog: RuntimeModelCatalog | None = None
     if settings is None:
         raise ProviderConfigError(
             f"Provider is not available after trusted extension loading: "
@@ -4157,6 +4254,7 @@ async def _prepare_provider_selection(
             if isinstance(discovery_provider, ModelCatalogProvider):
                 catalog = await discovery_provider.discover_models()
                 if catalog.models:
+                    discovered_catalog = catalog
                     live_provider = _provider_with_runtime_model_catalog(selected_provider, catalog)
                     settings = replace(
                         settings,
@@ -4209,6 +4307,7 @@ async def _prepare_provider_selection(
         inference_provider_mode=inference_provider_mode,
         runtime_provider_config=selection.provider,
         dynamic_provider=None,
+        runtime_model_catalog=discovered_catalog,
     )
 
 
@@ -4565,6 +4664,42 @@ def _system_prompt_resource_signatures(
         append_system_prompt,
         tuple(str(path) for path in append_system_prompt_paths),
     )
+
+
+def _provider_config_or_none(
+    settings: ProviderSettings | None,
+    provider_name: str | None,
+) -> ProviderConfig | None:
+    if settings is None or provider_name is None:
+        return None
+    try:
+        return settings.get_provider(provider_name)
+    except ProviderConfigError:
+        return None
+
+
+def _codex_account_id(
+    provider: OpenAICodexProviderConfig,
+    credential_store: FileCredentialStore,
+) -> str | None:
+    if provider.credential_name:
+        credential = credential_store.get_oauth(provider.credential_name)
+        if credential is not None and credential.account_id:
+            return credential.account_id
+    return account_id_from_access_token(environ.get(provider.api_key_env, ""))
+
+
+def _provider_settings_with_runtime_catalogs(
+    settings: ProviderSettings | None,
+    catalogs: Mapping[str, RuntimeModelCatalog],
+) -> ProviderSettings | None:
+    if settings is None or not catalogs:
+        return settings
+    providers = tuple(
+        _provider_with_runtime_model_catalog(provider, catalogs.get(provider.name))
+        for provider in settings.providers
+    )
+    return replace(settings, providers=providers)
 
 
 def _provider_with_runtime_model_catalog(

@@ -14,6 +14,7 @@ those locations and file formats.
 ├── catalog.toml        # optional provider/model catalog overlay
 ├── providers.json      # provider/model preferences
 ├── models-store.json   # refreshed models.dev catalog cache
+├── codex-models-store.json # account-scoped Codex model snapshot
 ├── credentials.json    # saved API keys / OAuth tokens (0600, atomic writes)
 ├── state/extensions/    # built-in integration state, including llama.cpp
 ├── settings.json       # general settings (trust default, shell prefix)
@@ -47,6 +48,11 @@ Startup update checks cache their latest PyPI result in
 bundled snapshot. `/model` refreshes it in the background at most every four
 hours; `tau update --models` forces revalidation. Set `TAU_OFFLINE=1` to disable
 catalog network access. User `catalog.toml` overrides still apply after the cache.
+
+`codex-models-store.json` contains only parsed model metadata and the active
+Codex account ID. Tau loads it at startup, then refreshes it when `/model` or
+`/scoped-models` opens; a snapshot from a different account is ignored. It never
+contains OAuth tokens.
 
 ## System prompt files
 

@@ -45,6 +45,11 @@ class TauPaths:
         return self.home / "codex-version-store.json"
 
     @property
+    def codex_models_store_path(self) -> Path:
+        """Return the account-scoped Codex model-catalog cache path."""
+        return self.home / "codex-models-store.json"
+
+    @property
     def extension_state_dir(self) -> Path:
         """Return the user-level state directory owned by built-in extensions."""
         return self.home / "state" / "extensions"

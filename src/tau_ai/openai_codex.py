@@ -105,6 +105,12 @@ class OpenAICodexProvider:
         self._owns_client = client is None
         self._discovered_model_catalog: RuntimeModelCatalog | None = None
         self._discovered_model_limits: dict[str, RuntimeModelLimits] | None = None
+        self._account_id: str | None = None
+
+    @property
+    def account_id(self) -> str | None:
+        """Return the account associated with the latest catalog request."""
+        return self._account_id
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client if this provider created it."""
@@ -134,6 +140,7 @@ class OpenAICodexProvider:
     async def _fetch_model_catalog(self) -> object:
         client = self._get_client()
         credentials = await self._config.credential_resolver()
+        self._account_id = credentials.account_id
         headers = _build_codex_headers(
             self._config.headers,
             access_token=credentials.access_token,

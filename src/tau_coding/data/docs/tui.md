@@ -13,13 +13,15 @@ token-weighted. TTFT is the arithmetic mean of provider-wait time through Tau's
 first text, thinking, or tool-call output event. Older assistant messages
 without persisted timing still count toward token usage but not these metrics.
 
-## `/model`
+## `/model` and `/scoped-models`
 
-The picker renders cached/bundled choices immediately, then refreshes remote
-catalogs in the background and updates the open list. Refreshes are throttled to
-four hours and failures leave the existing list usable. Use
-`tau update --models` for forced revalidation or `TAU_OFFLINE=1` to disable
-catalog network access.
+The pickers render cached/bundled choices immediately, then refresh remote
+catalogs in the background and update the open list. This includes the
+account-scoped OpenAI Codex model snapshot, so models discovered in an earlier
+session are available before a refresh. Both commands refresh the Codex catalog;
+refresh failures leave the existing list usable. Use `tau update --models` for
+forced public-catalog revalidation or `TAU_OFFLINE=1` to disable catalog network
+access.
 
 ## `/sidebar`
 

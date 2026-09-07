@@ -211,9 +211,13 @@ when you want to reduce what is sent to the model.
 ## Picking models and themes
 
 - **`/model`** opens the model picker. It shows cached/bundled models immediately,
-  refreshes catalogs in the background, and updates the open list. Selecting a
-  model from another provider switches the active provider too. Use
-  `tau update --models` to force refresh or `TAU_OFFLINE=1` to disable it.
+  refreshes catalogs in the background, and updates the open list. The
+  account-scoped Codex snapshot is also reused across sessions, and `/model`
+  refreshes it.
+- **`/scoped-models`** opens the favorite-model picker and refreshes provider
+  catalogs in the background too, so newly discovered Codex models can be
+  scoped without opening `/model` first. Use `tau update --models` to force
+  public-catalog refresh or `TAU_OFFLINE=1` to disable catalog network access.
 - **Ctrl+P** quickly cycles forward through your *scoped* (favorite) models;
   **Shift+Ctrl+P** cycles backward. Neither opens the picker. Manage that list
   with `/scoped-models` or by pressing `Space` on a model in the `/model` picker.

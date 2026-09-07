@@ -6408,6 +6408,29 @@ class TauTuiApp(App[None]):
             ),
             callback=self._handle_scoped_models_picker_result,
         )
+        self.run_worker(self._refresh_open_scoped_models_picker(), exclusive=False)
+
+    async def _refresh_open_scoped_models_picker(self) -> None:
+        refresh = getattr(self.session, "refresh_model_catalogs", None)
+        if not callable(refresh):
+            return
+        try:
+            await refresh()
+        except Exception as error:
+            if isinstance(self.screen, ModelPickerScreen):
+                self._notify(f"Could not refresh model catalogs: {error}", severity="warning")
+            return
+        if not isinstance(self.screen, ModelPickerScreen):
+            return
+        picker = self.screen
+        while not picker.is_mounted:
+            await asyncio.sleep(0)
+            if self.screen is not picker:
+                return
+        picker.update_choices(
+            self._available_model_choices(),
+            tuple(getattr(self.session, "scoped_model_choices", ())),
+        )
 
     def _toggle_scoped_model(self, choice: ModelChoice) -> Sequence[ModelChoice]:
         toggle_scoped_model = getattr(self.session, "toggle_scoped_model", None)

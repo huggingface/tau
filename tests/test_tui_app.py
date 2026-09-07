@@ -7806,6 +7806,7 @@ async def test_tui_scoped_models_picker_toggles_scoped_models_without_switching_
         await pilot.pause()
 
         assert isinstance(app.screen, ModelPickerScreen)
+        assert session.model_catalog_refresh_count == 1
         tabs = app.screen.query_one("#model-picker-tabs", Static)
         assert str(tabs.render()) == "Tabs: ● All models  ○ Scoped models"
         await pilot.press("enter")
@@ -7844,6 +7845,7 @@ async def test_tui_scoped_models_picker_tab_shows_only_scoped_models_for_unselec
         await pilot.pause()
 
         assert isinstance(app.screen, ModelPickerScreen)
+        assert session.model_catalog_refresh_count == 1
         await pilot.press("tab")
         await pilot.pause()
 
