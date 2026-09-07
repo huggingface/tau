@@ -13,7 +13,8 @@ Processing has explicit ceilings:
 - source encoding: 50 MB
 - source dimensions: 40 million pixels
 - output dimensions: 2,000 by 2,000 maximum
-- output encoding: 5 MB
+- output encoding: 5 MB per processed image
+- cumulative base64 attachments: 4 MB between successful model responses
 - image header sniff: 64 KB before loading oversized local files
 - resize/encode attempts: 12
 
@@ -66,7 +67,14 @@ because tool-result image placement differs across APIs.
    to Pi's terminal-image protocol renderer, so the TUI continues to show the
    textual status. A custom widget or third-party integration can be evaluated
    separately without changing the tool-result contract.
-7. Keep live credential checks outside CI. `TODO.md` retains the provider/model
+7. Bound cumulative request payloads separately from per-image processing. If a
+   processed image would exceed the remaining portion of the current turn's 4 MB
+   base64 budget, dynamically lower the processing byte target and resize or
+   re-encode the image to fit. Report that transformation to the model. Return a
+   text-only resize/compress instruction only when automatic processing cannot
+   fit safely. Images already consumed by a successful assistant response remain
+   durable but are omitted from later provider replays.
+8. Keep live credential checks outside CI. `TODO.md` retains the provider/model
    validation matrix follow-up.
 
 ## How to test

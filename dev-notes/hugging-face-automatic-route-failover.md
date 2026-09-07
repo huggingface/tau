@@ -12,7 +12,9 @@ Tau now distinguishes two session-scoped Hugging Face routing modes:
 When a sticky automatic route exhausts its provider-level retries with HTTP 408,
 409, 425, 429, or 5xx before emitting content, the coding session clears the
 resolved suffix and continues the same agent run once through Hugging Face's
-unsuffixed automatic router. A successful response supplies the replacement
+unsuffixed automatic router. The same recovery applies to HTTP 413: although a
+payload rejection is not transient on one backend, another Hugging Face route
+may accept that model request. A successful response supplies the replacement
 route header, which becomes the new automatic session pin.
 
 ## Why core owns recovery
@@ -40,7 +42,7 @@ Failover happens only when all conditions hold:
 1. the logical Tau provider is `huggingface`;
 2. the session mode is `automatic`;
 3. a resolved route is currently pinned;
-4. provider diagnostics contain a retryable HTTP status; and
+4. provider diagnostics contain a retryable HTTP status or HTTP 413; and
 5. the failed assistant message has no text, thinking, or tool-call content.
 
 Only one automatic reroute is attempted per prompt. The fallback itself is not
@@ -76,7 +78,9 @@ renderers treat a successful retry as a successful command. The TUI removes the
 intermediate terminal error when retry progress begins.
 
 Failover may lose provider-local prefix cache state and require a cold prefill.
-It also cannot bypass account-wide or router-wide rate limits.
+It also cannot bypass account-wide or router-wide rate limits. A 413 from the
+unsuffixed fallback remains terminal after this single attempt, preventing retry
+loops.
 
 ## Validation
 

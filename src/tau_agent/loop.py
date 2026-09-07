@@ -22,6 +22,7 @@ from tau_agent.events import (
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
+    ImageContent,
     ResponseTiming,
     TextContent,
     ToolCall,
@@ -183,11 +184,15 @@ async def run_agent_loop(
 
 
 def _provider_context(messages: list[AgentMessage]) -> list[AgentMessage]:
-    """Return replayable messages while retaining failures in durable history.
+    """Return replayable messages while retaining full durable history.
 
     Providers cannot consistently accept an assistant turn with no content. Tau
     persists terminal failures for diagnostics, but an empty failed or aborted
     turn is not model context and must not poison the next request.
+
+    Inline tool images are needed until the model produces its next successful
+    response. Older image bytes have already been consumed and are replaced with
+    a text marker so long sessions do not resend an ever-growing base64 payload.
     """
     replayable = tuple(
         message
@@ -198,7 +203,34 @@ def _provider_context(messages: list[AgentMessage]) -> list[AgentMessage]:
             and not message.content
         )
     )
-    return list(repair_tool_history(replayable).messages)
+    latest_successful_assistant = max(
+        (
+            index
+            for index, message in enumerate(replayable)
+            if isinstance(message, AssistantMessage)
+            and message.stop_reason not in {"error", "aborted"}
+        ),
+        default=-1,
+    )
+    compacted_images = tuple(
+        _omit_consumed_tool_images(message) if index < latest_successful_assistant else message
+        for index, message in enumerate(replayable)
+    )
+    return list(repair_tool_history(compacted_images).messages)
+
+
+def _omit_consumed_tool_images(message: AgentMessage) -> AgentMessage:
+    if not isinstance(message, ToolResultMessage) or not any(
+        isinstance(block, ImageContent) for block in message.content
+    ):
+        return message
+    content = [
+        block.model_copy(deep=True)
+        for block in message.content
+        if not isinstance(block, ImageContent)
+    ]
+    content.append(TextContent(text="[image omitted from replay after the model processed it]"))
+    return message.model_copy(update={"content": content})
 
 
 async def _assistant_events(

@@ -82,10 +82,11 @@ configure the built-in `llama.cpp` layer separately through `/local`.
 
 Hugging Face routing has two session modes. Automatic mode keeps the provider
 from the first successful response as a sticky route, but retries once through
-unsuffixed routing after that route exhausts retryable pre-output HTTP failures.
-A configured or extension-selected provider is fixed and never silently
-overridden. The external Hugging Face extension controls these modes with
-`/hf route`; core owns safe continuation, persistence, and reroute diagnostics.
+unsuffixed routing after that route exhausts retryable pre-output HTTP failures
+or rejects the request payload with HTTP 413. A configured or extension-selected
+provider is fixed and never silently overridden. The external Hugging Face
+extension controls these modes with `/hf route`; core owns safe continuation,
+persistence, and reroute diagnostics.
 
 ## Changing the built-in catalog
 

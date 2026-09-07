@@ -17,6 +17,8 @@ from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
     CustomMessage,
+    ImageContent,
+    ToolResultMessage,
     UserMessage,
     message_text,
 )
@@ -156,7 +158,12 @@ from tau_coding.thinking import (
     next_thinking_level,
     normalize_thinking_level,
 )
-from tau_coding.tools import ImageSupportState, create_bash_tool, create_coding_tools
+from tau_coding.tools import (
+    ImageAttachmentBudgetState,
+    ImageSupportState,
+    create_bash_tool,
+    create_coding_tools,
+)
 
 StreamingBehavior = Literal["steer", "follow_up"]
 SESSION_NAME_SYSTEM_PROMPT = (
@@ -403,6 +410,7 @@ class CodingSession:
         pending_initial_entries: tuple[SessionEntry, ...] = (),
         extension_runtime: ExtensionRuntime | None = None,
         image_support: ImageSupportState | None = None,
+        image_attachment_budget: ImageAttachmentBudgetState | None = None,
         project_trust_resolution: ProjectTrustResolution | None = None,
     ) -> None:
         self._config = config
@@ -411,6 +419,7 @@ class CodingSession:
         self._extension_runtime = extension_runtime or ExtensionRuntime()
         self._provider_registry = self._extension_runtime.provider_registry
         self._image_support = image_support or ImageSupportState()
+        self._image_attachment_budget = image_attachment_budget or ImageAttachmentBudgetState()
         self._session_start_pending = False
         self._last_parent_id = last_parent_id
         self._pending_initial_entries = pending_initial_entries
@@ -633,6 +642,9 @@ class CodingSession:
         image_support = ImageSupportState(
             supported=_configured_model_supports_images(config, active_model)
         )
+        image_attachment_budget = ImageAttachmentBudgetState(
+            used_encoded_bytes=_pending_tool_image_encoded_bytes(state.messages)
+        )
         base_tools = (
             config.tools
             if config.tools is not None
@@ -640,6 +652,7 @@ class CodingSession:
                 cwd=config.cwd,
                 shell_command_prefix=config.shell_command_prefix,
                 image_support=image_support,
+                image_attachment_budget=image_attachment_budget,
             )
         )
         tools = extension_runtime.compose_tools(base_tools)
@@ -695,6 +708,7 @@ class CodingSession:
             pending_initial_entries=pending_initial_entries,
             extension_runtime=extension_runtime,
             image_support=image_support,
+            image_attachment_budget=image_attachment_budget,
             project_trust_resolution=trust_resolution,
         )
         if config.owns_initial_provider:
@@ -2222,6 +2236,7 @@ class CodingSession:
                 cwd=self._config.cwd,
                 shell_command_prefix=self._config.shell_command_prefix,
                 image_support=self._image_support,
+                image_attachment_budget=self._image_attachment_budget,
             )
         )
         staged_tools = staged_runtime.compose_tools(base_tools)
@@ -2750,6 +2765,7 @@ class CodingSession:
         self._owned_providers.extend(replacement._owned_providers)
         replacement._owned_providers.clear()
         self._image_support = replacement._image_support
+        self._image_attachment_budget = replacement._image_attachment_budget
         self._project_trust_resolution = replacement._project_trust_resolution
         self._project_trust_commit_pending = False
         self._session_start_pending = False
@@ -3405,6 +3421,9 @@ class CodingSession:
     async def _refresh_persisted_state(self, *, leaf_id: str | None) -> None:
         entries = await self._read_session_entries()
         self._state = SessionState.from_entries(entries, leaf_id=leaf_id)
+        self._image_attachment_budget.reset(
+            used_encoded_bytes=_pending_tool_image_encoded_bytes(self._state.messages)
+        )
         if self._config.session_id is not None and self._config.session_manager is not None:
             self._config.session_manager.touch_session(
                 self._config.session_id,
@@ -3813,6 +3832,26 @@ def _next_user_message_index(
     return None
 
 
+def _pending_tool_image_encoded_bytes(messages: Sequence[AgentMessage]) -> int:
+    """Count tool images produced since the latest successful assistant response."""
+    latest_successful_assistant = max(
+        (
+            index
+            for index, message in enumerate(messages)
+            if isinstance(message, AssistantMessage)
+            and message.stop_reason not in {"error", "aborted"}
+        ),
+        default=-1,
+    )
+    return sum(
+        len(block.data)
+        for message in messages[latest_successful_assistant + 1 :]
+        if isinstance(message, ToolResultMessage)
+        for block in message.content
+        if isinstance(block, ImageContent)
+    )
+
+
 def is_context_overflow_error(message: AssistantMessage) -> bool:
     """Return True when an assistant error looks like a context overflow."""
     text = message.error_message or ""
@@ -3843,7 +3882,10 @@ def is_retryable_huggingface_route_error(message: AssistantMessage) -> bool:
             continue
         status_code = diagnostic.details.get("status_code")
         if isinstance(status_code, int) and not isinstance(status_code, bool):
-            return status_code in {408, 409, 425, 429} or status_code >= 500
+            # A 413 is not transient on the pinned backend, but another Hugging
+            # Face route may accept the same payload. Automatic mode can safely
+            # ask the router to choose again before any output was emitted.
+            return status_code in {408, 409, 413, 425, 429} or status_code >= 500
     return False
 
 

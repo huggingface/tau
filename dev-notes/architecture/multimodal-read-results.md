@@ -32,6 +32,17 @@ The image base64 payload moved from tool-result `details` into `content`. This
 prevents duplicate session storage and lets all frontends continue rendering the
 small text note without exposing base64 data.
 
+Tool images now share a 4 MB base64 budget between successful assistant
+responses. If a new attachment would exceed the remaining space, `read` first
+resizes and re-encodes it to fit. The model receives a transformation note. Only
+when safe automatic compression cannot fit the image does `read` return an
+actionable text-only result asking the agent to resize or compress the file. Once
+an assistant successfully consumes pending images, future provider-context
+replays replace those image bytes with a short marker. Durable session history
+retains the original image blocks. Together these bounds prevent multiple individually
+valid images from growing an OpenAI-compatible request until a backend rejects it
+with HTTP 413.
+
 ## Validation
 
 ```bash
