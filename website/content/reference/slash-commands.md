@@ -23,6 +23,7 @@ command palette with **Ctrl+K**.
 | `/theme [name]` | Show or set the TUI theme |
 | `/login [provider]` | Connect a built-in provider with OAuth or an API key; Anthropic uses `anthropic-subscription` or `anthropic-api` |
 | `/local` | Choose and manage a registered local backend; interactive-only. Compatible llama.cpp routers add explicit load/unload, Hugging Face GGUF search, and server-side download actions with confirmation and reconciliation. |
+| `/sidebar` | Toggle the sidebar for this session without changing `tui.json` |
 | `/logout [provider]` | Remove saved credentials for a provider |
 | `/reload` | Reload local skills, prompts, extensions, and project context |
 | `/prompts` | Search loaded prompt templates; press Enter to insert an invocation or Ctrl+E to edit the file |

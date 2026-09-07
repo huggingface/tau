@@ -829,10 +829,13 @@ def _build_chat_payload(
         payload["provider"] = openrouter_provider
     _apply_chat_reasoning(
         payload,
-        reasoning_effort=reasoning_effort if supports_reasoning_effort else None,
+        reasoning_effort=(
+            reasoning_effort if supports_reasoning_effort or thinking_format == "zai" else None
+        ),
         reasoning_effort_parameter=reasoning_effort_parameter,
         thinking_format=thinking_format,
         include_reasoning_effort_none=include_reasoning_effort_none,
+        supports_reasoning_effort=supports_reasoning_effort,
     )
     if tools:
         payload["tools"] = [_tool_to_openai(tool) for tool in tools]
@@ -848,9 +851,19 @@ def _apply_chat_reasoning(
     reasoning_effort_parameter: str,
     thinking_format: str,
     include_reasoning_effort_none: bool,
+    supports_reasoning_effort: bool = True,
 ) -> None:
     reasoning_enabled = reasoning_effort is not None and reasoning_effort != "none"
-    if thinking_format in {"zai", "qwen"}:
+    if thinking_format == "zai":
+        # Z.AI's OpenAI-compatible API uses the provider-specific ``thinking``
+        # object for every GLM model.  Only GLM-5.2+ accepts the separate
+        # reasoning_effort field, so keep that decision model-specific via
+        # supportsReasoningEffort instead of dropping the logical toggle.
+        payload["thinking"] = {"type": "enabled" if reasoning_enabled else "disabled"}
+        if supports_reasoning_effort and reasoning_enabled:
+            payload["reasoning_effort"] = reasoning_effort
+        return
+    if thinking_format == "qwen":
         payload["enable_thinking"] = reasoning_enabled
         return
     if thinking_format == "qwen-chat-template":
