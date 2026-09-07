@@ -7,6 +7,7 @@ from tau_agent import (
     AssistantMessage,
     CustomMessage,
     ImageContent,
+    ResponseTiming,
     TextContent,
     ThinkingContent,
     ToolResultMessage,
@@ -83,10 +84,29 @@ def test_assistant_and_tool_result_round_trip_canonical_blocks() -> None:
 
     assert assistant_payload["content"][0]["text"] == "Hi"
     assert assistant_payload["usage"]["totalTokens"] == 0
+    assert "timing" not in assistant_payload
     assert result_payload["role"] == "toolResult"
     assert result_payload["toolName"] == "edit"
     assert entry_from_json_line(entry_to_json_line(assistant)) == assistant
     assert entry_from_json_line(entry_to_json_line(result)) == result
+
+
+def test_assistant_response_timing_round_trips_jsonl() -> None:
+    entry = MessageEntry(
+        id="timed",
+        message=AssistantMessage(
+            content="Hi",
+            timing=ResponseTiming(time_to_first_output_ms=250, total_duration_ms=1000),
+        ),
+    )
+
+    line = entry_to_json_line(entry)
+
+    assert entry_from_json_line(line) == entry
+    assert json.loads(line)["message"]["timing"] == {
+        "timeToFirstOutputMs": 250,
+        "totalDurationMs": 1000,
+    }
 
 
 def test_tool_result_image_round_trips_jsonl() -> None:

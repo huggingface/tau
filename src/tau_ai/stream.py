@@ -108,6 +108,8 @@ async def canonicalize_provider_stream(
             # Retries are provider-internal at the Pi AI boundary.
             continue
         if isinstance(event, ProviderResponseStartEvent):
+            if event.response_provider is not None:
+                partial.response_provider = event.response_provider
             if not started:
                 started = True
                 yield AssistantStartEvent(partial=_snapshot(partial))
@@ -178,6 +180,7 @@ async def canonicalize_provider_stream(
             final.api = api
             final.provider = provider
             final.model = model
+            final.response_provider = event.message.response_provider or partial.response_provider
             final.content = [block.model_copy(deep=True) for block in partial.content]
             if not final.content and event.message.content:
                 final.content = [block.model_copy(deep=True) for block in event.message.content]
@@ -190,6 +193,7 @@ async def canonicalize_provider_stream(
             terminal = True
         elif isinstance(event, ProviderErrorEvent):
             error = partial.model_copy(deep=True)
+            error.response_provider = event.response_provider or partial.response_provider
             error.stop_reason = "error"
             error.error_message = event.message
             error.diagnostics = [

@@ -16,13 +16,23 @@ User-facing documentation lives in `website/content/` and is published at
   - `03-tools.md` — built-in tool design
   - `04-sessions.md` — session tree / persistence design
   - `05-core-types-and-events.md` — provider-neutral types and events
+  - `project-trust.md` — researched, implementation-ready project-trust design
+    (design only; enforcement is not implemented)
   - `agent-loop.md`, `harness.md` — harness/loop reference notes
 - `architecture/` — per-phase implementation notes (`phase-1` … `phase-24`, plus
   hardening and feature notes). Each answers: what was added, why it exists, how
   later phases use it.
 - `adr/` — architecture decision records.
 - `catalog-model-safety.md` — checklist for adding providers and models to the built-in catalog safely.
+- `google-stream-completion.md` — why native Google streams require an explicit
+  `finishReason` before Tau reports successful completion.
 - `startup-thinking-level-fallback.md` — why startup resolves a valid thinking
   level per model instead of assuming the global `medium` default.
+- `models-dev-catalog.md` — Pi-compatible build-time models.dev catalog
+  generation, offline fallback, and snapshot refresh workflow.
+- `llama-cpp-phase-5.md` — built-in llama.cpp connection, safe state, `/local`,
+  failure handling, and Phase 5 validation.
+- `architecture/phase-6-local-inference-hardening.md` — second-backend contract
+  validation, lifecycle hardening, migration, and security decisions.
 
 The roadmap is tracked in [GitHub issue #1](https://github.com/huggingface/tau/issues/1).

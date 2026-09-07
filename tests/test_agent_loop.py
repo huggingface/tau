@@ -1,8 +1,10 @@
 import asyncio
 from collections.abc import AsyncIterator, Mapping
+from itertools import chain, repeat
 
 import pytest
 
+import tau_agent.loop as loop_module
 from pi_event_helpers import (
     assistant_done,
     assistant_error,
@@ -81,6 +83,69 @@ async def test_agent_loop_streams_canonical_nested_events() -> None:
     updates = [event for event in events if isinstance(event, MessageUpdateEvent)]
     assert [event.assistant_message_event.delta for event in updates] == ["Hel", "lo"]  # type: ignore[union-attr]
     assert messages == [messages[0], assistant]
+
+
+@pytest.mark.anyio
+async def test_agent_loop_records_only_monotonic_provider_wait_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ticks = chain(
+        [
+            0,
+            100_000_000,
+            1_000_000_000,
+            2_150_000_000,
+            10_000_000_000,
+            13_750_000_000,
+        ],
+        repeat(13_750_000_000),
+    )
+    monkeypatch.setattr(loop_module, "monotonic_ns", lambda: next(ticks))
+    messages: list[AgentMessage] = [UserMessage(content="Say hello")]
+    assistant = AssistantMessage(content="Hello", model="fake")
+    assistant.usage.output = 100
+    provider = FakeProvider([[assistant_start(), text_delta("Hello"), assistant_done(assistant)]])
+
+    await _collect(
+        run_agent_loop(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            messages=messages,
+            tools=[],
+        )
+    )
+
+    assert assistant.timing is not None
+    assert assistant.timing.time_to_first_output_ms == 1250
+    assert assistant.timing.total_duration_ms == 5000
+
+
+@pytest.mark.anyio
+async def test_agent_loop_does_not_invent_ttft_without_an_output_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ticks = chain(
+        [0, 100_000_000, 1_000_000_000, 2_000_000_000],
+        repeat(2_000_000_000),
+    )
+    monkeypatch.setattr(loop_module, "monotonic_ns", lambda: next(ticks))
+    assistant = AssistantMessage(content="Non-streamed", model="fake")
+    provider = FakeProvider([[assistant_start(), assistant_done(assistant)]])
+
+    await _collect(
+        run_agent_loop(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            messages=[UserMessage(content="Say hello")],
+            tools=[],
+        )
+    )
+
+    assert assistant.timing is not None
+    assert assistant.timing.time_to_first_output_ms is None
+    assert assistant.timing.total_duration_ms == 1100
 
 
 @pytest.mark.anyio
@@ -313,6 +378,37 @@ async def test_agent_loop_excludes_empty_failed_assistant_from_next_provider_cal
     assert [message.text for message in replayed] == ["hello", "continue"]
     assert failed not in replayed
     assert messages[-1] is recovered
+
+
+@pytest.mark.anyio
+async def test_agent_loop_repairs_malformed_tool_history_before_provider_call() -> None:
+    call = ToolCall(id="call-1", name="read", arguments={"path": "README.md"})
+    assistant = AssistantMessage(content=[call])
+    late_user = UserMessage(content="continue")
+    orphan = ToolResultMessage(tool_call_id="call-missing", tool_name="bash", content="orphan")
+    recovered = AssistantMessage(content="recovered", model="fake")
+    provider = FakeProvider([[assistant_start(), assistant_done(recovered)]])
+    messages: list[AgentMessage] = [assistant, late_user, orphan]
+
+    await _collect(
+        run_agent_loop(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            messages=messages,
+            tools=[],
+        )
+    )
+
+    replayed = provider.calls[0][2]
+    assert replayed[0] is assistant
+    repair = replayed[1]
+    assert isinstance(repair, ToolResultMessage)
+    assert repair.tool_call_id == "call-1"
+    assert repair.is_error is True
+    assert replayed[2] is late_user
+    assert orphan not in replayed
+    assert orphan in messages
 
 
 @pytest.mark.anyio

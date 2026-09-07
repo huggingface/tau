@@ -17,11 +17,14 @@ def test_session_manager_creates_and_lists_sessions(tmp_path: Path) -> None:
     record = manager.create_session(
         cwd=cwd,
         model="fake",
-        provider_name="fake-provider",
+        provider_name="huggingface",
+        inference_provider="deepinfra",
         title="Test session",
     )
 
-    assert record.provider_name == "fake-provider"
+    assert record.provider_name == "huggingface"
+    assert record.inference_provider == "deepinfra"
+    assert record.inference_provider_mode == "fixed"
     assert record.path.parent.parent == tmp_path / ".tau" / "sessions"
     assert "project-" in record.path.parent.name
     assert len(record.path.parent.name.rsplit("-", maxsplit=1)[-1]) == 6
@@ -232,6 +235,35 @@ def test_session_manager_ignores_extra_index_metadata(tmp_path: Path) -> None:
     assert record.id == "session-1"
     assert record.path == session_path
     assert record.model == "gpt-5"
+
+
+def test_session_manager_treats_legacy_pinned_routes_as_fixed(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    index_path = manager.project_index_path(cwd)
+    index_path.parent.mkdir(parents=True)
+    index_path.write_text(
+        json.dumps(
+            {
+                "id": "legacy-hf",
+                "path": str(index_path.parent / "legacy-hf.jsonl"),
+                "cwd": str(cwd.resolve()),
+                "model": "moonshotai/Kimi-K3",
+                "provider_name": "huggingface",
+                "inference_provider": "deepinfra",
+                "created_at": 1.0,
+                "updated_at": 2.0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    [record] = manager.list_sessions(cwd)
+
+    assert record.inference_provider == "deepinfra"
+    assert record.inference_provider_mode == "fixed"
 
 
 def test_session_manager_gets_or_creates_default_session(tmp_path: Path) -> None:

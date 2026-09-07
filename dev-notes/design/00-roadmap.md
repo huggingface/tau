@@ -31,6 +31,10 @@ context during automatic compaction, and can recover from a context-overflow
 provider error with one compact-and-retry attempt. See
 [Context Compaction](./context-compaction.md).
 
+Project-trust enforcement is not implemented. Its documentation-first design,
+Pi compatibility research, resource matrix, staged implementation, and test plan
+are recorded in [Project trust](./project-trust.md) for issue #535.
+
 ## Phase plan
 
 0. Project foundation and design docs.

@@ -65,6 +65,23 @@ tau --provider local -p "explain this module"
 tau --cwd ./services/api -p "audit for secrets"
 ```
 
+## Resume a conversation
+
+Pass an existing session id to run a follow-up turn non-interactively:
+
+```bash
+tau --print --session <session-id> "Follow-up message"
+```
+
+Tau appends the turn to the existing transcript and sends its active conversation
+history to the model. It also uses the session's saved working directory,
+provider, and model unless explicit selection flags override them. This works
+with every output mode and keeps stdout dedicated to that mode. Unknown ids fail
+without creating a session. `--session` cannot be combined with `--new-session`
+or `--session-id`.
+
+Use `tau sessions` to find session ids.
+
 ## Recording the session id
 
 Automation can choose the exact id of a new print-mode session with

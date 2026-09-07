@@ -460,6 +460,7 @@ api_key_env = "OPENAI_CODEX_ACCESS_TOKEN"
 credential_name = "openai-codex"
 auth_methods = ["oauth"]
 models = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"]
+removed_models = ["gpt-5.6"]
 default_model = "gpt-5.5"
 docs_url = "https://chatgpt.com/codex"
 thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
@@ -573,7 +574,7 @@ input = ["text", "image"]
 context_window = 1000000
 max_tokens = 128000
 compat = { forceAdaptiveThinking = true }
-cost = { input = 10, output = 50, cacheRead = 1, cacheWrite = 12.5 }
+cost = { input = 10, output = 50, cacheRead = 1, cacheWrite = 12.5, cacheWrite1h = 20 }
 unsupported_thinking_levels = ["minimal"]
 
 [providers.model_metadata.claude-haiku-4-5]
@@ -582,7 +583,7 @@ reasoning = true
 input = ["text", "image"]
 context_window = 200000
 max_tokens = 64000
-cost = { input = 1, output = 5, cacheRead = 0.1, cacheWrite = 1.25 }
+cost = { input = 1, output = 5, cacheRead = 0.1, cacheWrite = 1.25, cacheWrite1h = 2 }
 
 [providers.model_metadata.claude-haiku-4-5-20251001]
 name = "Claude Haiku 4.5"
@@ -590,7 +591,7 @@ reasoning = true
 input = ["text", "image"]
 context_window = 200000
 max_tokens = 64000
-cost = { input = 1, output = 5, cacheRead = 0.1, cacheWrite = 1.25 }
+cost = { input = 1, output = 5, cacheRead = 0.1, cacheWrite = 1.25, cacheWrite1h = 2 }
 
 [providers.model_metadata.claude-opus-4-1]
 name = "Claude Opus 4.1 (latest)"
@@ -598,7 +599,7 @@ reasoning = true
 input = ["text", "image"]
 context_window = 200000
 max_tokens = 32000
-cost = { input = 15, output = 75, cacheRead = 1.5, cacheWrite = 18.75 }
+cost = { input = 15, output = 75, cacheRead = 1.5, cacheWrite = 18.75, cacheWrite1h = 30 }
 
 [providers.model_metadata.claude-opus-4-1-20250805]
 name = "Claude Opus 4.1"
@@ -606,7 +607,7 @@ reasoning = true
 input = ["text", "image"]
 context_window = 200000
 max_tokens = 32000
-cost = { input = 15, output = 75, cacheRead = 1.5, cacheWrite = 18.75 }
+cost = { input = 15, output = 75, cacheRead = 1.5, cacheWrite = 18.75, cacheWrite1h = 30 }
 
 [providers.model_metadata.claude-opus-4-5]
 name = "Claude Opus 4.5 (latest)"
@@ -614,7 +615,7 @@ reasoning = true
 input = ["text", "image"]
 context_window = 200000
 max_tokens = 64000
-cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25 }
+cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25, cacheWrite1h = 10 }
 
 [providers.model_metadata.claude-opus-4-5-20251101]
 name = "Claude Opus 4.5"
@@ -622,7 +623,7 @@ reasoning = true
 input = ["text", "image"]
 context_window = 200000
 max_tokens = 64000
-cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25 }
+cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25, cacheWrite1h = 10 }
 
 [providers.model_metadata.claude-opus-4-6]
 name = "Claude Opus 4.6"
@@ -631,7 +632,7 @@ input = ["text", "image"]
 context_window = 1000000
 max_tokens = 128000
 compat = { forceAdaptiveThinking = true }
-cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25 }
+cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25, cacheWrite1h = 10 }
 thinking_level_map = { xhigh = "max" }
 unsupported_thinking_levels = ["minimal"]
 
@@ -642,7 +643,7 @@ input = ["text", "image"]
 context_window = 1000000
 max_tokens = 128000
 compat = { forceAdaptiveThinking = true }
-cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25 }
+cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25, cacheWrite1h = 10 }
 thinking_level_map = { xhigh = "xhigh" }
 unsupported_thinking_levels = ["minimal"]
 
@@ -653,7 +654,7 @@ input = ["text", "image"]
 context_window = 1000000
 max_tokens = 128000
 compat = { forceAdaptiveThinking = true }
-cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25 }
+cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25, cacheWrite1h = 10 }
 thinking_level_map = { xhigh = "max" }
 unsupported_thinking_levels = ["minimal"]
 
@@ -663,7 +664,7 @@ reasoning = true
 input = ["text", "image"]
 context_window = 200000
 max_tokens = 64000
-cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75 }
+cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75, cacheWrite1h = 6 }
 
 [providers.model_metadata.claude-sonnet-4-5-20250929]
 name = "Claude Sonnet 4.5"
@@ -671,7 +672,7 @@ reasoning = true
 input = ["text", "image"]
 context_window = 200000
 max_tokens = 64000
-cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75 }
+cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75, cacheWrite1h = 6 }
 
 [providers.model_metadata.claude-sonnet-4-6]
 name = "Claude Sonnet 4.6"
@@ -680,7 +681,7 @@ input = ["text", "image"]
 context_window = 1000000
 max_tokens = 64000
 compat = { forceAdaptiveThinking = true }
-cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75 }
+cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75, cacheWrite1h = 6 }
 unsupported_thinking_levels = ["minimal"]
 
 [providers.model_metadata.claude-sonnet-5]
@@ -690,7 +691,7 @@ input = ["text", "image"]
 context_window = 1000000
 max_tokens = 128000
 compat = { forceAdaptiveThinking = true }
-cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75 }
+cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75, cacheWrite1h = 6 }
 unsupported_thinking_levels = ["minimal"]
 
 [[providers]]
@@ -1130,6 +1131,8 @@ models = ["nvidia/llama-3.3-nemotron-super-49b-v1.5", "nvidia/nvidia-nemotron-na
 default_model = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
 docs_url = "https://docs.api.nvidia.com/nim"
 api = "openai-completions"
+headers = { NVCF-POLL-SECONDS = "3600" }
+compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = false, maxTokensField = "max_tokens", supportsStrictMode = false, supportsLongCacheRetention = false }
 thinking_levels = ["off", "minimal", "low", "medium", "high"]
 thinking_default = "medium"
 thinking_parameter = "reasoning_effort"
@@ -3890,8 +3893,8 @@ models = ["k3", "kimi-for-coding"]
 default_model = "kimi-for-coding"
 docs_url = "https://www.kimi.com/code/docs/en/kimi-code/models"
 api = "openai-completions"
-thinking_levels = ["medium", "xhigh"]
-thinking_default = "medium"
+thinking_levels = ["low", "medium", "high", "xhigh", "max"]
+thinking_default = "max"
 thinking_parameter = "reasoning_effort"
 
 [providers.context_windows]
@@ -3905,8 +3908,8 @@ input = ["text", "image"]
 context_window = 1048576
 compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = true, maxTokensField = "max_tokens", supportsStrictMode = false }
 cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
-thinking_level_map = { xhigh = "max" }
-unsupported_thinking_levels = ["off", "minimal", "low", "medium", "high"]
+thinking_level_map = { low = "low", high = "high", xhigh = "max" }
+unsupported_thinking_levels = ["off", "minimal", "medium"]
 
 [providers.model_metadata.kimi-for-coding]
 name = "Kimi for Coding (latest)"
@@ -3916,6 +3919,7 @@ context_window = 262144
 max_tokens = 32768
 compat = { supportsStore = false, supportsDeveloperRole = false, supportsReasoningEffort = false, maxTokensField = "max_tokens", supportsStrictMode = false }
 cost = { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 }
+unsupported_thinking_levels = ["off", "minimal", "low", "high", "xhigh"]
 
 [[providers]]
 name = "moonshotai-cn"
@@ -4022,11 +4026,11 @@ kind = "openai-compatible"
 base_url = "https://router.huggingface.co/v1"
 api_key_env = "HF_TOKEN"
 credential_name = "huggingface"
-models = ["MiniMaxAI/MiniMax-M2", "MiniMaxAI/MiniMax-M2.1", "MiniMaxAI/MiniMax-M2.5", "MiniMaxAI/MiniMax-M2.7", "MiniMaxAI/MiniMax-M3", "Qwen/Qwen3-235B-A22B", "Qwen/Qwen3-235B-A22B-Thinking-2507", "Qwen/Qwen3-32B", "Qwen/Qwen3-Coder-30B-A3B-Instruct", "Qwen/Qwen3-Coder-480B-A35B-Instruct", "Qwen/Qwen3-Coder-Next", "Qwen/Qwen3-Next-80B-A3B-Instruct", "Qwen/Qwen3.5-122B-A10B", "Qwen/Qwen3.5-27B", "Qwen/Qwen3.5-35B-A3B", "Qwen/Qwen3.5-397B-A17B", "Qwen/Qwen3.5-9B", "Qwen/Qwen3.6-27B", "Qwen/Qwen3.6-35B-A3B", "XiaomiMiMo/MiMo-V2.5-Pro", "deepseek-ai/DeepSeek-R1", "deepseek-ai/DeepSeek-R1-0528", "deepseek-ai/DeepSeek-V3.2", "deepseek-ai/DeepSeek-V4-Flash", "deepseek-ai/DeepSeek-V4-Pro", "google/gemma-4-26B-A4B-it", "google/gemma-4-31B-it", "meta-llama/Llama-3.3-70B-Instruct", "moonshotai/Kimi-K2-Instruct", "moonshotai/Kimi-K2-Instruct-0905", "moonshotai/Kimi-K2.5", "moonshotai/Kimi-K2.6", "moonshotai/Kimi-K2.7-Code", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "stepfun-ai/Step-3.5-Flash", "stepfun-ai/Step-3.7-Flash", "zai-org/GLM-4.5", "zai-org/GLM-4.5-Air", "zai-org/GLM-4.5V", "zai-org/GLM-4.6", "zai-org/GLM-4.7", "zai-org/GLM-4.7-Flash", "zai-org/GLM-5", "zai-org/GLM-5.1", "zai-org/GLM-5.2"]
+models = ["MiniMaxAI/MiniMax-M2", "MiniMaxAI/MiniMax-M2.1", "MiniMaxAI/MiniMax-M2.5", "MiniMaxAI/MiniMax-M2.7", "MiniMaxAI/MiniMax-M3", "Qwen/Qwen3-235B-A22B", "Qwen/Qwen3-235B-A22B-Thinking-2507", "Qwen/Qwen3-32B", "Qwen/Qwen3-Coder-30B-A3B-Instruct", "Qwen/Qwen3-Coder-480B-A35B-Instruct", "Qwen/Qwen3-Coder-Next", "Qwen/Qwen3-Next-80B-A3B-Instruct", "Qwen/Qwen3.5-122B-A10B", "Qwen/Qwen3.5-27B", "Qwen/Qwen3.5-35B-A3B", "Qwen/Qwen3.5-397B-A17B", "Qwen/Qwen3.5-9B", "Qwen/Qwen3.6-27B", "Qwen/Qwen3.6-35B-A3B", "XiaomiMiMo/MiMo-V2.5-Pro", "deepseek-ai/DeepSeek-R1", "deepseek-ai/DeepSeek-R1-0528", "deepseek-ai/DeepSeek-V3.2", "deepseek-ai/DeepSeek-V4-Flash", "deepseek-ai/DeepSeek-V4-Pro", "google/gemma-4-26B-A4B-it", "google/gemma-4-31B-it", "meta-llama/Llama-3.3-70B-Instruct", "moonshotai/Kimi-K2-Instruct", "moonshotai/Kimi-K2-Instruct-0905", "moonshotai/Kimi-K2.5", "moonshotai/Kimi-K2.6", "moonshotai/Kimi-K2.7-Code", "moonshotai/Kimi-K3", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "stepfun-ai/Step-3.5-Flash", "stepfun-ai/Step-3.7-Flash", "zai-org/GLM-4.5", "zai-org/GLM-4.5-Air", "zai-org/GLM-4.5V", "zai-org/GLM-4.6", "zai-org/GLM-4.7", "zai-org/GLM-4.7-Flash", "zai-org/GLM-5", "zai-org/GLM-5.1", "zai-org/GLM-5.2"]
 default_model = "moonshotai/Kimi-K2.6"
 docs_url = "https://huggingface.co/docs/inference-providers"
 api = "openai-completions"
-thinking_levels = ["off", "minimal", "low", "medium", "high"]
+thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
 thinking_default = "medium"
 thinking_parameter = "reasoning_effort"
 
@@ -4064,6 +4068,7 @@ thinking_parameter = "reasoning_effort"
 "moonshotai/Kimi-K2.5" = 262144
 "moonshotai/Kimi-K2.6" = 262144
 "moonshotai/Kimi-K2.7-Code" = 262144
+"moonshotai/Kimi-K3" = 1048576
 "openai/gpt-oss-120b" = 131072
 "openai/gpt-oss-20b" = 131072
 "stepfun-ai/Step-3.5-Flash" = 262144
@@ -4411,6 +4416,16 @@ max_tokens = 262144
 compat = { supportsDeveloperRole = false }
 cost = { input = 0.95, output = 4, cacheRead = 0, cacheWrite = 0 }
 
+[providers.model_metadata."moonshotai/Kimi-K3"]
+name = "Kimi K3"
+reasoning = true
+input = ["text", "image"]
+context_window = 1048576
+compat = { supportsDeveloperRole = false }
+cost = { input = 3, output = 15, cacheRead = 0, cacheWrite = 0 }
+thinking_level_map = { low = "low", high = "high", xhigh = "max" }
+unsupported_thinking_levels = ["off", "minimal", "medium"]
+
 [providers.model_metadata."openai/gpt-oss-120b"]
 name = "GPT OSS 120B"
 reasoning = true
@@ -4491,6 +4506,8 @@ context_window = 262144
 max_tokens = 131072
 compat = { supportsDeveloperRole = false }
 cost = { input = 1.4, output = 4.4, cacheRead = 0, cacheWrite = 0 }
+thinking_level_map = { off = "none", high = "high", max = "max" }
+unsupported_thinking_levels = ["minimal", "low", "medium", "xhigh"]
 
 [[providers]]
 name = "fireworks"
@@ -6762,38 +6779,47 @@ input = ["text", "image"]
 [providers.model_metadata."claude-haiku-4.5"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 64000
 
 [providers.model_metadata."claude-opus-4.5"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 32000
 
 [providers.model_metadata."claude-opus-4.6"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 32000
 
 [providers.model_metadata."claude-opus-4.7"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 32000
 
 [providers.model_metadata."claude-opus-4.8"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 64000
 
 [providers.model_metadata."claude-sonnet-4"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 16000
 
 [providers.model_metadata."claude-sonnet-4.5"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 32000
 
 [providers.model_metadata."claude-sonnet-4.6"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 32000
 
 [providers.model_metadata."claude-sonnet-5"]
 api = "anthropic-messages"
 input = ["text", "image"]
+max_tokens = 128000
 
 [providers.model_metadata."gemini-2.5-pro"]
 api = "openai-completions"

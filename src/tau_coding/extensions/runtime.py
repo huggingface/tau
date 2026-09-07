@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from inspect import isawaitable
 from pathlib import Path
 from time import time_ns
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
+import httpx
+
+import tau_coding.built_in_extensions as built_in_extension_registry
 from tau_agent.events import AgentEvent, AgentStartEvent
 from tau_agent.events import TurnEndEvent as AgentTurnEndEvent
 from tau_agent.events import TurnStartEvent as AgentTurnStartEvent
@@ -20,6 +25,7 @@ from tau_agent.tools import (
     ToolUpdateCallback,
 )
 from tau_agent.types import JSONValue
+from tau_coding.built_in_extensions import BuiltInExtension, BuiltInExtensionContext
 from tau_coding.commands import (
     CommandContext,
     CommandRegistry,
@@ -27,6 +33,7 @@ from tau_coding.commands import (
     SlashCommand,
     create_default_command_registry,
 )
+from tau_coding.credentials import CredentialStore, FileCredentialStore, credentials_path
 from tau_coding.extensions.api import (
     AGENT_EVENT_TYPES,
     AGENT_EVENT_WILDCARD,
@@ -57,11 +64,22 @@ from tau_coding.extensions.api import (
     UiBridge,
 )
 from tau_coding.extensions.loader import (
+    ExtensionSourceMetadata,
     LoadedExtension,
     load_extensions,
     unload_extension_modules,
 )
+from tau_coding.extensions.provider_registry import (
+    DynamicProviderRegistry,
+    ProviderRegistryCloseResult,
+)
+from tau_coding.extensions.providers import CredentialReader, DynamicProvider
+from tau_coding.local_backends import LocalBackend, LocalBackendRegistry
+from tau_coding.paths import TauPaths
+from tau_coding.project_trust import ExtensionTrustResult, ProjectTrustEvent
+from tau_coding.provider_config import ProviderConfig
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
+from tau_coding.system_prompt import PromptSection
 
 # Host callback that delivers a message through the frontend's serialized run
 # path when the session is idle. Carries the same presentation metadata as a
@@ -83,7 +101,19 @@ class BoundSession(Protocol):
     def provider_name(self) -> str: ...
 
     @property
+    def inference_provider(self) -> str | None: ...
+
+    @property
+    def inference_provider_mode(self) -> str: ...
+
+    @property
     def session_id(self) -> str | None: ...
+
+    @property
+    def session_name(self) -> str | None: ...
+
+    @property
+    def thinking_level(self) -> str: ...
 
     @property
     def system_prompt(self) -> str: ...
@@ -112,12 +142,15 @@ class BoundSession(Protocol):
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None: ...
 
+    def set_inference_provider(self, route: str | None) -> str: ...
+
 
 @dataclass(frozen=True, slots=True)
 class ExtensionCommand:
     """A slash command registered by an extension."""
 
     extension: str
+    source_id: str
     name: str
     description: str
     usage: str
@@ -130,6 +163,7 @@ class RegisteredExtensionTool:
     """A tool registered by an extension."""
 
     extension: str
+    source_id: str
     tool: AgentTool
 
 
@@ -145,19 +179,72 @@ class InputHookOutcome:
 class ExtensionRuntime:
     """Owns loaded extensions and dispatches events between them and a session.
 
-    The runtime outlives any single `CodingSession`: session replacement flows
-    (resume, new, branch) re-bind the same runtime rather than re-running
-    extension discovery and `setup`. `/reload`, by contrast, replaces the
-    registration set and invalidates the previous extension generation (see
-    `reset_for_reload`), so pre-reload API objects fail loudly.
+    Each runtime belongs to one prepared session snapshot. Reload and
+    destination replacement stage a fresh runtime, then retire the prior
+    generation only after preparation succeeds. This prevents project extension
+    registrations from crossing cwd trust boundaries.
     """
 
-    def __init__(self, *, ui: UiBridge | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        ui: UiBridge | None = None,
+        durable_providers: Sequence[ProviderConfig] = (),
+        credentials: CredentialReader | None = None,
+        environment: Mapping[str, str] | None = None,
+        built_in_extensions: Sequence[BuiltInExtension] | None = None,
+        paths: TauPaths | None = None,
+        built_in_credentials: CredentialStore | None = None,
+        built_in_http_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._generation = ExtensionGeneration()
+        self._built_in_extensions = tuple(
+            built_in_extension_registry.BUILT_IN_EXTENSIONS
+            if built_in_extensions is None
+            else built_in_extensions
+        )
+        self._built_ins_loaded = False
+        self._durable_providers = tuple(durable_providers)
+        self._provider_credentials = credentials
+        self._provider_environment = environment
+        built_in_paths = paths or TauPaths()
+        resolved_built_in_credentials: CredentialStore = (
+            built_in_credentials
+            if built_in_credentials is not None
+            else (
+                cast(CredentialStore, credentials)
+                if credentials is not None
+                and all(
+                    callable(getattr(credentials, name, None))
+                    for name in ("set", "delete", "names")
+                )
+                else FileCredentialStore(credentials_path(built_in_paths))
+            )
+        )
+        self._built_in_context = BuiltInExtensionContext(
+            paths=built_in_paths,
+            credential_store=resolved_built_in_credentials,
+            environment=dict(environment) if environment is not None else dict(os.environ),
+            http_client=built_in_http_client,
+        )
+        self._provider_registry = DynamicProviderRegistry(
+            self._durable_providers,
+            generation_id=self._generation.id,
+            credentials=credentials,
+            environment=environment,
+        )
+        self._local_backend_registry = LocalBackendRegistry(
+            self._provider_registry,
+            generation_id=self._generation.id,
+        )
+        self._retired_provider_registries: list[DynamicProviderRegistry] = []
+        self._retired_local_backend_registries: list[LocalBackendRegistry] = []
         self._extensions: list[RegisteredExtension] = []
         self._tools: dict[str, RegisteredExtensionTool] = {}
         self._commands: dict[str, ExtensionCommand] = {}
-        self._prompt_guidelines: list[tuple[str, str]] = []
-        self._message_renderers: dict[str, tuple[str, MessageRenderer]] = {}
+        self._prompt_guidelines: list[tuple[str, str, str]] = []
+        self._prompt_sections: list[tuple[str, str, PromptSection]] = []
+        self._message_renderers: dict[str, tuple[str, str, MessageRenderer]] = {}
         self._renderer_failures_reported: set[str] = set()
         self._load_diagnostics: list[ResourceDiagnostic] = []
         self._runtime_diagnostics: list[ResourceDiagnostic] = []
@@ -166,7 +253,6 @@ class ExtensionRuntime:
         self._turn_requested: TurnRequestedCallback | None = None
         self._harness_unsubscribe: Callable[[], None] | None = None
         self._extension_turn_index = 0
-        self._generation = ExtensionGeneration()
 
     # -- loading -----------------------------------------------------------
 
@@ -177,17 +263,107 @@ class ExtensionRuntime:
         extra_paths: Sequence[Path] = (),
         include_resource_dirs: bool = True,
         include_project_dir: bool = False,
+        include_user_dir: bool = True,
     ) -> None:
-        """Discover extensions and run each `setup` with an isolated API."""
+        """Load built-ins, then discover extensions and run isolated setup."""
+        self._load_built_ins()
         result = load_extensions(
             paths,
             extra_paths=extra_paths,
             include_resource_dirs=include_resource_dirs,
             include_project_dir=include_project_dir,
+            include_user_dir=include_user_dir,
         )
         self._load_diagnostics.extend(result.diagnostics)
         for extension in result.extensions:
             self._setup_extension(extension)
+
+    def _load_built_ins(self) -> None:
+        """Load each trusted declaration once, before filesystem sources."""
+        if self._built_ins_loaded:
+            return
+        self._built_ins_loaded = True
+        for declaration in self._built_in_extensions:
+            setup = declaration.setup
+            if declaration.setup_with_context is not None:
+
+                def setup_with_runtime_context(
+                    api: ExtensionAPI,
+                    declaration: BuiltInExtension = declaration,
+                ) -> None:
+                    assert declaration.setup_with_context is not None
+                    declaration.setup_with_context(api, self._built_in_context)
+
+                setup = setup_with_runtime_context
+            self._setup_extension(
+                LoadedExtension(
+                    name=declaration.name,
+                    path=None,
+                    source_id=declaration.source_id,
+                    setup=setup,
+                    source="built-in",
+                    hidden=declaration.hidden,
+                )
+            )
+
+    @property
+    def active(self) -> bool:
+        """Return whether this runtime generation still owns live registrations."""
+        return self._generation.active
+
+    def retire(self) -> None:
+        """Invalidate this generation and release all source-owned work."""
+        if not self._generation.active:
+            return
+        # Replacement callers clear host UI before a successor uses the shared
+        # bridge; clearing here could erase that successor's freshly mounted UI.
+        # Provider retirement synchronously detaches every layer and requests
+        # cancellation of generation-owned provider and backend work.
+        self._local_backend_registry.retire()
+        self._provider_registry.retire()
+        self._generation.invalidate()
+        if self._harness_unsubscribe is not None:
+            self._harness_unsubscribe()
+            self._harness_unsubscribe = None
+        self._extensions.clear()
+        self._tools.clear()
+        self._commands.clear()
+        self._prompt_guidelines.clear()
+        self._prompt_sections.clear()
+        self._message_renderers.clear()
+        self._renderer_failures_reported.clear()
+        self._turn_requested = None
+        self._session = None
+
+    async def aclose(self) -> ProviderRegistryCloseResult:
+        """Retire this generation and report drain or bounded containment."""
+        self.retire()
+        provider_registries = (*self._retired_provider_registries, self._provider_registry)
+        backend_registries = (
+            *self._retired_local_backend_registries,
+            self._local_backend_registry,
+        )
+        try:
+            _, provider_results = await asyncio.gather(
+                asyncio.gather(*(registry.aclose() for registry in backend_registries)),
+                asyncio.gather(*(registry.aclose() for registry in provider_registries)),
+            )
+            self._retired_provider_registries = [
+                registry
+                for registry, result in zip(provider_registries, provider_results, strict=True)
+                if not result.drained and registry is not self._provider_registry
+            ]
+            self._retired_local_backend_registries = []
+            contained = sum(result.contained_discovery_tasks for result in provider_results)
+            return ProviderRegistryCloseResult(
+                drained=contained == 0,
+                contained_discovery_tasks=contained,
+            )
+        finally:
+            self._generation.invalidate()
+            if self._harness_unsubscribe is not None:
+                self._harness_unsubscribe()
+                self._harness_unsubscribe = None
 
     def reset_for_reload(self) -> None:
         """Drop all registrations and imported modules ahead of a re-load.
@@ -204,8 +380,23 @@ class ExtensionRuntime:
         # is still active so host cleanup triggered by component disposal can
         # safely use its API; only then make every captured API/context stale.
         self.clear_ui_components()
+        self._local_backend_registry.retire()
+        self._retired_local_backend_registries.append(self._local_backend_registry)
+        self._provider_registry.retire()
+        self._retired_provider_registries.append(self._provider_registry)
         self._generation.invalidate()
         self._generation = ExtensionGeneration()
+        self._built_ins_loaded = False
+        self._provider_registry = DynamicProviderRegistry(
+            self._durable_providers,
+            generation_id=self._generation.id,
+            credentials=self._provider_credentials,
+            environment=self._provider_environment,
+        )
+        self._local_backend_registry = LocalBackendRegistry(
+            self._provider_registry,
+            generation_id=self._generation.id,
+        )
         if self._harness_unsubscribe is not None:
             self._harness_unsubscribe()
             self._harness_unsubscribe = None
@@ -213,6 +404,7 @@ class ExtensionRuntime:
         self._tools.clear()
         self._commands.clear()
         self._prompt_guidelines.clear()
+        self._prompt_sections.clear()
         self._message_renderers.clear()
         self._renderer_failures_reported.clear()
         self._load_diagnostics.clear()
@@ -220,49 +412,95 @@ class ExtensionRuntime:
         unload_extension_modules()
 
     def _setup_extension(self, extension: LoadedExtension) -> None:
-        api = ExtensionAPI(self, extension.name, self._generation)
-        registered = RegisteredExtension(name=extension.name, path=extension.path, api=api)
-        self._extensions.append(registered)
-        try:
-            extension.setup(api)
-        except Exception as exc:  # noqa: BLE001 - extensions are an isolation boundary
-            self._extensions.remove(registered)
-            self._remove_registrations(extension.name)
+        source_id = extension.source_id
+        if self._extension_by_source(source_id) is not None:
             self._load_diagnostics.append(
                 ResourceDiagnostic(
                     kind="extension",
                     name=extension.name,
                     path=extension.path,
-                    message=f"setup failed: {exc!r}",
+                    message="duplicate extension source ignored (first-loaded wins)",
+                )
+            )
+            return
+        api = ExtensionAPI(
+            self,
+            extension.name,
+            self._generation,
+            source_id=source_id,
+        )
+        registered = RegisteredExtension(
+            name=extension.name,
+            source_id=source_id,
+            path=extension.path,
+            api=api,
+            source=extension.source,
+            hidden=extension.hidden,
+        )
+        self._extensions.append(registered)
+        try:
+            extension.setup(api)
+        except Exception as exc:  # noqa: BLE001 - extensions are an isolation boundary
+            self._extensions.remove(registered)
+            self._remove_registrations(source_id)
+            self._load_diagnostics.append(
+                ResourceDiagnostic(
+                    kind="extension",
+                    name=extension.name,
+                    path=extension.path,
+                    message=(
+                        f"built-in setup failed: {exc!r}"
+                        if extension.source == "built-in"
+                        else f"setup failed: {exc!r}"
+                    ),
                     severity="error",
                 )
             )
 
-    def _remove_registrations(self, extension_name: str) -> None:
+    def _remove_registrations(self, source_id: str) -> None:
         self._tools = {
             name: registration
             for name, registration in self._tools.items()
-            if registration.extension != extension_name
+            if registration.source_id != source_id
         }
         self._commands = {
             name: command
             for name, command in self._commands.items()
-            if command.extension != extension_name
+            if command.source_id != source_id
         }
         self._prompt_guidelines = [
-            (extension, guideline)
-            for extension, guideline in self._prompt_guidelines
-            if extension != extension_name
+            (owner, extension, guideline)
+            for owner, extension, guideline in self._prompt_guidelines
+            if owner != source_id
+        ]
+        self._prompt_sections = [
+            (owner, extension, section)
+            for owner, extension, section in self._prompt_sections
+            if owner != source_id
         ]
         self._message_renderers = {
             custom_type: registration
             for custom_type, registration in self._message_renderers.items()
-            if registration[0] != extension_name
+            if registration[0] != source_id
         }
+        self._provider_registry.unregister_source(source_id)
+        self._local_backend_registry.unregister_source(source_id)
 
     # -- registration (called through ExtensionAPI) -------------------------
 
-    def register_tool(self, extension_name: str, tool: AgentTool) -> None:
+    def register_provider(self, source_id: str, provider: DynamicProvider) -> None:
+        """Register or atomically replace one exact extension source layer."""
+        self._provider_registry.register(source_id, provider)
+
+    def update_provider(self, source_id: str, provider: DynamicProvider) -> bool:
+        """Publish a provider snapshot without invalidating paired backends."""
+        return self._provider_registry.update(source_id, provider)
+
+    def register_local_backend(self, source_id: str, backend: LocalBackend) -> None:
+        """Register a backend against its exact source-owned provider layer."""
+        self._local_backend_registry.register(source_id, backend)
+
+    def register_tool(self, source_id: str, extension_name: str, tool: AgentTool) -> None:
         """Register an extension tool; first registration per name wins."""
         existing = self._tools.get(tool.name)
         if existing is not None:
@@ -277,10 +515,15 @@ class ExtensionRuntime:
                 )
             )
             return
-        self._tools[tool.name] = RegisteredExtensionTool(extension=extension_name, tool=tool)
+        self._tools[tool.name] = RegisteredExtensionTool(
+            extension=extension_name,
+            source_id=source_id,
+            tool=tool,
+        )
 
     def register_command(
         self,
+        source_id: str,
         extension_name: str,
         name: str,
         handler: ExtensionCommandHandler,
@@ -306,6 +549,7 @@ class ExtensionRuntime:
             return
         self._commands[normalized] = ExtensionCommand(
             extension=extension_name,
+            source_id=source_id,
             name=normalized,
             description=description,
             usage=usage or f"/{normalized}",
@@ -315,6 +559,7 @@ class ExtensionRuntime:
 
     def register_message_renderer(
         self,
+        source_id: str,
         extension_name: str,
         custom_type: str,
         renderer: MessageRenderer,
@@ -338,12 +583,12 @@ class ExtensionRuntime:
                     name=extension_name,
                     message=(
                         f"message renderer for `{normalized}` already registered by"
-                        f" extension `{existing[0]}`; ignoring duplicate"
+                        f" extension `{existing[1]}`; ignoring duplicate"
                     ),
                 )
             )
             return
-        self._message_renderers[normalized] = (extension_name, renderer)
+        self._message_renderers[normalized] = (source_id, extension_name, renderer)
 
     def render_custom_message(
         self,
@@ -363,7 +608,7 @@ class ExtensionRuntime:
         registration = self._message_renderers.get(custom_type)
         if registration is None:
             return None
-        extension_name, renderer = registration
+        _, extension_name, renderer = registration
         view = CustomMessageView(custom_type=custom_type, content=content, details=details)
         options = MessageRenderOptions(expanded=expanded)
         try:
@@ -445,7 +690,9 @@ class ExtensionRuntime:
             return None
         return markup
 
-    def register_prompt_guideline(self, extension_name: str, guideline: str) -> None:
+    def register_prompt_guideline(
+        self, source_id: str, extension_name: str, guideline: str
+    ) -> None:
         """Register a standalone system-prompt guideline line."""
         normalized = guideline.strip()
         if not normalized:
@@ -457,9 +704,49 @@ class ExtensionRuntime:
                 )
             )
             return
-        self._prompt_guidelines.append((extension_name, normalized))
+        self._prompt_guidelines.append((source_id, extension_name, normalized))
 
-    def subscribe(self, extension_name: str, event: str, handler: ExtensionHandler) -> None:
+    def register_prompt_section(
+        self,
+        source_id: str,
+        extension_name: str,
+        title: str | None,
+        body: str,
+    ) -> None:
+        """Register a free-form system-prompt section."""
+        normalized_body = body.strip()
+        if not normalized_body:
+            self._load_diagnostics.append(
+                ResourceDiagnostic(
+                    kind="extension",
+                    name=extension_name,
+                    message="empty prompt section ignored",
+                )
+            )
+            return
+        normalized_title = title.strip() if title is not None else None
+        if normalized_title == "":
+            normalized_title = None
+        if normalized_title is not None and any(
+            separator in normalized_title for separator in ("\r", "\n")
+        ):
+            self._load_diagnostics.append(
+                ResourceDiagnostic(
+                    kind="extension",
+                    name=extension_name,
+                    message="prompt section ignored because its title spans multiple lines",
+                )
+            )
+            return
+        self._prompt_sections.append(
+            (
+                source_id,
+                extension_name,
+                PromptSection(title=normalized_title, body=normalized_body),
+            )
+        )
+
+    def subscribe(self, source_id: str, event: str, handler: ExtensionHandler) -> None:
         """Subscribe an extension handler to a named event."""
         known = (
             event in AGENT_EVENT_TYPES
@@ -470,14 +757,14 @@ class ExtensionRuntime:
             self._load_diagnostics.append(
                 ResourceDiagnostic(
                     kind="extension",
-                    name=extension_name,
+                    name=self._extension_display_name(source_id),
                     message=f"unknown event `{event}`; handler ignored",
                 )
             )
             return
-        extension = self._extension_by_name(extension_name)
+        extension = self._extension_by_source(source_id)
         if extension is None:
-            raise ExtensionError(f"unknown extension: {extension_name}")
+            raise ExtensionError(f"unknown extension source: {source_id}")
         extension.handlers.setdefault(event, []).append(handler)
 
     # -- binding -------------------------------------------------------------
@@ -494,6 +781,26 @@ class ExtensionRuntime:
         if self._harness_unsubscribe is not None:
             self._harness_unsubscribe()
         self._harness_unsubscribe = subscribe(self._on_agent_event)
+
+    @property
+    def provider_credentials(self) -> CredentialReader | None:
+        """Return the read-only credential reader used by dynamic runtimes."""
+        return self._provider_credentials
+
+    @property
+    def provider_environment(self) -> Mapping[str, str] | None:
+        """Return the environment snapshot used by dynamic provider auth."""
+        return self._provider_environment
+
+    @property
+    def built_in_credentials(self) -> CredentialStore:
+        """Return the injected mutable store used by trusted built-ins."""
+        return self._built_in_context.credential_store
+
+    @property
+    def built_in_http_client(self) -> httpx.AsyncClient | None:
+        """Return the externally owned HTTP client used by trusted built-ins."""
+        return self._built_in_context.http_client
 
     def set_ui_bridge(self, ui: UiBridge) -> None:
         """Install the frontend UI bridge (TUI, print-mode fallback, or test)."""
@@ -535,14 +842,51 @@ class ExtensionRuntime:
         return self._session
 
     @property
+    def provider_registry(self) -> DynamicProviderRegistry:
+        """Return this staged runtime generation's process-local provider registry."""
+        return self._provider_registry
+
+    @property
+    def local_backend_registry(self) -> LocalBackendRegistry:
+        """Return this staged runtime generation's local-backend registry."""
+        return self._local_backend_registry
+
+    @property
     def extension_names(self) -> tuple[str, ...]:
-        """Return loaded extension names in load order."""
-        return tuple(extension.name for extension in self._extensions)
+        """Return visible extension names in load order."""
+        return tuple(extension.name for extension in self._extensions if not extension.hidden)
+
+    @property
+    def extension_metadata(self) -> tuple[ExtensionSourceMetadata, ...]:
+        """Return active visible and hidden source metadata in load order."""
+        return tuple(
+            ExtensionSourceMetadata(
+                name=extension.name,
+                source_id=extension.source_id,
+                source=extension.source,
+                hidden=extension.hidden,
+                path=extension.path,
+            )
+            for extension in self._extensions
+        )
 
     @property
     def diagnostics(self) -> tuple[ResourceDiagnostic, ...]:
-        """Return load-time and runtime diagnostics."""
-        return tuple(self._load_diagnostics) + tuple(self._runtime_diagnostics)
+        """Return load-time, handler, and provider-refresh diagnostics."""
+        provider_diagnostics = tuple(
+            ResourceDiagnostic(
+                kind="provider",
+                name=diagnostic.token.source_id,
+                message=(
+                    f"{diagnostic.message} for provider "
+                    f"`{diagnostic.token.provider_id}` ({diagnostic.reason})"
+                ),
+            )
+            for diagnostic in self._provider_registry.diagnostics
+        )
+        return (
+            tuple(self._load_diagnostics) + tuple(self._runtime_diagnostics) + provider_diagnostics
+        )
 
     @property
     def extension_tools(self) -> tuple[AgentTool, ...]:
@@ -557,7 +901,12 @@ class ExtensionRuntime:
     @property
     def prompt_guidelines(self) -> tuple[str, ...]:
         """Return standalone guideline lines in registration order."""
-        return tuple(guideline for _, guideline in self._prompt_guidelines)
+        return tuple(guideline for _, _, guideline in self._prompt_guidelines)
+
+    @property
+    def prompt_sections(self) -> tuple[PromptSection, ...]:
+        """Return free-form prompt sections in registration order."""
+        return tuple(section for _, _, section in self._prompt_sections)
 
     # -- actions (called through ExtensionAPI) --------------------------------
 
@@ -668,20 +1017,20 @@ class ExtensionRuntime:
         arguments: Mapping[str, JSONValue],
     ) -> ToolCallHookResult:
         effective: Mapping[str, JSONValue] = arguments
-        for extension, handler in self._handlers_for("tool_call"):
+        for owner, handler in self._handlers_for("tool_call"):
             event = ToolCallHookEvent(tool_name=tool_name, arguments=effective)
             try:
-                result = await _resolve(handler(event, self._fresh_context(extension)))
+                result = await _resolve(handler(event, self._fresh_context(owner.source_id)))
             except Exception as exc:  # noqa: BLE001 - fail-safe: an error blocks the tool
-                self._record_runtime_failure(extension, "tool_call", exc)
+                self._record_runtime_failure(owner.name, "tool_call", exc)
                 return ToolCallHookResult(
                     block=True,
-                    reason=f"extension `{extension}` tool_call hook failed: {exc}",
+                    reason=f"extension `{owner.name}` tool_call hook failed: {exc}",
                 )
             if result is None:
                 continue
             if not isinstance(result, ToolCallHookResult):
-                self._record_bad_result(extension, "tool_call", result)
+                self._record_bad_result(owner.name, "tool_call", result)
                 continue
             if result.block:
                 return ToolCallHookResult(block=True, reason=result.reason)
@@ -698,17 +1047,17 @@ class ExtensionRuntime:
         result: AgentToolResult,
     ) -> AgentToolResult:
         current = result
-        for extension, handler in self._handlers_for("tool_result"):
+        for owner, handler in self._handlers_for("tool_result"):
             event = ToolResultHookEvent(tool_name=tool_name, arguments=arguments, result=current)
             try:
-                outcome = await _resolve(handler(event, self._fresh_context(extension)))
+                outcome = await _resolve(handler(event, self._fresh_context(owner.source_id)))
             except Exception as exc:  # noqa: BLE001 - result hooks are observational-ish
-                self._record_runtime_failure(extension, "tool_result", exc)
+                self._record_runtime_failure(owner.name, "tool_result", exc)
                 continue
             if outcome is None:
                 continue
             if not isinstance(outcome, ToolResultHookResult):
-                self._record_bad_result(extension, "tool_result", outcome)
+                self._record_bad_result(owner.name, "tool_result", outcome)
                 continue
             updates: dict[str, object] = {}
             if outcome.content is not None:
@@ -752,7 +1101,7 @@ class ExtensionRuntime:
             extension_context = ExtensionCommandContext(
                 name=command.name,
                 args=context.args,
-                api=self._api_for(command.extension),
+                api=self._api_for(command.source_id),
             )
             try:
                 message = command.handler(context.args, extension_context)
@@ -767,6 +1116,27 @@ class ExtensionRuntime:
         return handler
 
     # -- event dispatch -----------------------------------------------------------
+
+    async def decide_project_trust(self, event: ProjectTrustEvent) -> ExtensionTrustResult | None:
+        """Return the first decisive eligible extension trust result.
+
+        This runtime must contain only built-in, user, and explicit extensions;
+        callers load project extensions only after this method resolves.
+        """
+        for owner, handler in self._handlers_for("project_trust"):
+            try:
+                result = await _resolve(handler(event, self._fresh_context(owner.source_id)))
+            except Exception as exc:  # noqa: BLE001 - trust handlers fail closed/defer
+                self._record_runtime_failure(owner.name, "project_trust", exc)
+                continue
+            if result is None:
+                continue
+            if not isinstance(result, ExtensionTrustResult):
+                self._record_bad_result(owner.name, "project_trust", result)
+                continue
+            if result.decision != "defer":
+                return result
+        return None
 
     async def emit_session_start(self, reason: SessionLifecycleReason) -> None:
         """Dispatch `session_start` to subscribed extensions."""
@@ -789,7 +1159,7 @@ class ExtensionRuntime:
         `InputEvent` payload; they do not change chaining semantics.
         """
         current = text
-        for extension, handler in self._handlers_for("input"):
+        for owner, handler in self._handlers_for("input"):
             try:
                 result = await _resolve(
                     handler(
@@ -798,16 +1168,16 @@ class ExtensionRuntime:
                             source=source,
                             streaming_behavior=streaming_behavior,
                         ),
-                        self._fresh_context(extension),
+                        self._fresh_context(owner.source_id),
                     )
                 )
             except Exception as exc:  # noqa: BLE001 - extensions are an isolation boundary
-                self._record_runtime_failure(extension, "input", exc)
+                self._record_runtime_failure(owner.name, "input", exc)
                 continue
             if result is None:
                 continue
             if not isinstance(result, InputHookResult):
-                self._record_bad_result(extension, "input", result)
+                self._record_bad_result(owner.name, "input", result)
                 continue
             if result.action == "handled":
                 return InputHookOutcome(handled=True, text=current, message=result.message)
@@ -822,11 +1192,11 @@ class ExtensionRuntime:
             raise TypeError("Extension events must expose a string type")
         handlers = list(self._handlers_for(event_type))
         handlers.extend(self._handlers_for(AGENT_EVENT_WILDCARD))
-        for extension, handler in handlers:
+        for owner, handler in handlers:
             try:
-                await _resolve(handler(event, self._fresh_context(extension)))
+                await _resolve(handler(event, self._fresh_context(owner.source_id)))
             except Exception as exc:  # noqa: BLE001 - extensions are an isolation boundary
-                self._record_runtime_failure(extension, event_type, exc)
+                self._record_runtime_failure(owner.name, event_type, exc)
 
     async def _on_agent_event(self, event: AgentEvent) -> None:
         """Adapt core turn events to Pi's extension-facing session metadata."""
@@ -849,35 +1219,54 @@ class ExtensionRuntime:
             self._extension_turn_index += 1
 
     async def _emit_lifecycle(self, event_name: str, payload: object) -> None:
-        for extension, handler in self._handlers_for(event_name):
+        for owner, handler in self._handlers_for(event_name):
             try:
-                await _resolve(handler(payload, self._fresh_context(extension)))
+                await _resolve(handler(payload, self._fresh_context(owner.source_id)))
             except Exception as exc:  # noqa: BLE001 - extensions are an isolation boundary
-                self._record_runtime_failure(extension, event_name, exc)
+                self._record_runtime_failure(owner.name, event_name, exc)
 
     # -- internals -------------------------------------------------------------
 
-    def _handlers_for(self, event: str) -> Iterator[tuple[str, ExtensionHandler]]:
+    def _handlers_for(self, event: str) -> Iterator[tuple[RegisteredExtension, ExtensionHandler]]:
         for extension in self._extensions:
             for handler in extension.handlers.get(event, ()):
-                yield extension.name, handler
+                yield extension, handler
 
-    def _extension_by_name(self, name: str) -> RegisteredExtension | None:
+    def _extension_by_source(self, source_id: str) -> RegisteredExtension | None:
         for extension in self._extensions:
-            if extension.name == name:
+            if extension.source_id == source_id:
                 return extension
         return None
 
-    def _fresh_context(self, extension_name: str) -> ExtensionContext:
-        """Return a fresh context for one handler invocation."""
-        api = self._api_for(extension_name)
-        return ExtensionContext(self, api._generation)
+    def _extension_display_name(self, source_id: str) -> str:
+        extension = self._extension_by_source(source_id)
+        return extension.name if extension is not None else source_id
 
-    def _api_for(self, extension_name: str) -> ExtensionAPI:
-        extension = self._extension_by_name(extension_name)
+    def _fresh_context(self, source_id: str) -> ExtensionContext:
+        """Return a fresh context for one handler invocation."""
+        api = self._api_for(source_id)
+        return ExtensionContext(
+            self,
+            api._generation,
+            extension_name=self._extension_display_name(source_id),
+        )
+
+    def _api_for(self, source_id: str) -> ExtensionAPI:
+        extension = self._extension_by_source(source_id)
         if extension is None:
-            raise ExtensionError(f"unknown extension: {extension_name}")
+            raise ExtensionError(f"unknown extension source: {source_id}")
         return extension.api
+
+    def record_ui_failure(self, extension: str, context: str, exc: BaseException) -> None:
+        """Record a host-isolated extension UI failure in session diagnostics."""
+        self._runtime_diagnostics.append(
+            ResourceDiagnostic(
+                kind="extension",
+                name=extension,
+                message=f"UI component `{context}` failed: {exc!r}",
+                severity="error",
+            )
+        )
 
     def _record_runtime_failure(self, extension: str, event: str, exc: Exception) -> None:
         self._runtime_diagnostics.append(

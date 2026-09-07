@@ -33,6 +33,23 @@ TERMINAL_COMMAND_OUTPUT_PREVIEW_LINES = 120
 # Show live elapsed time on an executing tool row once it stops being instant;
 # quick reads/edits never flash a "(0s)".
 TOOL_TIMER_MIN_SECONDS = 1.0
+BATCHABLE_TOOL_NAMES = frozenset({"bash", "edit", "read", "write"})
+GROUPABLE_FILE_TOOL_NAMES = frozenset({"edit", "read", "write"})
+RESULTFUL_FILE_GROUP_NAMES = frozenset({"edit", "write"})
+
+
+@dataclass(slots=True)
+class GroupedToolCall:
+    """One underlying call represented by a grouped transcript row."""
+
+    tool_call_id: str
+    tool_name: str
+    tool_arguments: dict[str, JSONValue]
+    text: str
+    tool_result_text: str | None = None
+    tool_result: AgentToolResult | None = None
+    update_text: str | None = None
+    started_at: float | None = None
 
 
 @dataclass(slots=True)
@@ -50,10 +67,15 @@ class ChatItem:
     tool_name: str | None = None
     tool_arguments: dict[str, JSONValue] | None = None
     started_at: float | None = None
+    tool_batch_id: int | None = None
+    allows_file_mutation_continuation: bool = False
+    grouped_tool_calls: list[GroupedToolCall] | None = None
+    tool_batch_items: list[ChatItem] | None = None
     always_show_tool_result: bool = False
     custom_type: str | None = None
     details: dict[str, JSONValue] | None = None
-    highlight: Literal["update"] | None = None
+    system_prompt: bool = False
+    highlight: Literal["alert", "update"] | None = None
 
 
 @dataclass(slots=True)
@@ -78,6 +100,19 @@ class TuiState:
         repr=False,
         compare=False,
     )
+    _grouped_calls_by_call_id: dict[str, GroupedToolCall] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _batched_items_by_call_id: dict[str, ChatItem] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _next_tool_batch_id: int = field(default=0, init=False, repr=False, compare=False)
 
     def add_item(
         self,
@@ -89,7 +124,8 @@ class TuiState:
         always_show_tool_result: bool = False,
         custom_type: str | None = None,
         details: dict[str, JSONValue] | None = None,
-        highlight: Literal["update"] | None = None,
+        system_prompt: bool = False,
+        highlight: Literal["alert", "update"] | None = None,
     ) -> None:
         """Append a transcript item."""
         item = ChatItem(
@@ -100,6 +136,7 @@ class TuiState:
             always_show_tool_result=always_show_tool_result,
             custom_type=custom_type,
             details=details,
+            system_prompt=system_prompt,
             highlight=highlight,
         )
         self.items.append(item)
@@ -117,19 +154,54 @@ class TuiState:
             return None
         return self.custom_renderer(item.custom_type, item.text, item.details, expanded)
 
-    def resolve_tool_invocation(self, item: ChatItem) -> str | None:
+    def resolve_tool_invocation(self, item: ChatItem, *, expanded: bool = False) -> str | None:
         """Render a tool item's invocation via the installed resolver, or ``None``.
 
         Resolved lazily at render time (like custom markup) so tool calls
         restored before the extension runtime connects still pick up their
-        tool's `render_call` on the next redraw. ``None`` means "no renderer"
-        and the caller falls back to the generic ``item.text``.
+        tool's `render_call` on the next redraw. Expanded built-in bash calls
+        recover the exact command from their retained arguments. ``None`` means
+        "no renderer" and the caller falls back to the generic ``item.text``.
         """
         if item.role != "tool":
             return None
+        if item.tool_batch_items is not None:
+            if not expanded:
+                return None
+            return "\n".join(
+                self.resolve_tool_invocation(row, expanded=True) or row.text
+                for row in item.tool_batch_items
+            )
+        if item.grouped_tool_calls is not None:
+            if not expanded:
+                return None
+            blocks: list[str] = []
+            for member in item.grouped_tool_calls:
+                rendered_line = None
+                if self.tool_call_renderer is not None:
+                    rendered_line = self.tool_call_renderer(member.tool_name, member.tool_arguments)
+                block = rendered_line if rendered_line is not None else member.text
+                if (
+                    item.tool_name in RESULTFUL_FILE_GROUP_NAMES
+                    and member.tool_result_text is not None
+                ):
+                    block = f"{block}\n\n{member.tool_result_text}"
+                blocks.append(block)
+            separator = "\n\n" if item.tool_name in RESULTFUL_FILE_GROUP_NAMES else "\n"
+            return separator.join(blocks)
         line: str | None = None
         if item.tool_name is not None and self.tool_call_renderer is not None:
             line = self.tool_call_renderer(item.tool_name, item.tool_arguments or {})
+        if line is None and expanded and item.tool_name == "bash":
+            exact_command = format_tool_call_invocation(
+                ToolCall(
+                    id=item.tool_call_id or "display-call",
+                    name=item.tool_name,
+                    arguments=item.tool_arguments or {},
+                ),
+                expanded=True,
+            )
+            line = f"{item.text}\n{exact_command}"
         if item.tool_result_text is None and item.started_at is not None:
             elapsed = time.monotonic() - item.started_at
             if elapsed >= TOOL_TIMER_MIN_SECONDS:
@@ -144,14 +216,31 @@ class TuiState:
         their tool's `render_result` on the next redraw. ``None`` means "no
         renderer" and the caller falls back to the generic result block.
         """
-        if item.role != "tool" or item.tool_result is None or self.tool_result_renderer is None:
+        if (
+            item.role != "tool"
+            or item.tool_batch_items is not None
+            or item.grouped_tool_calls is not None
+            or item.tool_result is None
+            or self.tool_result_renderer is None
+        ):
             return None
         if item.tool_name is None:
             return None
         return self.tool_result_renderer(item.tool_name, item.tool_result, expanded)
 
-    def add_tool_call(self, tool_call: ToolCall) -> None:
-        """Append a collapsed tool-call item."""
+    def new_tool_batch_id(self) -> int:
+        """Return a presentation-only id for calls from one assistant message."""
+        self._next_tool_batch_id += 1
+        return self._next_tool_batch_id
+
+    def add_tool_call(
+        self,
+        tool_call: ToolCall,
+        *,
+        batch_id: int | None = None,
+        allows_file_mutation_continuation: bool = False,
+    ) -> ChatItem:
+        """Append a tool call, batching adjacent calls for compact presentation."""
         skill_name = self._read_skill_name(tool_call)
         if skill_name is not None:
             self.add_item(
@@ -159,17 +248,236 @@ class TuiState:
                 f"Loading skill: {skill_name}",
                 tool_call_id=tool_call.id,
             )
-            return
-        item = ChatItem(
+            return self.items[-1]
+        if self._can_append_file_mutation_continuation(
+            tool_call,
+            batch_id=batch_id,
+            allowed=allows_file_mutation_continuation,
+        ):
+            item = self.items[-1]
+            item.tool_batch_id = batch_id
+            self._append_batched_tool_call(item, tool_call)
+            return item
+        if self._can_append_tool_batch(tool_call, batch_id=batch_id):
+            item = self.items[-1]
+            self._append_batched_tool_call(item, tool_call)
+            return item
+        item = self._new_tool_item(
+            tool_call,
+            batch_id=batch_id,
+            allows_file_mutation_continuation=allows_file_mutation_continuation,
+        )
+        self.items.append(item)
+        self._tool_items_by_call_id[tool_call.id] = item
+        return item
+
+    def _new_tool_item(
+        self,
+        tool_call: ToolCall,
+        *,
+        batch_id: int | None,
+        allows_file_mutation_continuation: bool = False,
+    ) -> ChatItem:
+        return ChatItem(
             role="tool",
             text=format_tool_call_block(tool_call),
             tool_call_id=tool_call.id,
             tool_name=tool_call.name,
             tool_arguments=tool_call.arguments,
             started_at=time.monotonic(),
+            tool_batch_id=batch_id,
+            allows_file_mutation_continuation=allows_file_mutation_continuation,
         )
-        self.items.append(item)
+
+    def _can_append_file_mutation_continuation(
+        self,
+        tool_call: ToolCall,
+        *,
+        batch_id: int | None,
+        allowed: bool,
+    ) -> bool:
+        """Group completed edit/write-only continuations across response boundaries."""
+        if (
+            not allowed
+            or batch_id is None
+            or tool_call.name not in RESULTFUL_FILE_GROUP_NAMES
+            or not self.items
+        ):
+            return False
+        previous = self.items[-1]
+        if (
+            previous.role != "tool"
+            or not previous.allows_file_mutation_continuation
+            or previous.tool_name != tool_call.name
+            or previous.tool_batch_items is not None
+            or previous.tool_result_text is None
+        ):
+            return False
+        if self._has_custom_call_rendering(tool_call.name, tool_call.arguments):
+            return False
+        return not self._has_custom_call_rendering(
+            previous.tool_name,
+            previous.tool_arguments or {},
+        )
+
+    def _can_append_tool_batch(self, tool_call: ToolCall, *, batch_id: int | None) -> bool:
+        if batch_id is None or not self.items or tool_call.name not in BATCHABLE_TOOL_NAMES:
+            return False
+        previous = self.items[-1]
+        if previous.role != "tool" or previous.tool_batch_id != batch_id:
+            return False
+        if self._has_custom_call_rendering(tool_call.name, tool_call.arguments):
+            return False
+        previous_row = (
+            previous.tool_batch_items[-1] if previous.tool_batch_items is not None else previous
+        )
+        if previous_row.tool_name not in BATCHABLE_TOOL_NAMES:
+            return False
+        return not self._has_custom_call_rendering(
+            previous_row.tool_name,
+            previous_row.tool_arguments or {},
+        )
+
+    def _has_custom_call_rendering(
+        self,
+        tool_name: str | None,
+        arguments: dict[str, JSONValue],
+    ) -> bool:
+        if tool_name is None or self.tool_call_renderer is None:
+            return False
+        return self.tool_call_renderer(tool_name, arguments) is not None
+
+    def _append_batched_tool_call(self, item: ChatItem, tool_call: ToolCall) -> None:
+        if (
+            item.tool_batch_items is None
+            and item.tool_name in GROUPABLE_FILE_TOOL_NAMES
+            and tool_call.name == item.tool_name
+        ):
+            self._append_grouped_file_call(item, tool_call)
+            return
+        if item.tool_batch_items is None:
+            first = ChatItem(
+                role="tool",
+                text=item.text,
+                tool_call_id=item.tool_call_id,
+                tool_result_text=item.tool_result_text,
+                tool_result=item.tool_result,
+                update_text=item.update_text,
+                tool_name=item.tool_name,
+                tool_arguments=item.tool_arguments,
+                started_at=item.started_at,
+                tool_batch_id=item.tool_batch_id,
+                allows_file_mutation_continuation=item.allows_file_mutation_continuation,
+                grouped_tool_calls=item.grouped_tool_calls,
+            )
+            item.tool_batch_items = [first]
+            item.grouped_tool_calls = None
+            item.tool_result = None
+            for call_id in self._tool_call_ids(first):
+                self._batched_items_by_call_id[call_id] = first
+        last = item.tool_batch_items[-1]
+        if last.tool_name in GROUPABLE_FILE_TOOL_NAMES and tool_call.name == last.tool_name:
+            self._append_grouped_file_call(last, tool_call)
+            row = last
+        else:
+            row = self._new_tool_item(tool_call, batch_id=item.tool_batch_id)
+            item.tool_batch_items.append(row)
         self._tool_items_by_call_id[tool_call.id] = item
+        self._batched_items_by_call_id[tool_call.id] = row
+        self._refresh_tool_batch(item)
+
+    def _tool_call_ids(self, item: ChatItem) -> list[str]:
+        if item.grouped_tool_calls is not None:
+            return [member.tool_call_id for member in item.grouped_tool_calls]
+        return [item.tool_call_id] if item.tool_call_id is not None else []
+
+    def _append_grouped_file_call(self, item: ChatItem, tool_call: ToolCall) -> None:
+        if item.grouped_tool_calls is None:
+            first = GroupedToolCall(
+                tool_call_id=item.tool_call_id or "display-call",
+                tool_name=item.tool_name or "read",
+                tool_arguments=item.tool_arguments or {},
+                text=format_tool_call_block(
+                    ToolCall(
+                        id=item.tool_call_id or "display-call",
+                        name=item.tool_name or "read",
+                        arguments=item.tool_arguments or {},
+                    )
+                ),
+                tool_result_text=item.tool_result_text,
+                tool_result=item.tool_result,
+                update_text=item.update_text,
+                started_at=item.started_at,
+            )
+            item.grouped_tool_calls = [first]
+            self._grouped_calls_by_call_id[first.tool_call_id] = first
+        member = GroupedToolCall(
+            tool_call_id=tool_call.id,
+            tool_name=tool_call.name,
+            tool_arguments=tool_call.arguments,
+            text=format_tool_call_block(tool_call),
+            started_at=time.monotonic(),
+        )
+        item.grouped_tool_calls.append(member)
+        self._tool_items_by_call_id[tool_call.id] = item
+        self._grouped_calls_by_call_id[tool_call.id] = member
+        self._refresh_tool_group(item)
+
+    def _refresh_tool_batch(self, item: ChatItem) -> None:
+        rows = item.tool_batch_items or []
+        item.text = "\n".join(row.text for row in rows)
+        pending = [row for row in rows if row.started_at is not None]
+        failures = [
+            row
+            for row in rows
+            if row.tool_result_text is not None and row.tool_result_text.startswith("✗")
+        ]
+        if failures:
+            item.tool_result_text = "✗ tool batch"
+        elif not pending:
+            item.tool_result_text = "✓ tool batch"
+        else:
+            item.tool_result_text = None
+        item.update_text = None
+        item.started_at = next((row.started_at for row in pending), None)
+
+    def _refresh_tool_group(self, item: ChatItem) -> None:
+        members = item.grouped_tool_calls or []
+        completed = [member for member in members if member.tool_result_text is not None]
+        failures = [
+            member
+            for member in completed
+            if member.tool_result_text is not None and member.tool_result_text.startswith("✗")
+        ]
+        paths = [
+            _string_argument(member.tool_arguments, "path") or "[unknown path]"
+            for member in members
+        ]
+        path_list = "\n".join(f"  - {path}" for path in paths)
+        all_complete = len(completed) == len(members)
+        action = item.tool_name if item.tool_name in GROUPABLE_FILE_TOOL_NAMES else "read"
+        running_verb = {"edit": "Editing", "read": "Reading", "write": "Writing"}[action]
+        completed_verb = {"edit": "Edited", "read": "Read", "write": "Written"}[action]
+        if not all_complete:
+            progress = f" · {len(completed)}/{len(members)} complete" if completed else ""
+            headline = f"→ {running_verb} {len(members)} files{progress}"
+        else:
+            failure = f" · {len(failures)} failed" if failures else ""
+            headline = f"→ {completed_verb} {len(members)} files{failure}"
+        item.text = f"{headline}\n{path_list}"
+        if completed:
+            status = "✗" if failures else ("✓" if all_complete else "…")
+            item.tool_result_text = f"{status} {action} group"
+        else:
+            item.tool_result_text = None
+        item.update_text = next(
+            (member.update_text for member in members if member.update_text),
+            None,
+        )
+        item.started_at = next(
+            (member.started_at for member in members if member.tool_result_text is None),
+            None,
+        )
 
     def add_user_message(
         self,
@@ -228,9 +536,21 @@ class TuiState:
     def record_tool_update(self, tool_call_id: str, message: str) -> ChatItem | None:
         """Attach live progress to its pending tool call; drop orphan updates."""
         item = self.find_tool_item(tool_call_id)
-        if item is None or item.tool_result_text is not None:
+        if item is None:
             return None
-        item.update_text = message
+        row = self._batched_items_by_call_id.get(tool_call_id, item)
+        member = self._grouped_calls_by_call_id.get(tool_call_id)
+        if member is not None:
+            if member.tool_result_text is not None:
+                return None
+            member.update_text = message
+            self._refresh_tool_group(row)
+        else:
+            if row.tool_result_text is not None:
+                return None
+            row.update_text = message
+        if item.tool_batch_items is not None:
+            self._refresh_tool_batch(item)
         return item
 
     def record_tool_result(
@@ -249,9 +569,21 @@ class TuiState:
         )
         item = self.find_tool_item(tool_call_id)
         if item is not None:
-            item.tool_result_text = result_text
-            item.tool_result = result
-            item.update_text = None
+            row = self._batched_items_by_call_id.get(tool_call_id, item)
+            member = self._grouped_calls_by_call_id.get(tool_call_id)
+            if member is not None:
+                member.tool_result_text = result_text
+                member.tool_result = result
+                member.update_text = None
+                member.started_at = None
+                self._refresh_tool_group(row)
+            else:
+                row.tool_result_text = result_text
+                row.tool_result = result
+                row.update_text = None
+                row.started_at = None
+            if item.tool_batch_items is not None:
+                self._refresh_tool_batch(item)
             return
         item = ChatItem(
             role="tool",
@@ -287,6 +619,8 @@ class TuiState:
         """Clear visible transcript state without modifying durable session history."""
         self.items.clear()
         self._tool_items_by_call_id.clear()
+        self._grouped_calls_by_call_id.clear()
+        self._batched_items_by_call_id.clear()
         self.assistant_buffer = ""
         self.error = None
 
@@ -337,6 +671,8 @@ class TuiState:
         include_tool_calls: bool = True,
     ) -> None:
         """Project canonical assistant blocks into display state in order."""
+        batch_id = self.new_tool_batch_id() if include_tool_calls and message.tool_calls else None
+        allows_mutation_continuation = _is_file_mutation_only_message(message)
         for block in message.content:
             if isinstance(block, ThinkingContent):
                 if block.thinking:
@@ -345,7 +681,11 @@ class TuiState:
                 if block.text:
                     self.add_item("assistant", block.text)
             elif include_tool_calls:
-                self.add_tool_call(block)
+                self.add_tool_call(
+                    block,
+                    batch_id=batch_id,
+                    allows_file_mutation_continuation=allows_mutation_continuation,
+                )
 
     def add_assistant_error(self, message: AssistantMessage) -> None:
         """Project any partial response followed by its terminal error."""
@@ -365,6 +705,17 @@ class TuiState:
             if _normalized_path(skill.path) == read_path:
                 return skill.name
         return None
+
+
+def _is_file_mutation_only_message(message: AssistantMessage) -> bool:
+    calls = [block for block in message.content if isinstance(block, ToolCall)]
+    return (
+        bool(calls)
+        and len(calls) == len(message.content)
+        and all(
+            call.name == calls[0].name and call.name in RESULTFUL_FILE_GROUP_NAMES for call in calls
+        )
+    )
 
 
 def _parse_branch_summary_message(content: str) -> str | None:
@@ -396,15 +747,15 @@ def format_elapsed(seconds: float) -> str:
     return f"{hours}h {minutes}m"
 
 
-def format_tool_call_block(tool_call: ToolCall) -> str:
-    """Format a collapsed tool call for live and restored transcript blocks."""
-    invocation = format_tool_call_invocation(tool_call)
+def format_tool_call_block(tool_call: ToolCall, *, compact: bool = True) -> str:
+    """Format a tool call, optionally compacting long bash invocations."""
+    invocation = format_tool_call_invocation(tool_call, expanded=not compact)
     if tool_call.name == "bash":
         return invocation
     return f"→ {invocation}"
 
 
-def format_tool_call_invocation(tool_call: ToolCall) -> str:
+def format_tool_call_invocation(tool_call: ToolCall, *, expanded: bool = False) -> str:
     """Format a tool call as a terse human-readable invocation."""
     arguments = tool_call.arguments
     if tool_call.name == "read":
@@ -423,13 +774,31 @@ def format_tool_call_invocation(tool_call: ToolCall) -> str:
             return _fallback_tool_call_invocation(tool_call)
         return f"write {path}"
     if tool_call.name == "bash":
-        command = _string_argument(arguments, "command")
-        if command is None:
-            return _fallback_tool_call_invocation(tool_call)
-        timeout = _number_argument(arguments, "timeout")
-        suffix = f" (timeout {timeout:g}s)" if timeout is not None else ""
-        return f"$ {command}{suffix}"
+        invocation = _format_bash_tool_call_invocation(arguments, compact=not expanded)
+        return invocation if invocation is not None else _fallback_tool_call_invocation(tool_call)
     return _fallback_tool_call_invocation(tool_call)
+
+
+def _format_bash_tool_call_invocation(
+    arguments: dict[str, JSONValue], *, compact: bool
+) -> str | None:
+    command = _string_argument(arguments, "command")
+    if command is None:
+        return None
+    timeout = _number_argument(arguments, "timeout")
+    suffix = f" (timeout {timeout:g}s)" if timeout is not None else ""
+    if compact:
+        description = _string_argument(arguments, "description")
+        if description is not None:
+            displayed_description = _normalize_bash_description(description)
+            if displayed_description:
+                return f"→ {displayed_description}{suffix}"
+        return f"→ Running shell command{suffix}"
+    return f"$ {command}{suffix}"
+
+
+def _normalize_bash_description(description: str) -> str:
+    return " ".join(description.split())
 
 
 def _read_line_suffix(arguments: dict[str, JSONValue]) -> str:

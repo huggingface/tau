@@ -22,7 +22,7 @@ from tau_agent.session.jsonl import (
     entry_to_json_line,
 )
 from tau_agent.session.memory import SessionState
-from tau_agent.session.storage import JsonlSessionStorage, SessionStorage
+from tau_agent.session.storage import InMemorySessionStorage, JsonlSessionStorage, SessionStorage
 from tau_agent.session.tree import SessionTreeError, entries_by_id, path_to_entry
 
 __all__ = [
@@ -30,6 +30,7 @@ __all__ = [
     "BranchSummaryEntry",
     "CompactionEntry",
     "CustomEntry",
+    "InMemorySessionStorage",
     "JsonlSessionStorage",
     "LabelEntry",
     "LeafEntry",

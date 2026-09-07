@@ -21,6 +21,7 @@ publishDir = "public"
 [params]
   description = "An educational Python project for learning how coding agents are built."
   githubUrl = "https://github.com/huggingface/tau"
+  discordUrl = "https://link.alejandro-ao.com/tau-discord"
   editRepoUrl = "https://github.com/huggingface/tau/edit/main/website/content"
   githubRepo = "huggingface/tau"
 
@@ -49,3 +50,6 @@ publishDir = "public"
   [[module.mounts]]
     source = "../src/tau_coding/data/release-notes"
     target = "data/release-notes"
+  [[module.mounts]]
+    source = "../pyproject.toml"
+    target = "data/project.toml"

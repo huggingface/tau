@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
 from json import loads
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -37,16 +37,37 @@ from tau_ai.content import (
     messages_have_images,
     text_and_images,
 )
-from tau_ai.env import AnthropicConfig
+from tau_ai.env import (
+    CACHE_RETENTION_LONG,
+    CACHE_RETENTION_NONE,
+    CACHE_RETENTION_SHORT,
+    AnthropicConfig,
+    CacheRetention,
+)
 from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 from tau_ai.stream import canonicalize_provider_stream
+from tau_ai.tool_call_ids import portable_tool_call_id
 
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_MAX_TOKENS = 4096
+CACHE_TTL_LONG = "1h"
+
+# Anthropic rejects a request carrying more than four cache breakpoints, so the
+# budget is spent where it buys the most: the tool schemas, the system prompt, and
+# the two most recent request tails. See _apply_message_cache_breakpoints.
+MAX_CACHE_BREAKPOINTS = 4
+SYSTEM_CACHE_BREAKPOINTS = 1
+TOOLS_CACHE_BREAKPOINTS = 1
+MESSAGE_CACHE_BREAKPOINTS = (
+    MAX_CACHE_BREAKPOINTS - SYSTEM_CACHE_BREAKPOINTS - TOOLS_CACHE_BREAKPOINTS
+)
+
+# Block types that may carry cache_control.
+CACHEABLE_BLOCK_TYPES = frozenset({"text", "image", "tool_result"})
 
 
 class AnthropicProvider:
@@ -76,8 +97,10 @@ class AnthropicProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[AssistantMessageEvent]:
         """Stream one response as Pi-compatible assistant message events."""
+        del session_id
         raw = self._stream_provider_events(
             model=model, system=system, messages=messages, tools=tools, signal=signal
         )
@@ -120,6 +143,8 @@ class AnthropicProvider:
                 thinking_effort=self._config.thinking_effort,
                 thinking_mode=self._config.thinking_mode,
                 supports_images=self._config.supports_images,
+                cache_retention=self._config.cache_retention,
+                cache_control_on_tools=self._config.cache_control_on_tools,
             )
             headers = {
                 "anthropic-version": ANTHROPIC_VERSION,
@@ -184,6 +209,7 @@ class AnthropicProvider:
                             return
 
                         yield ProviderResponseStartEvent(model=model)
+                        stream_error: dict[str, JSONValue] | None = None
                         content_parts: list[str] = []
                         thinking_parts: list[str] = []
                         thinking_signature: str | None = None
@@ -260,12 +286,37 @@ class AnthropicProvider:
                                     )
                                 usage = _apply_message_delta_usage(usage, chunk.get("usage"))
                             elif event_type == "error":
-                                error = chunk.get("error")
-                                message = "Provider returned an error"
-                                if isinstance(error, Mapping):
-                                    message = _string_or_empty(error.get("message")) or message
-                                yield ProviderErrorEvent(message=message, data=chunk)
+                                error_type, message = _anthropic_stream_error_details(chunk)
+                                if (
+                                    not emitted_content
+                                    and self._should_retry(attempt)
+                                    and _retryable_anthropic_stream_error(error_type)
+                                ):
+                                    stream_error = chunk
+                                    break
+                                yield ProviderErrorEvent(
+                                    message=message,
+                                    data={"event": chunk, "attempts": attempt + 1},
+                                )
                                 return
+
+                        if stream_error is not None:
+                            error_type, _message = _anthropic_stream_error_details(stream_error)
+                            delay = retry_delay_seconds(
+                                attempt,
+                                max_delay_seconds=self._config.max_retry_delay_seconds,
+                            )
+                            yield provider_retry_event(
+                                attempt=attempt,
+                                max_retries=self._config.max_retries,
+                                delay_seconds=delay,
+                                reason=f"stream error ({error_type or 'unknown'})",
+                                data={"event": stream_error},
+                            )
+                            attempt += 1
+                            if not await wait_for_retry(delay, signal=signal):
+                                return
+                            continue
 
                         tool_calls = [
                             builder.build(index) for index, builder in sorted(tool_builders.items())
@@ -329,6 +380,30 @@ class AnthropicProvider:
         return status_code is None or status_code in {408, 409, 425, 429} or status_code >= 500
 
 
+_TRANSIENT_ANTHROPIC_STREAM_ERROR_TYPES = frozenset(
+    {
+        "api_error",
+        "overloaded_error",
+        "rate_limit_error",
+    }
+)
+
+
+def _anthropic_stream_error_details(event: Mapping[str, JSONValue]) -> tuple[str, str]:
+    """Return the provider classification and message from an Anthropic SSE error."""
+    error = event.get("error")
+    if not isinstance(error, Mapping):
+        return "", "Provider returned an error"
+    error_type = _string_or_empty(error.get("type"))
+    message = _string_or_empty(error.get("message")) or "Provider returned an error"
+    return error_type, message
+
+
+def _retryable_anthropic_stream_error(error_type: str) -> bool:
+    """Return whether an Anthropic SSE error is transient and safe to retry."""
+    return error_type.lower() in _TRANSIENT_ANTHROPIC_STREAM_ERROR_TYPES
+
+
 class _AnthropicToolBuilder:
     def __init__(self) -> None:
         self.id = ""
@@ -359,25 +434,28 @@ def _build_messages_payload(
     thinking_effort: str | None = None,
     thinking_mode: str = "budget",
     supports_images: bool = False,
+    cache_retention: CacheRetention = CACHE_RETENTION_SHORT,
+    cache_control_on_tools: bool = True,
 ) -> dict[str, JSONValue]:
     resolved_max_tokens = max_tokens or DEFAULT_MAX_TOKENS
     if thinking_budget_tokens is not None:
         resolved_max_tokens = max(resolved_max_tokens, thinking_budget_tokens + 1024)
+    cache_control = _cache_control(cache_retention)
+    payload_messages = []
+    for message in messages:
+        converted = _anthropic_message(message, supports_images=supports_images)
+        # Dropping foreign provider reasoning can empty a reasoning-only turn.
+        # Anthropic rejects empty assistant content, so omit that inert turn too.
+        if converted.get("role") == "assistant" and not converted.get("content"):
+            continue
+        payload_messages.append(converted)
+    _apply_message_cache_breakpoints(payload_messages, cache_control)
     payload: dict[str, JSONValue] = {
         "model": model,
         "max_tokens": resolved_max_tokens,
         "stream": True,
-        "system": (
-            [
-                {"type": "text", "text": oauth_system_prompt},
-                {"type": "text", "text": system},
-            ]
-            if oauth_system_prompt
-            else system
-        ),
-        "messages": [
-            _anthropic_message(message, supports_images=supports_images) for message in messages
-        ],
+        "system": _anthropic_system(system, oauth_system_prompt, cache_control),
+        "messages": cast("JSONValue", payload_messages),
     }
     if thinking_mode == "disabled":
         payload["thinking"] = {"type": "disabled"}
@@ -390,8 +468,143 @@ def _build_messages_payload(
             "budget_tokens": thinking_budget_tokens,
         }
     if tools:
-        payload["tools"] = [_anthropic_tool(tool) for tool in tools]
+        # Some Anthropic-protocol gateways accept cache_control everywhere except
+        # inside tool objects, so the tools breakpoint is separately suppressible.
+        tools_cache_control = cache_control if cache_control_on_tools else None
+        last_index = len(tools) - 1
+        payload["tools"] = [
+            _anthropic_tool(
+                tool, cache_control=tools_cache_control if index == last_index else None
+            )
+            for index, tool in enumerate(tools)
+        ]
     return payload
+
+
+def _cache_control(cache_retention: CacheRetention) -> dict[str, JSONValue] | None:
+    """Return the cache_control marker for a retention preference, if enabled.
+
+    Attach sites copy the result, so no two breakpoints share one dict.
+    """
+    if cache_retention == CACHE_RETENTION_NONE:
+        return None
+    if cache_retention == CACHE_RETENTION_LONG:
+        return {"type": "ephemeral", "ttl": CACHE_TTL_LONG}
+    return {"type": "ephemeral"}
+
+
+def _anthropic_system(
+    system: str,
+    oauth_system_prompt: str | None,
+    cache_control: dict[str, JSONValue] | None,
+) -> JSONValue:
+    """Build the system field, marking its tail as a cache breakpoint when enabled.
+
+    Only the final block is marked. A breakpoint on the OAuth identity block would
+    cache a prefix already covered by the block after it, wasting one of the four
+    breakpoints Anthropic allows.
+    """
+    if cache_control is None:
+        if oauth_system_prompt:
+            return [
+                {"type": "text", "text": oauth_system_prompt},
+                {"type": "text", "text": system},
+            ]
+        return system
+    blocks: list[dict[str, JSONValue]] = []
+    if oauth_system_prompt:
+        blocks.append({"type": "text", "text": oauth_system_prompt})
+    if system:
+        blocks.append({"type": "text", "text": system})
+    if not blocks:
+        # An empty text block carrying cache_control is rejected outright.
+        return system
+    blocks[-1]["cache_control"] = dict(cache_control)
+    return cast("JSONValue", blocks)
+
+
+def _apply_message_cache_breakpoints(
+    messages: list[dict[str, JSONValue]],
+    cache_control: dict[str, JSONValue] | None,
+) -> None:
+    """Mark this request's tail and the previous request's tail, in place.
+
+    Two breakpoints rather than one: Anthropic checks at most 20 block positions
+    back from a breakpoint when searching for a reusable prefix, and one tau turn
+    appends 2N+2 blocks for N tool calls. Marking where the previous request ended
+    opens a second lookback window there, so a wide parallel-tool turn still gets
+    a read hit instead of falling out of the window. Either position may be
+    ineligible, in which case fewer breakpoints are emitted.
+    """
+    if cache_control is None or not messages:
+        return
+    indexes = {len(messages) - 1}
+    boundary = _previous_request_boundary(messages)
+    if boundary is not None:
+        indexes.add(boundary)
+    if len(indexes) > MESSAGE_CACHE_BREAKPOINTS:  # pragma: no cover - defensive
+        raise AssertionError("message cache breakpoints exceed the Anthropic budget")
+    for index in indexes:
+        _mark_cache_breakpoint(messages[index], cache_control)
+
+
+def _previous_request_boundary(messages: list[dict[str, JSONValue]]) -> int | None:
+    """Return the index where the previous request's message list ended.
+
+    Tau's transcript is append-only and every request stops immediately before the
+    assistant message it produces, so the last user message preceding the final
+    assistant turn is where the previous request's tail breakpoint was placed.
+
+    Two cases return an older position than the literal previous request. A turn
+    whose assistant message was empty and errored or aborted is filtered out of
+    provider context, and consecutive assistant messages (a retained failure
+    followed by a continue) leave no user message at the true boundary. Both only
+    shorten the prefix this breakpoint can reuse; a marked position that was never
+    written simply opens a lookback window that finds an older entry, and
+    breakpoints themselves are not billed.
+    """
+    last_assistant = None
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index].get("role") == "assistant":
+            last_assistant = index
+            break
+    if last_assistant is None:
+        return None
+    for index in range(last_assistant - 1, -1, -1):
+        if messages[index].get("role") == "user":
+            return index
+    return None
+
+
+def _mark_cache_breakpoint(
+    message: dict[str, JSONValue],
+    cache_control: dict[str, JSONValue],
+) -> None:
+    """Attach cache_control to a user message's final content block, if eligible."""
+    if message.get("role") != "user":
+        return
+    content = message.get("content")
+    if isinstance(content, str):
+        if not content:
+            return
+        message["content"] = [
+            {"type": "text", "text": content, "cache_control": dict(cache_control)}
+        ]
+        return
+    if not isinstance(content, list) or not content:
+        return
+    last_block = content[-1]
+    if not isinstance(last_block, dict):
+        return
+    if last_block.get("type") not in CACHEABLE_BLOCK_TYPES:
+        return
+    if last_block.get("type") == "tool_result":
+        # A breakpoint on a tool_result carrying no content risks the same
+        # rejection as an empty text block.
+        inner = last_block.get("content")
+        if isinstance(inner, list) and not inner:
+            return
+    last_block["cache_control"] = dict(cache_control)
 
 
 def _anthropic_message(message: AgentMessage, *, supports_images: bool) -> dict[str, JSONValue]:
@@ -414,6 +627,11 @@ def _anthropic_message(message: AgentMessage, *, supports_images: bool) -> dict[
             if isinstance(block, TextContent):
                 content.append({"type": "text", "text": block.text})
             elif isinstance(block, ThinkingContent):
+                # Thinking signatures are provider-owned opaque state. Replaying
+                # an OpenAI/Google signature as an Anthropic thinking block makes
+                # an otherwise portable model switch fail validation.
+                if message.api != "anthropic-messages":
+                    continue
                 thinking: dict[str, JSONValue] = {
                     "type": "thinking",
                     "thinking": block.thinking,
@@ -425,7 +643,7 @@ def _anthropic_message(message: AgentMessage, *, supports_images: bool) -> dict[
                 content.append(
                     {
                         "type": "tool_use",
-                        "id": block.id,
+                        "id": portable_tool_call_id(block.id),
                         "name": block.name,
                         "input": block.arguments,
                     }
@@ -446,7 +664,7 @@ def _anthropic_message(message: AgentMessage, *, supports_images: bool) -> dict[
             "content": [
                 {
                     "type": "tool_result",
-                    "tool_use_id": message.tool_call_id,
+                    "tool_use_id": portable_tool_call_id(message.tool_call_id),
                     "content": result_content,
                     "is_error": bool(message.is_error),
                 }
@@ -466,12 +684,19 @@ def _anthropic_image(image: ImageContent) -> dict[str, JSONValue]:
     }
 
 
-def _anthropic_tool(tool: AgentTool) -> dict[str, JSONValue]:
-    return {
+def _anthropic_tool(
+    tool: AgentTool,
+    *,
+    cache_control: dict[str, JSONValue] | None = None,
+) -> dict[str, JSONValue]:
+    payload: dict[str, JSONValue] = {
         "name": tool.name,
         "description": tool.description,
         "input_schema": dict(tool.input_schema),
     }
+    if cache_control is not None:
+        payload["cache_control"] = dict(cache_control)
+    return payload
 
 
 def _parse_sse_line(line: str) -> str | None:

@@ -9,8 +9,10 @@ history) and lets you tune how hard the model works with **thinking modes**.
 
 ## Seeing context usage
 
-The compact status below the TUI prompt shows the approximate active context as
-`used/limit`. Run `/session` to see its detailed breakdown:
+The compact status below the TUI prompt shows provider-anchored active context as
+`used/limit`. When no valid provider usage exists yet, it shows `?/limit` instead
+of presenting the fallback estimate as provider-confirmed usage. Run `/session`
+to see the detailed provider basis or fallback estimate:
 
 ```text
 Estimated context tokens: <count>
@@ -20,13 +22,21 @@ Context token breakdown: system=<count>, messages=<count>, tools=<count>
 Thinking mode: <mode>
 ```
 
-The estimate is deterministic (roughly `characters / 4` plus small per-message
-and per-tool overhead), not a provider tokenizer — treat it as approximate. It
-covers the system prompt, project context (`AGENTS.md`), skill metadata, the
-active message history, and tool schemas.
+After a successful model response, Tau uses the provider-reported token usage as
+the authoritative size of the context processed by that response, then estimates
+only messages added afterward. Before the first response, immediately after
+compaction, or when no valid usage is available, Tau falls back to a deterministic
+estimate (roughly `characters / 4` plus small per-message and per-tool overhead).
+The fallback covers the system prompt, project context (`AGENTS.md`), skill
+metadata, active message history, and tool schemas.
 
-This is different from **cumulative usage** in the sidebar. Cumulative usage adds
-the provider-reported input and output tokens from every request on the active
+`/session` reports `Context token basis: provider=<count>, estimated
+trailing=<count>` when provider usage anchors the active count. Otherwise it shows
+the fallback system/message/tool breakdown. Provider usage from errored or aborted
+responses is not trusted.
+
+This is different from the cumulative token totals in the sidebar's **usage**
+section. Cumulative usage adds the provider-reported input and output tokens from every request on the active
 branch, including history later replaced by compaction. Repeatedly sending the
 same context therefore increases cumulative input usage, while active context
 consumption describes only what Tau expects to send next. The two figures are
@@ -39,7 +49,8 @@ model's context window. It checks three moments:
 
 - before a new prompt (to catch context added out-of-band),
 - after a successful turn (to compact before your next turn), and
-- after a context-overflow error (compact and retry once).
+- after a context-overflow error (force compaction regardless of the local estimate,
+  then retry once).
 
 When it compacts, Tau asks the model to summarize older messages, keeps a recent
 suffix of the conversation, and continues. The original session file is never
@@ -55,8 +66,10 @@ You can override the resulting threshold for a run:
 tau --auto-compact-threshold 100000
 ```
 
-Automatic compaction is best-effort: if summarization fails, Tau logs it, keeps
-the original context, and carries on.
+Automatic compaction is best-effort: if summarization fails, Tau logs it and keeps
+the original context. During successful overflow recovery, the TUI shows compaction
+and retry progress instead of presenting the intermediate provider rejection as a
+terminal error. The error becomes visible only if recovery cannot complete.
 
 ## Manual compaction
 
@@ -82,7 +95,7 @@ Some models can spend extra effort reasoning before answering. Tau exposes a
 thinking level you can cycle:
 
 ```text
-off → minimal → low → medium → high → xhigh
+off → minimal → low → medium → high → xhigh → max
 ```
 
 - **Shift+Tab** cycles the thinking level (default is `medium`).
@@ -98,8 +111,15 @@ isn't listed). Custom providers can opt in via `thinking_levels` in their config
 
 At startup Tau picks a valid level for the selected model automatically: a
 remembered per-model choice wins, then `medium`, then the provider's own
-default, then the first level the model supports. So a model that only supports
-`xhigh` (for example `kimi-code:k3`) opens at `xhigh` instead of failing with
-"Thinking mode medium is not available". Picking an unsupported level
-explicitly (via `/think` or the thinking picker) still shows an error listing
-the available modes.
+default, then the first level the model supports. For example, `kimi-code:k3`
+supports `low`, `high`, and `xhigh`; because `medium` is unavailable, it opens
+at its `xhigh` catalog default instead of failing with "Thinking mode medium is
+not available". Picking an unsupported level explicitly (via `/think` or the
+thinking picker) still shows an error listing the available modes.
+
+You can also set the startup level from the command line with `--thinking`
+(`-t`), for example `tau -t high` or `tau -t max -p "explain this"`. The flag
+takes precedence over remembered and catalog defaults for that run but is not
+saved as a new default; requesting a level the selected model does not support
+exits with an error listing the available modes. Levels chosen interactively
+afterwards (via `/think` or Shift+Tab) persist as usual.

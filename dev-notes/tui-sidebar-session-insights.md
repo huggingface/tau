@@ -14,6 +14,7 @@ The sidebar now shows:
 - the session name
 - user turns and assistant tool calls on the active branch
 - cumulative provider-reported input and output tokens
+- latest-request and cumulative-session prompt-cache hit rates
 - estimated cost when complete pricing is available
 - automatic-compaction status and threshold
 - context files, tools, skills, prompt templates, and loaded extensions
@@ -45,9 +46,11 @@ not only from the compacted model context. Consequently, compaction does not era
 activity or billed usage. A turn is a user or extension-authored custom message.
 A tool call is each tool-call block requested by an assistant message.
 
-Input totals include fresh input, cache reads, and cache writes. Output totals use
-the provider's reported output count. Cost is calculated per assistant response
-from that response's provider/model metadata, including tiered rates and separate
+Input totals include fresh input, cache reads, and cache writes. The cache line
+shows the latest assistant request separately from the cumulative active-branch
+rate; after tool use, latest refers to the most recent model continuation.
+Output totals use the provider's reported output count. Cost is calculated per
+assistant response from that response's provider/model metadata, including tiered rates and separate
 input, output, cache-read, and cache-write prices. If any billed response lacks
 pricing, Tau displays `$N/A` rather than showing a misleading partial estimate.
 

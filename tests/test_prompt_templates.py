@@ -140,6 +140,33 @@ def test_expand_prompt_template_command_replaces_slash_command() -> None:
     )
 
 
+def test_expand_prompt_template_command_supports_pi_argument_variables() -> None:
+    template = PromptTemplate(
+        name="example",
+        path=Path("example.md"),
+        content="first=$1 second=$2 all=$@ named=$ARGUMENTS",
+    )
+
+    assert expand_prompt_template_command('/example one "two words"', [template]) == (
+        "first=one second=two words all=one two words named=one two words"
+    )
+
+
+def test_expand_prompt_template_command_supports_pi_argument_defaults_and_slices() -> None:
+    template = PromptTemplate(
+        name="example",
+        path=Path("example.md"),
+        content="count=${1:-7} rest=${@:2} limited=${@:2:1} all=${@:-none}",
+    )
+
+    assert expand_prompt_template_command("/example", [template]) == (
+        "count=7 rest= limited= all=none"
+    )
+    assert expand_prompt_template_command("/example one two three", [template]) == (
+        "count=one rest=two three limited=two all=one two three"
+    )
+
+
 def test_expand_prompt_template_command_blanks_missing_custom_variables() -> None:
     template = PromptTemplate(
         name="review",

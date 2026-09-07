@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 from conftest import isolate_home
 from pi_event_helpers import assistant_done, assistant_error, assistant_start, text_delta
 from tau_agent import AssistantMessage, UserMessage
-from tau_agent.session import JsonlSessionStorage, MessageEntry
+from tau_agent.session import JsonlSessionStorage, MessageEntry, ModelChangeEntry
 from tau_ai import (
     FakeProvider,
 )
@@ -112,6 +112,239 @@ def test_version_command(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.stdout.strip() == "tau 1.2.3"
 
 
+def test_help_lists_system_prompt_options() -> None:
+    result = CliRunner().invoke(app, ["--help"], env={"COLUMNS": "160"})
+
+    output = re.sub(r"\s+", "", _strip_ansi(result.output))
+    assert result.exit_code == 0
+    assert "--system-promptTEXT_OR_PATH" in output
+    assert "--append-system-promptTEXT_OR_PATH" in output
+    assert "tauinstallSOURCE[--force]" in output
+
+
+def test_install_command_installs_extension(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[str, bool]] = []
+    destination = tmp_path / ".tau" / "extensions" / "demo"
+
+    def fake_install(source: str, *, force: bool = False) -> Path:
+        calls.append((source, force))
+        return destination
+
+    monkeypatch.setattr(cli, "install_extension", fake_install)
+
+    result = CliRunner().invoke(
+        app,
+        ["install", "git:github.com/example/demo", "--force"],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [("git:github.com/example/demo", True)]
+    assert "execute arbitrary Python" in result.output
+    assert f"Installed git:github.com/example/demo to {destination}" in result.output
+
+
+def test_install_command_reports_install_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_install(source: str, *, force: bool = False) -> Path:
+        del source, force
+        raise cli.ExtensionInstallError("clone failed")
+
+    monkeypatch.setattr(cli, "install_extension", fail_install)
+
+    result = CliRunner().invoke(app, ["install", "git:github.com/example/demo"])
+
+    assert result.exit_code == 1
+    assert "Could not install extension: clone failed" in result.output
+
+
+def test_install_command_requires_exactly_one_source() -> None:
+    result = CliRunner().invoke(app, ["install"])
+
+    assert result.exit_code == 2
+    assert "Usage: tau install <source> [--force]" in _panel_text(result.output)
+
+
+def test_prompt_inputs_resolve_files_literals_and_append_order(tmp_path: Path) -> None:
+    base_path = tmp_path / "base.md"
+    append_path = tmp_path / "append.md"
+    base_path.write_text("File base ü", encoding="utf-8")
+    append_path.write_text("File append", encoding="utf-8")
+
+    assert cli._resolve_prompt_input(str(base_path), option="--system-prompt") == "File base ü"
+    assert cli._resolve_prompt_input("literal base", option="--system-prompt") == "literal base"
+    assert (
+        cli._resolve_append_system_prompts(["first", str(append_path), "third"])
+        == "first\n\nFile append\n\nthird"
+    )
+
+
+@pytest.mark.parametrize(
+    ("option", "expected_base", "expected_append"),
+    [
+        ("--system-prompt", "~unknown-tau-user/base.md", None),
+        ("--append-system-prompt", None, "~unknown-tau-user/append.md"),
+    ],
+)
+def test_unknown_user_prompt_path_is_forwarded_as_literal(
+    monkeypatch: pytest.MonkeyPatch,
+    option: str,
+    expected_base: str | None,
+    expected_append: str | None,
+) -> None:
+    value = expected_base or expected_append
+    assert value is not None
+    calls: list[tuple[str | None, str | None]] = []
+    original_expanduser = Path.expanduser
+
+    def fail_for_unknown_user(path: Path) -> Path:
+        if str(path).startswith("~unknown-tau-user/"):
+            raise RuntimeError("Could not determine home directory")
+        return original_expanduser(path)
+
+    async def fake_run_openai_tui(*args: object) -> None:
+        calls.append((args[-2], args[-1]))  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "expanduser", fail_for_unknown_user)
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, [option, value, "--new-session"])
+
+    assert result.exit_code == 0
+    assert calls == [(expected_base, expected_append)]
+
+
+def test_prompt_input_reports_invalid_utf8_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    prompt_path = tmp_path / "invalid.md"
+    prompt_path.write_bytes(b"\xff")
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(
+        app,
+        ["--system-prompt", prompt_path.name, "--new-session"],
+    )
+
+    assert result.exit_code == 2
+    output = _strip_ansi(result.output)
+    assert "--system-prompt" in output
+    assert prompt_path.name in output
+    assert "Could not read" in output
+
+
+def test_system_prompt_flags_are_parsed_before_positional_prompt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    base_path = tmp_path / "base.md"
+    append_path = tmp_path / "append.md"
+    base_path.write_text("Custom base", encoding="utf-8")
+    append_path.write_text("second", encoding="utf-8")
+    calls: list[tuple[str, str | None, str | None]] = []
+
+    async def fake_run_openai_print_mode(*args: object) -> bool:
+        calls.append((str(args[0]), args[-2], args[-1]))  # type: ignore[arg-type]
+        return True
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--print",
+            "--system-prompt",
+            str(base_path),
+            "--append-system-prompt",
+            "first",
+            "--append-system-prompt",
+            str(append_path),
+            "explain",
+            "this",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [("explain this", "Custom base", "first\n\nsecond")]
+
+
+def test_prompt_input_reports_existing_unreadable_path(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        app,
+        ["--append-system-prompt", str(tmp_path), "--new-session"],
+    )
+
+    assert result.exit_code == 2
+    output = _strip_ansi(result.output)
+    assert "--append-system-prompt" in output
+    assert "Could not read" in output
+
+
+def test_prompt_input_reports_path_inspection_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    prompt_path = tmp_path / "base.md"
+    prompt_path.write_text("Custom base", encoding="utf-8")
+    original_exists = Path.exists
+    tui_calls = 0
+
+    def fail_for_prompt_path(path: Path) -> bool:
+        if path == prompt_path:
+            raise PermissionError("permission denied")
+        return original_exists(path)
+
+    async def fake_run_openai_tui(*args: object) -> None:
+        nonlocal tui_calls
+        tui_calls += 1
+
+    monkeypatch.setattr(Path, "exists", fail_for_prompt_path)
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(
+        app,
+        ["--system-prompt", str(prompt_path), "--new-session"],
+        env={"COLUMNS": "300"},
+    )
+
+    assert result.exit_code == 2
+    output = _strip_ansi(result.output)
+    compact_output = re.sub(r"\s+", "", output)
+    assert "--system-prompt" in output
+    assert str(prompt_path) in compact_output
+    assert "Could not inspect" in output
+    assert "permission denied" in output
+    assert tui_calls == 0
+
+
+def test_system_prompt_flags_forward_to_resumed_tui(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str | None, str | None, str | None]] = []
+
+    async def fake_run_openai_tui(*args: object) -> None:
+        calls.append((args[2], args[-2], args[-1]))  # type: ignore[arg-type]
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--session",
+            "session-1",
+            "--system-prompt",
+            "Resume base",
+            "--append-system-prompt",
+            "Resume append",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [("session-1", "Resume base", "Resume append")]
+
+
 def test_version_command_does_not_check_for_updates(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "_current_version", lambda: "1.2.3")
     monkeypatch.setattr(
@@ -146,6 +379,27 @@ def test_update_command_upgrades_without_startup_check(monkeypatch: pytest.Monke
     assert result.exit_code == 0
     assert "Updated tau-ai" in result.stdout
     assert "Tau update completed with: uv tool install tau-ai@0.2.4" in result.stdout
+
+
+def test_update_models_force_refreshes_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[bool] = []
+
+    async def refresh_models(*, force: bool) -> cli.ModelsDevRefreshResult:
+        calls.append(force)
+        return cli.ModelsDevRefreshResult(
+            refreshed=True,
+            not_modified=False,
+            model_count=42,
+            cache_path=Path("/tmp/models-store.json"),
+        )
+
+    monkeypatch.setattr(cli, "refresh_models_dev_catalog", refresh_models)
+
+    result = CliRunner().invoke(app, ["update", "--models"])
+
+    assert result.exit_code == 0
+    assert calls == [True]
+    assert "Model catalogs refreshed: 42 models" in result.stdout
 
 
 def test_update_command_reports_windows_handoff_without_claiming_completion(
@@ -362,11 +616,16 @@ def test_cli_positional_prompt_invokes_tui_runner(
 async def test_run_openai_tui_combines_release_notes_and_update_notice(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    calls: list[tuple[str | None, tuple[str, ...]]] = []
+    calls: list[tuple[str | None, tuple[str, ...], str | None, str | None]] = []
 
     async def fake_run_tui_app(**kwargs: object) -> None:
         calls.append(  # type: ignore[arg-type]
-            (kwargs["startup_update_notice"], kwargs["startup_notices"])
+            (
+                kwargs["startup_update_notice"],
+                kwargs["startup_notices"],
+                kwargs["custom_system_prompt"],
+                kwargs["append_system_prompt"],
+            )
         )
 
     monkeypatch.setattr(cli, "run_tui_app", fake_run_tui_app)
@@ -391,12 +650,16 @@ async def test_run_openai_tui_combines_release_notes_and_update_notice(
         model=None,
         cwd=tmp_path,
         update_notice=UpdateNotice(current_version="0.1.2", latest_version="0.1.3"),
+        custom_system_prompt="Custom base",
+        append_system_prompt="Custom append",
     )
 
     assert calls == [
         (
             "Tau 0.1.3 is available (installed: 0.1.2). Run `tau update` to upgrade.",
             ("Tau updated to 0.1.2\n\n**New**\n- Release note",),
+            "Custom base",
+            "Custom append",
         )
     ]
 
@@ -438,6 +701,44 @@ async def test_run_print_mode_prints_final_assistant_text(
         )
     )
     assert [tool.name for tool in provider.calls[0][3]] == ["read", "write", "edit", "bash"]
+
+
+@pytest.mark.anyio
+async def test_run_print_mode_uses_custom_and_appended_system_prompt(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    resource_root = tmp_path / "resources"
+    skill_dir = resource_root / "skills" / "testing"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\ndescription: Test code\n---\n# Testing",
+        encoding="utf-8",
+    )
+    (tmp_path / "AGENTS.md").write_text("Follow project rules.", encoding="utf-8")
+    provider = FakeProvider(
+        [[assistant_start(model="fake"), assistant_done(message=AssistantMessage(content="Done"))]]
+    )
+
+    ok = await run_print_mode(
+        prompt="Hello",
+        model="fake",
+        cwd=tmp_path,
+        provider=provider,
+        resource_paths=TauResourcePaths(root=resource_root, agents_root=None),
+        custom_system_prompt="Custom base.",
+        append_system_prompt="First append.\n\nSecond append.",
+        trust_default="always",
+    )
+
+    _captured = capsys.readouterr()
+    system = provider.calls[0][1]
+    assert ok is True
+    assert system.startswith("Custom base.\n\nFirst append.\n\nSecond append.")
+    assert "You are an expert coding assistant operating inside Tau" not in system
+    assert "Follow project rules." in system
+    assert "<available_skills>" in system
+    assert "Current date:" in system
+    assert f"Current working directory: {tmp_path}" in system
 
 
 @pytest.mark.anyio
@@ -512,6 +813,7 @@ async def test_run_print_mode_includes_discovered_context(
         cwd=tmp_path,
         provider=provider,
         resource_paths=TauResourcePaths(root=tmp_path / "resources", agents_root=None),
+        trust_default="always",
     )
 
     _captured = capsys.readouterr()
@@ -551,6 +853,44 @@ async def test_run_print_mode_persists_session_entries(
     assert messages[0].content == "Say hello"
     assert messages[1].text == "Done"
     assert any(entry.type == "leaf" for entry in entries)
+
+
+@pytest.mark.anyio
+async def test_run_print_mode_resumes_persisted_conversation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    await storage.append(MessageEntry(message=UserMessage(content="First question")))
+    await storage.append(MessageEntry(message=AssistantMessage(content="First answer")))
+    await storage.append(ModelChangeEntry(model="model-a"))
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="model-b"),
+                assistant_done(message=AssistantMessage(content="Done")),
+            ]
+        ]
+    )
+
+    ok = await run_print_mode(
+        prompt="Follow-up message",
+        model="model-b",
+        cwd=tmp_path,
+        provider=provider,
+        storage=storage,
+        session_id="session-123",
+        startup_model_override=True,
+    )
+
+    assert ok is True
+    assert capsys.readouterr().out == "Done\n"
+    assert provider.calls[0][0] == "model-b"
+    messages = provider.calls[0][2]
+    assert [(message.role, message.text) for message in messages] == [
+        ("user", "First question"),
+        ("assistant", "First answer"),
+        ("user", "Follow-up message"),
+    ]
 
 
 @pytest.mark.anyio
@@ -716,6 +1056,8 @@ def test_print_mode_passes_exact_session_id_without_changing_output(
         extensions_enabled: bool,
         project_extensions_enabled: bool,
         session_id: str | None,
+        custom_system_prompt: str | None,
+        append_system_prompt: str | None,
     ) -> bool:
         del (
             prompt,
@@ -727,6 +1069,8 @@ def test_print_mode_passes_exact_session_id_without_changing_output(
             extension_paths,
             extensions_enabled,
             project_extensions_enabled,
+            custom_system_prompt,
+            append_system_prompt,
         )
         calls.append(session_id)
         return True
@@ -743,6 +1087,70 @@ def test_print_mode_passes_exact_session_id_without_changing_output(
     assert result.stdout == ""
     assert result.stderr == ""
     assert calls == ["worker-499"]
+
+
+def test_print_mode_passes_session_id_for_resume(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str | None]] = []
+
+    async def fake_run_openai_print_mode(
+        prompt: str,
+        model: str | None,
+        cwd: Path,
+        output: PrintOutputMode,
+        provider_name: str | None,
+        session_manager: SessionManager | None,
+        extension_paths: tuple[Path, ...],
+        extensions_enabled: bool,
+        project_extensions_enabled: bool,
+        session_id: str | None,
+        custom_system_prompt: str | None,
+        append_system_prompt: str | None,
+        trust_override: object | None,
+        resume_session_id: str | None,
+    ) -> bool:
+        del (
+            model,
+            cwd,
+            output,
+            provider_name,
+            session_manager,
+            extension_paths,
+            extensions_enabled,
+            project_extensions_enabled,
+            session_id,
+            custom_system_prompt,
+            append_system_prompt,
+            trust_override,
+        )
+        calls.append((prompt, resume_session_id))
+        return True
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(app, ["--print", "--session", "session-123", "follow up"])
+
+    assert result.exit_code == 0
+    assert calls == [("follow up", "session-123")]
+
+
+def test_print_mode_rejects_session_and_new_session() -> None:
+    result = CliRunner().invoke(
+        app, ["--print", "--session", "session-123", "--new-session", "follow up"]
+    )
+
+    assert result.exit_code == 2
+    assert "--session and --new-session cannot be used together" in _strip_ansi(result.output)
+
+
+def test_print_mode_rejects_session_and_session_id() -> None:
+    result = CliRunner().invoke(
+        app,
+        ["--print", "--session", "session-123", "--session-id", "new-id", "follow up"],
+    )
+
+    assert result.exit_code == 2
+    assert "--session and --session-id cannot be used together" in _strip_ansi(result.output)
 
 
 @pytest.mark.parametrize(
@@ -768,6 +1176,124 @@ def test_session_id_is_print_mode_only() -> None:
 
     assert result.exit_code == 2
     assert "--session-id is only supported in print mode" in _strip_ansi(result.output)
+
+
+def test_print_session_record_resumes_existing_session(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    record = manager.create_session(
+        cwd=tmp_path,
+        model="fake",
+        session_id="session-123",
+    )
+
+    resumed = cli._print_session_record(
+        manager,
+        resume_session_id="session-123",
+        cwd=tmp_path / "other",
+        settings=_constrained_provider_settings(),
+        provider_name=None,
+        model=None,
+        session_id=None,
+    )
+
+    assert resumed == record
+
+
+def test_print_session_record_rejects_unknown_session(tmp_path: Path) -> None:
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+
+    with pytest.raises(ValueError, match="Unknown session: missing"):
+        cli._print_session_record(
+            manager,
+            resume_session_id="missing",
+            cwd=tmp_path,
+            settings=_constrained_provider_settings(),
+            provider_name=None,
+            model=None,
+            session_id=None,
+        )
+
+
+@pytest.mark.anyio
+async def test_print_resume_does_not_apply_hf_route_to_explicit_non_hf_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model = "shared-model"
+    settings = ProviderSettings(
+        default_provider="huggingface",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="huggingface",
+                models=(model,),
+                default_model=model,
+                inference_providers={model: "together"},
+            ),
+            OpenAICompatibleProviderConfig(
+                name="local",
+                base_url="http://localhost:11434/v1",
+                api_key_env="LOCAL_API_KEY",
+                models=(model,),
+                default_model=model,
+            ),
+        ),
+    )
+    manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
+    manager.create_session(
+        cwd=tmp_path,
+        model=model,
+        provider_name="huggingface",
+        inference_provider="together",
+        session_id="session-123",
+    )
+
+    lifecycle: list[str] = []
+
+    class ClosableFakeProvider(FakeProvider):
+        async def aclose(self) -> None:
+            lifecycle.append("provider_closed")
+
+    provider = ClosableFakeProvider([])
+    create_calls: list[tuple[str, str | None]] = []
+
+    def fake_create_model_provider(
+        provider_config: OpenAICompatibleProviderConfig,
+        *,
+        model: str,
+        inference_provider: str | None,
+        **kwargs: object,
+    ) -> ClosableFakeProvider:
+        del model, kwargs
+        lifecycle.append("provider_created")
+        create_calls.append((provider_config.name, inference_provider))
+        return provider
+
+    async def fake_run_print_mode(**kwargs: object) -> bool:
+        lifecycle.append("session_run")
+        resumed_record = manager.get_session("session-123")
+        storage = kwargs["storage"]
+        assert resumed_record is not None
+        assert isinstance(storage, JsonlSessionStorage)
+        assert kwargs["provider"] is provider
+        assert kwargs["provider_name"] == "local"
+        assert storage.path == resumed_record.path
+        return True
+
+    monkeypatch.setattr(cli, "load_provider_settings", lambda: settings)
+    monkeypatch.setattr(cli, "create_model_provider", fake_create_model_provider)
+    monkeypatch.setattr(cli, "run_print_mode", fake_run_print_mode)
+
+    ok = await cli.run_openai_print_mode(
+        "Follow up",
+        model,
+        tmp_path,
+        provider_name="local",
+        session_manager=manager,
+        resume_session_id="session-123",
+    )
+
+    assert ok is True
+    assert create_calls == [("local", None)]
+    assert lifecycle == ["provider_created", "session_run", "provider_closed"]
 
 
 def test_create_print_session_uses_requested_id_and_rejects_collision(tmp_path: Path) -> None:
@@ -1195,6 +1721,7 @@ async def test_export_session_command_writes_html_for_indexed_session(tmp_path: 
     assert "<title>Exported Session</title>" in html
     assert "Export this" in html
     assert str(record.path) in html
+    assert '<details class="system-prompt">' not in html
 
 
 @pytest.mark.anyio
@@ -1217,6 +1744,7 @@ async def test_export_session_command_writes_html_for_jsonl_path(tmp_path: Path)
     assert output_path == tmp_path / "session.html"
     assert "<title>Tau session session</title>" in html
     assert "Path export" in html
+    assert '<details class="system-prompt">' not in html
 
 
 @pytest.mark.anyio
@@ -1421,3 +1949,127 @@ def test_setup_command_warns_when_api_key_env_is_missing(
 
     assert result.exit_code == 0
     assert "Set MISSING_API_KEY before running Tau with this provider." in result.stderr
+
+
+@pytest.mark.parametrize("output", [PrintOutputMode.json, PrintOutputMode.transcript])
+@pytest.mark.anyio
+async def test_headless_ask_declines_without_corrupting_structured_stdout(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, output: PrintOutputMode
+) -> None:
+    (tmp_path / "AGENTS.md").write_text("PROTECTED-STRUCTURED-SECRET", encoding="utf-8")
+    provider = FakeProvider(
+        [[assistant_start(model="fake"), assistant_done(message=AssistantMessage(content="Done"))]]
+    )
+
+    ok = await run_print_mode(
+        prompt="Hello",
+        model="fake",
+        cwd=tmp_path,
+        provider=provider,
+        output=output,
+        resource_paths=TauResourcePaths(root=tmp_path / "home/.tau", agents_root=None),
+    )
+
+    captured = capsys.readouterr()
+    assert ok is True
+    assert "PROTECTED-STRUCTURED-SECRET" not in provider.calls[0][1]
+    assert "Project inputs" not in captured.out
+    assert "Project inputs" in captured.err
+
+
+def test_thinking_flag_forwards_to_tui_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+
+    async def fake_run_openai_tui(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs.get("thinking_level_override"))
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, ["--thinking", "high", "--new-session"])
+
+    assert result.exit_code == 0
+    assert calls == ["high"]
+
+
+def test_thinking_flag_forwards_to_print_mode_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+
+    async def fake_run_openai_print_mode(*args: object, **kwargs: object) -> bool:
+        calls.append(kwargs.get("thinking_level_override"))
+        return True
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_print_mode", fake_run_openai_print_mode)
+
+    result = CliRunner().invoke(app, ["--print", "-t", "low", "hello"])
+
+    assert result.exit_code == 0
+    assert calls == ["low"]
+
+
+def test_thinking_flag_forwards_to_rpc_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+
+    async def fake_run_openai_rpc_mode(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs.get("thinking_level_override"))
+
+    monkeypatch.setattr(cli, "run_openai_rpc_mode", fake_run_openai_rpc_mode)
+
+    result = CliRunner().invoke(app, ["--mode", "rpc", "--thinking", "xhigh"])
+
+    assert result.exit_code == 0
+    assert calls == ["xhigh"]
+
+
+def test_thinking_flag_rejects_invalid_level(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run_openai_tui(*args: object, **kwargs: object) -> None:
+        raise AssertionError("TUI must not start for an invalid thinking level")
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, ["--thinking", "maximum", "--new-session"])
+
+    assert result.exit_code == 2
+    assert "Unknown thinking mode: maximum" in _panel_text(result.output)
+
+
+def test_thinking_flag_accepts_case_insensitive_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+
+    async def fake_run_openai_tui(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs.get("thinking_level_override"))
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, ["-t", "HIGH", "--new-session"])
+
+    assert result.exit_code == 0
+    assert calls == ["high"]
+
+
+def test_thinking_flag_absent_forwards_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+
+    async def fake_run_openai_tui(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs.get("thinking_level_override"))
+
+    monkeypatch.setattr(cli, "_startup_update_notice", lambda: None)
+    monkeypatch.setattr(cli, "run_openai_tui", fake_run_openai_tui)
+
+    result = CliRunner().invoke(app, ["--new-session"])
+
+    assert result.exit_code == 0
+    assert calls == [None]
+
+
+def test_help_lists_thinking_option() -> None:
+    result = CliRunner().invoke(app, ["--help"], env={"COLUMNS": "160"})
+
+    output = re.sub(r"\s+", "", _strip_ansi(result.output))
+    assert result.exit_code == 0
+    assert "--thinking" in output

@@ -47,8 +47,9 @@ are called out inline as **Ruling:** notes.
   widgets** (`context.ui.components`: slot widgets, a main-area view, and
   pre-dispatch key interceptors), adopted as the committed design via the
   component-seam experiment (see the superseding Ruling under "Custom message
-  rendering" and `dev-notes/design/component-seam-experiment.md`). Custom
-  entry renderers remain out of scope.
+  rendering" and `dev-notes/design/component-seam-experiment.md`), plus
+  host-framed **sidebar sections** (`context.ui.sidebar`) whose stable keys are
+  isolated by extension ownership. Custom entry renderers remain out of scope.
 
 When any of these lands, design it from Pi's implementation first
 (`packages/coding-agent/src/core/extensions/` and `docs/extensions.md` in
@@ -170,14 +171,15 @@ class ExtensionAPI:
     ) -> None: ...
     async def append_entry(self, namespace: str, data: dict[str, JSONValue]) -> None: ...
     def notify(self, message: str, level: Literal["info", "warning", "error"] = "info") -> None: ...
+    def set_inference_provider(self, route: str | None) -> str: ...
 
-    # context (read-only)
+    # context (read-only; includes inference_provider)
     @property
     def context(self) -> ExtensionContext: ...
 ```
 
-`ExtensionContext` exposes `cwd`, `model`, `provider_name`, `session_id`,
-`system_prompt`, `is_running`, `has_ui`, and `transcript`. It is a live view
+`ExtensionContext` exposes `cwd`, `model`, `provider_name`, `inference_provider`, `session_id`,
+`session_name`, `thinking_level`, `system_prompt`, `is_running`, `has_ui`, and `transcript`. It is a live view
 over the bound `CodingSession`; action methods raise `ExtensionError` if
 called before binding (Pi's throwing-stubs-then-`bindCore` model).
 
@@ -326,7 +328,10 @@ sidebar, and `/session` counts like built-ins. Tool-attached
 `prompt_snippet`/`prompt_guidelines` flow into the system prompt as for
 built-ins, and `add_prompt_guideline` contributes standalone guideline
 lines through `BuildSystemPromptOptions.extra_guidelines` (rebuilt on
-`/reload` when they change).
+`/reload` when they change). Extensions that need structured always-on context
+use `add_prompt_section(title, body)`. These source-owned free-form blocks flow
+through `BuildSystemPromptOptions.extra_sections` after CLI/resource append
+content, retain registration order, and participate in reload change detection.
 
 ### Commands
 
@@ -708,8 +713,9 @@ of the newer API seams (manifest, dialogs, renderers, `on_update`,
   falling back to `send_user_message` on older builds — which also
   exercises the idle `turn_requested` path.
 
-Smaller examples: `hello_tool.py` (minimal tool) and `permission_gate.py`
-(`tool_call` blocking for dangerous bash commands).
+Smaller examples: `hello_tool.py` (minimal tool), `permission_gate.py`
+(`tool_call` blocking for dangerous bash commands), and `sidebar_status.py`
+(host-framed sidebar updates).
 
 ## Verification
 

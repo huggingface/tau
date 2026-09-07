@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from json import JSONDecodeError, dumps, loads
 from platform import machine, release, system
-from typing import Any
+from typing import Any, Literal, cast
 
 import httpx
 
@@ -45,12 +45,15 @@ from tau_ai.env import (
 from tau_ai.events import AssistantMessageEvent
 from tau_ai.http import create_async_client
 from tau_ai.http_errors import provider_http_error_message
+from tau_ai.model_catalog import RuntimeModel, RuntimeModelCatalog, RuntimeThinkingLevel
 from tau_ai.model_limits import RuntimeModelLimits
+from tau_ai.openai_cache import openai_prompt_cache_key
 from tau_ai.provider import CancellationToken
 from tau_ai.retry import provider_retry_event, retry_delay_seconds, wait_for_retry
 from tau_ai.stream import canonicalize_provider_stream
 
 DEFAULT_OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api"
+DEFAULT_OPENAI_CODEX_CLIENT_VERSION = "0.153.4"
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +65,7 @@ class OpenAICodexCredentials:
 
 
 type OpenAICodexCredentialResolver = Callable[[], Awaitable[OpenAICodexCredentials]]
+type OpenAICodexClientVersionResolver = Callable[[], Awaitable[str]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,9 +83,11 @@ class OpenAICodexConfig:
     reasoning_summary: str = "auto"
     supports_images: bool = False
     provider_name: str = "OpenAI Codex"
-    # The Codex catalog filters models by the official client's compatibility
-    # version. This is the oldest known version that advertises GPT-5.6.
-    client_version: str = "0.144.3"
+    # The endpoint requires an official Codex compatibility version and filters
+    # newer models from older clients. Tau resolves the latest release at runtime;
+    # this bundled value remains the offline/error fallback.
+    client_version: str = DEFAULT_OPENAI_CODEX_CLIENT_VERSION
+    client_version_resolver: OpenAICodexClientVersionResolver | None = None
     model_catalog_timeout_seconds: float = 5.0
 
 
@@ -97,6 +103,7 @@ class OpenAICodexProvider:
         self._config = config
         self._client = client
         self._owns_client = client is None
+        self._discovered_model_catalog: RuntimeModelCatalog | None = None
         self._discovered_model_limits: dict[str, RuntimeModelLimits] | None = None
 
     async def aclose(self) -> None:
@@ -105,13 +112,26 @@ class OpenAICodexProvider:
             await self._client.aclose()
             self._client = None
 
+    async def discover_models(self) -> RuntimeModelCatalog:
+        """Discover the authenticated account's selectable Codex models."""
+        await self._ensure_model_catalog()
+        assert self._discovered_model_catalog is not None
+        return self._discovered_model_catalog
+
     async def discover_model_limits(self, model: str) -> RuntimeModelLimits | None:
         """Discover model limits from the authenticated Codex model catalog."""
-        if self._discovered_model_limits is None:
-            self._discovered_model_limits = await self._fetch_model_limits()
+        await self._ensure_model_catalog()
+        assert self._discovered_model_limits is not None
         return self._discovered_model_limits.get(model)
 
-    async def _fetch_model_limits(self) -> dict[str, RuntimeModelLimits]:
+    async def _ensure_model_catalog(self) -> None:
+        if self._discovered_model_catalog is not None:
+            return
+        payload = await self._fetch_model_catalog()
+        self._discovered_model_catalog = _parse_codex_model_catalog(payload)
+        self._discovered_model_limits = _parse_codex_model_limits(payload)
+
+    async def _fetch_model_catalog(self) -> object:
         client = self._get_client()
         credentials = await self._config.credential_resolver()
         headers = _build_codex_headers(
@@ -122,14 +142,19 @@ class OpenAICodexProvider:
         )
         headers["accept"] = "application/json"
         headers.pop("content-type", None)
+        client_version = (
+            await self._config.client_version_resolver()
+            if self._config.client_version_resolver is not None
+            else self._config.client_version
+        )
         response = await client.get(
             _resolve_codex_models_url(self._config.base_url),
-            params={"client_version": self._config.client_version},
+            params={"client_version": client_version},
             headers=headers,
             timeout=self._config.model_catalog_timeout_seconds,
         )
         response.raise_for_status()
-        return _parse_codex_model_limits(response.json())
+        return response.json()
 
     def stream_response(
         self,
@@ -139,10 +164,16 @@ class OpenAICodexProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[AssistantMessageEvent]:
         """Stream one response as Pi-compatible assistant message events."""
         raw = self._stream_provider_events(
-            model=model, system=system, messages=messages, tools=tools, signal=signal
+            model=model,
+            system=system,
+            messages=messages,
+            tools=tools,
+            signal=signal,
+            session_id=session_id,
         )
         return canonicalize_provider_stream(
             raw, api="openai-codex-responses", provider="openai-codex", model=model
@@ -156,11 +187,13 @@ class OpenAICodexProvider:
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[ProviderEvent]:
         """Stream one Codex Responses request as provider-neutral events."""
 
         async def iterator() -> AsyncIterator[ProviderEvent]:
             client = self._get_client()
+            cache_key = openai_prompt_cache_key(session_id)
             payload = _build_codex_payload(
                 model=model,
                 system=system,
@@ -169,6 +202,7 @@ class OpenAICodexProvider:
                 reasoning_effort=self._config.reasoning_effort,
                 reasoning_summary=self._config.reasoning_summary,
                 supports_images=self._config.supports_images,
+                prompt_cache_key=cache_key,
             )
             url = _resolve_codex_url(self._config.base_url)
 
@@ -183,6 +217,7 @@ class OpenAICodexProvider:
                         access_token=credentials.access_token,
                         account_id=credentials.account_id,
                         originator=self._config.originator,
+                        session_id=cache_key,
                     )
                     async with client.stream(
                         "POST",
@@ -367,6 +402,7 @@ def _build_codex_payload(
     reasoning_effort: str | None = None,
     reasoning_summary: str = "auto",
     supports_images: bool = False,
+    prompt_cache_key: str | None = None,
 ) -> dict[str, JSONValue]:
     payload: dict[str, JSONValue] = {
         "model": model,
@@ -379,6 +415,8 @@ def _build_codex_payload(
         "tool_choice": "auto",
         "parallel_tool_calls": True,
     }
+    if prompt_cache_key is not None:
+        payload["prompt_cache_key"] = prompt_cache_key
     if reasoning_effort is not None:
         payload["reasoning"] = {
             "effort": reasoning_effort,
@@ -579,6 +617,12 @@ async def _codex_provider_events(
             if isinstance(delta, str) and delta:
                 thinking_parts.append(delta)
                 yield ProviderThinkingDeltaEvent(delta=delta)
+
+        elif event_type == "response.reasoning_summary_part.done":
+            if thinking_parts:
+                separator = "\n\n"
+                thinking_parts.append(separator)
+                yield ProviderThinkingDeltaEvent(delta=separator)
 
         elif event_type in {
             "response.output_item.done",
@@ -821,10 +865,8 @@ def _int_or_zero(value: object) -> int:
 def _usage_from_response(event: Mapping[str, Any]) -> Usage | None:
     """Parse billed usage from a Responses ``response.completed``-style event.
 
-    Ports Pi's openai-responses-shared.ts usage handling: ``cached_tokens`` are
-    cache reads and are subtracted from ``input_tokens`` to leave fresh input.
-    The Responses API does not report cache writes, so ``cache_write`` stays 0.
-    Cost is left unset (None) because Tau has no per-model pricing table.
+    Cache reads and writes are subtracted from ``input_tokens`` to leave fresh
+    input. Cost is left unset (None) because Tau has no per-model pricing table.
     """
     response = event.get("response")
     if not isinstance(response, Mapping):
@@ -838,6 +880,11 @@ def _usage_from_response(event: Mapping[str, Any]) -> Usage | None:
         if isinstance(input_details, Mapping)
         else 0
     )
+    cache_write = (
+        _int_or_zero(input_details.get("cache_write_tokens"))
+        if isinstance(input_details, Mapping)
+        else 0
+    )
     output_details = raw.get("output_tokens_details")
     # Leave reasoning None (not 0) when the provider reports no breakdown,
     # honoring the "None = not reported" contract on Usage.
@@ -847,10 +894,10 @@ def _usage_from_response(event: Mapping[str, Any]) -> Usage | None:
         else None
     )
     return Usage(
-        input=max(0, _int_or_zero(raw.get("input_tokens")) - cache_read),
+        input=max(0, _int_or_zero(raw.get("input_tokens")) - cache_read - cache_write),
         output=_int_or_zero(raw.get("output_tokens")),
         cache_read=cache_read,
-        cache_write=0,
+        cache_write=cache_write,
         reasoning=reasoning,
         total_tokens=_int_or_zero(raw.get("total_tokens")),
     )
@@ -949,6 +996,7 @@ def _build_codex_headers(
     access_token: str,
     account_id: str,
     originator: str,
+    session_id: str | None = None,
 ) -> dict[str, str]:
     headers = {
         **dict(configured_headers or {}),
@@ -960,6 +1008,8 @@ def _build_codex_headers(
         "accept": "text/event-stream",
         "content-type": "application/json",
     }
+    if session_id is not None:
+        headers["session-id"] = session_id
     return headers
 
 
@@ -981,6 +1031,88 @@ def _resolve_codex_models_url(base_url: str) -> str:
     return f"{normalized}/codex/models"
 
 
+def _parse_codex_model_catalog(payload: object) -> RuntimeModelCatalog:
+    """Parse models the Codex backend marks visible to ChatGPT accounts."""
+    if not isinstance(payload, Mapping):
+        return RuntimeModelCatalog(())
+    items = payload.get("models")
+    if not isinstance(items, list):
+        return RuntimeModelCatalog(())
+
+    candidates: list[tuple[int, int, RuntimeModel]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(items):
+        if not isinstance(item, Mapping):
+            continue
+        model_id = item.get("slug")
+        if (
+            not isinstance(model_id, str)
+            or not model_id
+            or model_id in seen
+            or item.get("visibility") != "list"
+        ):
+            continue
+        seen.add(model_id)
+        limits = _runtime_model_limits(item)
+        modalities = _codex_input_modalities(item.get("input_modalities"))
+        thinking_levels = _codex_thinking_levels(item.get("supported_reasoning_levels"))
+        default_thinking = _codex_thinking_level(item.get("default_reasoning_level"))
+        if default_thinking not in thinking_levels:
+            default_thinking = None
+        priority = item.get("priority")
+        candidates.append(
+            (
+                priority if isinstance(priority, int) and not isinstance(priority, bool) else 0,
+                index,
+                RuntimeModel(
+                    id=model_id,
+                    name=(
+                        item.get("display_name")
+                        if isinstance(item.get("display_name"), str) and item.get("display_name")
+                        else None
+                    ),
+                    limits=limits,
+                    input_modalities=modalities,
+                    thinking_levels=thinking_levels,
+                    default_thinking_level=default_thinking,
+                ),
+            )
+        )
+    candidates.sort(key=lambda candidate: (-candidate[0], candidate[1]))
+    return RuntimeModelCatalog(tuple(candidate[2] for candidate in candidates))
+
+
+def _codex_input_modalities(value: object) -> tuple[Literal["text", "image"], ...]:
+    # Official Codex clients treat an omitted field as legacy text+image support.
+    if value is None:
+        return ("text", "image")
+    if not isinstance(value, list):
+        return ("text",)
+    known: tuple[Literal["text", "image"], ...] = ("text", "image")
+    modalities = tuple(item for item in known if item in value)
+    return modalities or ("text",)
+
+
+def _codex_thinking_levels(value: object) -> tuple[RuntimeThinkingLevel, ...]:
+    if not isinstance(value, list):
+        return ()
+    levels: list[RuntimeThinkingLevel] = []
+    for item in value:
+        raw = item.get("effort") if isinstance(item, Mapping) else None
+        level = _codex_thinking_level(raw)
+        if level is not None and level not in levels:
+            levels.append(level)
+    return tuple(levels)
+
+
+def _codex_thinking_level(value: object) -> RuntimeThinkingLevel | None:
+    if value == "none":
+        return "off"
+    if value in {"minimal", "low", "medium", "high", "xhigh", "max"}:
+        return cast(RuntimeThinkingLevel, value)
+    return None
+
+
 def _parse_codex_model_limits(payload: object) -> dict[str, RuntimeModelLimits]:
     if not isinstance(payload, Mapping):
         return {}
@@ -993,21 +1125,28 @@ def _parse_codex_model_limits(payload: object) -> dict[str, RuntimeModelLimits]:
         if not isinstance(item, Mapping):
             continue
         model = item.get("slug")
-        context_window = _positive_int(item.get("context_window")) or _positive_int(
-            item.get("max_context_window")
-        )
-        if not isinstance(model, str) or not model or context_window is None:
+        limits = _runtime_model_limits(item)
+        if not isinstance(model, str) or not model or limits is None:
             continue
-        effective_percent = _positive_int(item.get("effective_context_window_percent")) or 100
-        if effective_percent > 100:
-            continue
-        parsed[model] = RuntimeModelLimits(
-            context_window=context_window,
-            max_output_tokens=_positive_int(item.get("max_output_tokens")),
-            effective_context_window_percent=effective_percent,
-            auto_compact_token_limit=_positive_int(item.get("auto_compact_token_limit")),
-        )
+        parsed[model] = limits
     return parsed
+
+
+def _runtime_model_limits(item: Mapping[object, object]) -> RuntimeModelLimits | None:
+    context_window = _positive_int(item.get("context_window")) or _positive_int(
+        item.get("max_context_window")
+    )
+    if context_window is None:
+        return None
+    effective_percent = _positive_int(item.get("effective_context_window_percent")) or 100
+    if effective_percent > 100:
+        return None
+    return RuntimeModelLimits(
+        context_window=context_window,
+        max_output_tokens=_positive_int(item.get("max_output_tokens")),
+        effective_context_window_percent=effective_percent,
+        auto_compact_token_limit=_positive_int(item.get("auto_compact_token_limit")),
+    )
 
 
 def _positive_int(value: object) -> int | None:
