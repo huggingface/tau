@@ -2981,6 +2981,36 @@ async def test_tau_markdown_block_remains_selectable_after_mount() -> None:
 
 
 @pytest.mark.anyio
+async def test_detached_transcript_message_ignores_stale_selection_hit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        widget = StreamingTranscriptMessageWidget(
+            ChatItem(role="assistant", text="Select this message."), theme=TAU_DARK_THEME
+        )
+        assert widget.allow_select is False
+        await app.query_one("#transcript").mount(widget)
+        await widget.finalize()
+        await pilot.pause()
+        assert widget.allow_select is True
+        await widget.remove()
+        assert widget.parent is None
+        assert widget.allow_select is False
+
+        # Model a compositor hit left over from before the widget was removed.
+        from textual.geometry import Offset
+
+        monkeypatch.setattr(
+            app.screen, "get_widget_and_offset_at", lambda x, y: (widget, Offset(0, 0))
+        )
+        app.screen._forward_event(events.MouseDown(None, 1, 1, 0, 0, 1, False, False, False))
+        assert app.screen._select_state is None
+        await pilot.pause()
+
+
+@pytest.mark.anyio
 async def test_tui_app_disables_text_selection_while_agent_is_running() -> None:
     app = TauTuiApp(FakeSession())
 

@@ -315,6 +315,15 @@ class TauMarkdownFence(MarkdownFence):
 class ThemedMarkdownWidget(TextualMarkdown):
     """Textual Markdown widget reserved for Tau transcript streaming."""
 
+    @property
+    def allow_select(self) -> bool:
+        """Ignore stale mouse hits after a transcript widget is detached.
+
+        Textual's selection startup dereferences the selected widget's parent.
+        Its compositor can still return a removed widget before the next layout.
+        """
+        return self.parent is not None and super().allow_select
+
     BLOCKS = {
         **TextualMarkdown.BLOCKS,
         "paragraph_open": TauMarkdownBlock,
