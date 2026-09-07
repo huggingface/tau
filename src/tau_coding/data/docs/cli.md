@@ -7,8 +7,9 @@ CLI entry point is `tau_coding.cli:app`.
 
 ## Local inference
 
-`/local` is interactive-only. It opens the provider-neutral local-backend host
-in the TUI; print mode never runs setup, probes endpoints, or picks a model
+`/local` and `/sidebar` are interactive-only. `/local` opens the provider-neutral
+local-backend host in the TUI; `/sidebar` toggles the session sidebar. Print mode
+never runs setup, probes endpoints, or picks a model
 implicitly. Configure llama.cpp through `/local`, then use its exact provider
 and model explicitly in headless mode:
 

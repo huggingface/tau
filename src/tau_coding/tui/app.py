@@ -3334,6 +3334,16 @@ class TauTuiApp(App[None]):
         border: tall $tau-border;
     }
 
+    ListView {
+        scrollbar-background: $tau-transcript-background;
+        scrollbar-color: $tau-border;
+        scrollbar-color-hover: $tau-highlight-background;
+        scrollbar-background-hover: $tau-transcript-background;
+        scrollbar-color-active: $tau-accent;
+        scrollbar-background-active: $tau-transcript-background;
+        scrollbar-size-vertical: 2;
+    }
+
     ListView > ListItem.-highlight {
         background: $tau-highlight-background;
         color: $tau-highlight-text;
@@ -3804,6 +3814,9 @@ class TauTuiApp(App[None]):
         legacy_notices = (startup_notice,) if startup_notice else ()
         self.startup_notices = tuple((*startup_notices, *legacy_notices))
         self.initial_prompt = initial_prompt
+        # This override is deliberately separate from durable settings. It is
+        # reset with every app instance and never participates in tui.json.
+        self._sidebar_visibility_override: bool | None = None
         super().__init__()
         self._register_tau_textual_themes()
         # Assign the resolved theme's name: it is always registered, while the
@@ -4270,6 +4283,8 @@ class TauTuiApp(App[None]):
                 self._open_custom_provider_login()
             if command.local_requested:
                 self._open_local_backend_picker()
+            if command.sidebar_toggle_requested:
+                self._toggle_sidebar_visibility()
             if command.login_provider is not None:
                 self._open_login(command.login_provider, method=command.login_method)
             if command.logout_picker_requested:
@@ -6705,17 +6720,30 @@ class TauTuiApp(App[None]):
         )
 
     def _update_responsive_layout(self, width: int, height: int) -> None:
-        if self.tui_settings.sidebar_position == "off":
-            return
-        show_sidebar = width >= SIDEBAR_MIN_WIDTH and height >= SIDEBAR_MIN_HEIGHT
+        if self._sidebar_visibility_override is not None:
+            show_sidebar = self._sidebar_visibility_override
+        elif self.tui_settings.sidebar_position == "off":
+            show_sidebar = False
+        else:
+            show_sidebar = width >= SIDEBAR_MIN_WIDTH and height >= SIDEBAR_MIN_HEIGHT
         self.set_class(not show_sidebar, "-hide-sidebar")
 
     def _apply_sidebar_position(self) -> None:
-        """Apply CSS classes for the configured sidebar position."""
+        """Apply the configured (or off-setting fallback) sidebar position."""
         pos = self.tui_settings.sidebar_position
-        self.set_class(pos == "right", "-sidebar-right")
-        if pos == "off":
-            self.add_class("-hide-sidebar")
+        # A configured ``off`` has no prior visible position, so an explicit
+        # session-only show uses the normal right-hand placement.
+        show_right = pos == "right" or (pos == "off" and self._sidebar_visibility_override is True)
+        self.set_class(show_right, "-sidebar-right")
+
+    def _toggle_sidebar_visibility(self) -> None:
+        """Toggle sidebar visibility without changing durable TUI settings."""
+        currently_visible = not self.has_class("-hide-sidebar")
+        self._sidebar_visibility_override = not currently_visible
+        self._apply_sidebar_position()
+        self._update_responsive_layout(self.size.width, self.size.height)
+        state = "shown" if self._sidebar_visibility_override else "hidden"
+        self._notify(f"Sidebar {state} for this session.")
 
     def _build_completion_state(self, text: str) -> CompletionState:
         registry = _session_command_registry(self.session)

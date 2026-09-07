@@ -80,6 +80,24 @@ Project extensions cannot approve themselves. They execute arbitrary Python and
 remain disabled without both approval and the explicit code opt-in. Trust is not
 a process/filesystem/network/tool/model sandbox.
 
+## Resolved filesystem paths
+
+`tau.context.paths` is a read-only `TauPaths` snapshot for the active session.
+If `TauResourcePaths.paths` was supplied by the host, it is authoritative and
+preserves custom `TauPaths.home` and `TauPaths.agents_home` locations. Without
+an explicit `TauPaths`, Tau derives one as
+`TauPaths(home=resource_paths.root, agents_home=resource_paths.agents_root or ~/.agents)`.
+Thus `root`/`home` controls Tau's user data and extension directory, while
+`agents_root`/`agents_home` controls `.agents` resources; the project `cwd`
+remains separate. `ExtensionRuntime(paths=custom_paths)` exposes those
+constructor paths immediately, before `load`; a later `load` makes its
+`TauResourcePaths` snapshot authoritative.
+
+The snapshot belongs to the extension generation. After `/reload` (and other
+fresh-generation replacement flows), a context captured from the outgoing
+generation is stale: even reading `context.paths` raises `ExtensionError`. Read
+`context.paths` again from the new generation's context.
+
 ## Dynamic providers
 
 `tau.register_provider(DynamicProvider(...))` adds a frontend-free provider layer

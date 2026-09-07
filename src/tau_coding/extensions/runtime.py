@@ -248,6 +248,9 @@ class ExtensionRuntime:
         self._renderer_failures_reported: set[str] = set()
         self._load_diagnostics: list[ResourceDiagnostic] = []
         self._runtime_diagnostics: list[ResourceDiagnostic] = []
+        # Keep constructor-provided paths visible until ``load`` installs the
+        # authoritative resource-path snapshot.
+        self._paths: TauPaths = paths or TauPaths()
         self._session: BoundSession | None = None
         self._ui: UiBridge = ui or NullUiBridge()
         self._turn_requested: TurnRequestedCallback | None = None
@@ -266,6 +269,10 @@ class ExtensionRuntime:
         include_user_dir: bool = True,
     ) -> None:
         """Load built-ins, then discover extensions and run isolated setup."""
+        self._paths = paths.paths or TauPaths(
+            home=paths.root,
+            agents_home=paths.agents_root or Path.home() / ".agents",
+        )
         self._load_built_ins()
         result = load_extensions(
             paths,
@@ -850,6 +857,11 @@ class ExtensionRuntime:
     def local_backend_registry(self) -> LocalBackendRegistry:
         """Return this staged runtime generation's local-backend registry."""
         return self._local_backend_registry
+
+    @property
+    def paths(self) -> TauPaths:
+        """Return the resolved Tau filesystem paths for this runtime."""
+        return self._paths
 
     @property
     def extension_names(self) -> tuple[str, ...]:
