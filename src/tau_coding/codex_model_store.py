@@ -142,7 +142,7 @@ def _model_from_json(value: object) -> RuntimeModel | None:
     modalities = tuple(
         cast(RuntimeInputModality, modality)
         for modality in modalities_value
-        if modality in {"text", "image"}
+        if isinstance(modality, str) and modality in {"text", "image"}
     )
     if len(modalities) != len(modalities_value) or len(set(modalities)) != len(modalities):
         return None
@@ -151,7 +151,8 @@ def _model_from_json(value: object) -> RuntimeModel | None:
     thinking_levels = tuple(
         cast(RuntimeThinkingLevel, level)
         for level in thinking_value
-        if level in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+        if isinstance(level, str)
+        and level in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
     )
     if len(thinking_levels) != len(thinking_value) or len(set(thinking_levels)) != len(
         thinking_levels

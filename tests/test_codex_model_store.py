@@ -1,4 +1,7 @@
+import json
 from pathlib import Path
+
+import pytest
 
 from tau_ai.model_catalog import RuntimeModel, RuntimeModelCatalog
 from tau_ai.model_limits import RuntimeModelLimits
@@ -34,6 +37,28 @@ def test_codex_model_catalog_round_trips_with_account_scope(tmp_path: Path) -> N
     assert path == paths.codex_models_store_path
     assert cached_codex_model_catalog(paths, account_id="other-account") is None
     assert cached_codex_model_catalog(paths, account_id="account-1") == catalog
+
+
+@pytest.mark.parametrize("field", ["input_modalities", "thinking_levels"])
+@pytest.mark.parametrize("invalid_item", [{}, [], None, 1, True, "unknown"])
+def test_codex_model_catalog_cache_rejects_invalid_model_values(
+    tmp_path: Path, field: str, invalid_item: object
+) -> None:
+    paths = TauPaths(home=tmp_path)
+    model = {
+        "id": "gpt-live",
+        "input_modalities": ["text"],
+        "thinking_levels": ["low"],
+    }
+    document = {
+        "schema_version": 1,
+        "account_id": "account-1",
+        "catalog": {"models": [model]},
+    }
+    model[field] = [invalid_item]
+    paths.codex_models_store_path.write_text(json.dumps(document), encoding="utf-8")
+
+    assert cached_codex_model_catalog(paths, account_id="account-1") is None
 
 
 def test_codex_model_catalog_cache_rejects_invalid_documents(tmp_path: Path) -> None:
