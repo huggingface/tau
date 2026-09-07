@@ -13,6 +13,7 @@ The initial field-guide treatment was rejected as too close to the existing webs
 - `website/layouts/partials/manifold.html` remains the original static SVG fallback when JavaScript or canvas is unavailable. Animation controls appear only after successful canvas initialization.
 - `website/assets/css/atlas.css` defines the new identity for all page types. Hugo concatenates it with the shared component stylesheet and fingerprints the production asset. The prior `editorial.css` is replaced, not layered underneath it.
 - `website/assets/js/atlas.js` powers four native buttons in the loop exhibit. The selected state uses `aria-pressed`; explanations update in a polite live region. It is explicitly a schematic, not a fake live agent session. Without JavaScript, the first explanation remains readable.
+- The three-layer section now uses a connected runtime diagram instead of isolated decorative cards. It reads from the app (`tau_coding`) through the loop (`tau_agent`) to the model connection (`tau_ai`), with labeled request/response arrows. A concrete “Explain this project” example shows the loop executing an app-supplied `read` tool and returning results to the model. The caption distinguishes runtime communication from one-way Python dependencies. Mobile stacks the same semantic HTML with vertical arrows; no new animation or JavaScript is required.
 - Documentation retains a restrained white reading surface, with the new type, navigation, code blocks, accent colors, and responsive sidebar. Releases, roadmap, math essays, search, and 404 share the same identity.
 - The skip link, main landmark, visible touch copy controls, clipboard error handling, and reduced-motion support from the first pass remain.
 
@@ -33,8 +34,9 @@ node --check website/assets/js/atlas.js
 node --check website/assets/js/manifold.js
 node --check website/static/landing.js
 uv run --with playwright python website/tests/hero_smoke.py /tmp/tau-atlas-preview
-uv run ruff check website/tests/hero_smoke.py
-uv run ruff format --check website/tests/hero_smoke.py
+uv run --with playwright python website/tests/architecture_smoke.py /tmp/tau-atlas-preview
+uv run ruff check website/tests/hero_smoke.py website/tests/architecture_smoke.py
+uv run ruff format --check website/tests/hero_smoke.py website/tests/architecture_smoke.py
 git diff --check
 ```
 

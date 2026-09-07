@@ -49,21 +49,57 @@
     <div class="atlas-premise-bottom"><span class="premise-asterisk" aria-hidden="true">✳</span><p>The model responds. The loop runs tools. The session keeps the history. Tau separates these parts so you can understand and change each one.</p><a class="atlas-text-link" href="{{ "/internals/architecture/" | relURL }}">Read the architecture ↗</a></div>
   </section>
 
-  <section class="atlas-anatomy">
+  <section class="atlas-anatomy" aria-labelledby="architecture-heading">
     <div class="wrap">
-      <div class="atlas-section-label"><span>02 / THE ANATOMY</span><span>Each part has a job.</span></div>
-      <div class="atlas-anatomy-head"><h2>Three layers.<br>One agent.</h2><p>Start with the model.<br>Then add tools and a terminal.</p></div>
-      <div class="atlas-stack">
-        <a class="atlas-layer" href="{{ "/internals/architecture/" | relURL }}#tau_ai--talking-to-models">
-          <span class="layer-number">01</span><div class="layer-visual visual-stream" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="atlas-label">tau_ai / the signal</span><h3>Models → streams</h3><p>Provider adapters translate model output into neutral events. One interface, independent of the provider.</p><span class="layer-bottom">Explore the provider layer <b>↗</b></span>
-        </a>
-        <a class="atlas-layer" href="{{ "/internals/architecture/" | relURL }}#tau_agent--the-portable-brain">
-          <span class="layer-number">02</span><div class="layer-visual visual-loop" aria-hidden="true"><i></i><i></i><span>↗</span></div><span class="atlas-label">tau_agent / the engine</span><h3>Events → actions</h3><p>The portable harness: messages, tools, transcript state, cancellation, and the loop that connects them.</p><span class="layer-bottom">Explore the agent harness <b>↗</b></span>
-        </a>
-        <a class="atlas-layer" href="{{ "/internals/architecture/" | relURL }}#tau_coding--the-coding-application">
-          <span class="layer-number">03</span><div class="layer-visual visual-interface" aria-hidden="true"><i>τ ›<span>_</span></i></div><span class="atlas-label">tau_coding / the environment</span><h3>Actions → a workflow</h3><p>The coding environment: files, shell commands, saved sessions, skills, and a terminal UI.</p><span class="layer-bottom">Explore the coding app <b>↗</b></span>
-        </a>
+      <div class="atlas-section-label"><span>02 / HOW THE PARTS CONNECT</span><span>From your terminal to the model and back.</span></div>
+      <div class="atlas-anatomy-head">
+        <h2 id="architecture-heading">Three layers. <br>One agent.</h2>
+        <p>The app handles your workspace. The loop coordinates the work. The model connection handles the AI provider.</p>
       </div>
+      <figure class="architecture-map" aria-describedby="architecture-caption">
+        <div class="architecture-endpoints"><span>You work here</span><span>The AI connects here</span></div>
+        <div class="architecture-flow">
+          <article class="architecture-node architecture-app">
+            <span class="architecture-role">01 / Your workspace</span>
+            <h3>The app</h3>
+            <a class="architecture-package" href="{{ "/internals/architecture/" | relURL }}#tau_coding--the-coding-application">tau_coding <span aria-hidden="true">↗</span></a>
+            <p>Takes your prompt, supplies coding tools, and shows the answer.</p>
+            <ul><li>Terminal interface</li><li>Files and shell tools</li><li>Saved sessions</li></ul>
+          </article>
+          <div class="architecture-connector" role="img" aria-label="App to loop: prompt and tools. Loop to app: progress and results.">
+            <span>prompt + tools</span><b class="connector-out" aria-hidden="true"></b>
+            <b class="connector-back" aria-hidden="true"></b><span>progress + results</span>
+          </div>
+          <article class="architecture-node architecture-agent">
+            <span class="architecture-role">02 / The coordinator</span>
+            <h3>The agent loop</h3>
+            <a class="architecture-package" href="{{ "/internals/architecture/" | relURL }}#tau_agent--the-portable-brain">tau_agent <span aria-hidden="true">↗</span></a>
+            <p>Asks the model what to do, runs requested tools, and sends their results back.</p>
+            <ul><li>Conversation state</li><li>Tool execution</li><li>Repeat until done</li></ul>
+          </article>
+          <div class="architecture-connector" role="img" aria-label="Loop to model connection: model request. Model connection to loop: text and tool requests.">
+            <span>model request</span><b class="connector-out" aria-hidden="true"></b>
+            <b class="connector-back" aria-hidden="true"></b><span>text + tool requests</span>
+          </div>
+          <article class="architecture-node architecture-model">
+            <span class="architecture-role">03 / The translator</span>
+            <h3>The model connection</h3>
+            <a class="architecture-package" href="{{ "/internals/architecture/" | relURL }}#tau_ai--talking-to-models">tau_ai <span aria-hidden="true">↗</span></a>
+            <p>Talks to your chosen AI provider and turns its responses into a shared format.</p>
+            <ul><li>Provider API calls</li><li>Streaming responses</li><li>One format for the loop</li></ul>
+          </article>
+        </div>
+        <figcaption id="architecture-caption">Requests go toward the model; text, tool requests, and results flow back. These arrows show communication, not code dependencies.</figcaption>
+      </figure>
+      <div class="architecture-example">
+        <div class="architecture-example-heading"><span class="atlas-label">One request, end to end</span><p><span aria-hidden="true">τ › </span>“Explain this project.”</p></div>
+        <ol>
+          <li><strong>You ask.</strong><span>The app passes your prompt and available tools to the loop. The loop asks the model through <code>tau_ai</code>.</span></li>
+          <li><strong>Tau reads.</strong><span>If the model asks for a file, the loop runs the app's <code>read</code> tool and sends the contents back to the model.</span></li>
+          <li><strong>You get an answer.</strong><span>The model uses that context to respond. The loop streams progress to the app, which displays and saves the conversation.</span></li>
+        </ol>
+      </div>
+      <div class="architecture-takeaway"><p><strong>Why separate them?</strong> You can change the interface or the model provider without rewriting the agent loop.</p><a class="atlas-text-link" href="{{ "/internals/architecture/" | relURL }}">Read the architecture <span aria-hidden="true">↗</span></a></div>
     </div>
   </section>
 
