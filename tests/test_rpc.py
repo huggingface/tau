@@ -15,6 +15,7 @@ from tau_coding import (
     CodingSession,
     CodingSessionConfig,
     ModelChoice,
+    OpenAICodexProviderConfig,
     OpenAICompatibleProviderConfig,
     ProviderSettings,
     SessionManager,
@@ -189,6 +190,42 @@ async def test_rpc_model_shape_uses_catalog_metadata(
         "maxTokens": 32768,
         "cost": {"input": 1.0, "output": 2.0, "cacheRead": 0.0, "cacheWrite": 0.0},
     }
+
+
+@pytest.mark.anyio
+async def test_rpc_subscription_model_omits_catalog_cost(tmp_path: Path) -> None:
+    model = "gpt-5.6-sol"
+    provider_config = OpenAICodexProviderConfig(
+        models=(model,),
+        default_model=model,
+        model_metadata={model: ProviderModelMetadata(cost={"input": 5.0, "output": 30.0})},
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model=model,
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai-codex",
+            provider_settings=ProviderSettings(
+                default_provider="openai-codex", providers=(provider_config,)
+            ),
+        )
+    )
+    stdin = StringIO('{"id":"state","type":"get_state"}\n')
+    stdout = StringIO()
+
+    await RpcServer(session, stdin=stdin, stdout=stdout).run()
+
+    model_wire = json.loads(stdout.getvalue())["data"]["model"]
+    assert model_wire["cost"] == {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0,
+    }
+    await session.aclose()
 
 
 @pytest.mark.anyio

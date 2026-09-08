@@ -47,6 +47,7 @@ from tau_ai import (
 )
 from tau_ai.events import AssistantMessageEvent
 from tau_coding import (
+    AnthropicProviderConfig,
     CodingSession,
     CodingSessionConfig,
     FileCredentialStore,
@@ -106,7 +107,13 @@ def _assert_messages(actual: object, expected: object) -> None:
     def dump(message: object) -> object:
         model_dump = getattr(message, "model_dump", None)
         if callable(model_dump):
-            return model_dump(exclude={"timestamp", "timing"})
+            return model_dump(
+                exclude={
+                    "timestamp": True,
+                    "timing": True,
+                    "usage": {"pricing_mode"},
+                }
+            )
         return message
 
     assert [dump(message) for message in actual] == [dump(message) for message in expected]  # type: ignore[union-attr]
@@ -3861,6 +3868,163 @@ async def test_session_uses_live_provider_limits_for_compaction_threshold(
     assert session.auto_compact_token_threshold == 334_800
     assert session.context_window_source == "provider live catalog"
     assert session.model_limits_discovery_error is None
+
+
+@pytest.mark.anyio
+async def test_session_marks_codex_subscription_usage_without_estimated_cost(
+    tmp_path: Path,
+) -> None:
+    tau_paths = TauPaths(home=tmp_path / ".tau")
+    model = "gpt-5.6-sol"
+    settings = ProviderSettings(
+        default_provider="openai-codex",
+        providers=(
+            OpenAICodexProviderConfig(
+                models=(model,),
+                default_model=model,
+                model_metadata={
+                    model: ProviderModelMetadata(
+                        cost={
+                            "input": 5.0,
+                            "output": 30.0,
+                            "cacheRead": 0.5,
+                            "cacheWrite": 0.0,
+                        }
+                    )
+                },
+            ),
+        ),
+    )
+    provider = FakeProvider(
+        [
+            [
+                assistant_done(
+                    AssistantMessage(
+                        provider="openai-codex",
+                        model=model,
+                        content="Done.",
+                        usage=Usage(input=1_000_000, output=20_000),
+                    )
+                )
+            ]
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model=model,
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="openai-codex",
+            provider_settings=settings,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    try:
+        await _collect_session_events(session.prompt("Finish the task."))
+        assistant = next(
+            entry.message
+            for entry in await session.session_entries()
+            if isinstance(entry, MessageEntry) and isinstance(entry.message, AssistantMessage)
+        )
+
+        assert assistant.usage.pricing_mode == "subscription"
+        assert session.session_stats.estimated_cost is None
+    finally:
+        await session.aclose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("oauth", [False, True])
+async def test_session_pricing_respects_anthropic_auth_mode(
+    tmp_path: Path,
+    oauth: bool,
+) -> None:
+    tau_paths = TauPaths(home=tmp_path / ".tau")
+    credential_store = FileCredentialStore(tau_paths.home / "credentials.json")
+    if oauth:
+        credential_store.set_oauth(
+            "anthropic",
+            OAuthCredential(
+                access="access-token",
+                refresh="refresh-token",
+                expires=4_000_000_000,
+            ),
+        )
+    else:
+        credential_store.set("anthropic", "api-key")
+    model = "claude-sonnet-4-6"
+    settings = ProviderSettings(
+        default_provider="anthropic",
+        providers=(
+            AnthropicProviderConfig(
+                models=(model,),
+                default_model=model,
+                model_metadata={
+                    model: ProviderModelMetadata(
+                        cost={
+                            "input": 3.0,
+                            "output": 15.0,
+                            "cacheRead": 0.3,
+                            "cacheWrite": 0.0,
+                        }
+                    )
+                },
+            ),
+        ),
+    )
+    provider = FakeProvider(
+        [
+            [
+                assistant_done(
+                    AssistantMessage(
+                        provider="anthropic",
+                        model=model,
+                        content="Done.",
+                        usage=Usage(input=1_000_000, output=20_000),
+                    )
+                )
+            ]
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model=model,
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            provider_name="anthropic",
+            provider_settings=settings,
+            resource_paths=TauResourcePaths(root=tau_paths.home, paths=tau_paths),
+        )
+    )
+
+    try:
+        await _collect_session_events(session.prompt("Finish the task."))
+        assistant = next(
+            entry.message
+            for entry in await session.session_entries()
+            if isinstance(entry, MessageEntry) and isinstance(entry.message, AssistantMessage)
+        )
+
+        assert assistant.usage.pricing_mode == ("subscription" if oauth else "api")
+        assert session.session_stats.estimated_cost == (None if oauth else 3.3)
+        if not oauth:
+            credential_store.set_oauth(
+                "anthropic",
+                OAuthCredential(
+                    access="access-token",
+                    refresh="refresh-token",
+                    expires=4_000_000_000,
+                ),
+            )
+            assert session.provider_uses_subscription_auth("anthropic") is True
+            assert session.session_stats.estimated_cost == 3.3
+    finally:
+        await session.aclose()
 
 
 @pytest.mark.anyio

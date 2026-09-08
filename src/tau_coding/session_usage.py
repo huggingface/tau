@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from tau_agent.messages import AssistantMessage
+from tau_agent.messages import AssistantMessage, PricingMode
 from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
@@ -19,6 +19,9 @@ from tau_agent.session import (
 from tau_coding.provider_catalog import builtin_provider_entry, model_cost_for_input_tokens
 from tau_coding.session_stats import _response_cost
 from tau_coding.tui.themes import TAU_DARK_THEME, TAU_LIGHT_THEME
+
+_SUBSCRIPTION_PROVIDERS = frozenset({"openai-codex", "github-copilot"})
+
 
 __all__ = [
     "RequestUsage",
@@ -48,6 +51,7 @@ class RequestUsage:
     reasoning: int
     stop_reason: str
     estimated_cost: float | None
+    pricing_mode: PricingMode | None
 
     @property
     def prompt(self) -> int:
@@ -120,8 +124,11 @@ def estimated_request_cost(
     cache_write: int,
     cache_write_1h: int,
     output: int,
+    pricing_mode: PricingMode | None = None,
 ) -> float | None:
     """Estimate a request cost in USD from the built-in provider catalog rates."""
+    if pricing_mode == "subscription" or provider in _SUBSCRIPTION_PROVIDERS:
+        return None
     entry = builtin_provider_entry(provider)
     metadata = entry.model_metadata.get(model) if entry is not None else None
     if metadata is None:
@@ -174,6 +181,7 @@ def collect_session_usage(entries: Sequence[SessionEntry]) -> SessionUsage:
             cache_write=usage.cache_write,
             cache_write_1h=cache_write_1h,
             output=usage.output,
+            pricing_mode=usage.pricing_mode,
         )
         if estimated is None and usage.cost.total > 0:
             estimated = usage.cost.total
@@ -193,6 +201,7 @@ def collect_session_usage(entries: Sequence[SessionEntry]) -> SessionUsage:
                 reasoning=usage.reasoning or 0,
                 stop_reason=message.stop_reason,
                 estimated_cost=estimated,
+                pricing_mode=usage.pricing_mode,
             )
         )
         events.extend(
@@ -484,8 +493,8 @@ def render_usage_dashboard(usage: SessionUsage) -> str:
 
     return (
         f'<div class="usage-cards">{cards_html}</div>'
-        '<p class="usage-note">Costs use Tau\'s provider catalog rates. OAuth subscription '
-        "estimates are API-rate equivalents, not actual subscription charges. Hover a request "
+        '<p class="usage-note">Costs use Tau\'s provider catalog rates. Subscription-backed '
+        "requests are shown without API-equivalent dollar estimates. Hover a request "
         "for exact values, select a legend item to hide a series, and use PNG to save a "
         "chart. Event markers show compactions, model or thinking changes, and branch summaries."
         "</p>"

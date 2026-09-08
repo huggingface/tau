@@ -10,12 +10,13 @@ from tau_agent.session import MessageEntry
 from tau_agent.session.entries import SessionEntry
 
 PricingResolver = Callable[[str, str, int], Mapping[str, float] | None]
+SubscriptionPricingResolver = Callable[[str], bool]
 _TOKENS_PER_MILLION = 1_000_000
 
 
 @dataclass(frozen=True, slots=True)
 class SessionStats:
-    """Cumulative activity and billed usage for one active branch."""
+    """Cumulative activity and estimated usage for one active branch."""
 
     turn_count: int = 0
     tool_call_count: int = 0
@@ -72,6 +73,7 @@ def calculate_session_stats(
     entries: Sequence[SessionEntry],
     *,
     pricing: PricingResolver,
+    subscription_pricing: SubscriptionPricingResolver | None = None,
 ) -> SessionStats:
     """Aggregate original branch messages, including messages replaced by compaction."""
     turn_count = 0
@@ -124,6 +126,19 @@ def calculate_session_stats(
             continue
 
         has_billable_usage = True
+        is_subscription = usage.pricing_mode == "subscription" or (
+            usage.pricing_mode is None
+            and subscription_pricing is not None
+            and subscription_pricing(message.provider)
+        )
+        if is_subscription:
+            if usage.cost.total > 0:
+                # A provider-reported cost is still useful when a subscription
+                # endpoint explicitly reports a charge.
+                estimated_cost += usage.cost.total
+            else:
+                has_complete_pricing = False
+            continue
         rates = pricing(message.provider, message.model, prompt_tokens)
         if rates is None:
             if usage.cost.total > 0:

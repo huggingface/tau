@@ -42,6 +42,9 @@ class UsageCost(WireModel):
     total: float = 0.0
 
 
+PricingMode = Literal["api", "subscription"]
+
+
 class Usage(WireModel):
     """Provider-reported token usage for one assistant response."""
 
@@ -53,6 +56,9 @@ class Usage(WireModel):
     reasoning: int | None = None
     total_tokens: int = 0
     cost: UsageCost = UsageCost()
+    # Coding-session hosts set this when the request used subscription OAuth.
+    # ``None`` preserves compatibility with provider-neutral and legacy messages.
+    pricing_mode: PricingMode | None = None
 
 
 class ResponseTiming(WireModel):

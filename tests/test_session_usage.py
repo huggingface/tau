@@ -95,6 +95,22 @@ def test_collect_session_usage_estimates_cost_from_catalog() -> None:
     assert unknown.requests[0].estimated_cost is None
 
 
+def test_collect_session_usage_excludes_subscription_pricing() -> None:
+    usage = collect_session_usage(
+        [
+            _assistant(
+                "a1",
+                provider="openai-codex",
+                model="gpt-5.6-sol",
+                usage=Usage(input=1_000_000, output=20_000, pricing_mode="subscription"),
+            )
+        ]
+    )
+
+    assert usage.requests[0].estimated_cost is None
+    assert usage.total_cost is None
+
+
 def test_collect_session_usage_falls_back_to_reported_cost_and_keeps_partial_total() -> None:
     usage = collect_session_usage(
         [
