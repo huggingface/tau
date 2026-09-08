@@ -31,6 +31,7 @@ from tau_agent.messages import (
     CompactionSummaryMessage,
     CustomMessage,
     ImageContent,
+    PricingMode,
     ResponseTiming,
     TextContent,
     ThinkingContent,

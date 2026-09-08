@@ -85,6 +85,7 @@ from tau_coding.extensions.providers import DynamicProvider, ProviderModel
 from tau_coding.extensions.runtime import ExtensionRuntime
 from tau_coding.models_dev_store import ModelsDevRefreshResult, refresh_models_dev_catalog
 from tau_coding.oauth import account_id_from_access_token
+from tau_coding.oauth_registry import get_oauth_provider
 from tau_coding.paths import TauPaths
 from tau_coding.project_trust import (
     CanonicalProjectPath,
@@ -1237,12 +1238,26 @@ class CodingSession:
         """Return loaded extension names in load order."""
         return self._extension_runtime.extension_names
 
+    def provider_uses_subscription_auth(self, provider_name: str) -> bool:
+        """Return whether the active credentials use a subscription endpoint."""
+        provider = self.provider_config(provider_name)
+        if provider is None:
+            return False
+        if isinstance(provider, OpenAICodexProviderConfig):
+            return True
+        return bool(
+            provider.credential_name
+            and get_oauth_provider(provider_name) is not None
+            and self._credential_store.get_oauth(provider.credential_name) is not None
+        )
+
     @property
     def session_stats(self) -> SessionStats:
-        """Return cumulative activity and billed usage for the active branch."""
+        """Return cumulative activity and estimated usage for the active branch."""
         return calculate_session_stats(
             self._state.entries,
             pricing=self._pricing_for_response,
+            subscription_pricing=self.provider_uses_subscription_auth,
         )
 
     def _pricing_for_response(
@@ -3398,8 +3413,23 @@ class CodingSession:
 
     async def _persist_on_message_end(self, event: AgentEvent) -> None:
         if isinstance(event, MessageEndEvent):
+            self._mark_subscription_pricing(event.message)
             self._ended_message_ids.add(id(event.message))
             await self._persist_message(event.message)
+
+    def _mark_subscription_pricing(self, message: AgentMessage) -> None:
+        """Mark responses made through subscription-backed authentication.
+
+        The marker is persisted with the response so later session views do not
+        reinterpret historical API requests using the credential active at view
+        time. Provider-neutral callers that do not go through CodingSession keep
+        the field unset and retain the existing catalog-pricing behavior.
+        """
+        if not isinstance(message, AssistantMessage):
+            return
+        provider_name = message.provider if message.provider != "unknown" else self.provider_name
+        if self.provider_uses_subscription_auth(provider_name):
+            message.usage = message.usage.model_copy(update={"pricing_mode": "subscription"})
 
     async def _persist_message(self, message: AgentMessage) -> None:
         """Persist one completed message at the active branch tip, idempotently.

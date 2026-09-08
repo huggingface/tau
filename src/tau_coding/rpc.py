@@ -57,6 +57,8 @@ class RpcSession(Protocol):
 
     def provider_config(self, provider_name: str) -> ProviderConfig | None: ...
 
+    def provider_uses_subscription_auth(self, provider_name: str) -> bool: ...
+
     @property
     def messages(self) -> tuple[object, ...]: ...
 
@@ -602,7 +604,12 @@ def _model_wire(session: RpcSession, *, choice: ModelChoice | None = None) -> di
         if provider is not None
         else None
     )
-    cost = metadata.cost if metadata is not None else {}
+    cost = (
+        metadata.cost
+        if metadata is not None
+        and not session.provider_uses_subscription_auth(selected.provider_name)
+        else {}
+    )
     return {
         "id": selected.model,
         "name": metadata.name if metadata is not None and metadata.name else selected.model,

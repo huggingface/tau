@@ -281,8 +281,10 @@ both performance metrics.
 Cumulative usage and cost cover the active branch, including history replaced by
 compaction. Input usage counts tokens processed on every
 provider request, so it can be much larger than the context used by the next
-request. Cost is an estimate based on provider-reported usage and configured
-catalog rates; the sidebar shows `$N/A` when Tau lacks complete pricing data.
+request. For metered API requests, cost is an estimate based on provider-reported
+usage and configured catalog rates. Subscription-backed OAuth requests do not
+show API-equivalent dollar estimates; the sidebar shows `$N/A` when pricing is
+not applicable or unavailable.
 
 The cache line separates the latest model request from the cumulative session.
 Both rates are the share of prompt tokens the provider served from its cache

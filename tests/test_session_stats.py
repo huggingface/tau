@@ -224,6 +224,30 @@ def test_calculate_session_stats_marks_cost_unavailable_when_pricing_is_missing(
     assert stats.estimated_cost is None
 
 
+def test_calculate_session_stats_excludes_subscription_pricing() -> None:
+    entry = MessageEntry(
+        message=AssistantMessage(
+            provider="openai-codex",
+            model="gpt-5.6-sol",
+            usage=Usage(input=1_000_000, output=20_000, pricing_mode="subscription"),
+        )
+    )
+
+    stats = calculate_session_stats(
+        [entry],
+        pricing=lambda _provider, _model, _input: {
+            "input": 5.0,
+            "output": 30.0,
+            "cacheRead": 0.5,
+            "cacheWrite": 0.0,
+        },
+    )
+
+    assert stats.input_tokens == 1_000_000
+    assert stats.output_tokens == 20_000
+    assert stats.estimated_cost is None
+
+
 def test_calculate_session_stats_prices_one_hour_cache_writes() -> None:
     """Anthropic's cache_write total includes 1h writes, billed at cacheWrite1h."""
     entry = MessageEntry(
