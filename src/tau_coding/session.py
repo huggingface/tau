@@ -3413,23 +3413,25 @@ class CodingSession:
 
     async def _persist_on_message_end(self, event: AgentEvent) -> None:
         if isinstance(event, MessageEndEvent):
-            self._mark_subscription_pricing(event.message)
+            self._mark_pricing_mode(event.message)
             self._ended_message_ids.add(id(event.message))
             await self._persist_message(event.message)
 
-    def _mark_subscription_pricing(self, message: AgentMessage) -> None:
-        """Mark responses made through subscription-backed authentication.
+    def _mark_pricing_mode(self, message: AgentMessage) -> None:
+        """Persist the authentication pricing mode used for a response.
 
-        The marker is persisted with the response so later session views do not
-        reinterpret historical API requests using the credential active at view
-        time. Provider-neutral callers that do not go through CodingSession keep
-        the field unset and retain the existing catalog-pricing behavior.
+        Recording both modes keeps later session views from reinterpreting
+        historical requests using the credential active at view time.
+        Provider-neutral callers that do not go through CodingSession keep the
+        field unset and retain the existing catalog-pricing behavior.
         """
         if not isinstance(message, AssistantMessage):
             return
         provider_name = message.provider if message.provider != "unknown" else self.provider_name
-        if self.provider_uses_subscription_auth(provider_name):
-            message.usage = message.usage.model_copy(update={"pricing_mode": "subscription"})
+        pricing_mode = (
+            "subscription" if self.provider_uses_subscription_auth(provider_name) else "api"
+        )
+        message.usage = message.usage.model_copy(update={"pricing_mode": pricing_mode})
 
     async def _persist_message(self, message: AgentMessage) -> None:
         """Persist one completed message at the active branch tip, idempotently.

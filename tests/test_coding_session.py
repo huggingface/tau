@@ -107,7 +107,13 @@ def _assert_messages(actual: object, expected: object) -> None:
     def dump(message: object) -> object:
         model_dump = getattr(message, "model_dump", None)
         if callable(model_dump):
-            return model_dump(exclude={"timestamp", "timing"})
+            return model_dump(
+                exclude={
+                    "timestamp": True,
+                    "timing": True,
+                    "usage": {"pricing_mode"},
+                }
+            )
         return message
 
     assert [dump(message) for message in actual] == [dump(message) for message in expected]  # type: ignore[union-attr]
@@ -4004,8 +4010,19 @@ async def test_session_pricing_respects_anthropic_auth_mode(
             if isinstance(entry, MessageEntry) and isinstance(entry.message, AssistantMessage)
         )
 
-        assert assistant.usage.pricing_mode == ("subscription" if oauth else None)
+        assert assistant.usage.pricing_mode == ("subscription" if oauth else "api")
         assert session.session_stats.estimated_cost == (None if oauth else 3.3)
+        if not oauth:
+            credential_store.set_oauth(
+                "anthropic",
+                OAuthCredential(
+                    access="access-token",
+                    refresh="refresh-token",
+                    expires=4_000_000_000,
+                ),
+            )
+            assert session.provider_uses_subscription_auth("anthropic") is True
+            assert session.session_stats.estimated_cost == 3.3
     finally:
         await session.aclose()
 

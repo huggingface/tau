@@ -8,10 +8,10 @@ cache, timing, and tool-usage totals, but their dollar estimate is unavailable.
 The TUI and HTML usage dashboard therefore show no API-equivalent cost for them.
 
 The session marks each persisted assistant response with `usage.pricing_mode =
-"subscription"`. This keeps later views from changing newly recorded API
-responses when a session is resumed with a subscription credential. Provider-
-neutral agent messages leave the field unset and retain the existing catalog-
-pricing behavior.
+"subscription"` or `"api"`. This keeps later views from changing newly recorded
+responses when a session is resumed with a different credential. Provider-neutral
+agent messages leave the field unset and retain the existing catalog-pricing
+behavior.
 
 ## Why
 
