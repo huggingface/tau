@@ -12,14 +12,16 @@ transcript.
 from pathlib import Path
 
 import pytest
+from rich.style import Style as RichStyle
 from textual.containers import Container
-from textual.widgets import Static
+from textual.widgets import Collapsible, Static
 
 from conftest import isolate_home
 from tau_coding.extensions import ExtensionRuntime
 from tau_coding.tui.app import PromptInput, TauTuiApp
 from tau_coding.tui.config import TuiSettings
-from tau_coding.tui.widgets import TranscriptView
+from tau_coding.tui.themes import get_tui_theme
+from tau_coding.tui.widgets import SessionSidebar, TranscriptView
 from test_tui_app import (  # noqa: E402 - sibling test module (see docstring)
     FakeSession,
     _component_bridge,
@@ -445,6 +447,65 @@ async def test_sidebar_factory_rebuilds_with_live_theme(
             app.query_one("#sidebar-extension-sections .theme-body", Static).render().plain
             == "tau-light"
         )
+
+
+def _collapsible_title_color(collapsible: Collapsible) -> str:
+    """Return the hex color of the first styled span in the title label."""
+
+    def _hex(color) -> str:  # noqa: ANN001
+        triplet = color.triplet
+        return f"{triplet.red:02x}{triplet.green:02x}{triplet.blue:02x}"
+
+    label = collapsible._title.label
+    for span in label.spans:
+        if span.start == 0:
+            style = span.style
+            if hasattr(style, "color"):
+                assert style.color is not None
+                return _hex(style.color)
+            parsed = RichStyle.parse(str(style))
+            assert parsed.color is not None
+            return _hex(parsed.color)
+    raise AssertionError(f"no styled span covers the title start: {label.plain!r}")
+
+
+@pytest.mark.anyio
+async def test_sidebar_collapsible_titles_retheme_on_theme_switch() -> None:
+    """skills/prompts titles must re-render their baked colors on theme switch.
+
+    Textual's CollapsibleTitle stores the title in a reactive label whose
+    change detection compares plain text only, so a theme switch that keeps the
+    title text unchanged leaves the old colors behind. The sidebar must force
+    the label to re-render whenever the themed markup differs.
+    """
+    dark = get_tui_theme("tau-dark")
+    light = get_tui_theme("tau-light")
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(theme="tau-dark"))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        sidebar = app.query_one("#sidebar", SessionSidebar)
+        skills = sidebar.query_one("#sidebar-skills", Collapsible)
+        prompts = sidebar.query_one("#sidebar-prompts", Collapsible)
+
+        assert _collapsible_title_color(skills) == dark.prompt_text.lstrip("#")
+        assert _collapsible_title_color(prompts) == dark.prompt_text.lstrip("#")
+
+        # Tau's own /theme route.
+        app._set_tui_theme("tau-light")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert _collapsible_title_color(skills) == light.prompt_text.lstrip("#")
+        assert _collapsible_title_color(prompts) == light.prompt_text.lstrip("#")
+
+        # Textual-native theme assignment must refresh chrome too.
+        app.theme = "tau-dark"
+        await pilot.pause()
+        await pilot.pause()
+
+        assert _collapsible_title_color(skills) == dark.prompt_text.lstrip("#")
+        assert _collapsible_title_color(prompts) == dark.prompt_text.lstrip("#")
 
 
 @pytest.mark.anyio
