@@ -380,11 +380,11 @@ def test_session_state_applies_compaction_and_branch_summary() -> None:
 @pytest.mark.parametrize(
     ("boundary", "expected"),
     [
-        ("first", ["summary", "first", "middle", "last"]),
-        ("middle", ["summary", "middle", "last"]),
-        ("last", ["summary", "last"]),
-        ("missing", ["summary"]),
-        (None, ["summary"]),
+        ("first", ["summary", "first", "middle", "last", "after"]),
+        ("middle", ["summary", "middle", "last", "after"]),
+        ("last", ["summary", "last", "after"]),
+        ("missing", ["summary", "after"]),
+        (None, ["summary", "after"]),
     ],
 )
 def test_session_state_applies_first_kept_boundary_inclusively(
@@ -405,6 +405,7 @@ def test_session_state_applies_first_kept_boundary_inclusively(
             summary="summary",
             first_kept_entry_id=boundary,
         ),
+        MessageEntry(id="after", parent_id="compact", message=UserMessage(content="after")),
     ]
 
     state = SessionState.from_entries(entries)
@@ -414,7 +415,7 @@ def test_session_state_applies_first_kept_boundary_inclusively(
     ] == expected
     assert state.context_entry_ids == (
         "compact",
-        *(entry_id for entry_id in ("first", "middle", "last") if entry_id in expected),
+        *(entry_id for entry_id in ("first", "middle", "last", "after") if entry_id in expected),
     )
 
 
