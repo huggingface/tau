@@ -28,6 +28,7 @@ from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
     CustomEntry,
+    CustomMessageEntry,
     JsonlSessionStorage,
     LabelEntry,
     MessageEntry,
@@ -323,7 +324,7 @@ class _PendingMessageWrite:
     """Stable entry retained while a message persistence attempt is retried."""
 
     message: AgentMessage
-    message_entry: MessageEntry
+    entry: MessageEntry | CustomMessageEntry
 
 
 @dataclass(frozen=True, slots=True)
@@ -3333,7 +3334,7 @@ class CodingSession:
         ]
         parent_id = staged[-1].id
         for message in suffix:
-            entry = MessageEntry(parent_id=parent_id, message=message)
+            entry = _session_entry_for_message(parent_id=parent_id, message=message)
             staged.append(entry)
             parent_id = entry.id
         if active_model is not None:
@@ -3405,16 +3406,16 @@ class CodingSession:
         pending = self._pending_message_writes.get(message_id)
         is_retry = pending is not None
         if pending is None:
-            entry = MessageEntry(parent_id=self._last_parent_id, message=message)
-            pending = _PendingMessageWrite(message=message, message_entry=entry)
+            entry = _session_entry_for_message(parent_id=self._last_parent_id, message=message)
+            pending = _PendingMessageWrite(message=message, entry=entry)
             self._pending_message_writes[message_id] = pending
 
         durable_ids = (
             {entry.id for entry in await self._read_session_entries()} if is_retry else frozenset()
         )
-        if pending.message_entry.id not in durable_ids:
-            await self._append_session_entry(pending.message_entry)
-        self._last_parent_id = pending.message_entry.id
+        if pending.entry.id not in durable_ids:
+            await self._append_session_entry(pending.entry)
+        self._last_parent_id = pending.entry.id
 
         await self._refresh_persisted_state(leaf_id=self._last_parent_id)
         self._persisted_message_ids.add(message_id)
@@ -3962,6 +3963,22 @@ def is_retryable_huggingface_route_error(message: AssistantMessage) -> bool:
     return False
 
 
+def _session_entry_for_message(
+    *, parent_id: str | None, message: AgentMessage
+) -> MessageEntry | CustomMessageEntry:
+    """Build the canonical persisted entry for one completed runtime message."""
+    if isinstance(message, CustomMessage):
+        return CustomMessageEntry(
+            parent_id=parent_id,
+            timestamp=message.timestamp / 1000,
+            custom_type=message.custom_type,
+            content=message.content,
+            display=message.display,
+            details=message.details,
+        )
+    return MessageEntry(parent_id=parent_id, message=message)
+
+
 def _detach_missing_parents(entries: list[SessionEntry]) -> list[SessionEntry]:
     """Return entries with dangling parent pointers detached from external history."""
     entry_ids = {entry.id for entry in entries}
@@ -4075,6 +4092,8 @@ def _tree_entry_title(entry: SessionEntry) -> str:
                 tool_names = ", ".join(call.name for call in message.tool_calls)
                 return f"tool call: {tool_names}"
             return f"{message.role}: {_message_text_preview(message)}"
+        case "custom_message":
+            return f"custom: {_short_preview(message_text(_custom_message_from_entry(entry)))}"
         case "compaction":
             return f"compaction summary: {_short_preview(entry.summary)}"
         case "branch_summary":
@@ -4111,8 +4130,22 @@ def _messages_after_entry_on_active_path(
         )
     except StopIteration:
         return ()
-    return tuple(
-        entry.message for entry in active_path[target_index + 1 :] if entry.type == "message"
+    messages: list[AgentMessage] = []
+    for entry in active_path[target_index + 1 :]:
+        if entry.type == "message":
+            messages.append(entry.message)
+        elif entry.type == "custom_message":
+            messages.append(_custom_message_from_entry(entry))
+    return tuple(messages)
+
+
+def _custom_message_from_entry(entry: CustomMessageEntry) -> CustomMessage:
+    return CustomMessage(
+        custom_type=entry.custom_type,
+        content=entry.content,
+        display=entry.display,
+        details=entry.details,
+        timestamp=round(entry.timestamp * 1000),
     )
 
 

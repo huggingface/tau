@@ -4527,11 +4527,12 @@ class TauTuiApp(App[None]):
             await self._append_optimistic_user_message(message.text)
             return
         if isinstance(message, CustomMessage):
-            await self._append_optimistic_user_message(
-                message.text,
-                custom_type=message.custom_type,
-                details=message.details if isinstance(message.details, dict) else None,
-            )
+            if message.display:
+                await self._append_optimistic_user_message(
+                    message.text,
+                    custom_type=message.custom_type,
+                    details=message.details if isinstance(message.details, dict) else None,
+                )
             return
         self._refresh()
 

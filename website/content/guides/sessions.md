@@ -167,6 +167,19 @@ nested accordions. The export header includes controls to:
 Tool rows are titled `Tool: <name>` (for example, `Tool: read`), and the
 session tree labels tool entries with just the tool name for readability.
 
+Extension-injected model context is stored as a first-class `custom_message`
+entry. Its `custom_type` identifies the extension, while `content`, `details`,
+and `display` preserve its payload and presentation choice. `display: false`
+keeps the content in model context but hides it from the TUI and the visible
+HTML transcript; the complete entry remains in JSONL exports. Older Tau files
+that stored these as a generic `message` with `role: "custom"`, or as a Tau-v1
+user message with `custom_type`, are normalized when loaded and replay the same
+context.
+
+Tau's persisted entry wrappers use snake_case names such as `parent_id` and
+`custom_type`. The Pi-compatible RPC inspection API projects those fields as
+`parentId` and `customType`; see the [RPC reference]({{< relref "../reference/rpc.md" >}}).
+
 ## Where sessions live
 
 ```text

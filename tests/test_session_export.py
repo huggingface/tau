@@ -5,6 +5,7 @@ from pathlib import Path
 from tau_agent import (
     AssistantMessage,
     CompactionEntry,
+    CustomMessageEntry,
     LeafEntry,
     MessageEntry,
     ModelChangeEntry,
@@ -251,6 +252,45 @@ def test_render_session_html_marks_error_tool_results() -> None:
 
     assert 'id="entry-failure" class="entry active-entry is-error"' in html
     assert '<span class="error-flag">error</span>' in html
+
+
+def test_render_session_html_honors_custom_message_display() -> None:
+    entries = [
+        CustomMessageEntry(
+            id="visible",
+            custom_type="extension:status",
+            content="visible context",
+            details={"job": 1},
+        ),
+        CustomMessageEntry(
+            id="hidden",
+            parent_id="visible",
+            custom_type="extension:secret",
+            content="hidden context marker",
+            display=False,
+        ),
+        MessageEntry(
+            id="reply",
+            parent_id="hidden",
+            message=AssistantMessage(content="continued"),
+        ),
+    ]
+
+    html = render_session_html(entries)
+
+    assert 'id="entry-visible"' in html
+    assert "Custom message: extension:status" in html
+    assert "visible context" in html
+    assert 'id="entry-hidden"' not in html
+    assert "hidden context marker" not in html
+    assert 'id="entry-reply"' in html
+    assert '<span>parent <a href="#entry-visible"><code>visible</code></a></span>' in html
+    encoded = re.search(
+        r'<script id="sessionJsonlData" type="application/octet-stream">([^<]*)</script>',
+        html,
+    )
+    assert encoded is not None
+    assert "hidden context marker" in base64.b64decode(encoded.group(1)).decode("utf-8")
 
 
 def test_render_session_html_includes_jsonl_download() -> None:

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from tau_agent.messages import AssistantMessage, CustomMessage, UserMessage
 from tau_agent.session import BranchSummaryEntry, CompactionEntry, MessageEntry, ModelChangeEntry
-from tau_agent.session.entries import SessionEntry
+from tau_agent.session.entries import CustomMessageEntry, SessionEntry
 
 PricingResolver = Callable[[str, str, int], Mapping[str, float] | None]
 _TOKENS_PER_MILLION = 1_000_000
@@ -93,6 +93,9 @@ def calculate_session_stats(
     current_model = "unknown"
 
     for entry in entries:
+        if isinstance(entry, CustomMessageEntry):
+            turn_count += 1
+            continue
         if isinstance(entry, ModelChangeEntry):
             current_model = entry.model
             if entry.provider is not None:

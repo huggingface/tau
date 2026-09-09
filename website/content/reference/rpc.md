@@ -66,6 +66,12 @@ are not added to the RPC wire format. When available, projected compaction and b
 entries include Pi-compatible `usage` data from the request that generated the summary. Legacy
 entries and heuristic fallback summaries omit the field.
 
+Session inspection projects persisted `custom_message` entries in Pi wire
+shape: `parentId`, `customType`, `content`, `details`, and `display`. Tau's local
+session JSONL uses snake_case wrapper fields such as `parent_id` and
+`custom_type`; clients should rely on the RPC shape rather than the storage
+spelling.
+
 Tau mirrors Pi where its public `CodingSession` has equivalent behavior. Direct `bash` is
 supported, but `abort_bash` requires a future cancellable session API. Queue delivery modes,
 retry controls, cloning, image prompts, and the extension UI request/response subprotocol remain

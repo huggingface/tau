@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from tau_agent.messages import AgentMessage, Usage
+from tau_agent.messages import AgentMessage, Usage, UserContent
 from tau_agent.types import JSONValue
 
 
@@ -37,6 +37,16 @@ class MessageEntry(BaseSessionEntry):
 
     type: Literal["message"] = "message"
     message: AgentMessage
+
+
+class CustomMessageEntry(BaseSessionEntry):
+    """An extension-injected message that participates in model context."""
+
+    type: Literal["custom_message"] = "custom_message"
+    custom_type: str
+    content: UserContent
+    display: bool = True
+    details: JSONValue = None
 
 
 class ModelChangeEntry(BaseSessionEntry):
@@ -120,6 +130,7 @@ class CustomEntry(BaseSessionEntry):
 
 type SessionEntry = Annotated[
     MessageEntry
+    | CustomMessageEntry
     | ModelChangeEntry
     | ThinkingLevelChangeEntry
     | CompactionEntry

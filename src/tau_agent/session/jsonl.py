@@ -17,7 +17,7 @@ class SessionJsonlError(ValueError):
 
 
 def entry_to_json_line(entry: SessionEntry) -> str:
-    """Serialize one session entry using only the canonical Pi wire shape."""
+    """Serialize one entry in Tau's canonical persisted shape."""
     return _SESSION_ENTRY_ADAPTER.dump_json(entry, exclude_none=True).decode() + "\n"
 
 
@@ -49,10 +49,32 @@ def _migrate_session_entry(value: Any) -> Any:
     Migration is intentionally confined to this persistence boundary so runtime
     models and extension-facing constructors retain one strict protocol.
     """
-    if not isinstance(value, dict) or value.get("type") != "message":
+    if not isinstance(value, dict):
         return value
+    if value.get("type") == "custom_message":
+        migrated = dict(value)
+        if "customType" in migrated:
+            migrated.setdefault("custom_type", migrated["customType"])
+            migrated.pop("customType")
+        return migrated
+    if value.get("type") != "message":
+        return value
+
     migrated = dict(value)
-    migrated["message"] = _migrate_message(value.get("message"))
+    message = _migrate_message(value.get("message"))
+    if isinstance(message, dict) and message.get("role") == "custom":
+        message_timestamp = message.get("timestamp")
+        if isinstance(message_timestamp, int | float) and not isinstance(message_timestamp, bool):
+            migrated["timestamp"] = message_timestamp / 1000
+        migrated["type"] = "custom_message"
+        migrated["custom_type"] = message.get("customType", message.get("custom_type"))
+        migrated["content"] = message.get("content")
+        migrated["display"] = message.get("display", True)
+        migrated["details"] = message.get("details")
+        migrated.pop("message", None)
+        return migrated
+
+    migrated["message"] = message
     return migrated
 
 

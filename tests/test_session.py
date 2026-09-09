@@ -15,11 +15,12 @@ from tau_agent import (
     UsageCost,
     UserMessage,
 )
-from tau_agent.messages import sum_usage
+from tau_agent.messages import message_to_user, sum_usage
 from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
     CustomEntry,
+    CustomMessageEntry,
     JsonlSessionStorage,
     LabelEntry,
     LeafEntry,
@@ -51,22 +52,26 @@ def test_session_entry_round_trips_canonical_jsonl() -> None:
     }
 
 
-def test_custom_message_round_trips_with_pi_role_and_metadata() -> None:
-    entry = MessageEntry(
+def test_custom_message_entry_round_trips_with_tau_persisted_naming() -> None:
+    entry = CustomMessageEntry(
         id="entry-1",
-        message=CustomMessage(
-            content="<task-notification/>",
-            custom_type="subagent-notification",
-            details={"id": "run-1"},
-        ),
+        timestamp=2,
+        content=[
+            TextContent(text="<task-notification/>"),
+            ImageContent(data="aW1hZ2U=", mime_type="image/png"),
+        ],
+        custom_type="subagent-notification",
+        details={"id": "run-1"},
     )
 
     line = entry_to_json_line(entry)
     parsed = entry_from_json_line(line)
 
-    payload = json.loads(line)["message"]
-    assert payload["role"] == "custom"
-    assert payload["customType"] == "subagent-notification"
+    payload = json.loads(line)
+    assert payload["type"] == "custom_message"
+    assert payload["custom_type"] == "subagent-notification"
+    assert "customType" not in payload
+    assert payload["content"][1]["mimeType"] == "image/png"
     assert parsed == entry
 
 
@@ -245,27 +250,73 @@ def test_legacy_tool_message_migrates_and_preserves_data() -> None:
     assert not {"name", "ok", "error", "data", "tool_call_id"} & rewritten.keys()
 
 
-def test_legacy_custom_user_message_migrates_to_custom_message() -> None:
+@pytest.mark.parametrize("role", ["user", "custom"])
+@pytest.mark.parametrize("custom_type_key", ["custom_type", "customType"])
+def test_legacy_custom_message_shapes_migrate_and_replay_identically(
+    role: str, custom_type_key: str
+) -> None:
+    legacy_message = {
+        "role": role,
+        "content": "<task-notification/>",
+        custom_type_key: "subagent-notification",
+        "display": False,
+        "details": {"id": "run-1"},
+        "timestamp": 2345,
+    }
     legacy = json.dumps(
         {
             "type": "message",
             "id": "custom",
             "timestamp": 1,
-            "message": {
-                "role": "user",
-                "content": "<task-notification/>",
-                "custom_type": "subagent-notification",
-                "details": {"id": "run-1"},
-            },
+            "message": legacy_message,
         }
     )
 
     entry = entry_from_json_line(legacy)
 
-    assert isinstance(entry, MessageEntry)
-    assert isinstance(entry.message, CustomMessage)
-    assert entry.message.custom_type == "subagent-notification"
-    assert json.loads(entry_to_json_line(entry))["message"]["role"] == "custom"
+    assert isinstance(entry, CustomMessageEntry)
+    assert entry.parent_id is None
+    assert entry.timestamp == 2.345
+    assert entry.custom_type == "subagent-notification"
+    assert entry.display is False
+    assert entry.details == {"id": "run-1"}
+    state = SessionState.from_entries([entry])
+    assert state.messages == (
+        CustomMessage(
+            custom_type="subagent-notification",
+            content="<task-notification/>",
+            display=False,
+            details={"id": "run-1"},
+            timestamp=2345,
+        ),
+    )
+    assert (
+        message_to_user(state.messages[0]).model_dump_json()
+        == UserMessage(content="<task-notification/>", timestamp=2345).model_dump_json()
+    )
+    rewritten = json.loads(entry_to_json_line(entry))
+    assert rewritten["type"] == "custom_message"
+    assert rewritten["custom_type"] == "subagent-notification"
+    assert "message" not in rewritten
+
+
+def test_pi_named_custom_message_entry_normalizes_to_tau_persistence() -> None:
+    entry = entry_from_json_line(
+        json.dumps(
+            {
+                "type": "custom_message",
+                "id": "custom",
+                "timestamp": 1,
+                "customType": "extension:status",
+                "content": "ready",
+                "display": True,
+            }
+        )
+    )
+
+    assert isinstance(entry, CustomMessageEntry)
+    assert entry.custom_type == "extension:status"
+    assert "custom_type" in json.loads(entry_to_json_line(entry))
 
 
 def test_invalid_jsonl_line_raises_useful_error() -> None:
