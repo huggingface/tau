@@ -55,6 +55,15 @@ Run `/tree` to open the session tree, then select an earlier entry:
 - **S** — ask the active model for a structured summary of the messages you're
   leaving behind before moving the active point.
 - **C** — provide custom focus instructions for that one summary.
+- **L** — create or edit a bookmark label on the highlighted entry. Submit an
+  empty label to clear it.
+- **Ctrl+F** — toggle a view containing only labeled entries.
+- **Ctrl+L** — show or hide when each visible label was last changed.
+- **Ctrl+T** — show or hide tool-call rows.
+
+Labels render as `[label]` before the entry. They are per-entry bookmarks and
+remain attached to their entry across branches; they do not rename the session.
+Use `/name` for the separate session display title.
 
 If a summary request fails, Tau falls back to a deterministic summary.
 
@@ -156,6 +165,8 @@ nested accordions. The export header includes controls to:
 
 Tool rows are titled `Tool: <name>` (for example, `Tool: read`), and the
 session tree labels tool entries with just the tool name for readability.
+Resolved bookmark labels also appear as `[label]` prefixes on their target tree
+nodes; label change entries remain available in the entry stream for auditing.
 
 ## Where sessions live
 
@@ -168,5 +179,9 @@ For example, `/Users/you/repos/tau` becomes something like
 write separate `leaf` pointer records; the last non-`leaf` entry in file order
 is the active tip. Older files containing `leaf` records remain readable, but
 those records do not override file-order tip selection. Compaction and
-branching change the *active* view, never the recorded history. See
+branching change the *active* view, never the recorded history. A label change
+is stored as `{"type":"label","target_id":"<entry-id>","label":"checkpoint"}`;
+`null` or an empty label clears the target's bookmark. Pre-bookmark Tau files
+whose label entries lack `target_id` load deterministically as a bookmark on the
+earliest branchable entry. See
 [Configuration]({{< relref "../reference/configuration.md#sessions" >}}) for the exact layout.
