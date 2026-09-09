@@ -70,6 +70,7 @@ class CompactionEntry(BaseSessionEntry):
     usage: Usage | None = None
     provider: str | None = None
     model: str | None = None
+    response_provider: str | None = None
 
 
 class BranchSummaryEntry(BaseSessionEntry):
@@ -81,6 +82,7 @@ class BranchSummaryEntry(BaseSessionEntry):
     usage: Usage | None = None
     provider: str | None = None
     model: str | None = None
+    response_provider: str | None = None
 
 
 class LabelEntry(BaseSessionEntry):

@@ -78,6 +78,7 @@ def test_collect_session_usage_includes_labeled_summary_requests() -> None:
             ),
             provider="summary-provider",
             model="summary-model",
+            response_provider="routed-summary-provider",
         ),
         BranchSummaryEntry(
             id="branch",
@@ -96,6 +97,10 @@ def test_collect_session_usage_includes_labeled_summary_requests() -> None:
         ("summary-provider", "summary-model"),
         ("anthropic", "claude-sonnet-4-5"),
     ]
+    assert [request.response_provider for request in usage.requests] == [
+        "routed-summary-provider",
+        None,
+    ]
     assert usage.total_prompt == 1_850
     assert usage.total_output == 30
     assert usage.hit_rate == 550 / 1_850
@@ -111,6 +116,7 @@ def test_collect_session_usage_positions_notable_events_at_next_request() -> Non
             timestamp=2,
             summary="summary",
             replaces_entry_ids=["a1"],
+            usage=Usage(input=15),
         ),
         ThinkingLevelChangeEntry(id="thinking", timestamp=3, thinking_level="high"),
         _assistant("a2", usage=Usage(input=20)),
@@ -121,10 +127,11 @@ def test_collect_session_usage_positions_notable_events_at_next_request() -> Non
 
     assert [(event.request_number, event.kind, event.label) for event in usage.events] == [
         (1, "model", "Model changed to claude-sonnet-4-5"),
-        (2, "compaction", "Compaction"),
-        (2, "thinking", "Thinking changed to high"),
-        (2, "branch", "Branch summary"),
+        (3, "compaction", "Compaction"),
+        (3, "thinking", "Thinking changed to high"),
+        (3, "branch", "Branch summary"),
     ]
+    assert [event.position for event in usage.events] == ["before", "before", "before", "after"]
 
 
 def test_collect_session_usage_estimates_cost_from_catalog() -> None:

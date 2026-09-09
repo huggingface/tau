@@ -341,10 +341,12 @@ def test_legacy_summary_entries_load_without_usage() -> None:
     assert compaction.usage is None
     assert compaction.provider is None
     assert compaction.model is None
+    assert compaction.response_provider is None
     assert isinstance(branch, BranchSummaryEntry)
     assert branch.usage is None
     assert branch.provider is None
     assert branch.model is None
+    assert branch.response_provider is None
 
 
 def test_sum_usage_combines_tokens_optional_fields_and_cost() -> None:
@@ -376,12 +378,14 @@ def test_summary_entry_usage_round_trips_with_camel_case_usage_fields() -> None:
         usage=Usage(input=10, cache_read=20, cache_write_1h=5),
         provider="anthropic",
         model="claude-test",
+        response_provider="inference-route",
     )
 
     line = entry_to_json_line(entry)
 
     assert '"cacheRead":20' in line
     assert '"cacheWrite1H":5' in line
+    assert '"response_provider":"inference-route"' in line
     assert entry_from_json_line(line) == entry
 
 

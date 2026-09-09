@@ -2336,6 +2336,7 @@ async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> N
                         content="The abandoned branch went left.",
                         provider="openai",
                         model="fake",
+                        response_provider="branch-route",
                         usage=Usage(input=120, output=15, cache_read=30, cache_write=4),
                     )
                 ),
@@ -2370,6 +2371,7 @@ async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> N
     assert summary.usage == Usage(input=120, output=15, cache_read=30, cache_write=4)
     assert summary.provider == "openai"
     assert summary.model == "fake"
+    assert summary.response_provider == "branch-route"
     assert provider.calls[0][3] == []
     assert "<conversation>" in provider.calls[0][2][0].content
     assert "Use this EXACT format:" in provider.calls[0][2][0].content
@@ -3630,6 +3632,7 @@ async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: P
                         content="Generated session summary",
                         provider="openai",
                         model="fake",
+                        response_provider="compaction-route",
                         usage=Usage(input=1_000, output=80, cache_read=200, cache_write=50),
                     )
                 ),
@@ -3667,6 +3670,7 @@ async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: P
     )
     assert compactions[0].provider == "openai"
     assert compactions[0].model == "fake"
+    assert compactions[0].response_provider == "compaction-route"
     assert compactions[0].replaces_entry_ids == message_entries_before
     assert leaves == []
     assert entries_after_compact[-1] == compactions[0]

@@ -303,6 +303,7 @@ class _GeneratedSummary:
     usage: Usage | None
     provider: str | None = None
     model: str | None = None
+    response_provider: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1001,6 +1002,7 @@ class CodingSession:
                     usage=generated.usage,
                     provider=generated.provider,
                     model=generated.model,
+                    response_provider=generated.response_provider,
                 )
                 await self._append_session_entry(summary_entry)
                 target_id = summary_entry.id
@@ -2877,6 +2879,7 @@ class CodingSession:
             usage=generated.usage,
             provider=generated.provider,
             model=generated.model,
+            response_provider=generated.response_provider,
         )
         return ManualCompactionResult(
             summary=generated.text,
@@ -2901,6 +2904,7 @@ class CodingSession:
             usage=generated.usage,
             provider=generated.provider,
             model=generated.model,
+            response_provider=generated.response_provider,
         )
         return f"Compacted {len(compaction.replaces_entry_ids)} context entries."
 
@@ -3647,6 +3651,7 @@ class CodingSession:
                 usage=generated.usage,
                 provider=generated.provider,
                 model=generated.model,
+                response_provider=generated.response_provider,
             )
             return True
         except Exception as exc:  # noqa: BLE001 - the original overflow remains visible
@@ -3751,6 +3756,7 @@ class CodingSession:
             usage=generated.usage,
             provider=generated.provider,
             model=generated.model,
+            response_provider=generated.response_provider,
         )
         return True
 
@@ -3767,6 +3773,7 @@ class CodingSession:
         text_parts: list[str] = []
         final_text: str | None = None
         response_usages: list[Usage] = []
+        response_provider: str | None = None
         summary_messages: list[AgentMessage] = [UserMessage(content=prompt)]
         async for event in self._harness.config.provider.stream_response(
             model=self.model,
@@ -3779,6 +3786,7 @@ class CodingSession:
             elif isinstance(event, AssistantDoneEvent):
                 final_text = event.message.text
                 response_usages.append(event.message.usage)
+                response_provider = event.message.response_provider
             elif isinstance(event, AssistantErrorEvent):
                 raise RuntimeError(
                     f"Compaction summarization failed: {event.error.error_message or event.reason}"
@@ -3792,6 +3800,7 @@ class CodingSession:
             usage=sum_usage(response_usages) if response_usages else None,
             provider=self.provider_name,
             model=self.model,
+            response_provider=response_provider,
         )
 
     async def _summarize_branch_messages(
@@ -3812,12 +3821,13 @@ class CodingSession:
         except Exception:
             result = None
         if result is not None:
-            summary, usage = result
+            summary, usage, response_provider = result
             return _GeneratedSummary(
                 text=summary,
                 usage=usage,
                 provider=self.provider_name,
                 model=self.model,
+                response_provider=response_provider,
             )
         return _GeneratedSummary(
             text=summarize_messages_for_compaction(messages),
@@ -3866,6 +3876,7 @@ class CodingSession:
         usage: Usage | None = None,
         provider: str | None = None,
         model: str | None = None,
+        response_provider: str | None = None,
     ) -> CompactionEntry:
         if not replace_entry_ids:
             raise ValueError("No active context messages to compact")
@@ -3879,6 +3890,7 @@ class CodingSession:
             usage=usage,
             provider=provider,
             model=model,
+            response_provider=response_provider,
         )
         await self._append_session_entry(compaction)
         self._last_parent_id = compaction.id

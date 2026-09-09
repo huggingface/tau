@@ -6,6 +6,7 @@ import html
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Literal
 
 from tau_agent.messages import AssistantMessage, Usage
 from tau_agent.session import (
@@ -67,6 +68,7 @@ class UsageEvent:
     timestamp: str
     kind: str
     label: str
+    position: Literal["before", "after"] = "before"
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,9 +209,6 @@ def collect_session_usage(entries: Sequence[SessionEntry]) -> SessionUsage:
 
     for entry in entries:
         event = _usage_event(entry)
-        if event is not None:
-            kind, label = event
-            pending_events.append((_entry_time(entry.timestamp), kind, label))
         if isinstance(entry, CompactionEntry):
             compactions += 1
             if entry.usage is not None:
@@ -219,7 +218,11 @@ def collect_session_usage(entries: Sequence[SessionEntry]) -> SessionUsage:
                     kind="compaction summary",
                     provider=entry.provider or current_provider,
                     model=entry.model or current_model,
+                    response_provider=entry.response_provider,
                 )
+            if event is not None:
+                kind, label = event
+                pending_events.append((_entry_time(entry.timestamp), kind, label))
             continue
         if isinstance(entry, BranchSummaryEntry):
             if entry.usage is not None:
@@ -229,8 +232,15 @@ def collect_session_usage(entries: Sequence[SessionEntry]) -> SessionUsage:
                     kind="branch summary",
                     provider=entry.provider or current_provider,
                     model=entry.model or current_model,
+                    response_provider=entry.response_provider,
                 )
+            if event is not None:
+                kind, label = event
+                pending_events.append((_entry_time(entry.timestamp), kind, label))
             continue
+        if event is not None:
+            kind, label = event
+            pending_events.append((_entry_time(entry.timestamp), kind, label))
         if isinstance(entry, ModelChangeEntry):
             current_model = entry.model
             if entry.provider is not None:
@@ -261,6 +271,7 @@ def collect_session_usage(entries: Sequence[SessionEntry]) -> SessionUsage:
                 timestamp=timestamp,
                 kind=kind,
                 label=label,
+                position="after",
             )
             for timestamp, kind, label in pending_events
         )
@@ -386,7 +397,9 @@ def _line_chart(
     for event_index, event in enumerate(events):
         x, _ = point(max(0, min(count - 1, event.request_number - 1)), 0)
         marker_y = top + 7 + (event_index % 3) * 9
-        description = f"{event.label} before request {event.request_number} at {event.timestamp}"
+        description = (
+            f"{event.label} {event.position} request {event.request_number} at {event.timestamp}"
+        )
         parts.append(
             f'<g class="usage-event usage-event-{html.escape(event.kind, quote=True)}" '
             f'data-request="{event.request_number}" '

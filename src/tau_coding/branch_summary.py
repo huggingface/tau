@@ -72,8 +72,8 @@ async def summarize_branch_messages_with_model(
     messages: Sequence[AgentMessage],
     custom_instructions: str | None = None,
     replace_instructions: bool = False,
-) -> tuple[str, Usage] | None:
-    """Return a model-generated branch summary and its usage, or None on failure."""
+) -> tuple[str, Usage, str | None] | None:
+    """Return a generated summary, usage, and resolved provider, or None on failure."""
     if not messages:
         return None
 
@@ -104,7 +104,11 @@ async def summarize_branch_messages_with_model(
     summary = response.text.strip()
     if not summary:
         return None
-    return _add_branch_summary_context(summary, messages), sum_usage(response_usages)
+    return (
+        _add_branch_summary_context(summary, messages),
+        sum_usage(response_usages),
+        response.response_provider,
+    )
 
 
 def _branch_summary_prompt(
