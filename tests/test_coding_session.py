@@ -15,6 +15,7 @@ from tau_agent import (
     AgentTool,
     AgentToolResult,
     AssistantMessage,
+    CustomMessage,
     ImageContent,
     MessageEndEvent,
     TextContent,
@@ -29,6 +30,7 @@ from tau_agent.provider_events import AssistantErrorEvent
 from tau_agent.session import (
     CompactionEntry,
     CustomEntry,
+    CustomMessageEntry,
     JsonlSessionStorage,
     LeafEntry,
     MessageEntry,
@@ -548,7 +550,12 @@ class _FaultInjectingStorage:
         self.failures_remaining = 2 if phase == "message_twice" else 1
 
     async def append(self, entry: SessionEntry) -> None:
-        target = self.phase.startswith("message") and isinstance(entry, MessageEntry)
+        target = (
+            self.phase.startswith("message")
+            and isinstance(entry, MessageEntry)
+            or self.phase.startswith("custom_message")
+            and isinstance(entry, CustomMessageEntry)
+        )
         if target and (self.failures_remaining > 0 or self.phase == "message_always"):
             self.failed = True
             self.failures_remaining -= 1
@@ -602,6 +609,77 @@ async def test_message_persistence_retry_is_idempotent(tmp_path: Path, phase: st
         )
     )
     _assert_messages(restored.messages, [UserMessage(content="go")])
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("queue_method", ["queue_steering_message", "queue_follow_up_message"])
+async def test_queued_custom_messages_persist_as_first_class_entries(
+    tmp_path: Path, queue_method: str
+) -> None:
+    provider = FakeProvider(
+        [
+            [assistant_start(), assistant_done(AssistantMessage(content="first"))],
+            [assistant_start(), assistant_done(AssistantMessage(content="second"))],
+        ]
+    )
+    storage = _CountingStorage()
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+    queue = getattr(session, queue_method)
+    queue("extension context", custom_type="extension:queued", details={"job": 1})
+
+    await _collect_session_events(session.prompt("start"))
+
+    custom_entries = [entry for entry in storage.entries if isinstance(entry, CustomMessageEntry)]
+    assert len(custom_entries) == 1
+    assert custom_entries[0].custom_type == "extension:queued"
+    assert custom_entries[0].details == {"job": 1}
+    assert not any(
+        isinstance(entry, MessageEntry) and entry.message.role == "custom"
+        for entry in storage.entries
+    )
+
+
+@pytest.mark.anyio
+async def test_custom_message_persistence_retry_is_idempotent(tmp_path: Path) -> None:
+    storage = _FaultInjectingStorage("custom_message_after")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    with pytest.raises(OSError, match="simulated custom_message_after failure"):
+        await _collect_session_events(
+            session.prompt(
+                "hidden context",
+                custom_type="extension:context",
+                details={"source": "test"},
+            )
+        )
+
+    entries = [entry for entry in storage.entries if isinstance(entry, CustomMessageEntry)]
+    assert len(entries) == 1
+    assert entries[0].custom_type == "extension:context"
+    await session._flush_pending_message_writes(context=session._diagnostic_context())
+    assert len([entry for entry in storage.entries if isinstance(entry, CustomMessageEntry)]) == 1
+    assert session.messages[0] == CustomMessage(
+        content="hidden context",
+        custom_type="extension:context",
+        details={"source": "test"},
+        timestamp=session.messages[0].timestamp,
+    )
 
 
 @pytest.mark.anyio

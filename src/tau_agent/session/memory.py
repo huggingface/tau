@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, cast
 
-from tau_agent.messages import AgentMessage, UserMessage
+from tau_agent.messages import AgentMessage, CustomMessage, UserMessage
 from tau_agent.session.entries import (
     BranchSummaryEntry,
     CompactionEntry,
@@ -69,6 +69,19 @@ class SessionState:
             match entry.type:
                 case "message":
                     message_rows.append((entry.id, entry.message))
+                case "custom_message":
+                    message_rows.append(
+                        (
+                            entry.id,
+                            CustomMessage(
+                                custom_type=entry.custom_type,
+                                content=entry.content,
+                                display=entry.display,
+                                details=entry.details,
+                                timestamp=round(entry.timestamp * 1000),
+                            ),
+                        )
+                    )
                 case "model_change":
                     model = entry.model
                     if entry.provider is not None:

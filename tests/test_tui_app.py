@@ -90,6 +90,7 @@ from tau_coding.skills import Skill, format_skill_invocation
 from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.tools import create_coding_tools
 from tau_coding.tui import app as tui_app
+from tau_coding.tui.adapter import TuiEventAdapter
 from tau_coding.tui.app import (
     COMPLETION_MAX_VISIBLE_LINES,
     PASTE_DISPLAY_THRESHOLD,
@@ -1086,12 +1087,34 @@ def test_state_load_messages_projects_custom_type_on_resume() -> None:
                 custom_type="subagent-notification",
                 details={"id": "run-1"},
             ),
+            CustomMessage(
+                content="hidden model context",
+                custom_type="extension:hidden",
+                display=False,
+            ),
         ]
     )
 
     assert [item.role for item in state.items] == ["user", "custom"]
     assert state.items[1].custom_type == "subagent-notification"
     assert state.items[1].details == {"id": "run-1"}
+
+
+def test_tui_event_adapter_hides_non_display_custom_messages() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+
+    adapter.apply(
+        MessageEndEvent(
+            message=CustomMessage(
+                content="hidden model context",
+                custom_type="extension:hidden",
+                display=False,
+            )
+        )
+    )
+
+    assert state.items == []
 
 
 def test_chat_items_render_as_unlabeled_blocks() -> None:

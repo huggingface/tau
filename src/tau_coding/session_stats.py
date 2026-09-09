@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from tau_agent.messages import AssistantMessage, CustomMessage, UserMessage
 from tau_agent.session import MessageEntry
-from tau_agent.session.entries import SessionEntry
+from tau_agent.session.entries import CustomMessageEntry, SessionEntry
 
 PricingResolver = Callable[[str, str, int], Mapping[str, float] | None]
 _TOKENS_PER_MILLION = 1_000_000
@@ -91,6 +91,9 @@ def calculate_session_stats(
     has_complete_pricing = True
 
     for entry in entries:
+        if isinstance(entry, CustomMessageEntry):
+            turn_count += 1
+            continue
         if not isinstance(entry, MessageEntry):
             continue
         message = entry.message

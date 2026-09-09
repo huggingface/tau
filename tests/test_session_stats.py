@@ -1,6 +1,5 @@
 from tau_agent.messages import (
     AssistantMessage,
-    CustomMessage,
     ResponseTiming,
     TextContent,
     ToolCall,
@@ -8,7 +7,7 @@ from tau_agent.messages import (
     Usage,
     UserMessage,
 )
-from tau_agent.session import CompactionEntry, MessageEntry
+from tau_agent.session import CompactionEntry, CustomMessageEntry, MessageEntry
 from tau_coding.session_stats import SessionStats, calculate_session_stats
 
 
@@ -181,9 +180,10 @@ def test_calculate_session_stats_keeps_compacted_active_branch_usage() -> None:
             usage=Usage(input=1_000_000, output=100_000, cache_read=500_000),
         ),
     )
-    extension_turn = MessageEntry(
+    extension_turn = CustomMessageEntry(
         parent_id=assistant.id,
-        message=CustomMessage(custom_type="test:status", content="Continue"),
+        custom_type="test:status",
+        content="Continue",
     )
     compaction = CompactionEntry(
         parent_id=extension_turn.id,

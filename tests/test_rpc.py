@@ -9,7 +9,13 @@ from typer.testing import CliRunner
 
 from pi_event_helpers import assistant_done, assistant_start, text_delta
 from tau_agent import AssistantMessage, Usage, UserMessage
-from tau_agent.session import JsonlSessionStorage, LeafEntry, MessageEntry, ModelChangeEntry
+from tau_agent.session import (
+    CustomMessageEntry,
+    JsonlSessionStorage,
+    LeafEntry,
+    MessageEntry,
+    ModelChangeEntry,
+)
 from tau_ai import FakeProvider
 from tau_coding import (
     CodingSession,
@@ -263,6 +269,46 @@ async def test_rpc_session_inspection_matches_pi_shapes(tmp_path: Path) -> None:
     }
     assert stats["data"]["cost"] == 0.0
     assert isinstance(stats["data"]["cost"], float)
+
+
+@pytest.mark.anyio
+async def test_rpc_projects_custom_message_entry_with_pi_wire_names(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    entry = CustomMessageEntry(
+        id="custom",
+        timestamp=1,
+        custom_type="extension:status",
+        content="working",
+        display=False,
+        details={"job": 7},
+    )
+    await storage.append(entry)
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+    stdin = StringIO('{"id":"entries","type":"get_entries"}\n')
+    stdout = StringIO()
+
+    await RpcServer(session, stdin=stdin, stdout=stdout).run()
+
+    projected = json.loads(stdout.getvalue())["data"]["entries"][0]
+    assert projected == {
+        "type": "custom_message",
+        "id": "custom",
+        "parentId": None,
+        "timestamp": "1970-01-01T00:00:01Z",
+        "customType": "extension:status",
+        "content": "working",
+        "details": {"job": 7},
+        "display": False,
+    }
+    assert "custom_type" not in projected
 
 
 @pytest.mark.anyio
