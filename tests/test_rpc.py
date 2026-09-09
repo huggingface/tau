@@ -9,7 +9,13 @@ from typer.testing import CliRunner
 
 from pi_event_helpers import assistant_done, assistant_start, text_delta
 from tau_agent import AssistantMessage, Usage, UserMessage
-from tau_agent.session import JsonlSessionStorage, LeafEntry, MessageEntry, ModelChangeEntry
+from tau_agent.session import (
+    CompactionEntry,
+    JsonlSessionStorage,
+    LeafEntry,
+    MessageEntry,
+    ModelChangeEntry,
+)
 from tau_ai import FakeProvider
 from tau_coding import (
     CodingSession,
@@ -316,7 +322,7 @@ async def test_rpc_compaction_returns_canonical_summary_and_boundary(tmp_path: P
     boundary = response["data"]["firstKeptEntryId"]
     assert response["data"]["summary"] == "real summary"
     assert boundary in original_ids
-    assert boundary not in compaction.replaces_entry_ids
+    assert compaction.replaces_entry_ids == []
     assert boundary != compaction.id
     assert compaction.first_kept_entry_id == boundary
     assert compaction.tokens_before == response["data"]["tokensBefore"]
@@ -326,6 +332,45 @@ async def test_rpc_compaction_returns_canonical_summary_and_boundary(tmp_path: P
     assert projected["usage"]["input"] == 800
     assert projected["usage"]["cacheRead"] == 200
     assert projected["usage"]["output"] == 40
+
+    entries_stdout = StringIO()
+    await RpcServer(
+        session,
+        stdin=StringIO('{"id":"entries","type":"get_entries"}\n'),
+        stdout=entries_stdout,
+    ).run()
+    projected = json.loads(entries_stdout.getvalue())["data"]["entries"][-1]
+    assert projected["firstKeptEntryId"] == boundary
+    assert projected["details"] == {}
+    assert "replacesEntryIds" not in json.dumps(projected)
+    assert "tauReplacedEntryIds" not in json.dumps(projected)
+
+
+@pytest.mark.anyio
+async def test_rpc_projects_legacy_compaction_without_id_list_bridge(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    await storage.append(MessageEntry(id="user", message=UserMessage(content="hi")))
+    await storage.append(
+        CompactionEntry(
+            id="compact",
+            parent_id="user",
+            summary="legacy",
+            replaces_entry_ids=["user"],
+        )
+    )
+    session = await _session(tmp_path, FakeProvider([]))
+    stdout = StringIO()
+
+    await RpcServer(
+        session,
+        stdin=StringIO('{"id":"entries","type":"get_entries"}\n'),
+        stdout=stdout,
+    ).run()
+
+    projected = json.loads(stdout.getvalue())["data"]["entries"][-1]
+    assert projected["type"] == "custom"
+    assert projected["customType"] == "tau.compaction"
+    assert projected["data"] == {"summary": "legacy"}
 
 
 @pytest.mark.anyio

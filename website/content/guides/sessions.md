@@ -143,6 +143,13 @@ The system prompt is display-only export metadata, not a transcript entry.
 Direct JSONL exports and JSONL downloaded from the HTML remain entry-only and do
 not contain it.
 
+New compaction entries store a `first_kept_entry_id` boundary: replay inserts the
+summary, then keeps that active-path entry and everything after it. This is a fixed-size,
+Pi-compatible replacement for older Tau files' `replaces_entry_ids` arrays. Older arrays
+remain readable and take precedence during replay, so exporting or resuming a legacy
+session does not change its message history. HTML entry details show the first-kept
+boundary for modern compactions and identify unavailable legacy boundaries.
+
 Every transcript entry is a compact accordion row
 (icon, title, one-line preview, timestamp) that expands to reveal the full
 content; thinking blocks, tool-call arguments, and tool-result details are

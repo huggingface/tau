@@ -331,6 +331,27 @@ def test_session_state_replays_linear_entries() -> None:
     assert state.active_leaf_id == "custom"
 
 
+def test_compaction_entry_omits_empty_legacy_id_list_from_jsonl() -> None:
+    line = entry_to_json_line(
+        CompactionEntry(
+            id="compact",
+            summary="summary",
+            first_kept_entry_id="kept",
+            tokens_before=42,
+        )
+    )
+
+    assert json.loads(line) == {
+        "id": "compact",
+        "timestamp": json.loads(line)["timestamp"],
+        "type": "compaction",
+        "summary": "summary",
+        "first_kept_entry_id": "kept",
+        "tokens_before": 42,
+    }
+    assert entry_from_json_line(line).replaces_entry_ids == []
+
+
 def test_legacy_summary_entries_load_without_usage() -> None:
     compaction = entry_from_json_line(
         '{"type":"compaction","id":"compact","summary":"old","replaces_entry_ids":[]}'
@@ -375,6 +396,7 @@ def test_summary_entry_usage_round_trips_with_camel_case_usage_fields() -> None:
     entry = CompactionEntry(
         id="compact",
         summary="summary",
+        first_kept_entry_id="kept",
         usage=Usage(input=10, cache_read=20, cache_write_1h=5),
         provider="anthropic",
         model="claude-test",
@@ -415,6 +437,196 @@ def test_session_state_applies_compaction_and_branch_summary() -> None:
     assert [message.role for message in state.messages] == ["user", "user"]
     assert "The user asked about sessions." in state.messages[0].text
     assert "A side branch explored storage." in state.messages[1].text
+
+
+@pytest.mark.parametrize(
+    ("boundary", "expected"),
+    [
+        ("first", ["summary", "first", "middle", "last", "after"]),
+        ("middle", ["summary", "middle", "last", "after"]),
+        ("last", ["summary", "last", "after"]),
+        ("missing", ["summary", "after"]),
+        (None, ["summary", "after"]),
+    ],
+)
+def test_session_state_applies_first_kept_boundary_inclusively(
+    boundary: str | None,
+    expected: list[str],
+) -> None:
+    entries = [
+        MessageEntry(id="first", message=UserMessage(content="first")),
+        MessageEntry(
+            id="middle",
+            parent_id="first",
+            message=AssistantMessage(content="middle"),
+        ),
+        MessageEntry(id="last", parent_id="middle", message=UserMessage(content="last")),
+        CompactionEntry(
+            id="compact",
+            parent_id="last",
+            summary="summary",
+            first_kept_entry_id=boundary,
+        ),
+        MessageEntry(id="after", parent_id="compact", message=UserMessage(content="after")),
+    ]
+
+    state = SessionState.from_entries(entries)
+
+    assert [
+        message.text.removeprefix("Previous conversation summary:\n") for message in state.messages
+    ] == expected
+    assert state.context_entry_ids == (
+        "compact",
+        *(entry_id for entry_id in ("first", "middle", "last", "after") if entry_id in expected),
+    )
+
+
+def test_first_kept_boundary_can_reference_non_message_path_entry() -> None:
+    entries = [
+        MessageEntry(id="first", message=UserMessage(content="first")),
+        ModelChangeEntry(
+            id="model",
+            parent_id="first",
+            model="new-model",
+        ),
+        MessageEntry(id="kept", parent_id="model", message=UserMessage(content="kept")),
+        CompactionEntry(
+            id="compact",
+            parent_id="kept",
+            summary="summary",
+            first_kept_entry_id="model",
+        ),
+        MessageEntry(id="after", parent_id="compact", message=UserMessage(content="after")),
+    ]
+
+    state = SessionState.from_entries(entries)
+
+    assert [message.text for message in state.messages] == [
+        "Previous conversation summary:\nsummary",
+        "kept",
+        "after",
+    ]
+    assert state.context_entry_ids == ("compact", "kept", "after")
+
+
+def test_first_kept_replay_includes_compaction_after_boundary_in_path_order() -> None:
+    entries = [
+        MessageEntry(id="first", message=UserMessage(content="first")),
+        MessageEntry(id="kept", parent_id="first", message=UserMessage(content="kept")),
+        CompactionEntry(
+            id="old-compact",
+            parent_id="kept",
+            summary="old summary",
+            first_kept_entry_id="kept",
+        ),
+        MessageEntry(
+            id="after-old",
+            parent_id="old-compact",
+            message=UserMessage(content="after old"),
+        ),
+        CompactionEntry(
+            id="new-compact",
+            parent_id="after-old",
+            summary="new summary",
+            first_kept_entry_id="kept",
+        ),
+    ]
+
+    state = SessionState.from_entries(entries)
+
+    assert [message.text for message in state.messages] == [
+        "Previous conversation summary:\nnew summary",
+        "kept",
+        "Previous conversation summary:\nold summary",
+        "after old",
+    ]
+    assert state.context_entry_ids == (
+        "new-compact",
+        "kept",
+        "old-compact",
+        "after-old",
+    )
+
+
+def test_session_state_applies_first_kept_boundary_on_active_branch_only() -> None:
+    entries = [
+        MessageEntry(id="root", message=UserMessage(content="root")),
+        MessageEntry(
+            id="left",
+            parent_id="root",
+            message=AssistantMessage(content="abandoned left"),
+        ),
+        MessageEntry(
+            id="right",
+            parent_id="root",
+            message=AssistantMessage(content="kept right"),
+        ),
+        CompactionEntry(
+            id="compact",
+            parent_id="right",
+            summary="right summary",
+            first_kept_entry_id="right",
+        ),
+        MessageEntry(id="after", parent_id="compact", message=UserMessage(content="after")),
+    ]
+
+    state = SessionState.from_entries(entries)
+
+    assert [message.text for message in state.messages] == [
+        "Previous conversation summary:\nright summary",
+        "kept right",
+        "after",
+    ]
+    assert state.context_entry_ids == ("compact", "right", "after")
+
+
+def test_legacy_compaction_with_explicit_empty_id_list_keeps_prior_context() -> None:
+    legacy_compaction = entry_from_json_line(
+        json.dumps(
+            {
+                "type": "compaction",
+                "id": "compact",
+                "parent_id": "first",
+                "timestamp": 2,
+                "summary": "legacy summary",
+                "replaces_entry_ids": [],
+            }
+        )
+    )
+    entries = [
+        MessageEntry(id="first", message=UserMessage(content="first")),
+        legacy_compaction,
+    ]
+
+    state = SessionState.from_entries(entries)
+
+    assert [message.text for message in state.messages] == [
+        "first",
+        "Previous conversation summary:\nlegacy summary",
+    ]
+    assert state.context_entry_ids == ("first", "compact")
+
+
+@pytest.mark.anyio
+async def test_legacy_compaction_fixture_replays_with_id_list_precedence(
+    tmp_path: Path,
+) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "legacy_compaction.jsonl"
+    session_path = tmp_path / "legacy_compaction.jsonl"
+    session_path.write_bytes(fixture.read_bytes())
+    entries = await JsonlSessionStorage(session_path).read_all()
+
+    compaction = next(entry for entry in entries if entry.type == "compaction")
+    state = SessionState.from_entries(entries)
+
+    assert compaction.replaces_entry_ids == ["root", "tail"]
+    assert compaction.first_kept_entry_id == "tail"
+    assert [message.text for message in state.messages] == [
+        "Previous conversation summary:\nlegacy summary",
+        "keep middle",
+        "after compaction",
+    ]
+    assert state.context_entry_ids == ("compact", "middle", "after")
 
 
 def test_path_to_entry_follows_parent_chain() -> None:

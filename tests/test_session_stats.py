@@ -188,7 +188,7 @@ def test_calculate_session_stats_keeps_compacted_active_branch_usage() -> None:
     compaction = CompactionEntry(
         parent_id=extension_turn.id,
         summary="Earlier work",
-        replaces_entry_ids=[user.id, assistant.id],
+        first_kept_entry_id=extension_turn.id,
         usage=Usage(input=200_000, output=10_000, cache_read=100_000),
         provider="summary-provider",
         model="summary-model",

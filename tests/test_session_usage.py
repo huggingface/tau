@@ -39,7 +39,7 @@ def test_collect_session_usage_aggregates_requests_tools_and_compactions() -> No
             usage=Usage(input=100, output=20, cache_read=900, cache_write=50),
             tools=[ToolCall(id="c1", name="read", arguments={})],
         ),
-        CompactionEntry(id="compact", summary="summary", replaces_entry_ids=["user"]),
+        CompactionEntry(id="compact", summary="summary", first_kept_entry_id="a1"),
         _assistant(
             "a2",
             usage=Usage(input=50, output=10, cache_read=1950, cache_write=0, reasoning=5),
@@ -115,7 +115,7 @@ def test_collect_session_usage_positions_notable_events_at_next_request() -> Non
             id="compact",
             timestamp=2,
             summary="summary",
-            replaces_entry_ids=["a1"],
+            first_kept_entry_id="a1",
             usage=Usage(input=15),
         ),
         ThinkingLevelChangeEntry(id="thinking", timestamp=3, thinking_level="high"),
@@ -187,7 +187,7 @@ def test_render_usage_dashboard_marks_events_on_prompt_input_chart() -> None:
                 id="compact",
                 timestamp=2,
                 summary="summary",
-                replaces_entry_ids=["a1"],
+                first_kept_entry_id="a1",
             ),
             _assistant("a2", usage=Usage(input=20, cache_read=80)),
         ]
