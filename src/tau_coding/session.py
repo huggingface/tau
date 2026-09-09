@@ -289,7 +289,8 @@ class SessionResources:
 class CompactionPlan:
     """Prepared active-context entries for a compaction run."""
 
-    replace_entry_ids: tuple[str, ...]
+    first_kept_entry_id: str
+    replaced_entry_count: int
     messages_to_summarize: tuple[AgentMessage, ...]
 
 
@@ -2844,44 +2845,31 @@ class CodingSession:
     async def compact_detailed(self, instructions: str | None = None) -> ManualCompactionResult:
         """Compact older context while preserving a real recent-entry boundary."""
         await self._flush_pending_message_writes(context=self._diagnostic_context())
-        rows = self._active_context_rows()
         plan = self._recent_preserving_compaction_plan()
         if plan is None:
             raise ValueError("Not enough context to compact while preserving recent entries")
-        first_kept_entry_id = rows[len(plan.replace_entry_ids)][0]
         tokens_before = self.context_token_estimate
         summary = await self._generate_compaction_summary(
             plan.messages_to_summarize,
             custom_instructions=instructions,
         )
-        compaction = await self._append_compaction(
+        await self._append_compaction(
             summary,
-            replace_entry_ids=plan.replace_entry_ids,
-            first_kept_entry_id=first_kept_entry_id,
+            first_kept_entry_id=plan.first_kept_entry_id,
             tokens_before=tokens_before,
         )
         return ManualCompactionResult(
             summary=summary,
-            first_kept_entry_id=first_kept_entry_id,
+            first_kept_entry_id=plan.first_kept_entry_id,
             tokens_before=tokens_before,
             estimated_tokens_after=self.context_token_estimate,
-            replaced_entry_count=len(compaction.replaces_entry_ids),
+            replaced_entry_count=plan.replaced_entry_count,
         )
 
     async def compact(self, instructions: str | None = None) -> str:
         """Generate a manual compaction summary and rebuild active context."""
-        await self._flush_pending_message_writes(context=self._diagnostic_context())
-        plan = self._manual_compaction_plan()
-        summary = await self._generate_compaction_summary(
-            plan.messages_to_summarize,
-            custom_instructions=instructions,
-        )
-        compaction = await self._append_compaction(
-            summary,
-            replace_entry_ids=plan.replace_entry_ids,
-            tokens_before=self.context_token_estimate,
-        )
-        return f"Compacted {len(compaction.replaces_entry_ids)} context entries."
+        result = await self.compact_detailed(instructions)
+        return f"Compacted {result.replaced_entry_count} context entries."
 
     async def aclose(self) -> None:
         """Close every owned extension/provider resource exactly once.
@@ -3620,7 +3608,7 @@ class CodingSession:
             if plan is None:
                 return False
             summary = await self._generate_compaction_summary(plan.messages_to_summarize)
-            await self._append_compaction(summary, replace_entry_ids=plan.replace_entry_ids)
+            await self._append_compaction(summary, first_kept_entry_id=plan.first_kept_entry_id)
             return True
         except Exception as exc:  # noqa: BLE001 - the original overflow remains visible
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
@@ -3718,7 +3706,7 @@ class CodingSession:
         if plan is None:
             return False
         summary = await self._generate_compaction_summary(plan.messages_to_summarize)
-        await self._append_compaction(summary, replace_entry_ids=plan.replace_entry_ids)
+        await self._append_compaction(summary, first_kept_entry_id=plan.first_kept_entry_id)
         return True
 
     async def _generate_compaction_summary(
@@ -3773,15 +3761,6 @@ class CodingSession:
             summary = None
         return summary or summarize_messages_for_compaction(messages)
 
-    def _manual_compaction_plan(self) -> CompactionPlan:
-        rows = self._active_context_rows()
-        if not rows:
-            raise ValueError("No active context messages to compact")
-        return CompactionPlan(
-            replace_entry_ids=tuple(entry_id for entry_id, _message in rows),
-            messages_to_summarize=tuple(message for _entry_id, message in rows),
-        )
-
     def _recent_preserving_compaction_plan(self) -> CompactionPlan | None:
         rows = self._active_context_rows()
         if len(rows) < 2:
@@ -3794,11 +3773,13 @@ class CodingSession:
         if first_kept_index <= 0:
             return None
 
-        replaced = rows[:first_kept_index]
-        if not replaced:
+        if first_kept_index >= len(rows):
             return None
+
+        replaced = rows[:first_kept_index]
         return CompactionPlan(
-            replace_entry_ids=tuple(entry_id for entry_id, _message in replaced),
+            first_kept_entry_id=rows[first_kept_index][0],
+            replaced_entry_count=len(replaced),
             messages_to_summarize=tuple(message for _entry_id, message in replaced),
         )
 
@@ -3809,17 +3790,15 @@ class CodingSession:
         self,
         summary: str,
         *,
-        replace_entry_ids: tuple[str, ...],
-        first_kept_entry_id: str | None = None,
+        first_kept_entry_id: str,
         tokens_before: int | None = None,
     ) -> CompactionEntry:
-        if not replace_entry_ids:
-            raise ValueError("No active context messages to compact")
+        if first_kept_entry_id not in self._state.context_entry_ids:
+            raise ValueError("First kept entry is not in the active context")
 
         compaction = CompactionEntry(
             parent_id=self._last_parent_id,
             summary=summary,
-            replaces_entry_ids=list(replace_entry_ids),
             first_kept_entry_id=first_kept_entry_id,
             tokens_before=tokens_before,
         )

@@ -712,17 +712,14 @@ def _entry_wire(entry: SessionEntry, provider_name: str) -> dict[str, JSONValue]
                 **base,
                 "type": "custom",
                 "customType": "tau.compaction",
-                "data": {
-                    "summary": entry.summary,
-                    "replacesEntryIds": list(entry.replaces_entry_ids),
-                },
+                "data": {"summary": entry.summary},
             }
         return {
             **base,
             "summary": entry.summary,
             "firstKeptEntryId": entry.first_kept_entry_id,
             "tokensBefore": entry.tokens_before,
-            "details": {"tauReplacedEntryIds": list(entry.replaces_entry_ids)},
+            "details": {},
         }
     if entry.type == "branch_summary":
         return {

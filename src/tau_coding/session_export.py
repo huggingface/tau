@@ -1307,9 +1307,10 @@ def _render_entry_body(entry: SessionEntry) -> str:
         level = entry.thinking_level if entry.thinking_level is not None else "off"
         return f"<p>Thinking level changed to <code>{_escape(level)}</code>.</p>"
     if isinstance(entry, CompactionEntry):
+        boundary = entry.first_kept_entry_id or "unavailable (legacy compaction)"
         return (
+            f"<p>First kept entry: <code>{_escape(boundary)}</code></p>"
             f"<pre>{_escape(entry.summary)}</pre>"
-            f"{_render_list('Replaces entries', entry.replaces_entry_ids)}"
         )
     if isinstance(entry, BranchSummaryEntry):
         branch_root = entry.branch_root_id or "none"

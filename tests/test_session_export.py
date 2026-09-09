@@ -51,7 +51,7 @@ def test_render_session_html_preserves_branch_tree() -> None:
             id="compact",
             parent_id="tool",
             summary="The right branch was compacted.",
-            replaces_entry_ids=["root", "right", "tool"],
+            first_kept_entry_id="tool",
         ),
         LeafEntry(id="leaf", parent_id="compact", entry_id="left"),
     ]
@@ -69,7 +69,9 @@ def test_render_session_html_preserves_branch_tree() -> None:
     assert "Right branch" in html
     assert "active-path" in html
     assert "active-leaf" in html
-    assert "Replaces entries" in html
+    assert "First kept entry" in html
+    assert "<code>tool</code>" in html
+    assert "Replaces entries" not in html
 
 
 def test_render_session_html_handles_long_legacy_leaf_history() -> None:

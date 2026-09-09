@@ -117,22 +117,36 @@ def _apply_compaction(
     message_rows: list[tuple[str, AgentMessage]],
     entry: CompactionEntry,
 ) -> list[tuple[str, AgentMessage]]:
-    replaced_ids = set(entry.replaces_entry_ids)
-    retained: list[tuple[str, AgentMessage]] = []
-    inserted_summary = False
-    for entry_id, message in message_rows:
-        if entry_id not in replaced_ids:
-            retained.append((entry_id, message))
-            continue
-        if not inserted_summary:
-            retained.append(
-                (entry.id, UserMessage(content=_format_compaction_summary(entry.summary)))
-            )
-            inserted_summary = True
+    summary_row = (entry.id, UserMessage(content=_format_compaction_summary(entry.summary)))
 
-    if not inserted_summary:
-        retained.append((entry.id, UserMessage(content=_format_compaction_summary(entry.summary))))
-    return retained
+    # Tau originally persisted arbitrary replacement-id sets. They take
+    # precedence when present so old sessions retain their exact replay.
+    if entry.replaces_entry_ids:
+        replaced_ids = set(entry.replaces_entry_ids)
+        retained: list[tuple[str, AgentMessage]] = []
+        inserted_summary = False
+        for entry_id, message in message_rows:
+            if entry_id not in replaced_ids:
+                retained.append((entry_id, message))
+                continue
+            if not inserted_summary:
+                retained.append(summary_row)
+                inserted_summary = True
+        if not inserted_summary:
+            retained.append(summary_row)
+        return retained
+
+    # Pi's first-kept encoding replaces the active-path prefix. A missing or
+    # unreachable boundary means there is no retained pre-compaction entry.
+    first_kept_index = next(
+        (
+            index
+            for index, (entry_id, _message) in enumerate(message_rows)
+            if entry_id == entry.first_kept_entry_id
+        ),
+        len(message_rows),
+    )
+    return [summary_row, *message_rows[first_kept_index:]]
 
 
 def _format_compaction_summary(summary: str) -> str:
