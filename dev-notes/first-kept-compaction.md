@@ -2,15 +2,16 @@
 
 ## What changed
 
-Tau compactions now persist `first_kept_entry_id`, the id of the first active-context
-message retained after the summarized prefix. Fresh JSONL records omit the empty legacy
-`replaces_entry_ids` field. The persisted cost is therefore constant instead of growing by
-one id for every summarized entry.
+Tau compactions now persist `first_kept_entry_id`, the id of the first active-path
+entry retained after the summarized prefix. The boundary may be a metadata entry that does
+not itself produce a message. Fresh JSONL records omit the empty legacy `replaces_entry_ids`
+field. The persisted cost is therefore constant instead of growing by one id for every
+summarized entry.
 
 `CompactionPlan` carries the boundary and a transient replaced-entry count. The count keeps
 manual status text accurate without storing all replaced ids. Manual, threshold, and
-overflow compaction all use the same recent-preserving plan, and a compaction is not written
-unless it has a real retained boundary.
+overflow compaction all use the same recent-preserving plan, record the pre-compaction token
+estimate, and do not write a compaction unless it has a real retained boundary.
 
 ## Replay semantics
 
@@ -20,9 +21,11 @@ Replay follows the active root-to-leaf path. At a modern compaction it produces:
 [summary] + [first kept message ... messages before compaction] + [successor messages]
 ```
 
-The boundary is inclusive. If a hand-edited or boundary-less entry has no resolvable kept
-id, the pre-compaction result is only the summary; normal path replay still adds successors
-written after that compaction. This matches Pi's historical `firstKeptEntryId` behavior.
+The boundary is inclusive and is resolved against every entry on the active path, including
+metadata and earlier compaction entries; only context-producing entries become messages. If
+a hand-edited or boundary-less entry has no resolvable kept id, the pre-compaction result is
+only the summary; normal path replay still adds successors written after that compaction.
+This matches Pi's historical `firstKeptEntryId` behavior.
 
 Tau applies compactions while walking the selected path, so branches not on that path never
 influence the boundary lookup. A boundary at the first, middle, or final active message is
@@ -31,10 +34,11 @@ covered deterministically.
 ## Legacy compatibility
 
 Older Tau versions persisted `replaces_entry_ids`, including records that also have a
-`first_kept_entry_id`. A non-empty legacy list deliberately takes precedence. That preserves
-the old set-based behavior, including arbitrary non-prefix replacement sets and summaries
-inserted at the first replaced position. The field remains accepted by the strict Pydantic
-discriminated union and is serialized only when non-empty.
+`first_kept_entry_id`. An explicitly stored legacy list deliberately takes precedence, even
+when it is empty. That preserves the old set-based behavior, including arbitrary non-prefix
+replacement sets and summaries inserted at the first replaced position. The field remains
+accepted by the strict Pydantic discriminated union and is omitted from fresh records when
+it was not supplied.
 
 RPC session inspection no longer emits `replacesEntryIds` or
 `details.tauReplacedEntryIds`. Modern entries map directly to Pi's compaction shape. Legacy

@@ -3607,8 +3607,13 @@ class CodingSession:
             plan = self._recent_preserving_compaction_plan()
             if plan is None:
                 return False
+            tokens_before = self.context_token_estimate
             summary = await self._generate_compaction_summary(plan.messages_to_summarize)
-            await self._append_compaction(summary, first_kept_entry_id=plan.first_kept_entry_id)
+            await self._append_compaction(
+                summary,
+                first_kept_entry_id=plan.first_kept_entry_id,
+                tokens_before=tokens_before,
+            )
             return True
         except Exception as exc:  # noqa: BLE001 - the original overflow remains visible
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
@@ -3705,8 +3710,13 @@ class CodingSession:
         plan = self._recent_preserving_compaction_plan()
         if plan is None:
             return False
+        tokens_before = self.context_token_estimate
         summary = await self._generate_compaction_summary(plan.messages_to_summarize)
-        await self._append_compaction(summary, first_kept_entry_id=plan.first_kept_entry_id)
+        await self._append_compaction(
+            summary,
+            first_kept_entry_id=plan.first_kept_entry_id,
+            tokens_before=tokens_before,
+        )
         return True
 
     async def _generate_compaction_summary(

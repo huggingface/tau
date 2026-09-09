@@ -23,8 +23,8 @@ src/tau_coding/commands.py
 When `SessionState.from_entries()` sees a modern compaction entry, it:
 
 1. inserts one provider-neutral summary message
-2. finds `first_kept_entry_id` on the active root-to-leaf message path
-3. keeps that boundary entry and every later active message
+2. finds `first_kept_entry_id` on the complete active root-to-leaf entry path
+3. keeps context-producing entries at that boundary and later in path order
 4. keeps the original append-only entries intact
 
 This matches Pi's inclusive first-kept semantics. If the boundary is missing or cannot

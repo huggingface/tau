@@ -3726,6 +3726,8 @@ async def test_session_auto_compacts_after_response_when_threshold_is_exceeded(
     assert compactions[0].summary == "Generated automatic summary"
     assert compactions[0].replaces_entry_ids == []
     assert compactions[0].first_kept_entry_id in session.state.context_entry_ids
+    assert compactions[0].tokens_before is not None
+    assert compactions[0].tokens_before > 0
     assert "Explain sessions." in provider.calls[2][2][0].content
     _assert_messages(
         provider.calls[3][2],
@@ -4323,6 +4325,8 @@ async def test_session_compacts_and_retries_once_after_context_overflow(
 
     assert len(compactions) == 1
     assert compactions[0].summary == "Overflow recovery summary"
+    assert compactions[0].tokens_before is not None
+    assert compactions[0].tokens_before > 0
     assert any(
         getattr(event, "type", None) == "message_end"
         and getattr(getattr(event, "message", None), "text", None) == "Recovered answer"
