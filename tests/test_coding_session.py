@@ -1640,7 +1640,11 @@ async def test_context_usage_is_cached_until_session_context_changes(
 
 
 @pytest.mark.anyio
-async def test_context_usage_recalculates_after_prompt_and_compaction(tmp_path: Path) -> None:
+async def test_context_usage_recalculates_after_prompt_and_compaction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(coding_session_module, "DEFAULT_COMPACTION_KEEP_RECENT_TOKENS", 1)
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(
         [
@@ -1669,8 +1673,9 @@ async def test_context_usage_recalculates_after_prompt_and_compaction(tmp_path: 
     _message = await session.compact("Context accounting was discussed.")
     after_compaction_usage = session.context_usage
 
-    assert after_compaction_usage.message_count == 1
-    assert after_compaction_usage.total_tokens < after_prompt_usage.total_tokens
+    assert after_compaction_usage is not after_prompt_usage
+    assert after_compaction_usage.message_count == 2
+    assert after_compaction_usage.total_tokens != after_prompt_usage.total_tokens
     assert session.context_token_estimate == after_compaction_usage.total_tokens
 
 
@@ -2226,7 +2231,11 @@ async def test_session_branches_to_previous_entry_without_destroying_history(
 
 
 @pytest.mark.anyio
-async def test_persist_after_branch_keeps_state_on_active_branch(tmp_path: Path) -> None:
+async def test_persist_after_branch_keeps_state_on_active_branch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(coding_session_module, "DEFAULT_COMPACTION_KEEP_RECENT_TOKENS", 1)
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(
         [
@@ -2281,8 +2290,9 @@ async def test_persist_after_branch_keeps_state_on_active_branch(tmp_path: Path)
     await session.compact()
     compactions = [entry for entry in await storage.read_all() if entry.type == "compaction"]
     assert len(compactions) == 1
-    assert "abandoned" not in compactions[0].replaces_entry_ids
-    assert "abandoned-answer" not in compactions[0].replaces_entry_ids
+    assert compactions[0].replaces_entry_ids == []
+    assert compactions[0].first_kept_entry_id in session.state.context_entry_ids
+    assert compactions[0].first_kept_entry_id not in {"abandoned", "abandoned-answer"}
     assert "Abandoned" not in provider.calls[1][2][0].content
 
 
@@ -2409,7 +2419,15 @@ async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> N
         [
             [
                 assistant_start(model="fake"),
-                assistant_done(message=AssistantMessage(content="The abandoned branch went left.")),
+                assistant_done(
+                    message=AssistantMessage(
+                        content="The abandoned branch went left.",
+                        provider="openai",
+                        model="fake",
+                        response_provider="branch-route",
+                        usage=Usage(input=120, output=15, cache_read=30, cache_write=4),
+                    )
+                ),
             ]
         ]
     )
@@ -2438,6 +2456,10 @@ async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> N
         "The user explored a different conversation branch before returning here."
     )
     assert "The abandoned branch went left." in summary.summary
+    assert summary.usage == Usage(input=120, output=15, cache_read=30, cache_write=4)
+    assert summary.provider == "openai"
+    assert summary.model == "fake"
+    assert summary.response_provider == "branch-route"
     assert provider.calls[0][3] == []
     assert "<conversation>" in provider.calls[0][2][0].content
     assert "Use this EXACT format:" in provider.calls[0][2][0].content
@@ -2544,6 +2566,7 @@ async def test_session_branch_with_summary_falls_back_when_model_summary_is_unav
 
     assert "with branch summary" in result.message
     assert summary.type == "branch_summary"
+    assert summary.usage is None
     assert "Automatically compacted 2 prior message(s)." in summary.summary
     assert "Abandoned follow-up" in summary.summary
     assert len(session.messages) == 2
@@ -3682,7 +3705,11 @@ async def test_session_provider_settings_reload_uses_session_paths(
 
 
 @pytest.mark.anyio
-async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: Path) -> None:
+async def test_session_compact_persists_summary_and_rebuilds_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(coding_session_module, "DEFAULT_COMPACTION_KEEP_RECENT_TOKENS", 1)
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(
         [
@@ -3692,7 +3719,15 @@ async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: P
             ],
             [
                 assistant_start(model="fake"),
-                assistant_done(message=AssistantMessage(content="Generated session summary")),
+                assistant_done(
+                    message=AssistantMessage(
+                        content="Generated session summary",
+                        provider="openai",
+                        model="fake",
+                        response_provider="compaction-route",
+                        usage=Usage(input=1_000, output=80, cache_read=200, cache_write=50),
+                    )
+                ),
             ],
             [
                 assistant_start(model="fake"),
@@ -3715,11 +3750,28 @@ async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: P
 
     _next_events = await _collect_session_events(session.prompt("Continue."))
 
-    assert result == f"Compacted {message_count_before} context entries."
+    assert result == f"Compacted {message_count_before - 1} context entries."
     assert len(compactions) == 1
     assert isinstance(compactions[0], CompactionEntry)
     assert compactions[0].summary == "Generated session summary"
-    assert compactions[0].replaces_entry_ids == message_entries_before
+    assert compactions[0].replaces_entry_ids == []
+    assert compactions[0].first_kept_entry_id == message_entries_before[-1]
+    assert compactions[0].usage == Usage(
+        input=1_000,
+        output=80,
+        cache_read=200,
+        cache_write=50,
+    )
+    assert compactions[0].provider == "openai"
+    assert compactions[0].model == "fake"
+    assert compactions[0].response_provider == "compaction-route"
+    persisted_payload = next(
+        payload
+        for line in storage.path.read_text().splitlines()
+        if (payload := json.loads(line))["type"] == "compaction"
+    )
+    assert "replaces_entry_ids" not in persisted_payload
+    assert persisted_payload["first_kept_entry_id"] == message_entries_before[-1]
     assert leaves == []
     assert entries_after_compact[-1] == compactions[0]
     assert provider.calls[1][1].startswith("You are a context summarization assistant.")
@@ -3728,6 +3780,7 @@ async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: P
         provider.calls[2][2],
         [
             UserMessage(content=("Previous conversation summary:\nGenerated session summary")),
+            AssistantMessage(content="Session answer"),
             UserMessage(content="Continue."),
         ],
     )
@@ -3779,6 +3832,10 @@ async def test_session_auto_compacts_after_response_when_threshold_is_exceeded(
 
     assert len(compactions) == 1
     assert compactions[0].summary == "Generated automatic summary"
+    assert compactions[0].replaces_entry_ids == []
+    assert compactions[0].first_kept_entry_id in session.state.context_entry_ids
+    assert compactions[0].tokens_before is not None
+    assert compactions[0].tokens_before > 0
     assert "Explain sessions." in provider.calls[2][2][0].content
     _assert_messages(
         provider.calls[3][2],
@@ -4376,6 +4433,8 @@ async def test_session_compacts_and_retries_once_after_context_overflow(
 
     assert len(compactions) == 1
     assert compactions[0].summary == "Overflow recovery summary"
+    assert compactions[0].tokens_before is not None
+    assert compactions[0].tokens_before > 0
     assert any(
         getattr(event, "type", None) == "message_end"
         and getattr(getattr(event, "message", None), "text", None) == "Recovered answer"

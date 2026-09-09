@@ -123,8 +123,11 @@ model as context.
 
 HTML exports are self-contained and include two tabs: **Transcript** preserves
 the session tree and entries in storage order, while **Cache** summarizes the
-active branch's model requests, prompt caching, output and reasoning tokens,
-estimated API-rate cost, tool calls, and compactions. Cache charts are
+active branch's model requests, including the requests that generate compaction
+and branch summaries, prompt caching, output and reasoning tokens, estimated
+API-rate cost, tool calls, and compactions. Summary-generation requests are
+labeled separately in the request table rather than blended into assistant turns.
+Cache charts are
 interactive—hover for exact values and select a legend item to hide a
 series—and can be downloaded as static PNG images with white backgrounds. The
 export follows Tau's themes: tau-light in light mode and tau-dark in dark mode,
@@ -139,6 +142,13 @@ because session JSONL does not persist the prompt.
 The system prompt is display-only export metadata, not a transcript entry.
 Direct JSONL exports and JSONL downloaded from the HTML remain entry-only and do
 not contain it.
+
+New compaction entries store a `first_kept_entry_id` boundary: replay inserts the
+summary, then keeps that active-path entry and everything after it. This is a fixed-size,
+Pi-compatible replacement for older Tau files' `replaces_entry_ids` arrays. Older arrays
+remain readable and take precedence during replay, so exporting or resuming a legacy
+session does not change its message history. HTML entry details show the first-kept
+boundary for modern compactions and identify unavailable legacy boundaries.
 
 Every transcript entry is a compact accordion row
 (icon, title, one-line preview, timestamp) that expands to reveal the full
@@ -181,5 +191,17 @@ For example, `/Users/you/repos/tau` becomes something like
 write separate `leaf` pointer records; the last non-`leaf` entry in file order
 is the active tip. Older files containing `leaf` records remain readable, but
 those records do not override file-order tip selection. Compaction and
-branching change the *active* view, never the recorded history. See
+branching change the *active* view, never the recorded history.
+
+New compaction and branch-summary entries include optional `usage`, `provider`,
+`model`, and `response_provider` fields for the model call that generated the
+summary. `response_provider` identifies the resolved backend when a routing
+service reports one. The `usage` field uses the same shape as assistant messages (`input`, `output`,
+`cacheRead`, `cacheWrite`, optional `cacheWrite1H` and `reasoning`, `totalTokens`,
+and `cost`). If more than one completion contributes to a summary, Tau stores
+the field-wise total. Older entries and heuristic branch-summary fallbacks omit
+`usage`; they continue to load normally and do not add a zero-cost request to
+usage analytics.
+
+See
 [Configuration]({{< relref "../reference/configuration.md#sessions" >}}) for the exact layout.

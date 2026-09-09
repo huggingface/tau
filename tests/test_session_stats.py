@@ -188,24 +188,37 @@ def test_calculate_session_stats_keeps_compacted_active_branch_usage() -> None:
     compaction = CompactionEntry(
         parent_id=extension_turn.id,
         summary="Earlier work",
-        replaces_entry_ids=[user.id, assistant.id],
+        first_kept_entry_id=extension_turn.id,
+        usage=Usage(input=200_000, output=10_000, cache_read=100_000),
+        provider="summary-provider",
+        model="summary-model",
     )
+    priced_requests: list[tuple[str, str, int]] = []
 
-    stats = calculate_session_stats(
-        [user, assistant, extension_turn, compaction],
-        pricing=lambda provider, model, input_tokens: {
+    def pricing(provider: str, model: str, input_tokens: int) -> dict[str, float]:
+        priced_requests.append((provider, model, input_tokens))
+        return {
             "input": 2.0,
             "output": 8.0,
             "cacheRead": 0.5,
             "cacheWrite": 0.0,
-        },
+        }
+
+    stats = calculate_session_stats(
+        [user, assistant, extension_turn, compaction],
+        pricing=pricing,
     )
 
+    assert priced_requests == [
+        ("openai", "gpt-test", 1_500_000),
+        ("summary-provider", "summary-model", 300_000),
+    ]
     assert stats.turn_count == 2
     assert stats.tool_call_count == 2
-    assert stats.input_tokens == 1_500_000
-    assert stats.output_tokens == 100_000
-    assert stats.estimated_cost == 3.05
+    assert stats.input_tokens == 1_800_000
+    assert stats.output_tokens == 110_000
+    assert stats.latest_cache_hit_rate == 1 / 3
+    assert stats.estimated_cost == 3.58
 
 
 def test_calculate_session_stats_marks_cost_unavailable_when_pricing_is_missing() -> None:

@@ -713,7 +713,7 @@ def _entry_wire(entry: SessionEntry, provider_name: str) -> dict[str, JSONValue]
                 "customType": "tau.compaction",
                 "data": {
                     "summary": entry.summary,
-                    "replacesEntryIds": list(entry.replaces_entry_ids),
+                    **({"usage": _jsonable(entry.usage)} if entry.usage is not None else {}),
                 },
             }
         return {
@@ -721,13 +721,15 @@ def _entry_wire(entry: SessionEntry, provider_name: str) -> dict[str, JSONValue]
             "summary": entry.summary,
             "firstKeptEntryId": entry.first_kept_entry_id,
             "tokensBefore": entry.tokens_before,
-            "details": {"tauReplacedEntryIds": list(entry.replaces_entry_ids)},
+            **({"usage": _jsonable(entry.usage)} if entry.usage is not None else {}),
+            "details": {},
         }
     if entry.type == "branch_summary":
         return {
             **base,
             "fromId": entry.branch_root_id or entry.parent_id or entry.id,
             "summary": entry.summary,
+            **({"usage": _jsonable(entry.usage)} if entry.usage is not None else {}),
             "details": {},
         }
     if entry.type == "custom":
