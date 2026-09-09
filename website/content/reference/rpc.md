@@ -61,6 +61,9 @@ RPC compaction preserves recent entries and returns the first pre-existing retai
 `firstKeptEntryId`, matching Pi. Older Tau compaction records and TUI compactions that replaced
 all active context have no such boundary; session inspection exposes those honestly as
 `customType: "tau.compaction"` entries instead of fabricating Pi compaction metadata.
+When available, projected compaction and branch-summary entries include Pi-compatible
+`usage` data from the request that generated the summary. Legacy entries and heuristic
+fallback summaries omit the field.
 
 Tau mirrors Pi where its public `CodingSession` has equivalent behavior. Direct `bash` is
 supported, but `abort_bash` requires a future cancellable session API. Queue delivery modes,
