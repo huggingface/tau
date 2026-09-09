@@ -162,12 +162,41 @@ def test_builtin_catalog_separates_openai_api_and_codex_context_limits() -> None
     assert codex.model_metadata["gpt-5.6-sol"].context_window == 272_000
 
 
+def test_builtin_catalog_supports_gpt_6_astra_for_openai_and_codex() -> None:
+    openai = builtin_provider_entry("openai")
+    codex = builtin_provider_entry("openai-codex")
+
+    assert openai is not None
+    assert codex is not None
+    for provider in (openai, codex):
+        assert "gpt-6-astra" in provider.models
+        assert provider.context_windows is not None
+        assert provider.context_windows["gpt-6-astra"] == 272_000
+        metadata = provider.model_metadata["gpt-6-astra"]
+        assert metadata.name == "GPT-6 Astra"
+        assert metadata.input == ("text", "image")
+        assert metadata.max_tokens == 128_000
+        assert model_cost_for_input_tokens(metadata, 272_000) == {
+            "input": 10.0,
+            "output": 50.0,
+            "cacheRead": 1.0,
+            "cacheWrite": 12.5,
+        }
+        assert model_cost_for_input_tokens(metadata, 272_001) == {
+            "input": 20.0,
+            "output": 75.0,
+            "cacheRead": 2.0,
+            "cacheWrite": 25.0,
+        }
+
+
 @pytest.mark.parametrize(
     ("provider_name", "vision_models"),
     [
         (
             "openai-codex",
             {
+                "gpt-6-astra",
                 "gpt-5.6-sol",
                 "gpt-5.6-terra",
                 "gpt-5.6-luna",

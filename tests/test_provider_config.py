@@ -134,6 +134,7 @@ def test_builtin_codex_preserves_model_input_capabilities() -> None:
     codex = ProviderSettings().get_provider("openai-codex")
 
     for model in (
+        "gpt-6-astra",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
@@ -159,6 +160,13 @@ def test_builtin_openai_declares_model_scoped_thinking_capabilities() -> None:
     assert openai.context_windows["gpt-5.5-pro"] == 1_050_000
     assert settings.get_provider("anthropic").context_windows["claude-sonnet-4-6"] == 1_000_000
     assert openrouter.context_windows["openai/gpt-5.5"] == 1_050_000
+    assert provider_thinking_levels(openai, model="gpt-6-astra") == (
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    )
     assert provider_thinking_levels(openai, model="gpt-5.5") == (
         "off",
         "low",
@@ -199,6 +207,14 @@ def test_builtin_openai_declares_model_scoped_thinking_capabilities() -> None:
         "high",
     )
     assert provider_thinking_unavailable_reason(huggingface, model="MiniMaxAI/MiniMax-M2.7") is None
+    assert provider_thinking_levels(codex, model="gpt-6-astra") == (
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    )
     assert provider_thinking_levels(codex, model="gpt-5.5") == (
         "off",
         "minimal",
@@ -1589,6 +1605,7 @@ def test_load_provider_settings_does_not_restore_stale_codex_builtin_models(
     provider = settings.get_provider("openai-codex")
 
     assert provider.models == (
+        "gpt-6-astra",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",

@@ -5742,6 +5742,48 @@
             "minimal"
           ]
         },
+        "gpt-6-astra": {
+          "context_window": 1050000,
+          "cost": {
+            "cacheRead": 1.0,
+            "cacheWrite": 12.5,
+            "input": 10.0,
+            "output": 50.0
+          },
+          "cost_tiers": [
+            {
+              "cacheRead": 1.0,
+              "cacheWrite": 12.5,
+              "input": 10.0,
+              "max_input_tokens": 272000,
+              "output": 50.0
+            },
+            {
+              "cacheRead": 2.0,
+              "cacheWrite": 25.0,
+              "input": 20.0,
+              "output": 75.0
+            }
+          ],
+          "input": [
+            "text",
+            "image"
+          ],
+          "max_tokens": 128000,
+          "name": "GPT-6 Astra",
+          "reasoning": true,
+          "thinking_level_map": {
+            "high": "high",
+            "low": "low",
+            "max": "max",
+            "medium": "medium",
+            "xhigh": "xhigh"
+          },
+          "unsupported_thinking_levels": [
+            "off",
+            "minimal"
+          ]
+        },
         "gpt-realtime-2.1": {
           "context_window": 128000,
           "cost": {
@@ -5861,7 +5903,8 @@
         "gpt-5.1-codex-mini",
         "gpt-5.2-codex",
         "gpt-5.3-codex-spark",
-        "gpt-realtime-2.1"
+        "gpt-realtime-2.1",
+        "gpt-6-astra"
       ]
     },
     "opencode": {

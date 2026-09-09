@@ -143,7 +143,11 @@ A discovery failure is non-fatal: Tau reports it in `/session` and continues wit
 the fallback. Direct OpenAI API sessions retain the context limits documented on
 the API model page. Vision-capable Codex models retain their image-input
 metadata separately from these runtime context limits, allowing image files read
-by Tau to reach the model. The `gpt-5.6` alias, which routes to GPT-5.6 Sol, is only
+by Tau to reach the model. GPT-6 Astra is available as `gpt-6-astra` through both
+the direct `openai` provider and an eligible `openai-codex` subscription. It
+supports image input and the `low`, `medium`, `high`, `xhigh`, and `max`
+reasoning levels; Codex also maps `minimal` to Astra's `low` effort. The
+`gpt-5.6` alias, which routes to GPT-5.6 Sol, is only
 available through the direct OpenAI API; Codex subscription users should select
 the explicit `gpt-5.6-sol` model instead. Tau tombstones the API-only alias for
 the Codex provider, so older user catalog overlays and saved preferences cannot
