@@ -28,7 +28,6 @@ from tau_agent.session import (
     CustomEntry,
     JsonlSessionStorage,
     LabelEntry,
-    LeafEntry,
     MessageEntry,
     ModelChangeEntry,
     SessionInfoEntry,
@@ -307,11 +306,10 @@ class ManualCompactionResult:
 
 @dataclass(frozen=True, slots=True)
 class _PendingMessageWrite:
-    """Stable entries retained while a message persistence attempt is retried."""
+    """Stable entry retained while a message persistence attempt is retried."""
 
     message: AgentMessage
     message_entry: MessageEntry
-    leaf_entry: LeafEntry
 
 
 @dataclass(frozen=True, slots=True)
@@ -488,13 +486,7 @@ class CodingSession:
         else:
             entries = _detach_missing_parents(entries)
 
-        linear_state = SessionState.from_entries(entries)
-        latest_leaf = _latest_leaf_entry(entries)
-        state = (
-            SessionState.from_entries(entries, leaf_id=latest_leaf.entry_id)
-            if latest_leaf is not None
-            else linear_state
-        )
+        state = SessionState.from_entries(entries)
         unfiltered_resource_paths = resource_paths_with_cwd(config.resource_paths, config.cwd)
 
         # A runtime is cwd-bound because it may contain project registrations.
@@ -1001,10 +993,10 @@ class CodingSession:
             target_id = selected_entry.parent_id
             input_prefill = selected_entry.message.text
 
-        leaf = LeafEntry(parent_id=target_id, entry_id=target_id)
-        await self._append_session_entry(leaf)
         self._last_parent_id = target_id
 
+        # Plain navigation is in-memory only. A summary above is the sole write,
+        # and becomes the file-order tip when present.
         await self._refresh_persisted_state(leaf_id=target_id)
         history_repair = await self._persist_active_tool_history_repairs()
         if history_repair is None:
@@ -1330,8 +1322,6 @@ class CodingSession:
         entry = CustomEntry(parent_id=self._last_parent_id, namespace=namespace, data=data)
         await self._append_session_entry(entry)
         self._last_parent_id = entry.id
-        leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
-        await self._append_session_entry(leaf)
         await self._refresh_persisted_state(leaf_id=entry.id)
 
     @property
@@ -1471,8 +1461,7 @@ class CodingSession:
             model=model,
             provider=self.provider_name,
         )
-        leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
-        await self._append_session_batch((entry, leaf))
+        await self._append_session_entry(entry)
         self._last_parent_id = entry.id
         await self._refresh_persisted_state(leaf_id=entry.id)
 
@@ -1480,7 +1469,7 @@ class CodingSession:
         """Switch provider/model with candidate-first durable publication.
 
         No active state changes until the candidate runtime exists and the
-        provider-aware model entry plus leaf are committed as one batch.
+        provider-aware model entry is committed.
         """
         if self._harness.is_running:
             raise RuntimeError(
@@ -1562,8 +1551,7 @@ class CodingSession:
                 model=choice.model,
                 provider=choice.provider_name,
             )
-            leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
-            await self._append_session_batch((entry, leaf))
+            await self._append_session_entry(entry)
         except BaseException:
             if candidate is not None:
                 await candidate.aclose()
@@ -1817,8 +1805,6 @@ class CodingSession:
             thinking_level=normalized,
         )
         await self._append_session_entry(entry)
-        leaf = LeafEntry(parent_id=entry.id, entry_id=entry.id)
-        await self._append_session_entry(leaf)
         self._last_parent_id = entry.id
 
         self._persist_thinking_level_choice()
@@ -3367,8 +3353,6 @@ class CodingSession:
             )
             staged.append(copied_entry)
             parent_id = copied_entry.id
-        staged.append(LeafEntry(parent_id=parent_id, entry_id=parent_id))
-
         if self._config.defer_authoritative_writes:
             self._prepared_entries.extend(staged)
             self._last_parent_id = parent_id
@@ -3404,24 +3388,16 @@ class CodingSession:
     async def _persist_message(self, message: AgentMessage) -> None:
         """Persist one completed message at the active branch tip, idempotently.
 
-        Message lifecycle events are the durable-message boundary. Stable entry
-        ids let a retry finish a partially completed message/leaf pair without
-        appending the message a second time.
-
-        Only a retry reads durable ids: a first attempt mints ids that cannot
-        already be on disk, so the extra full-file read is skipped on the hot
-        path.
+        Message lifecycle events are the durable-message boundary. A stable entry
+        id lets a retry recognize an append that reached disk before raising.
+        Only retries pay for a full-file read.
         """
         message_id = id(message)
         pending = self._pending_message_writes.get(message_id)
         is_retry = pending is not None
         if pending is None:
             entry = MessageEntry(parent_id=self._last_parent_id, message=message)
-            pending = _PendingMessageWrite(
-                message=message,
-                message_entry=entry,
-                leaf_entry=LeafEntry(parent_id=entry.id, entry_id=entry.id),
-            )
+            pending = _PendingMessageWrite(message=message, message_entry=entry)
             self._pending_message_writes[message_id] = pending
 
         durable_ids = (
@@ -3430,8 +3406,6 @@ class CodingSession:
         if pending.message_entry.id not in durable_ids:
             await self._append_session_entry(pending.message_entry)
         self._last_parent_id = pending.message_entry.id
-        if pending.leaf_entry.id not in durable_ids:
-            await self._append_session_entry(pending.leaf_entry)
 
         await self._refresh_persisted_state(leaf_id=self._last_parent_id)
         self._persisted_message_ids.add(message_id)
@@ -3850,8 +3824,6 @@ class CodingSession:
             tokens_before=tokens_before,
         )
         await self._append_session_entry(compaction)
-        leaf = LeafEntry(parent_id=compaction.id, entry_id=compaction.id)
-        await self._append_session_entry(leaf)
         self._last_parent_id = compaction.id
 
         await self._refresh_persisted_state(leaf_id=compaction.id)
@@ -3958,13 +3930,6 @@ def _last_parent_id_from_state(state: SessionState) -> str | None:
         return state.active_leaf_id
     if state.entries:
         return state.entries[-1].id
-    return None
-
-
-def _latest_leaf_entry(entries: list[SessionEntry]) -> LeafEntry | None:
-    for entry in reversed(entries):
-        if isinstance(entry, LeafEntry):
-            return entry
     return None
 
 

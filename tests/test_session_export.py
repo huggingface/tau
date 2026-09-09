@@ -53,7 +53,7 @@ def test_render_session_html_preserves_branch_tree() -> None:
             summary="The right branch was compacted.",
             replaces_entry_ids=["root", "right", "tool"],
         ),
-        LeafEntry(id="leaf", parent_id="compact", entry_id="compact"),
+        LeafEntry(id="leaf", parent_id="compact", entry_id="left"),
     ]
 
     html = render_session_html(entries, title="Test Export", source="/tmp/session.jsonl")
@@ -63,7 +63,8 @@ def test_render_session_html_preserves_branch_tree() -> None:
     assert 'id="entry-root"' in html
     assert 'id="entry-left"' in html
     assert 'id="entry-right"' in html
-    assert 'id="entry-compact"' in html
+    assert 'id="entry-compact" class="entry active-entry"' in html
+    assert 'id="entry-leaf" class="entry"' in html
     assert "Start &lt;session&gt;" in html
     assert "Right branch" in html
     assert "active-path" in html
@@ -242,7 +243,7 @@ def test_render_session_html_includes_jsonl_download() -> None:
     assert match is not None
     decoded = base64.b64decode(match.group(1)).decode("utf-8")
     lines = decoded.splitlines()
-    # The download embeds every entry, including leaf pointers filtered from the view,
+    # The download embeds every entry, including historical leaf pointers,
     # but keeps the live prompt outside persisted transcript data.
     assert len(lines) == 3
     assert '"id":"leaf"' in lines[2]

@@ -85,7 +85,7 @@ class LabelEntry(BaseSessionEntry):
 
 
 class LeafEntry(BaseSessionEntry):
-    """The active branch leaf pointer entry."""
+    """A legacy active-tip pointer retained only for deserialization."""
 
     type: Literal["leaf"] = "leaf"
     entry_id: str | None = None

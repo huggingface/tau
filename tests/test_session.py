@@ -312,11 +312,12 @@ def test_session_state_replays_linear_entries() -> None:
     assistant = AssistantMessage(content="Hello", timestamp=2)
     entries = [
         MessageEntry(id="user", message=user),
-        ModelChangeEntry(id="model", model="fake-model"),
-        MessageEntry(id="assistant", message=assistant),
-        LabelEntry(id="label", label="Greeting"),
-        CustomEntry(id="custom", namespace="test", data={"ok": True}),
-        LeafEntry(id="leaf", entry_id="assistant"),
+        ModelChangeEntry(id="model", parent_id="user", model="fake-model"),
+        MessageEntry(id="assistant", parent_id="model", message=assistant),
+        LabelEntry(id="label", parent_id="assistant", label="Greeting"),
+        CustomEntry(id="custom", parent_id="label", namespace="test", data={"ok": True}),
+        # Historical pointers deserialize but do not override the file-order tip.
+        LeafEntry(id="leaf", parent_id="custom", entry_id="assistant"),
     ]
 
     state = SessionState.from_entries(entries)
@@ -324,19 +325,28 @@ def test_session_state_replays_linear_entries() -> None:
     assert state.messages == (user, assistant)
     assert state.model == "fake-model"
     assert state.label == "Greeting"
-    assert state.active_leaf_id == "assistant"
+    assert state.active_leaf_id == "custom"
 
 
 def test_session_state_applies_compaction_and_branch_summary() -> None:
     entries = [
         MessageEntry(id="user", message=UserMessage(content="Explain sessions.")),
-        MessageEntry(id="assistant", message=AssistantMessage(content="They are trees.")),
+        MessageEntry(
+            id="assistant",
+            parent_id="user",
+            message=AssistantMessage(content="They are trees."),
+        ),
         CompactionEntry(
             id="compact",
+            parent_id="assistant",
             summary="The user asked about sessions.",
             replaces_entry_ids=["user", "assistant"],
         ),
-        BranchSummaryEntry(id="branch", summary="A side branch explored storage."),
+        BranchSummaryEntry(
+            id="branch",
+            parent_id="compact",
+            summary="A side branch explored storage.",
+        ),
     ]
 
     state = SessionState.from_entries(entries)

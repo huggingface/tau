@@ -852,7 +852,7 @@ async def test_run_print_mode_persists_session_entries(
     assert [message.role for message in messages] == ["user", "assistant"]
     assert messages[0].content == "Say hello"
     assert messages[1].text == "Done"
-    assert any(entry.type == "leaf" for entry in entries)
+    assert not any(entry.type == "leaf" for entry in entries)
 
 
 @pytest.mark.anyio
@@ -860,9 +860,14 @@ async def test_run_print_mode_resumes_persisted_conversation(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
-    await storage.append(MessageEntry(message=UserMessage(content="First question")))
-    await storage.append(MessageEntry(message=AssistantMessage(content="First answer")))
-    await storage.append(ModelChangeEntry(model="model-a"))
+    user_entry = MessageEntry(message=UserMessage(content="First question"))
+    assistant_entry = MessageEntry(
+        parent_id=user_entry.id,
+        message=AssistantMessage(content="First answer"),
+    )
+    await storage.append(user_entry)
+    await storage.append(assistant_entry)
+    await storage.append(ModelChangeEntry(parent_id=assistant_entry.id, model="model-a"))
     provider = FakeProvider(
         [
             [

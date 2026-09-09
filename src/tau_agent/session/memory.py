@@ -41,20 +41,20 @@ class SessionState:
         *,
         leaf_id: str | None | object = _UNSET_LEAF_ID,
     ) -> SessionState:
-        """Replay entries into state.
+        """Replay the branch ending at the active entry.
 
-        When `leaf_id` is provided, only the root-to-leaf path is replayed. Passing
-        ``None`` explicitly replays the empty path before the first root entry.
-        Without it, entries are replayed linearly in storage order.
+        By default the active entry is the last non-leaf entry in file order.
+        Historical ``leaf`` records remain readable but never select the tip.
+        An explicit `leaf_id` supports in-memory tree navigation; passing
+        ``None`` selects the empty path before the first root entry.
         """
-        replay_all = leaf_id is _UNSET_LEAF_ID
-        resolved_leaf_id = None if replay_all else cast(str | None, leaf_id)
+        resolved_leaf_id = (
+            _last_non_leaf_id(entries)
+            if leaf_id is _UNSET_LEAF_ID
+            else cast(str | None, leaf_id)
+        )
         replay_entries = (
-            entries
-            if replay_all
-            else path_to_entry(entries, resolved_leaf_id)
-            if resolved_leaf_id is not None
-            else []
+            path_to_entry(entries, resolved_leaf_id) if resolved_leaf_id is not None else []
         )
 
         message_rows: list[tuple[str, AgentMessage]] = []
@@ -80,7 +80,7 @@ class SessionState:
                 case "label":
                     label = entry.label
                 case "leaf":
-                    active_leaf_id = entry.entry_id
+                    pass  # Backward-compatible historical record; never selects the tip.
                 case "session_info":
                     session_info = entry
                 case "custom":
@@ -106,6 +106,13 @@ class SessionState:
             context_entry_ids=tuple(entry_id for entry_id, _message in message_rows),
             entries=tuple(replay_entries),
         )
+
+
+def _last_non_leaf_id(entries: list[SessionEntry]) -> str | None:
+    for entry in reversed(entries):
+        if entry.type != "leaf":
+            return entry.id
+    return None
 
 
 def _apply_compaction(

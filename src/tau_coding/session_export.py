@@ -183,20 +183,18 @@ def render_session_html(
     entry_list = list(entries)
     active_leaf_id = _active_leaf_id(entry_list)
     active_path_ids = _active_path_ids(entry_list, active_leaf_id)
-    visible_entries = _visible_entries(entry_list)
-    tree_html = _render_tree(visible_entries, active_path_ids, active_leaf_id)
-    details_html = _render_entry_details(visible_entries, active_path_ids, active_leaf_id)
+    tree_html = _render_tree(entry_list, active_path_ids, active_leaf_id)
+    details_html = _render_entry_details(entry_list, active_path_ids, active_leaf_id)
     source_html = f'<p class="source">Source: <code>{_escape(source)}</code></p>' if source else ""
     system_prompt_html = _render_system_prompt(system_prompt)
     generated_at = datetime.now(UTC).replace(microsecond=0).isoformat()
     jsonl_b64 = base64.b64encode(_session_jsonl_text(entry_list).encode("utf-8")).decode("ascii")
     jsonl_filename = _jsonl_filename(title, source)
-    tool_count = sum(1 for entry in visible_entries if _entry_filter_kind(entry) == "tool")
-    event_count = sum(1 for entry in visible_entries if _entry_filter_kind(entry) == "event")
+    tool_count = sum(1 for entry in entry_list if _entry_filter_kind(entry) == "tool")
+    event_count = sum(1 for entry in entry_list if _entry_filter_kind(entry) == "event")
     usage_html = render_usage_dashboard(
         collect_session_usage(
-            [entry for entry in visible_entries if entry.id in active_path_ids]
-            or list(visible_entries)
+            [entry for entry in entry_list if entry.id in active_path_ids] or entry_list
         )
     )
     light_theme_css = _export_theme_css(TAU_LIGHT_THEME)
@@ -1075,22 +1073,10 @@ def _render_system_prompt(system_prompt: str | None) -> str:
     )
 
 
-def _visible_entries(entries: Sequence[SessionEntry]) -> list[SessionEntry]:
-    """Filter out entries that are pointers/plumbing rather than transcript content.
-
-    Leaf pointer entries only record which entry is the current tip of a branch;
-    that information is already conveyed by the active-path/active-leaf styling,
-    so showing them as their own rows would just add noise to the export.
-    """
-    return [entry for entry in entries if not isinstance(entry, LeafEntry)]
-
-
 def _active_leaf_id(entries: Sequence[SessionEntry]) -> str | None:
     for entry in reversed(entries):
-        if isinstance(entry, LeafEntry):
-            return entry.entry_id
-    if entries:
-        return entries[-1].id
+        if not isinstance(entry, LeafEntry):
+            return entry.id
     return None
 
 
