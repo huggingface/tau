@@ -62,6 +62,12 @@ RPC compaction preserves recent entries and returns the first pre-existing retai
 all active context have no such boundary; session inspection exposes those honestly as
 `customType: "tau.compaction"` entries instead of fabricating Pi compaction metadata.
 
+Session inspection projects persisted `custom_message` entries in Pi wire
+shape: `parentId`, `customType`, `content`, `details`, and `display`. Tau's local
+session JSONL uses snake_case wrapper fields such as `parent_id` and
+`custom_type`; clients should rely on the RPC shape rather than the storage
+spelling.
+
 Tau mirrors Pi where its public `CodingSession` has equivalent behavior. Direct `bash` is
 supported, but `abort_bash` requires a future cancellable session API. Queue delivery modes,
 retry controls, cloning, image prompts, and the extension UI request/response subprotocol remain
