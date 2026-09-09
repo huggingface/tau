@@ -17,8 +17,10 @@ from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
     CustomMessage,
+    Usage,
     UserMessage,
     message_text,
+    sum_usage,
 )
 from tau_agent.provider import ModelProvider
 from tau_agent.provider_events import AssistantDoneEvent, AssistantErrorEvent, TextDeltaEvent
@@ -291,6 +293,14 @@ class CompactionPlan:
 
     replace_entry_ids: tuple[str, ...]
     messages_to_summarize: tuple[AgentMessage, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _GeneratedSummary:
+    """Summary text paired with the provider usage spent producing it."""
+
+    text: str
+    usage: Usage | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -977,7 +987,7 @@ class CodingSession:
                 self._last_parent_id,
             )
             if abandoned_messages:
-                summary = await self._summarize_branch_messages(
+                generated = await self._summarize_branch_messages(
                     abandoned_messages,
                     custom_instructions=custom_instructions,
                     replace_instructions=replace_instructions,
@@ -985,7 +995,8 @@ class CodingSession:
                 summary_entry = BranchSummaryEntry(
                     parent_id=entry_id,
                     branch_root_id=entry_id,
-                    summary=summary,
+                    summary=generated.text,
+                    usage=generated.usage,
                 )
                 await self._append_session_entry(summary_entry)
                 target_id = summary_entry.id
@@ -2850,18 +2861,19 @@ class CodingSession:
             raise ValueError("Not enough context to compact while preserving recent entries")
         first_kept_entry_id = rows[len(plan.replace_entry_ids)][0]
         tokens_before = self.context_token_estimate
-        summary = await self._generate_compaction_summary(
+        generated = await self._generate_compaction_summary(
             plan.messages_to_summarize,
             custom_instructions=instructions,
         )
         compaction = await self._append_compaction(
-            summary,
+            generated.text,
             replace_entry_ids=plan.replace_entry_ids,
             first_kept_entry_id=first_kept_entry_id,
             tokens_before=tokens_before,
+            usage=generated.usage,
         )
         return ManualCompactionResult(
-            summary=summary,
+            summary=generated.text,
             first_kept_entry_id=first_kept_entry_id,
             tokens_before=tokens_before,
             estimated_tokens_after=self.context_token_estimate,
@@ -2872,14 +2884,15 @@ class CodingSession:
         """Generate a manual compaction summary and rebuild active context."""
         await self._flush_pending_message_writes(context=self._diagnostic_context())
         plan = self._manual_compaction_plan()
-        summary = await self._generate_compaction_summary(
+        generated = await self._generate_compaction_summary(
             plan.messages_to_summarize,
             custom_instructions=instructions,
         )
         compaction = await self._append_compaction(
-            summary,
+            generated.text,
             replace_entry_ids=plan.replace_entry_ids,
             tokens_before=self.context_token_estimate,
+            usage=generated.usage,
         )
         return f"Compacted {len(compaction.replaces_entry_ids)} context entries."
 
@@ -3619,8 +3632,12 @@ class CodingSession:
             plan = self._recent_preserving_compaction_plan()
             if plan is None:
                 return False
-            summary = await self._generate_compaction_summary(plan.messages_to_summarize)
-            await self._append_compaction(summary, replace_entry_ids=plan.replace_entry_ids)
+            generated = await self._generate_compaction_summary(plan.messages_to_summarize)
+            await self._append_compaction(
+                generated.text,
+                replace_entry_ids=plan.replace_entry_ids,
+                usage=generated.usage,
+            )
             return True
         except Exception as exc:  # noqa: BLE001 - the original overflow remains visible
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
@@ -3717,8 +3734,12 @@ class CodingSession:
         plan = self._recent_preserving_compaction_plan()
         if plan is None:
             return False
-        summary = await self._generate_compaction_summary(plan.messages_to_summarize)
-        await self._append_compaction(summary, replace_entry_ids=plan.replace_entry_ids)
+        generated = await self._generate_compaction_summary(plan.messages_to_summarize)
+        await self._append_compaction(
+            generated.text,
+            replace_entry_ids=plan.replace_entry_ids,
+            usage=generated.usage,
+        )
         return True
 
     async def _generate_compaction_summary(
@@ -3726,13 +3747,14 @@ class CodingSession:
         messages: tuple[AgentMessage, ...],
         *,
         custom_instructions: str | None = None,
-    ) -> str:
+    ) -> _GeneratedSummary:
         prompt = build_compaction_summary_prompt(
             messages,
             custom_instructions=custom_instructions,
         )
         text_parts: list[str] = []
         final_text: str | None = None
+        response_usages: list[Usage] = []
         summary_messages: list[AgentMessage] = [UserMessage(content=prompt)]
         async for event in self._harness.config.provider.stream_response(
             model=self.model,
@@ -3744,6 +3766,7 @@ class CodingSession:
                 text_parts.append(event.delta)
             elif isinstance(event, AssistantDoneEvent):
                 final_text = event.message.text
+                response_usages.append(event.message.usage)
             elif isinstance(event, AssistantErrorEvent):
                 raise RuntimeError(
                     f"Compaction summarization failed: {event.error.error_message or event.reason}"
@@ -3752,7 +3775,10 @@ class CodingSession:
         summary = (final_text if final_text is not None else "".join(text_parts)).strip()
         if not summary:
             raise RuntimeError("Compaction summarization returned an empty summary")
-        return summary
+        return _GeneratedSummary(
+            text=summary,
+            usage=sum_usage(response_usages) if response_usages else None,
+        )
 
     async def _summarize_branch_messages(
         self,
@@ -3760,9 +3786,9 @@ class CodingSession:
         *,
         custom_instructions: str | None = None,
         replace_instructions: bool = False,
-    ) -> str:
+    ) -> _GeneratedSummary:
         try:
-            summary = await summarize_branch_messages_with_model(
+            result = await summarize_branch_messages_with_model(
                 provider=self._harness.config.provider,
                 model=self.model,
                 messages=messages,
@@ -3770,8 +3796,14 @@ class CodingSession:
                 replace_instructions=replace_instructions,
             )
         except Exception:
-            summary = None
-        return summary or summarize_messages_for_compaction(messages)
+            result = None
+        if result is not None:
+            summary, usage = result
+            return _GeneratedSummary(text=summary, usage=usage)
+        return _GeneratedSummary(
+            text=summarize_messages_for_compaction(messages),
+            usage=None,
+        )
 
     def _manual_compaction_plan(self) -> CompactionPlan:
         rows = self._active_context_rows()
@@ -3812,6 +3844,7 @@ class CodingSession:
         replace_entry_ids: tuple[str, ...],
         first_kept_entry_id: str | None = None,
         tokens_before: int | None = None,
+        usage: Usage | None = None,
     ) -> CompactionEntry:
         if not replace_entry_ids:
             raise ValueError("No active context messages to compact")
@@ -3822,6 +3855,7 @@ class CodingSession:
             replaces_entry_ids=list(replace_entry_ids),
             first_kept_entry_id=first_kept_entry_id,
             tokens_before=tokens_before,
+            usage=usage,
         )
         await self._append_session_entry(compaction)
         self._last_parent_id = compaction.id

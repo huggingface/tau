@@ -1307,15 +1307,33 @@ def _render_entry_body(entry: SessionEntry) -> str:
         level = entry.thinking_level if entry.thinking_level is not None else "off"
         return f"<p>Thinking level changed to <code>{_escape(level)}</code>.</p>"
     if isinstance(entry, CompactionEntry):
+        usage = (
+            _render_block(
+                "Summary request usage",
+                _render_json_block(entry.usage.model_dump(mode="json", by_alias=True)),
+            )
+            if entry.usage is not None
+            else ""
+        )
         return (
             f"<pre>{_escape(entry.summary)}</pre>"
             f"{_render_list('Replaces entries', entry.replaces_entry_ids)}"
+            f"{usage}"
         )
     if isinstance(entry, BranchSummaryEntry):
         branch_root = entry.branch_root_id or "none"
+        usage = (
+            _render_block(
+                "Summary request usage",
+                _render_json_block(entry.usage.model_dump(mode="json", by_alias=True)),
+            )
+            if entry.usage is not None
+            else ""
+        )
         return (
             f"<p>Branch root: <code>{_escape(branch_root)}</code></p>"
             f"<pre>{_escape(entry.summary)}</pre>"
+            f"{usage}"
         )
     if isinstance(entry, LabelEntry):
         return f"<p>Session label: <strong>{_escape(entry.label)}</strong></p>"

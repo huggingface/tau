@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from tau_agent.messages import AssistantMessage
+from tau_agent.messages import AssistantMessage, Usage
 from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
@@ -36,6 +36,7 @@ class RequestUsage:
     """Token usage for a single assistant response."""
 
     number: int
+    kind: str
     timestamp: str
     provider: str
     model: str
@@ -149,26 +150,23 @@ def collect_session_usage(entries: Sequence[SessionEntry]) -> SessionUsage:
     compactions = 0
     pending_events: list[tuple[str, str, str]] = []
     events: list[UsageEvent] = []
-    for entry in entries:
-        event = _usage_event(entry)
-        if event is not None:
-            kind, label = event
-            pending_events.append((_entry_time(entry.timestamp), kind, label))
-            if isinstance(entry, CompactionEntry):
-                compactions += 1
-            continue
-        if not isinstance(entry, MessageEntry):
-            continue
-        message = entry.message
-        if not isinstance(message, AssistantMessage):
-            continue
-        for call in message.tool_calls:
-            tools[call.name] = tools.get(call.name, 0) + 1
-        usage = message.usage
+    current_provider = "unknown"
+    current_model = "unknown"
+
+    def append_request(
+        usage: Usage,
+        *,
+        timestamp: float,
+        kind: str,
+        provider: str,
+        model: str,
+        response_provider: str | None = None,
+        stop_reason: str = "-",
+    ) -> None:
         cache_write_1h = usage.cache_write_1h or 0
         estimated = estimated_request_cost(
-            message.provider,
-            message.model,
+            provider,
+            model,
             fresh=usage.input,
             cached=usage.cache_read,
             cache_write=usage.cache_write,
@@ -181,30 +179,81 @@ def collect_session_usage(entries: Sequence[SessionEntry]) -> SessionUsage:
         requests.append(
             RequestUsage(
                 number=request_number,
-                timestamp=datetime.fromtimestamp(entry.timestamp, tz=UTC).strftime("%H:%M:%S"),
-                provider=message.provider,
-                model=message.model,
-                response_provider=message.response_provider,
+                kind=kind,
+                timestamp=_entry_time(timestamp),
+                provider=provider,
+                model=model,
+                response_provider=response_provider,
                 fresh=usage.input,
                 cached=usage.cache_read,
                 cache_write=usage.cache_write,
                 cache_write_1h=cache_write_1h,
                 output=usage.output,
                 reasoning=usage.reasoning or 0,
-                stop_reason=message.stop_reason,
+                stop_reason=stop_reason,
                 estimated_cost=estimated,
             )
         )
         events.extend(
             UsageEvent(
                 request_number=request_number,
-                timestamp=timestamp,
-                kind=kind,
+                timestamp=event_timestamp,
+                kind=event_kind,
                 label=label,
             )
-            for timestamp, kind, label in pending_events
+            for event_timestamp, event_kind, label in pending_events
         )
         pending_events.clear()
+
+    for entry in entries:
+        event = _usage_event(entry)
+        if event is not None:
+            kind, label = event
+            pending_events.append((_entry_time(entry.timestamp), kind, label))
+        if isinstance(entry, CompactionEntry):
+            compactions += 1
+            if entry.usage is not None:
+                append_request(
+                    entry.usage,
+                    timestamp=entry.timestamp,
+                    kind="compaction summary",
+                    provider=current_provider,
+                    model=current_model,
+                )
+            continue
+        if isinstance(entry, BranchSummaryEntry):
+            if entry.usage is not None:
+                append_request(
+                    entry.usage,
+                    timestamp=entry.timestamp,
+                    kind="branch summary",
+                    provider=current_provider,
+                    model=current_model,
+                )
+            continue
+        if isinstance(entry, ModelChangeEntry):
+            current_model = entry.model
+            if entry.provider is not None:
+                current_provider = entry.provider
+            continue
+        if not isinstance(entry, MessageEntry):
+            continue
+        message = entry.message
+        if not isinstance(message, AssistantMessage):
+            continue
+        current_provider = message.provider
+        current_model = message.model
+        for call in message.tool_calls:
+            tools[call.name] = tools.get(call.name, 0) + 1
+        append_request(
+            message.usage,
+            timestamp=entry.timestamp,
+            kind="assistant",
+            provider=message.provider,
+            model=message.model,
+            response_provider=message.response_provider,
+            stop_reason=message.stop_reason,
+        )
     if requests:
         events.extend(
             UsageEvent(
@@ -463,8 +512,8 @@ def render_usage_dashboard(usage: SessionUsage) -> str:
     show_hit_rates = cache_hit_rate is not None
 
     table_rows = "".join(
-        f"<tr><td>{item.number}</td><td>{html.escape(item.timestamp)}</td>"
-        f"<td>{html.escape(item.provider)}</td>"
+        f"<tr><td>{item.number}</td><td>{html.escape(item.kind)}</td>"
+        f"<td>{html.escape(item.timestamp)}</td><td>{html.escape(item.provider)}</td>"
         f"<td>{html.escape(item.response_provider) if item.response_provider else '-'}</td>"
         f"<td>{html.escape(item.model)}</td><td>{item.fresh:,}</td><td>{item.cached:,}</td>"
         f"<td>{item.cache_write:,}</td><td>{item.prompt:,}</td>"
@@ -492,7 +541,7 @@ def render_usage_dashboard(usage: SessionUsage) -> str:
         f'<div class="usage-charts">{charts_html}</div>'
         '<div class="usage-details">'
         '<div class="usage-panel"><h2>Requests</h2><div class="usage-table-wrap"><table>'
-        "<thead><tr><th>#</th><th>Time</th><th>Provider</th>"
+        "<thead><tr><th>#</th><th>Request</th><th>Time</th><th>Provider</th>"
         "<th>Response Provider</th><th>Model</th><th>Fresh</th>"
         "<th>Cached</th>"
         "<th>Written</th><th>Prompt</th><th>Hit rate</th><th>Output</th><th>Est. cost</th>"
@@ -674,10 +723,10 @@ USAGE_STYLES = """
       text-transform: uppercase;
       border-bottom: 1px solid var(--line-strong);
     }
-    .usage-panel th:nth-child(3), .usage-panel th:nth-child(4),
-    .usage-panel th:nth-child(5),
-    .usage-panel td:nth-child(3), .usage-panel td:nth-child(4),
-    .usage-panel td:nth-child(5) { text-align: left; }
+    .usage-panel th:nth-child(2), .usage-panel th:nth-child(4),
+    .usage-panel th:nth-child(5), .usage-panel th:nth-child(6),
+    .usage-panel td:nth-child(2), .usage-panel td:nth-child(4),
+    .usage-panel td:nth-child(5), .usage-panel td:nth-child(6) { text-align: left; }
     .usage-tool {
       display: flex;
       justify-content: space-between;

@@ -52,6 +52,7 @@ def test_render_session_html_preserves_branch_tree() -> None:
             parent_id="tool",
             summary="The right branch was compacted.",
             replaces_entry_ids=["root", "right", "tool"],
+            usage=Usage(input=100, output=10, cache_read=20),
         ),
         LeafEntry(id="leaf", parent_id="compact", entry_id="left"),
     ]
@@ -70,6 +71,9 @@ def test_render_session_html_preserves_branch_tree() -> None:
     assert "active-path" in html
     assert "active-leaf" in html
     assert "Replaces entries" in html
+    assert "Summary request usage" in html
+    assert "cacheRead" in html
+    assert "compaction summary" in html
 
 
 def test_render_session_html_handles_long_legacy_leaf_history() -> None:

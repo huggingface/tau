@@ -189,6 +189,7 @@ def test_calculate_session_stats_keeps_compacted_active_branch_usage() -> None:
         parent_id=extension_turn.id,
         summary="Earlier work",
         replaces_entry_ids=[user.id, assistant.id],
+        usage=Usage(input=200_000, output=10_000, cache_read=100_000),
     )
 
     stats = calculate_session_stats(
@@ -203,9 +204,10 @@ def test_calculate_session_stats_keeps_compacted_active_branch_usage() -> None:
 
     assert stats.turn_count == 2
     assert stats.tool_call_count == 2
-    assert stats.input_tokens == 1_500_000
-    assert stats.output_tokens == 100_000
-    assert stats.estimated_cost == 3.05
+    assert stats.input_tokens == 1_800_000
+    assert stats.output_tokens == 110_000
+    assert stats.latest_cache_hit_rate == 1 / 3
+    assert stats.estimated_cost == 3.58
 
 
 def test_calculate_session_stats_marks_cost_unavailable_when_pricing_is_missing() -> None:

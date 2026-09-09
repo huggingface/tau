@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from tau_agent.messages import AssistantMessage, CustomMessage, UserMessage
-from tau_agent.session import MessageEntry
+from tau_agent.session import BranchSummaryEntry, CompactionEntry, MessageEntry, ModelChangeEntry
 from tau_agent.session.entries import SessionEntry
 
 PricingResolver = Callable[[str, str, int], Mapping[str, float] | None]
@@ -89,19 +89,39 @@ def calculate_session_stats(
     estimated_cost = 0.0
     has_billable_usage = False
     has_complete_pricing = True
+    current_provider = "unknown"
+    current_model = "unknown"
 
     for entry in entries:
-        if not isinstance(entry, MessageEntry):
-            continue
-        message = entry.message
-        if isinstance(message, (UserMessage, CustomMessage)):
-            turn_count += 1
-            continue
-        if not isinstance(message, AssistantMessage):
+        if isinstance(entry, ModelChangeEntry):
+            current_model = entry.model
+            if entry.provider is not None:
+                current_provider = entry.provider
             continue
 
-        tool_call_count += len(message.tool_calls)
-        usage = message.usage
+        message: AssistantMessage | None = None
+        if isinstance(entry, MessageEntry):
+            if isinstance(entry.message, (UserMessage, CustomMessage)):
+                turn_count += 1
+                continue
+            if not isinstance(entry.message, AssistantMessage):
+                continue
+            message = entry.message
+            current_provider = message.provider
+            current_model = message.model
+            tool_call_count += len(message.tool_calls)
+            usage = message.usage
+            provider = message.provider
+            model = message.model
+        elif isinstance(entry, CompactionEntry | BranchSummaryEntry):
+            if entry.usage is None:
+                continue
+            usage = entry.usage
+            provider = current_provider
+            model = current_model
+        else:
+            continue
+
         prompt_tokens = usage.input + usage.cache_read + usage.cache_write
         latest_prompt_tokens = prompt_tokens
         latest_cached_input_tokens = usage.cache_read
@@ -109,7 +129,7 @@ def calculate_session_stats(
         cached_input_tokens += usage.cache_read
         cache_write_tokens += usage.cache_write
         output_tokens += usage.output
-        timing = message.timing
+        timing = message.timing if message is not None else None
         if timing is not None:
             # TPS is token-weighted and requires usable output usage. TTFT is a
             # per-call arithmetic mean whenever output was observed, even if a
@@ -124,7 +144,7 @@ def calculate_session_stats(
             continue
 
         has_billable_usage = True
-        rates = pricing(message.provider, message.model, prompt_tokens)
+        rates = pricing(provider, model, prompt_tokens)
         if rates is None:
             if usage.cost.total > 0:
                 estimated_cost += usage.cost.total

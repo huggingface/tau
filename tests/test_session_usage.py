@@ -59,6 +59,41 @@ def test_collect_session_usage_aggregates_requests_tools_and_compactions() -> No
     assert usage.hit_rate == 2850 / 3050
 
 
+def test_collect_session_usage_includes_labeled_summary_requests() -> None:
+    entries = [
+        ModelChangeEntry(
+            id="model",
+            provider="anthropic",
+            model="claude-sonnet-4-5",
+        ),
+        CompactionEntry(
+            id="compact",
+            summary="summary",
+            usage=Usage(input=1_000, output=20, cache_read=500, cache_write=100),
+        ),
+        BranchSummaryEntry(
+            id="branch",
+            summary="branch",
+            usage=Usage(input=200, output=10, cache_read=50),
+        ),
+    ]
+
+    usage = collect_session_usage(entries)
+
+    assert [request.kind for request in usage.requests] == [
+        "compaction summary",
+        "branch summary",
+    ]
+    assert [request.model for request in usage.requests] == [
+        "claude-sonnet-4-5",
+        "claude-sonnet-4-5",
+    ]
+    assert usage.total_prompt == 1_850
+    assert usage.total_output == 30
+    assert usage.hit_rate == 550 / 1_850
+    assert usage.total_cost is not None
+
+
 def test_collect_session_usage_positions_notable_events_at_next_request() -> None:
     entries = [
         ModelChangeEntry(id="model", timestamp=1, model="claude-sonnet-4-5"),
@@ -125,6 +160,7 @@ def test_render_usage_dashboard_renders_charts_and_table() -> None:
     assert "Prompt input by request" in markup
     assert "Cache hit rate" in markup
     assert "claude-sonnet-4-5" in markup
+    assert "assistant" in markup
 
 
 def test_render_usage_dashboard_marks_events_on_prompt_input_chart() -> None:

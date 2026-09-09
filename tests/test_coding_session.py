@@ -2331,7 +2331,14 @@ async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> N
         [
             [
                 assistant_start(model="fake"),
-                assistant_done(message=AssistantMessage(content="The abandoned branch went left.")),
+                assistant_done(
+                    message=AssistantMessage(
+                        content="The abandoned branch went left.",
+                        provider="openai",
+                        model="fake",
+                        usage=Usage(input=120, output=15, cache_read=30, cache_write=4),
+                    )
+                ),
             ]
         ]
     )
@@ -2360,6 +2367,7 @@ async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> N
         "The user explored a different conversation branch before returning here."
     )
     assert "The abandoned branch went left." in summary.summary
+    assert summary.usage == Usage(input=120, output=15, cache_read=30, cache_write=4)
     assert provider.calls[0][3] == []
     assert "<conversation>" in provider.calls[0][2][0].content
     assert "Use this EXACT format:" in provider.calls[0][2][0].content
@@ -2466,6 +2474,7 @@ async def test_session_branch_with_summary_falls_back_when_model_summary_is_unav
 
     assert "with branch summary" in result.message
     assert summary.type == "branch_summary"
+    assert summary.usage is None
     assert "Automatically compacted 2 prior message(s)." in summary.summary
     assert "Abandoned follow-up" in summary.summary
     assert len(session.messages) == 2
@@ -3614,7 +3623,14 @@ async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: P
             ],
             [
                 assistant_start(model="fake"),
-                assistant_done(message=AssistantMessage(content="Generated session summary")),
+                assistant_done(
+                    message=AssistantMessage(
+                        content="Generated session summary",
+                        provider="openai",
+                        model="fake",
+                        usage=Usage(input=1_000, output=80, cache_read=200, cache_write=50),
+                    )
+                ),
             ],
             [
                 assistant_start(model="fake"),
@@ -3641,6 +3657,12 @@ async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: P
     assert len(compactions) == 1
     assert isinstance(compactions[0], CompactionEntry)
     assert compactions[0].summary == "Generated session summary"
+    assert compactions[0].usage == Usage(
+        input=1_000,
+        output=80,
+        cache_read=200,
+        cache_write=50,
+    )
     assert compactions[0].replaces_entry_ids == message_entries_before
     assert leaves == []
     assert entries_after_compact[-1] == compactions[0]
