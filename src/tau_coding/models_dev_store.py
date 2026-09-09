@@ -33,11 +33,19 @@ class ModelsDevRefreshError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class ModelsDevCatalogChanges:
+    added: tuple[str, ...] = ()
+    removed: tuple[str, ...] = ()
+    updated: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ModelsDevRefreshResult:
     refreshed: bool
     not_modified: bool
     model_count: int
     cache_path: Path
+    changes: ModelsDevCatalogChanges = ModelsDevCatalogChanges()
 
 
 def models_store_path(paths: TauPaths | None = None) -> Path:
@@ -140,11 +148,15 @@ async def refresh_models_dev_catalog(
             "catalog": document,
         }
         _write_cache(path, cache_document)
+        previous_document = (
+            cache["catalog"] if cache is not None else bundled_models_dev_catalog_document()
+        )
         return ModelsDevRefreshResult(
             refreshed=True,
             not_modified=False,
             model_count=_model_count(document),
             cache_path=path,
+            changes=_catalog_changes(previous_document, document),
         )
     except (httpx.HTTPError, TypeError, ValueError, json.JSONDecodeError) as error:
         raise ModelsDevRefreshError(f"Could not refresh model catalogs: {error}") from error
@@ -181,6 +193,47 @@ def _model_count(document: dict[str, Any]) -> int:
         for provider in providers.values()
         if isinstance(provider, dict) and isinstance(provider.get("models"), list)
     )
+
+
+def _catalog_changes(
+    previous: dict[str, Any] | None,
+    current: dict[str, Any],
+) -> ModelsDevCatalogChanges:
+    previous_models = _catalog_models(previous)
+    current_models = _catalog_models(current)
+    previous_ids = set(previous_models)
+    current_ids = set(current_models)
+    return ModelsDevCatalogChanges(
+        added=tuple(sorted(current_ids - previous_ids)),
+        removed=tuple(sorted(previous_ids - current_ids)),
+        updated=tuple(
+            sorted(
+                model_id
+                for model_id in previous_ids & current_ids
+                if previous_models[model_id] != current_models[model_id]
+            )
+        ),
+    )
+
+
+def _catalog_models(document: dict[str, Any] | None) -> dict[str, object]:
+    if document is None:
+        return {}
+    providers = document.get("providers")
+    if not isinstance(providers, dict):
+        return {}
+    models: dict[str, object] = {}
+    for provider_name, provider in providers.items():
+        if not isinstance(provider_name, str) or not isinstance(provider, dict):
+            continue
+        provider_models = provider.get("models")
+        metadata = provider.get("model_metadata")
+        if not isinstance(provider_models, list) or not isinstance(metadata, dict):
+            continue
+        for model_id in provider_models:
+            if isinstance(model_id, str):
+                models[f"{provider_name}:{model_id}"] = metadata.get(model_id)
+    return models
 
 
 def _write_cache(path: Path, value: dict[str, Any]) -> None:

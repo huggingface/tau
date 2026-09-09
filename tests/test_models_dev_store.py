@@ -142,3 +142,35 @@ async def test_fresh_cache_skips_network_and_failed_force_preserves_it(tmp_path:
                 now=2000.0,
             )
     assert first.cache_path.read_text(encoding="utf-8") == cached_text
+
+
+@pytest.mark.anyio
+async def test_refresh_summarizes_added_removed_and_updated_models(tmp_path: Path) -> None:
+    paths = TauPaths(home=tmp_path / ".tau")
+    async with _client(_source()) as client:
+        await refresh_models_dev_catalog(paths=paths, force=True, client=client, now=1000.0)
+
+    changed_source = _source()
+    huggingface = changed_source["huggingface"]
+    assert isinstance(huggingface, dict)
+    models = huggingface["models"]
+    assert isinstance(models, dict)
+    added_model = dict(models.pop("example/new-tool-model"))
+    added_model["id"] = "example/added-model"
+    added_model["name"] = "Added Model"
+    models["example/added-model"] = added_model
+    kimi = models["moonshotai/Kimi-K3"]
+    assert isinstance(kimi, dict)
+    kimi["name"] = "Updated Kimi K3"
+
+    async with _client(changed_source) as client:
+        result = await refresh_models_dev_catalog(
+            paths=paths,
+            force=True,
+            client=client,
+            now=2000.0,
+        )
+
+    assert result.changes.added == ("huggingface:example/added-model",)
+    assert result.changes.removed == ("huggingface:example/new-tool-model",)
+    assert result.changes.updated == ("huggingface:moonshotai/Kimi-K3",)

@@ -60,8 +60,10 @@ tau update --models
 
 This forces ETag revalidation of models.dev and the live NVIDIA model filter,
 then atomically caches the transformed catalog at `~/.tau/models-store.json`.
-Opening `/model` performs the same refresh in the background, subject to a
-four-hour freshness window. Cached/bundled models remain available on failure;
+The command reports the total cached models plus counts of models added,
+removed, and updated compared with the previous cache (or bundled snapshot on
+the first refresh). Opening `/model` performs the same refresh in the background,
+subject to a four-hour freshness window. Cached/bundled models remain available on failure;
 set `TAU_OFFLINE=1` to disable catalog network access.
 
 ## Safety boundary
