@@ -69,7 +69,15 @@ def test_collect_session_usage_includes_labeled_summary_requests() -> None:
         CompactionEntry(
             id="compact",
             summary="summary",
-            usage=Usage(input=1_000, output=20, cache_read=500, cache_write=100),
+            usage=Usage(
+                input=1_000,
+                output=20,
+                cache_read=500,
+                cache_write=100,
+                cost=UsageCost(total=0.5),
+            ),
+            provider="summary-provider",
+            model="summary-model",
         ),
         BranchSummaryEntry(
             id="branch",
@@ -84,9 +92,9 @@ def test_collect_session_usage_includes_labeled_summary_requests() -> None:
         "compaction summary",
         "branch summary",
     ]
-    assert [request.model for request in usage.requests] == [
-        "claude-sonnet-4-5",
-        "claude-sonnet-4-5",
+    assert [(request.provider, request.model) for request in usage.requests] == [
+        ("summary-provider", "summary-model"),
+        ("anthropic", "claude-sonnet-4-5"),
     ]
     assert usage.total_prompt == 1_850
     assert usage.total_output == 30

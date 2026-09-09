@@ -117,8 +117,8 @@ def calculate_session_stats(
             if entry.usage is None:
                 continue
             usage = entry.usage
-            provider = current_provider
-            model = current_model
+            provider = entry.provider or current_provider
+            model = entry.model or current_model
         else:
             continue
 

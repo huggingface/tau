@@ -68,6 +68,8 @@ class CompactionEntry(BaseSessionEntry):
     first_kept_entry_id: str | None = None
     tokens_before: int | None = None
     usage: Usage | None = None
+    provider: str | None = None
+    model: str | None = None
 
 
 class BranchSummaryEntry(BaseSessionEntry):
@@ -77,6 +79,8 @@ class BranchSummaryEntry(BaseSessionEntry):
     summary: str
     branch_root_id: str | None = None
     usage: Usage | None = None
+    provider: str | None = None
+    model: str | None = None
 
 
 class LabelEntry(BaseSessionEntry):

@@ -301,6 +301,8 @@ class _GeneratedSummary:
 
     text: str
     usage: Usage | None
+    provider: str | None = None
+    model: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -997,6 +999,8 @@ class CodingSession:
                     branch_root_id=entry_id,
                     summary=generated.text,
                     usage=generated.usage,
+                    provider=generated.provider,
+                    model=generated.model,
                 )
                 await self._append_session_entry(summary_entry)
                 target_id = summary_entry.id
@@ -2871,6 +2875,8 @@ class CodingSession:
             first_kept_entry_id=first_kept_entry_id,
             tokens_before=tokens_before,
             usage=generated.usage,
+            provider=generated.provider,
+            model=generated.model,
         )
         return ManualCompactionResult(
             summary=generated.text,
@@ -2893,6 +2899,8 @@ class CodingSession:
             replace_entry_ids=plan.replace_entry_ids,
             tokens_before=self.context_token_estimate,
             usage=generated.usage,
+            provider=generated.provider,
+            model=generated.model,
         )
         return f"Compacted {len(compaction.replaces_entry_ids)} context entries."
 
@@ -3637,6 +3645,8 @@ class CodingSession:
                 generated.text,
                 replace_entry_ids=plan.replace_entry_ids,
                 usage=generated.usage,
+                provider=generated.provider,
+                model=generated.model,
             )
             return True
         except Exception as exc:  # noqa: BLE001 - the original overflow remains visible
@@ -3739,6 +3749,8 @@ class CodingSession:
             generated.text,
             replace_entry_ids=plan.replace_entry_ids,
             usage=generated.usage,
+            provider=generated.provider,
+            model=generated.model,
         )
         return True
 
@@ -3778,6 +3790,8 @@ class CodingSession:
         return _GeneratedSummary(
             text=summary,
             usage=sum_usage(response_usages) if response_usages else None,
+            provider=self.provider_name,
+            model=self.model,
         )
 
     async def _summarize_branch_messages(
@@ -3799,7 +3813,12 @@ class CodingSession:
             result = None
         if result is not None:
             summary, usage = result
-            return _GeneratedSummary(text=summary, usage=usage)
+            return _GeneratedSummary(
+                text=summary,
+                usage=usage,
+                provider=self.provider_name,
+                model=self.model,
+            )
         return _GeneratedSummary(
             text=summarize_messages_for_compaction(messages),
             usage=None,
@@ -3845,6 +3864,8 @@ class CodingSession:
         first_kept_entry_id: str | None = None,
         tokens_before: int | None = None,
         usage: Usage | None = None,
+        provider: str | None = None,
+        model: str | None = None,
     ) -> CompactionEntry:
         if not replace_entry_ids:
             raise ValueError("No active context messages to compact")
@@ -3856,6 +3877,8 @@ class CodingSession:
             first_kept_entry_id=first_kept_entry_id,
             tokens_before=tokens_before,
             usage=usage,
+            provider=provider,
+            model=model,
         )
         await self._append_session_entry(compaction)
         self._last_parent_id = compaction.id

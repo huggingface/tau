@@ -217,8 +217,8 @@ def collect_session_usage(entries: Sequence[SessionEntry]) -> SessionUsage:
                     entry.usage,
                     timestamp=entry.timestamp,
                     kind="compaction summary",
-                    provider=current_provider,
-                    model=current_model,
+                    provider=entry.provider or current_provider,
+                    model=entry.model or current_model,
                 )
             continue
         if isinstance(entry, BranchSummaryEntry):
@@ -227,8 +227,8 @@ def collect_session_usage(entries: Sequence[SessionEntry]) -> SessionUsage:
                     entry.usage,
                     timestamp=entry.timestamp,
                     kind="branch summary",
-                    provider=current_provider,
-                    model=current_model,
+                    provider=entry.provider or current_provider,
+                    model=entry.model or current_model,
                 )
             continue
         if isinstance(entry, ModelChangeEntry):
