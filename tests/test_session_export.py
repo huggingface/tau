@@ -72,6 +72,34 @@ def test_render_session_html_preserves_branch_tree() -> None:
     assert "Replaces entries" in html
 
 
+def test_render_session_html_handles_long_legacy_leaf_history() -> None:
+    entries: list[MessageEntry | LeafEntry] = []
+    parent_id: str | None = None
+    for index in range(1_100):
+        message = MessageEntry(
+            id=f"message-{index}",
+            parent_id=parent_id,
+            message=UserMessage(content=f"Message {index}"),
+        )
+        entries.extend(
+            [
+                message,
+                LeafEntry(
+                    id=f"leaf-{index}",
+                    parent_id=message.id,
+                    entry_id=message.id,
+                ),
+            ]
+        )
+        parent_id = message.id
+
+    html = render_session_html(entries, title="Legacy session")
+
+    assert 'id="entry-message-1099"' in html
+    assert 'id="entry-leaf-1099"' in html
+    assert 'href="#entry-leaf-1099"' not in html
+
+
 def test_render_session_html_uses_static_document_layout() -> None:
     entries = [MessageEntry(id="root", message=UserMessage(content="Export layout"))]
 

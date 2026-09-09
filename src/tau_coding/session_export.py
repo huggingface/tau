@@ -183,7 +183,10 @@ def render_session_html(
     entry_list = list(entries)
     active_leaf_id = _active_leaf_id(entry_list)
     active_path_ids = _active_path_ids(entry_list, active_leaf_id)
-    tree_html = _render_tree(entry_list, active_path_ids, active_leaf_id)
+    tree_entries: list[SessionEntry] = [
+        entry for entry in entry_list if not isinstance(entry, LeafEntry)
+    ]
+    tree_html = _render_tree(tree_entries, active_path_ids, active_leaf_id)
     details_html = _render_entry_details(entry_list, active_path_ids, active_leaf_id)
     source_html = f'<p class="source">Source: <code>{_escape(source)}</code></p>' if source else ""
     system_prompt_html = _render_system_prompt(system_prompt)
