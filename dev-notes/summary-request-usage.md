@@ -3,10 +3,11 @@
 ## What changed
 
 Compaction and branch-summary entries now have optional `usage`, `provider`,
-and `model` fields. `usage` uses `tau_agent.messages.Usage`, the same strict
-token-and-cost model stored on assistant messages. The coding session captures
-the final provider event's usage when it generates a summary and persists it
-with the exact logical provider and model used for that request.
+`model`, and `response_provider` fields. `usage` uses `tau_agent.messages.Usage`,
+the same strict token-and-cost model stored on assistant messages. The coding
+session captures the final provider event's usage when it generates a summary
+and persists it with the exact logical provider, model, and resolved routing
+provider used for that request.
 Multiple completion events are combined field by field so the entry represents
 the total cost of producing the summary.
 
@@ -18,8 +19,11 @@ The HTML export's usage collector treats persisted summary usage as a real,
 separately labeled request. The cumulative session-statistics collector does the
 same for the TUI sidebar. Both include those tokens in prompt, cache, output,
 hit-rate, and estimated-cost totals. New entries provide the exact persisted
-provider/model; legacy entries fall back to preceding model-change or assistant
-metadata. The shared Pi-compatible `Usage` object itself intentionally contains
+provider/model and, when reported, the resolved provider used by a routing
+service; legacy entries fall back to preceding model-change or assistant
+metadata. Summary requests are recorded before the compaction or branch event
+that they produce, so event markers remain attached to the next context request.
+The shared Pi-compatible `Usage` object itself intentionally contains
 only tokens and cost. RPC entry projections include `usage` where present, and the
 transcript detail panel displays the raw usage object.
 

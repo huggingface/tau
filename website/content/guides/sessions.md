@@ -174,8 +174,9 @@ those records do not override file-order tip selection. Compaction and
 branching change the *active* view, never the recorded history.
 
 New compaction and branch-summary entries include optional `usage`, `provider`,
-and `model` fields for the model call that generated the summary. The `usage`
-field uses the same shape as assistant messages (`input`, `output`,
+`model`, and `response_provider` fields for the model call that generated the
+summary. `response_provider` identifies the resolved backend when a routing
+service reports one. The `usage` field uses the same shape as assistant messages (`input`, `output`,
 `cacheRead`, `cacheWrite`, optional `cacheWrite1H` and `reasoning`, `totalTokens`,
 and `cost`). If more than one completion contributes to a summary, Tau stores
 the field-wise total. Older entries and heuristic branch-summary fallbacks omit
