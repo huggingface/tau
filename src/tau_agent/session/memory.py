@@ -49,9 +49,7 @@ class SessionState:
         ``None`` selects the empty path before the first root entry.
         """
         resolved_leaf_id = (
-            _last_non_leaf_id(entries)
-            if leaf_id is _UNSET_LEAF_ID
-            else cast(str | None, leaf_id)
+            _last_non_leaf_id(entries) if leaf_id is _UNSET_LEAF_ID else cast(str | None, leaf_id)
         )
         replay_entries = (
             path_to_entry(entries, resolved_leaf_id) if resolved_leaf_id is not None else []
