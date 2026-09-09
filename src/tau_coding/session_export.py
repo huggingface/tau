@@ -193,7 +193,8 @@ def render_session_html(
     tree_entries: list[SessionEntry] = [
         entry for entry in visible_entries if not isinstance(entry, LeafEntry)
     ]
-    tree_html = _render_tree(tree_entries, active_path_ids, visible_active_leaf_id)
+    labels_by_id = _resolved_labels(entry_list)
+    tree_html = _render_tree(tree_entries, active_path_ids, visible_active_leaf_id, labels_by_id)
     details_html = _render_entry_details(visible_entries, active_path_ids, visible_active_leaf_id)
     source_html = f'<p class="source">Source: <code>{_escape(source)}</code></p>' if source else ""
     system_prompt_html = _render_system_prompt(system_prompt)
@@ -549,6 +550,7 @@ def render_session_html(
       border-left: 1px solid var(--line);
     }}
     .tree li {{ margin: 1px 0; }}
+    .bookmark-label {{ color: var(--accent); font-weight: 700; margin-right: 0.45rem; }}
     .node-link {{
       display: flex;
       align-items: center;
@@ -1127,6 +1129,7 @@ def _render_tree(
     entries: list[SessionEntry],
     active_path_ids: set[str],
     active_leaf_id: str | None,
+    labels_by_id: dict[str, str],
 ) -> str:
     if not entries:
         return '<p class="empty">No entries.</p>'
@@ -1149,6 +1152,7 @@ def _render_tree(
             children_by_parent,
             active_path_ids,
             active_leaf_id,
+            labels_by_id,
             ancestors=set(),
             rendered_ids=rendered_ids,
         )
@@ -1162,6 +1166,7 @@ def _render_tree(
             children_by_parent,
             active_path_ids,
             active_leaf_id,
+            labels_by_id,
             ancestors=set(),
             rendered_ids=rendered_ids,
         )
@@ -1184,6 +1189,7 @@ def _render_tree_chain(
     children_by_parent: dict[str | None, list[SessionEntry]],
     active_path_ids: set[str],
     active_leaf_id: str | None,
+    labels_by_id: dict[str, str],
     *,
     ancestors: set[str],
     rendered_ids: set[str],
@@ -1224,6 +1230,7 @@ def _render_tree_chain(
                     children_by_parent,
                     active_path_ids,
                     active_leaf_id,
+                    labels_by_id,
                     ancestors=chain_ancestors,
                     rendered_ids=rendered_ids,
                 )
@@ -1231,7 +1238,9 @@ def _render_tree_chain(
                 if child.id not in rendered_ids
             )
             nested_html = f'<ol class="tree">{nested_html}</ol>'
-        li_html_parts.append(_render_tree_node(node, nested_html, active_path_ids, active_leaf_id))
+        li_html_parts.append(
+            _render_tree_node(node, nested_html, active_path_ids, active_leaf_id, labels_by_id)
+        )
     return "".join(li_html_parts)
 
 
@@ -1240,6 +1249,7 @@ def _render_tree_node(
     nested_html: str,
     active_path_ids: set[str],
     active_leaf_id: str | None,
+    labels_by_id: dict[str, str],
 ) -> str:
     classes = ["tree-node"]
     if entry.id in active_path_ids:
@@ -1247,13 +1257,16 @@ def _render_tree_node(
     if entry.id == active_leaf_id:
         classes.append("active-leaf")
     label = _entry_tree_label(entry)
+    bookmark = labels_by_id.get(entry.id)
+    bookmark_html = f'<span class="bookmark-label">[{_escape(bookmark)}]</span>' if bookmark else ""
+    accessible_label = f"[{bookmark}] {label}" if bookmark else label
     return (
         f'<li class="{" ".join(c for c in classes if c)}" '
         f'data-entry-kind="{_entry_filter_kind(entry)}">'
         f'<a class="node-link" href="#entry-{_attr(entry.id)}" '
-        f'aria-label="{_attr(label)}">'
+        f'aria-label="{_attr(accessible_label)}">'
         f'<span class="icon">{_entry_icon(entry)}</span>'
-        f'<span class="node-type">{_escape(label)}</span>'
+        f'{bookmark_html}<span class="node-type">{_escape(label)}</span>'
         "</a>"
         f"{nested_html}"
         "</li>"
@@ -1375,7 +1388,15 @@ def _render_entry_body(entry: SessionEntry) -> str:
             f"{usage}"
         )
     if isinstance(entry, LabelEntry):
-        return f"<p>Session label: <strong>{_escape(entry.label)}</strong></p>"
+        action = (
+            f"Set bookmark to <strong>{_escape(entry.label)}</strong>"
+            if entry.label
+            else "Cleared bookmark"
+        )
+        return (
+            f'<p>{action} on <a href="#entry-{_attr(entry.target_id)}">'
+            f"<code>{_escape(entry.target_id)}</code></a>.</p>"
+        )
     if isinstance(entry, LeafEntry):
         leaf = entry.entry_id or "none"
         return f"<p>Active leaf pointer: <code>{_escape(leaf)}</code></p>"
@@ -1642,7 +1663,7 @@ def _entry_preview(entry: SessionEntry) -> str:
     if isinstance(entry, CompactionEntry | BranchSummaryEntry):
         return _summarize_text(entry.summary)
     if isinstance(entry, LabelEntry):
-        return entry.label
+        return entry.label or f"cleared {entry.target_id}"
     if isinstance(entry, LeafEntry):
         return entry.entry_id or "none"
     if isinstance(entry, SessionInfoEntry):
@@ -1650,6 +1671,19 @@ def _entry_preview(entry: SessionEntry) -> str:
     if isinstance(entry, CustomEntry):
         return f"{len(entry.data)} field(s)"
     return entry.id
+
+
+def _resolved_labels(entries: Sequence[SessionEntry]) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for entry in entries:
+        if not isinstance(entry, LabelEntry):
+            continue
+        label = entry.label.strip() if entry.label is not None else ""
+        if label:
+            labels[entry.target_id] = label
+        else:
+            labels.pop(entry.target_id, None)
+    return labels
 
 
 def _entry_tree_label(entry: SessionEntry) -> str:

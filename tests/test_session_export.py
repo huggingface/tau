@@ -6,6 +6,7 @@ from tau_agent import (
     AssistantMessage,
     CompactionEntry,
     CustomMessageEntry,
+    LabelEntry,
     LeafEntry,
     MessageEntry,
     ModelChangeEntry,
@@ -77,6 +78,25 @@ def test_render_session_html_preserves_branch_tree() -> None:
     assert "Summary request usage" in html
     assert "cacheRead" in html
     assert "compaction summary" in html
+
+
+def test_render_session_html_resolves_bookmark_labels_on_tree_nodes() -> None:
+    entries = [
+        MessageEntry(id="root", message=UserMessage(content="Start")),
+        LabelEntry(
+            id="set",
+            parent_id="root",
+            target_id="root",
+            label="important <checkpoint>",
+        ),
+    ]
+
+    html = render_session_html(entries)
+
+    assert '<span class="bookmark-label">[important &lt;checkpoint&gt;]</span>' in html
+    assert 'aria-label="[important &lt;checkpoint&gt;] user: Start"' in html
+    assert "Set bookmark to <strong>important &lt;checkpoint&gt;</strong>" in html
+    assert 'href="#entry-root"' in html
 
 
 def test_render_session_html_handles_long_legacy_leaf_history() -> None:

@@ -26,7 +26,8 @@ class SessionState:
     model: str | None
     provider: str | None
     thinking_level: str | None
-    label: str | None
+    labels_by_id: dict[str, str]
+    label_timestamps_by_id: dict[str, float]
     active_leaf_id: str | None
     session_info: SessionInfoEntry | None
     custom_entries: tuple[CustomEntry, ...]
@@ -59,7 +60,7 @@ class SessionState:
         model: str | None = None
         provider: str | None = None
         thinking_level: str | None = None
-        label: str | None = None
+        labels_by_id, label_timestamps_by_id = _resolve_labels(entries)
         active_leaf_id: str | None = resolved_leaf_id
         session_info: SessionInfoEntry | None = None
         custom_entries: list[CustomEntry] = []
@@ -89,7 +90,7 @@ class SessionState:
                 case "thinking_level_change":
                     thinking_level = entry.thinking_level
                 case "label":
-                    label = entry.label
+                    pass  # Resolved globally above so off-path bookmarks remain visible.
                 case "leaf":
                     pass  # Backward-compatible historical record; never selects the tip.
                 case "session_info":
@@ -113,7 +114,8 @@ class SessionState:
             model=model,
             provider=provider,
             thinking_level=thinking_level,
-            label=label,
+            labels_by_id=labels_by_id,
+            label_timestamps_by_id=label_timestamps_by_id,
             active_leaf_id=active_leaf_id,
             session_info=session_info,
             custom_entries=tuple(custom_entries),
@@ -121,6 +123,22 @@ class SessionState:
             context_entry_ids=tuple(entry_id for entry_id, _message in message_rows),
             entries=tuple(replay_entries),
         )
+
+
+def _resolve_labels(entries: list[SessionEntry]) -> tuple[dict[str, str], dict[str, float]]:
+    labels: dict[str, str] = {}
+    timestamps: dict[str, float] = {}
+    for entry in entries:
+        if entry.type != "label":
+            continue
+        label = entry.label.strip() if entry.label is not None else ""
+        if label:
+            labels[entry.target_id] = label
+            timestamps[entry.target_id] = entry.timestamp
+        else:
+            labels.pop(entry.target_id, None)
+            timestamps.pop(entry.target_id, None)
+    return labels, timestamps
 
 
 def _last_non_leaf_id(entries: list[SessionEntry]) -> str | None:

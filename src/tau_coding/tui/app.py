@@ -1015,17 +1015,29 @@ class ExtensionInputScreen(ModalScreen[str | None]):
 
     BINDINGS: ClassVar[list[BindingEntry]] = [Binding("escape", "cancel", "Cancel")]
 
-    def __init__(self, title: str, placeholder: str = "", *, theme: TuiTheme) -> None:
+    def __init__(
+        self,
+        title: str,
+        placeholder: str = "",
+        *,
+        theme: TuiTheme,
+        value: str = "",
+    ) -> None:
         super().__init__()
         self.title_text = title
         self.placeholder = placeholder
         self.theme = theme
+        self.value = value
 
     def compose(self) -> ComposeResult:
         """Compose the text prompt."""
         with Vertical(id="extension-input"):
             yield Static(self.title_text, id="extension-input-title", markup=False)
-            yield Input(placeholder=self.placeholder, id="extension-input-field")
+            yield Input(
+                value=self.value,
+                placeholder=self.placeholder,
+                id="extension-input-field",
+            )
             yield Static("Enter submits - Escape cancels", id="extension-input-help")
 
     def on_mount(self) -> None:
@@ -1719,16 +1731,37 @@ class TreePickerResult:
 class _TreePickerListItem(ListItem):
     """Tree entry that keeps inline label colors readable when highlighted."""
 
-    def __init__(self, choice: SessionTreeChoice, *, theme: TuiTheme) -> None:
+    def __init__(
+        self,
+        choice: SessionTreeChoice,
+        *,
+        theme: TuiTheme,
+        show_label_timestamp: bool = False,
+    ) -> None:
         self.choice = choice
         self.theme = theme
-        super().__init__(Label(_tree_picker_label(choice, theme=theme), markup=False))
+        self.show_label_timestamp = show_label_timestamp
+        super().__init__(
+            Label(
+                _tree_picker_label(
+                    choice,
+                    theme=theme,
+                    show_label_timestamp=show_label_timestamp,
+                ),
+                markup=False,
+            )
+        )
 
     def watch_highlighted(self, value: bool) -> None:
         """Recolor inline label spans when the list highlight changes."""
         super().watch_highlighted(value)
         self.query_one(Label).update(
-            _tree_picker_label(self.choice, theme=self.theme, highlighted=value)
+            _tree_picker_label(
+                self.choice,
+                theme=self.theme,
+                highlighted=value,
+                show_label_timestamp=self.show_label_timestamp,
+            )
         )
 
 
@@ -1743,6 +1776,9 @@ class TreePickerScreen(ModalScreen[TreePickerResult | None]):
         Binding("s", "select_with_summary", "Summarize", show=False),
         Binding("c", "select_with_custom_summary", "Custom summary", show=False),
         Binding("ctrl+t", "toggle_tool_calls", "Tool calls", show=False),
+        Binding("l", "edit_label", "Label", show=False),
+        Binding("ctrl+f", "toggle_labeled_only", "Labeled", show=False),
+        Binding("ctrl+l", "toggle_label_timestamps", "Label time", show=False),
     ]
 
     def __init__(
@@ -1750,11 +1786,15 @@ class TreePickerScreen(ModalScreen[TreePickerResult | None]):
         choices: Sequence[SessionTreeChoice],
         *,
         theme: TuiTheme,
+        on_label_change: Callable[[str, str | None], Awaitable[float]] | None = None,
     ) -> None:
         super().__init__()
         self.choices = tuple(choices)
         self.theme = theme
+        self.on_label_change = on_label_change
         self.show_tool_calls = True
+        self.labeled_only = False
+        self.show_label_timestamps = False
 
     def compose(self) -> ComposeResult:
         """Compose the tree picker."""
@@ -1795,6 +1835,15 @@ class TreePickerScreen(ModalScreen[TreePickerResult | None]):
         elif event.key == "ctrl+t":
             event.stop()
             self.action_toggle_tool_calls()
+        elif event.key == "l":
+            event.stop()
+            self.action_edit_label()
+        elif event.key == "ctrl+f":
+            event.stop()
+            self.action_toggle_labeled_only()
+        elif event.key == "ctrl+l":
+            event.stop()
+            self.action_toggle_label_timestamps()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Dismiss with the selected entry id."""
@@ -1849,16 +1898,72 @@ class TreePickerScreen(ModalScreen[TreePickerResult | None]):
 
     def action_toggle_tool_calls(self) -> None:
         """Toggle tool-call entries in the tree picker."""
-        self.run_worker(self._toggle_tool_calls())
-
-    async def _toggle_tool_calls(self) -> None:
         selected_entry_id = self._selected_entry_id()
         self.show_tool_calls = not self.show_tool_calls
+        self.run_worker(self._refresh_choices(selected_entry_id=selected_entry_id))
+
+    def action_toggle_labeled_only(self) -> None:
+        """Toggle the Pi-style labeled-entry filter."""
+        selected_entry_id = self._selected_entry_id()
+        self.labeled_only = not self.labeled_only
+        self.run_worker(self._refresh_choices(selected_entry_id=selected_entry_id))
+
+    def action_toggle_label_timestamps(self) -> None:
+        """Toggle display of the latest label-change timestamp."""
+        selected_entry_id = self._selected_entry_id()
+        self.show_label_timestamps = not self.show_label_timestamps
+        self.run_worker(self._refresh_choices(selected_entry_id=selected_entry_id))
+
+    def action_edit_label(self) -> None:
+        """Open a prefilled editor; submitting an empty value clears the label."""
+        selected = self._selected_choice()
+        if selected is None:
+            return
+        self.app.push_screen(
+            ExtensionInputScreen(
+                "Label this session entry",
+                "Empty clears the label",
+                theme=self.theme,
+                value=selected.bookmark_label or "",
+            ),
+            callback=lambda value: self._handle_label_input(selected.entry_id, value),
+        )
+
+    def _handle_label_input(self, entry_id: str, value: str | None) -> None:
+        if value is None:
+            return
+        self.run_worker(self._apply_label(entry_id, value))
+
+    async def _apply_label(self, entry_id: str, value: str) -> None:
+        normalized = value.strip() or None
+        try:
+            if self.on_label_change is None:
+                raise RuntimeError("Session labels are not available.")
+            timestamp = await self.on_label_change(entry_id, normalized)
+        except Exception as exc:  # noqa: BLE001 - keep the tree open and surface persistence errors
+            self.app.notify(f"Error: {exc}", severity="error")
+            return
+        self.choices = tuple(
+            replace(
+                choice,
+                bookmark_label=normalized,
+                label_timestamp=timestamp if normalized is not None else None,
+            )
+            if choice.entry_id == entry_id
+            else choice
+            for choice in self.choices
+        )
+        await self._refresh_choices(selected_entry_id=entry_id)
+
+    async def _refresh_choices(self, *, selected_entry_id: str | None = None) -> None:
+        selected_entry_id = selected_entry_id or self._selected_entry_id()
         tree_list = self.query_one("#tree-picker-list", ListView)
         await tree_list.clear()
         await tree_list.extend(self._list_items())
         visible_choices = self._visible_choices()
-        tree_list.index = _tree_choice_index(visible_choices, selected_entry_id)
+        tree_list.index = (
+            _tree_choice_index(visible_choices, selected_entry_id) if visible_choices else None
+        )
         self.query_one("#tree-picker-help", Static).update(self._help_text())
 
     def _selected_entry_id(self) -> str | None:
@@ -1869,19 +1974,36 @@ class TreePickerScreen(ModalScreen[TreePickerResult | None]):
             return None
         return visible_choices[index].entry_id
 
+    def _selected_choice(self) -> SessionTreeChoice | None:
+        entry_id = self._selected_entry_id()
+        return next((choice for choice in self.choices if choice.entry_id == entry_id), None)
+
     def _visible_choices(self) -> tuple[SessionTreeChoice, ...]:
-        if self.show_tool_calls:
-            return self.choices
-        return tuple(choice for choice in self.choices if not choice.is_tool_call)
+        return tuple(
+            choice
+            for choice in self.choices
+            if (self.show_tool_calls or not choice.is_tool_call)
+            and (not self.labeled_only or choice.bookmark_label is not None)
+        )
 
     def _list_items(self) -> list[ListItem]:
-        return [_TreePickerListItem(choice, theme=self.theme) for choice in self._visible_choices()]
+        return [
+            _TreePickerListItem(
+                choice,
+                theme=self.theme,
+                show_label_timestamp=self.show_label_timestamps,
+            )
+            for choice in self._visible_choices()
+        ]
 
     def _help_text(self) -> str:
         tool_call_state = "shown" if self.show_tool_calls else "hidden"
+        labeled_state = "only" if self.labeled_only else "all"
+        time_state = "shown" if self.show_label_timestamps else "hidden"
         return (
-            "Enter branches - S summarizes - C custom summary - "
-            f"Ctrl+T tool calls {tool_call_state} - Escape closes"
+            "Enter branch · L label/clear · S summary · C custom · "
+            f"Ctrl+T tool calls {tool_call_state} · Ctrl+F labels {labeled_state} · "
+            f"Ctrl+L times {time_state} · Esc close"
         )
 
     def action_cancel(self) -> None:
@@ -3386,6 +3508,10 @@ class TauTuiApp(App[None]):
         height: 1;
         margin-top: 1;
         color: $tau-muted-text;
+    }
+
+    #tree-picker-help {
+        height: auto;
     }
 
     ExtensionSelectScreen,
@@ -5905,9 +6031,23 @@ class TauTuiApp(App[None]):
             self._notify("No session entries are available for branching.", severity="warning")
             return
         self.push_screen(
-            TreePickerScreen(choices, theme=self.tui_settings.resolved_theme),
+            TreePickerScreen(
+                choices,
+                theme=self.tui_settings.resolved_theme,
+                on_label_change=self._set_tree_label,
+            ),
             callback=self._handle_tree_picker_result,
         )
+
+    async def _set_tree_label(self, entry_id: str, label: str | None) -> float:
+        set_label = getattr(self.session, "set_label", None)
+        if set_label is None:
+            raise RuntimeError("Session labels are not available.")
+        entry = set_label(entry_id, label)
+        if isawaitable(entry):
+            entry = await entry
+        self._notify("Label cleared." if label is None else f"Label set to [{label}].")
+        return float(entry.timestamp)
 
     def _handle_tree_picker_result(self, result: TreePickerResult | None) -> None:
         if result is None:
@@ -7084,6 +7224,7 @@ def _tree_picker_label(
     *,
     theme: TuiTheme,
     highlighted: bool = False,
+    show_label_timestamp: bool = False,
 ) -> Text:
     marker = "* " if choice.active else "  "
     label = choice.label
@@ -7092,6 +7233,13 @@ def _tree_picker_label(
     body = label[indent_width:]
     author, separator, rest = body.partition(":")
     text = Text(f"{marker}{indent}")
+    if choice.bookmark_label is not None:
+        bookmark_color = theme.highlight_text if highlighted else theme.success
+        text.append(f"[{choice.bookmark_label}] ", style=bookmark_color)
+        if show_label_timestamp and choice.label_timestamp is not None:
+            timestamp = datetime.fromtimestamp(choice.label_timestamp).strftime("%Y-%m-%d %H:%M")
+            timestamp_color = theme.highlight_text if highlighted else theme.muted_text
+            text.append(f"{timestamp} ", style=timestamp_color)
     if separator:
         author_color = theme.highlight_text if highlighted else theme.accent
         text.append(author, style=author_color)

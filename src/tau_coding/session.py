@@ -256,6 +256,8 @@ class SessionTreeChoice:
     label: str
     active: bool = False
     is_tool_call: bool = False
+    bookmark_label: str | None = None
+    label_timestamp: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -951,16 +953,39 @@ class CodingSession:
         """Return branchable session entries for a tree picker."""
         entries = await self._read_session_entries()
         branch_indents = _tree_branch_indents(entries)
+        labels_by_id, label_timestamps_by_id = _resolved_labels(entries)
+        active_choice_id = _active_branchable_entry_id(entries, self._state.active_leaf_id)
         return tuple(
             SessionTreeChoice(
                 entry_id=entry.id,
                 label=_tree_choice_label(entry, branch_indent=branch_indents.get(entry.id, 0)),
-                active=entry.id == self._state.active_leaf_id,
+                active=entry.id == active_choice_id,
                 is_tool_call=_is_tool_call_tree_entry(entry),
+                bookmark_label=labels_by_id.get(entry.id),
+                label_timestamp=label_timestamps_by_id.get(entry.id),
             )
             for entry in _ordered_tree_entries(entries)
             if _is_branchable_tree_entry(entry)
         )
+
+    async def set_label(self, target_id: str, label: str | None) -> LabelEntry:
+        """Set or clear the bookmark on an existing session entry."""
+        if self._harness.is_running:
+            raise RuntimeError(TREE_RUNNING_MESSAGE)
+        await self._flush_pending_message_writes(context=self._diagnostic_context())
+        entries = await self._read_session_entries()
+        if target_id not in {entry.id for entry in entries}:
+            raise ValueError(f"Unknown session entry: {target_id}")
+        normalized = label.strip() if label is not None else ""
+        entry = LabelEntry(
+            parent_id=self._last_parent_id,
+            target_id=target_id,
+            label=normalized or None,
+        )
+        await self._append_session_entry(entry)
+        self._last_parent_id = entry.id
+        await self._refresh_persisted_state(leaf_id=entry.id)
+        return entry
 
     async def branch_to_entry(
         self,
@@ -3314,7 +3339,6 @@ class CodingSession:
         parent_id, suffix, repair = plan
         active_model = self._state.model
         active_thinking_level = self._state.thinking_level
-        active_label = self._state.label
         active_entries = self._state.entries
         parent_index = next(
             (index for index, entry in enumerate(active_entries) if entry.id == parent_id),
@@ -3351,10 +3375,6 @@ class CodingSession:
         )
         staged.append(thinking_entry)
         parent_id = thinking_entry.id
-        if active_label is not None:
-            label_entry = LabelEntry(parent_id=parent_id, label=active_label)
-            staged.append(label_entry)
-            parent_id = label_entry.id
         for custom_entry in custom_entries:
             copied_entry = CustomEntry(
                 parent_id=parent_id,
@@ -3996,6 +4016,35 @@ def _last_parent_id_from_state(state: SessionState) -> str | None:
     if state.entries:
         return state.entries[-1].id
     return None
+
+
+def _active_branchable_entry_id(
+    entries: list[SessionEntry], active_leaf_id: str | None
+) -> str | None:
+    if active_leaf_id is None:
+        return None
+    try:
+        path = path_to_entry(entries, active_leaf_id)
+    except SessionTreeError:
+        return active_leaf_id
+    return next((entry.id for entry in reversed(path) if _is_branchable_tree_entry(entry)), None)
+
+
+def _resolved_labels(entries: list[SessionEntry]) -> tuple[dict[str, str], dict[str, float]]:
+    """Resolve the latest label change for every target in storage order."""
+    labels: dict[str, str] = {}
+    timestamps: dict[str, float] = {}
+    for entry in entries:
+        if not isinstance(entry, LabelEntry):
+            continue
+        label = entry.label.strip() if entry.label is not None else ""
+        if label:
+            labels[entry.target_id] = label
+            timestamps[entry.target_id] = entry.timestamp
+        else:
+            labels.pop(entry.target_id, None)
+            timestamps.pop(entry.target_id, None)
+    return labels, timestamps
 
 
 def _is_branchable_tree_entry(entry: SessionEntry) -> bool:
