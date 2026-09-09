@@ -78,10 +78,11 @@ class BranchSummaryEntry(BaseSessionEntry):
 
 
 class LabelEntry(BaseSessionEntry):
-    """A human-readable session label entry."""
+    """A bookmark change attached to one session entry."""
 
     type: Literal["label"] = "label"
-    label: str
+    target_id: str
+    label: str | None = None
 
 
 class LeafEntry(BaseSessionEntry):

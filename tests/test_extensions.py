@@ -129,6 +129,7 @@ class RecordingSession:
         self.steered: list[str] = []
         self.followed_up: list[str] = []
         self.custom_entries: list[tuple[str, dict[str, JSONValue]]] = []
+        self.labels: list[tuple[str, str | None]] = []
         self.queued_custom: list[tuple[str, str | None, dict[str, JSONValue] | None]] = []
 
     def queue_steering_message(
@@ -153,6 +154,9 @@ class RecordingSession:
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         self.custom_entries.append((namespace, data))
+
+    async def set_label(self, target_id: str, label: str | None) -> None:
+        self.labels.append((target_id, label))
 
     def set_inference_provider(self, route: str | None) -> str:
         self.inference_provider = route
@@ -1521,6 +1525,18 @@ async def test_append_entry_routes_to_session(tmp_path: Path) -> None:
     await api.append_entry("persister:record", {"value": 1})
 
     assert session.custom_entries == [("persister:record", {"value": 1})]
+
+
+async def test_set_label_routes_to_session(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _register_inline_extension(runtime, "bookmarker")
+    session = RecordingSession(tmp_path)
+    runtime.bind(session)
+
+    await api.set_label("entry-1", "checkpoint")
+    await api.set_label("entry-1", None)
+
+    assert session.labels == [("entry-1", "checkpoint"), ("entry-1", None)]
 
 
 def test_transcript_is_empty_at_session_start(tmp_path: Path) -> None:

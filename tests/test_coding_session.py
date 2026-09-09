@@ -30,6 +30,7 @@ from tau_agent.session import (
     CompactionEntry,
     CustomEntry,
     JsonlSessionStorage,
+    LabelEntry,
     LeafEntry,
     MessageEntry,
     ModelChangeEntry,
@@ -986,8 +987,15 @@ async def test_load_persists_branch_without_orphaned_tool_result(tmp_path: Path)
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     user_entry = MessageEntry(message=UserMessage(content="what remains?"))
     await storage.append(user_entry)
-    orphan_entry = MessageEntry(
+    label_entry = LabelEntry(
         parent_id=user_entry.id,
+        target_id=user_entry.id,
+        label="before repair",
+        timestamp=123,
+    )
+    await storage.append(label_entry)
+    orphan_entry = MessageEntry(
+        parent_id=label_entry.id,
         message=ToolResultMessage(
             tool_call_id="call-missing",
             tool_name="bash",
@@ -1029,6 +1037,8 @@ async def test_load_persists_branch_without_orphaned_tool_result(tmp_path: Path)
         [UserMessage(content="what remains?"), UserMessage(content="continue")],
     )
     assert session.state.model == "recovered-model"
+    assert session.state.labels_by_id == {user_entry.id: "before repair"}
+    assert session.state.label_timestamps_by_id == {user_entry.id: 123}
     assert any(
         entry.namespace == "example.state" and entry.data == {"kept": True}
         for entry in session.state.custom_entries
@@ -1057,6 +1067,8 @@ async def test_load_persists_branch_without_orphaned_tool_result(tmp_path: Path)
         )
     )
     _assert_messages(restored.messages, session.messages)
+    assert restored.state.labels_by_id == {user_entry.id: "before repair"}
+    assert restored.state.label_timestamps_by_id == {user_entry.id: 123}
     diagnostics = [
         entry
         for entry in (await storage.read_all())
@@ -1388,6 +1400,33 @@ async def test_tree_choices_label_structured_tool_calls_without_exposing_thinkin
     assert len(choices) == 1
     assert choices[0].label == "tool call: read, bash"
     assert choices[0].is_tool_call is True
+
+
+@pytest.mark.anyio
+async def test_set_label_validates_target_and_tree_choices_resolve_changes(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    target = MessageEntry(id="target", message=UserMessage(content="Remember this"))
+    await storage.append(target)
+    session = await CodingSession.load(_config(tmp_path, FakeProvider([]), storage))
+
+    with pytest.raises(ValueError, match="Unknown session entry: missing"):
+        await session.set_label("missing", "nope")
+
+    first = await session.set_label("target", " first ")
+    cleared = await session.set_label("target", "")
+    latest = await session.set_label("target", "latest")
+    choices = await session.tree_choices()
+
+    assert isinstance(first, LabelEntry)
+    assert first.target_id == "target"
+    assert first.label == "first"
+    assert cleared.label is None
+    assert choices[0].bookmark_label == "latest"
+    assert choices[0].label_timestamp == latest.timestamp
+    assert choices[0].active is True
+    assert session.state.labels_by_id == {"target": "latest"}
 
 
 @pytest.mark.anyio

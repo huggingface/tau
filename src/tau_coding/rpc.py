@@ -734,7 +734,7 @@ def _entry_wire(entry: SessionEntry, provider_name: str) -> dict[str, JSONValue]
     if entry.type == "custom":
         return {**base, "customType": entry.namespace, "data": entry.data}
     if entry.type == "label":
-        return {**base, "targetId": entry.parent_id or entry.id, "label": entry.label}
+        return {**base, "targetId": entry.target_id, "label": entry.label}
     if entry.type == "session_info":
         return {**base, "name": entry.title}
     raise AssertionError(f"Unhandled Tau session entry: {entry.type}")

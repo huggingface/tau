@@ -25,6 +25,7 @@ from tau_agent.session import (
     SessionJsonlError,
     SessionState,
     SessionTreeError,
+    entries_from_json_lines,
     entry_from_json_line,
     entry_to_json_line,
     path_to_entry,
@@ -274,7 +275,7 @@ def test_invalid_jsonl_line_raises_useful_error() -> None:
 async def test_jsonl_storage_appends_and_reads_entries(tmp_path: Path) -> None:
     storage = JsonlSessionStorage(tmp_path / "sessions" / "one.jsonl")
     first = MessageEntry(id="one", message=UserMessage(content="Hi"))
-    second = LabelEntry(id="two", label="Greeting")
+    second = LabelEntry(id="two", target_id="one", label="Greeting")
 
     await storage.append(first)
     await storage.append(second)
@@ -314,7 +315,13 @@ def test_session_state_replays_linear_entries() -> None:
         MessageEntry(id="user", message=user),
         ModelChangeEntry(id="model", parent_id="user", model="fake-model"),
         MessageEntry(id="assistant", parent_id="model", message=assistant),
-        LabelEntry(id="label", parent_id="assistant", label="Greeting"),
+        LabelEntry(
+            id="label",
+            parent_id="assistant",
+            target_id="assistant",
+            label="Greeting",
+            timestamp=3,
+        ),
         CustomEntry(id="custom", parent_id="label", namespace="test", data={"ok": True}),
         # Historical pointers deserialize but do not override the file-order tip.
         LeafEntry(id="leaf", parent_id="custom", entry_id="assistant"),
@@ -324,8 +331,70 @@ def test_session_state_replays_linear_entries() -> None:
 
     assert state.messages == (user, assistant)
     assert state.model == "fake-model"
-    assert state.label == "Greeting"
+    assert state.labels_by_id == {"assistant": "Greeting"}
+    assert state.label_timestamps_by_id == {"assistant": 3}
     assert state.active_leaf_id == "custom"
+
+
+def test_session_state_resolves_relabel_clear_and_relabel_in_file_order() -> None:
+    target = MessageEntry(id="target", message=UserMessage(content="Bookmark me"))
+    entries = [
+        target,
+        LabelEntry(
+            id="first", parent_id="target", target_id="target", label=" first ", timestamp=2
+        ),
+        LabelEntry(id="clear", parent_id="first", target_id="target", label="", timestamp=3),
+        LabelEntry(id="latest", parent_id="clear", target_id="target", label="latest", timestamp=4),
+    ]
+
+    state = SessionState.from_entries(entries)
+
+    assert state.labels_by_id == {"target": "latest"}
+    assert state.label_timestamps_by_id == {"target": 4}
+
+
+def test_session_state_clear_removes_label_and_timestamp() -> None:
+    entries = [
+        MessageEntry(id="target", message=UserMessage(content="Bookmark me")),
+        LabelEntry(id="set", parent_id="target", target_id="target", label="saved"),
+        LabelEntry(id="clear", parent_id="set", target_id="target", label=None),
+    ]
+
+    state = SessionState.from_entries(entries)
+
+    assert state.labels_by_id == {}
+    assert state.label_timestamps_by_id == {}
+
+
+def test_legacy_session_label_migrates_to_earliest_branchable_entry() -> None:
+    entries = entries_from_json_lines(
+        [
+            json.dumps({"type": "session_info", "id": "info", "timestamp": 1}),
+            json.dumps(
+                {
+                    "type": "message",
+                    "id": "first-message",
+                    "parent_id": "info",
+                    "timestamp": 2,
+                    "message": {"role": "user", "content": "hello"},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "label",
+                    "id": "legacy-label",
+                    "parent_id": "first-message",
+                    "timestamp": 3,
+                    "label": "Legacy name",
+                }
+            ),
+        ]
+    )
+
+    label = entries[-1]
+    assert isinstance(label, LabelEntry)
+    assert label.target_id == "first-message"
+    assert SessionState.from_entries(entries).labels_by_id == {"first-message": "Legacy name"}
 
 
 def test_session_state_applies_compaction_and_branch_summary() -> None:

@@ -142,6 +142,8 @@ class BoundSession(Protocol):
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None: ...
 
+    async def set_label(self, target_id: str, label: str | None) -> object: ...
+
     def set_inference_provider(self, route: str | None) -> str: ...
 
 
@@ -970,6 +972,10 @@ class ExtensionRuntime:
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         """Persist a `CustomEntry` through the bound session."""
         await self.session_view.append_custom_entry(namespace, data)
+
+    async def set_label(self, target_id: str, label: str | None) -> None:
+        """Set or clear a per-entry session bookmark through the bound session."""
+        await self.session_view.set_label(target_id, label)
 
     # -- tools ----------------------------------------------------------------
 

@@ -1171,6 +1171,11 @@ class ExtensionAPI:
         self._generation.assert_active()
         await self._runtime.append_custom_entry(namespace, data)
 
+    async def set_label(self, entry_id: str, label: str | None) -> None:
+        """Set or clear a bookmark on an existing session entry."""
+        self._generation.assert_active()
+        await self._runtime.set_label(entry_id, label)
+
     def notify(self, message: str, level: NotifyLevel = "info") -> None:
         """Show a notification in the UI, if one is attached."""
         self._generation.assert_active()
