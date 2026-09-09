@@ -62,7 +62,9 @@ retained entry as `firstKeptEntryId`, matching Pi. Session inspection emits mode
 in Pi's native shape without Tau's former replacement-id bridge. Older Tau records can lack a
 boundary; inspection exposes those honestly as `customType: "tau.compaction"` entries instead
 of fabricating Pi compaction metadata. Their legacy id lists remain usable for local replay but
-are not added to the RPC wire format.
+are not added to the RPC wire format. When available, projected compaction and branch-summary
+entries include Pi-compatible `usage` data from the request that generated the summary. Legacy
+entries and heuristic fallback summaries omit the field.
 
 Tau mirrors Pi where its public `CodingSession` has equivalent behavior. Direct `bash` is
 supported, but `abort_bash` requires a future cancellable session API. Queue delivery modes,

@@ -293,7 +293,13 @@ async def test_rpc_compaction_returns_canonical_summary_and_boundary(tmp_path: P
         [
             [
                 assistant_start(model="fake"),
-                assistant_done(AssistantMessage(content="real summary", model="fake")),
+                assistant_done(
+                    AssistantMessage(
+                        content="real summary",
+                        model="fake",
+                        usage=Usage(input=800, output=40, cache_read=200),
+                    )
+                ),
             ]
         ]
     )
@@ -306,12 +312,12 @@ async def test_rpc_compaction_returns_canonical_summary_and_boundary(tmp_path: P
             cwd=tmp_path,
         )
     )
-    stdin = StringIO('{"id":"compact","type":"compact"}\n')
+    stdin = StringIO('{"id":"compact","type":"compact"}\n{"id":"entries","type":"get_entries"}\n')
     stdout = StringIO()
 
     await RpcServer(session, stdin=stdin, stdout=stdout).run()
 
-    response = json.loads(stdout.getvalue())
+    response, entries_response = [json.loads(line) for line in stdout.getvalue().splitlines()]
     compaction = next(entry for entry in await storage.read_all() if entry.type == "compaction")
     boundary = response["data"]["firstKeptEntryId"]
     assert response["data"]["summary"] == "real summary"
@@ -320,6 +326,12 @@ async def test_rpc_compaction_returns_canonical_summary_and_boundary(tmp_path: P
     assert boundary != compaction.id
     assert compaction.first_kept_entry_id == boundary
     assert compaction.tokens_before == response["data"]["tokensBefore"]
+    projected = next(
+        entry for entry in entries_response["data"]["entries"] if entry["type"] == "compaction"
+    )
+    assert projected["usage"]["input"] == 800
+    assert projected["usage"]["cacheRead"] == 200
+    assert projected["usage"]["output"] == 40
 
     entries_stdout = StringIO()
     await RpcServer(

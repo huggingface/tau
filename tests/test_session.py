@@ -11,8 +11,11 @@ from tau_agent import (
     TextContent,
     ThinkingContent,
     ToolResultMessage,
+    Usage,
+    UsageCost,
     UserMessage,
 )
+from tau_agent.messages import sum_usage
 from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
@@ -347,6 +350,65 @@ def test_compaction_entry_omits_empty_legacy_id_list_from_jsonl() -> None:
         "tokens_before": 42,
     }
     assert entry_from_json_line(line).replaces_entry_ids == []
+
+
+def test_legacy_summary_entries_load_without_usage() -> None:
+    compaction = entry_from_json_line(
+        '{"type":"compaction","id":"compact","summary":"old","replaces_entry_ids":[]}'
+    )
+    branch = entry_from_json_line('{"type":"branch_summary","id":"branch","summary":"old"}')
+
+    assert isinstance(compaction, CompactionEntry)
+    assert compaction.usage is None
+    assert compaction.provider is None
+    assert compaction.model is None
+    assert compaction.response_provider is None
+    assert isinstance(branch, BranchSummaryEntry)
+    assert branch.usage is None
+    assert branch.provider is None
+    assert branch.model is None
+    assert branch.response_provider is None
+
+
+def test_sum_usage_combines_tokens_optional_fields_and_cost() -> None:
+    combined = sum_usage(
+        [
+            Usage(input=10, reasoning=2, cost=UsageCost(input=0.1, total=0.1)),
+            Usage(
+                input=20,
+                output=5,
+                cache_write_1h=3,
+                cost=UsageCost(output=0.2, total=0.2),
+            ),
+        ]
+    )
+
+    assert combined.input == 30
+    assert combined.output == 5
+    assert combined.reasoning == 2
+    assert combined.cache_write_1h == 3
+    assert combined.cost.input == 0.1
+    assert combined.cost.output == 0.2
+    assert combined.cost.total == pytest.approx(0.3)
+
+
+def test_summary_entry_usage_round_trips_with_camel_case_usage_fields() -> None:
+    entry = CompactionEntry(
+        id="compact",
+        summary="summary",
+        first_kept_entry_id="kept",
+        usage=Usage(input=10, cache_read=20, cache_write_1h=5),
+        provider="anthropic",
+        model="claude-test",
+        response_provider="inference-route",
+    )
+
+    line = entry_to_json_line(entry)
+
+    assert '"cacheRead":20' in line
+    assert '"cacheWrite1H":5' in line
+    assert '"response_provider":"inference-route"' in line
+    assert entry_from_json_line(line) == entry
 
 
 def test_session_state_applies_compaction_and_branch_summary() -> None:
