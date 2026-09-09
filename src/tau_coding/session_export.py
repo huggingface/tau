@@ -194,9 +194,7 @@ def render_session_html(
         entry for entry in visible_entries if not isinstance(entry, LeafEntry)
     ]
     labels_by_id = _resolved_labels(entry_list)
-    tree_html = _render_tree(
-        tree_entries, active_path_ids, visible_active_leaf_id, labels_by_id
-    )
+    tree_html = _render_tree(tree_entries, active_path_ids, visible_active_leaf_id, labels_by_id)
     details_html = _render_entry_details(visible_entries, active_path_ids, visible_active_leaf_id)
     source_html = f'<p class="source">Source: <code>{_escape(source)}</code></p>' if source else ""
     system_prompt_html = _render_system_prompt(system_prompt)

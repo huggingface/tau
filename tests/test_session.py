@@ -531,9 +531,6 @@ def test_summary_entry_usage_round_trips_with_camel_case_usage_fields() -> None:
     assert entry_from_json_line(line) == entry
 
 
-
-
-
 def test_session_state_applies_compaction_and_branch_summary() -> None:
     entries = [
         MessageEntry(id="user", message=UserMessage(content="Explain sessions.")),
