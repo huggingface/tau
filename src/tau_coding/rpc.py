@@ -13,7 +13,7 @@ from typing import IO, Literal, Protocol, cast
 import anyio
 from pydantic import BaseModel
 
-from tau_agent.messages import AssistantMessage, CustomMessage, UserMessage
+from tau_agent.messages import AssistantMessage, UserMessage
 from tau_agent.session import JsonlSessionStorage
 from tau_agent.session.entries import SessionEntry
 from tau_agent.types import JSONValue
@@ -688,16 +688,15 @@ def _entry_wire(entry: SessionEntry, provider_name: str) -> dict[str, JSONValue]
         "timestamp": timestamp.isoformat().replace("+00:00", "Z"),
     }
     if entry.type == "message":
-        if isinstance(entry.message, CustomMessage):
-            return {
-                **base,
-                "type": "custom_message",
-                "customType": entry.message.custom_type,
-                "content": _jsonable(entry.message.content),
-                "details": entry.message.details,
-                "display": entry.message.display,
-            }
         return {**base, "message": _jsonable(entry.message)}
+    if entry.type == "custom_message":
+        return {
+            **base,
+            "customType": entry.custom_type,
+            "content": _jsonable(entry.content),
+            "details": entry.details,
+            "display": entry.display,
+        }
     if entry.type == "model_change":
         return {
             **base,
@@ -714,7 +713,7 @@ def _entry_wire(entry: SessionEntry, provider_name: str) -> dict[str, JSONValue]
                 "customType": "tau.compaction",
                 "data": {
                     "summary": entry.summary,
-                    "replacesEntryIds": list(entry.replaces_entry_ids),
+                    **({"usage": _jsonable(entry.usage)} if entry.usage is not None else {}),
                 },
             }
         return {
@@ -722,13 +721,15 @@ def _entry_wire(entry: SessionEntry, provider_name: str) -> dict[str, JSONValue]
             "summary": entry.summary,
             "firstKeptEntryId": entry.first_kept_entry_id,
             "tokensBefore": entry.tokens_before,
-            "details": {"tauReplacedEntryIds": list(entry.replaces_entry_ids)},
+            **({"usage": _jsonable(entry.usage)} if entry.usage is not None else {}),
+            "details": {},
         }
     if entry.type == "branch_summary":
         return {
             **base,
             "fromId": entry.branch_root_id or entry.parent_id or entry.id,
             "summary": entry.summary,
+            **({"usage": _jsonable(entry.usage)} if entry.usage is not None else {}),
             "details": {},
         }
     if entry.type == "custom":

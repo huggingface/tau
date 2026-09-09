@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from tau_agent.messages import AgentMessage
+from tau_agent.messages import AgentMessage, Usage, UserContent
 from tau_agent.types import JSONValue
 
 
@@ -39,6 +39,16 @@ class MessageEntry(BaseSessionEntry):
     message: AgentMessage
 
 
+class CustomMessageEntry(BaseSessionEntry):
+    """An extension-injected message that participates in model context."""
+
+    type: Literal["custom_message"] = "custom_message"
+    custom_type: str
+    content: UserContent
+    display: bool = True
+    details: JSONValue = None
+
+
 class ModelChangeEntry(BaseSessionEntry):
     """A model selection change entry.
 
@@ -64,9 +74,15 @@ class CompactionEntry(BaseSessionEntry):
 
     type: Literal["compaction"] = "compaction"
     summary: str
-    replaces_entry_ids: list[str] = Field(default_factory=list)
+    # Legacy Tau sessions stored every replaced id. Keep accepting and replaying
+    # that shape, but omit the empty compatibility field from new JSONL records.
+    replaces_entry_ids: list[str] = Field(default_factory=list, exclude_if=lambda ids: not ids)
     first_kept_entry_id: str | None = None
     tokens_before: int | None = None
+    usage: Usage | None = None
+    provider: str | None = None
+    model: str | None = None
+    response_provider: str | None = None
 
 
 class BranchSummaryEntry(BaseSessionEntry):
@@ -75,6 +91,10 @@ class BranchSummaryEntry(BaseSessionEntry):
     type: Literal["branch_summary"] = "branch_summary"
     summary: str
     branch_root_id: str | None = None
+    usage: Usage | None = None
+    provider: str | None = None
+    model: str | None = None
+    response_provider: str | None = None
 
 
 class LabelEntry(BaseSessionEntry):
@@ -111,6 +131,7 @@ class CustomEntry(BaseSessionEntry):
 
 type SessionEntry = Annotated[
     MessageEntry
+    | CustomMessageEntry
     | ModelChangeEntry
     | ThinkingLevelChangeEntry
     | CompactionEntry

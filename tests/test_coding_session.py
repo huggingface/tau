@@ -15,6 +15,7 @@ from tau_agent import (
     AgentTool,
     AgentToolResult,
     AssistantMessage,
+    CustomMessage,
     ImageContent,
     MessageEndEvent,
     TextContent,
@@ -29,6 +30,7 @@ from tau_agent.provider_events import AssistantErrorEvent
 from tau_agent.session import (
     CompactionEntry,
     CustomEntry,
+    CustomMessageEntry,
     JsonlSessionStorage,
     LabelEntry,
     LeafEntry,
@@ -549,7 +551,12 @@ class _FaultInjectingStorage:
         self.failures_remaining = 2 if phase == "message_twice" else 1
 
     async def append(self, entry: SessionEntry) -> None:
-        target = self.phase.startswith("message") and isinstance(entry, MessageEntry)
+        target = (
+            self.phase.startswith("message")
+            and isinstance(entry, MessageEntry)
+            or self.phase.startswith("custom_message")
+            and isinstance(entry, CustomMessageEntry)
+        )
         if target and (self.failures_remaining > 0 or self.phase == "message_always"):
             self.failed = True
             self.failures_remaining -= 1
@@ -603,6 +610,77 @@ async def test_message_persistence_retry_is_idempotent(tmp_path: Path, phase: st
         )
     )
     _assert_messages(restored.messages, [UserMessage(content="go")])
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("queue_method", ["queue_steering_message", "queue_follow_up_message"])
+async def test_queued_custom_messages_persist_as_first_class_entries(
+    tmp_path: Path, queue_method: str
+) -> None:
+    provider = FakeProvider(
+        [
+            [assistant_start(), assistant_done(AssistantMessage(content="first"))],
+            [assistant_start(), assistant_done(AssistantMessage(content="second"))],
+        ]
+    )
+    storage = _CountingStorage()
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+    queue = getattr(session, queue_method)
+    queue("extension context", custom_type="extension:queued", details={"job": 1})
+
+    await _collect_session_events(session.prompt("start"))
+
+    custom_entries = [entry for entry in storage.entries if isinstance(entry, CustomMessageEntry)]
+    assert len(custom_entries) == 1
+    assert custom_entries[0].custom_type == "extension:queued"
+    assert custom_entries[0].details == {"job": 1}
+    assert not any(
+        isinstance(entry, MessageEntry) and entry.message.role == "custom"
+        for entry in storage.entries
+    )
+
+
+@pytest.mark.anyio
+async def test_custom_message_persistence_retry_is_idempotent(tmp_path: Path) -> None:
+    storage = _FaultInjectingStorage("custom_message_after")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=storage,
+            cwd=tmp_path,
+        )
+    )
+
+    with pytest.raises(OSError, match="simulated custom_message_after failure"):
+        await _collect_session_events(
+            session.prompt(
+                "hidden context",
+                custom_type="extension:context",
+                details={"source": "test"},
+            )
+        )
+
+    entries = [entry for entry in storage.entries if isinstance(entry, CustomMessageEntry)]
+    assert len(entries) == 1
+    assert entries[0].custom_type == "extension:context"
+    await session._flush_pending_message_writes(context=session._diagnostic_context())
+    assert len([entry for entry in storage.entries if isinstance(entry, CustomMessageEntry)]) == 1
+    assert session.messages[0] == CustomMessage(
+        content="hidden context",
+        custom_type="extension:context",
+        details={"source": "test"},
+        timestamp=session.messages[0].timestamp,
+    )
 
 
 @pytest.mark.anyio
@@ -1601,7 +1679,11 @@ async def test_context_usage_is_cached_until_session_context_changes(
 
 
 @pytest.mark.anyio
-async def test_context_usage_recalculates_after_prompt_and_compaction(tmp_path: Path) -> None:
+async def test_context_usage_recalculates_after_prompt_and_compaction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(coding_session_module, "DEFAULT_COMPACTION_KEEP_RECENT_TOKENS", 1)
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(
         [
@@ -1630,8 +1712,9 @@ async def test_context_usage_recalculates_after_prompt_and_compaction(tmp_path: 
     _message = await session.compact("Context accounting was discussed.")
     after_compaction_usage = session.context_usage
 
-    assert after_compaction_usage.message_count == 1
-    assert after_compaction_usage.total_tokens < after_prompt_usage.total_tokens
+    assert after_compaction_usage is not after_prompt_usage
+    assert after_compaction_usage.message_count == 2
+    assert after_compaction_usage.total_tokens != after_prompt_usage.total_tokens
     assert session.context_token_estimate == after_compaction_usage.total_tokens
 
 
@@ -2187,7 +2270,11 @@ async def test_session_branches_to_previous_entry_without_destroying_history(
 
 
 @pytest.mark.anyio
-async def test_persist_after_branch_keeps_state_on_active_branch(tmp_path: Path) -> None:
+async def test_persist_after_branch_keeps_state_on_active_branch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(coding_session_module, "DEFAULT_COMPACTION_KEEP_RECENT_TOKENS", 1)
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(
         [
@@ -2242,8 +2329,9 @@ async def test_persist_after_branch_keeps_state_on_active_branch(tmp_path: Path)
     await session.compact()
     compactions = [entry for entry in await storage.read_all() if entry.type == "compaction"]
     assert len(compactions) == 1
-    assert "abandoned" not in compactions[0].replaces_entry_ids
-    assert "abandoned-answer" not in compactions[0].replaces_entry_ids
+    assert compactions[0].replaces_entry_ids == []
+    assert compactions[0].first_kept_entry_id in session.state.context_entry_ids
+    assert compactions[0].first_kept_entry_id not in {"abandoned", "abandoned-answer"}
     assert "Abandoned" not in provider.calls[1][2][0].content
 
 
@@ -2370,7 +2458,15 @@ async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> N
         [
             [
                 assistant_start(model="fake"),
-                assistant_done(message=AssistantMessage(content="The abandoned branch went left.")),
+                assistant_done(
+                    message=AssistantMessage(
+                        content="The abandoned branch went left.",
+                        provider="openai",
+                        model="fake",
+                        response_provider="branch-route",
+                        usage=Usage(input=120, output=15, cache_read=30, cache_write=4),
+                    )
+                ),
             ]
         ]
     )
@@ -2399,6 +2495,10 @@ async def test_session_branch_with_summary_rebuilds_context(tmp_path: Path) -> N
         "The user explored a different conversation branch before returning here."
     )
     assert "The abandoned branch went left." in summary.summary
+    assert summary.usage == Usage(input=120, output=15, cache_read=30, cache_write=4)
+    assert summary.provider == "openai"
+    assert summary.model == "fake"
+    assert summary.response_provider == "branch-route"
     assert provider.calls[0][3] == []
     assert "<conversation>" in provider.calls[0][2][0].content
     assert "Use this EXACT format:" in provider.calls[0][2][0].content
@@ -2505,6 +2605,7 @@ async def test_session_branch_with_summary_falls_back_when_model_summary_is_unav
 
     assert "with branch summary" in result.message
     assert summary.type == "branch_summary"
+    assert summary.usage is None
     assert "Automatically compacted 2 prior message(s)." in summary.summary
     assert "Abandoned follow-up" in summary.summary
     assert len(session.messages) == 2
@@ -3643,7 +3744,11 @@ async def test_session_provider_settings_reload_uses_session_paths(
 
 
 @pytest.mark.anyio
-async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: Path) -> None:
+async def test_session_compact_persists_summary_and_rebuilds_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(coding_session_module, "DEFAULT_COMPACTION_KEEP_RECENT_TOKENS", 1)
     storage = JsonlSessionStorage(tmp_path / "session.jsonl")
     provider = FakeProvider(
         [
@@ -3653,7 +3758,15 @@ async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: P
             ],
             [
                 assistant_start(model="fake"),
-                assistant_done(message=AssistantMessage(content="Generated session summary")),
+                assistant_done(
+                    message=AssistantMessage(
+                        content="Generated session summary",
+                        provider="openai",
+                        model="fake",
+                        response_provider="compaction-route",
+                        usage=Usage(input=1_000, output=80, cache_read=200, cache_write=50),
+                    )
+                ),
             ],
             [
                 assistant_start(model="fake"),
@@ -3676,11 +3789,28 @@ async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: P
 
     _next_events = await _collect_session_events(session.prompt("Continue."))
 
-    assert result == f"Compacted {message_count_before} context entries."
+    assert result == f"Compacted {message_count_before - 1} context entries."
     assert len(compactions) == 1
     assert isinstance(compactions[0], CompactionEntry)
     assert compactions[0].summary == "Generated session summary"
-    assert compactions[0].replaces_entry_ids == message_entries_before
+    assert compactions[0].replaces_entry_ids == []
+    assert compactions[0].first_kept_entry_id == message_entries_before[-1]
+    assert compactions[0].usage == Usage(
+        input=1_000,
+        output=80,
+        cache_read=200,
+        cache_write=50,
+    )
+    assert compactions[0].provider == "openai"
+    assert compactions[0].model == "fake"
+    assert compactions[0].response_provider == "compaction-route"
+    persisted_payload = next(
+        payload
+        for line in storage.path.read_text().splitlines()
+        if (payload := json.loads(line))["type"] == "compaction"
+    )
+    assert "replaces_entry_ids" not in persisted_payload
+    assert persisted_payload["first_kept_entry_id"] == message_entries_before[-1]
     assert leaves == []
     assert entries_after_compact[-1] == compactions[0]
     assert provider.calls[1][1].startswith("You are a context summarization assistant.")
@@ -3689,6 +3819,7 @@ async def test_session_compact_persists_summary_and_rebuilds_context(tmp_path: P
         provider.calls[2][2],
         [
             UserMessage(content=("Previous conversation summary:\nGenerated session summary")),
+            AssistantMessage(content="Session answer"),
             UserMessage(content="Continue."),
         ],
     )
@@ -3740,6 +3871,10 @@ async def test_session_auto_compacts_after_response_when_threshold_is_exceeded(
 
     assert len(compactions) == 1
     assert compactions[0].summary == "Generated automatic summary"
+    assert compactions[0].replaces_entry_ids == []
+    assert compactions[0].first_kept_entry_id in session.state.context_entry_ids
+    assert compactions[0].tokens_before is not None
+    assert compactions[0].tokens_before > 0
     assert "Explain sessions." in provider.calls[2][2][0].content
     _assert_messages(
         provider.calls[3][2],
@@ -4337,6 +4472,8 @@ async def test_session_compacts_and_retries_once_after_context_overflow(
 
     assert len(compactions) == 1
     assert compactions[0].summary == "Overflow recovery summary"
+    assert compactions[0].tokens_before is not None
+    assert compactions[0].tokens_before > 0
     assert any(
         getattr(event, "type", None) == "message_end"
         and getattr(getattr(event, "message", None), "text", None) == "Recovered answer"

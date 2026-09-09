@@ -11,8 +11,14 @@ import pytest
 
 from pi_event_helpers import assistant_done, assistant_start
 from tau_agent import AssistantMessage, ToolCall, UserMessage
-from tau_agent.messages import AgentMessage, assistant_content
-from tau_agent.session import CustomEntry, JsonlSessionStorage, LeafEntry, MessageEntry
+from tau_agent.messages import AgentMessage, assistant_content, message_to_user
+from tau_agent.session import (
+    CustomEntry,
+    CustomMessageEntry,
+    JsonlSessionStorage,
+    LeafEntry,
+    MessageEntry,
+)
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
 from tau_ai import FakeProvider
@@ -2512,6 +2518,18 @@ async def test_custom_message_metadata_survives_session_reload(tmp_path: Path) -
             details={"id": "run-1"},
         )
     ]
+    entries = await session.storage.read_all()
+    persisted = [entry for entry in entries if isinstance(entry, CustomMessageEntry)]
+    assert len(persisted) == 1
+    assert persisted[0].custom_type == "subagent-notification"
+    assert not any(
+        isinstance(entry, MessageEntry) and entry.message.role == "custom" for entry in entries
+    )
+    _model, _system, sent, _tools = provider.calls[0]
+    assert message_to_user(sent[0]) == UserMessage(
+        content="<task-notification/>", timestamp=sent[0].timestamp
+    )
+
     await session.aclose()
 
     reopened = await CodingSession.load(_session_config(tmp_path, FakeProvider([])))

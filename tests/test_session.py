@@ -11,12 +11,16 @@ from tau_agent import (
     TextContent,
     ThinkingContent,
     ToolResultMessage,
+    Usage,
+    UsageCost,
     UserMessage,
 )
+from tau_agent.messages import message_to_user, sum_usage
 from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
     CustomEntry,
+    CustomMessageEntry,
     JsonlSessionStorage,
     LabelEntry,
     LeafEntry,
@@ -49,22 +53,26 @@ def test_session_entry_round_trips_canonical_jsonl() -> None:
     }
 
 
-def test_custom_message_round_trips_with_pi_role_and_metadata() -> None:
-    entry = MessageEntry(
+def test_custom_message_entry_round_trips_with_tau_persisted_naming() -> None:
+    entry = CustomMessageEntry(
         id="entry-1",
-        message=CustomMessage(
-            content="<task-notification/>",
-            custom_type="subagent-notification",
-            details={"id": "run-1"},
-        ),
+        timestamp=2,
+        content=[
+            TextContent(text="<task-notification/>"),
+            ImageContent(data="aW1hZ2U=", mime_type="image/png"),
+        ],
+        custom_type="subagent-notification",
+        details={"id": "run-1"},
     )
 
     line = entry_to_json_line(entry)
     parsed = entry_from_json_line(line)
 
-    payload = json.loads(line)["message"]
-    assert payload["role"] == "custom"
-    assert payload["customType"] == "subagent-notification"
+    payload = json.loads(line)
+    assert payload["type"] == "custom_message"
+    assert payload["custom_type"] == "subagent-notification"
+    assert "customType" not in payload
+    assert payload["content"][1]["mimeType"] == "image/png"
     assert parsed == entry
 
 
@@ -243,27 +251,73 @@ def test_legacy_tool_message_migrates_and_preserves_data() -> None:
     assert not {"name", "ok", "error", "data", "tool_call_id"} & rewritten.keys()
 
 
-def test_legacy_custom_user_message_migrates_to_custom_message() -> None:
+@pytest.mark.parametrize("role", ["user", "custom"])
+@pytest.mark.parametrize("custom_type_key", ["custom_type", "customType"])
+def test_legacy_custom_message_shapes_migrate_and_replay_identically(
+    role: str, custom_type_key: str
+) -> None:
+    legacy_message = {
+        "role": role,
+        "content": "<task-notification/>",
+        custom_type_key: "subagent-notification",
+        "display": False,
+        "details": {"id": "run-1"},
+        "timestamp": 2345,
+    }
     legacy = json.dumps(
         {
             "type": "message",
             "id": "custom",
             "timestamp": 1,
-            "message": {
-                "role": "user",
-                "content": "<task-notification/>",
-                "custom_type": "subagent-notification",
-                "details": {"id": "run-1"},
-            },
+            "message": legacy_message,
         }
     )
 
     entry = entry_from_json_line(legacy)
 
-    assert isinstance(entry, MessageEntry)
-    assert isinstance(entry.message, CustomMessage)
-    assert entry.message.custom_type == "subagent-notification"
-    assert json.loads(entry_to_json_line(entry))["message"]["role"] == "custom"
+    assert isinstance(entry, CustomMessageEntry)
+    assert entry.parent_id is None
+    assert entry.timestamp == 2.345
+    assert entry.custom_type == "subagent-notification"
+    assert entry.display is False
+    assert entry.details == {"id": "run-1"}
+    state = SessionState.from_entries([entry])
+    assert state.messages == (
+        CustomMessage(
+            custom_type="subagent-notification",
+            content="<task-notification/>",
+            display=False,
+            details={"id": "run-1"},
+            timestamp=2345,
+        ),
+    )
+    assert (
+        message_to_user(state.messages[0]).model_dump_json()
+        == UserMessage(content="<task-notification/>", timestamp=2345).model_dump_json()
+    )
+    rewritten = json.loads(entry_to_json_line(entry))
+    assert rewritten["type"] == "custom_message"
+    assert rewritten["custom_type"] == "subagent-notification"
+    assert "message" not in rewritten
+
+
+def test_pi_named_custom_message_entry_normalizes_to_tau_persistence() -> None:
+    entry = entry_from_json_line(
+        json.dumps(
+            {
+                "type": "custom_message",
+                "id": "custom",
+                "timestamp": 1,
+                "customType": "extension:status",
+                "content": "ready",
+                "display": True,
+            }
+        )
+    )
+
+    assert isinstance(entry, CustomMessageEntry)
+    assert entry.custom_type == "extension:status"
+    assert "custom_type" in json.loads(entry_to_json_line(entry))
 
 
 def test_invalid_jsonl_line_raises_useful_error() -> None:
@@ -397,6 +451,89 @@ def test_legacy_session_label_migrates_to_earliest_branchable_entry() -> None:
     assert SessionState.from_entries(entries).labels_by_id == {"first-message": "Legacy name"}
 
 
+def test_compaction_entry_omits_empty_legacy_id_list_from_jsonl() -> None:
+    line = entry_to_json_line(
+        CompactionEntry(
+            id="compact",
+            summary="summary",
+            first_kept_entry_id="kept",
+            tokens_before=42,
+        )
+    )
+
+    assert json.loads(line) == {
+        "id": "compact",
+        "timestamp": json.loads(line)["timestamp"],
+        "type": "compaction",
+        "summary": "summary",
+        "first_kept_entry_id": "kept",
+        "tokens_before": 42,
+    }
+    assert entry_from_json_line(line).replaces_entry_ids == []
+
+
+def test_legacy_summary_entries_load_without_usage() -> None:
+    compaction = entry_from_json_line(
+        '{"type":"compaction","id":"compact","summary":"old","replaces_entry_ids":[]}'
+    )
+    branch = entry_from_json_line('{"type":"branch_summary","id":"branch","summary":"old"}')
+
+    assert isinstance(compaction, CompactionEntry)
+    assert compaction.usage is None
+    assert compaction.provider is None
+    assert compaction.model is None
+    assert compaction.response_provider is None
+    assert isinstance(branch, BranchSummaryEntry)
+    assert branch.usage is None
+    assert branch.provider is None
+    assert branch.model is None
+    assert branch.response_provider is None
+
+
+def test_sum_usage_combines_tokens_optional_fields_and_cost() -> None:
+    combined = sum_usage(
+        [
+            Usage(input=10, reasoning=2, cost=UsageCost(input=0.1, total=0.1)),
+            Usage(
+                input=20,
+                output=5,
+                cache_write_1h=3,
+                cost=UsageCost(output=0.2, total=0.2),
+            ),
+        ]
+    )
+
+    assert combined.input == 30
+    assert combined.output == 5
+    assert combined.reasoning == 2
+    assert combined.cache_write_1h == 3
+    assert combined.cost.input == 0.1
+    assert combined.cost.output == 0.2
+    assert combined.cost.total == pytest.approx(0.3)
+
+
+def test_summary_entry_usage_round_trips_with_camel_case_usage_fields() -> None:
+    entry = CompactionEntry(
+        id="compact",
+        summary="summary",
+        first_kept_entry_id="kept",
+        usage=Usage(input=10, cache_read=20, cache_write_1h=5),
+        provider="anthropic",
+        model="claude-test",
+        response_provider="inference-route",
+    )
+
+    line = entry_to_json_line(entry)
+
+    assert '"cacheRead":20' in line
+    assert '"cacheWrite1H":5' in line
+    assert '"response_provider":"inference-route"' in line
+    assert entry_from_json_line(line) == entry
+
+
+
+
+
 def test_session_state_applies_compaction_and_branch_summary() -> None:
     entries = [
         MessageEntry(id="user", message=UserMessage(content="Explain sessions.")),
@@ -423,6 +560,196 @@ def test_session_state_applies_compaction_and_branch_summary() -> None:
     assert [message.role for message in state.messages] == ["user", "user"]
     assert "The user asked about sessions." in state.messages[0].text
     assert "A side branch explored storage." in state.messages[1].text
+
+
+@pytest.mark.parametrize(
+    ("boundary", "expected"),
+    [
+        ("first", ["summary", "first", "middle", "last", "after"]),
+        ("middle", ["summary", "middle", "last", "after"]),
+        ("last", ["summary", "last", "after"]),
+        ("missing", ["summary", "after"]),
+        (None, ["summary", "after"]),
+    ],
+)
+def test_session_state_applies_first_kept_boundary_inclusively(
+    boundary: str | None,
+    expected: list[str],
+) -> None:
+    entries = [
+        MessageEntry(id="first", message=UserMessage(content="first")),
+        MessageEntry(
+            id="middle",
+            parent_id="first",
+            message=AssistantMessage(content="middle"),
+        ),
+        MessageEntry(id="last", parent_id="middle", message=UserMessage(content="last")),
+        CompactionEntry(
+            id="compact",
+            parent_id="last",
+            summary="summary",
+            first_kept_entry_id=boundary,
+        ),
+        MessageEntry(id="after", parent_id="compact", message=UserMessage(content="after")),
+    ]
+
+    state = SessionState.from_entries(entries)
+
+    assert [
+        message.text.removeprefix("Previous conversation summary:\n") for message in state.messages
+    ] == expected
+    assert state.context_entry_ids == (
+        "compact",
+        *(entry_id for entry_id in ("first", "middle", "last", "after") if entry_id in expected),
+    )
+
+
+def test_first_kept_boundary_can_reference_non_message_path_entry() -> None:
+    entries = [
+        MessageEntry(id="first", message=UserMessage(content="first")),
+        ModelChangeEntry(
+            id="model",
+            parent_id="first",
+            model="new-model",
+        ),
+        MessageEntry(id="kept", parent_id="model", message=UserMessage(content="kept")),
+        CompactionEntry(
+            id="compact",
+            parent_id="kept",
+            summary="summary",
+            first_kept_entry_id="model",
+        ),
+        MessageEntry(id="after", parent_id="compact", message=UserMessage(content="after")),
+    ]
+
+    state = SessionState.from_entries(entries)
+
+    assert [message.text for message in state.messages] == [
+        "Previous conversation summary:\nsummary",
+        "kept",
+        "after",
+    ]
+    assert state.context_entry_ids == ("compact", "kept", "after")
+
+
+def test_first_kept_replay_includes_compaction_after_boundary_in_path_order() -> None:
+    entries = [
+        MessageEntry(id="first", message=UserMessage(content="first")),
+        MessageEntry(id="kept", parent_id="first", message=UserMessage(content="kept")),
+        CompactionEntry(
+            id="old-compact",
+            parent_id="kept",
+            summary="old summary",
+            first_kept_entry_id="kept",
+        ),
+        MessageEntry(
+            id="after-old",
+            parent_id="old-compact",
+            message=UserMessage(content="after old"),
+        ),
+        CompactionEntry(
+            id="new-compact",
+            parent_id="after-old",
+            summary="new summary",
+            first_kept_entry_id="kept",
+        ),
+    ]
+
+    state = SessionState.from_entries(entries)
+
+    assert [message.text for message in state.messages] == [
+        "Previous conversation summary:\nnew summary",
+        "kept",
+        "Previous conversation summary:\nold summary",
+        "after old",
+    ]
+    assert state.context_entry_ids == (
+        "new-compact",
+        "kept",
+        "old-compact",
+        "after-old",
+    )
+
+
+def test_session_state_applies_first_kept_boundary_on_active_branch_only() -> None:
+    entries = [
+        MessageEntry(id="root", message=UserMessage(content="root")),
+        MessageEntry(
+            id="left",
+            parent_id="root",
+            message=AssistantMessage(content="abandoned left"),
+        ),
+        MessageEntry(
+            id="right",
+            parent_id="root",
+            message=AssistantMessage(content="kept right"),
+        ),
+        CompactionEntry(
+            id="compact",
+            parent_id="right",
+            summary="right summary",
+            first_kept_entry_id="right",
+        ),
+        MessageEntry(id="after", parent_id="compact", message=UserMessage(content="after")),
+    ]
+
+    state = SessionState.from_entries(entries)
+
+    assert [message.text for message in state.messages] == [
+        "Previous conversation summary:\nright summary",
+        "kept right",
+        "after",
+    ]
+    assert state.context_entry_ids == ("compact", "right", "after")
+
+
+def test_legacy_compaction_with_explicit_empty_id_list_keeps_prior_context() -> None:
+    legacy_compaction = entry_from_json_line(
+        json.dumps(
+            {
+                "type": "compaction",
+                "id": "compact",
+                "parent_id": "first",
+                "timestamp": 2,
+                "summary": "legacy summary",
+                "replaces_entry_ids": [],
+            }
+        )
+    )
+    entries = [
+        MessageEntry(id="first", message=UserMessage(content="first")),
+        legacy_compaction,
+    ]
+
+    state = SessionState.from_entries(entries)
+
+    assert [message.text for message in state.messages] == [
+        "first",
+        "Previous conversation summary:\nlegacy summary",
+    ]
+    assert state.context_entry_ids == ("first", "compact")
+
+
+@pytest.mark.anyio
+async def test_legacy_compaction_fixture_replays_with_id_list_precedence(
+    tmp_path: Path,
+) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "legacy_compaction.jsonl"
+    session_path = tmp_path / "legacy_compaction.jsonl"
+    session_path.write_bytes(fixture.read_bytes())
+    entries = await JsonlSessionStorage(session_path).read_all()
+
+    compaction = next(entry for entry in entries if entry.type == "compaction")
+    state = SessionState.from_entries(entries)
+
+    assert compaction.replaces_entry_ids == ["root", "tail"]
+    assert compaction.first_kept_entry_id == "tail"
+    assert [message.text for message in state.messages] == [
+        "Previous conversation summary:\nlegacy summary",
+        "keep middle",
+        "after compaction",
+    ]
+    assert state.context_entry_ids == ("compact", "middle", "after")
 
 
 def test_path_to_entry_follows_parent_chain() -> None:

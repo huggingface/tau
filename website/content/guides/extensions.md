@@ -708,8 +708,9 @@ tau.send_custom_message(
   renderer raises or returns a non-string, the message falls back to its raw
   `content` — a broken renderer never crashes the UI.
 - Custom rendering works in the interactive TUI and the `-p` print transcript,
-  and survives `/resume` (the `custom_type`/`details` are persisted with the
-  message). In the TUI, a custom message appears once its user event is
+  and survives `/resume`. Tau persists it as a first-class `custom_message`
+  session entry whose `custom_type` and `details` can be inspected without
+  parsing a generic message payload. In the TUI, a custom message appears once its user event is
   confirmed by the run (a moment after delivery), rather than instantly like a
   typed prompt's optimistic echo.
 

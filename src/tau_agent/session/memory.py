@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, cast
 
-from tau_agent.messages import AgentMessage, UserMessage
+from tau_agent.messages import AgentMessage, CustomMessage, UserMessage
 from tau_agent.session.entries import (
     BranchSummaryEntry,
     CompactionEntry,
@@ -66,10 +66,23 @@ class SessionState:
         custom_entries: list[CustomEntry] = []
         compaction_entries: list[CompactionEntry] = []
 
-        for entry in replay_entries:
+        for entry_index, entry in enumerate(replay_entries):
             match entry.type:
                 case "message":
                     message_rows.append((entry.id, entry.message))
+                case "custom_message":
+                    message_rows.append(
+                        (
+                            entry.id,
+                            CustomMessage(
+                                custom_type=entry.custom_type,
+                                content=entry.content,
+                                display=entry.display,
+                                details=entry.details,
+                                timestamp=round(entry.timestamp * 1000),
+                            ),
+                        )
+                    )
                 case "model_change":
                     model = entry.model
                     if entry.provider is not None:
@@ -86,7 +99,11 @@ class SessionState:
                     custom_entries.append(entry)
                 case "compaction":
                     compaction_entries.append(entry)
-                    message_rows = _apply_compaction(message_rows, entry)
+                    message_rows = _apply_compaction(
+                        message_rows,
+                        entry,
+                        path_before=replay_entries[:entry_index],
+                    )
                 case "branch_summary":
                     message_rows.append(
                         (entry.id, UserMessage(content=_format_branch_summary(entry)))
@@ -134,23 +151,50 @@ def _last_non_leaf_id(entries: list[SessionEntry]) -> str | None:
 def _apply_compaction(
     message_rows: list[tuple[str, AgentMessage]],
     entry: CompactionEntry,
+    *,
+    path_before: list[SessionEntry],
 ) -> list[tuple[str, AgentMessage]]:
-    replaced_ids = set(entry.replaces_entry_ids)
-    retained: list[tuple[str, AgentMessage]] = []
-    inserted_summary = False
-    for entry_id, message in message_rows:
-        if entry_id not in replaced_ids:
-            retained.append((entry_id, message))
-            continue
-        if not inserted_summary:
-            retained.append(
-                (entry.id, UserMessage(content=_format_compaction_summary(entry.summary)))
-            )
-            inserted_summary = True
+    summary_row = (entry.id, UserMessage(content=_format_compaction_summary(entry.summary)))
 
-    if not inserted_summary:
-        retained.append((entry.id, UserMessage(content=_format_compaction_summary(entry.summary))))
-    return retained
+    # Tau originally persisted arbitrary replacement-id sets. Explicit legacy
+    # fields take precedence, including an empty list, so old sessions retain
+    # their exact replay behavior.
+    if "replaces_entry_ids" in entry.model_fields_set:
+        replaced_ids = set(entry.replaces_entry_ids)
+        retained: list[tuple[str, AgentMessage]] = []
+        inserted_summary = False
+        for entry_id, message in message_rows:
+            if entry_id not in replaced_ids:
+                retained.append((entry_id, message))
+                continue
+            if not inserted_summary:
+                retained.append(summary_row)
+                inserted_summary = True
+        if not inserted_summary:
+            retained.append(summary_row)
+        return retained
+
+    # Pi resolves the boundary against the complete active path, not only
+    # message-producing entries. Reorder retained context by that path as well:
+    # a previous compaction can itself occur after the kept boundary.
+    first_kept_index = next(
+        (
+            index
+            for index, path_entry in enumerate(path_before)
+            if path_entry.id == entry.first_kept_entry_id
+        ),
+        None,
+    )
+    if first_kept_index is None:
+        return [summary_row]
+
+    retained_by_id = dict(message_rows)
+    retained = [
+        (path_entry.id, retained_by_id[path_entry.id])
+        for path_entry in path_before[first_kept_index:]
+        if path_entry.id in retained_by_id
+    ]
+    return [summary_row, *retained]
 
 
 def _format_compaction_summary(summary: str) -> str:

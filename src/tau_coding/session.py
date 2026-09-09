@@ -17,8 +17,10 @@ from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
     CustomMessage,
+    Usage,
     UserMessage,
     message_text,
+    sum_usage,
 )
 from tau_agent.provider import ModelProvider
 from tau_agent.provider_events import AssistantDoneEvent, AssistantErrorEvent, TextDeltaEvent
@@ -26,6 +28,7 @@ from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
     CustomEntry,
+    CustomMessageEntry,
     JsonlSessionStorage,
     LabelEntry,
     MessageEntry,
@@ -291,8 +294,20 @@ class SessionResources:
 class CompactionPlan:
     """Prepared active-context entries for a compaction run."""
 
-    replace_entry_ids: tuple[str, ...]
+    first_kept_entry_id: str
+    replaced_entry_count: int
     messages_to_summarize: tuple[AgentMessage, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _GeneratedSummary:
+    """Summary text paired with the provider usage spent producing it."""
+
+    text: str
+    usage: Usage | None
+    provider: str | None = None
+    model: str | None = None
+    response_provider: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,7 +326,7 @@ class _PendingMessageWrite:
     """Stable entry retained while a message persistence attempt is retried."""
 
     message: AgentMessage
-    message_entry: MessageEntry
+    entry: MessageEntry | CustomMessageEntry
 
 
 @dataclass(frozen=True, slots=True)
@@ -1002,7 +1017,7 @@ class CodingSession:
                 self._last_parent_id,
             )
             if abandoned_messages:
-                summary = await self._summarize_branch_messages(
+                generated = await self._summarize_branch_messages(
                     abandoned_messages,
                     custom_instructions=custom_instructions,
                     replace_instructions=replace_instructions,
@@ -1010,7 +1025,11 @@ class CodingSession:
                 summary_entry = BranchSummaryEntry(
                     parent_id=entry_id,
                     branch_root_id=entry_id,
-                    summary=summary,
+                    summary=generated.text,
+                    usage=generated.usage,
+                    provider=generated.provider,
+                    model=generated.model,
+                    response_provider=generated.response_provider,
                 )
                 await self._append_session_entry(summary_entry)
                 target_id = summary_entry.id
@@ -2869,44 +2888,35 @@ class CodingSession:
     async def compact_detailed(self, instructions: str | None = None) -> ManualCompactionResult:
         """Compact older context while preserving a real recent-entry boundary."""
         await self._flush_pending_message_writes(context=self._diagnostic_context())
-        rows = self._active_context_rows()
         plan = self._recent_preserving_compaction_plan()
         if plan is None:
             raise ValueError("Not enough context to compact while preserving recent entries")
-        first_kept_entry_id = rows[len(plan.replace_entry_ids)][0]
         tokens_before = self.context_token_estimate
-        summary = await self._generate_compaction_summary(
+        generated = await self._generate_compaction_summary(
             plan.messages_to_summarize,
             custom_instructions=instructions,
         )
-        compaction = await self._append_compaction(
-            summary,
-            replace_entry_ids=plan.replace_entry_ids,
-            first_kept_entry_id=first_kept_entry_id,
+        await self._append_compaction(
+            generated.text,
+            first_kept_entry_id=plan.first_kept_entry_id,
             tokens_before=tokens_before,
+            usage=generated.usage,
+            provider=generated.provider,
+            model=generated.model,
+            response_provider=generated.response_provider,
         )
         return ManualCompactionResult(
-            summary=summary,
-            first_kept_entry_id=first_kept_entry_id,
+            summary=generated.text,
+            first_kept_entry_id=plan.first_kept_entry_id,
             tokens_before=tokens_before,
             estimated_tokens_after=self.context_token_estimate,
-            replaced_entry_count=len(compaction.replaces_entry_ids),
+            replaced_entry_count=plan.replaced_entry_count,
         )
 
     async def compact(self, instructions: str | None = None) -> str:
         """Generate a manual compaction summary and rebuild active context."""
-        await self._flush_pending_message_writes(context=self._diagnostic_context())
-        plan = self._manual_compaction_plan()
-        summary = await self._generate_compaction_summary(
-            plan.messages_to_summarize,
-            custom_instructions=instructions,
-        )
-        compaction = await self._append_compaction(
-            summary,
-            replace_entry_ids=plan.replace_entry_ids,
-            tokens_before=self.context_token_estimate,
-        )
-        return f"Compacted {len(compaction.replaces_entry_ids)} context entries."
+        result = await self.compact_detailed(instructions)
+        return f"Compacted {result.replaced_entry_count} context entries."
 
     async def aclose(self) -> None:
         """Close every owned extension/provider resource exactly once.
@@ -3348,7 +3358,7 @@ class CodingSession:
         ]
         parent_id = staged[-1].id
         for message in suffix:
-            entry = MessageEntry(parent_id=parent_id, message=message)
+            entry = _session_entry_for_message(parent_id=parent_id, message=message)
             staged.append(entry)
             parent_id = entry.id
         if active_model is not None:
@@ -3416,16 +3426,16 @@ class CodingSession:
         pending = self._pending_message_writes.get(message_id)
         is_retry = pending is not None
         if pending is None:
-            entry = MessageEntry(parent_id=self._last_parent_id, message=message)
-            pending = _PendingMessageWrite(message=message, message_entry=entry)
+            entry = _session_entry_for_message(parent_id=self._last_parent_id, message=message)
+            pending = _PendingMessageWrite(message=message, entry=entry)
             self._pending_message_writes[message_id] = pending
 
         durable_ids = (
             {entry.id for entry in await self._read_session_entries()} if is_retry else frozenset()
         )
-        if pending.message_entry.id not in durable_ids:
-            await self._append_session_entry(pending.message_entry)
-        self._last_parent_id = pending.message_entry.id
+        if pending.entry.id not in durable_ids:
+            await self._append_session_entry(pending.entry)
+        self._last_parent_id = pending.entry.id
 
         await self._refresh_persisted_state(leaf_id=self._last_parent_id)
         self._persisted_message_ids.add(message_id)
@@ -3639,8 +3649,17 @@ class CodingSession:
             plan = self._recent_preserving_compaction_plan()
             if plan is None:
                 return False
-            summary = await self._generate_compaction_summary(plan.messages_to_summarize)
-            await self._append_compaction(summary, replace_entry_ids=plan.replace_entry_ids)
+            tokens_before = self.context_token_estimate
+            generated = await self._generate_compaction_summary(plan.messages_to_summarize)
+            await self._append_compaction(
+                generated.text,
+                first_kept_entry_id=plan.first_kept_entry_id,
+                tokens_before=tokens_before,
+                usage=generated.usage,
+                provider=generated.provider,
+                model=generated.model,
+                response_provider=generated.response_provider,
+            )
             return True
         except Exception as exc:  # noqa: BLE001 - the original overflow remains visible
             self._last_diagnostic_log_path = self._diagnostic_logger.log_exception(
@@ -3737,8 +3756,17 @@ class CodingSession:
         plan = self._recent_preserving_compaction_plan()
         if plan is None:
             return False
-        summary = await self._generate_compaction_summary(plan.messages_to_summarize)
-        await self._append_compaction(summary, replace_entry_ids=plan.replace_entry_ids)
+        tokens_before = self.context_token_estimate
+        generated = await self._generate_compaction_summary(plan.messages_to_summarize)
+        await self._append_compaction(
+            generated.text,
+            first_kept_entry_id=plan.first_kept_entry_id,
+            tokens_before=tokens_before,
+            usage=generated.usage,
+            provider=generated.provider,
+            model=generated.model,
+            response_provider=generated.response_provider,
+        )
         return True
 
     async def _generate_compaction_summary(
@@ -3746,13 +3774,15 @@ class CodingSession:
         messages: tuple[AgentMessage, ...],
         *,
         custom_instructions: str | None = None,
-    ) -> str:
+    ) -> _GeneratedSummary:
         prompt = build_compaction_summary_prompt(
             messages,
             custom_instructions=custom_instructions,
         )
         text_parts: list[str] = []
         final_text: str | None = None
+        response_usages: list[Usage] = []
+        response_provider: str | None = None
         summary_messages: list[AgentMessage] = [UserMessage(content=prompt)]
         async for event in self._harness.config.provider.stream_response(
             model=self.model,
@@ -3764,6 +3794,8 @@ class CodingSession:
                 text_parts.append(event.delta)
             elif isinstance(event, AssistantDoneEvent):
                 final_text = event.message.text
+                response_usages.append(event.message.usage)
+                response_provider = event.message.response_provider
             elif isinstance(event, AssistantErrorEvent):
                 raise RuntimeError(
                     f"Compaction summarization failed: {event.error.error_message or event.reason}"
@@ -3772,7 +3804,13 @@ class CodingSession:
         summary = (final_text if final_text is not None else "".join(text_parts)).strip()
         if not summary:
             raise RuntimeError("Compaction summarization returned an empty summary")
-        return summary
+        return _GeneratedSummary(
+            text=summary,
+            usage=sum_usage(response_usages) if response_usages else None,
+            provider=self.provider_name,
+            model=self.model,
+            response_provider=response_provider,
+        )
 
     async def _summarize_branch_messages(
         self,
@@ -3780,9 +3818,9 @@ class CodingSession:
         *,
         custom_instructions: str | None = None,
         replace_instructions: bool = False,
-    ) -> str:
+    ) -> _GeneratedSummary:
         try:
-            summary = await summarize_branch_messages_with_model(
+            result = await summarize_branch_messages_with_model(
                 provider=self._harness.config.provider,
                 model=self.model,
                 messages=messages,
@@ -3790,16 +3828,19 @@ class CodingSession:
                 replace_instructions=replace_instructions,
             )
         except Exception:
-            summary = None
-        return summary or summarize_messages_for_compaction(messages)
-
-    def _manual_compaction_plan(self) -> CompactionPlan:
-        rows = self._active_context_rows()
-        if not rows:
-            raise ValueError("No active context messages to compact")
-        return CompactionPlan(
-            replace_entry_ids=tuple(entry_id for entry_id, _message in rows),
-            messages_to_summarize=tuple(message for _entry_id, message in rows),
+            result = None
+        if result is not None:
+            summary, usage, response_provider = result
+            return _GeneratedSummary(
+                text=summary,
+                usage=usage,
+                provider=self.provider_name,
+                model=self.model,
+                response_provider=response_provider,
+            )
+        return _GeneratedSummary(
+            text=summarize_messages_for_compaction(messages),
+            usage=None,
         )
 
     def _recent_preserving_compaction_plan(self) -> CompactionPlan | None:
@@ -3814,11 +3855,13 @@ class CodingSession:
         if first_kept_index <= 0:
             return None
 
-        replaced = rows[:first_kept_index]
-        if not replaced:
+        if first_kept_index >= len(rows):
             return None
+
+        replaced = rows[:first_kept_index]
         return CompactionPlan(
-            replace_entry_ids=tuple(entry_id for entry_id, _message in replaced),
+            first_kept_entry_id=rows[first_kept_index][0],
+            replaced_entry_count=len(replaced),
             messages_to_summarize=tuple(message for _entry_id, message in replaced),
         )
 
@@ -3829,19 +3872,25 @@ class CodingSession:
         self,
         summary: str,
         *,
-        replace_entry_ids: tuple[str, ...],
-        first_kept_entry_id: str | None = None,
+        first_kept_entry_id: str,
         tokens_before: int | None = None,
+        usage: Usage | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        response_provider: str | None = None,
     ) -> CompactionEntry:
-        if not replace_entry_ids:
-            raise ValueError("No active context messages to compact")
+        if first_kept_entry_id not in self._state.context_entry_ids:
+            raise ValueError("First kept entry is not in the active context")
 
         compaction = CompactionEntry(
             parent_id=self._last_parent_id,
             summary=summary,
-            replaces_entry_ids=list(replace_entry_ids),
             first_kept_entry_id=first_kept_entry_id,
             tokens_before=tokens_before,
+            usage=usage,
+            provider=provider,
+            model=model,
+            response_provider=response_provider,
         )
         await self._append_session_entry(compaction)
         self._last_parent_id = compaction.id
@@ -3932,6 +3981,22 @@ def is_retryable_huggingface_route_error(message: AssistantMessage) -> bool:
         if isinstance(status_code, int) and not isinstance(status_code, bool):
             return status_code in {408, 409, 425, 429} or status_code >= 500
     return False
+
+
+def _session_entry_for_message(
+    *, parent_id: str | None, message: AgentMessage
+) -> MessageEntry | CustomMessageEntry:
+    """Build the canonical persisted entry for one completed runtime message."""
+    if isinstance(message, CustomMessage):
+        return CustomMessageEntry(
+            parent_id=parent_id,
+            timestamp=message.timestamp / 1000,
+            custom_type=message.custom_type,
+            content=message.content,
+            display=message.display,
+            details=message.details,
+        )
+    return MessageEntry(parent_id=parent_id, message=message)
 
 
 def _detach_missing_parents(entries: list[SessionEntry]) -> list[SessionEntry]:
@@ -4076,6 +4141,8 @@ def _tree_entry_title(entry: SessionEntry) -> str:
                 tool_names = ", ".join(call.name for call in message.tool_calls)
                 return f"tool call: {tool_names}"
             return f"{message.role}: {_message_text_preview(message)}"
+        case "custom_message":
+            return f"custom: {_short_preview(message_text(_custom_message_from_entry(entry)))}"
         case "compaction":
             return f"compaction summary: {_short_preview(entry.summary)}"
         case "branch_summary":
@@ -4112,8 +4179,22 @@ def _messages_after_entry_on_active_path(
         )
     except StopIteration:
         return ()
-    return tuple(
-        entry.message for entry in active_path[target_index + 1 :] if entry.type == "message"
+    messages: list[AgentMessage] = []
+    for entry in active_path[target_index + 1 :]:
+        if entry.type == "message":
+            messages.append(entry.message)
+        elif entry.type == "custom_message":
+            messages.append(_custom_message_from_entry(entry))
+    return tuple(messages)
+
+
+def _custom_message_from_entry(entry: CustomMessageEntry) -> CustomMessage:
+    return CustomMessage(
+        custom_type=entry.custom_type,
+        content=entry.content,
+        display=entry.display,
+        details=entry.details,
+        timestamp=round(entry.timestamp * 1000),
     )
 
 

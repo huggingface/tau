@@ -23,12 +23,14 @@ from tau_agent.messages import (
     ToolCall,
     ToolResultMessage,
     UserMessage,
+    content_text,
     message_text,
 )
 from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
     CustomEntry,
+    CustomMessageEntry,
     LabelEntry,
     LeafEntry,
     MessageEntry,
@@ -183,19 +185,26 @@ def render_session_html(
     entry_list = list(entries)
     active_leaf_id = _active_leaf_id(entry_list)
     active_path_ids = _active_path_ids(entry_list, active_leaf_id)
+    visible_entries = _visible_export_entries(entry_list)
+    visible_active_leaf_id = next(
+        (entry.id for entry in reversed(visible_entries) if entry.id in active_path_ids),
+        None,
+    )
     tree_entries: list[SessionEntry] = [
-        entry for entry in entry_list if not isinstance(entry, LeafEntry)
+        entry for entry in visible_entries if not isinstance(entry, LeafEntry)
     ]
     labels_by_id = _resolved_labels(entry_list)
-    tree_html = _render_tree(tree_entries, active_path_ids, active_leaf_id, labels_by_id)
-    details_html = _render_entry_details(entry_list, active_path_ids, active_leaf_id)
+    tree_html = _render_tree(
+        tree_entries, active_path_ids, visible_active_leaf_id, labels_by_id
+    )
+    details_html = _render_entry_details(visible_entries, active_path_ids, visible_active_leaf_id)
     source_html = f'<p class="source">Source: <code>{_escape(source)}</code></p>' if source else ""
     system_prompt_html = _render_system_prompt(system_prompt)
     generated_at = datetime.now(UTC).replace(microsecond=0).isoformat()
     jsonl_b64 = base64.b64encode(_session_jsonl_text(entry_list).encode("utf-8")).decode("ascii")
     jsonl_filename = _jsonl_filename(title, source)
-    tool_count = sum(1 for entry in entry_list if _entry_filter_kind(entry) == "tool")
-    event_count = sum(1 for entry in entry_list if _entry_filter_kind(entry) == "event")
+    tool_count = sum(1 for entry in visible_entries if _entry_filter_kind(entry) == "tool")
+    event_count = sum(1 for entry in visible_entries if _entry_filter_kind(entry) == "event")
     usage_html = render_usage_dashboard(
         collect_session_usage(
             [entry for entry in entry_list if entry.id in active_path_ids] or entry_list
@@ -1078,6 +1087,30 @@ def _render_system_prompt(system_prompt: str | None) -> str:
     )
 
 
+def _visible_export_entries(entries: list[SessionEntry]) -> list[SessionEntry]:
+    """Hide presentation-only entries while preserving visible tree ancestry."""
+    entries_by_id = {entry.id: entry for entry in entries}
+    hidden_ids = {
+        entry.id for entry in entries if isinstance(entry, CustomMessageEntry) and not entry.display
+    }
+    visible: list[SessionEntry] = []
+    for entry in entries:
+        if entry.id in hidden_ids:
+            continue
+        parent_id = entry.parent_id
+        visited: set[str] = set()
+        while parent_id in hidden_ids and parent_id not in visited:
+            visited.add(parent_id)
+            parent = entries_by_id.get(parent_id)
+            parent_id = parent.parent_id if parent is not None else None
+        visible.append(
+            entry.model_copy(update={"parent_id": parent_id})
+            if parent_id != entry.parent_id
+            else entry
+        )
+    return visible
+
+
 def _active_leaf_id(entries: Sequence[SessionEntry]) -> str | None:
     for entry in reversed(entries):
         if not isinstance(entry, LeafEntry):
@@ -1314,21 +1347,47 @@ def _render_entry_detail(
 def _render_entry_body(entry: SessionEntry) -> str:
     if isinstance(entry, MessageEntry):
         return _render_message_entry(entry)
+    if isinstance(entry, CustomMessageEntry):
+        details = (
+            _render_block("Details", _render_json_block(entry.details))
+            if entry.details is not None
+            else ""
+        )
+        return f"<pre>{_escape(content_text(entry.content))}</pre>{details}"
     if isinstance(entry, ModelChangeEntry):
         return f"<p>Model changed to <code>{_escape(entry.model)}</code>.</p>"
     if isinstance(entry, ThinkingLevelChangeEntry):
         level = entry.thinking_level if entry.thinking_level is not None else "off"
         return f"<p>Thinking level changed to <code>{_escape(level)}</code>.</p>"
     if isinstance(entry, CompactionEntry):
+        boundary = entry.first_kept_entry_id or "unavailable (legacy compaction)"
+        usage = (
+            _render_block(
+                "Summary request usage",
+                _render_json_block(entry.usage.model_dump(mode="json", by_alias=True)),
+            )
+            if entry.usage is not None
+            else ""
+        )
         return (
+            f"<p>First kept entry: <code>{_escape(boundary)}</code></p>"
             f"<pre>{_escape(entry.summary)}</pre>"
-            f"{_render_list('Replaces entries', entry.replaces_entry_ids)}"
+            f"{usage}"
         )
     if isinstance(entry, BranchSummaryEntry):
         branch_root = entry.branch_root_id or "none"
+        usage = (
+            _render_block(
+                "Summary request usage",
+                _render_json_block(entry.usage.model_dump(mode="json", by_alias=True)),
+            )
+            if entry.usage is not None
+            else ""
+        )
         return (
             f"<p>Branch root: <code>{_escape(branch_root)}</code></p>"
             f"<pre>{_escape(entry.summary)}</pre>"
+            f"{usage}"
         )
     if isinstance(entry, LabelEntry):
         action = (
@@ -1529,6 +1588,8 @@ _ICON_DOWNLOAD = (
 
 
 def _entry_icon(entry: SessionEntry) -> str:
+    if isinstance(entry, CustomMessageEntry):
+        return _ICON_USER
     if isinstance(entry, MessageEntry):
         message = entry.message
         if isinstance(message, UserMessage):
@@ -1556,6 +1617,8 @@ def _entry_parent_html(entry: SessionEntry) -> str:
 
 
 def _entry_title(entry: SessionEntry) -> str:
+    if isinstance(entry, CustomMessageEntry):
+        return f"Custom message: {entry.custom_type}"
     if isinstance(entry, MessageEntry):
         message = entry.message
         if isinstance(message, UserMessage):
@@ -1586,6 +1649,8 @@ def _entry_title(entry: SessionEntry) -> str:
 
 def _entry_preview(entry: SessionEntry) -> str:
     """Return a short one-line preview shown on the collapsed entry row."""
+    if isinstance(entry, CustomMessageEntry):
+        return _summarize_text(content_text(entry.content))
     if isinstance(entry, MessageEntry):
         message = entry.message
         if isinstance(message, ToolResultMessage):
@@ -1625,6 +1690,9 @@ def _resolved_labels(entries: Sequence[SessionEntry]) -> dict[str, str]:
 
 def _entry_tree_label(entry: SessionEntry) -> str:
     """Return the sidebar label: just the tool name for tool entries."""
+    if isinstance(entry, CustomMessageEntry):
+        summary = _entry_preview(entry)
+        return f"custom message: {summary}" if summary else "custom message"
     if isinstance(entry, MessageEntry):
         message = entry.message
         if isinstance(message, ToolResultMessage):
@@ -1661,6 +1729,8 @@ def _entry_is_error(entry: SessionEntry) -> bool:
 
 
 def _entry_filter_kind(entry: SessionEntry) -> str:
+    if isinstance(entry, CustomMessageEntry):
+        return "message"
     if isinstance(entry, MessageEntry):
         message = entry.message
         if isinstance(message, ToolResultMessage):
@@ -1678,7 +1748,7 @@ def _summarize_text(text: str, *, limit: int = 110) -> str:
     return summary[: limit - 3].rstrip() + "..."
 
 
-def _json_dump(value: dict[str, JSONValue]) -> str:
+def _json_dump(value: JSONValue) -> str:
     return json.dumps(value, indent=2, sort_keys=True)
 
 
@@ -1686,7 +1756,7 @@ _JSON_LEXER = JsonLexer()
 _HIGHLIGHT_FORMATTER = HtmlFormatter(nowrap=True)
 
 
-def _render_json_block(value: dict[str, JSONValue]) -> str:
+def _render_json_block(value: JSONValue) -> str:
     """Render a JSON payload as a syntax-highlighted, self-contained <pre> block."""
     source = _json_dump(value)
     try:
