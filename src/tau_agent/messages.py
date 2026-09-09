@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from time import time
 from typing import Annotated, Any, Literal
 
@@ -53,6 +54,36 @@ class Usage(WireModel):
     reasoning: int | None = None
     total_tokens: int = 0
     cost: UsageCost = UsageCost()
+
+
+def sum_usage(usages: Iterable[Usage]) -> Usage:
+    """Return the field-wise total for one or more provider requests."""
+    items = tuple(usages)
+
+    def optional_total(field: Literal["cache_write_1h", "reasoning"]) -> int | None:
+        values = [getattr(item, field) for item in items]
+        return (
+            sum(value for value in values if value is not None)
+            if any(value is not None for value in values)
+            else None
+        )
+
+    return Usage(
+        input=sum(item.input for item in items),
+        output=sum(item.output for item in items),
+        cache_read=sum(item.cache_read for item in items),
+        cache_write=sum(item.cache_write for item in items),
+        cache_write_1h=optional_total("cache_write_1h"),
+        reasoning=optional_total("reasoning"),
+        total_tokens=sum(item.total_tokens for item in items),
+        cost=UsageCost(
+            input=sum(item.cost.input for item in items),
+            output=sum(item.cost.output for item in items),
+            cache_read=sum(item.cost.cache_read for item in items),
+            cache_write=sum(item.cost.cache_write for item in items),
+            total=sum(item.cost.total for item in items),
+        ),
+    )
 
 
 class ResponseTiming(WireModel):
