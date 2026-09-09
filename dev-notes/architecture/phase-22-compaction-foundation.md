@@ -98,8 +98,9 @@ Tau now supports model-generated manual compaction in the TUI:
 
 The command uses Tau's built-in Pi-style compaction prompt. Optional
 instructions are appended to that prompt as extra focus. The generated summary is
-stored in a `CompactionEntry`, followed by a new leaf pointer. Tau then replays
-the session and replaces the in-memory harness transcript for future turns.
+stored in a `CompactionEntry`, which becomes the active file-order tip. Tau then
+replays the session and replaces the in-memory harness transcript for future
+turns.
 
 See [Context Compaction](../context-compaction.md) for the current prompt,
 trigger conditions, and known limitations.

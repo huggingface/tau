@@ -254,8 +254,8 @@ Adoption does this:
 
 1. Require the outgoing harness to be idle.
 2. Attach the candidate frontend bridge in buffered mode.
-3. Atomically append the complete staged transcript batch, ending in the active
-   `LeafEntry`. This is the durable commit point.
+3. Atomically append the complete staged transcript batch. Its final non-leaf
+   entry becomes the active tip and is the durable commit point.
 4. Enter a serialized no-fail publication boundary.
 5. For replacement, emit outgoing shutdown while its API is valid and clear its
    UI; handler failures become diagnostics.
@@ -267,8 +267,8 @@ Adoption does this:
 10. Retire outgoing provider, tasks, and extension generation.
 
 After step 3, expected extension, UI, trust-store, and index errors cannot escape
-as ordinary rollback failures. A crash after step 3 leaves a complete leaf that
-the next resume can recover.
+as ordinary rollback failures. A crash after step 3 leaves a complete final
+entry that the next resume selects by file order.
 
 `abort()` is idempotent. `adopt()` and `abort()` are mutually exclusive state
 transitions.
@@ -276,8 +276,8 @@ transitions.
 ### 7. Transcript is authoritative; index is repairable
 
 Add optional `provider` to `ModelChangeEntry`. Every new initial selection and
-switch writes it. A provider/model change and its final `LeafEntry` are one
-atomic storage batch.
+switch writes it. The provider/model change itself becomes the active file-order
+tip.
 
 Selection precedence is:
 
@@ -311,7 +311,7 @@ A switch transaction is candidate-first:
 validate effective provider/model
 → create candidate provider
 → prepare history/thinking/route/image state
-→ atomic provider-aware ModelChangeEntry + LeafEntry batch
+→ append provider-aware ModelChangeEntry as the new file-order tip
 → synchronous no-fail in-memory publication
 → repairable index update
 → close replaced provider

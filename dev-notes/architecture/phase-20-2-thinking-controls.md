@@ -27,9 +27,9 @@ mode that Tau cannot safely send.
 ## Session Persistence
 
 New sessions append an initial `thinking_level_change` entry after the initial
-model entry. Explicit changes append another `thinking_level_change` entry and a
-leaf pointer, so resume reconstructs the active thinking mode from the session
-tree.
+model entry. Explicit changes append another `thinking_level_change` entry. As
+the last non-legacy-leaf entry, it becomes the active tip, so resume reconstructs
+the active thinking mode from the session tree.
 
 `CodingSession` exposes:
 

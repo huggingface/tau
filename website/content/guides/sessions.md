@@ -58,6 +58,13 @@ Run `/tree` to open the session tree, then select an earlier entry:
 
 If a summary request fails, Tau falls back to a deterministic summary.
 
+The active branch tip is the last session entry written. Plain **Enter**
+navigation is in-memory only: quitting before another action and reopening will
+return to the last non-legacy-leaf entry in file order. Your next message or
+state change uses the selected point as its parent, making the new branch the
+active persisted tip. **S** writes its branch summary immediately, so summarized
+navigation survives a restart even before another message.
+
 ## Recovering older sessions
 
 Older Tau versions could leave malformed tool-call history when a run was
@@ -144,7 +151,8 @@ nested accordions. The export header includes controls to:
 - hide session events—such as session info, model and thinking changes,
   compactions, labels, and custom entries—to focus on user and assistant messages
 - download the session as a JSONL file—the complete entry data is embedded in
-  the page, so the download works offline and includes every entry
+  the page, so the download works offline and includes every entry (including
+  historical `leaf` records from older Tau versions)
 
 Tool rows are titled `Tool: <name>` (for example, `Tool: read`), and the
 session tree labels tool entries with just the tool name for readability.
@@ -156,6 +164,9 @@ session tree labels tool entries with just the tool name for readability.
 ```
 
 For example, `/Users/you/repos/tau` becomes something like
-`repos-tau-a1b2c3`. The original JSONL is append-only — compaction and branching
-change the *active* view, never the recorded history. See
+`repos-tau-a1b2c3`. The original JSONL is append-only. New Tau versions do not
+write separate `leaf` pointer records; the last non-`leaf` entry in file order
+is the active tip. Older files containing `leaf` records remain readable, but
+those records do not override file-order tip selection. Compaction and
+branching change the *active* view, never the recorded history. See
 [Configuration]({{< relref "../reference/configuration.md#sessions" >}}) for the exact layout.

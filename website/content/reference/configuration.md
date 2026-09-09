@@ -438,8 +438,9 @@ Full list in [Keyboard shortcuts]({{< relref "./keybindings.md" >}}).
 ```
 
 Each working directory gets its own subdirectory; transcripts are append-only
-JSONL preserving messages, model changes, and the active leaf of the session
-tree. Metadata is indexed per project. See the
+JSONL preserving messages and state changes. The last non-legacy-leaf entry in
+file order is the active session-tree tip; historical `leaf` records remain
+readable but are ignored. Metadata is indexed per project. See the
 [Sessions guide]({{< relref "../guides/sessions.md" >}}).
 
 ## Skills, prompts & project context
