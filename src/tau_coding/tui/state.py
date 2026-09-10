@@ -633,7 +633,7 @@ class TuiState:
         for message in messages:
             if isinstance(message, UserMessage):
                 self.add_user_message(message.text)
-            elif isinstance(message, CustomMessage):
+            elif isinstance(message, CustomMessage) and message.display:
                 self.add_user_message(
                     message.text,
                     custom_type=message.custom_type,

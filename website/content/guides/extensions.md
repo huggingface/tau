@@ -175,6 +175,7 @@ def setup(tau):
     tau.send_user_message("text", deliver_as="follow_up")  # or "steer"
     tau.send_custom_message("text", custom_type="my-ext:status", details={...})
     await tau.append_entry("my-ext:records", {"key": "value"})
+    await tau.set_label(entry_id, "checkpoint")  # None or empty clears
     tau.notify("message", "info")            # "info" | "warning" | "error"
     tau.set_inference_provider("deepinfra")   # Hugging Face route; None resets
 
@@ -660,7 +661,10 @@ All other handler failures are contained: they are recorded as diagnostics
 run it queues as steering or a follow-up; when the session is idle the TUI
 starts a new turn with it — this is how background work reports back.
 `append_entry(namespace, data)` persists extension-owned data as a durable
-session entry replayed on resume.
+session entry replayed on resume. `set_label(entry_id, label)` creates, changes,
+or clears (`None`/empty) a bookmark on an existing session entry using the same
+validation and append-only storage as the `/tree` label editor. It raises for an
+unknown entry ID.
 
 ### Custom message rendering
 
@@ -704,8 +708,9 @@ tau.send_custom_message(
   renderer raises or returns a non-string, the message falls back to its raw
   `content` — a broken renderer never crashes the UI.
 - Custom rendering works in the interactive TUI and the `-p` print transcript,
-  and survives `/resume` (the `custom_type`/`details` are persisted with the
-  message). In the TUI, a custom message appears once its user event is
+  and survives `/resume`. Tau persists it as a first-class `custom_message`
+  session entry whose `custom_type` and `details` can be inspected without
+  parsing a generic message payload. In the TUI, a custom message appears once its user event is
   confirmed by the run (a moment after delivery), rather than instantly like a
   typed prompt's optimistic echo.
 

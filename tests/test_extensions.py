@@ -11,8 +11,14 @@ import pytest
 
 from pi_event_helpers import assistant_done, assistant_start
 from tau_agent import AssistantMessage, ToolCall, UserMessage
-from tau_agent.messages import AgentMessage, assistant_content
-from tau_agent.session import CustomEntry, JsonlSessionStorage, LeafEntry, MessageEntry
+from tau_agent.messages import AgentMessage, assistant_content, message_to_user
+from tau_agent.session import (
+    CustomEntry,
+    CustomMessageEntry,
+    JsonlSessionStorage,
+    LeafEntry,
+    MessageEntry,
+)
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
 from tau_ai import FakeProvider
@@ -129,6 +135,7 @@ class RecordingSession:
         self.steered: list[str] = []
         self.followed_up: list[str] = []
         self.custom_entries: list[tuple[str, dict[str, JSONValue]]] = []
+        self.labels: list[tuple[str, str | None]] = []
         self.queued_custom: list[tuple[str, str | None, dict[str, JSONValue] | None]] = []
 
     def queue_steering_message(
@@ -153,6 +160,9 @@ class RecordingSession:
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         self.custom_entries.append((namespace, data))
+
+    async def set_label(self, target_id: str, label: str | None) -> None:
+        self.labels.append((target_id, label))
 
     def set_inference_provider(self, route: str | None) -> str:
         self.inference_provider = route
@@ -1523,6 +1533,18 @@ async def test_append_entry_routes_to_session(tmp_path: Path) -> None:
     assert session.custom_entries == [("persister:record", {"value": 1})]
 
 
+async def test_set_label_routes_to_session(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _register_inline_extension(runtime, "bookmarker")
+    session = RecordingSession(tmp_path)
+    runtime.bind(session)
+
+    await api.set_label("entry-1", "checkpoint")
+    await api.set_label("entry-1", None)
+
+    assert session.labels == [("entry-1", "checkpoint"), ("entry-1", None)]
+
+
 def test_transcript_is_empty_at_session_start(tmp_path: Path) -> None:
     runtime = ExtensionRuntime()
     api = _register_inline_extension(runtime, "reader")
@@ -2496,6 +2518,18 @@ async def test_custom_message_metadata_survives_session_reload(tmp_path: Path) -
             details={"id": "run-1"},
         )
     ]
+    entries = await session.storage.read_all()
+    persisted = [entry for entry in entries if isinstance(entry, CustomMessageEntry)]
+    assert len(persisted) == 1
+    assert persisted[0].custom_type == "subagent-notification"
+    assert not any(
+        isinstance(entry, MessageEntry) and entry.message.role == "custom" for entry in entries
+    )
+    _model, _system, sent, _tools = provider.calls[0]
+    assert message_to_user(sent[0]) == UserMessage(
+        content="<task-notification/>", timestamp=sent[0].timestamp
+    )
+
     await session.aclose()
 
     reopened = await CodingSession.load(_session_config(tmp_path, FakeProvider([])))
