@@ -279,9 +279,10 @@ history still counts toward cumulative token usage and cost but is omitted from
 both performance metrics.
 
 Cumulative usage and cost cover the active branch, including history replaced by
-compaction. Input usage counts tokens processed on every
-provider request, so it can be much larger than the context used by the next
-request. Cost is an estimate based on provider-reported usage and configured
+compaction and the model requests used to generate compaction or branch summaries.
+Heuristic summary fallbacks have no provider usage and add nothing. Input usage
+counts tokens processed on every provider request, so it can be much larger than
+the context used by the next request. Cost is an estimate based on provider-reported usage and configured
 catalog rates; the sidebar shows `$N/A` when Tau lacks complete pricing data.
 
 The cache line separates the latest model request from the cumulative session.

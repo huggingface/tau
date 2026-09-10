@@ -1,5 +1,30 @@
 [
   {
+    "version": "0.4.2",
+    "date": "2026-09-10",
+    "sections": {
+      "New": [
+        "Bookmark specific moments in the session tree with persistent per-entry labels, including create, edit, clear, filter, and timestamp controls in /tree.",
+        "Persist extension-injected model context as first-class custom_message entries and expose extension APIs for custom messages and session labels.",
+        "Discover and persist live OpenAI Codex subscription model catalogs so newly available models can be selected without waiting for a Tau release.",
+        "Show or hide the TUI sidebar for the current session without changing the saved global preference."
+      ],
+      "Changed": [
+        "Align session storage more closely with Pi: stop writing redundant leaf pointers, store fixed-size first-kept compaction boundaries, and retain backward-compatible replay for older session files.",
+        "Include compaction and branch-summary model usage in session analytics, exports, and RPC inspection with provider and routed-provider attribution.",
+        "Make the prompt newline shortcut configurable and add a scoped-only tab to the scoped-model picker.",
+        "Expose resolved Tau paths to extensions through ExtensionContext.paths and align Anthropic usage accounting with the provider contract."
+      ],
+      "Fixed": [
+        "Preserve interleaved Chat Completions reasoning and answer blocks instead of losing or misordering streamed content.",
+        "Reject or retry incomplete Anthropic-compatible streams rather than accepting empty SSE frames as successful responses.",
+        "Serialize Z.AI thinking requests correctly.",
+        "Disconnect shell-command standard input after execution and ignore selection events from detached TUI transcript widgets.",
+        "Highlight the initial provider correctly when the login picker opens."
+      ]
+    }
+  },
+  {
     "version": "0.4.1",
     "date": "2026-08-28",
     "sections": {
