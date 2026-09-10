@@ -20,12 +20,17 @@ src/tau_coding/commands.py
 
 `CompactionEntry` is now meaningful during session replay.
 
-When `SessionState.from_entries()` sees a compaction entry, it:
+When `SessionState.from_entries()` sees a modern compaction entry, it:
 
-1. removes message entries whose ids appear in `replaces_entry_ids`
-2. inserts one provider-neutral summary message at the first replaced position
-3. keeps any non-replaced recent messages in chronological order
+1. inserts one provider-neutral summary message
+2. finds `first_kept_entry_id` on the complete active root-to-leaf entry path
+3. keeps context-producing entries at that boundary and later in path order
 4. keeps the original append-only entries intact
+
+This matches Pi's inclusive first-kept semantics. If the boundary is missing or cannot
+be found, replay keeps no pre-compaction message and still includes later successors.
+Tau sessions written before this encoding used `replaces_entry_ids`; a non-empty legacy
+list takes precedence and retains the original arbitrary-set replay behavior.
 
 The summary message currently uses this stable form:
 
@@ -45,7 +50,8 @@ SessionState.messages = reconstructed active context
 ```
 
 Manual `/compact` work can append `CompactionEntry` values without editing or
-deleting old entries.
+deleting old entries. New records persist one first-kept boundary rather than a list of
+all summarized entry ids.
 
 ## Context Size Estimation
 
@@ -128,9 +134,10 @@ tests/test_tui_app.py
 
 The tests verify:
 
-- compaction entries round-trip through JSONL
-- linear replay replaces compacted messages with a summary
+- compaction entries round-trip through JSONL without writing an empty legacy id list
+- linear replay keeps the first boundary entry inclusively and handles every boundary depth
 - branch replay applies compaction only on the active branch path
+- fixture-based legacy replay preserves replacement-list precedence
 - context-size estimation is deterministic
 - `/status` includes an estimated context token count
 - `/compact [instructions]` requests model-generated compaction

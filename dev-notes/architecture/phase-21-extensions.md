@@ -450,17 +450,17 @@ A renderer is `Callable[[CustomMessageView, MessageRenderOptions], str]`:
 `MessageRenderOptions(expanded)`. It returns a **Rich-markup string**
 (e.g. `"[bold]✓ done[/bold]"`).
 
-Data flow: `send_custom_message` → the message rides the normal user-message
-pipeline as a `UserMessage` carrying `custom_type`/`details` metadata (it still
-enters LLM context via `content`) → `MessageEndEvent(message=...)` → the TUI
+Data flow: `send_custom_message` → a runtime `CustomMessage` carrying
+`custom_type`/`details` (its content converts to a provider-facing user message)
+→ `MessageEndEvent(message=...)` → a persisted `CustomMessageEntry` → the TUI
 adapter projects it to a `ChatItem(role="custom")` → the render path calls
 `runtime.render_custom_message(...)`, which looks up the registered renderer,
 builds the view/options, and returns markup (or `None` to fall back to raw
 `content`). The resolver is installed into every render path: the live TUI
 (`state.custom_renderer`, consumed by `TranscriptView._redraw` /
 `TranscriptMessageWidget` / `render_chat_item`), session **resume**
-(`TuiState.load_messages` projects `custom_type` off replayed `UserMessage`s),
-and the **print-mode** transcript (`TranscriptRenderer`, wired in `cli.py`).
+(`SessionState` reconstructs the runtime `CustomMessage`), and the **print-mode**
+transcript (`TranscriptRenderer`, wired in `cli.py`).
 
 **Ruling:** custom-message renderers return **markup strings, not Textual
 widgets** (deviation from Pi's `Component` return). This keeps extensions
@@ -515,30 +515,13 @@ renderers, string-list slot widgets — all frontend-portable and print-safe);
 widgets are for extensions that need live, interactive UI. The declarative
 middle ground stays available as a future *addition*, not a replacement.
 
-**Ruling:** `custom_type`/`details` ride on **`UserMessage` metadata** rather
-than a separate `custom` message role (deviation from Pi's `CustomMessageEntry`
-/ `role:"custom"`). Pi needs a distinct role because its messages are
-content-block arrays converted to a user message for the LLM anyway
-(`convertToLlm`); Tau's transcript is plain-string, so metadata on `UserMessage`
-achieves identical LLM-context semantics with a far smaller wire/replay
-footprint — no new entry in the `AgentMessage` union, no discriminator change.
-
-Wire behavior (the actual compatibility contract):
-
-- **Reading old files:** both fields default to `None`, so sessions persisted
-  before this change load under the models' `extra="forbid"` config.
-- **Writing new files:** the fields are **omitted from serialization when
-  unset** (a targeted `model_serializer` on `UserMessage`, not a global
-  `exclude_none`, so no other field's wire semantics change). A session that
-  never uses custom messages is therefore **byte-identical** to the
-  pre-metadata format and remains readable by older binaries.
-- **Downgrade with custom messages present is unsupported:** once a session
-  contains a message sent via `send_custom_message`, its JSONL lines carry
-  `custom_type`/`details` keys, and an older binary's `extra="forbid"`
-  `UserMessage` will reject that file. This is the one real
-  persistence-format extension this feature makes.
-- Sessions written with the fields round-trip through `MessageEntry` and
-  render correctly after resume.
+**Ruling (superseded by issue #704):** custom messages now match Pi's two-layer
+model: runtime `role:"custom"` plus a first-class persisted `custom_message`
+entry. Tau keeps its persisted entry-wrapper naming convention
+(`parent_id`/`custom_type`), while RPC projection uses Pi's
+`parentId`/`customType` wire names. The JSONL migration boundary converts both
+the former generic `role:"custom"` entry and the older Tau-v1 user message with
+`custom_type`; replay preserves model-visible content and metadata.
 
 **Ruling:** the resolver **never raises** into a render path. A missing
 renderer, a renderer that throws, or one that returns a non-string all yield
@@ -558,9 +541,9 @@ session exits before the next run**. Pi, by contrast, persists the message to
 the session file and emits `message_start`/`message_end` immediately even
 without triggering a turn (`agent-session.ts:1357-1370`). Extensions that need
 a durable no-turn record should use `append_entry` alongside, or accept the
-default turn-triggering delivery. `display=false` is **not** implemented —
-custom messages are always shown (the tau-subagents extension only ever sends
-`display:true`). Pi's parallel `registerEntryRenderer`/`appendEntry`
+default turn-triggering delivery. `display=false` is honored by live and restored TUI paths and by HTML export;
+the message remains in model context and complete JSONL data. Pi's parallel
+`registerEntryRenderer`/`appendEntry`
 (non-LLM-context cards) stays out of scope.
 
 **Ruling:** delivery **defaults deviate from Pi**, deliberately matching Tau's
@@ -602,7 +585,7 @@ raw-text views by design; only live transcripts (TUI + print mode) render.
 - **`send_user_message` / `send_custom_message`** — both funnel through one
   `_deliver_message` path. When a run is active, they map to
   `queue_steering_message` / `queue_follow_up_message` (which build a
-  `UserMessage` carrying any `custom_type`/`details`). When idle, the runtime
+  `CustomMessage` when `custom_type` is present). When idle, the runtime
   invokes a `turn_requested(content, custom_type, details)` callback (queuing a
   follow-up and calling `continue_()` would hit the provider with a stale
   transcript first, because the loop drains queues only after a turn). The
