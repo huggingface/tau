@@ -1162,6 +1162,48 @@ async def test_openai_compatible_provider_streams_tool_calls() -> None:
 
 
 @pytest.mark.anyio
+async def test_openai_compatible_provider_keeps_tool_name_when_later_chunks_send_empty_name() -> None:
+    """Some providers repeat ``"name": ""`` on every tool-call chunk."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1",'
+                '"function":{"name":"read","arguments":""}}]}}]}\n\n'
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                '"function":{"name":"","arguments":"{\\"path\\":"}}]}}]}\n\n'
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                '"function":{"name":"","arguments":"\\"README.md\\"}"}}]},'
+                '"finish_reason":"tool_calls"}]}\n\n'
+                "data: [DONE]\n\n"
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(api_key="test-key", base_url="https://example.test/v1"),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="test-model",
+                system="You are Tau.",
+                messages=[UserMessage(content="Read README.md")],
+                tools=[],
+            )
+        )
+
+    assert isinstance(events[-1], AssistantDoneEvent)
+    assert events[-1].message.tool_calls == (
+        ToolCall(id="call-1", name="read", arguments={"path": "README.md"}),
+    )
+    assert events[-1].reason == "toolUse"
+
+
+@pytest.mark.anyio
 async def test_openai_compatible_provider_reports_resolved_response_provider() -> None:
     attempts = 0
 
