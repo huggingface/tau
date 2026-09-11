@@ -23,6 +23,15 @@ refresh failures leave the existing list usable. Use `tau update --models` for
 forced public-catalog revalidation or `TAU_OFFLINE=1` to disable catalog network
 access.
 
+## Suspending to the shell
+
+On Unix-like systems, press Ctrl+Z to suspend Tau and return to the shell. Run
+`fg` to resume the same interactive session. Tau relies on Textual to restore
+normal terminal mode before suspension and redraw the TUI after resumption.
+Native Windows leaves this action unbound because it does not provide Unix job
+control. Set the `suspend` keybinding to `null` in `~/.tau/tui.json` to disable
+it on another platform.
+
 ## `/sidebar`
 
 Use `/sidebar` to toggle the detailed session sidebar for the current TUI

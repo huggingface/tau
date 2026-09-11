@@ -3155,7 +3155,8 @@ class OAuthLoginScreen(ModalScreen[OAuthCredential | _LoginFlowAction | None]):
 #: brick the TUI. Deliberately minimal — only the always-available escape
 #: hatches: ``ctrl+d`` (the ``quit`` action, exits the app) and ``ctrl+c``
 #: (Tau binds it to ``clear_prompt``, but it is the terminal-standard
-#: SIGINT/interrupt reflex users hit to bail). NOT reserved: escape/enter/
+#: SIGINT/interrupt reflex users hit to bail). The configured process-suspend
+#: key is reserved dynamically by :meth:`TauTuiApp.on_event`. NOT reserved: escape/enter/
 #: arrows/tab/left/right — those are load-bearing for the tau-subagents
 #: extension and must stay interceptable. This is Tau's counterpart to Pi's
 #: ``RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS`` (runner.ts:69), applied
@@ -4211,6 +4212,7 @@ class TauTuiApp(App[None]):
             isinstance(event, events.Key)
             and not event.is_forwarded
             and event.key not in RESERVED_EXTENSION_INTERCEPTOR_KEYS
+            and event.key != self.tui_settings.keybindings.suspend
             and self._extension_key_interceptors
             and len(self.screen_stack) <= 1
             and self._run_extension_key_interceptors(event, self._current_prompt_text())
@@ -7423,7 +7425,7 @@ def _key_hint(key: str) -> str:
 
 
 def _app_bindings(keybindings: TuiKeybindings) -> list[Binding]:
-    return [
+    bindings = [
         Binding(keybindings.cancel, "cancel", "Cancel"),
         Binding(keybindings.command_palette, "open_command_palette", "Commands"),
         Binding(keybindings.session_picker, "open_session_picker", "Sessions"),
@@ -7464,6 +7466,16 @@ def _app_bindings(keybindings: TuiKeybindings) -> list[Binding]:
         Binding(keybindings.copy_message, "clear_prompt", "Clear input"),
         Binding(keybindings.quit, "quit", "Quit"),
     ]
+    if keybindings.suspend is not None:
+        bindings.append(
+            Binding(
+                keybindings.suspend,
+                "suspend_process",
+                "Suspend",
+                priority=True,
+            )
+        )
+    return bindings
 
 
 def _prompt_bindings(
@@ -7563,11 +7575,12 @@ def _hidden_prompt_bindings(
         (keybindings.completion_next, "completion_next"),
         (keybindings.completion_previous, "completion_previous"),
         (keybindings.quit, "quit"),
+        (keybindings.suspend, "suspend_process"),
     )
     return [
         Binding(key, action, show=False, priority=True)
         for key, action in candidates
-        if key not in visible_keys
+        if key is not None and key not in visible_keys
     ]
 
 

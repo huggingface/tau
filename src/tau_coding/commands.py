@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -521,6 +522,8 @@ def _hotkeys_command(context: CommandContext) -> CommandResult:
         "- Ctrl+C: clear prompt input",
         "- Ctrl+D: quit",
     ]
+    if sys.platform != "win32":
+        lines.append("- Ctrl+Z: suspend to the shell; resume with fg")
     return CommandResult(handled=True, message="\n".join(lines))
 
 
