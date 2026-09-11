@@ -1162,7 +1162,9 @@ async def test_openai_compatible_provider_streams_tool_calls() -> None:
 
 
 @pytest.mark.anyio
-async def test_openai_compatible_provider_keeps_tool_name_when_later_chunks_send_empty_name() -> None:
+async def test_openai_compatible_provider_keeps_tool_name_when_later_chunks_send_empty_name() -> (
+    None
+):
     """Some providers repeat ``"name": ""`` on every tool-call chunk."""
 
     def handler(request: httpx.Request) -> httpx.Response:
