@@ -42,6 +42,8 @@ class BuildSystemPromptOptions:
     current_date: date | None = None
     extra_guidelines: Sequence[str] = field(default_factory=tuple)
     extra_sections: Sequence[PromptSection] = field(default_factory=tuple)
+    learned_context: str | None = None
+    """Frozen learned-memory/lessons section appended near the prompt tail."""
 
 
 def build_system_prompt(options: BuildSystemPromptOptions) -> str:
@@ -51,10 +53,14 @@ def build_system_prompt(options: BuildSystemPromptOptions) -> str:
     append_parts = [options.append_system_prompt] if options.append_system_prompt else []
     append_parts.extend(format_prompt_section(section) for section in options.extra_sections)
     append_section = "".join(f"\n\n{part}" for part in append_parts)
+    learned_section = (
+        f"\n\n{options.learned_context}" if options.learned_context is not None else ""
+    )
 
     if options.custom_prompt is not None:
         prompt = options.custom_prompt
         prompt += append_section
+        prompt += learned_section
         prompt += format_project_context(options.context_files)
         if _has_tool(options.tools, "read"):
             prompt += format_skills_for_prompt(options.skills)
@@ -73,6 +79,7 @@ def build_system_prompt(options: BuildSystemPromptOptions) -> str:
     )
 
     prompt += append_section
+    prompt += learned_section
     prompt += format_project_context(options.context_files)
     if _has_tool(options.tools, "read"):
         prompt += format_skills_for_prompt(options.skills)
