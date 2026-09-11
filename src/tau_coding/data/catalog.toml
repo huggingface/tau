@@ -3357,6 +3357,257 @@ max_tokens = 128000
 cost = { input = 0.75, output = 4.5, cacheRead = 0.075, cacheWrite = 0 }
 
 [[providers]]
+name = "requesty"
+display_name = "Requesty"
+kind = "openai-compatible"
+base_url = "https://router.requesty.ai/v1"
+api_key_env = "REQUESTY_API_KEY"
+credential_name = "requesty"
+models = ["anthropic/claude-haiku-4-5", "anthropic/claude-opus-4-6", "anthropic/claude-opus-4-7", "anthropic/claude-sonnet-4-5", "anthropic/claude-sonnet-4-6", "deepseek/deepseek-chat", "deepseek/deepseek-reasoner", "google/gemini-2.5-flash", "google/gemini-2.5-pro", "google/gemini-3.5-flash", "openai/gpt-4.1", "openai/gpt-4.1-mini", "openai/gpt-4o-mini", "openai/gpt-5", "openai/gpt-5-mini", "openai/gpt-5.4", "openai/gpt-5.4-mini", "openai/gpt-5.5", "claude-haiku-4-5", "claude-opus-4-7", "claude-sonnet-4-6", "deepseek-v4-flash", "gemini-3.5-flash", "gpt-5.4", "gpt-5.4-mini", "kimi-k3"]
+default_model = "openai/gpt-4o-mini"
+docs_url = "https://docs.requesty.ai"
+api = "openai-completions"
+thinking_levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
+thinking_default = "medium"
+thinking_parameter = "reasoning_effort"
+
+[providers.context_windows]
+"anthropic/claude-haiku-4-5" = 200000
+"anthropic/claude-opus-4-6" = 1000000
+"anthropic/claude-opus-4-7" = 1000000
+"anthropic/claude-sonnet-4-5" = 1000000
+"anthropic/claude-sonnet-4-6" = 1000000
+"deepseek/deepseek-chat" = 1000000
+"deepseek/deepseek-reasoner" = 1000000
+"google/gemini-2.5-flash" = 1048576
+"google/gemini-2.5-pro" = 1048576
+"google/gemini-3.5-flash" = 1048576
+"openai/gpt-4.1" = 1047576
+"openai/gpt-4.1-mini" = 1047576
+"openai/gpt-4o-mini" = 128000
+"openai/gpt-5" = 400000
+"openai/gpt-5-mini" = 400000
+"openai/gpt-5.4" = 1050000
+"openai/gpt-5.4-mini" = 400000
+"openai/gpt-5.5" = 1050000
+claude-haiku-4-5 = 200000
+claude-opus-4-7 = 1000000
+claude-sonnet-4-6 = 1000000
+deepseek-v4-flash = 1048576
+"gemini-3.5-flash" = 1048576
+"gpt-5.4" = 1050000
+"gpt-5.4-mini" = 400000
+kimi-k3 = 1048576
+
+[providers.model_metadata."anthropic/claude-haiku-4-5"]
+name = "Anthropic: Claude Haiku 4.5"
+reasoning = true
+input = ["text", "image"]
+context_window = 200000
+max_tokens = 64000
+cost = { input = 1, output = 5, cacheRead = 0.1, cacheWrite = 1.25 }
+
+[providers.model_metadata."anthropic/claude-opus-4-6"]
+name = "Anthropic: Claude Opus 4.6"
+reasoning = true
+input = ["text", "image"]
+context_window = 1000000
+max_tokens = 128000
+cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25 }
+
+[providers.model_metadata."anthropic/claude-opus-4-7"]
+name = "Anthropic: Claude Opus 4.7"
+reasoning = true
+input = ["text", "image"]
+context_window = 1000000
+max_tokens = 128000
+cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25 }
+
+[providers.model_metadata."anthropic/claude-sonnet-4-5"]
+name = "Anthropic: Claude Sonnet 4.5"
+reasoning = true
+input = ["text", "image"]
+context_window = 1000000
+max_tokens = 64000
+cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75 }
+
+[providers.model_metadata."anthropic/claude-sonnet-4-6"]
+name = "Anthropic: Claude Sonnet 4.6"
+reasoning = true
+input = ["text", "image"]
+context_window = 1000000
+max_tokens = 128000
+cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75 }
+
+[providers.model_metadata."deepseek/deepseek-chat"]
+name = "DeepSeek: DeepSeek Chat"
+reasoning = false
+input = ["text"]
+context_window = 1000000
+max_tokens = 384000
+cost = { input = 0.14, output = 0.28, cacheRead = 0.028, cacheWrite = 0 }
+
+[providers.model_metadata."deepseek/deepseek-reasoner"]
+name = "DeepSeek: DeepSeek Reasoner"
+reasoning = false
+input = ["text"]
+context_window = 1000000
+max_tokens = 384000
+cost = { input = 0.14, output = 0.28, cacheRead = 0.028, cacheWrite = 0 }
+
+[providers.model_metadata."google/gemini-2.5-flash"]
+name = "Google: Gemini 2.5 Flash"
+reasoning = true
+input = ["text", "image"]
+context_window = 1048576
+max_tokens = 65535
+cost = { input = 0.3, output = 2.5, cacheRead = 0.075, cacheWrite = 0 }
+
+[providers.model_metadata."google/gemini-2.5-pro"]
+name = "Google: Gemini 2.5 Pro"
+reasoning = true
+input = ["text", "image"]
+context_window = 1048576
+max_tokens = 65535
+cost = { input = 1.25, output = 10, cacheRead = 0.31, cacheWrite = 2.375 }
+
+[providers.model_metadata."google/gemini-3.5-flash"]
+name = "Google: Gemini 3.5 Flash"
+reasoning = true
+input = ["text", "image"]
+context_window = 1048576
+max_tokens = 65535
+cost = { input = 1.5, output = 9, cacheRead = 0.15, cacheWrite = 1.583 }
+
+[providers.model_metadata."openai/gpt-4.1"]
+name = "OpenAI: GPT-4.1"
+reasoning = false
+input = ["text", "image"]
+context_window = 1047576
+max_tokens = 32768
+cost = { input = 2, output = 8, cacheRead = 0.5, cacheWrite = 0 }
+
+[providers.model_metadata."openai/gpt-4.1-mini"]
+name = "OpenAI: GPT-4.1 Mini"
+reasoning = false
+input = ["text", "image"]
+context_window = 1047576
+max_tokens = 32768
+cost = { input = 0.4, output = 1.6, cacheRead = 0.1, cacheWrite = 0 }
+
+[providers.model_metadata."openai/gpt-4o-mini"]
+name = "OpenAI: GPT-4o-mini"
+reasoning = false
+input = ["text", "image"]
+context_window = 128000
+max_tokens = 16384
+cost = { input = 0.15, output = 0.6, cacheRead = 0.075, cacheWrite = 0 }
+
+[providers.model_metadata."openai/gpt-5"]
+name = "OpenAI: GPT-5"
+reasoning = true
+input = ["text", "image"]
+context_window = 400000
+max_tokens = 128000
+cost = { input = 1.25, output = 10, cacheRead = 0.125, cacheWrite = 0 }
+
+[providers.model_metadata."openai/gpt-5-mini"]
+name = "OpenAI: GPT-5 Mini"
+reasoning = true
+input = ["text", "image"]
+context_window = 400000
+max_tokens = 128000
+cost = { input = 0.25, output = 2, cacheRead = 0.025, cacheWrite = 0 }
+
+[providers.model_metadata."openai/gpt-5.4"]
+name = "OpenAI: GPT-5.4"
+reasoning = true
+input = ["text", "image"]
+context_window = 1050000
+max_tokens = 128000
+cost = { input = 2.5, output = 15, cacheRead = 0.25, cacheWrite = 0 }
+
+[providers.model_metadata."openai/gpt-5.4-mini"]
+name = "OpenAI: GPT-5.4 Mini"
+reasoning = true
+input = ["text", "image"]
+context_window = 400000
+max_tokens = 128000
+cost = { input = 0.75, output = 4.5, cacheRead = 0.075, cacheWrite = 0 }
+
+[providers.model_metadata."openai/gpt-5.5"]
+name = "OpenAI: GPT-5.5"
+reasoning = true
+input = ["text", "image"]
+context_window = 1050000
+max_tokens = 128000
+cost = { input = 5, output = 30, cacheRead = 0.5, cacheWrite = 0 }
+
+[providers.model_metadata.claude-haiku-4-5]
+name = "Claude Haiku 4.5 (managed policy)"
+reasoning = true
+input = ["text", "image"]
+context_window = 200000
+max_tokens = 64000
+cost = { input = 1, output = 5, cacheRead = 0.1, cacheWrite = 1.25 }
+
+[providers.model_metadata.claude-opus-4-7]
+name = "Claude Opus 4.7 (managed policy)"
+reasoning = true
+input = ["text", "image"]
+context_window = 1000000
+max_tokens = 128000
+cost = { input = 5, output = 25, cacheRead = 0.5, cacheWrite = 6.25 }
+
+[providers.model_metadata.claude-sonnet-4-6]
+name = "Claude Sonnet 4.6 (managed policy)"
+reasoning = true
+input = ["text", "image"]
+context_window = 1000000
+max_tokens = 128000
+cost = { input = 3, output = 15, cacheRead = 0.3, cacheWrite = 3.75 }
+
+[providers.model_metadata.deepseek-v4-flash]
+name = "DeepSeek V4 Flash (managed policy)"
+reasoning = true
+input = ["text"]
+context_window = 1048576
+max_tokens = 131072
+cost = { input = 0.28, output = 0.56, cacheRead = 0.07, cacheWrite = 0 }
+
+[providers.model_metadata."gemini-3.5-flash"]
+name = "Gemini 3.5 Flash (managed policy)"
+reasoning = true
+input = ["text", "image"]
+context_window = 1048576
+max_tokens = 65535
+cost = { input = 1.5, output = 9, cacheRead = 0.15, cacheWrite = 1.583 }
+
+[providers.model_metadata."gpt-5.4"]
+name = "GPT-5.4 (managed policy)"
+reasoning = true
+input = ["text", "image"]
+context_window = 1050000
+max_tokens = 128000
+cost = { input = 2.75, output = 16.5, cacheRead = 0.275, cacheWrite = 0 }
+
+[providers.model_metadata."gpt-5.4-mini"]
+name = "GPT-5.4 Mini (managed policy)"
+reasoning = true
+input = ["text", "image"]
+context_window = 400000
+max_tokens = 128000
+cost = { input = 0.75, output = 4.5, cacheRead = 0.075, cacheWrite = 0 }
+
+[providers.model_metadata.kimi-k3]
+name = "Kimi K3 (managed policy)"
+reasoning = true
+input = ["text"]
+context_window = 1048576
+max_tokens = 262144
+cost = { input = 3, output = 15, cacheRead = 0.45, cacheWrite = 0 }
+
+[[providers]]
 name = "zai"
 display_name = "ZAI"
 kind = "openai-compatible"
