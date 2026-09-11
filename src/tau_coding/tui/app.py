@@ -1259,6 +1259,13 @@ class SessionPickerSearchInput(Input):
             event.stop()
             event.prevent_default()
             self.action_cursor_down()
+        elif event.key in {"left", "right"} and isinstance(self.screen, SessionPickerScreen):
+            event.stop()
+            event.prevent_default()
+            if event.key == "left":
+                self.screen.action_focus_projects()
+            else:
+                self.screen.action_focus_sessions()
         elif event.key == "escape":
             event.stop()
             event.prevent_default()
@@ -1419,28 +1426,65 @@ class PromptTemplateEditorScreen(ModalScreen[str | None]):
 
 
 class SessionPickerScreen(ModalScreen[str | None]):
-    """Minimal modal picker for indexed sessions, with a search field."""
+    """Project-and-session navigator for indexed sessions."""
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
         Binding("escape", "cancel", "Cancel"),
         Binding("up", "cursor_up", "Up", show=False),
         Binding("down", "cursor_down", "Down", show=False),
+        Binding("left", "focus_projects", "Projects", show=False),
+        Binding("right", "focus_sessions", "Sessions", show=False),
         Binding("enter", "select_cursor", "Select", show=False),
     ]
 
     CSS = """
     #session-picker {
-        width: 100;
+        width: 110;
         max-width: 94%;
         height: auto;
         max-height: 85%;
     }
 
-    .-session-picker-divider > Label {
+    #session-picker-columns {
+        height: auto;
+    }
+
+    .session-picker-column {
+        height: auto;
+        border: tall $tau-border;
+        background: $tau-transcript-background;
+    }
+
+    .session-picker-column.-active-column {
+        border: tall $tau-accent;
+    }
+
+    #session-picker-project-column {
+        width: 34;
+        margin-right: 1;
+    }
+
+    #session-picker-session-column {
+        width: 1fr;
+    }
+
+    .session-picker-column-title {
+        height: 1;
+        padding: 0 1;
         color: $tau-muted-text;
         text-style: bold;
-        margin-top: 1;
-        padding-left: 2;
+    }
+
+    .-active-column > .session-picker-column-title {
+        color: $tau-accent;
+    }
+
+    #session-picker-project-list,
+    #session-picker-list {
+        height: auto;
+        max-height: 16;
+        border: none;
+        background: $tau-transcript-background;
     }
     """
 
@@ -1453,31 +1497,46 @@ class SessionPickerScreen(ModalScreen[str | None]):
     ) -> None:
         super().__init__()
         self.records = tuple(records)
-        self.visible_records = self.records
         self.local_cwd = local_cwd.resolve()
         self.theme = theme
         self.search_value = ""
-        self._row_records: list[SessionCompletionRecord | None] = []
+        self.active_column: Literal["projects", "sessions"] = "sessions"
+        self.project_cwds = self._project_paths()
+        self.selected_project_index = 0
+        self.visible_records: tuple[SessionCompletionRecord, ...] = ()
 
     def compose(self) -> ComposeResult:
-        """Compose the session picker."""
+        """Compose project and session columns under one search field."""
         with Vertical(id="session-picker"):
             yield Static("Sessions", id="session-picker-title")
             yield SessionPickerSearchInput(
-                placeholder="Search sessions",
+                placeholder="Search sessions in selected project",
                 id="session-picker-search",
             )
-            yield ListView(id="session-picker-list")
-            yield Static("Enter selects - Escape closes", id="session-picker-help")
+            with Horizontal(id="session-picker-columns"):
+                with Vertical(
+                    id="session-picker-project-column",
+                    classes="session-picker-column",
+                ):
+                    yield Static("Projects", classes="session-picker-column-title")
+                    yield ListView(id="session-picker-project-list")
+                with Vertical(
+                    id="session-picker-session-column",
+                    classes="session-picker-column -active-column",
+                ):
+                    yield Static("Recent sessions", classes="session-picker-column-title")
+                    yield ListView(id="session-picker-list")
+            yield Static("", id="session-picker-help")
 
     def on_mount(self) -> None:
-        """Focus the search field for keyboard navigation."""
-        search = self.query_one("#session-picker-search", Input)
-        search.focus()
+        """Start in the current project's recent-session column."""
+        self.query_one("#session-picker-search", Input).focus()
+        self._refresh_project_list()
         self._refresh_session_list()
+        self._update_help()
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        """Filter session choices as the search value changes."""
+        """Filter sessions in the selected project."""
         if event.input.id != "session-picker-search":
             return
         event.stop()
@@ -1485,137 +1544,133 @@ class SessionPickerScreen(ModalScreen[str | None]):
         self._refresh_session_list()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Select the highlighted session from the search field."""
         if event.input.id != "session-picker-search":
             return
         event.stop()
-        self._select_visible_record()
+        self.action_select_cursor()
 
     def on_key(self, event: Key) -> None:
-        """Route session picker keys to the list."""
-        if event.key == "up":
+        """Route navigation while keeping typing focus in the search field."""
+        actions = {
+            "up": self.action_cursor_up,
+            "down": self.action_cursor_down,
+            "left": self.action_focus_projects,
+            "right": self.action_focus_sessions,
+            "enter": self.action_select_cursor,
+        }
+        action = actions.get(event.key)
+        if action is not None:
             event.stop()
-            self.action_cursor_up()
-        elif event.key == "down":
-            event.stop()
-            self.action_cursor_down()
-        elif event.key == "enter":
-            event.stop()
-            self.action_select_cursor()
+            action()
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        """Show sessions for the highlighted project immediately."""
+        if event.list_view.id != "session-picker-project-list":
+            return
+        index = event.list_view.index
+        if index is None or index == self.selected_project_index:
+            return
+        self.selected_project_index = index
+        self._refresh_session_list()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Dismiss with the selected session id; ignore clicks on the divider."""
         event.stop()
-        if (
-            event.index is not None
-            and 0 <= event.index < len(self._row_records)
-            and self._row_records[event.index] is None
-        ):
+        if event.list_view.id == "session-picker-project-list":
+            self.selected_project_index = event.index
+            self._refresh_session_list()
+            self.action_focus_sessions()
             return
         self._select_visible_record()
 
     def action_cursor_up(self) -> None:
-        """Move to the previous selectable session, skipping the divider row."""
-        session_list = self.query_one("#session-picker-list", ListView)
-        current = session_list.index
-        if current is None or not self._row_records:
-            session_list.index = 0 if self._row_records else None
-            return
-        start = min(current - 1, len(self._row_records) - 1)
-        for index in range(start, -1, -1):
-            if self._row_records[index] is not None:
-                session_list.index = index
-                return
+        self._active_list().action_cursor_up()
 
     def action_cursor_down(self) -> None:
-        """Move to the next selectable session, skipping the divider row."""
-        session_list = self.query_one("#session-picker-list", ListView)
-        current = session_list.index
-        if current is None or not self._row_records:
-            session_list.index = 0 if self._row_records else None
-            return
-        for index in range(current + 1, len(self._row_records)):
-            if self._row_records[index] is not None:
-                session_list.index = index
-                return
+        self._active_list().action_cursor_down()
+
+    def action_focus_projects(self) -> None:
+        self._set_active_column("projects")
+
+    def action_focus_sessions(self) -> None:
+        self._set_active_column("sessions")
 
     def action_select_cursor(self) -> None:
-        """Select the highlighted session."""
-        self._select_visible_record()
+        if self.active_column == "projects":
+            self.action_focus_sessions()
+        else:
+            self._select_visible_record()
 
     def action_cancel(self) -> None:
-        """Close the picker without selecting a session."""
         self.dismiss(None)
 
-    def _select_visible_record(self) -> None:
-        session_list = self.query_one("#session-picker-list", ListView)
-        index = session_list.index
-        if index is None or index >= len(self._row_records):
-            return
-        target = (
-            index if self._row_records[index] is not None else self._nearest_selectable_index(index)
+    def _active_list(self) -> ListView:
+        selector = (
+            "#session-picker-project-list"
+            if self.active_column == "projects"
+            else "#session-picker-list"
         )
-        if target is None:
-            return
-        record = self._row_records[target]
-        if record is None:
-            # No selectable row nearby (e.g. a lone divider); nothing to dismiss.
-            return
-        if target != index:
-            # Cursor was on the "Other Directories" divider; move it onto the row
-            # we are actually selecting before dismissing.
-            session_list.index = target
-        self.dismiss(record.id)
+        return self.query_one(selector, ListView)
 
-    def _nearest_selectable_index(self, index: int) -> int | None:
-        for offset in range(1, len(self._row_records)):
-            forward = index + offset
-            if forward < len(self._row_records) and self._row_records[forward] is not None:
-                return forward
-            backward = index - offset
-            if backward >= 0 and self._row_records[backward] is not None:
-                return backward
-        return None
+    def _set_active_column(self, column: Literal["projects", "sessions"]) -> None:
+        self.active_column = column
+        projects = self.query_one("#session-picker-project-column", Vertical)
+        sessions = self.query_one("#session-picker-session-column", Vertical)
+        projects.set_class(column == "projects", "-active-column")
+        sessions.set_class(column == "sessions", "-active-column")
+        self._update_help()
+
+    def _select_visible_record(self) -> None:
+        index = self.query_one("#session-picker-list", ListView).index
+        if index is not None and index < len(self.visible_records):
+            self.dismiss(self.visible_records[index].id)
+
+    def _project_paths(self) -> tuple[Path, ...]:
+        paths = [self.local_cwd]
+        for record in self.records:
+            cwd = Path(record.cwd).resolve()
+            if cwd not in paths:
+                paths.append(cwd)
+        return tuple(paths)
+
+    def _refresh_project_list(self) -> None:
+        project_list = self.query_one("#session-picker-project-list", ListView)
+        project_list.clear()
+        items: list[ListItem] = []
+        for cwd in self.project_cwds:
+            count = sum(1 for record in self.records if Path(record.cwd).resolve() == cwd)
+            marker = "● " if cwd == self.local_cwd else "  "
+            noun = "session" if count == 1 else "sessions"
+            items.append(
+                ListItem(Label(f"{marker}{_short_path(cwd)}  {count} {noun}", markup=False))
+            )
+        project_list.extend(items)
+        project_list.index = self.selected_project_index
 
     def _refresh_session_list(self) -> None:
-        self.visible_records = _filter_session_records(self.records, self.search_value)
+        selected_cwd = self.project_cwds[self.selected_project_index]
+        project_records = tuple(
+            record for record in self.records if Path(record.cwd).resolve() == selected_cwd
+        )
+        self.visible_records = _filter_session_records(project_records, self.search_value)
         session_list = self.query_one("#session-picker-list", ListView)
         session_list.clear()
-
-        items: list[ListItem] = []
-        rows: list[SessionCompletionRecord | None] = []
-        local_visible = sum(1 for record in self.visible_records if self._is_local(record))
-        seen_other = False
-        for record in self.visible_records:
-            is_local = self._is_local(record)
-            if not is_local and not seen_other and local_visible > 0:
-                items.append(self._directory_divider())
-                rows.append(None)
-                seen_other = True
-            label = _session_picker_label(record, show_cwd=not is_local)
-            items.append(ListItem(Label(label, markup=False)))
-            rows.append(record)
-
-        if items:
-            session_list.extend(items)
-        self._row_records = rows
-        session_list.index = 0 if rows else None
-        help_text = (
-            "Enter selects - Escape closes"
-            if self.visible_records
-            else "No matching sessions - Escape closes"
+        session_list.extend(
+            ListItem(Label(_session_picker_label(record), markup=False))
+            for record in self.visible_records
         )
-        self.query_one("#session-picker-help", Static).update(help_text)
+        session_list.index = 0 if self.visible_records else None
+        self._update_help()
 
-    def _is_local(self, record: SessionCompletionRecord) -> bool:
-        return Path(record.cwd).resolve() == self.local_cwd
-
-    @staticmethod
-    def _directory_divider() -> ListItem:
-        return ListItem(
-            Label("Other Directories", markup=False),
-            classes="-session-picker-divider",
-        )
+    def _update_help(self) -> None:
+        if not self.is_mounted:
+            return
+        if not self.visible_records and self.active_column == "sessions":
+            text = "No matching sessions - Left selects a project - Escape closes"
+        elif self.active_column == "projects":
+            text = "Up/Down selects project - Right opens sessions - Escape closes"
+        else:
+            text = "Left selects project - Up/Down navigates - Enter resumes - Escape closes"
+        self.query_one("#session-picker-help", Static).update(text)
 
 
 class SkillPickerSearchInput(Input):
@@ -7293,17 +7348,10 @@ def _short_path(path: Path) -> str:
         return str(path)
 
 
-def _session_picker_label(
-    record: SessionCompletionRecord,
-    *,
-    show_cwd: bool = False,
-) -> str:
-    # Row layout: a slim directory key (other directories only), a compact
-    # relative age, the title, and the model last (so it truncates first).
-    parts: list[str] = []
-    if show_cwd:
-        parts.append(_short_path(record.cwd))
-    parts.append(_session_updated_at_label(record.updated_at))
+def _session_picker_label(record: SessionCompletionRecord) -> str:
+    # The project column provides directory context. Keep the model last so it
+    # truncates before the relative age and title.
+    parts = [_session_updated_at_label(record.updated_at)]
     title = _named_session_title(record.title)
     if title is not None:
         parts.append(title)

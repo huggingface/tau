@@ -30,9 +30,12 @@ From inside the TUI:
 /resume <id>       # resume a specific session
 ```
 
-The `/resume` picker has a search field that filters by session name or model.
-Start typing to narrow the list, then use the arrow keys and Enter (or click) to
-pick a session.
+The `/resume` picker separates projects and recent sessions into two columns.
+It starts on the current project's sessions. Press **Left** to move to the
+project column, use **Up/Down** to choose another project, then press **Right**
+to return to its sessions. Press **Enter** (or click) to resume one.
+
+The search field filters session names and models within the selected project.
 
 To deliberately start fresh instead of resuming, use `tau --new-session` (or
 `/new` in the TUI).
