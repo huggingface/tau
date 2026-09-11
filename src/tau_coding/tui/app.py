@@ -4368,6 +4368,13 @@ class TauTuiApp(App[None]):
                 else:
                     self._reload_session_themes()
                     command = replace(command, message=format_reload_summary(summary))
+            if command.learn_requested:
+                try:
+                    learn_result = await self.session.learn()
+                except ValueError as exc:
+                    command = replace(command, message=f"Could not learn: {exc}")
+                else:
+                    command = replace(command, message=learn_result.format_summary())
             if command.new_session_requested:
                 await self._new_session()
             if command.compact_summary is not None:

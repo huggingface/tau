@@ -115,6 +115,7 @@ class CommandResult:
     custom_provider_login_requested: bool = False
     local_requested: bool = False
     sidebar_toggle_requested: bool = False
+    learn_requested: bool = False
     login_provider: str | None = None
     login_method: str | None = None
     logout_picker_requested: bool = False
@@ -310,6 +311,15 @@ def create_default_command_registry() -> CommandRegistry:
             usage="/reload",
             description="Reload local resources and project context.",
             handler=_reload_command,
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="learn",
+            usage="/learn",
+            description="Review this session and save durable memory and lessons.",
+            handler=_learn_command,
+            search_terms=("memory", "curate", "lessons"),
         )
     )
     registry.register(
@@ -549,6 +559,12 @@ def _reload_command(context: CommandContext) -> CommandResult:
     # Reload owns async extension lifecycle hooks, so frontends execute it from
     # their async command path rather than inside this synchronous registry.
     return CommandResult(handled=True, reload_requested=True)
+
+
+def _learn_command(context: CommandContext) -> CommandResult:
+    # Curation is an async provider call, so frontends execute it from their
+    # async command path, mirroring /reload's flag-then-run pattern.
+    return CommandResult(handled=True, learn_requested=True)
 
 
 def _context_command(context: CommandContext) -> CommandResult:
