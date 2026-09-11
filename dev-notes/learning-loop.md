@@ -10,9 +10,11 @@ Tau now has a compact port of Hermes Agent's learning loop:
 1. `~/.tau/MEMORIES.md` — a small, durable, declarative memory file. Entries
    are joined by a `\n§\n` delimiter and injected into the system prompt as a
    *frozen snapshot* per session (budgeted at 2,200 chars, so it stays cheap).
-2. `~/.tau/skills/lessons/<name>/SKILL.md` — durable lesson files written in
-   the existing skill-directory format, so `/reload` (and the regular skill
-   loader) picks new lessons up with no extra plumbing.
+2. `~/.tau/lessons/<name>/SKILL.md` — durable lesson files written in
+   the skill-directory format, under a dedicated top-level directory.
+   Deliberately NOT under `~/.tau/skills/`: the skill loader scans one
+   level (`skills/<name>/SKILL.md`), so a nested `skills/lessons/`
+   namespace was invisible to it (found in first real-world testing).
 3. An LLM **curator** pass (`/learn`) that reviews a settled session
    transcript and writes both stores, using the session's own provider and
    model.
@@ -54,7 +56,7 @@ Durable layout after a run:
 
 ```text
 ~/.tau/MEMORIES.md            # §-delimited declarative facts
-~/.tau/skills/lessons/<name>/SKILL.md   # lesson = skill-format file
+~/.tau/lessons/<name>/SKILL.md          # lesson = skill-format file
 ```
 
 Invariants worth keeping when extending this:
@@ -73,6 +75,6 @@ Invariants worth keeping when extending this:
   behind a config flag, but was deliberately deferred.
 - Memory consolidation (merging stale entries) is manual today: edit
   `~/.tau/MEMORIES.md` when the store rejects new entries.
-- The lessons directory is loaded by the standard skill loader, so lessons
-  appear in `<available_skills>` like any other skill — intentional, but a
-  future phase may want a dedicated "learned lessons" index with provenance.
+- Lessons live in their own `~/.tau/lessons/` namespace (skill-file format),
+  not in the skill loader's tree; the learned-context prompt section lists
+  each lesson's absolute path so the agent reads the exact file.

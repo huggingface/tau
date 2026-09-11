@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 ENTRY_DELIMITER = "\n§\n"
 DEFAULT_MEMORY_CHAR_LIMIT = 2200
 DEFAULT_MAX_LESSONS_PER_RUN = 3
-LESSONS_DIRNAME = "lessons"
+LESSONS_DIRNAME = "lessons"  # ~/.tau/lessons/ — top-level, NOT under skills/
 LEARNED_PROMPT_SECTION_TITLE = "Learned memory"
 LEARNED_PROMPT_CHAR_LIMIT = 2600
 MAX_LESSON_BODY_CHARS = 4000
@@ -108,11 +108,20 @@ class CuratorResult:
 
 
 @dataclass(frozen=True, slots=True)
+class Lesson:
+    """One durable lesson file discovered under the lessons directory."""
+
+    name: str
+    description: str
+    path: Path
+
+
+@dataclass(frozen=True, slots=True)
 class LearnedContext:
     """Frozen prompt snapshot of durable learned state for one session."""
 
     memory_text: str | None
-    lessons: tuple[tuple[str, str], ...]  # (name, description)
+    lessons: tuple[Lesson, ...]
 
     def render(self) -> str | None:
         """Render the learned-context prompt section, or None when empty."""
@@ -128,10 +137,11 @@ class LearnedContext:
         if self.lessons:
             lines.append(
                 "\nLessons learned in previous sessions for this project. When a "
-                "task matches one, read the lesson file before proceeding:"
+                "task matches one, read the lesson file at its listed path "
+                "before proceeding:"
             )
-            for name, description in self.lessons:
-                lines.append(f"- {name}: {description}")
+            for lesson in self.lessons:
+                lines.append(f"- {lesson.name}: {lesson.description} ({lesson.path})")
         text = "\n".join(lines)
         if len(text) > LEARNED_PROMPT_CHAR_LIMIT:
             text = text[: LEARNED_PROMPT_CHAR_LIMIT - 3].rstrip() + "..."
@@ -144,7 +154,7 @@ def resolve_store_paths(paths: TauPaths | None = None) -> MemoryStorePaths:
     home = tau_paths.home
     return MemoryStorePaths(
         memory_path=home / "MEMORIES.md",
-        lessons_dir=home / "skills" / LESSONS_DIRNAME,
+        lessons_dir=home / LESSONS_DIRNAME,
     )
 
 
@@ -230,16 +240,17 @@ def append_memory_entries(
 
 def load_learned_lessons(
     lessons_dir: Path,
-) -> tuple[tuple[str, str], ...]:
-    """Load lesson names/descriptions from the lessons directory.
+) -> tuple[Lesson, ...]:
+    """Load lessons from the lessons directory.
 
-    Only ``<dir>/SKILL.md`` files are lessons (matching the skill loader).
-    Returns (name, description) pairs; missing descriptions fall back to the
-    first non-empty body line, mirroring ``derive_description``.
+    Only ``<dir>/<name>/SKILL.md`` files are lessons (one level deep,
+    mirroring the skill loader's layout). Returns ``Lesson`` records with
+    their absolute paths so the prompt can point the agent at the exact
+    file; missing descriptions fall back to the first non-empty body line.
     """
     if not lessons_dir.is_dir():
         return ()
-    lessons: list[tuple[str, str]] = []
+    lessons: list[Lesson] = []
     for path in sorted(lessons_dir.iterdir(), key=lambda item: item.name):
         if not path.is_dir():
             continue
@@ -253,7 +264,7 @@ def load_learned_lessons(
             continue
         name = path.name
         description = _frontmatter_description(raw) or _first_body_line(raw)
-        lessons.append((name, description))
+        lessons.append(Lesson(name=name, description=description, path=skill_path))
     return tuple(lessons)
 
 
@@ -329,14 +340,14 @@ def build_curator_review_prompt(
     messages: tuple[AgentMessage, ...],
     *,
     existing_memory: tuple[str, ...],
-    existing_lessons: tuple[tuple[str, str], ...],
+    existing_lessons: tuple[Lesson, ...],
 ) -> str:
     """Build the user prompt for the curator review of one settled run."""
     existing_lines: list[str] = []
     for entry in existing_memory:
         existing_lines.append(f"- {entry}")
     memory_block = "\n".join(existing_lines) if existing_lines else "(memory store is empty)"
-    lesson_lines = [f"- {name}: {description}" for name, description in existing_lessons]
+    lesson_lines = [f"- {lesson.name}: {lesson.description}" for lesson in existing_lessons]
     lessons_block = "\n".join(lesson_lines) if lesson_lines else "(no lessons yet)"
     transcript = _curator_review_transcript(messages)
     if not transcript:
@@ -379,7 +390,7 @@ def extract_curator_json(text: str) -> dict[str, Any]:
 def parse_curator_result(
     parsed: dict[str, Any],
     *,
-    existing_lessons: tuple[tuple[str, str], ...],
+    existing_lessons: tuple[Lesson, ...],
 ) -> tuple[tuple[str, ...], tuple[CuratorSuggestion, ...]]:
     """Validate curator output into memory entries and lesson suggestions."""
     raw_entries = parsed.get("memory_entries") or []
@@ -393,7 +404,7 @@ def parse_curator_result(
     raw_lessons = parsed.get("lessons") or []
     if not isinstance(raw_lessons, list):
         raise ValueError("lessons must be a list of objects")
-    existing_names = {name for name, _ in existing_lessons}
+    existing_names = {lesson.name for lesson in existing_lessons}
     lessons: list[CuratorSuggestion] = []
     for raw in raw_lessons[:DEFAULT_MAX_LESSONS_PER_RUN]:
         if not isinstance(raw, dict):

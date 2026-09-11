@@ -19,6 +19,7 @@ from tau_coding.learning import (
     ENTRY_DELIMITER,
     MAX_MEMORY_ENTRY_CHARS,
     LearnedContext,
+    Lesson,
     append_memory_entries,
     load_learned_lessons,
     load_memory_entries,
@@ -111,13 +112,18 @@ class TestLessons:
             "Run tau tests through uv.",
             "# Rule\n\nAlways use `uv run pytest`.",
         )
-        assert load_learned_lessons(lessons_dir) == (("uv-first", "Run tau tests through uv."),)
+        loaded = load_learned_lessons(lessons_dir)
+        assert [lesson.name for lesson in loaded] == ["uv-first"]
+        assert [lesson.description for lesson in loaded] == ["Run tau tests through uv."]
+        assert loaded[0].path == lessons_dir / "uv-first" / "SKILL.md"
 
     def test_write_updates_existing_lesson(self, tmp_path: Path) -> None:
         lessons_dir = tmp_path / "lessons"
         write_lesson(lessons_dir, "uv-first", "Old description.", "old body")
         write_lesson(lessons_dir, "uv-first", "New description.", "new body")
-        assert load_learned_lessons(lessons_dir) == (("uv-first", "New description."),)
+        loaded = load_learned_lessons(lessons_dir)
+        assert [lesson.name for lesson in loaded] == ["uv-first"]
+        assert [lesson.description for lesson in loaded] == ["New description."]
         content = (lessons_dir / "uv-first" / "SKILL.md").read_text()
         assert "new body" in content
         assert "old body" not in content
@@ -138,11 +144,23 @@ class TestLessons:
         assert rendered is not None
         assert "repo tests use uv" in rendered
         assert "uv-first" in rendered
+        # The rendered section must include each lesson's absolute path so the
+        # agent never has to guess where lessons live.
+        assert str(store.lessons_dir / "uv-first" / "SKILL.md") in rendered
+
+    def test_lessons_live_outside_the_skills_tree(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        assert store.lessons_dir == Path(tmp_path) / "lessons"
+        assert "skills" not in store.lessons_dir.parts
 
     def test_learned_context_render_truncates(self) -> None:
+        many_lessons = tuple(
+            Lesson(name=f"lesson-{i:02d}", description="d", path=Path(f"/tmp/{i:02d}/SKILL.md"))
+            for i in range(40)
+        )
         learned = LearnedContext(
             memory_text="m" * 3000,
-            lessons=(("lesson", "d"),) * 40,
+            lessons=many_lessons,
         )
         rendered = learned.render()
         assert rendered is not None
@@ -439,8 +457,9 @@ class TestSessionLearn:
         assert result.lessons == (("use-uv", False),)
         learned = load_memory_entries(home / "MEMORIES.md")
         assert learned == ("the repo uses uv",)
-        lessons = load_learned_lessons(home / "skills" / "lessons")
-        assert lessons == (("use-uv", "Run tests via uv."),)
+        lessons = load_learned_lessons(home / "lessons")
+        assert [lesson.name for lesson in lessons] == ["use-uv"]
+        assert [lesson.description for lesson in lessons] == ["Run tests via uv."]
 
     @pytest.mark.anyio
     async def test_learn_requires_provider(self, tmp_path: Path) -> None:
