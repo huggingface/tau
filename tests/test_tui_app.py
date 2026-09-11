@@ -90,6 +90,7 @@ from tau_coding.skills import Skill, format_skill_invocation
 from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.tools import create_coding_tools
 from tau_coding.tui import app as tui_app
+from tau_coding.tui.adapter import TuiEventAdapter
 from tau_coding.tui.app import (
     COMPLETION_MAX_VISIBLE_LINES,
     PASTE_DISPLAY_THRESHOLD,
@@ -246,6 +247,8 @@ class FakeSession:
         self.compact_summaries: list[str] = []
         self.resumed_session_ids: list[str] = []
         self.tree_branch_requests: list[tuple[str, bool, str | None]] = []
+        self.tree_label_requests: list[tuple[str, str | None]] = []
+        self.tree_labels: dict[str, tuple[str, float]] = {}
         self.new_session_count = 0
         self.prompt_texts: list[str] = []
         self.prompt_sources: list[str] = []
@@ -437,9 +440,23 @@ class FakeSession:
         return (
             SessionTreeChoice(entry_id="root", label="user: Root"),
             SessionTreeChoice(entry_id="tool", label="tool call: read", is_tool_call=True),
-            SessionTreeChoice(entry_id="left", label="assistant: Left"),
+            SessionTreeChoice(
+                entry_id="left",
+                label="assistant: Left",
+                bookmark_label=self.tree_labels.get("left", (None, None))[0],
+                label_timestamp=self.tree_labels.get("left", (None, None))[1],
+            ),
             SessionTreeChoice(entry_id="right", label="assistant: Right", active=True),
         )
+
+    async def set_label(self, entry_id: str, label: str | None) -> SimpleNamespace:
+        self.tree_label_requests.append((entry_id, label))
+        timestamp = 1_700_000_000.0 + len(self.tree_label_requests)
+        if label is None:
+            self.tree_labels.pop(entry_id, None)
+        else:
+            self.tree_labels[entry_id] = (label, timestamp)
+        return SimpleNamespace(timestamp=timestamp)
 
     async def branch_to_entry(
         self,
@@ -850,7 +867,7 @@ def test_session_sidebar_brand_includes_current_version() -> None:
 
     console.print(_sidebar_brand(theme=TAU_DARK_THEME))
 
-    assert "τ = 2π  0.4.1" in console.export_text()
+    assert "τ = 2π  0.4.2" in console.export_text()
 
 
 def test_session_sidebar_uses_prominent_title_and_accented_section_headers() -> None:
@@ -1086,12 +1103,34 @@ def test_state_load_messages_projects_custom_type_on_resume() -> None:
                 custom_type="subagent-notification",
                 details={"id": "run-1"},
             ),
+            CustomMessage(
+                content="hidden model context",
+                custom_type="extension:hidden",
+                display=False,
+            ),
         ]
     )
 
     assert [item.role for item in state.items] == ["user", "custom"]
     assert state.items[1].custom_type == "subagent-notification"
     assert state.items[1].details == {"id": "run-1"}
+
+
+def test_tui_event_adapter_hides_non_display_custom_messages() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+
+    adapter.apply(
+        MessageEndEvent(
+            message=CustomMessage(
+                content="hidden model context",
+                custom_type="extension:hidden",
+                display=False,
+            )
+        )
+    )
+
+    assert state.items == []
 
 
 def test_chat_items_render_as_unlabeled_blocks() -> None:
@@ -6376,6 +6415,52 @@ async def test_tui_app_tree_picker_toggles_tool_calls() -> None:
             "* assistant: Right",
         ]
         assert tree_list.index == 3
+
+
+@pytest.mark.anyio
+async def test_tui_tree_labels_filter_timestamps_and_clear() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/tree"
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("up", "l")
+        await pilot.pause()
+
+        field = app.screen.query_one("#extension-input-field", Input)
+        field.value = "checkpoint"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, TreePickerScreen)
+        tree_list = app.screen.query_one("#tree-picker-list", ListView)
+        labels = [str(item.query_one(Label).render()) for item in tree_list.children]
+        assert "[checkpoint] assistant: Left" in labels[2]
+        assert session.tree_label_requests == [("left", "checkpoint")]
+
+        await pilot.press("ctrl+l")
+        await pilot.pause()
+        assert "2023-11-14" in str(tree_list.children[2].query_one(Label).render())
+
+        await pilot.press("ctrl+f")
+        await pilot.pause()
+        assert len(tree_list.children) == 1
+        assert "[checkpoint]" in str(tree_list.children[0].query_one(Label).render())
+
+        await pilot.press("l")
+        await pilot.pause()
+        field = app.screen.query_one("#extension-input-field", Input)
+        assert field.value == "checkpoint"
+        field.value = ""
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, TreePickerScreen)
+        assert session.tree_label_requests == [("left", "checkpoint"), ("left", None)]
+        assert len(app.screen.query_one("#tree-picker-list", ListView).children) == 0
 
 
 @pytest.mark.anyio

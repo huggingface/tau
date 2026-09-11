@@ -46,6 +46,7 @@ from tau_agent.session import (
     BranchSummaryEntry,
     CompactionEntry,
     CustomEntry,
+    CustomMessageEntry,
     JsonlSessionStorage,
     LabelEntry,
     LeafEntry,
