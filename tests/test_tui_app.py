@@ -257,6 +257,8 @@ class FakeSession:
         self.prompt_sources: list[str] = []
         self.reload_count = 0
         self.provider_reload_count = 0
+        self.leave_provider_calls: list[str] = []
+        self.leave_provider_choice: ModelChoice | None = None
         self.model_catalog_refresh_count = 0
         self.queued_steering_messages: tuple[str, ...] = ()
         self.queued_follow_up_messages: tuple[str, ...] = ()
@@ -403,6 +405,16 @@ class FakeSession:
 
     def reload_provider_settings(self) -> None:
         self.provider_reload_count += 1
+
+    def leave_provider(self, provider_name: str, *, persist_default: bool = False) -> object | None:
+        del persist_default
+        self.leave_provider_calls.append(provider_name)
+        if self.provider_name != provider_name or not self.leave_provider_choice:
+            return None
+        choice = self.leave_provider_choice
+        self.provider_name = choice.provider_name
+        self.model = choice.model
+        return choice
 
     async def refresh_model_catalogs(self) -> None:
         self.model_catalog_refresh_count += 1
@@ -7978,6 +7990,41 @@ async def test_tui_logout_removes_oauth_credential(
     assert FileCredentialStore(credential_path).get_oauth("openai-codex") is None
     assert session.provider_reload_count == 1
     assert notifications == ["Logged out of OpenAI Codex subscription."]
+
+
+@pytest.mark.anyio
+async def test_tui_logout_switches_active_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    isolate_home(monkeypatch, tmp_path)
+    credential_path = tmp_path / ".tau" / "credentials.json"
+    FileCredentialStore(credential_path).set("openai", "stored-openai-key")
+    session = FakeSession()
+    session.leave_provider_choice = ModelChoice(provider_name="anthropic", model="claude-a")
+    app = TauTuiApp(session)
+    notifications: list[str] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        del kwargs
+        notifications.append(message)
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/logout openai"
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert session.leave_provider_calls == ["openai"]
+    assert session.provider_name == "anthropic"
+    assert session.model == "claude-a"
+    assert notifications == [
+        "Removed stored API key for OpenAI. "
+        "Environment variables and providers.json config are unchanged. "
+        "Now using anthropic:claude-a."
+    ]
 
 
 @pytest.mark.anyio

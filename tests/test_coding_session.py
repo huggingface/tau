@@ -146,6 +146,11 @@ def _provider_http_error(
     )
 
 
+class ClosableFakeProvider(FakeProvider):
+    async def aclose(self) -> None:
+        return None
+
+
 class SwitchableFakeProvider:
     def __init__(self, config: object) -> None:
         self.config = config
@@ -4302,6 +4307,119 @@ async def test_codex_missing_active_model_survives_settings_refresh(
         assert session.model == "static-model"
         assert session._active_provider_config() == static
         assert session.provider_config("openai-codex").models == ("live-model",)
+    finally:
+        await session.aclose()
+
+
+@pytest.mark.anyio
+async def test_session_reload_moves_off_provider_that_lost_credentials(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    openai = OpenAICompatibleProviderConfig(
+        name="openai",
+        credential_name="openai",
+        models=("gpt-a",),
+        default_model="gpt-a",
+    )
+    anthropic = OpenAICompatibleProviderConfig(
+        name="anthropic",
+        credential_name="anthropic",
+        models=("claude-a",),
+        default_model="claude-a",
+    )
+    settings = ProviderSettings(default_provider="openai", providers=(openai, anthropic))
+    monkeypatch.setattr(coding_session_module, "load_provider_settings", lambda *a, **k: settings)
+
+    def create(provider: object, **kwargs: object) -> FakeProvider:
+        credential_store = kwargs["credential_store"]
+        assert isinstance(credential_store, FileCredentialStore)
+        if not credential_store.get(provider.credential_name):  # type: ignore[attr-defined]
+            raise RuntimeError(
+                f"Missing provider API key. Run /login {provider.credential_name}."  # type: ignore[attr-defined]
+            )
+        return ClosableFakeProvider([])
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create)
+
+    credentials = FileCredentialStore()
+    credentials.set("openai", "openai-key")
+    credentials.set("anthropic", "anthropic-key")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="gpt-a",
+            provider_name="openai",
+            provider_settings=settings,
+            runtime_provider_config=openai,
+            system="Test",
+            cwd=tmp_path,
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            extensions_enabled=False,
+        )
+    )
+    try:
+        credentials.delete("openai")
+        session.reload_provider_settings()
+        assert session.provider_name == "anthropic"
+        assert session.model == "claude-a"
+    finally:
+        await session.aclose()
+
+
+@pytest.mark.anyio
+async def test_session_reload_stays_on_provider_with_usable_credentials(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    openai = OpenAICompatibleProviderConfig(
+        name="openai",
+        credential_name="openai",
+        models=("gpt-a",),
+        default_model="gpt-a",
+    )
+    anthropic = OpenAICompatibleProviderConfig(
+        name="anthropic",
+        credential_name="anthropic",
+        models=("claude-a",),
+        default_model="claude-a",
+    )
+    settings = ProviderSettings(default_provider="openai", providers=(openai, anthropic))
+    monkeypatch.setattr(coding_session_module, "load_provider_settings", lambda *a, **k: settings)
+    broken: set[str] = set()
+
+    def create(provider: object, **kwargs: object) -> FakeProvider:
+        del kwargs
+        if getattr(provider, "name", "") in broken:
+            raise RuntimeError("Provider is temporarily unavailable.")
+        return ClosableFakeProvider([])
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create)
+
+    credentials = FileCredentialStore()
+    credentials.set("openai", "openai-key")
+    credentials.set("anthropic", "anthropic-key")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="gpt-a",
+            provider_name="openai",
+            provider_settings=settings,
+            runtime_provider_config=openai,
+            system="Test",
+            cwd=tmp_path,
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            extensions_enabled=False,
+        )
+    )
+    try:
+        broken.add("openai")
+        with pytest.raises(ProviderConfigError, match="temporarily unavailable"):
+            session.reload_provider_settings()
+        assert session.provider_name == "openai"
+        assert session.model == "gpt-a"
     finally:
         await session.aclose()
 

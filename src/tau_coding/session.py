@@ -2535,10 +2535,59 @@ class CodingSession:
             self._refresh_runtime_provider()
             self._sync_image_support()
         except ProviderConfigError:
-            self._provider_settings = previous_settings
-            self._durable_provider_settings = previous_durable_settings
-            self._thinking_level = previous_thinking_level
-            raise
+            active = self._active_provider_config()
+            fallback = self._usable_fallback_choice(self._provider_name)
+            lost_credentials = active is not None and not self._provider_is_usable(active)
+            if fallback is None or not lost_credentials:
+                self._provider_settings = previous_settings
+                self._durable_provider_settings = previous_durable_settings
+                self._thinking_level = previous_thinking_level
+                raise
+            # The active provider lost its credentials (for example after
+            # /logout), so staying on it would break /model, /login, and every
+            # later refresh. Move to a provider Tau can still call.
+            try:
+                self._set_provider_model(
+                    fallback.provider_name,
+                    fallback.model,
+                    persist_default=False,
+                )
+            except ProviderConfigError:
+                self._provider_settings = previous_settings
+                self._durable_provider_settings = previous_durable_settings
+                self._thinking_level = previous_thinking_level
+                raise
+
+    def _usable_fallback_choice(self, excluded_provider: str) -> ModelChoice | None:
+        """Return a usable provider/model choice other than ``excluded_provider``."""
+        for provider in self._usable_provider_configs():
+            if provider.name == excluded_provider:
+                continue
+            model = self.model if self.model in provider.models else provider.default_model
+            return ModelChoice(provider_name=provider.name, model=model)
+        return None
+
+    def leave_provider(
+        self,
+        provider_name: str,
+        *,
+        persist_default: bool = False,
+    ) -> ModelChoice | None:
+        """Move off ``provider_name`` when it is active and another provider is usable.
+
+        Returns the new choice, or ``None`` when the session stays where it is.
+        """
+        if self._provider_settings is None or self._provider_name != provider_name:
+            return None
+        choice = self._usable_fallback_choice(provider_name)
+        if choice is None:
+            return None
+        self._set_provider_model(
+            choice.provider_name,
+            choice.model,
+            persist_default=persist_default,
+        )
+        return choice
 
     async def resume(self, session_id: str) -> str:
         """Replace this session's active state with another indexed session."""

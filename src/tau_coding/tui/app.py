@@ -6547,18 +6547,34 @@ class TauTuiApp(App[None]):
 
         try:
             credential_store.delete(entry.credential_name)
+            moved = self.session.leave_provider(entry.name, persist_default=True)
             self.session.reload_provider_settings()
+        except ProviderConfigError:
+            message = f"Removed stored credentials for {entry.display_name}."
+            if self.session.provider_name == entry.name:
+                # Nothing else is usable, so the session stays on the provider
+                # we just logged out of until /login runs.
+                message = (
+                    f"{message} No other configured provider is usable; run /login to add one."
+                )
+            else:
+                message = f"{message} Now using {self.session.provider_name}:{self.session.model}."
+            self._notify(message, severity="warning")
+            self._refresh()
+            return
         except Exception as exc:  # noqa: BLE001 - surface logout failures in the TUI
             self._notify(f"Could not log out: {exc}", severity="error")
             return
 
-        if entry.kind == "openai-codex":
-            self._notify(f"Logged out of {entry.display_name}.")
-        else:
-            self._notify(
-                f"Removed stored API key for {entry.display_name}. "
-                "Environment variables and providers.json config are unchanged."
-            )
+        message = (
+            f"Logged out of {entry.display_name}."
+            if entry.kind == "openai-codex"
+            else f"Removed stored API key for {entry.display_name}. "
+            "Environment variables and providers.json config are unchanged."
+        )
+        if moved is not None:
+            message = f"{message} Now using {moved.provider_name}:{moved.model}."
+        self._notify(message)
         self._refresh()
 
     def _available_model_choices(self) -> tuple[ModelChoice, ...]:
