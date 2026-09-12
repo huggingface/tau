@@ -704,7 +704,9 @@ def _parse_sse_line(line: str) -> str | None:
     if not line or not line.startswith("data:"):
         return None
     data = line.removeprefix("data:").strip()
-    return data or None
+    if not data or data == "[DONE]":
+        return None
+    return data
 
 
 def _loads_object(text: str) -> dict[str, Any] | None:
