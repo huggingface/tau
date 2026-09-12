@@ -151,7 +151,7 @@ class AssistantMessageDiagnostic(WireModel):
     details: dict[str, JSONValue] | None = None
 
 
-StopReason = Literal["stop", "length", "toolUse", "error", "aborted"]
+type StopReason = Literal["stop", "length", "toolUse", "error", "aborted"]
 
 
 class AssistantMessage(WireModel):
