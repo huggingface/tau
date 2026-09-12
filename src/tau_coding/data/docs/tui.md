@@ -31,6 +31,15 @@ session. It preserves a configured `left` or `right` position and never writes
 `sidebar_position` is `"off"`, an explicit show temporarily uses the default
 right position.
 
+## `/resume`
+
+The resume picker uses separate project and recent-session columns. Project
+rows show compact folder names, while the session-column header shows the
+selected project's full path. It opens on the current project's sessions. Press
+Left to select the project column, Up/Down to choose a project, and Right to
+return to its sessions. Enter resumes the selected session. Search filters names
+and models within the selected project.
+
 ## `/local`
 
 Type `/local` to open the generic local-backend host. It explicitly chooses a

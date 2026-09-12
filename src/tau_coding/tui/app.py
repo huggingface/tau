@@ -1259,6 +1259,13 @@ class SessionPickerSearchInput(Input):
             event.stop()
             event.prevent_default()
             self.action_cursor_down()
+        elif event.key in {"left", "right"} and isinstance(self.screen, SessionPickerScreen):
+            event.stop()
+            event.prevent_default()
+            if event.key == "left":
+                self.screen.action_focus_projects()
+            else:
+                self.screen.action_focus_sessions()
         elif event.key == "escape":
             event.stop()
             event.prevent_default()
@@ -1419,52 +1426,125 @@ class PromptTemplateEditorScreen(ModalScreen[str | None]):
 
 
 class SessionPickerScreen(ModalScreen[str | None]):
-    """Minimal modal picker for indexed sessions, with a search field."""
+    """Project-and-session navigator for indexed sessions."""
 
     BINDINGS: ClassVar[list[BindingEntry]] = [
         Binding("escape", "cancel", "Cancel"),
         Binding("up", "cursor_up", "Up", show=False),
         Binding("down", "cursor_down", "Down", show=False),
+        Binding("left", "focus_projects", "Projects", show=False),
+        Binding("right", "focus_sessions", "Sessions", show=False),
         Binding("enter", "select_cursor", "Select", show=False),
     ]
+
+    CSS = """
+    #session-picker {
+        width: 110;
+        max-width: 94%;
+        height: auto;
+        max-height: 85%;
+    }
+
+    #session-picker-columns {
+        height: auto;
+    }
+
+    .session-picker-column {
+        height: auto;
+        border: tall $tau-border;
+        background: $tau-transcript-background;
+    }
+
+    .session-picker-column.-active-column {
+        border: tall $tau-accent;
+    }
+
+    #session-picker-project-column {
+        width: 34;
+        margin-right: 1;
+    }
+
+    #session-picker-session-column {
+        width: 1fr;
+    }
+
+    .session-picker-column-title {
+        height: 1;
+        padding: 0 1;
+        color: $tau-muted-text;
+        text-style: bold;
+    }
+
+    .-active-column > .session-picker-column-title {
+        color: $tau-accent;
+    }
+
+    #session-picker-project-list,
+    #session-picker-list {
+        height: auto;
+        max-height: 16;
+        border: none;
+        background: $tau-transcript-background;
+    }
+
+    #session-picker-list {
+        padding: 0 1;
+    }
+    """
 
     def __init__(
         self,
         records: Sequence[SessionCompletionRecord],
         *,
+        local_cwd: Path,
         theme: TuiTheme,
     ) -> None:
         super().__init__()
         self.records = tuple(records)
-        self.visible_records = self.records
+        self.local_cwd = local_cwd.resolve()
         self.theme = theme
         self.search_value = ""
+        self.active_column: Literal["projects", "sessions"] = "sessions"
+        self.project_cwds = self._project_paths()
+        self.selected_project_index = 0
+        self.visible_records: tuple[SessionCompletionRecord, ...] = ()
 
     def compose(self) -> ComposeResult:
-        """Compose the session picker."""
+        """Compose project and session columns under one search field."""
         with Vertical(id="session-picker"):
             yield Static("Sessions", id="session-picker-title")
             yield SessionPickerSearchInput(
-                placeholder="Search sessions",
+                placeholder="Search sessions in selected project",
                 id="session-picker-search",
             )
-            yield ListView(
-                *[
-                    ListItem(Label(_session_picker_label(record), markup=False))
-                    for record in self.records
-                ],
-                id="session-picker-list",
-            )
-            yield Static("Enter selects - Escape closes", id="session-picker-help")
+            with Horizontal(id="session-picker-columns"):
+                with Vertical(
+                    id="session-picker-project-column",
+                    classes="session-picker-column",
+                ):
+                    yield Static("Projects", classes="session-picker-column-title")
+                    yield ListView(id="session-picker-project-list")
+                with Vertical(
+                    id="session-picker-session-column",
+                    classes="session-picker-column -active-column",
+                ):
+                    yield Static(
+                        "",
+                        id="session-picker-session-title",
+                        classes="session-picker-column-title",
+                    )
+                    yield ListView(id="session-picker-list")
+            yield Static("", id="session-picker-help")
 
     def on_mount(self) -> None:
-        """Focus the search field for keyboard navigation."""
-        search = self.query_one("#session-picker-search", Input)
-        search.focus()
+        """Start in the current project's recent-session column."""
+        self.query_one("#session-picker-search", Input).focus()
+        self._refresh_project_list()
         self._refresh_session_list()
+        self._update_help()
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        """Filter session choices as the search value changes."""
+        """Filter sessions in the selected project."""
         if event.input.id != "session-picker-search":
             return
         event.stop()
@@ -1472,71 +1552,135 @@ class SessionPickerScreen(ModalScreen[str | None]):
         self._refresh_session_list()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Select the highlighted session from the search field."""
         if event.input.id != "session-picker-search":
             return
         event.stop()
-        self._select_visible_record()
+        self.action_select_cursor()
 
     def on_key(self, event: Key) -> None:
-        """Route session picker keys to the list."""
-        if event.key == "up":
+        """Route navigation while keeping typing focus in the search field."""
+        actions = {
+            "up": self.action_cursor_up,
+            "down": self.action_cursor_down,
+            "left": self.action_focus_projects,
+            "right": self.action_focus_sessions,
+            "enter": self.action_select_cursor,
+        }
+        action = actions.get(event.key)
+        if action is not None:
             event.stop()
-            self.action_cursor_up()
-        elif event.key == "down":
-            event.stop()
-            self.action_cursor_down()
-        elif event.key == "enter":
-            event.stop()
-            self.action_select_cursor()
+            action()
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        """Show sessions for the highlighted project immediately."""
+        if event.list_view.id != "session-picker-project-list":
+            return
+        index = event.list_view.index
+        if index is None or index == self.selected_project_index:
+            return
+        self.selected_project_index = index
+        self._refresh_session_list()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Dismiss with the selected session id."""
         event.stop()
+        if event.list_view.id == "session-picker-project-list":
+            self.selected_project_index = event.index
+            self._refresh_session_list()
+            self.action_focus_sessions()
+            return
         self._select_visible_record()
 
     def action_cursor_up(self) -> None:
-        """Move to the previous session."""
-        self.query_one("#session-picker-list", ListView).action_cursor_up()
+        self._active_list().action_cursor_up()
 
     def action_cursor_down(self) -> None:
-        """Move to the next session."""
-        self.query_one("#session-picker-list", ListView).action_cursor_down()
+        self._active_list().action_cursor_down()
+
+    def action_focus_projects(self) -> None:
+        self._set_active_column("projects")
+
+    def action_focus_sessions(self) -> None:
+        self._set_active_column("sessions")
 
     def action_select_cursor(self) -> None:
-        """Select the highlighted session."""
-        self._select_visible_record()
+        if self.active_column == "projects":
+            self.action_focus_sessions()
+        else:
+            self._select_visible_record()
 
     def action_cancel(self) -> None:
-        """Close the picker without selecting a session."""
         self.dismiss(None)
 
+    def _active_list(self) -> ListView:
+        selector = (
+            "#session-picker-project-list"
+            if self.active_column == "projects"
+            else "#session-picker-list"
+        )
+        return self.query_one(selector, ListView)
+
+    def _set_active_column(self, column: Literal["projects", "sessions"]) -> None:
+        self.active_column = column
+        projects = self.query_one("#session-picker-project-column", Vertical)
+        sessions = self.query_one("#session-picker-session-column", Vertical)
+        projects.set_class(column == "projects", "-active-column")
+        sessions.set_class(column == "sessions", "-active-column")
+        self._update_help()
+
     def _select_visible_record(self) -> None:
-        if not self.visible_records:
-            return
-        session_list = self.query_one("#session-picker-list", ListView)
-        index = session_list.index
-        if index is None:
-            return
-        self.dismiss(self.visible_records[index].id)
+        index = self.query_one("#session-picker-list", ListView).index
+        if index is not None and index < len(self.visible_records):
+            self.dismiss(self.visible_records[index].id)
+
+    def _project_paths(self) -> tuple[Path, ...]:
+        paths = [self.local_cwd]
+        for record in self.records:
+            cwd = Path(record.cwd).resolve()
+            if cwd not in paths:
+                paths.append(cwd)
+        return tuple(paths)
+
+    def _refresh_project_list(self) -> None:
+        project_list = self.query_one("#session-picker-project-list", ListView)
+        project_list.clear()
+        items: list[ListItem] = []
+        for cwd in self.project_cwds:
+            count = sum(1 for record in self.records if Path(record.cwd).resolve() == cwd)
+            marker = "● " if cwd == self.local_cwd else "  "
+            noun = "session" if count == 1 else "sessions"
+            folder_name = cwd.name or str(cwd)
+            items.append(ListItem(Label(f"{marker}{folder_name}  {count} {noun}", markup=False)))
+        project_list.extend(items)
+        project_list.index = self.selected_project_index
 
     def _refresh_session_list(self) -> None:
-        self.visible_records = _filter_session_records(self.records, self.search_value)
+        selected_cwd = self.project_cwds[self.selected_project_index]
+        self.query_one("#session-picker-session-title", Static).update(
+            f"Recent sessions — {selected_cwd}"
+        )
+        project_records = tuple(
+            record for record in self.records if Path(record.cwd).resolve() == selected_cwd
+        )
+        self.visible_records = _filter_session_records(project_records, self.search_value)
         session_list = self.query_one("#session-picker-list", ListView)
         session_list.clear()
         session_list.extend(
-            [
-                ListItem(Label(_session_picker_label(record), markup=False))
-                for record in self.visible_records
-            ]
+            ListItem(Label(_session_picker_label(record), markup=False))
+            for record in self.visible_records
         )
         session_list.index = 0 if self.visible_records else None
-        help_text = (
-            "Enter selects - Escape closes"
-            if self.visible_records
-            else "No matching sessions - Escape closes"
-        )
-        self.query_one("#session-picker-help", Static).update(help_text)
+        self._update_help()
+
+    def _update_help(self) -> None:
+        if not self.is_mounted:
+            return
+        if not self.visible_records and self.active_column == "sessions":
+            text = "No matching sessions - Left selects a project - Escape closes"
+        elif self.active_column == "projects":
+            text = "Up/Down selects project - Right opens sessions - Escape closes"
+        else:
+            text = "Left selects project - Up/Down navigates - Enter resumes - Escape closes"
+        self.query_one("#session-picker-help", Static).update(text)
 
 
 class SkillPickerSearchInput(Input):
@@ -5870,7 +6014,11 @@ class TauTuiApp(App[None]):
             self._notify("No sessions found.")
             return
         self.push_screen(
-            SessionPickerScreen(records, theme=self.tui_settings.resolved_theme),
+            SessionPickerScreen(
+                records,
+                local_cwd=Path(self.session.cwd),
+                theme=self.tui_settings.resolved_theme,
+            ),
             callback=self._handle_session_picker_result,
         )
 
@@ -6004,11 +6152,15 @@ class TauTuiApp(App[None]):
 
     async def _resume_session(self, session_id: str) -> None:
         try:
+            previous_cwd = Path(self.session.cwd).resolve()
             resume_message = await self.session.resume(session_id)
             self._reload_session_themes()
             self.state.clear()
             self.state.set_skills(self.session.skills)
             self._load_session_messages_from_session()
+            current_cwd = Path(self.session.cwd).resolve()
+            if current_cwd != previous_cwd:
+                resume_message = f"{resume_message} ({_short_path(current_cwd)})"
             self._notify(resume_message)
         except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
             self._notify(f"Error: {exc}", severity="error")
@@ -7169,14 +7321,24 @@ def _session_options(session: CodingSession) -> tuple[CompletionOption, ...]:
 
 
 def _session_records(session: CodingSession) -> tuple[SessionCompletionRecord, ...]:
+    """Return indexed sessions for resume, current directory first.
+
+    Sessions from the session's working directory are listed newest-first,
+    followed by sessions from every other directory (also newest-first), so a
+    session from another project is visible in the picker without leaving it.
+    """
     manager = getattr(session, "session_manager", None)
     if manager is None:
         return ()
     try:
-        records = manager.list_sessions(session.cwd)
+        records = list(manager.list_sessions())
     except TypeError:
-        records = manager.list_sessions()
-    return tuple(records)
+        # Older managers only accept an explicit cwd argument.
+        records = list(manager.list_sessions(session.cwd))
+    local_cwd = Path(session.cwd).resolve()
+    local = [record for record in records if Path(record.cwd).resolve() == local_cwd]
+    other = [record for record in records if Path(record.cwd).resolve() != local_cwd]
+    return tuple(local) + tuple(other)
 
 
 def _session_option(record: SessionCompletionRecord) -> CompletionOption:
@@ -7190,19 +7352,22 @@ def _session_option(record: SessionCompletionRecord) -> CompletionOption:
 def _short_path(path: Path) -> str:
     home = Path.home()
     try:
-        return f"~/{path.relative_to(home)}"
+        relative = path.relative_to(home)
+        return "~" if relative == Path(".") else f"~/{relative}"
     except ValueError:
         return str(path)
 
 
 def _session_picker_label(record: SessionCompletionRecord) -> str:
+    # The project column provides directory context. Keep the model last so it
+    # truncates before the relative age and title.
     parts = [_session_updated_at_label(record.updated_at)]
-    if record.model:
-        parts.append(record.model)
     title = _named_session_title(record.title)
     if title is not None:
         parts.append(title)
-    return " - ".join(parts)
+    if record.model:
+        parts.append(record.model)
+    return "  ".join(parts)
 
 
 def _filter_session_records(
@@ -7265,7 +7430,22 @@ def _tree_choice_index(choices: Sequence[SessionTreeChoice], entry_id: str | Non
 
 
 def _session_updated_at_label(timestamp: float) -> str:
-    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
+    """Return a compact relative age label for a session (e.g. ``2h ago``)."""
+    delta = (datetime.now() - datetime.fromtimestamp(timestamp)).total_seconds()
+    minutes = int(delta // 60)
+    if minutes < 1:
+        return "now"
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    if days == 1:
+        return "yesterday"
+    if days < 7:
+        return f"{days}d ago"
+    return datetime.fromtimestamp(timestamp).strftime("%b %d")
 
 
 def _named_session_title(title: str | None) -> str | None:
