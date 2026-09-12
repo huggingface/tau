@@ -683,6 +683,12 @@ def update_models_command() -> None:
     typer.echo(
         f"Model catalogs {status}: {result.model_count} models cached at {result.cache_path}"
     )
+    typer.echo(
+        "Model changes: "
+        f"{len(result.changes.added)} added, "
+        f"{len(result.changes.removed)} removed, "
+        f"{len(result.changes.updated)} updated"
+    )
 
 
 def update_command() -> None:

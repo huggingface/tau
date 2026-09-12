@@ -13,6 +13,7 @@ from tau_ai import (
 )
 from tau_coding import CodingSessionRecord, SessionManager, cli
 from tau_coding.cli import app, run_print_mode
+from tau_coding.models_dev_store import ModelsDevCatalogChanges
 from tau_coding.paths import TauPaths
 from tau_coding.provider_config import (
     OpenAICompatibleProviderConfig,
@@ -391,6 +392,11 @@ def test_update_models_force_refreshes_catalog(monkeypatch: pytest.MonkeyPatch) 
             not_modified=False,
             model_count=42,
             cache_path=Path("/tmp/models-store.json"),
+            changes=ModelsDevCatalogChanges(
+                added=("huggingface:new-model", "nvidia:new-model"),
+                removed=("openai:old-model",),
+                updated=("anthropic:changed-model",),
+            ),
         )
 
     monkeypatch.setattr(cli, "refresh_models_dev_catalog", refresh_models)
@@ -400,6 +406,7 @@ def test_update_models_force_refreshes_catalog(monkeypatch: pytest.MonkeyPatch) 
     assert result.exit_code == 0
     assert calls == [True]
     assert "Model catalogs refreshed: 42 models" in result.stdout
+    assert "Model changes: 2 added, 1 removed, 1 updated" in result.stdout
 
 
 def test_update_command_reports_windows_handoff_without_claiming_completion(
