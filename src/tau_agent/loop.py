@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from inspect import isawaitable
 from time import monotonic_ns
+
 
 from tau_agent.events import (
     AgentEndEvent,
@@ -13,6 +15,7 @@ from tau_agent.events import (
     MessageEndEvent,
     MessageStartEvent,
     MessageUpdateEvent,
+    ModelChangeEvent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     ToolExecutionUpdateEvent,
@@ -48,6 +51,10 @@ AfterToolCall = Callable[
     Awaitable[tuple[AgentToolResult, bool]],
 ]
 
+# Optional fields: None keeps the current value for that field.
+TurnConfig = tuple[str | None, str | None, list[AgentTool] | None]
+TurnRenderer = Callable[[], TurnConfig | Awaitable[TurnConfig] | None]
+
 
 async def run_agent_loop(
     *,
@@ -65,6 +72,7 @@ async def run_agent_loop(
     get_follow_up_messages: Callable[[], Sequence[AgentMessage]] | None = None,
     before_tool_call: BeforeToolCall | None = None,
     after_tool_call: AfterToolCall | None = None,
+    render_turn: TurnRenderer | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Run the provider/tool loop and emit Pi-compatible agent events."""
     new_messages = list(prompts)
@@ -91,6 +99,7 @@ async def run_agent_loop(
         return
 
     tool_by_name = {tool.name: tool for tool in tools}
+    last_model = model
     turn = 1
     first_turn = True
     pending = tuple(get_steering_messages() if get_steering_messages else ())
@@ -118,6 +127,33 @@ async def run_agent_loop(
                 yield TurnEndEvent(message=error)
                 yield AgentEndEvent(messages=new_messages)
                 return
+
+            if render_turn is not None:
+                try:
+                    rendered = render_turn()
+                    if isawaitable(rendered):
+                        rendered = await rendered
+                    if rendered is not None:
+                        new_model, new_system, new_tools = rendered
+                        if new_model is not None:
+                            if new_model != last_model:
+                                last_model = new_model
+                                yield ModelChangeEvent(model=new_model)
+                            model = new_model
+                        if new_system is not None:
+                            system = new_system
+                        if new_tools is not None:
+                            tools = new_tools
+                            tool_by_name = {tool.name: tool for tool in tools}
+                except Exception as exc:
+                    error = _error_message(model, f"render_turn failed: {exc}")
+                    messages.append(error)
+                    new_messages.append(error)
+                    yield MessageStartEvent(message=error)
+                    yield MessageEndEvent(message=error)
+                    yield TurnEndEvent(message=error)
+                    yield AgentEndEvent(messages=new_messages)
+                    return
 
             # Python async generators cannot pass a yielding callback through a
             # normal await cleanly, so consume the assistant sub-generator and

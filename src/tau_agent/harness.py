@@ -9,8 +9,13 @@ from dataclasses import dataclass, field
 from inspect import isawaitable
 from typing import Literal
 
+from tau_agent.loop import (
+    AfterToolCall,
+    BeforeToolCall,
+    TurnRenderer,
+    run_agent_loop,
+)
 from tau_agent.events import AgentEvent, MessageEndEvent, MessageStartEvent
-from tau_agent.loop import AfterToolCall, BeforeToolCall, run_agent_loop
 from tau_agent.messages import (
     AgentMessage,
     AssistantMessage,
@@ -46,6 +51,7 @@ class AgentHarnessConfig:
     session_id: str | None = None
     before_tool_call: BeforeToolCall | None = None
     after_tool_call: AfterToolCall | None = None
+    render_turn: TurnRenderer | None = None
 
 
 class SimpleCancellationToken:
@@ -186,6 +192,7 @@ class AgentHarness:
                 get_follow_up_messages=self._drain_follow_up_messages,
                 before_tool_call=self._config.before_tool_call,
                 after_tool_call=self._config.after_tool_call,
+                render_turn=self._config.render_turn,
             ):
                 await self._notify(event)
                 yield event
