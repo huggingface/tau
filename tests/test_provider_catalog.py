@@ -17,6 +17,8 @@ from tau_coding.catalog_loader import (
 from tau_coding.paths import TauPaths
 from tau_coding.provider_catalog import (
     BUILTIN_PROVIDER_CATALOG,
+    ModelCatalogMetadata,
+    ProviderCatalogEntry,
     builtin_provider_entry,
     model_cost_for_input_tokens,
 )
@@ -530,6 +532,33 @@ def test_user_catalog_adds_new_provider(tmp_path: Path) -> None:
     assert entry.default_model == "deepseek-ai/DeepSeek-V4-Pro"
     assert entry.context_windows == {"deepseek-ai/DeepSeek-V4-Pro": 163_840}
     assert entry.thinking_levels == ("off", "low", "medium", "high")
+
+
+def test_user_catalog_round_trips_provider_and_model_api_metadata(tmp_path: Path) -> None:
+    paths = TauPaths(home=tmp_path / ".tau")
+    entry = ProviderCatalogEntry(
+        name="company-ai",
+        display_name="Company AI",
+        kind="openai-compatible",
+        base_url="https://ai.company.example/v1",
+        api_key_env="COMPANY_AI_API_KEY",
+        credential_name="company-ai",
+        models=("chat-proxy", "responses-only"),
+        default_model="chat-proxy",
+        docs_url="https://ai.company.example/docs",
+        api="openai-completions",
+        model_metadata={"responses-only": ModelCatalogMetadata(api="openai-responses")},
+    )
+
+    save_user_catalog_entries((entry,), paths)
+    reloaded = next(item for item in effective_catalog(paths) if item.name == "company-ai")
+
+    assert reloaded.api == "openai-completions"
+    assert reloaded.model_metadata["responses-only"].api == "openai-responses"
+    serialized = user_catalog_path(paths).read_text(encoding="utf-8")
+    assert 'api = "openai-completions"' in serialized
+    assert "[providers.model_metadata.responses-only]" in serialized
+    assert 'api = "openai-responses"' in serialized
 
 
 def test_user_catalog_overlays_builtin_provider(tmp_path: Path) -> None:

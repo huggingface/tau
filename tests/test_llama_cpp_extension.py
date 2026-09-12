@@ -496,7 +496,6 @@ async def test_gpt_and_codex_model_ids_use_local_chat_transport(tmp_path: Path) 
             environment={},
         )
         assert runtime._config.api == "openai-completions"
-        assert runtime._config.infer_api_from_model is False
         await runtime.aclose()
     await client.aclose()
 

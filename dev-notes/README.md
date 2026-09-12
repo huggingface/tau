@@ -26,6 +26,8 @@ User-facing documentation lives in `website/content/` and is published at
 - `catalog-model-safety.md` — checklist for adding providers and models to the built-in catalog safely.
 - `google-stream-completion.md` — why native Google streams require an explicit
   `finishReason` before Tau reports successful completion.
+- `openai-compatible-protocol-selection.md` documents custom-provider API
+  selection, the Pi mapping, and compatibility for existing catalog entries.
 - `startup-thinking-level-fallback.md` — why startup resolves a valid thinking
   level per model instead of assuming the global `medium` default.
 - `models-dev-catalog.md` — Pi-compatible build-time models.dev catalog

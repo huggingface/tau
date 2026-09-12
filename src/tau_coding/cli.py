@@ -44,6 +44,7 @@ from tau_coding.provider_config import (
     provider_kind,
     resolve_provider_selection,
     resolve_startup_thinking_level,
+    save_provider_definition,
     save_provider_settings,
     upsert_openai_compatible_provider,
 )
@@ -162,6 +163,7 @@ def setup_command(
     base_url: str = DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
     api_key_env: str = "OPENAI_API_KEY",
     model: str = DEFAULT_MODEL,
+    api: Literal["openai-completions", "openai-responses"] = "openai-completions",
     timeout_seconds: float = DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS,
     max_retries: int = DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES,
     max_retry_delay_seconds: float = DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS,
@@ -169,10 +171,20 @@ def setup_command(
 ) -> None:
     """Create or update an OpenAI-compatible provider entry."""
     settings = load_provider_settings()
+    existing = next(
+        (item for item in settings.providers if item.name == provider_name),
+        None,
+    )
     provider = OpenAICompatibleProviderConfig(
         name=provider_name,
         base_url=base_url.rstrip("/"),
         api_key_env=api_key_env,
+        api=api,
+        credential_name=(
+            existing.credential_name
+            if isinstance(existing, OpenAICompatibleProviderConfig)
+            else None
+        ),
         models=(model,),
         default_model=model,
         timeout_seconds=timeout_seconds,
@@ -180,6 +192,7 @@ def setup_command(
         max_retry_delay_seconds=max_retry_delay_seconds,
     )
     updated = upsert_openai_compatible_provider(settings, provider, set_default=set_default)
+    save_provider_definition(provider)
     path = save_provider_settings(updated)
     typer.echo(
         f"Saved provider '{provider.name}' to {user_catalog_path()} and preferences to {path}"
@@ -239,6 +252,10 @@ def main(
         str,
         typer.Option("--api-key-env", help="API key environment variable for `tau setup`."),
     ] = "OPENAI_API_KEY",
+    setup_api: Annotated[
+        Literal["openai-completions", "openai-responses"],
+        typer.Option("--api", help="OpenAI API protocol for `tau setup`."),
+    ] = "openai-completions",
     setup_timeout_seconds: Annotated[
         float,
         typer.Option(
@@ -501,6 +518,7 @@ def main(
             base_url=setup_base_url,
             api_key_env=setup_api_key_env,
             model=model or DEFAULT_MODEL,
+            api=setup_api,
             timeout_seconds=setup_timeout_seconds,
             max_retries=setup_max_retries,
             max_retry_delay_seconds=setup_max_retry_delay_seconds,
