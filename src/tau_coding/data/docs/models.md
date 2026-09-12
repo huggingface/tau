@@ -115,10 +115,40 @@ immediately and refreshes in the background. `tau update --models` forces a
 refresh. Results are ETag-revalidated, throttled to four hours, and cached at
 `~/.tau/models-store.json`; a cache applies only when newer than the bundled
 snapshot. Since Tau has no hosted catalog service, it fetches models.dev and
-NVIDIA directly and transforms them locally. `TAU_OFFLINE=1` disables catalog
-network access.
+NVIDIA directly and transforms them locally.
 
-Startup never requires network. Missing, invalid, or incompatible generated or
+The `openai-codex` provider is different: its inventory is account-specific.
+When Codex OAuth is configured, Tau loads the last successful account-matched
+snapshot from `~/.tau/codex-models-store.json` at startup. This makes a model
+that was discovered in an earlier session available immediately. Opening
+`/model` or `/scoped-models` refreshes the authenticated Codex `/models` catalog
+in the background. Because that endpoint filters models by official-client
+version, Tau first resolves the current stable `@openai/codex` release from the
+npm registry. The version lookup is ETag-revalidated, throttled to four hours,
+and cached at `~/.tau/codex-version-store.json`; a stale cached or bundled
+version is the non-fatal fallback. This lets newly gated models appear without a
+Tau release.
+
+A successful live snapshot replaces the checked-in Codex inventory for that
+process and supplies model names, input modalities, reasoning efforts, and
+runtime limits. Tau persists only parsed model metadata and the account ID, not
+OAuth tokens. The cache is never merged into `catalog.toml`, `providers.json`,
+or the models.dev cache. A different account does not use the previous
+account's snapshot. Missing credentials, malformed data, or network failures
+retain the account-matched snapshot or static Codex fallback.
+`TAU_OFFLINE=1` disables catalog network access and permits only the cached or
+bundled data.
+
+Explicit startup and resume of a Codex model absent from the static catalog
+perform authenticated discovery before model validation. Such live-only selections
+require successful discovery; offline startup still supports static models.
+If a refreshed inventory omits the active model, its existing runtime metadata
+remains usable without restoring that model to the picker. Resume restores the
+transcript's model selection, not the model from the session being left. If an
+older session has a stale saved selection, resume it and explicitly select the
+intended model in `/model` to record the correction.
+
+Static-model startup never requires network. Missing, invalid, or incompatible generated or
 cached data falls back silently to `catalog.toml`. User `~/.tau/catalog.toml`
 overlays are applied last. When withdrawing one provider's model, add it to that
 provider's `removed_models` list so stale user overlays cannot restore it.

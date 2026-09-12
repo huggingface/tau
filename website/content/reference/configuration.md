@@ -14,6 +14,7 @@ those locations and file formats.
 ├── catalog.toml        # optional provider/model catalog overlay
 ├── providers.json      # provider/model preferences
 ├── models-store.json   # refreshed models.dev catalog cache
+├── codex-models-store.json # account-scoped Codex model snapshot
 ├── credentials.json    # saved API keys / OAuth tokens (0600, atomic writes)
 ├── state/extensions/    # built-in integration state, including llama.cpp
 ├── settings.json       # general settings (trust default, shell prefix)
@@ -47,6 +48,11 @@ Startup update checks cache their latest PyPI result in
 bundled snapshot. `/model` refreshes it in the background at most every four
 hours; `tau update --models` forces revalidation. Set `TAU_OFFLINE=1` to disable
 catalog network access. User `catalog.toml` overrides still apply after the cache.
+
+`codex-models-store.json` contains only parsed model metadata and the active
+Codex account ID. Tau loads it at startup, then refreshes it when `/model` or
+`/scoped-models` opens; a snapshot from a different account is ignored. It never
+contains OAuth tokens.
 
 ## System prompt files
 
@@ -382,6 +388,7 @@ The built-in frontend reads optional settings from `~/.tau/tui.json`:
     "command_palette": "ctrl+k",
     "session_picker": "ctrl+r",
     "queue_follow_up": "alt+enter",
+    "insert_newline": "shift+enter",
     "accept_completion": "tab",
     "completion_next": "down",
     "completion_previous": "up",
@@ -409,7 +416,10 @@ Tau rejects invalid values, empty keys, and duplicate assignments.
 
 - `sidebar_position`: `"right"` (default), `"left"`, or `"off"`. Controls
   placement of the session metadata sidebar. `"off"` hides the sidebar entirely;
-  the compact session info row below the prompt still works.
+  the compact session info row below the prompt still works. In a running TUI,
+  `/sidebar` temporarily toggles visibility without writing this setting; a
+  temporarily shown `"off"` sidebar uses the default right position and the
+  saved setting is honored again after restart.
 - `turn_notification`: `"desktop"` (default), `"bell"`, or `"off"`. When Tau's
   terminal surface is unfocused and the agent becomes fully idle, `"desktop"`
   selects OSC 9 for Ghostty, iTerm2, and MinTTY, or Kitty's OSC 99 protocol for
@@ -428,8 +438,12 @@ Full list in [Keyboard shortcuts]({{< relref "./keybindings.md" >}}).
 ```
 
 Each working directory gets its own subdirectory; transcripts are append-only
-JSONL preserving messages, model changes, and the active leaf of the session
-tree. Metadata is indexed per project. See the
+JSONL preserving messages and state changes. The last non-legacy-leaf entry in
+file order is the active session-tree tip; historical `leaf` records remain
+readable but are ignored. Per-entry bookmarks are append-only `label` changes
+with `target_id` and an optional `label`; the latest change per target wins and
+`null`/empty clears it. Session display names remain `session_info.title`.
+Metadata is indexed per project. See the
 [Sessions guide]({{< relref "../guides/sessions.md" >}}).
 
 ## Skills, prompts & project context

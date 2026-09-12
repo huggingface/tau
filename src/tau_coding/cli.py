@@ -951,11 +951,18 @@ async def run_openai_rpc_mode(
         session_id=None,
     )
     explicit_selection = provider_name is not None or model is not None
-    selection = resolve_provider_selection(
-        settings,
-        provider_name=provider_name if explicit_selection else record.provider_name,
-        model=model if explicit_selection else record.model,
-    )
+    selected_provider = provider_name if explicit_selection else record.provider_name
+    selected_model = model if explicit_selection else record.model
+    try:
+        selection = resolve_provider_selection(
+            settings, provider_name=selected_provider, model=selected_model
+        )
+    except ProviderConfigError:
+        if (selected_provider or settings.default_provider) != "openai-codex":
+            raise
+        # Bootstrap with the static default; the staged loader discovers and
+        # validates the requested/resumed live-only model before activating it.
+        selection = resolve_provider_selection(settings, provider_name="openai-codex")
     inference_provider = (
         record.inference_provider
         if resume_session_id is not None
@@ -990,7 +997,10 @@ async def run_openai_rpc_mode(
     session = await CodingSession.load(
         CodingSessionConfig(
             provider=provider,
-            model=selection.model,
+            model=selected_model or selection.model,
+            requested_provider=selected_provider if explicit_selection else None,
+            requested_model=selected_model if explicit_selection else None,
+            session_provider_name=record.provider_name,
             thinking_level_override=thinking_level_override,
             cwd=record.cwd,
             storage=jsonl_session_storage(record.path),
@@ -1331,6 +1341,8 @@ async def run_print_mode(
                     "The /local command is interactive-only. In print mode, configure a "
                     "backend in the TUI, then use --provider and --model."
                 )
+            if command.sidebar_toggle_requested:
+                message = "The /sidebar command is interactive-only."
             if command.reload_requested:
                 try:
                     summary = await session.reload()

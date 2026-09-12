@@ -10,6 +10,7 @@ from tau_agent import (
     MessageEndEvent,
     MessageStartEvent,
     MessageUpdateEvent,
+    ResponseTiming,
     TextContent,
     ThinkingContent,
     ToolCall,
@@ -60,6 +61,22 @@ def test_assistant_message_serializes_resolved_response_provider() -> None:
 
     assert payload["provider"] == "huggingface"
     assert payload["responseProvider"] == "test-inference-provider"
+
+
+def test_assistant_message_serializes_response_timing() -> None:
+    message = AssistantMessage(
+        content="done",
+        timing=ResponseTiming(time_to_first_output_ms=1200, total_duration_ms=5000),
+        timestamp=123,
+    )
+
+    payload = message.model_dump(by_alias=True)
+
+    assert payload["timing"] == {
+        "timeToFirstOutputMs": 1200,
+        "totalDurationMs": 5000,
+    }
+    assert message.timing is not None
 
 
 def test_assistant_message_persists_thinking_blocks_and_signatures() -> None:

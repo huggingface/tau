@@ -11,7 +11,7 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 
 | Key | Action |
 | --- | --- |
-| `Enter` | Submit the prompt (or apply a highlighted completion) |
+| `Enter` | Submit the prompt |
 | `Shift+Enter` | Insert a newline |
 | `Esc` | Cancel the active run |
 | `Enter` (while running) | Queue text as steering for the current run |
@@ -49,5 +49,14 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 {{% note title="Remapping" %}}
 Keys use Textual's syntax (`ctrl+k`, `shift+tab`, `down`, `f2`, …). Tau rejects
 unknown names, empty keys, and duplicate assignments so mistakes fail early. Any
-key you don't set keeps its default.
+key you don't set keeps its default. If your terminal cannot distinguish
+`Shift+Enter` from `Enter`, choose a key it can report separately:
+
+```json
+{
+  "keybindings": {
+    "insert_newline": "f2"
+  }
+}
+```
 {{% /note %}}

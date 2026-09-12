@@ -142,6 +142,8 @@ class BoundSession(Protocol):
 
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None: ...
 
+    async def set_label(self, target_id: str, label: str | None) -> object: ...
+
     def set_inference_provider(self, route: str | None) -> str: ...
 
 
@@ -248,6 +250,9 @@ class ExtensionRuntime:
         self._renderer_failures_reported: set[str] = set()
         self._load_diagnostics: list[ResourceDiagnostic] = []
         self._runtime_diagnostics: list[ResourceDiagnostic] = []
+        # Keep constructor-provided paths visible until ``load`` installs the
+        # authoritative resource-path snapshot.
+        self._paths: TauPaths = paths or TauPaths()
         self._session: BoundSession | None = None
         self._ui: UiBridge = ui or NullUiBridge()
         self._turn_requested: TurnRequestedCallback | None = None
@@ -266,6 +271,10 @@ class ExtensionRuntime:
         include_user_dir: bool = True,
     ) -> None:
         """Load built-ins, then discover extensions and run isolated setup."""
+        self._paths = paths.paths or TauPaths(
+            home=paths.root,
+            agents_home=paths.agents_root or Path.home() / ".agents",
+        )
         self._load_built_ins()
         result = load_extensions(
             paths,
@@ -852,6 +861,11 @@ class ExtensionRuntime:
         return self._local_backend_registry
 
     @property
+    def paths(self) -> TauPaths:
+        """Return the resolved Tau filesystem paths for this runtime."""
+        return self._paths
+
+    @property
     def extension_names(self) -> tuple[str, ...]:
         """Return visible extension names in load order."""
         return tuple(extension.name for extension in self._extensions if not extension.hidden)
@@ -958,6 +972,10 @@ class ExtensionRuntime:
     async def append_custom_entry(self, namespace: str, data: dict[str, JSONValue]) -> None:
         """Persist a `CustomEntry` through the bound session."""
         await self.session_view.append_custom_entry(namespace, data)
+
+    async def set_label(self, target_id: str, label: str | None) -> None:
+        """Set or clear a per-entry session bookmark through the bound session."""
+        await self.session_view.set_label(target_id, label)
 
     # -- tools ----------------------------------------------------------------
 

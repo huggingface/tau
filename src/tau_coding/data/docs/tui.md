@@ -5,13 +5,31 @@ portable `tau_agent` harness emits provider-neutral events; the TUI renders
 them and owns interaction. Ctrl+P cycles forward through scoped models;
 Shift+Ctrl+P cycles backward.
 
-## `/model`
+The sidebar usage section shows `avg TPS` and `avg TTFT` across timed session
+history. Effective TPS uses the accumulated time Tau spends awaiting provider
+events, including provider queueing, network waits, prefill, and TTFT; it
+excludes Tau's rendering and persistence between stream pulls. TPS is
+token-weighted. TTFT is the arithmetic mean of provider-wait time through Tau's
+first text, thinking, or tool-call output event. Older assistant messages
+without persisted timing still count toward token usage but not these metrics.
 
-The picker renders cached/bundled choices immediately, then refreshes remote
-catalogs in the background and updates the open list. Refreshes are throttled to
-four hours and failures leave the existing list usable. Use
-`tau update --models` for forced revalidation or `TAU_OFFLINE=1` to disable
-catalog network access.
+## `/model` and `/scoped-models`
+
+The pickers render cached/bundled choices immediately, then refresh remote
+catalogs in the background and update the open list. This includes the
+account-scoped OpenAI Codex model snapshot, so models discovered in an earlier
+session are available before a refresh. Both commands refresh the Codex catalog;
+refresh failures leave the existing list usable. Use `tau update --models` for
+forced public-catalog revalidation or `TAU_OFFLINE=1` to disable catalog network
+access.
+
+## `/sidebar`
+
+Use `/sidebar` to toggle the detailed session sidebar for the current TUI
+session. It preserves a configured `left` or `right` position and never writes
+`~/.tau/tui.json`; the choice is forgotten when Tau restarts. When
+`sidebar_position` is `"off"`, an explicit show temporarily uses the default
+right position.
 
 ## `/local`
 

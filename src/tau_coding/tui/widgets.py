@@ -315,6 +315,15 @@ class TauMarkdownFence(MarkdownFence):
 class ThemedMarkdownWidget(TextualMarkdown):
     """Textual Markdown widget reserved for Tau transcript streaming."""
 
+    @property
+    def allow_select(self) -> bool:
+        """Ignore stale mouse hits after a transcript widget is detached.
+
+        Textual's selection startup dereferences the selected widget's parent.
+        Its compositor can still return a removed widget before the next layout.
+        """
+        return self.parent is not None and super().allow_select
+
     BLOCKS = {
         **TextualMarkdown.BLOCKS,
         "paragraph_open": TauMarkdownBlock,
@@ -829,6 +838,10 @@ class TranscriptView(VerticalScroll):
 
         self.call_after_refresh(restore_anchor)
 
+    async def finish_thinking_message(self) -> None:
+        """Close a thinking block at its explicit stream boundary."""
+        await self._finalize_active_thinking_message()
+
     async def _finalize_active_thinking_message(self) -> None:
         """Stop streaming for a completed thinking block before another block starts."""
         widget = self._active_thinking_widget
@@ -1180,11 +1193,13 @@ class TranscriptView(VerticalScroll):
         *,
         theme: TuiTheme = TAU_DARK_THEME,
         scroll_end: bool = False,
+        preserve_thinking: bool = False,
     ) -> StreamingTranscriptMessageWidget:
         """Create the active assistant message widget if needed."""
         if self._active_assistant_widget is not None:
             return self._active_assistant_widget
-        await self._finalize_active_thinking_message()
+        if not preserve_thinking:
+            await self._finalize_active_thinking_message()
         should_follow = self._should_follow_output if not scroll_end else True
         widget = StreamingTranscriptMessageWidget(
             ChatItem(role="assistant", text=""),
@@ -1209,7 +1224,9 @@ class TranscriptView(VerticalScroll):
         if not self._window_is_latest:
             return
         should_follow = self._should_follow_output if not scroll_end else True
-        widget = await self.start_assistant_message(theme=theme, scroll_end=scroll_end)
+        widget = await self.start_assistant_message(
+            theme=theme, scroll_end=scroll_end, preserve_thinking=True
+        )
         await widget.append_fragment(delta)
         if should_follow:
             self._request_follow_scroll(force=scroll_end)
@@ -1867,6 +1884,13 @@ def _build_sidebar_content(
     if cache_rates:
         usage.append("\ncache: ", style=theme.completion_description)
         usage.append(" · ".join(cache_rates), style=theme.completion_description)
+    performance: list[str] = []
+    if (session_speed := stats.output_tokens_per_second) is not None:
+        performance.append(f"avg TPS: {session_speed:.1f}")
+    if (average_ttft := stats.average_time_to_first_output_ms) is not None:
+        performance.append(f"avg TTFT: {_format_milliseconds(average_ttft)}")
+    if performance:
+        usage.append(f"\n{' · '.join(performance)}", style=theme.completion_description)
 
     threshold = session.auto_compact_token_threshold
     compaction = Text(
@@ -2529,6 +2553,13 @@ def _styled_cwd(cwd: Path, *, theme: TuiTheme) -> Text:
         text.append(short_path, style=theme.prompt_text)
     text.append(f" ({_git_branch(cwd)})", style=theme.completion_description)
     return text
+
+
+def _format_milliseconds(value: float) -> str:
+    rounded = round(value)
+    if rounded < 1000:
+        return f"{rounded}ms"
+    return f"{rounded / 1000:.1f}s"
 
 
 def _compact_token_count(value: int) -> str:

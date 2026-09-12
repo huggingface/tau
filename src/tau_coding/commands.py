@@ -114,6 +114,7 @@ class CommandResult:
     login_picker_requested: bool = False
     custom_provider_login_requested: bool = False
     local_requested: bool = False
+    sidebar_toggle_requested: bool = False
     login_provider: str | None = None
     login_method: str | None = None
     logout_picker_requested: bool = False
@@ -380,6 +381,15 @@ def create_default_command_registry() -> CommandRegistry:
             description="Configure and manage local backends.",
             handler=_local_command,
             search_terms=("backends", "inference"),
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="sidebar",
+            usage="/sidebar",
+            description="Show or hide the TUI sidebar for this session.",
+            handler=_sidebar_command,
+            search_terms=("toggle", "visibility", "panel"),
         )
     )
     registry.register(
@@ -751,6 +761,12 @@ def _local_command(context: CommandContext) -> CommandResult:
     if context.args:
         return CommandResult(handled=True, message="Usage: /local")
     return CommandResult(handled=True, local_requested=True)
+
+
+def _sidebar_command(context: CommandContext) -> CommandResult:
+    if context.args:
+        return CommandResult(handled=True, message="Usage: /sidebar")
+    return CommandResult(handled=True, sidebar_toggle_requested=True)
 
 
 def _login_command(context: CommandContext) -> CommandResult:

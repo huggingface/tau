@@ -90,6 +90,7 @@ from tau_coding.skills import Skill, format_skill_invocation
 from tau_coding.system_prompt import ProjectContextFile
 from tau_coding.tools import create_coding_tools
 from tau_coding.tui import app as tui_app
+from tau_coding.tui.adapter import TuiEventAdapter
 from tau_coding.tui.app import (
     COMPLETION_MAX_VISIBLE_LINES,
     PASTE_DISPLAY_THRESHOLD,
@@ -155,6 +156,7 @@ from tau_coding.tui.widgets import (
     TranscriptWindowBoundary,
     _comma_list,
     _compact_token_count,
+    _format_milliseconds,
     _sidebar_brand,
     _split_rich_style_colors,
     _styled_cwd,
@@ -236,6 +238,10 @@ class FakeSession:
             cached_input_tokens=1_140_000,
             latest_prompt_tokens=1_200_000,
             latest_cached_input_tokens=1_188_000,
+            timed_output_tokens=48_000,
+            response_duration_ms=1_200_000,
+            time_to_first_output_ms=18_000,
+            timed_first_output_count=15,
             estimated_cost=1.24,
         )
         self.system_prompt = "You are Tau."
@@ -244,6 +250,8 @@ class FakeSession:
         self.compact_summaries: list[str] = []
         self.resumed_session_ids: list[str] = []
         self.tree_branch_requests: list[tuple[str, bool, str | None]] = []
+        self.tree_label_requests: list[tuple[str, str | None]] = []
+        self.tree_labels: dict[str, tuple[str, float]] = {}
         self.new_session_count = 0
         self.prompt_texts: list[str] = []
         self.prompt_sources: list[str] = []
@@ -343,6 +351,8 @@ class FakeSession:
             return CommandResult(handled=True, thinking_level=text.removeprefix("/thinking "))
         if text == "/theme":
             return CommandResult(handled=True, theme_picker_requested=True)
+        if text == "/sidebar":
+            return CommandResult(handled=True, sidebar_toggle_requested=True)
         if text.startswith("/theme "):
             return CommandResult(handled=True, theme=text.removeprefix("/theme "))
         if text.startswith("/name "):
@@ -433,9 +443,23 @@ class FakeSession:
         return (
             SessionTreeChoice(entry_id="root", label="user: Root"),
             SessionTreeChoice(entry_id="tool", label="tool call: read", is_tool_call=True),
-            SessionTreeChoice(entry_id="left", label="assistant: Left"),
+            SessionTreeChoice(
+                entry_id="left",
+                label="assistant: Left",
+                bookmark_label=self.tree_labels.get("left", (None, None))[0],
+                label_timestamp=self.tree_labels.get("left", (None, None))[1],
+            ),
             SessionTreeChoice(entry_id="right", label="assistant: Right", active=True),
         )
+
+    async def set_label(self, entry_id: str, label: str | None) -> SimpleNamespace:
+        self.tree_label_requests.append((entry_id, label))
+        timestamp = 1_700_000_000.0 + len(self.tree_label_requests)
+        if label is None:
+            self.tree_labels.pop(entry_id, None)
+        else:
+            self.tree_labels[entry_id] = (label, timestamp)
+        return SimpleNamespace(timestamp=timestamp)
 
     async def branch_to_entry(
         self,
@@ -525,6 +549,17 @@ def _visible_footer_bindings(app: TauTuiApp) -> dict[str, str]:
     }
 
 
+@pytest.mark.parametrize(
+    ("milliseconds", "expected"),
+    [(999, "999ms"), (1000, "1.0s"), (999.6, "1.0s")],
+)
+def test_format_milliseconds_handles_unit_boundary(
+    milliseconds: float,
+    expected: str,
+) -> None:
+    assert _format_milliseconds(milliseconds) == expected
+
+
 def test_session_sidebar_renders_session_metadata() -> None:
     console = Console(record=True, width=80)
 
@@ -549,6 +584,7 @@ def test_session_sidebar_renders_session_metadata() -> None:
     assert "cumulative usage" not in output
     assert "1.2m in, 48k out · ~$1.24" in output
     assert "cache: 99% latest · 95% session" in output
+    assert "avg TPS: 40.0 · avg TTFT: 1.2s" in output
     assert "auto at 200k" in output
     assert "read, write, edit, bash" in output
     assert re.search(r"\./\.tau/skills\s+• review", output)
@@ -834,7 +870,7 @@ def test_session_sidebar_brand_includes_current_version() -> None:
 
     console.print(_sidebar_brand(theme=TAU_DARK_THEME))
 
-    assert "τ = 2π  0.4.0" in console.export_text()
+    assert "τ = 2π  0.4.2" in console.export_text()
 
 
 def test_session_sidebar_uses_prominent_title_and_accented_section_headers() -> None:
@@ -1070,12 +1106,34 @@ def test_state_load_messages_projects_custom_type_on_resume() -> None:
                 custom_type="subagent-notification",
                 details={"id": "run-1"},
             ),
+            CustomMessage(
+                content="hidden model context",
+                custom_type="extension:hidden",
+                display=False,
+            ),
         ]
     )
 
     assert [item.role for item in state.items] == ["user", "custom"]
     assert state.items[1].custom_type == "subagent-notification"
     assert state.items[1].details == {"id": "run-1"}
+
+
+def test_tui_event_adapter_hides_non_display_custom_messages() -> None:
+    state = TuiState()
+    adapter = TuiEventAdapter(state)
+
+    adapter.apply(
+        MessageEndEvent(
+            message=CustomMessage(
+                content="hidden model context",
+                custom_type="extension:hidden",
+                display=False,
+            )
+        )
+    )
+
+    assert state.items == []
 
 
 def test_chat_items_render_as_unlabeled_blocks() -> None:
@@ -2965,6 +3023,36 @@ async def test_tau_markdown_block_remains_selectable_after_mount() -> None:
 
 
 @pytest.mark.anyio
+async def test_detached_transcript_message_ignores_stale_selection_hit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        widget = StreamingTranscriptMessageWidget(
+            ChatItem(role="assistant", text="Select this message."), theme=TAU_DARK_THEME
+        )
+        assert widget.allow_select is False
+        await app.query_one("#transcript").mount(widget)
+        await widget.finalize()
+        await pilot.pause()
+        assert widget.allow_select is True
+        await widget.remove()
+        assert widget.parent is None
+        assert widget.allow_select is False
+
+        # Model a compositor hit left over from before the widget was removed.
+        from textual.geometry import Offset
+
+        monkeypatch.setattr(
+            app.screen, "get_widget_and_offset_at", lambda x, y: (widget, Offset(0, 0))
+        )
+        app.screen._forward_event(events.MouseDown(None, 1, 1, 0, 0, 1, False, False, False))
+        assert app.screen._select_state is None
+        await pilot.pause()
+
+
+@pytest.mark.anyio
 async def test_tui_app_disables_text_selection_while_agent_is_running() -> None:
     app = TauTuiApp(FakeSession())
 
@@ -3100,7 +3188,7 @@ async def test_tui_app_footer_hints_update_for_completions() -> None:
 
         assert _visible_footer_bindings(app) == {
             "Choose": "Up/Down",
-            "Complete": "Tab/Enter",
+            "Complete": "Tab",
             "Close": "escape",
         }
 
@@ -3403,6 +3491,76 @@ async def test_tui_sidebar_shows_on_left_when_configured() -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("position", ["left", "right"])
+async def test_tui_sidebar_command_toggles_visibility_without_changing_position(
+    position: str,
+) -> None:
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(sidebar_position=position))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        sidebar = app.query_one("#sidebar")
+        assert sidebar.display is True
+        assert app.has_class("-sidebar-right") is (position == "right")
+
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/sidebar"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert sidebar.display is False
+        assert app.has_class("-sidebar-right") is (position == "right")
+        assert app.tui_settings.sidebar_position == position
+
+        prompt.value = "/sidebar"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert sidebar.display is True
+        assert app.has_class("-sidebar-right") is (position == "right")
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_command_hides_user_sidebar_across_resize() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        sidebar = app.query_one("#sidebar")
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/sidebar"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert sidebar.display is False
+
+        await pilot.resize_terminal(width=80, height=30)
+        await pilot.resize_terminal(width=120, height=40)
+        await pilot.pause()
+        assert sidebar.display is False
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_off_can_be_shown_temporarily_on_right() -> None:
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(sidebar_position="off"))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        sidebar = app.query_one("#sidebar")
+        assert sidebar.display is False
+        assert not app.has_class("-sidebar-right")
+
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/sidebar"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert sidebar.display is True
+        assert app.has_class("-sidebar-right")
+        assert app.tui_settings.sidebar_position == "off"
+        assert not tui_settings_path().exists()
+
+        prompt.value = "/sidebar"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert sidebar.display is False
+        assert not app.has_class("-sidebar-right")
+
+
+@pytest.mark.anyio
 async def test_tui_sidebar_is_hidden_when_off() -> None:
     app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(sidebar_position="off"))
 
@@ -3658,6 +3816,34 @@ def test_tui_app_uses_light_theme_css_variables() -> None:
     assert variables["footer-description-foreground"] == "#111827"
     assert variables["footer-key-foreground"] == "#0f766e"
     assert app.current_theme.dark is False
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "theme",
+    [TAU_DARK_THEME, TAU_LIGHT_THEME, HIGH_CONTRAST_THEME],
+    ids=lambda theme: theme.name,
+)
+async def test_list_view_scrollbars_use_theme_colors(theme: TuiTheme) -> None:
+    app = TauTuiApp(FakeSession(), tui_settings=TuiSettings(theme=theme.name))
+
+    async with app.run_test() as pilot:
+        await app.push_screen(SessionPickerScreen([], theme=theme))
+        await pilot.pause()
+
+        list_view = app.screen.query_one("#session-picker-list", ListView)
+
+        assert list_view.styles.scrollbar_background == Color.parse(theme.transcript_background)
+        assert list_view.styles.scrollbar_color == Color.parse(theme.border)
+        assert list_view.styles.scrollbar_background_hover == Color.parse(
+            theme.transcript_background
+        )
+        assert list_view.styles.scrollbar_color_hover == Color.parse(theme.highlight_background)
+        assert list_view.styles.scrollbar_background_active == Color.parse(
+            theme.transcript_background
+        )
+        assert list_view.styles.scrollbar_color_active == Color.parse(theme.accent)
+        assert list_view.styles.scrollbar_size_vertical == 2
 
 
 def test_tui_app_registers_only_tau_themes_with_textual() -> None:
@@ -5503,6 +5689,35 @@ async def test_tui_app_submits_multiline_prompt_with_enter() -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(("key", "hint"), [("f7", "F7"), ("ctrl+j", "Ctrl+J")])
+async def test_tui_app_uses_configured_newline_keybinding(key: str, hint: str) -> None:
+    session = FakeSession(events=[AgentStartEvent(), AgentEndEvent()])
+    app = TauTuiApp(
+        session,
+        tui_settings=TuiSettings(keybindings=TuiKeybindings(insert_newline=key)),
+    )
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "first"
+        prompt.cursor_position = len(prompt.value)
+
+        await pilot.press(key)
+
+        assert prompt.value == "first\n"
+        assert session.prompt_texts == []
+        assert f"{hint} inserts a newline" in prompt.placeholder
+        assert _visible_footer_bindings(app)["Newline"] == key
+
+        prompt.value += "second"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert session.prompt_texts == ["first\nsecond"]
+        assert prompt.value == ""
+
+
+@pytest.mark.anyio
 async def test_tui_extension_turn_delivers_source_extension() -> None:
     # An extension-initiated idle turn threads source="extension" through the
     # serialized prompt path; ordinary user submits stay source="interactive".
@@ -5917,7 +6132,7 @@ async def test_tui_app_completes_registered_slash_command() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_app_enter_accepts_completion_without_submitting() -> None:
+async def test_tui_app_enter_submits_without_accepting_completion() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
@@ -5927,13 +6142,14 @@ async def test_tui_app_enter_accepts_completion_without_submitting() -> None:
         app._refresh_completions()
 
         await pilot.press("enter")
+        await pilot.pause()
 
-        assert prompt.value == "/session"
-        assert app.state.items == []
+        assert prompt.value == ""
+        assert app.session.prompt_texts == ["/se"]
 
 
 @pytest.mark.anyio
-async def test_tui_app_enter_accepts_arrow_selected_completion() -> None:
+async def test_tui_app_enter_ignores_arrow_selected_completion() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
@@ -5946,9 +6162,10 @@ async def test_tui_app_enter_accepts_arrow_selected_completion() -> None:
         assert selected is not None
 
         await pilot.press("enter")
+        await pilot.pause()
 
-        assert prompt.value == selected.replacement
-        assert app.state.items == []
+        assert prompt.value == ""
+        assert app.session.prompt_texts == ["/s"]
 
 
 @pytest.mark.anyio
@@ -6511,6 +6728,52 @@ async def test_tui_app_tree_picker_toggles_tool_calls() -> None:
             "* assistant: Right",
         ]
         assert tree_list.index == 3
+
+
+@pytest.mark.anyio
+async def test_tui_tree_labels_filter_timestamps_and_clear() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/tree"
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("up", "l")
+        await pilot.pause()
+
+        field = app.screen.query_one("#extension-input-field", Input)
+        field.value = "checkpoint"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, TreePickerScreen)
+        tree_list = app.screen.query_one("#tree-picker-list", ListView)
+        labels = [str(item.query_one(Label).render()) for item in tree_list.children]
+        assert "[checkpoint] assistant: Left" in labels[2]
+        assert session.tree_label_requests == [("left", "checkpoint")]
+
+        await pilot.press("ctrl+l")
+        await pilot.pause()
+        assert "2023-11-14" in str(tree_list.children[2].query_one(Label).render())
+
+        await pilot.press("ctrl+f")
+        await pilot.pause()
+        assert len(tree_list.children) == 1
+        assert "[checkpoint]" in str(tree_list.children[0].query_one(Label).render())
+
+        await pilot.press("l")
+        await pilot.pause()
+        field = app.screen.query_one("#extension-input-field", Input)
+        assert field.value == "checkpoint"
+        field.value = ""
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, TreePickerScreen)
+        assert session.tree_label_requests == [("left", "checkpoint"), ("left", None)]
+        assert len(app.screen.query_one("#tree-picker-list", ListView).children) == 0
 
 
 @pytest.mark.anyio
@@ -7730,6 +7993,49 @@ async def test_tui_login_subscription_opens_oauth_provider_picker() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_login_api_provider_picker_highlights_first_provider() -> None:
+    # Regression test for issue #494: the list was populated and its index set
+    # in the same pass, so the index was assigned while the list was still
+    # empty and validated back to None. Nothing was highlighted when the picker
+    # opened and the first down key skipped past the first provider.
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/login"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, LoginMethodPickerScreen)
+        app.screen.action_cursor_down()
+        app.screen.action_select_cursor()
+        await pilot.pause()
+
+        assert isinstance(app.screen, LoginProviderPickerScreen)
+        screen = app.screen
+        provider_list = screen.query_one("#login-provider-list", ListView)
+
+        # The initial refresh must highlight the first provider before the
+        # picker can receive a navigation key.
+        assert provider_list.index == 0
+        assert provider_list.highlighted_child is not None
+
+        # Drive filtering through the search input event path. The refreshed
+        # list must still highlight its first match before Down/Enter arrive.
+        search = screen.query_one("#login-provider-search", Input)
+        search.value = "moonshot"
+        await pilot.wait_for_scheduled_animations()
+        assert provider_list.index == 0
+        assert screen.visible_providers[0].name.startswith("moonshot")
+
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, LoginScreen)
+        assert app.screen.provider.name == "moonshotai-cn"
+
+
+@pytest.mark.anyio
 async def test_tui_login_api_provider_picker_filters_by_name_and_display_name() -> None:
     app = TauTuiApp(FakeSession())
 
@@ -7790,7 +8096,8 @@ async def test_tui_login_api_provider_picker_handles_no_matches() -> None:
         assert isinstance(app.screen, LoginProviderPickerScreen)
         search = app.screen.query_one("#login-provider-search", Input)
         search.value = "no-such-provider"
-        await pilot.pause()
+        # Refreshing the list awaits its mounts, so flush them before asserting.
+        await pilot.wait_for_scheduled_animations()
 
         provider_list = app.screen.query_one("#login-provider-list", ListView)
         assert len(provider_list.children) == 0
@@ -7897,10 +8204,9 @@ async def test_tui_scoped_models_picker_toggles_scoped_models_without_switching_
         await pilot.pause()
 
         assert isinstance(app.screen, ModelPickerScreen)
+        assert session.model_catalog_refresh_count == 1
         tabs = app.screen.query_one("#model-picker-tabs", Static)
-        assert str(tabs.render()) == (
-            "Scoped models setup — Enter toggles membership; active model is unchanged"
-        )
+        assert str(tabs.render()) == "Tabs: ● All models  ○ Scoped models"
         await pilot.press("enter")
         await pilot.pause()
 
@@ -7919,6 +8225,53 @@ async def test_tui_scoped_models_picker_toggles_scoped_models_without_switching_
         assert session.scoped_model_choices == ()
         assert session.provider_name == "openai"
         assert session.model == "fake-model"
+
+
+@pytest.mark.anyio
+async def test_tui_scoped_models_picker_tab_shows_only_scoped_models_for_unselect() -> None:
+    session = FakeSession()
+    session.scoped_model_choices = (
+        ModelChoice(provider_name="openai", model="fake-model"),
+        ModelChoice(provider_name="openai", model="other-model"),
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/scoped-models"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ModelPickerScreen)
+        assert session.model_catalog_refresh_count == 1
+        await pilot.press("tab")
+        await pilot.pause()
+
+        tabs = app.screen.query_one("#model-picker-tabs", Static)
+        assert str(tabs.render()) == "Tabs: ○ All models  ● Scoped models"
+        model_list = app.screen.query_one("#model-picker-list", ListView)
+        labels = [str(item.query_one(Label).render()) for item in model_list.children]
+        assert labels == [
+            "* openai:fake-model [scoped]",
+            "  openai:other-model [scoped]",
+        ]
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert session.scoped_model_choices == (
+            ModelChoice(provider_name="openai", model="other-model"),
+        )
+        assert session.provider_name == "openai"
+        assert session.model == "fake-model"
+        labels = [str(item.query_one(Label).render()) for item in model_list.children]
+        assert labels == ["  openai:other-model [scoped]"]
+
+        await pilot.press("tab")
+        await pilot.pause()
+
+        tabs = app.screen.query_one("#model-picker-tabs", Static)
+        assert str(tabs.render()) == "Tabs: ● All models  ○ Scoped models"
 
 
 @pytest.mark.anyio

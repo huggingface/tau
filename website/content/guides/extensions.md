@@ -175,6 +175,7 @@ def setup(tau):
     tau.send_user_message("text", deliver_as="follow_up")  # or "steer"
     tau.send_custom_message("text", custom_type="my-ext:status", details={...})
     await tau.append_entry("my-ext:records", {"key": "value"})
+    await tau.set_label(entry_id, "checkpoint")  # None or empty clears
     tau.notify("message", "info")            # "info" | "warning" | "error"
     tau.set_inference_provider("deepinfra")   # Hugging Face route; None resets
 
@@ -184,6 +185,7 @@ def setup(tau):
     tau.context.inference_provider_mode        # "automatic" or "fixed"
     tau.context.session_id, tau.context.session_name
     tau.context.thinking_level, tau.context.system_prompt
+    tau.context.paths                 # resolved TauPaths snapshot
     tau.context.is_running, tau.context.has_ui
     tau.context.transcript   # parent conversation, deep-copied AgentMessages
 
@@ -212,6 +214,24 @@ reject the operation. The current resolved route is available as
 or async and always receive `(event, context)`; the context is freshly created
 for each dispatch. Action methods raise `ExtensionError` if called before the session
 is bound — register handlers in `setup` and act on events instead.
+
+#### Resolved filesystem paths
+
+`tau.context.paths` is a read-only `TauPaths` snapshot for the active session.
+If the host supplies `TauResourcePaths.paths`, that object is authoritative and
+preserves custom `TauPaths.home` and `TauPaths.agents_home` locations. Otherwise
+Tau derives one as
+`TauPaths(home=resource_paths.root, agents_home=resource_paths.agents_root or ~/.agents)`.
+In other words, `root`/`home` controls Tau's user data and extension directory,
+while `agents_root`/`agents_home` controls `.agents` resources; the project
+`cwd` remains separate. `ExtensionRuntime(paths=custom_paths)` exposes its
+constructor paths immediately, before `load`; a later `load` makes its
+`TauResourcePaths` snapshot authoritative.
+
+The snapshot belongs to the extension generation. After `/reload` (and other
+fresh-generation replacement flows), a context captured from the outgoing
+generation is stale: even reading `context.paths` raises `ExtensionError`. Read
+`context.paths` again from the new generation's context.
 
 ### Local-backend registrations
 
@@ -641,7 +661,10 @@ All other handler failures are contained: they are recorded as diagnostics
 run it queues as steering or a follow-up; when the session is idle the TUI
 starts a new turn with it — this is how background work reports back.
 `append_entry(namespace, data)` persists extension-owned data as a durable
-session entry replayed on resume.
+session entry replayed on resume. `set_label(entry_id, label)` creates, changes,
+or clears (`None`/empty) a bookmark on an existing session entry using the same
+validation and append-only storage as the `/tree` label editor. It raises for an
+unknown entry ID.
 
 ### Custom message rendering
 
@@ -685,8 +708,9 @@ tau.send_custom_message(
   renderer raises or returns a non-string, the message falls back to its raw
   `content` — a broken renderer never crashes the UI.
 - Custom rendering works in the interactive TUI and the `-p` print transcript,
-  and survives `/resume` (the `custom_type`/`details` are persisted with the
-  message). In the TUI, a custom message appears once its user event is
+  and survives `/resume`. Tau persists it as a first-class `custom_message`
+  session entry whose `custom_type` and `details` can be inspected without
+  parsing a generic message payload. In the TUI, a custom message appears once its user event is
   confirmed by the run (a moment after delivery), rather than instantly like a
   typed prompt's optimistic echo.
 

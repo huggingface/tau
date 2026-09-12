@@ -95,6 +95,11 @@ send no cache breakpoints, since not every gateway accepts them. Watch the
 sidebar's cache hit rate to see caching working; see
 [The interactive session]({{< relref "./tui.md" >}}) for how to read it.
 
+Anthropic reports `input_tokens` as the fresh, uncached portion after the last
+cache breakpoint. Tau preserves that value as fresh input, retains the separate
+cache-read and cache-write counters, and reports total input as their sum. This
+keeps usage and cost displays aligned with Anthropic's response contract.
+
 #### Codex subscription context limits
 
 OpenAI's public API and the ChatGPT/Codex subscription are separate serving
@@ -103,12 +108,35 @@ window through Codex OAuth than through an API key. For example, the public
 GPT-5.6 Sol API advertises a 1.05M-token window, while Codex has advertised
 substantially smaller limits through its authenticated model catalog.
 
-Tau queries that catalog when a Codex session starts and uses the returned
-context window and automatic-compaction threshold for the session. If discovery
-is unavailable, Tau falls back to conservative Codex-specific values from its
-built-in catalog; it does not reuse the public API limit. `/session` reports both
-the active value and whether it came from the live provider catalog or Tau's
-configured fallback.
+Tau loads the last successful account-specific snapshot from
+`~/.tau/codex-models-store.json` when a session starts, so models discovered in a
+previous session are immediately available without opening a picker. It refreshes
+the authenticated catalog in the background when `/model` or `/scoped-models`
+opens. Since OpenAI filters the response by official-client version, Tau resolves
+the current stable `@openai/codex` release from the npm registry and caches that
+safe, non-secret version for four hours at `~/.tau/codex-version-store.json`.
+Failed lookups use the stale cached version or Tau's bundled fallback. A
+successful refresh replaces the Codex model picker inventory, so newly enabled
+and newly client-gated models appear without a Tau release. Models unavailable to
+the account are not copied from the separate public API catalog. Tau also uses
+reported context windows, compaction thresholds, input modalities, and reasoning
+efforts when present.
+
+If discovery is unavailable or invalid, Tau retains the last account-matched
+snapshot, or the checked-in Codex model list when no snapshot is available; it
+does not reuse the public API inventory or limits. `/session` reports whether the
+active context value came from the live provider catalog or Tau's configured
+fallback. The model cache contains only parsed account/model metadata (no OAuth
+tokens), is scoped to the saved Codex account ID, and is never written to
+`catalog.toml`, `providers.json`, or the models.dev cache.
+
+Starting or resuming a live-only Codex model discovers the account inventory
+before validating the selection. This requires successful discovery; offline
+startup remains available for static models. If a later refresh omits the active
+model, Tau preserves its runtime metadata without adding it back to the picker.
+Resume restores the transcript's saved model selection. If an older session
+restores a stale selection, resume it and explicitly choose the intended model
+in `/model` once to record the correction.
 
 Live limits can vary by account or rollout and may change independently of Tau.
 A discovery failure is non-fatal: Tau reports it in `/session` and continues with
@@ -137,6 +165,23 @@ separate `opencode-go` and `opencode` names, allowing different keys when
 needed. Available models and plan limits change over time; consult the
 [OpenCode Go](https://opencode.ai/docs/go) and
 [OpenCode Zen](https://opencode.ai/docs/zen) pages for the current list.
+
+### Z.AI
+
+Log in with `/login zai` or set `ZAI_API_KEY`. Tau sends Z.AI's provider-specific
+thinking object rather than an OpenAI `reasoning_effort` field:
+`{"thinking": {"type": "enabled"}}` for an enabled logical mode and
+`{"thinking": {"type": "disabled"}}` for `off`. This keeps configured
+thinking enabled for GLM models whose endpoint does not accept the raw effort
+field.
+
+Z.AI documents `reasoning_effort` only for GLM-5.2 and newer, with model-specific
+values. Tau therefore emits that additional field only when the selected model's
+compatibility metadata explicitly supports it; unsupported providers and models
+continue to omit it. See the [Z.AI deep-thinking
+reference](https://docs.z.ai/guides/capabilities/thinking) and [chat-completion
+schema](https://docs.z.ai/api-reference/llm/chat-completion) for the authoritative
+wire contract.
 
 ### Hugging Face Inference Providers
 
@@ -289,7 +334,8 @@ provider/model access varies by plan and policy.
 - **Ctrl+P** / **Shift+Ctrl+P** — cycle your *scoped* (favorite) models
   forward / backward without opening the picker.
   Build the list with `/scoped-models`, or press `Space` on a model in the
-  `/model` picker.
+  `/model` picker. In the `/scoped-models` modal, press `Tab` to switch to a
+  scoped-only view where `Enter` removes models from the list.
 
 Tau validates the selected model against the active provider's configured model
 list before creating or refreshing a runtime provider. This prevents accidental

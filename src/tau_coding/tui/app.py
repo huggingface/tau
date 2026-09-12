@@ -62,6 +62,7 @@ from tau_agent.provider_events import (
     AssistantMessageEvent,
     TextDeltaEvent,
     ThinkingDeltaEvent,
+    ThinkingEndEvent,
 )
 from tau_agent.tools import AgentTool
 from tau_agent.types import JSONValue
@@ -197,7 +198,6 @@ COMPLETION_MAX_VISIBLE_LINES = 16
 COMPLETION_INITIAL_TERMINAL_FRACTION = 3
 COMPLETION_MIN_TRANSCRIPT_LINES = 4
 COMPLETION_WIDGET_CHROME_LINES = 3
-PROMPT_PLACEHOLDER = "Ask Tau…  Enter submits, Shift+Enter inserts a newline"
 NO_STORED_CREDENTIALS_MESSAGE = (
     "No stored credentials to remove. /logout only removes credentials saved by /login; "
     "environment variables and providers.json config are unchanged."
@@ -801,7 +801,7 @@ class PromptInput(TextArea):
             event.stop()
             event.prevent_default()
             await self._completion_target().action_submit_prompt()
-        elif event.key == "shift+enter":
+        elif event.key == keybindings.insert_newline:
             event.stop()
             event.prevent_default()
             self.insert("\n")
@@ -1015,17 +1015,29 @@ class ExtensionInputScreen(ModalScreen[str | None]):
 
     BINDINGS: ClassVar[list[BindingEntry]] = [Binding("escape", "cancel", "Cancel")]
 
-    def __init__(self, title: str, placeholder: str = "", *, theme: TuiTheme) -> None:
+    def __init__(
+        self,
+        title: str,
+        placeholder: str = "",
+        *,
+        theme: TuiTheme,
+        value: str = "",
+    ) -> None:
         super().__init__()
         self.title_text = title
         self.placeholder = placeholder
         self.theme = theme
+        self.value = value
 
     def compose(self) -> ComposeResult:
         """Compose the text prompt."""
         with Vertical(id="extension-input"):
             yield Static(self.title_text, id="extension-input-title", markup=False)
-            yield Input(placeholder=self.placeholder, id="extension-input-field")
+            yield Input(
+                value=self.value,
+                placeholder=self.placeholder,
+                id="extension-input-field",
+            )
             yield Static("Enter submits - Escape cancels", id="extension-input-help")
 
     def on_mount(self) -> None:
@@ -1798,16 +1810,37 @@ class TreePickerResult:
 class _TreePickerListItem(ListItem):
     """Tree entry that keeps inline label colors readable when highlighted."""
 
-    def __init__(self, choice: SessionTreeChoice, *, theme: TuiTheme) -> None:
+    def __init__(
+        self,
+        choice: SessionTreeChoice,
+        *,
+        theme: TuiTheme,
+        show_label_timestamp: bool = False,
+    ) -> None:
         self.choice = choice
         self.theme = theme
-        super().__init__(Label(_tree_picker_label(choice, theme=theme), markup=False))
+        self.show_label_timestamp = show_label_timestamp
+        super().__init__(
+            Label(
+                _tree_picker_label(
+                    choice,
+                    theme=theme,
+                    show_label_timestamp=show_label_timestamp,
+                ),
+                markup=False,
+            )
+        )
 
     def watch_highlighted(self, value: bool) -> None:
         """Recolor inline label spans when the list highlight changes."""
         super().watch_highlighted(value)
         self.query_one(Label).update(
-            _tree_picker_label(self.choice, theme=self.theme, highlighted=value)
+            _tree_picker_label(
+                self.choice,
+                theme=self.theme,
+                highlighted=value,
+                show_label_timestamp=self.show_label_timestamp,
+            )
         )
 
 
@@ -1822,6 +1855,9 @@ class TreePickerScreen(ModalScreen[TreePickerResult | None]):
         Binding("s", "select_with_summary", "Summarize", show=False),
         Binding("c", "select_with_custom_summary", "Custom summary", show=False),
         Binding("ctrl+t", "toggle_tool_calls", "Tool calls", show=False),
+        Binding("l", "edit_label", "Label", show=False),
+        Binding("ctrl+f", "toggle_labeled_only", "Labeled", show=False),
+        Binding("ctrl+l", "toggle_label_timestamps", "Label time", show=False),
     ]
 
     def __init__(
@@ -1829,11 +1865,15 @@ class TreePickerScreen(ModalScreen[TreePickerResult | None]):
         choices: Sequence[SessionTreeChoice],
         *,
         theme: TuiTheme,
+        on_label_change: Callable[[str, str | None], Awaitable[float]] | None = None,
     ) -> None:
         super().__init__()
         self.choices = tuple(choices)
         self.theme = theme
+        self.on_label_change = on_label_change
         self.show_tool_calls = True
+        self.labeled_only = False
+        self.show_label_timestamps = False
 
     def compose(self) -> ComposeResult:
         """Compose the tree picker."""
@@ -1874,6 +1914,15 @@ class TreePickerScreen(ModalScreen[TreePickerResult | None]):
         elif event.key == "ctrl+t":
             event.stop()
             self.action_toggle_tool_calls()
+        elif event.key == "l":
+            event.stop()
+            self.action_edit_label()
+        elif event.key == "ctrl+f":
+            event.stop()
+            self.action_toggle_labeled_only()
+        elif event.key == "ctrl+l":
+            event.stop()
+            self.action_toggle_label_timestamps()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Dismiss with the selected entry id."""
@@ -1928,16 +1977,72 @@ class TreePickerScreen(ModalScreen[TreePickerResult | None]):
 
     def action_toggle_tool_calls(self) -> None:
         """Toggle tool-call entries in the tree picker."""
-        self.run_worker(self._toggle_tool_calls())
-
-    async def _toggle_tool_calls(self) -> None:
         selected_entry_id = self._selected_entry_id()
         self.show_tool_calls = not self.show_tool_calls
+        self.run_worker(self._refresh_choices(selected_entry_id=selected_entry_id))
+
+    def action_toggle_labeled_only(self) -> None:
+        """Toggle the Pi-style labeled-entry filter."""
+        selected_entry_id = self._selected_entry_id()
+        self.labeled_only = not self.labeled_only
+        self.run_worker(self._refresh_choices(selected_entry_id=selected_entry_id))
+
+    def action_toggle_label_timestamps(self) -> None:
+        """Toggle display of the latest label-change timestamp."""
+        selected_entry_id = self._selected_entry_id()
+        self.show_label_timestamps = not self.show_label_timestamps
+        self.run_worker(self._refresh_choices(selected_entry_id=selected_entry_id))
+
+    def action_edit_label(self) -> None:
+        """Open a prefilled editor; submitting an empty value clears the label."""
+        selected = self._selected_choice()
+        if selected is None:
+            return
+        self.app.push_screen(
+            ExtensionInputScreen(
+                "Label this session entry",
+                "Empty clears the label",
+                theme=self.theme,
+                value=selected.bookmark_label or "",
+            ),
+            callback=lambda value: self._handle_label_input(selected.entry_id, value),
+        )
+
+    def _handle_label_input(self, entry_id: str, value: str | None) -> None:
+        if value is None:
+            return
+        self.run_worker(self._apply_label(entry_id, value))
+
+    async def _apply_label(self, entry_id: str, value: str) -> None:
+        normalized = value.strip() or None
+        try:
+            if self.on_label_change is None:
+                raise RuntimeError("Session labels are not available.")
+            timestamp = await self.on_label_change(entry_id, normalized)
+        except Exception as exc:  # noqa: BLE001 - keep the tree open and surface persistence errors
+            self.app.notify(f"Error: {exc}", severity="error")
+            return
+        self.choices = tuple(
+            replace(
+                choice,
+                bookmark_label=normalized,
+                label_timestamp=timestamp if normalized is not None else None,
+            )
+            if choice.entry_id == entry_id
+            else choice
+            for choice in self.choices
+        )
+        await self._refresh_choices(selected_entry_id=entry_id)
+
+    async def _refresh_choices(self, *, selected_entry_id: str | None = None) -> None:
+        selected_entry_id = selected_entry_id or self._selected_entry_id()
         tree_list = self.query_one("#tree-picker-list", ListView)
         await tree_list.clear()
         await tree_list.extend(self._list_items())
         visible_choices = self._visible_choices()
-        tree_list.index = _tree_choice_index(visible_choices, selected_entry_id)
+        tree_list.index = (
+            _tree_choice_index(visible_choices, selected_entry_id) if visible_choices else None
+        )
         self.query_one("#tree-picker-help", Static).update(self._help_text())
 
     def _selected_entry_id(self) -> str | None:
@@ -1948,19 +2053,36 @@ class TreePickerScreen(ModalScreen[TreePickerResult | None]):
             return None
         return visible_choices[index].entry_id
 
+    def _selected_choice(self) -> SessionTreeChoice | None:
+        entry_id = self._selected_entry_id()
+        return next((choice for choice in self.choices if choice.entry_id == entry_id), None)
+
     def _visible_choices(self) -> tuple[SessionTreeChoice, ...]:
-        if self.show_tool_calls:
-            return self.choices
-        return tuple(choice for choice in self.choices if not choice.is_tool_call)
+        return tuple(
+            choice
+            for choice in self.choices
+            if (self.show_tool_calls or not choice.is_tool_call)
+            and (not self.labeled_only or choice.bookmark_label is not None)
+        )
 
     def _list_items(self) -> list[ListItem]:
-        return [_TreePickerListItem(choice, theme=self.theme) for choice in self._visible_choices()]
+        return [
+            _TreePickerListItem(
+                choice,
+                theme=self.theme,
+                show_label_timestamp=self.show_label_timestamps,
+            )
+            for choice in self._visible_choices()
+        ]
 
     def _help_text(self) -> str:
         tool_call_state = "shown" if self.show_tool_calls else "hidden"
+        labeled_state = "only" if self.labeled_only else "all"
+        time_state = "shown" if self.show_label_timestamps else "hidden"
         return (
-            "Enter branches - S summarizes - C custom summary - "
-            f"Ctrl+T tool calls {tool_call_state} - Escape closes"
+            "Enter branch · L label/clear · S summary · C custom · "
+            f"Ctrl+T tool calls {tool_call_state} · Ctrl+F labels {labeled_state} · "
+            f"Ctrl+L times {time_state} · Esc close"
         )
 
     def action_cancel(self) -> None:
@@ -2184,18 +2306,18 @@ class LoginProviderPickerScreen(ModalScreen[str | _LoginFlowAction | None]):
             )
             yield Static("Enter selects - Escape closes", id="login-provider-help")
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         """Focus the provider search field."""
         self.query_one("#login-provider-search", Input).focus()
-        self._refresh_provider_list()
+        await self._refresh_provider_list()
 
-    def on_input_changed(self, event: Input.Changed) -> None:
+    async def on_input_changed(self, event: Input.Changed) -> None:
         """Filter providers as the search value changes."""
         if event.input.id != "login-provider-search":
             return
         event.stop()
         self.visible_providers = _filter_login_providers(self.providers, event.value)
-        self._refresh_provider_list()
+        await self._refresh_provider_list()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Select the highlighted provider from the search field."""
@@ -2242,16 +2364,21 @@ class LoginProviderPickerScreen(ModalScreen[str | _LoginFlowAction | None]):
         self.dismiss(None)
 
     def _select_visible_provider(self) -> None:
-        provider_list = self.query_one("#login-provider-list", ListView)
-        index = provider_list.index
-        if index is None or not self.visible_providers:
+        if not self.visible_providers:
             return
-        self.dismiss(self.visible_providers[index].name)
-
-    def _refresh_provider_list(self) -> None:
         provider_list = self.query_one("#login-provider-list", ListView)
-        provider_list.clear()
-        provider_list.extend(
+        # Fall back to the first match: submitting from the search field can
+        # land here before the refreshed list has applied its highlight.
+        index = provider_list.index
+        self.dismiss(self.visible_providers[0 if index is None else index].name)
+
+    async def _refresh_provider_list(self) -> None:
+        provider_list = self.query_one("#login-provider-list", ListView)
+        # Await the mounts: assigning the index while the list is still empty
+        # validates it back to None, leaving the first provider unreachable
+        # with the down key (issue #494).
+        await provider_list.clear()
+        await provider_list.extend(
             [
                 ListItem(Label(_login_provider_label(provider), markup=False))
                 for provider in self.visible_providers
@@ -2664,8 +2791,6 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
 
     def action_toggle_mode(self) -> None:
         """Toggle between all models and scoped models."""
-        if self.picker_kind != "model":
-            return
         self.mode = "scoped" if self.mode == "all" else "all"
         self._refresh_model_list()
 
@@ -2738,12 +2863,23 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         scope_count = len(self.scoped_choices)
         tabs = self.query_one("#model-picker-tabs", Static)
         if self.picker_kind == "scoped":
-            tabs.update("Scoped models setup — Enter toggles membership; active model is unchanged")
-            help_text = (
-                "No matching models - Enter toggles scoped model"
-                if not self.visible_choices
-                else f"Enter toggles scoped model - {scope_count} scoped"
-            )
+            if self.mode == "all":
+                tabs.update("Tabs: ● All models  ○ Scoped models")
+                help_text = (
+                    "all models: no matching models - Tab switches to scoped models"
+                    if not self.visible_choices
+                    else (
+                        "All models - Enter toggles scoped model - Tab switches tabs - "
+                        f"{scope_count} scoped - active model is unchanged"
+                    )
+                )
+            else:
+                tabs.update("Tabs: ○ All models  ● Scoped models")
+                help_text = (
+                    "scoped models: no scoped models - Tab switches to all models"
+                    if not self.visible_choices
+                    else "Scoped models - Enter removes scoped model - Tab switches tabs"
+                )
         elif self.mode == "all":
             tabs.update("Tabs: ● All models  ○ Scoped models")
             help_text = (
@@ -3404,6 +3540,16 @@ class TauTuiApp(App[None]):
         border: tall $tau-border;
     }
 
+    ListView {
+        scrollbar-background: $tau-transcript-background;
+        scrollbar-color: $tau-border;
+        scrollbar-color-hover: $tau-highlight-background;
+        scrollbar-background-hover: $tau-transcript-background;
+        scrollbar-color-active: $tau-accent;
+        scrollbar-background-active: $tau-transcript-background;
+        scrollbar-size-vertical: 2;
+    }
+
     ListView > ListItem.-highlight {
         background: $tau-highlight-background;
         color: $tau-highlight-text;
@@ -3441,6 +3587,10 @@ class TauTuiApp(App[None]):
         height: 1;
         margin-top: 1;
         color: $tau-muted-text;
+    }
+
+    #tree-picker-help {
+        height: auto;
     }
 
     ExtensionSelectScreen,
@@ -3874,6 +4024,9 @@ class TauTuiApp(App[None]):
         legacy_notices = (startup_notice,) if startup_notice else ()
         self.startup_notices = tuple((*startup_notices, *legacy_notices))
         self.initial_prompt = initial_prompt
+        # This override is deliberately separate from durable settings. It is
+        # reset with every app instance and never participates in tui.json.
+        self._sidebar_visibility_override: bool | None = None
         super().__init__()
         self._register_tau_textual_themes()
         # Assign the resolved theme's name: it is always registered, while the
@@ -4081,7 +4234,11 @@ class TauTuiApp(App[None]):
                 with Horizontal(id="prompt-row"):
                     yield Static("τ", id="prompt-prefix")
                     yield PromptInput(
-                        placeholder=PROMPT_PLACEHOLDER,
+                        placeholder=(
+                            "Ask Tau…  Enter submits, "
+                            f"{_key_hint(self.tui_settings.keybindings.insert_newline)} "
+                            "inserts a newline"
+                        ),
                         id="prompt",
                         tui_keybindings=self.tui_settings.keybindings,
                     )
@@ -4235,16 +4392,11 @@ class TauTuiApp(App[None]):
         *,
         streaming_behavior: Literal["steer", "follow_up"],
     ) -> None:
+        # Enter always submits the prompt text as typed; accepting the
+        # selected completion is reserved for the accept-completion key
+        # (Tab by default).
         prompt = self.query_one("#prompt", PromptInput)
         raw_text = prompt.text_for_submission()
-        applied_completion = self._apply_selected_completion(raw_text)
-        if applied_completion is not None and applied_completion != raw_text:
-            prompt.text = applied_completion
-            prompt._clear_pending_paste()
-            prompt.move_cursor(_text_end_location(applied_completion))
-            self._completion_state = self._build_completion_state(applied_completion)
-            self._refresh_completions()
-            return
 
         text = raw_text.strip()
         if not text:
@@ -4345,6 +4497,8 @@ class TauTuiApp(App[None]):
                 self._open_custom_provider_login()
             if command.local_requested:
                 self._open_local_backend_picker()
+            if command.sidebar_toggle_requested:
+                self._toggle_sidebar_visibility()
             if command.login_provider is not None:
                 self._open_login(command.login_provider, method=command.login_method)
             if command.logout_picker_requested:
@@ -4578,11 +4732,12 @@ class TauTuiApp(App[None]):
             await self._append_optimistic_user_message(message.text)
             return
         if isinstance(message, CustomMessage):
-            await self._append_optimistic_user_message(
-                message.text,
-                custom_type=message.custom_type,
-                details=message.details if isinstance(message.details, dict) else None,
-            )
+            if message.display:
+                await self._append_optimistic_user_message(
+                    message.text,
+                    custom_type=message.custom_type,
+                    details=message.details if isinstance(message.details, dict) else None,
+                )
             return
         self._refresh()
 
@@ -5440,6 +5595,8 @@ class TauTuiApp(App[None]):
             nested = event.assistant_message_event
             if isinstance(nested, TextDeltaEvent):
                 await transcript.append_assistant_delta(nested.delta, theme=theme)
+            elif isinstance(nested, ThinkingEndEvent):
+                await transcript.finish_thinking_message()
             elif isinstance(nested, ThinkingDeltaEvent):
                 await transcript.append_thinking_delta(
                     nested.delta,
@@ -5961,9 +6118,23 @@ class TauTuiApp(App[None]):
             self._notify("No session entries are available for branching.", severity="warning")
             return
         self.push_screen(
-            TreePickerScreen(choices, theme=self.tui_settings.resolved_theme),
+            TreePickerScreen(
+                choices,
+                theme=self.tui_settings.resolved_theme,
+                on_label_change=self._set_tree_label,
+            ),
             callback=self._handle_tree_picker_result,
         )
+
+    async def _set_tree_label(self, entry_id: str, label: str | None) -> float:
+        set_label = getattr(self.session, "set_label", None)
+        if set_label is None:
+            raise RuntimeError("Session labels are not available.")
+        entry = set_label(entry_id, label)
+        if isawaitable(entry):
+            entry = await entry
+        self._notify("Label cleared." if label is None else f"Label set to [{label}].")
+        return float(entry.timestamp)
 
     def _handle_tree_picker_result(self, result: TreePickerResult | None) -> None:
         if result is None:
@@ -6465,6 +6636,7 @@ class TauTuiApp(App[None]):
             ),
             callback=self._handle_scoped_models_picker_result,
         )
+        self.run_worker(self._refresh_open_model_picker(), exclusive=False)
 
     def _toggle_scoped_model(self, choice: ModelChoice) -> Sequence[ModelChoice]:
         toggle_scoped_model = getattr(self.session, "toggle_scoped_model", None)
@@ -6788,17 +6960,30 @@ class TauTuiApp(App[None]):
         )
 
     def _update_responsive_layout(self, width: int, height: int) -> None:
-        if self.tui_settings.sidebar_position == "off":
-            return
-        show_sidebar = width >= SIDEBAR_MIN_WIDTH and height >= SIDEBAR_MIN_HEIGHT
+        if self._sidebar_visibility_override is not None:
+            show_sidebar = self._sidebar_visibility_override
+        elif self.tui_settings.sidebar_position == "off":
+            show_sidebar = False
+        else:
+            show_sidebar = width >= SIDEBAR_MIN_WIDTH and height >= SIDEBAR_MIN_HEIGHT
         self.set_class(not show_sidebar, "-hide-sidebar")
 
     def _apply_sidebar_position(self) -> None:
-        """Apply CSS classes for the configured sidebar position."""
+        """Apply the configured (or off-setting fallback) sidebar position."""
         pos = self.tui_settings.sidebar_position
-        self.set_class(pos == "right", "-sidebar-right")
-        if pos == "off":
-            self.add_class("-hide-sidebar")
+        # A configured ``off`` has no prior visible position, so an explicit
+        # session-only show uses the normal right-hand placement.
+        show_right = pos == "right" or (pos == "off" and self._sidebar_visibility_override is True)
+        self.set_class(show_right, "-sidebar-right")
+
+    def _toggle_sidebar_visibility(self) -> None:
+        """Toggle sidebar visibility without changing durable TUI settings."""
+        currently_visible = not self.has_class("-hide-sidebar")
+        self._sidebar_visibility_override = not currently_visible
+        self._apply_sidebar_position()
+        self._update_responsive_layout(self.size.width, self.size.height)
+        state = "shown" if self._sidebar_visibility_override else "hidden"
+        self._notify(f"Sidebar {state} for this session.")
 
     def _build_completion_state(self, text: str) -> CompletionState:
         registry = _session_command_registry(self.session)
@@ -7146,6 +7331,7 @@ def _tree_picker_label(
     *,
     theme: TuiTheme,
     highlighted: bool = False,
+    show_label_timestamp: bool = False,
 ) -> Text:
     marker = "* " if choice.active else "  "
     label = choice.label
@@ -7154,6 +7340,13 @@ def _tree_picker_label(
     body = label[indent_width:]
     author, separator, rest = body.partition(":")
     text = Text(f"{marker}{indent}")
+    if choice.bookmark_label is not None:
+        bookmark_color = theme.highlight_text if highlighted else theme.success
+        text.append(f"[{choice.bookmark_label}] ", style=bookmark_color)
+        if show_label_timestamp and choice.label_timestamp is not None:
+            timestamp = datetime.fromtimestamp(choice.label_timestamp).strftime("%Y-%m-%d %H:%M")
+            timestamp_color = theme.highlight_text if highlighted else theme.muted_text
+            text.append(f"{timestamp} ", style=timestamp_color)
     if separator:
         author_color = theme.highlight_text if highlighted else theme.accent
         text.append(author, style=author_color)
@@ -7406,7 +7599,7 @@ def _prompt_bindings(
                 keybindings.accept_completion,
                 "accept_completion",
                 "Complete",
-                key_display=f"{_key_hint(keybindings.accept_completion)}/Enter",
+                key_display=_key_hint(keybindings.accept_completion),
                 priority=True,
             ),
             Binding(
@@ -7443,7 +7636,12 @@ def _prompt_bindings(
         return bindings + _hidden_prompt_bindings(keybindings, visible_bindings=bindings)
     bindings = [
         Binding("enter", "submit_prompt", "Submit", priority=True),
-        Binding("shift+enter", "insert_newline", "Newline", priority=True),
+        Binding(
+            keybindings.insert_newline,
+            "insert_newline",
+            "Newline",
+            priority=True,
+        ),
         Binding(keybindings.command_palette, "open_command_palette", "Commands", priority=True),
         Binding(keybindings.session_picker, "open_session_picker", "Sessions", priority=True),
         Binding(keybindings.thinking_cycle, "cycle_thinking", "Thinking", priority=True),
@@ -7476,6 +7674,7 @@ def _hidden_prompt_bindings(
         (keybindings.command_palette, "open_command_palette"),
         (keybindings.session_picker, "open_session_picker"),
         (keybindings.queue_follow_up, "submit_follow_up"),
+        (keybindings.insert_newline, "insert_newline"),
         (keybindings.thinking_cycle, "cycle_thinking"),
         (keybindings.model_cycle, "cycle_model"),
         (keybindings.model_cycle_reverse, "cycle_model_reverse"),

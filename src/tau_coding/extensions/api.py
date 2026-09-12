@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from tau_coding.extensions.providers import DynamicProvider
     from tau_coding.extensions.runtime import ExtensionRuntime
     from tau_coding.local_backends import LocalBackend
+    from tau_coding.paths import TauPaths
     from tau_coding.tui.config import TuiTheme
 
 AGENT_EVENT_TYPES: frozenset[str] = frozenset(
@@ -891,6 +892,12 @@ class ExtensionContext:
         return self._runtime.session_view.cwd
 
     @property
+    def paths(self) -> TauPaths:
+        """Return the resolved Tau filesystem paths for this session."""
+        self._generation.assert_active()
+        return self._runtime.paths
+
+    @property
     def model(self) -> str:
         """Return the active model name."""
         self._generation.assert_active()
@@ -1163,6 +1170,11 @@ class ExtensionAPI:
         """Persist extension-owned data to the session as a custom entry."""
         self._generation.assert_active()
         await self._runtime.append_custom_entry(namespace, data)
+
+    async def set_label(self, entry_id: str, label: str | None) -> None:
+        """Set or clear a bookmark on an existing session entry."""
+        self._generation.assert_active()
+        await self._runtime.set_label(entry_id, label)
 
     def notify(self, message: str, level: NotifyLevel = "info") -> None:
         """Show a notification in the UI, if one is attached."""
