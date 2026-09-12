@@ -6,9 +6,11 @@ PR #669 made sessions from every working directory available in `/resume`. This
 follow-up presents that history as a two-column navigator instead of appending
 foreign sessions below the current project's sessions:
 
-- **Projects** lists the current working directory first, followed by other
-  projects ordered by their most recent indexed session.
-- **Recent sessions** shows only the selected project's sessions, newest first.
+- **Projects** lists compact folder names, with the current working directory
+  first, followed by other projects ordered by their most recent indexed
+  session.
+- **Recent sessions** shows only the selected project's sessions, newest first;
+  its header preserves the selected directory's full path.
 - Left moves navigation to projects; Up/Down changes the project and updates its
   session list immediately; Right returns to sessions; Enter resumes.
 - Clicking a project opens its session list without resuming anything.
@@ -16,7 +18,8 @@ foreign sessions below the current project's sessions:
   project.
 
 The active column gets an accent border and title. The current project gets a
-marker, and every project row includes its session count.
+marker, every project row includes its session count, and the session list has
+horizontal breathing room inside its border.
 
 ## Architecture
 

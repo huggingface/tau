@@ -5444,8 +5444,14 @@ async def test_session_picker_navigates_projects_in_left_column() -> None:
         project_list = screen.query_one("#session-picker-project-list", ListView)
         session_list = screen.query_one("#session-picker-list", ListView)
 
-        assert len(project_list.children) == 2
+        project_labels = [str(item.query_one(Label).render()) for item in project_list.children]
+        assert project_labels == ["● project  1 session", "  elsewhere  1 session"]
         assert [record.id for record in screen.visible_records] == ["local-1"]
+        assert str(screen.query_one("#session-picker-session-title", Static).render()) == (
+            "Recent sessions — /workspace/project"
+        )
+        assert session_list.styles.padding.left == 1
+        assert session_list.styles.padding.right == 1
         assert screen.active_column == "sessions"
 
         await pilot.press("left", "down")
@@ -5453,6 +5459,9 @@ async def test_session_picker_navigates_projects_in_left_column() -> None:
         assert screen.active_column == "projects"
         assert project_list.index == 1
         assert [record.id for record in screen.visible_records] == ["other-1"]
+        assert str(screen.query_one("#session-picker-session-title", Static).render()) == (
+            "Recent sessions — /elsewhere"
+        )
         assert "Other session" in str(session_list.children[0].query_one(Label).render())
 
         await pilot.press("right", "enter")

@@ -1486,6 +1486,10 @@ class SessionPickerScreen(ModalScreen[str | None]):
         border: none;
         background: $tau-transcript-background;
     }
+
+    #session-picker-list {
+        padding: 0 1;
+    }
     """
 
     def __init__(
@@ -1524,7 +1528,11 @@ class SessionPickerScreen(ModalScreen[str | None]):
                     id="session-picker-session-column",
                     classes="session-picker-column -active-column",
                 ):
-                    yield Static("Recent sessions", classes="session-picker-column-title")
+                    yield Static(
+                        "",
+                        id="session-picker-session-title",
+                        classes="session-picker-column-title",
+                    )
                     yield ListView(id="session-picker-list")
             yield Static("", id="session-picker-help")
 
@@ -1640,14 +1648,16 @@ class SessionPickerScreen(ModalScreen[str | None]):
             count = sum(1 for record in self.records if Path(record.cwd).resolve() == cwd)
             marker = "● " if cwd == self.local_cwd else "  "
             noun = "session" if count == 1 else "sessions"
-            items.append(
-                ListItem(Label(f"{marker}{_short_path(cwd)}  {count} {noun}", markup=False))
-            )
+            folder_name = cwd.name or str(cwd)
+            items.append(ListItem(Label(f"{marker}{folder_name}  {count} {noun}", markup=False)))
         project_list.extend(items)
         project_list.index = self.selected_project_index
 
     def _refresh_session_list(self) -> None:
         selected_cwd = self.project_cwds[self.selected_project_index]
+        self.query_one("#session-picker-session-title", Static).update(
+            f"Recent sessions — {selected_cwd}"
+        )
         project_records = tuple(
             record for record in self.records if Path(record.cwd).resolve() == selected_cwd
         )
