@@ -45,11 +45,14 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 | `Ctrl+O` | Toggle exact tool commands and full output (vs. compact previews) |
 | `Ctrl+C` | Clear the prompt input |
 | `Ctrl+D` | Quit |
+| `Ctrl+Z` | Suspend to the shell; resume with `fg` (Unix-like systems) |
 
 {{% note title="Remapping" %}}
 Keys use Textual's syntax (`ctrl+k`, `shift+tab`, `down`, `f2`, …). Tau rejects
 unknown names, empty keys, and duplicate assignments so mistakes fail early. Any
-key you don't set keeps its default. If your terminal cannot distinguish
+key you don't set keeps its default. Set `suspend` to `null` to leave process
+suspension unbound; this is the default on native Windows, which does not support
+Unix job control. If your terminal cannot distinguish
 `Shift+Enter` from `Enter`, choose a key it can report separately:
 
 ```json

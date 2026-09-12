@@ -7643,6 +7643,58 @@ async def test_tui_app_quits_from_focused_prompt_with_default_keybinding() -> No
 
 
 @pytest.mark.anyio
+async def test_tui_app_suspends_from_focused_prompt_before_editor_undo() -> None:
+    app = TauTuiApp(FakeSession())
+    suspensions: list[int] = []
+    app.action_suspend_process = lambda: suspensions.append(1)  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "keep this text"
+
+        await pilot.press("ctrl+z")
+        await pilot.pause()
+
+        assert suspensions == [1]
+        assert prompt.value == "keep this text"
+
+
+@pytest.mark.anyio
+async def test_tui_app_uses_configured_suspend_keybinding() -> None:
+    app = TauTuiApp(
+        FakeSession(),
+        tui_settings=TuiSettings(keybindings=TuiKeybindings(suspend="f8")),
+    )
+    suspensions: list[int] = []
+    app.action_suspend_process = lambda: suspensions.append(1)  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+z")
+        await pilot.pause()
+        assert suspensions == []
+
+        await pilot.press("f8")
+        await pilot.pause()
+        assert suspensions == [1]
+
+
+@pytest.mark.anyio
+async def test_tui_app_allows_suspend_keybinding_to_be_unbound() -> None:
+    app = TauTuiApp(
+        FakeSession(),
+        tui_settings=TuiSettings(keybindings=TuiKeybindings(suspend=None)),
+    )
+
+    async with app.run_test():
+        prompt = app.query_one("#prompt")
+        assert not any(
+            binding.action == "suspend_process"
+            for binding in prompt._bindings.get_bindings_for_key("ctrl+z")
+        )
+        assert "ctrl+z" not in app._bindings.key_to_bindings
+
+
+@pytest.mark.anyio
 async def test_tui_app_uses_configured_completion_keybinding() -> None:
     app = TauTuiApp(
         FakeSession(),
@@ -11050,11 +11102,13 @@ async def test_component_interceptor_never_consumes_reserved_interrupt_keys() ->
         bridge = _component_bridge(app)
         seen: list[str] = []
         quits: list[int] = []
+        suspensions: list[int] = []
 
         async def fake_quit() -> None:  # don't actually tear down the pilot
             quits.append(1)
 
         app.action_quit = fake_quit  # type: ignore[method-assign]
+        app.action_suspend_process = lambda: suspensions.append(1)  # type: ignore[method-assign]
 
         # Greedy interceptor: consumes literally every key it is consulted for.
         bridge.register_key_interceptor(lambda event, text: (seen.append(event.key), True)[1])
@@ -11070,6 +11124,12 @@ async def test_component_interceptor_never_consumes_reserved_interrupt_keys() ->
         await pilot.pause()
         assert "ctrl+c" not in seen
         assert prompt.text == ""
+
+        # ctrl+z (process suspend): never consulted, and suspend still fires.
+        await pilot.press("ctrl+z")
+        await pilot.pause()
+        assert "ctrl+z" not in seen
+        assert suspensions == [1]
 
         # ctrl+d (quit / hard exit): never consulted, and quit still fires.
         await pilot.press("ctrl+d")
