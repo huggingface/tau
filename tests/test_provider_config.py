@@ -105,6 +105,7 @@ def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path)
         "cerebras",
         "nvidia",
         "openrouter",
+        "requesty",
         "zai",
         "mistral",
         "minimax",
@@ -127,6 +128,7 @@ def test_load_provider_settings_missing_file_uses_openai_default(tmp_path: Path)
     assert settings.providers[0].default_model == DEFAULT_MODEL
     assert settings.get_provider("anthropic").api_key_env == "ANTHROPIC_API_KEY"
     assert settings.get_provider("openrouter").api_key_env == "OPENROUTER_API_KEY"
+    assert settings.get_provider("requesty").api_key_env == "REQUESTY_API_KEY"
     assert settings.get_provider("huggingface").api_key_env == "HF_TOKEN"
 
 
