@@ -63,6 +63,7 @@ def test_builtin_catalog_matches_expected_providers() -> None:
         "cerebras",
         "nvidia",
         "openrouter",
+        "orcarouter",
         "zai",
         "mistral",
         "minimax",

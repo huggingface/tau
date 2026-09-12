@@ -30,8 +30,8 @@ tau
 
 Built-in providers include **OpenAI**, **Anthropic**, **OpenAI Codex**
 (subscription), **GitHub Copilot**, **OpenCode Go**, **OpenCode Zen**,
-**Moonshot AI (Kimi)**, **Kimi Code** (subscription), **OpenRouter**, **Hugging Face**,
-and **NVIDIA NIM**.
+**Moonshot AI (Kimi)**, **Kimi Code** (subscription), **OpenRouter**, **OrcaRouter**,
+**Hugging Face**, and **NVIDIA NIM**.
 
 ### OAuth subscriptions
 
