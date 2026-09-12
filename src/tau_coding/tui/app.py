@@ -4273,10 +4273,12 @@ class TauTuiApp(App[None]):
         if getattr(self, "_applying_settings_theme", False):
             return
         tau_theme: TuiThemeName = theme_name
-        if self.tui_settings.theme == tau_theme:
-            return
-        self._replace_tui_settings(theme=tau_theme)
-        save_tui_settings(self.tui_settings)
+        if self.tui_settings.theme != tau_theme:
+            self._replace_tui_settings(theme=tau_theme)
+            save_tui_settings(self.tui_settings)
+        # Re-render theme-baked chrome so a Textual-side theme switch updates
+        # the sidebar even when Tau's durable settings already match.
+        self._refresh_chrome_if_mounted()
 
     def get_theme_variable_defaults(self) -> dict[str, str]:
         """Return Tau-specific CSS variables for the selected TUI theme."""
