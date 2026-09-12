@@ -4305,11 +4305,14 @@ class TauTuiApp(App[None]):
         self._refresh_completions()
 
     async def action_submit_prompt(self) -> None:
-        """Accept a non-file completion, or submit the current prompt text."""
+        """Accept a changing non-file completion, or submit the current prompt text."""
         selected = self._completion_state.selected
         if selected is not None and selected.kind is not CompletionKind.FILE_REFERENCE:
+            prompt = self.query_one("#prompt", PromptInput)
+            text_before_completion = prompt.text
             self.action_accept_completion()
-            return
+            if prompt.text != text_before_completion:
+                return
         await self._submit_prompt_from_editor(streaming_behavior="steer")
 
     async def action_submit_follow_up(self) -> None:

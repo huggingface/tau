@@ -5842,7 +5842,7 @@ async def test_tui_app_completes_registered_slash_command() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_app_enter_accepts_slash_completion_without_submitting() -> None:
+async def test_tui_app_enter_completes_slash_then_second_enter_submits() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
@@ -5856,6 +5856,99 @@ async def test_tui_app_enter_accepts_slash_completion_without_submitting() -> No
 
         assert prompt.value == "/session"
         assert app.session.prompt_texts == []
+        assert not isinstance(app.screen, CommandOutputScreen)
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert prompt.value == ""
+        assert isinstance(app.screen, CommandOutputScreen)
+        assert app.screen.message == "Session info"
+
+
+@pytest.mark.anyio
+async def test_tui_app_enter_submits_directly_typed_exact_slash_command() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/session"
+        app._completion_state = app._build_completion_state(prompt.value)
+        app._refresh_completions()
+
+        selected = app._completion_state.selected
+        assert selected is not None
+        assert selected.replacement == prompt.value
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert prompt.value == ""
+        assert isinstance(app.screen, CommandOutputScreen)
+        assert app.screen.message == "Session info"
+
+
+@pytest.mark.anyio
+async def test_tui_app_tab_completion_then_enter_submits() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/se"
+        app._completion_state = app._build_completion_state(prompt.value)
+        app._refresh_completions()
+
+        await pilot.press("tab")
+        assert prompt.value == "/session"
+        assert app.session.prompt_texts == []
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert prompt.value == ""
+        assert isinstance(app.screen, CommandOutputScreen)
+        assert app.screen.message == "Session info"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("raw_text", "expected_kind"),
+    (
+        ("/skill:review", CompletionKind.SKILL),
+        ("/example", CompletionKind.PROMPT_TEMPLATE),
+        ("/model fake-model", CompletionKind.ARGUMENT),
+    ),
+)
+async def test_tui_app_enter_submits_exact_non_file_completion_kinds(
+    raw_text: str,
+    expected_kind: CompletionKind,
+) -> None:
+    session = FakeSession()
+    session.prompt_templates = (
+        PromptTemplate(
+            name="example",
+            path=Path("example.md"),
+            content="Example prompt.",
+        ),
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = raw_text
+        app._completion_state = app._build_completion_state(prompt.value)
+        app._refresh_completions()
+
+        selected = app._completion_state.selected
+        assert selected is not None
+        assert selected.kind is expected_kind
+        assert app._apply_selected_completion(raw_text) == raw_text
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert prompt.value == ""
+        assert session.prompt_texts == [raw_text]
 
 
 @pytest.mark.anyio
