@@ -2802,6 +2802,12 @@ async def test_session_auto_names_first_unnamed_managed_session(tmp_path: Path) 
     renamed = manager.get_session(record.id)
     assert renamed is not None
     assert renamed.title == "Fix broken CLI output"
+    names = [
+        entry.name
+        for entry in await storage.read_all()
+        if isinstance(entry, SessionInfoEntry) and entry.name is not None
+    ]
+    assert names == ["Fix broken CLI output"]
     assert provider.calls[0][0] == "fake"
     assert provider.calls[0][3] == []
     assert "Please fix the broken CLI output." in provider.calls[0][2][0].content
@@ -3014,6 +3020,12 @@ async def test_manual_name_wins_while_auto_name_is_in_flight(
     assert updated is not None
     assert updated.title == "Manual name"
     assert metadata_names == ["Manual name"]
+    names = [
+        entry.name
+        for entry in await storage.read_all()
+        if isinstance(entry, SessionInfoEntry) and entry.name is not None
+    ]
+    assert names == ["Manual name"]
 
 
 @pytest.mark.anyio

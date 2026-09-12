@@ -479,6 +479,7 @@ class CodingSession:
         self._persisted_message_ids: set[int] = set()
         self._ended_message_ids: set[int] = set()
         self._pending_message_writes: dict[int, _PendingMessageWrite] = {}
+        self._session_name_lock = asyncio.Lock()
         self._attach_persistence_listener()
 
     @classmethod
@@ -778,6 +779,8 @@ class CodingSession:
             # after installing their UI bridge.
             session._session_start_pending = True
             session._project_trust_commit_pending = not trust_resolution.cancelled
+            if not config.defer_authoritative_writes:
+                session._sync_session_name_index()
         except BaseException:
             # Once constructed, this session explicitly owns every candidate
             # provider until load returns it to the caller.
@@ -1375,17 +1378,18 @@ class CodingSession:
 
     @property
     def session_title(self) -> str | None:
-        """Return this session's indexed human-friendly title, if named."""
-        if self._config.session_id is None or self._config.session_manager is None:
-            return None
-        record = self._config.session_manager.get_session(self._config.session_id)
-        if record is None:
-            return None
-        return record.title
+        """Resolve the transcript name, then legacy index and root titles."""
+        if self._state.session_name is not None:
+            return self._state.session_name
+        if self._config.session_id is not None and self._config.session_manager is not None:
+            record = self._config.session_manager.get_session(self._config.session_id)
+            if record is not None and record.title:
+                return record.title
+        return self._state.session_info.title if self._state.session_info is not None else None
 
     @property
     def session_name(self) -> str | None:
-        """Return this session's indexed human-friendly name, if named."""
+        """Return this session's human-friendly name, if named."""
         return self.session_title
 
     @property
@@ -2657,7 +2661,7 @@ class CodingSession:
     async def set_session_name(self, name: str) -> str:
         """Persist a session name and notify extensions after it changes."""
         normalized = normalize_session_name(name)
-        persisted = self._persist_session_name(
+        persisted = await self._persist_session_name(
             normalized,
             only_if_unnamed=False,
             index_if_missing=True,
@@ -2667,40 +2671,50 @@ class CodingSession:
         await self._extension_runtime.emit_event(SessionInfoChangedEvent(name=persisted))
         return persisted
 
-    def _persist_session_name(
+    async def _persist_session_name(
         self,
         name: str,
         *,
         only_if_unnamed: bool,
         index_if_missing: bool,
     ) -> str | None:
-        """Persist and return a changed name; return None for a no-op."""
+        """Append a changed name before updating the discovery cache."""
         normalized = normalize_session_name(name)
+        async with self._session_name_lock:
+            if only_if_unnamed and self.session_title:
+                return None
+            if self._state.session_name == normalized:
+                self._sync_session_name_index()
+                return None
+            await self._flush_pending_message_writes(context=self._diagnostic_context())
+            await self._ensure_session_initialized()
+            entry = SessionInfoEntry(parent_id=self._last_parent_id, name=normalized)
+            await self._config.storage.append(entry)
+            self._last_parent_id = entry.id
+            self._state = SessionState.from_entries(
+                await self._read_session_entries(), leaf_id=entry.id
+            )
+            if index_if_missing:
+                try:
+                    self._index_current_session()
+                except Exception as exc:
+                    self._record_session_index_diagnostic(exc)
+            self._sync_session_name_index()
+            return normalized
+
+    def _sync_session_name_index(self) -> None:
+        """Repair an existing listing cache without making it authoritative."""
         manager = self._config.session_manager
         session_id = self._config.session_id
         if manager is None or session_id is None:
-            raise ValueError("Session manager is not available")
-        record = manager.get_session(session_id)
-        if record is None and index_if_missing:
-            self.ensure_session_indexed()
+            return
+        try:
+            title = self.session_title
             record = manager.get_session(session_id)
-        if record is None:
-            return None
-        if only_if_unnamed and record.title:
-            return None
-        if record.title == normalized:
-            return None
-        updated = manager.touch_session(
-            session_id,
-            model=self.model,
-            provider_name=self.provider_name,
-            title=normalized,
-        )
-        if updated is None:
-            if index_if_missing:
-                raise ValueError(f"Unknown session: {session_id}")
-            return None
-        return updated.title or normalized
+            if title is not None and record is not None and record.title != title:
+                manager.touch_session(session_id, title=title)
+        except Exception as exc:
+            self._record_session_index_diagnostic(exc)
 
     async def new_session(self) -> str:
         """Replace this session's active state with a pending unindexed session."""
@@ -3387,7 +3401,10 @@ class CodingSession:
             self._prepared_entries.extend(staged)
             self._last_parent_id = parent_id
             replay_entries = [*self._state.entries, *staged]
-            self._state = SessionState.from_entries(replay_entries, leaf_id=parent_id)
+            self._state = replace(
+                SessionState.from_entries(replay_entries, leaf_id=parent_id),
+                session_name=self._state.session_name,
+            )
         else:
             await self._append_session_batch(staged)
             self._last_parent_id = parent_id
@@ -3512,6 +3529,7 @@ class CodingSession:
                 inference_provider=self._inference_provider,
                 inference_provider_mode=self._inference_provider_mode,
                 preserve_inference_provider=False,
+                title=self.session_title,
             )
 
     async def _read_session_entries(self) -> list[SessionEntry]:
@@ -3541,6 +3559,7 @@ class CodingSession:
                 self._index_current_session()
         except Exception as exc:  # index is a rebuildable cache, not authority
             self._record_session_index_diagnostic(exc)
+        self._sync_session_name_index()
 
     async def _append_session_entry(self, entry: SessionEntry) -> None:
         """Append one durable entry after flushing deferred session metadata."""
@@ -3622,6 +3641,7 @@ class CodingSession:
             provider_name=self.provider_name,
             inference_provider=self._inference_provider,
             session_id=self._config.session_id,
+            title=self.session_title,
         )
 
     async def _try_auto_compact(
@@ -3690,7 +3710,7 @@ class CodingSession:
             title = _fallback_session_name(first_message)
         if title is None:
             return
-        persisted = self._persist_session_name(
+        persisted = await self._persist_session_name(
             title,
             only_if_unnamed=True,
             index_if_missing=False,
@@ -3701,8 +3721,7 @@ class CodingSession:
     def _should_auto_name_session(self) -> bool:
         if self._config.session_id is None or self._config.session_manager is None:
             return False
-        record = self._config.session_manager.get_session(self._config.session_id)
-        if record is not None and record.title:
+        if self.session_title:
             return False
         return sum(isinstance(message, UserMessage) for message in self._harness.messages) == 1
 

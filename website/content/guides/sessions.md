@@ -112,6 +112,20 @@ when possible.
 Use `/name` at any time to manually override the automatic name. Tau will not
 replace a name you set yourself.
 
+Names and renames are appended to the session JSONL as `session_info` entries
+with a `name` field. The latest naming entry in file order wins across all
+branches, so copying or exporting the transcript preserves its name without
+the original project index. Naming does not add a message to the model context
+or rewrite earlier entries.
+
+The project index still caches names for fast `/resume` listings. Tau updates
+that cache after a rename and repairs a stale name when loading the session.
+Older sessions remain readable: without a naming entry, Tau uses the legacy
+index title first, then the original `session_info.title`. For an old name stored
+only in the index, run `/name` with that same name before copying the transcript
+to persist it in the new format. Simply opening an old session does not rewrite
+its history.
+
 ## Exporting
 
 Export a session to a shareable file:
