@@ -397,6 +397,7 @@ The built-in frontend reads optional settings from `~/.tau/tui.json`:
     "model_cycle_reverse": "ctrl+shift+p",
     "toggle_thinking": "ctrl+t",
     "toggle_tool_results": "ctrl+o",
+    "paste_clipboard": "ctrl+v",
     "copy_message": "ctrl+c",
     "quit": "ctrl+d"
   }
