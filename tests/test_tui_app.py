@@ -128,7 +128,7 @@ from tau_coding.tui.app import (
     _TuiExtensionUiBridge,
     _visible_completion_state,
 )
-from tau_coding.tui.autocomplete import CompletionItem, CompletionState
+from tau_coding.tui.autocomplete import CompletionItem, CompletionKind, CompletionState
 from tau_coding.tui.config import (
     HIGH_CONTRAST_THEME,
     TAU_DARK_THEME,
@@ -3188,7 +3188,30 @@ async def test_tui_app_footer_hints_update_for_completions() -> None:
 
         assert _visible_footer_bindings(app) == {
             "Choose": "Up/Down",
+            "Complete": "Tab/Enter",
+            "Close": "escape",
+        }
+
+
+@pytest.mark.anyio
+async def test_tui_app_footer_hints_explain_file_reference_enter_behavior(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "README.md").write_text("# Project\n", encoding="utf-8")
+    session = FakeSession()
+    session.cwd = tmp_path
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 30)):
+        prompt = app.query_one("#prompt")
+        prompt.value = "inspect @READ"
+        app._completion_state = app._build_completion_state(prompt.value)
+        app._refresh_completions()
+
+        assert _visible_footer_bindings(app) == {
+            "Choose": "Up/Down",
             "Complete": "Tab",
+            "Submit raw": "enter",
             "Close": "escape",
         }
 
@@ -6094,7 +6117,7 @@ async def test_tui_app_completes_registered_slash_command() -> None:
 
 
 @pytest.mark.anyio
-async def test_tui_app_enter_submits_without_accepting_completion() -> None:
+async def test_tui_app_enter_completes_slash_then_second_enter_submits() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
@@ -6106,12 +6129,105 @@ async def test_tui_app_enter_submits_without_accepting_completion() -> None:
         await pilot.press("enter")
         await pilot.pause()
 
+        assert prompt.value == "/session"
+        assert app.session.prompt_texts == []
+        assert not isinstance(app.screen, CommandOutputScreen)
+
+        await pilot.press("enter")
+        await pilot.pause()
+
         assert prompt.value == ""
-        assert app.session.prompt_texts == ["/se"]
+        assert isinstance(app.screen, CommandOutputScreen)
+        assert app.screen.message == "Session info"
 
 
 @pytest.mark.anyio
-async def test_tui_app_enter_ignores_arrow_selected_completion() -> None:
+async def test_tui_app_enter_submits_directly_typed_exact_slash_command() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/session"
+        app._completion_state = app._build_completion_state(prompt.value)
+        app._refresh_completions()
+
+        selected = app._completion_state.selected
+        assert selected is not None
+        assert selected.replacement == prompt.value
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert prompt.value == ""
+        assert isinstance(app.screen, CommandOutputScreen)
+        assert app.screen.message == "Session info"
+
+
+@pytest.mark.anyio
+async def test_tui_app_tab_completion_then_enter_submits() -> None:
+    app = TauTuiApp(FakeSession())
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/se"
+        app._completion_state = app._build_completion_state(prompt.value)
+        app._refresh_completions()
+
+        await pilot.press("tab")
+        assert prompt.value == "/session"
+        assert app.session.prompt_texts == []
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert prompt.value == ""
+        assert isinstance(app.screen, CommandOutputScreen)
+        assert app.screen.message == "Session info"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("raw_text", "expected_kind"),
+    (
+        ("/skill:review", CompletionKind.SKILL),
+        ("/example", CompletionKind.PROMPT_TEMPLATE),
+        ("/model fake-model", CompletionKind.ARGUMENT),
+    ),
+)
+async def test_tui_app_enter_submits_exact_non_file_completion_kinds(
+    raw_text: str,
+    expected_kind: CompletionKind,
+) -> None:
+    session = FakeSession()
+    session.prompt_templates = (
+        PromptTemplate(
+            name="example",
+            path=Path("example.md"),
+            content="Example prompt.",
+        ),
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = raw_text
+        app._completion_state = app._build_completion_state(prompt.value)
+        app._refresh_completions()
+
+        selected = app._completion_state.selected
+        assert selected is not None
+        assert selected.kind is expected_kind
+        assert app._apply_selected_completion(raw_text) == raw_text
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert prompt.value == ""
+        assert session.prompt_texts == [raw_text]
+
+
+@pytest.mark.anyio
+async def test_tui_app_enter_accepts_arrow_selected_non_file_completion() -> None:
     app = TauTuiApp(FakeSession())
 
     async with app.run_test() as pilot:
@@ -6126,8 +6242,51 @@ async def test_tui_app_enter_ignores_arrow_selected_completion() -> None:
         await pilot.press("enter")
         await pilot.pause()
 
+        assert prompt.value == selected.replacement
+        assert app.session.prompt_texts == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "raw_text",
+    (
+        "inspect @main",
+        "/skill:review inspect @main",
+        "/example inspect @main",
+    ),
+)
+async def test_tui_app_enter_submits_raw_file_reference_text(
+    tmp_path: Path,
+    raw_text: str,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.py").write_text("print('hi')\n", encoding="utf-8")
+
+    session = FakeSession()
+    session.cwd = tmp_path
+    session.prompt_templates = (
+        PromptTemplate(
+            name="example",
+            path=tmp_path / "example.md",
+            content="Example prompt.",
+        ),
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = raw_text
+        app._completion_state = app._build_completion_state(prompt.value)
+        app._refresh_completions()
+
+        selected = app._completion_state.selected
+        assert selected is not None
+        assert selected.kind is CompletionKind.FILE_REFERENCE
+        await pilot.press("enter")
+        await pilot.pause()
+
         assert prompt.value == ""
-        assert app.session.prompt_texts == ["/s"]
+        assert session.prompt_texts == [raw_text]
 
 
 @pytest.mark.anyio
@@ -6750,6 +6909,7 @@ def test_completion_selected_render_line_accounts_for_group_headers() -> None:
                 replacement="/session",
                 start=0,
                 end=2,
+                kind=CompletionKind.COMMAND,
                 category="Commands",
             ),
             CompletionItem(
@@ -6757,6 +6917,7 @@ def test_completion_selected_render_line_accounts_for_group_headers() -> None:
                 replacement="/example",
                 start=0,
                 end=2,
+                kind=CompletionKind.PROMPT_TEMPLATE,
                 category="Custom prompts",
             ),
         ),
@@ -6774,6 +6935,7 @@ def test_visible_completion_state_keeps_selected_item_in_render_window() -> None
             replacement=f"/prompt-{index:02d}",
             start=0,
             end=1,
+            kind=CompletionKind.PROMPT_TEMPLATE,
             category="Custom prompts",
         )
         for index in range(30)
@@ -6796,6 +6958,7 @@ def test_visible_completion_state_accounts_for_wrapped_descriptions() -> None:
             replacement=f"/prompt-{index:02d}",
             start=0,
             end=1,
+            kind=CompletionKind.PROMPT_TEMPLATE,
             description=(
                 "This prompt has a long description that wraps across multiple lines "
                 "inside the completion table."
@@ -6821,6 +6984,7 @@ def test_visible_completion_state_keeps_selected_item_above_bottom_edge() -> Non
             replacement=f"/prompt-{index:02d}",
             start=0,
             end=1,
+            kind=CompletionKind.PROMPT_TEMPLATE,
             category="Custom prompts",
         )
         for index in range(30)
