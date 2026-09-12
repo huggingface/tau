@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.4.3",
+    "date": "2026-09-12",
+    "sections": {
+      "New": [
+        "Resume sessions from other projects directly from /resume, with current-directory sessions first and other directories grouped separately."
+      ],
+      "Changed": [
+        "Accept highlighted non-file autocomplete suggestions with Enter while preserving raw @ file references; Tab continues to accept every completion kind."
+      ]
+    }
+  },
+  {
     "version": "0.4.2",
     "date": "2026-09-10",
     "sections": {
