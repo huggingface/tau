@@ -1,0 +1,28 @@
+<article class="demo-card{{ if .featured }} demo-card-featured{{ end }}" aria-labelledby="demo-title-{{ .id }}">
+  <div class="demo-recording">
+    <div class="demo-recording-bar"><span>{{ .category }}</span><span>{{ .duration }} <span aria-hidden="true">/</span> Silent demo</span></div>
+    <video controls muted playsinline preload="none" width="1468" height="1080"
+      poster="{{ printf "media/demos/%s.webp" .id | relURL }}"
+      aria-labelledby="demo-title-{{ .id }}" aria-describedby="demo-summary-{{ .id }}">
+      {{/* Local previews use backups: Bunny's CDN restricts playback by referrer. */}}
+      {{ $videoURL := printf "media/demos/%s.mp4" .id | relURL }}
+      {{ if and hugo.IsProduction .video_url }}{{ $videoURL = .video_url }}{{ end }}
+      <source src="{{ $videoURL }}" type="video/mp4">
+      {{ if and hugo.IsProduction .video_url }}
+        {{ range .video_fallbacks }}<source src="{{ . }}" type="video/mp4">{{ end }}
+      {{ end }}
+      <p>Your browser cannot play this video. <a href="{{ .source }}">Watch the original recording on X.</a></p>
+    </video>
+  </div>
+  <div class="demo-description">
+    <span class="demo-command">{{ .command }}</span>
+    <h3 id="demo-title-{{ .id }}">{{ .title }}</h3>
+    <p>{{ .description }}</p>
+    <a class="atlas-text-link" href="{{ .guide | relURL }}">{{ .guide_label }} <span aria-hidden="true">↗</span></a>
+    <details class="demo-summary">
+      <summary>What happens in the video</summary>
+      <p id="demo-summary-{{ .id }}">{{ .summary }}</p>
+    </details>
+    <a class="demo-source" href="{{ .source }}" target="_blank" rel="noopener">Original post <span aria-hidden="true">↗</span></a>
+  </div>
+</article>

@@ -3,10 +3,15 @@
   function bindCopy(id){
     var b = document.getElementById(id);
     if(!b) return;
-    b.addEventListener("click", function(){
-      navigator.clipboard && navigator.clipboard.writeText("curl -LsSf https://twotimespi.dev/install.sh | sh");
-      var t = b.textContent; b.textContent = "copied";
-      setTimeout(function(){ b.textContent = t; }, 1400);
+    b.setAttribute("aria-live", "polite");
+    b.addEventListener("click", async function(){
+      try {
+        await navigator.clipboard.writeText("curl -LsSf https://twotimespi.dev/install.sh | sh");
+        b.textContent = "copied";
+      } catch (_) {
+        b.textContent = "select to copy";
+      }
+      setTimeout(function(){ b.textContent = "copy"; }, 1800);
     });
   }
   bindCopy("copyBtn"); bindCopy("copyBtn2");
@@ -16,11 +21,12 @@
   var canvas = document.getElementById("tauCanvas");
   if(!canvas) return;
   var ctx = canvas.getContext("2d");
-  var INK   = "#13213C";
-  var BLUE  = "#1B3FA0";
-  var RED   = "#D6435B";
-  var SOFT  = "#9FB0D0";
-  var GRID  = "#C9D6EE";
+  var theme = getComputedStyle(document.documentElement);
+  var INK   = theme.getPropertyValue("--ink").trim();
+  var BLUE  = theme.getPropertyValue("--accent").trim();
+  var RED   = theme.getPropertyValue("--red").trim();
+  var SOFT  = theme.getPropertyValue("--ink-soft").trim();
+  var GRID  = theme.getPropertyValue("--grid-strong").trim();
   var TAU   = Math.PI * 2;
 
   var W = canvas.width, H = canvas.height, DPR = 1;
@@ -33,7 +39,10 @@
     W = canvas.width; H = canvas.height;
   }
   resize();
-  window.addEventListener("resize", resize);
+  window.addEventListener("resize", function(){
+    resize();
+    if(reduce) draw(TAU * 0.78);
+  });
 
   var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var thetaLabel = document.getElementById("thetaVal");
