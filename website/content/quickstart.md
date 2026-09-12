@@ -83,6 +83,7 @@ Then run one of these inside Tau:
 /login              # choose a provider
 /login openai       # save an OpenAI API key
 /login openai-codex # authenticate a Codex/ChatGPT subscription
+/login xai          # authenticate SuperGrok/X Premium via device code
 ```
 
 Tau ships with built-in entries for OpenAI, Anthropic, OpenAI Codex,
