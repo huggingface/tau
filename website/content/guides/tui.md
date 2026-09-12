@@ -74,6 +74,10 @@ to search and run them. Common ones:
 - `/local` — choose and manage a registered local backend
 - `/sidebar` — show or hide the sidebar for this session
 
+When slash-command autocomplete is open, **Enter** applies the highlighted
+suggestion without submitting it; use the arrow keys first to choose a different
+suggestion. **Tab** also applies the highlighted suggestion.
+
 The full list is in the [Slash commands reference]({{< relref "../reference/slash-commands.md" >}}). For local inference, see the [local backends guide]({{< relref "./local-inference.md" >}}).
 
 ### Local backends
@@ -136,7 +140,9 @@ complete files and directories outside the project root. External completion
 follows only the path you type instead of scanning the surrounding filesystem.
 Dot-prefixed content such as `.env` and `.agents/` is included. Tau still skips
 known metadata and generated directories such as `.git`, `.venv`, `node_modules`,
-`__pycache__`, `build`, and `dist`.
+`__pycache__`, `build`, and `dist`. Press **Tab** to insert the highlighted file;
+press **Enter** to submit exactly what you typed without inserting it. The same
+rule applies to `@` suggestions in skill and custom-prompt argument text.
 
 ## Dropping files into the prompt
 

@@ -144,6 +144,7 @@ from tau_coding.thinking import ThinkingLevel
 from tau_coding.tui.adapter import TuiEventAdapter
 from tau_coding.tui.autocomplete import (
     CompletionItem,
+    CompletionKind,
     CompletionOption,
     CompletionState,
     build_completion_state,
@@ -547,12 +548,15 @@ class PromptInput(TextArea):
         super().__init__(**kwargs)
         self.tui_keybindings = tui_keybindings or TuiKeybindings()
         self._base_bindings = self._bindings.copy()
-        self._footer_mode: Literal["normal", "completion", "running"] = "normal"
+        self._footer_mode: Literal["normal", "completion", "file_completion", "running"] = "normal"
         self._pending_pastes: list[tuple[str, str]] = []
         self._paste_placeholder_counter = 0
         self._apply_prompt_bindings()
 
-    def set_footer_mode(self, mode: Literal["normal", "completion", "running"]) -> None:
+    def set_footer_mode(
+        self,
+        mode: Literal["normal", "completion", "file_completion", "running"],
+    ) -> None:
         """Switch the prompt bindings shown by Textual's built-in footer."""
         if mode == self._footer_mode:
             return
@@ -4301,7 +4305,11 @@ class TauTuiApp(App[None]):
         self._refresh_completions()
 
     async def action_submit_prompt(self) -> None:
-        """Submit the current prompt text or slash command."""
+        """Accept a non-file completion, or submit the current prompt text."""
+        selected = self._completion_state.selected
+        if selected is not None and selected.kind is not CompletionKind.FILE_REFERENCE:
+            self.action_accept_completion()
+            return
         await self._submit_prompt_from_editor(streaming_behavior="steer")
 
     async def action_submit_follow_up(self) -> None:
@@ -4313,9 +4321,6 @@ class TauTuiApp(App[None]):
         *,
         streaming_behavior: Literal["steer", "follow_up"],
     ) -> None:
-        # Enter always submits the prompt text as typed; accepting the
-        # selected completion is reserved for the accept-completion key
-        # (Tab by default).
         prompt = self.query_one("#prompt", PromptInput)
         raw_text = prompt.text_for_submission()
 
@@ -7410,8 +7415,11 @@ def _prompt_footer_mode(
     completion_state: CompletionState,
     *,
     working: bool,
-) -> Literal["normal", "completion", "running"]:
-    if completion_state.items:
+) -> Literal["normal", "completion", "file_completion", "running"]:
+    selected = completion_state.selected
+    if selected is not None:
+        if selected.kind is CompletionKind.FILE_REFERENCE:
+            return "file_completion"
         return "completion"
     if working:
         return "running"
@@ -7469,15 +7477,19 @@ def _app_bindings(keybindings: TuiKeybindings) -> list[Binding]:
 def _prompt_bindings(
     keybindings: TuiKeybindings,
     *,
-    mode: Literal["normal", "completion", "running"],
+    mode: Literal["normal", "completion", "file_completion", "running"],
 ) -> list[Binding]:
-    if mode == "completion":
+    if mode in {"completion", "file_completion"}:
         bindings = [
             Binding(
                 keybindings.accept_completion,
                 "accept_completion",
                 "Complete",
-                key_display=_key_hint(keybindings.accept_completion),
+                key_display=(
+                    _key_hint(keybindings.accept_completion)
+                    if mode == "file_completion"
+                    else f"{_key_hint(keybindings.accept_completion)}/Enter"
+                ),
                 priority=True,
             ),
             Binding(
@@ -7492,6 +7504,8 @@ def _prompt_bindings(
             ),
             Binding(keybindings.cancel, "cancel", "Close", priority=True),
         ]
+        if mode == "file_completion":
+            bindings.insert(1, Binding("enter", "submit_prompt", "Submit raw", priority=True))
         return bindings + _hidden_prompt_bindings(keybindings, visible_bindings=bindings)
     if mode == "running":
         bindings = [
