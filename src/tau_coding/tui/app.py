@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
 import stat
 import tempfile
@@ -1456,9 +1457,23 @@ def _write_staged_utf8(handle: BinaryIO, source: str) -> None:
 
 
 def _atomic_write_sidebar_file(path: Path, source: str) -> None:
-    """Atomically replace a file while preserving its mode and any symlink."""
+    """Atomically replace a writable file while preserving its mode and any symlink."""
     target = path.resolve(strict=True)
-    target_mode = stat.S_IMODE(target.stat().st_mode)
+    # Ask the OS to enforce ownership/ACL rules without truncating the target.
+    authorization = os.open(
+        target,
+        os.O_WRONLY | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        target_stat = os.fstat(authorization)
+        # Privileged processes may open 0444 files, but the editor treats an
+        # explicitly read-only resource as not authorized for replacement.
+        if target_stat.st_mode & 0o222 == 0:
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), target)
+        target_mode = stat.S_IMODE(target_stat.st_mode)
+    finally:
+        os.close(authorization)
+
     descriptor = -1
     temporary: Path | None = None
     try:

@@ -3537,6 +3537,44 @@ async def test_tui_sidebar_editor_partial_staging_failure_is_safe(
         assert not tuple(tmp_path.glob(f".{context_path.name}.*.tmp"))
 
 
+@pytest.mark.anyio
+async def test_tui_sidebar_editor_rejects_read_only_target(tmp_path: Path) -> None:
+    context_path = tmp_path / "AGENTS.md"
+    original = b"Original rules.\n"
+    context_path.write_bytes(original)
+    context_path.chmod(0o444)
+    original_mode = context_path.stat().st_mode
+    session = FakeSession()
+    session.cwd = tmp_path
+    session.context_files = (ProjectContextFile(path=str(context_path), content="Original rules."),)
+    app = TauTuiApp(session)
+    notifications: list[tuple[str, str | None]] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        severity = kwargs.get("severity")
+        notifications.append((message, severity if isinstance(severity, str) else None))
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.click("#sidebar-context-content .sidebar-file-item")
+        await pilot.pause()
+
+        editor = app.query_one("#sidebar-file-editor", SidebarFileEditor)
+        editor.query_one("#sidebar-file-editor-input", TextArea).text = "Replacement rules.\n"
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+
+        status = editor.query_one("#sidebar-file-editor-status", Static).render().plain
+        assert editor.is_mounted
+        assert "Could not save" in status
+        assert "Permission denied" in status
+        assert notifications == [(status, "error")]
+        assert context_path.read_bytes() == original
+        assert context_path.stat().st_mode == original_mode
+        assert not tuple(tmp_path.glob(f".{context_path.name}.*.tmp"))
+
+
 def test_sidebar_file_atomic_save_preserves_symlink_and_permissions(tmp_path: Path) -> None:
     target = tmp_path / "actual.md"
     target.write_text("Original.\n", encoding="utf-8")
