@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.4.4",
+    "date": "2026-09-13",
+    "sections": {
+      "Changed": [
+        "Open /resume immediately, load project history in the background, and virtualize session rows so large histories remain responsive."
+      ],
+      "Fixed": [
+        "Restore mouse input in Herdr terminals that advertise pixel mouse support while forwarding cell coordinates."
+      ]
+    }
+  },
+  {
     "version": "0.4.3",
     "date": "2026-09-12",
     "sections": {
