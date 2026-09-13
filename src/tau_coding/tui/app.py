@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import stat
+import tempfile
 import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping, Sequence
 from contextlib import suppress
@@ -13,7 +15,7 @@ from enum import Enum, auto
 from inspect import isawaitable
 from io import StringIO
 from pathlib import Path
-from typing import Any, ClassVar, Literal, Protocol, TypeVar, cast
+from typing import Any, BinaryIO, ClassVar, Literal, Protocol, TypeVar, cast
 
 from rich.console import Console, Group
 from rich.style import Style
@@ -1443,6 +1445,44 @@ class PromptTemplateEditorScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+def _write_staged_utf8(handle: BinaryIO, source: str) -> None:
+    """Write complete UTF-8 editor contents to an open staging file."""
+    remaining = memoryview(source.encode("utf-8"))
+    while remaining:
+        written = handle.write(remaining)
+        if written is None or written <= 0:
+            raise OSError("staged write did not make progress")
+        remaining = remaining[written:]
+
+
+def _atomic_write_sidebar_file(path: Path, source: str) -> None:
+    """Atomically replace a file while preserving its mode and any symlink."""
+    target = path.resolve(strict=True)
+    target_mode = stat.S_IMODE(target.stat().st_mode)
+    descriptor = -1
+    temporary: Path | None = None
+    try:
+        descriptor, raw_temporary = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+        )
+        temporary = Path(raw_temporary)
+        os.fchmod(descriptor, target_mode)
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1
+            _write_staged_utf8(handle, source)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+        temporary = None
+    finally:
+        if descriptor >= 0:
+            with suppress(OSError):
+                os.close(descriptor)
+        if temporary is not None:
+            with suppress(OSError):
+                temporary.unlink()
+
+
 class SidebarFileEditor(Vertical):
     """Main-area editor for a file selected from the session sidebar."""
 
@@ -1492,7 +1532,7 @@ class SidebarFileEditor(Vertical):
     async def _save(self) -> None:
         source = self.query_one("#sidebar-file-editor-input", TextArea).text
         try:
-            await asyncio.to_thread(self.path.write_text, source, encoding="utf-8")
+            await asyncio.to_thread(_atomic_write_sidebar_file, self.path, source)
         except OSError as exc:
             message = f"Could not save {self.path}: {exc}"
             self.query_one("#sidebar-file-editor-status", Static).update(message)

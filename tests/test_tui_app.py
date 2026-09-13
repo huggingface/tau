@@ -6,6 +6,7 @@ from datetime import datetime
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import BinaryIO
 
 import pytest
 from rich.console import Console
@@ -3498,6 +3499,76 @@ async def test_tui_sidebar_editor_keeps_contents_open_after_save_failure(tmp_pat
             in editor.query_one("#sidebar-file-editor-status", Static).render().plain
         )
         assert not context_path.exists()
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_editor_partial_staging_failure_is_safe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context_path = tmp_path / "AGENTS.md"
+    original = b"Original rules.\n"
+    context_path.write_bytes(original)
+    session = FakeSession()
+    session.cwd = tmp_path
+    session.context_files = (ProjectContextFile(path=str(context_path), content="Original rules."),)
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.click("#sidebar-context-content .sidebar-file-item")
+        await pilot.pause()
+
+        def fail_after_partial_stage(handle: BinaryIO, source: str) -> None:
+            del source
+            handle.write(b"partial")
+            handle.flush()
+            raise OSError("simulated disk full")
+
+        monkeypatch.setattr(tui_app, "_write_staged_utf8", fail_after_partial_stage)
+        editor = app.query_one("#sidebar-file-editor", SidebarFileEditor)
+        editor.query_one("#sidebar-file-editor-input", TextArea).text = "Replacement rules.\n"
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+
+        status = editor.query_one("#sidebar-file-editor-status", Static).render().plain
+        assert editor.is_mounted
+        assert "Could not save" in status
+        assert "simulated disk full" in status
+        assert context_path.read_bytes() == original
+        assert not tuple(tmp_path.glob(f".{context_path.name}.*.tmp"))
+
+
+def test_sidebar_file_atomic_save_preserves_symlink_and_permissions(tmp_path: Path) -> None:
+    target = tmp_path / "actual.md"
+    target.write_text("Original.\n", encoding="utf-8")
+    target.chmod(0o640)
+    link = tmp_path / "AGENTS.md"
+    link.symlink_to(target.name)
+
+    tui_app._atomic_write_sidebar_file(link, "Updated.\n")
+
+    assert link.is_symlink()
+    assert link.read_text(encoding="utf-8") == "Updated.\n"
+    assert target.stat().st_mode & 0o777 == 0o640
+    assert not tuple(tmp_path.glob(f".{target.name}.*.tmp"))
+
+
+def test_sidebar_file_atomic_save_replace_failure_keeps_original(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "AGENTS.md"
+    original = b"Original.\n"
+    target.write_bytes(original)
+
+    def fail_replace(source: str | Path, destination: str | Path) -> None:
+        del source, destination
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(tui_app.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="replace failure"):
+        tui_app._atomic_write_sidebar_file(target, "Updated.\n")
+
+    assert target.read_bytes() == original
+    assert not tuple(tmp_path.glob(f".{target.name}.*.tmp"))
 
 
 @pytest.mark.anyio
