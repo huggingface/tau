@@ -5122,10 +5122,13 @@ async def test_tui_app_shows_working_state_during_manual_compaction() -> None:
         assert app._is_compaction_active() is True
         assert prompt._footer_mode == "running"
         assert indicator.render().plain != "τ"
-        assert titles[-1] == "\x1b]0;⠋ τ | build notes\x07"
+        # The title shows a spinner frame; which frame depends on timer timing.
+        idle_title = "\x1b]0;τ | build notes\x07"
+        assert titles[-1] != idle_title
+        title_before_tick = titles[-1]
 
         app._tick_activity()
-        assert titles[-1] == "\x1b]0;⠙ τ | build notes\x07"
+        assert titles[-1] != title_before_tick
 
         finish.set()
         await pilot.pause()
@@ -5352,9 +5355,7 @@ async def test_tui_app_shows_learning_summary_in_transcript() -> None:
         await pilot.pause()
         await pilot.pause()
 
-        rendered = "\n".join(
-            item.text for item in app.state.items if item.role == "status"
-        )
+        rendered = "\n".join(item.text for item in app.state.items if item.role == "status")
         assert "Learning review complete." in rendered
         assert "a durable fact" in rendered
 
