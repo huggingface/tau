@@ -5262,6 +5262,31 @@ async def test_tui_app_clears_working_state_when_learning_review_fails() -> None
 
 
 @pytest.mark.anyio
+async def test_tui_app_shows_learning_summary_in_transcript() -> None:
+    from tau_coding.learning_curator import CuratorRunResult as _Result
+
+    class QuickLearnSession(FakeSession):
+        async def learn(self) -> _Result:
+            return _Result(memory_added=("a durable fact",), lessons=())
+
+    app = TauTuiApp(QuickLearnSession(messages=[UserMessage(content="Earlier")]))
+    app._notify = lambda message, **kwargs: None  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/learn"
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        rendered = "\n".join(
+            item.text for item in app.state.items if item.role == "status"
+        )
+        assert "Learning review complete." in rendered
+        assert "a durable fact" in rendered
+
+
+@pytest.mark.anyio
 async def test_tui_app_clears_working_state_when_learning_review_is_cancelled() -> None:
     started = asyncio.Event()
     finish = asyncio.Event()

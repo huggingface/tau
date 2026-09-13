@@ -4543,6 +4543,7 @@ class TauTuiApp(App[None]):
             self._learning = False
             self._learn_worker = None
             self._refresh_chrome_if_mounted()
+        self._append_command_message("/learn", learn_result.format_summary())
         self._notify(learn_result.format_summary())
 
     def _is_agent_or_queue_active(self) -> bool:
