@@ -18,7 +18,16 @@ from textual.content import Content
 from textual.content import Style as TextualStyle
 from textual.geometry import Offset
 from textual.selection import SELECT_ALL, Selection
-from textual.widgets import Collapsible, Input, Label, ListItem, ListView, Static, TextArea
+from textual.widgets import (
+    Collapsible,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    OptionList,
+    Static,
+    TextArea,
+)
 from textual.widgets import Markdown as TextualMarkdown
 from textual.widgets.markdown import MarkdownStream
 
@@ -3892,7 +3901,7 @@ async def test_list_view_scrollbars_use_theme_colors(theme: TuiTheme) -> None:
         )
         await pilot.pause()
 
-        list_view = app.screen.query_one("#session-picker-list", ListView)
+        list_view = app.screen.query_one("#session-picker-list", OptionList)
 
         assert list_view.styles.scrollbar_background == Color.parse(theme.transcript_background)
         assert list_view.styles.scrollbar_color == Color.parse(theme.border)
@@ -5393,12 +5402,16 @@ async def test_tui_app_resume_picker_loads_other_projects_in_background() -> Non
         created_at=1.0,
         updated_at=3.0,
     )
+    local_started = threading.Event()
+    release_local = threading.Event()
     global_started = threading.Event()
     release_global = threading.Event()
 
     class DelayedSessionManager:
         def list_sessions(self, cwd: Path | None = None) -> list[CodingSessionRecord]:
             if cwd is not None:
+                local_started.set()
+                assert release_local.wait(timeout=2)
                 return [local]
             global_started.set()
             assert release_global.wait(timeout=2)
@@ -5415,6 +5428,16 @@ async def test_tui_app_resume_picker_loads_other_projects_in_background() -> Non
         screen = app.screen
         assert isinstance(screen, SessionPickerScreen)
         assert screen.loading_other_projects is True
+        assert screen.current_project_loaded is False
+        assert screen.visible_records == ()
+        assert "Loading sessions" in str(screen.query_one("#session-picker-help", Static).render())
+        assert await asyncio.to_thread(local_started.wait, 1)
+
+        release_local.set()
+        for _ in range(20):
+            await pilot.pause()
+            if screen.current_project_loaded:
+                break
         assert [record.id for record in screen.visible_records] == ["local"]
         assert "Loading other projects" in str(
             screen.query_one("#session-picker-help", Static).render()
@@ -5428,8 +5451,8 @@ async def test_tui_app_resume_picker_loads_other_projects_in_background() -> Non
                 break
 
         assert screen.loading_other_projects is False
-        project_list = screen.query_one("#session-picker-project-list", ListView)
-        assert len(project_list.children) == 2
+        project_list = screen.query_one("#session-picker-project-list", OptionList)
+        assert project_list.option_count == 2
         assert [record.id for record in screen.visible_records] == ["local"]
 
 
@@ -5454,8 +5477,8 @@ async def test_tui_app_resume_command_opens_session_picker() -> None:
         await pilot.press("enter")
 
         assert isinstance(app.screen, SessionPickerScreen)
-        picker_list = app.screen.query_one("#session-picker-list", ListView)
-        assert picker_list.index == 0
+        picker_list = app.screen.query_one("#session-picker-list", OptionList)
+        assert picker_list.highlighted == 0
         assert [(item.role, item.text) for item in app.state.items] == [("user", "Earlier")]
 
 
@@ -5560,10 +5583,10 @@ async def test_session_picker_navigates_projects_in_left_column() -> None:
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, SessionPickerScreen)
-        project_list = screen.query_one("#session-picker-project-list", ListView)
-        session_list = screen.query_one("#session-picker-list", ListView)
+        project_list = screen.query_one("#session-picker-project-list", OptionList)
+        session_list = screen.query_one("#session-picker-list", OptionList)
 
-        project_labels = [str(item.query_one(Label).render()) for item in project_list.children]
+        project_labels = [str(option.prompt) for option in project_list.options]
         assert project_labels == ["● project  1 session", "  elsewhere  1 session"]
         assert [record.id for record in screen.visible_records] == ["local-1"]
         assert str(screen.query_one("#session-picker-session-title", Static).render()) == (
@@ -5576,12 +5599,12 @@ async def test_session_picker_navigates_projects_in_left_column() -> None:
         await pilot.press("left", "down")
         await pilot.pause()
         assert screen.active_column == "projects"
-        assert project_list.index == 1
+        assert project_list.highlighted == 1
         assert [record.id for record in screen.visible_records] == ["other-1"]
         assert str(screen.query_one("#session-picker-session-title", Static).render()) == (
             "Recent sessions — /elsewhere"
         )
-        assert "Other session" in str(session_list.children[0].query_one(Label).render())
+        assert "Other session" in str(session_list.get_option_at_index(0).prompt)
 
         await pilot.press("right", "enter")
         await pilot.pause()
@@ -5611,12 +5634,14 @@ async def test_session_picker_rapid_project_refresh_is_stable() -> None:
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, SessionPickerScreen)
-        picker_list = screen.query_one("#session-picker-list", ListView)
+        picker_list = screen.query_one("#session-picker-list", OptionList)
         for _ in range(4):
             screen._refresh_session_list()
             await pilot.pause()
-        assert picker_list.index == 0
-        assert len(picker_list.children) == len(screen.visible_records) == 3
+        assert picker_list.highlighted == 0
+        assert picker_list.option_count == len(screen.visible_records) == 3
+        # OptionList renders virtual lines instead of mounting one widget per record.
+        assert list(picker_list.children) == []
 
 
 @pytest.mark.anyio
@@ -5646,20 +5671,19 @@ async def test_session_picker_first_row_highlighted_after_search_refill() -> Non
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, SessionPickerScreen)
-        picker_list = screen.query_one("#session-picker-list", ListView)
+        picker_list = screen.query_one("#session-picker-list", OptionList)
         # Move off the first row, then filter to no matches and back.
         await pilot.press("down")
-        assert picker_list.index == 1
+        assert picker_list.highlighted == 1
         screen.search_value = "zzz-no-match"
         screen._refresh_session_list()
         await pilot.pause()
-        assert picker_list.index is None
+        assert picker_list.highlighted is None
         screen.search_value = ""
         screen._refresh_session_list()
         await pilot.pause()
         # After the refill the first row is current again and highlighted.
-        assert picker_list.index == 0
-        assert picker_list.children[0].highlighted is True
+        assert picker_list.highlighted == 0
 
 
 @pytest.mark.anyio
@@ -5685,14 +5709,14 @@ async def test_session_picker_column_navigation_at_boundaries_does_not_raise() -
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, SessionPickerScreen)
-        project_list = screen.query_one("#session-picker-project-list", ListView)
+        project_list = screen.query_one("#session-picker-project-list", OptionList)
         for _ in range(16):
             screen.action_cursor_down()
         for _ in range(16):
             screen.action_cursor_up()
-        assert project_list.index == 0
+        assert project_list.highlighted == 0
         screen.action_focus_sessions()
-        assert screen.query_one("#session-picker-list", ListView).index is None
+        assert screen.query_one("#session-picker-list", OptionList).highlighted is None
 
 
 @pytest.mark.anyio
@@ -5715,8 +5739,8 @@ async def test_session_picker_project_click_opens_its_sessions() -> None:
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, SessionPickerScreen)
-        project_list = screen.query_one("#session-picker-project-list", ListView)
-        await pilot.click(project_list.children[1])
+        project_list = screen.query_one("#session-picker-project-list", OptionList)
+        await pilot.click(project_list, offset=Offset(2, 1))
         await pilot.pause()
 
         assert isinstance(app.screen, SessionPickerScreen)
@@ -6553,10 +6577,8 @@ async def test_tui_app_session_picker_shows_human_readable_session_metadata() ->
     async with app.run_test() as pilot:
         await pilot.press("ctrl+r")
         assert isinstance(app.screen, SessionPickerScreen)
-        labels = [
-            item.query_one(Label).content
-            for item in app.screen.query_one("#session-picker-list", ListView).children
-        ]
+        session_list = app.screen.query_one("#session-picker-list", OptionList)
+        labels = [option.prompt for option in session_list.options]
 
     assert labels == [
         "Jun 19  fake-model",
@@ -6641,8 +6663,8 @@ async def test_tui_app_session_picker_search_filters_sessions() -> None:
         search.value = "search bar"
         await pilot.pause()
 
-        session_list = app.screen.query_one("#session-picker-list", ListView)
-        labels = [str(item.query_one(Label).render()) for item in session_list.children]
+        session_list = app.screen.query_one("#session-picker-list", OptionList)
+        labels = [str(option.prompt) for option in session_list.options]
         assert labels == ["Jun 19  Add search bar  other-model"]
 
         await pilot.press("enter")
@@ -6674,17 +6696,17 @@ async def test_tui_app_session_picker_search_does_not_match_workspace_path() -> 
         assert isinstance(app.screen, SessionPickerScreen)
 
         search = app.screen.query_one("#session-picker-search", Input)
-        session_list = app.screen.query_one("#session-picker-list", ListView)
+        session_list = app.screen.query_one("#session-picker-list", OptionList)
 
         await pilot.press("left", "down", "right")
         search.value = "path-query"
         await pilot.pause()
-        assert list(session_list.children) == []
+        assert session_list.option_count == 0
 
         for query in ("model-query", "named"):
             search.value = query
             await pilot.pause()
-            assert len(session_list.children) == 1
+            assert session_list.option_count == 1
 
 
 @pytest.mark.anyio
@@ -6713,8 +6735,8 @@ async def test_tui_app_session_picker_search_with_no_matches_shows_help_text() -
         search.value = "nonexistent"
         await pilot.pause()
 
-        session_list = app.screen.query_one("#session-picker-list", ListView)
-        assert list(session_list.children) == []
+        session_list = app.screen.query_one("#session-picker-list", OptionList)
+        assert session_list.option_count == 0
         help_text = app.screen.query_one("#session-picker-help", Static)
         assert str(help_text.render()) == (
             "No matching sessions - Left selects a project - Escape closes"

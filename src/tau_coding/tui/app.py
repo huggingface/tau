@@ -35,6 +35,7 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    OptionList,
     Static,
     TextArea,
 )
@@ -1515,6 +1516,7 @@ class SessionPickerScreen(ModalScreen[str | None]):
         local_cwd: Path,
         theme: TuiTheme,
         loading_other_projects: bool = False,
+        current_project_loaded: bool = True,
     ) -> None:
         super().__init__()
         self.records = tuple(records)
@@ -1522,10 +1524,12 @@ class SessionPickerScreen(ModalScreen[str | None]):
         self.theme = theme
         self.search_value = ""
         self.active_column: Literal["projects", "sessions"] = "sessions"
-        self.project_cwds = self._project_paths()
+        self.records_by_project = self._group_records_by_project()
+        self.project_cwds = tuple(self.records_by_project)
         self.selected_project_index = 0
         self.visible_records: tuple[SessionCompletionRecord, ...] = ()
         self.loading_other_projects = loading_other_projects
+        self.current_project_loaded = current_project_loaded
 
     def compose(self) -> ComposeResult:
         """Compose project and session columns under one search field."""
@@ -1541,7 +1545,7 @@ class SessionPickerScreen(ModalScreen[str | None]):
                     classes="session-picker-column",
                 ):
                     yield Static("Projects", classes="session-picker-column-title")
-                    yield ListView(id="session-picker-project-list")
+                    yield OptionList(id="session-picker-project-list", markup=False, compact=True)
                 with Vertical(
                     id="session-picker-session-column",
                     classes="session-picker-column -active-column",
@@ -1551,7 +1555,7 @@ class SessionPickerScreen(ModalScreen[str | None]):
                         id="session-picker-session-title",
                         classes="session-picker-column-title",
                     )
-                    yield ListView(id="session-picker-list")
+                    yield OptionList(id="session-picker-list", markup=False, compact=True)
             yield Static("", id="session-picker-help")
 
     def on_mount(self) -> None:
@@ -1589,20 +1593,20 @@ class SessionPickerScreen(ModalScreen[str | None]):
             event.stop()
             action()
 
-    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         """Show sessions for the highlighted project immediately."""
-        if event.list_view.id != "session-picker-project-list":
+        if event.option_list.id != "session-picker-project-list":
             return
-        index = event.list_view.index
-        if index is None or index == self.selected_project_index:
+        index = event.option_index
+        if index == self.selected_project_index:
             return
         self.selected_project_index = index
         self._refresh_session_list()
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
-        if event.list_view.id == "session-picker-project-list":
-            self.selected_project_index = event.index
+        if event.option_list.id == "session-picker-project-list":
+            self.selected_project_index = event.option_index
             self._refresh_session_list()
             self.action_focus_sessions()
             return
@@ -1629,28 +1633,37 @@ class SessionPickerScreen(ModalScreen[str | None]):
     def action_cancel(self) -> None:
         self.dismiss(None)
 
-    def update_records(self, records: Sequence[SessionCompletionRecord]) -> None:
+    def update_records(
+        self,
+        records: Sequence[SessionCompletionRecord],
+        *,
+        loading_other_projects: bool = False,
+    ) -> None:
         """Replace records after background loading while preserving navigation."""
         selected_cwd = self.project_cwds[self.selected_project_index]
-        session_list = self.query_one("#session-picker-list", ListView)
+        session_list = self.query_one("#session-picker-list", OptionList)
         selected_session_id = None
-        if session_list.index is not None and session_list.index < len(self.visible_records):
-            selected_session_id = self.visible_records[session_list.index].id
+        if session_list.highlighted is not None and session_list.highlighted < len(
+            self.visible_records
+        ):
+            selected_session_id = self.visible_records[session_list.highlighted].id
 
         self.records = tuple(records)
-        self.project_cwds = self._project_paths()
+        self.records_by_project = self._group_records_by_project()
+        self.project_cwds = tuple(self.records_by_project)
         try:
             self.selected_project_index = self.project_cwds.index(selected_cwd)
         except ValueError:
             self.selected_project_index = 0
-        self.loading_other_projects = False
+        self.loading_other_projects = loading_other_projects
+        self.current_project_loaded = True
         self._refresh_project_list()
         self._refresh_session_list()
 
         if selected_session_id is not None:
             for index, record in enumerate(self.visible_records):
                 if record.id == selected_session_id:
-                    session_list.index = index
+                    session_list.highlighted = index
                     break
 
     def finish_loading(self) -> None:
@@ -1658,13 +1671,13 @@ class SessionPickerScreen(ModalScreen[str | None]):
         self.loading_other_projects = False
         self._update_help()
 
-    def _active_list(self) -> ListView:
+    def _active_list(self) -> OptionList:
         selector = (
             "#session-picker-project-list"
             if self.active_column == "projects"
             else "#session-picker-list"
         )
-        return self.query_one(selector, ListView)
+        return self.query_one(selector, OptionList)
 
     def _set_active_column(self, column: Literal["projects", "sessions"]) -> None:
         self.active_column = column
@@ -1675,51 +1688,47 @@ class SessionPickerScreen(ModalScreen[str | None]):
         self._update_help()
 
     def _select_visible_record(self) -> None:
-        index = self.query_one("#session-picker-list", ListView).index
+        index = self.query_one("#session-picker-list", OptionList).highlighted
         if index is not None and index < len(self.visible_records):
             self.dismiss(self.visible_records[index].id)
 
-    def _project_paths(self) -> tuple[Path, ...]:
-        paths = [self.local_cwd]
+    def _group_records_by_project(
+        self,
+    ) -> dict[Path, tuple[SessionCompletionRecord, ...]]:
+        """Group records once so picker refreshes stay linear in history size."""
+        grouped: dict[Path, list[SessionCompletionRecord]] = {self.local_cwd: []}
         for record in self.records:
-            cwd = Path(record.cwd).resolve()
-            if cwd not in paths:
-                paths.append(cwd)
-        return tuple(paths)
+            grouped.setdefault(Path(record.cwd).resolve(), []).append(record)
+        return {cwd: tuple(records) for cwd, records in grouped.items()}
 
     def _refresh_project_list(self) -> None:
-        project_list = self.query_one("#session-picker-project-list", ListView)
-        project_list.clear()
-        items: list[ListItem] = []
+        project_list = self.query_one("#session-picker-project-list", OptionList)
+        items: list[str] = []
         for cwd in self.project_cwds:
-            count = sum(1 for record in self.records if Path(record.cwd).resolve() == cwd)
+            count = len(self.records_by_project[cwd])
             marker = "● " if cwd == self.local_cwd else "  "
             noun = "session" if count == 1 else "sessions"
             folder_name = cwd.name or str(cwd)
-            items.append(ListItem(Label(f"{marker}{folder_name}  {count} {noun}", markup=False)))
-        project_list.extend(items)
-        project_list.index = self.selected_project_index
+            items.append(f"{marker}{folder_name}  {count} {noun}")
+        project_list.set_options(items)
+        project_list.highlighted = self.selected_project_index
 
     def _refresh_session_list(self) -> None:
         selected_cwd = self.project_cwds[self.selected_project_index]
         self.query_one("#session-picker-session-title", Static).update(
             f"Recent sessions — {selected_cwd}"
         )
-        project_records = tuple(
-            record for record in self.records if Path(record.cwd).resolve() == selected_cwd
-        )
+        project_records = self.records_by_project[selected_cwd]
         self.visible_records = _filter_session_records(project_records, self.search_value)
-        session_list = self.query_one("#session-picker-list", ListView)
-        session_list.clear()
-        session_list.extend(
-            ListItem(Label(_session_picker_label(record), markup=False))
-            for record in self.visible_records
-        )
-        session_list.index = 0 if self.visible_records else None
+        session_list = self.query_one("#session-picker-list", OptionList)
+        session_list.set_options(_session_picker_label(record) for record in self.visible_records)
+        session_list.highlighted = 0 if self.visible_records else None
         self._update_help()
 
     def _update_help(self) -> None:
-        if self.loading_other_projects:
+        if self.loading_other_projects and not self.current_project_loaded:
+            text = "Loading sessions… - Escape closes"
+        elif self.loading_other_projects:
             text = "Loading other projects… - Current sessions are ready - Escape closes"
         elif not self.visible_records and self.active_column == "sessions":
             text = "No matching sessions - Left selects a project - Escape closes"
@@ -3652,7 +3661,8 @@ class TauTuiApp(App[None]):
         border: tall $tau-border;
     }
 
-    ListView {
+    ListView,
+    OptionList {
         scrollbar-background: $tau-transcript-background;
         scrollbar-color: $tau-border;
         scrollbar-color-hover: $tau-highlight-background;
@@ -3668,6 +3678,11 @@ class TauTuiApp(App[None]):
     }
 
     ListView > ListItem.-highlight Label {
+        background: $tau-highlight-background;
+        color: $tau-highlight-text;
+    }
+
+    OptionList > .option-list--option-highlighted {
         background: $tau-highlight-background;
         color: $tau-highlight-text;
     }
@@ -6064,16 +6079,27 @@ class TauTuiApp(App[None]):
             self._notify("No sessions found.")
             return
         picker = SessionPickerScreen(
-            _local_session_records(self.session),
+            (),
             local_cwd=Path(self.session.cwd),
             theme=self.tui_settings.resolved_theme,
             loading_other_projects=True,
+            current_project_loaded=False,
         )
         self.push_screen(picker, callback=self._handle_session_picker_result)
         self.run_worker(self._refresh_open_session_picker(picker), exclusive=False)
 
     async def _refresh_open_session_picker(self, picker: SessionPickerScreen) -> None:
-        """Load all project indexes without blocking Textual's event loop."""
+        """Load session indexes without blocking Textual's event loop."""
+        try:
+            local_records = await asyncio.to_thread(_local_session_records, self.session)
+        except Exception as exc:  # noqa: BLE001 - still attempt the global index
+            if self.screen is picker:
+                self._notify(f"Could not load current project sessions: {exc}", severity="warning")
+        else:
+            if not await self._wait_for_open_session_picker(picker):
+                return
+            picker.update_records(local_records, loading_other_projects=True)
+
         try:
             records = await asyncio.to_thread(_session_records, self.session)
         except Exception as exc:  # noqa: BLE001 - keep local sessions usable
@@ -6081,13 +6107,18 @@ class TauTuiApp(App[None]):
                 picker.finish_loading()
                 self._notify(f"Could not load other projects: {exc}", severity="warning")
             return
+        if await self._wait_for_open_session_picker(picker):
+            picker.update_records(records)
+
+    async def _wait_for_open_session_picker(self, picker: SessionPickerScreen) -> bool:
+        """Wait until this picker is mounted, or report that it was closed."""
         if self.screen is not picker:
-            return
+            return False
         while not picker.is_mounted:
             await asyncio.sleep(0)
             if self.screen is not picker:
-                return
-        picker.update_records(records)
+                return False
+        return True
 
     def _open_prompt_template_picker(self) -> None:
         self.push_screen(
