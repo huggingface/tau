@@ -74,6 +74,10 @@ to search and run them. Common ones:
 - `/local` — choose and manage a registered local backend
 - `/sidebar` — show or hide the sidebar for this session
 
+When slash-command autocomplete is open, **Enter** applies the highlighted
+suggestion without submitting it; use the arrow keys first to choose a different
+suggestion. **Tab** also applies the highlighted suggestion.
+
 The full list is in the [Slash commands reference]({{< relref "../reference/slash-commands.md" >}}). For local inference, see the [local backends guide]({{< relref "./local-inference.md" >}}).
 
 ### Local backends
@@ -136,7 +140,9 @@ complete files and directories outside the project root. External completion
 follows only the path you type instead of scanning the surrounding filesystem.
 Dot-prefixed content such as `.env` and `.agents/` is included. Tau still skips
 known metadata and generated directories such as `.git`, `.venv`, `node_modules`,
-`__pycache__`, `build`, and `dist`.
+`__pycache__`, `build`, and `dist`. Press **Tab** to insert the highlighted file;
+press **Enter** to submit exactly what you typed without inserting it. The same
+rule applies to `@` suggestions in skill and custom-prompt argument text.
 
 ## Dropping files into the prompt
 
@@ -312,6 +318,16 @@ Use `/sidebar` to toggle visibility during a session. This is temporary: it
 preserves a configured left/right position, does not change `tui.json`, and is
 forgotten when Tau restarts. A configured `off` sidebar can be shown temporarily
 on the default right side.
+
+## Herdr compatibility
+
+When Tau detects that its TUI is running inside Herdr, it defaults Textual to
+cell-coordinate mouse input and standard terminal resize signals. This avoids a
+Herdr 0.9.0 interoperability bug that can collapse clicks, hover, selection, and
+scrolling into the top-left corner of the pane. Other terminals keep Textual's
+normal in-band resize and pixel-mouse behavior. An explicitly configured
+`TEXTUAL_SMOOTH_SCROLL` environment variable takes precedence over Tau's
+compatibility default.
 
 ## Next
 

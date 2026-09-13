@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.4.4",
+    "date": "2026-09-13",
+    "sections": {
+      "Changed": [
+        "Open /resume immediately, load project history in the background, and virtualize session rows so large histories remain responsive."
+      ],
+      "Fixed": [
+        "Restore mouse input in Herdr terminals that advertise pixel mouse support while forwarding cell coordinates."
+      ]
+    }
+  },
+  {
+    "version": "0.4.3",
+    "date": "2026-09-12",
+    "sections": {
+      "New": [
+        "Resume sessions from other projects directly from /resume, with current-directory sessions first and other directories grouped separately."
+      ],
+      "Changed": [
+        "Accept highlighted non-file autocomplete suggestions with Enter while preserving raw @ file references; Tab continues to accept every completion kind."
+      ]
+    }
+  },
+  {
     "version": "0.4.2",
     "date": "2026-09-10",
     "sections": {

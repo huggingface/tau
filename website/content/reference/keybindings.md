@@ -11,7 +11,7 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 
 | Key | Action |
 | --- | --- |
-| `Enter` | Submit the prompt |
+| `Enter` | Accept a highlighted non-file completion; otherwise submit the prompt exactly as typed (including `@` file-reference text) |
 | `Shift+Enter` | Insert a newline |
 | `Esc` | Cancel the active run |
 | `Enter` (while running) | Queue text as steering for the current run |
@@ -24,7 +24,7 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 | --- | --- |
 | `Ctrl+K` | Open the command palette |
 | `Ctrl+R` | Open the session picker |
-| `Tab` | Accept the highlighted completion |
+| `Tab` | Accept any highlighted completion, including `@` file references |
 | `Down` / `Up` | Move through completions |
 | `Ctrl+E` (in `/prompts`) | Edit the selected prompt template |
 | `Ctrl+S` (while editing a prompt template) | Save and reload resources |
