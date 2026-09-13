@@ -75,6 +75,15 @@ Reset removes only Tau's llama.cpp settings and safe snapshot. Stored credential
 deletion is separately confirmed. Tau never stops the external server or
 deletes model files. See `local-inference.md` and `security.md`.
 
+## Herdr compatibility
+
+Herdr 0.9.0 can advertise SGR pixel mouse support while forwarding cell
+coordinates. Textual then interprets those coordinates as pixels, collapsing
+mouse interactions into the pane's top-left corner. When `HERDR_ENV=1`, Tau
+defaults `TEXTUAL_SMOOTH_SCROLL` to `0` before starting the TUI and updates
+Textual's already-loaded setting. This retains standard resize signals and cell
+mouse coordinates. An explicit user value is preserved.
+
 Do not introduce Textual dependencies into `tau_agent`. Keep reusable behavior
 in the harness/session layers and UI behavior in this adapter. Use Textual pilot
 tests and deterministic fake providers/backends for interaction tests.

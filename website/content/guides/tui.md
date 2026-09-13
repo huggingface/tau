@@ -319,6 +319,16 @@ preserves a configured left/right position, does not change `tui.json`, and is
 forgotten when Tau restarts. A configured `off` sidebar can be shown temporarily
 on the default right side.
 
+## Herdr compatibility
+
+When Tau detects that its TUI is running inside Herdr, it defaults Textual to
+cell-coordinate mouse input and standard terminal resize signals. This avoids a
+Herdr 0.9.0 interoperability bug that can collapse clicks, hover, selection, and
+scrolling into the top-left corner of the pane. Other terminals keep Textual's
+normal in-band resize and pixel-mouse behavior. An explicitly configured
+`TEXTUAL_SMOOTH_SCROLL` environment variable takes precedence over Tau's
+compatibility default.
+
 ## Next
 
 - [Sessions]({{< relref "./sessions.md" >}}) — resume, branch, rename, export.

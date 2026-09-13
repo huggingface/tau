@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping, Sequence
 from contextlib import suppress
@@ -17,6 +18,7 @@ from typing import Any, ClassVar, Literal, Protocol, TypeVar, cast
 from rich.console import Console, Group
 from rich.style import Style
 from rich.text import Text
+from textual import constants as textual_constants
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingsMap
@@ -203,6 +205,16 @@ NO_STORED_CREDENTIALS_MESSAGE = (
     "No stored credentials to remove. /logout only removes credentials saved by /login; "
     "environment variables and providers.json config are unchanged."
 )
+
+
+def _configure_herdr_textual_mouse() -> None:
+    """Keep Textual on cell mouse coordinates inside affected Herdr versions."""
+    if os.environ.get("HERDR_ENV") != "1" or "TEXTUAL_SMOOTH_SCROLL" in os.environ:
+        return
+    os.environ["TEXTUAL_SMOOTH_SCROLL"] = "0"
+    # Textual reads this environment variable while importing constants, before
+    # Tau reaches the TUI runner. Update the loaded value for this process too.
+    textual_constants.SMOOTH_SCROLL = False  # type: ignore[misc]
 
 
 class LoginRequiredProvider:
@@ -8023,6 +8035,7 @@ async def run_tui_app(
     thinking_level_override: ThinkingLevel | None = None,
 ) -> str | None:
     """Run the Textual app and return the active id when its session is persisted."""
+    _configure_herdr_textual_mouse()
     if new_session and session_id is not None:
         raise RuntimeError("--session and --new-session cannot be used together")
 
