@@ -1514,6 +1514,7 @@ class SessionPickerScreen(ModalScreen[str | None]):
         *,
         local_cwd: Path,
         theme: TuiTheme,
+        loading_other_projects: bool = False,
     ) -> None:
         super().__init__()
         self.records = tuple(records)
@@ -1524,6 +1525,7 @@ class SessionPickerScreen(ModalScreen[str | None]):
         self.project_cwds = self._project_paths()
         self.selected_project_index = 0
         self.visible_records: tuple[SessionCompletionRecord, ...] = ()
+        self.loading_other_projects = loading_other_projects
 
     def compose(self) -> ComposeResult:
         """Compose project and session columns under one search field."""
@@ -1627,6 +1629,35 @@ class SessionPickerScreen(ModalScreen[str | None]):
     def action_cancel(self) -> None:
         self.dismiss(None)
 
+    def update_records(self, records: Sequence[SessionCompletionRecord]) -> None:
+        """Replace records after background loading while preserving navigation."""
+        selected_cwd = self.project_cwds[self.selected_project_index]
+        session_list = self.query_one("#session-picker-list", ListView)
+        selected_session_id = None
+        if session_list.index is not None and session_list.index < len(self.visible_records):
+            selected_session_id = self.visible_records[session_list.index].id
+
+        self.records = tuple(records)
+        self.project_cwds = self._project_paths()
+        try:
+            self.selected_project_index = self.project_cwds.index(selected_cwd)
+        except ValueError:
+            self.selected_project_index = 0
+        self.loading_other_projects = False
+        self._refresh_project_list()
+        self._refresh_session_list()
+
+        if selected_session_id is not None:
+            for index, record in enumerate(self.visible_records):
+                if record.id == selected_session_id:
+                    session_list.index = index
+                    break
+
+    def finish_loading(self) -> None:
+        """Remove the loading state when a background refresh fails."""
+        self.loading_other_projects = False
+        self._update_help()
+
     def _active_list(self) -> ListView:
         selector = (
             "#session-picker-project-list"
@@ -1688,9 +1719,9 @@ class SessionPickerScreen(ModalScreen[str | None]):
         self._update_help()
 
     def _update_help(self) -> None:
-        if not self.is_mounted:
-            return
-        if not self.visible_records and self.active_column == "sessions":
+        if self.loading_other_projects:
+            text = "Loading other projects… - Current sessions are ready - Escape closes"
+        elif not self.visible_records and self.active_column == "sessions":
             text = "No matching sessions - Left selects a project - Escape closes"
         elif self.active_column == "projects":
             text = "Up/Down selects project - Right opens sessions - Escape closes"
@@ -6025,22 +6056,38 @@ class TauTuiApp(App[None]):
         self._refresh_completions()
 
     def action_open_session_picker(self) -> None:
-        """Open the indexed session picker."""
+        """Open local sessions immediately, then load other projects."""
         if self.state.running:
             self._notify("Tau is already working. Press Escape to cancel.")
             return
-        records = _session_records(self.session)
-        if not records:
+        if getattr(self.session, "session_manager", None) is None:
             self._notify("No sessions found.")
             return
-        self.push_screen(
-            SessionPickerScreen(
-                records,
-                local_cwd=Path(self.session.cwd),
-                theme=self.tui_settings.resolved_theme,
-            ),
-            callback=self._handle_session_picker_result,
+        picker = SessionPickerScreen(
+            _local_session_records(self.session),
+            local_cwd=Path(self.session.cwd),
+            theme=self.tui_settings.resolved_theme,
+            loading_other_projects=True,
         )
+        self.push_screen(picker, callback=self._handle_session_picker_result)
+        self.run_worker(self._refresh_open_session_picker(picker), exclusive=False)
+
+    async def _refresh_open_session_picker(self, picker: SessionPickerScreen) -> None:
+        """Load all project indexes without blocking Textual's event loop."""
+        try:
+            records = await asyncio.to_thread(_session_records, self.session)
+        except Exception as exc:  # noqa: BLE001 - keep local sessions usable
+            if self.screen is picker:
+                picker.finish_loading()
+                self._notify(f"Could not load other projects: {exc}", severity="warning")
+            return
+        if self.screen is not picker:
+            return
+        while not picker.is_mounted:
+            await asyncio.sleep(0)
+            if self.screen is not picker:
+                return
+        picker.update_records(records)
 
     def _open_prompt_template_picker(self) -> None:
         self.push_screen(
@@ -7084,7 +7131,7 @@ class TauTuiApp(App[None]):
             ),
             thinking_levels=getattr(self.session, "available_thinking_levels", ()),
             theme_names=available_tui_theme_names(),
-            session_options=_session_options(self.session),
+            session_options=(_session_options(self.session) if text.startswith("/resume ") else ()),
             cwd=self.session.cwd,
         )
 
@@ -7338,6 +7385,19 @@ def _session_command_registry(session: CodingSession) -> CommandRegistry:
 
 def _session_options(session: CodingSession) -> tuple[CompletionOption, ...]:
     return tuple(_session_option(record) for record in _session_records(session))
+
+
+def _local_session_records(session: CodingSession) -> tuple[SessionCompletionRecord, ...]:
+    """Return only the current project's indexed sessions."""
+    manager = getattr(session, "session_manager", None)
+    if manager is None:
+        return ()
+    try:
+        records = manager.list_sessions(session.cwd)
+    except TypeError:
+        records = manager.list_sessions()
+    local_cwd = Path(session.cwd).resolve()
+    return tuple(record for record in records if Path(record.cwd).resolve() == local_cwd)
 
 
 def _session_records(session: CodingSession) -> tuple[SessionCompletionRecord, ...]:

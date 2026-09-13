@@ -32,8 +32,9 @@ From inside the TUI:
 
 The `/resume` picker separates projects and recent sessions into two columns.
 The project column uses compact folder names; the selected project's full path
-appears above the session column. It starts on the current project's sessions.
-Press **Left** to move to the project column, use **Up/Down** to choose another
+appears above the session column. It opens immediately with the current
+project's sessions while other project indexes load in the background. Press
+**Left** to move to the project column, use **Up/Down** to choose another
 project, then press **Right** to return to its sessions. Press **Enter** (or
 click) to resume one.
 

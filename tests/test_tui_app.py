@@ -1,5 +1,6 @@
 import asyncio
 import re
+import threading
 from collections.abc import AsyncIterator
 from datetime import datetime
 from io import StringIO
@@ -5370,6 +5371,66 @@ async def test_tui_app_resume_command_reloads_visible_state() -> None:
         await pilot.pause()
 
         assert prompt.value == "Restored prompt"
+
+
+@pytest.mark.anyio
+async def test_tui_app_resume_picker_loads_other_projects_in_background() -> None:
+    local = CodingSessionRecord(
+        id="local",
+        path=Path("/workspace/project/local.jsonl"),
+        cwd=Path("/workspace/project"),
+        model="local-model",
+        title="Local session",
+        created_at=1.0,
+        updated_at=2.0,
+    )
+    other = CodingSessionRecord(
+        id="other",
+        path=Path("/elsewhere/other.jsonl"),
+        cwd=Path("/elsewhere"),
+        model="other-model",
+        title="Other session",
+        created_at=1.0,
+        updated_at=3.0,
+    )
+    global_started = threading.Event()
+    release_global = threading.Event()
+
+    class DelayedSessionManager:
+        def list_sessions(self, cwd: Path | None = None) -> list[CodingSessionRecord]:
+            if cwd is not None:
+                return [local]
+            global_started.set()
+            assert release_global.wait(timeout=2)
+            return [other, local]
+
+    session = FakeSession()
+    session.session_manager = DelayedSessionManager()
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+
+        screen = app.screen
+        assert isinstance(screen, SessionPickerScreen)
+        assert screen.loading_other_projects is True
+        assert [record.id for record in screen.visible_records] == ["local"]
+        assert "Loading other projects" in str(
+            screen.query_one("#session-picker-help", Static).render()
+        )
+        assert await asyncio.to_thread(global_started.wait, 1)
+
+        release_global.set()
+        for _ in range(20):
+            await pilot.pause()
+            if not screen.loading_other_projects:
+                break
+
+        assert screen.loading_other_projects is False
+        project_list = screen.query_one("#session-picker-project-list", ListView)
+        assert len(project_list.children) == 2
+        assert [record.id for record in screen.visible_records] == ["local"]
 
 
 @pytest.mark.anyio
