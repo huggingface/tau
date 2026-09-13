@@ -22,6 +22,8 @@ those locations and file formats.
 ├── tui.json            # TUI theme, keybindings, and layout
 ├── sessions/           # saved sessions, per project
 ├── skills/             # user-level skills
+├── lessons/            # durable lessons written by /learn
+├── MEMORIES.md         # durable memory entries written by /learn
 ├── prompts/            # user-level prompt templates
 ├── themes/             # user-level TUI themes
 ├── SYSTEM.md           # optional replacement system-prompt base
@@ -453,6 +455,12 @@ Resource discovery order (later overrides earlier) is documented in
 [Project instructions]({{< relref "../guides/project-instructions.md" >}}). In short: user-level
 `~/.tau` and `~/.agents`, then project-level `.tau` and `.agents`, with
 `AGENTS.md` discovered from the project root down to your current directory.
+
+`MEMORIES.md` and `lessons/` are written by the
+[`/learn`](#sessions) review: `MEMORIES.md` holds delimiter-joined declarative
+memory entries injected into future sessions' prompts, and `lessons/` holds
+skill-format lesson files listed by path in future sessions. Both are
+additive-or-replace and never deleted by Tau.
 
 ## Context
 

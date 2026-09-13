@@ -31,6 +31,24 @@ session. It preserves a configured `left` or `right` position and never writes
 `sidebar_position` is `"off"`, an explicit show temporarily uses the default
 right position.
 
+## `/learn`
+
+`/learn` reviews the settled session transcript with the session's own
+provider and model, then saves what is worth remembering for future sessions:
+
+- Declarative facts append to `~/.tau/MEMORIES.md` (budgeted, deduplicated,
+  injected into every future session's system prompt).
+- Durable lessons write to `~/.tau/lessons/<name>/SKILL.md` in skill-file
+  format; the learned-context prompt section lists each lesson's absolute
+  path so the agent can read the exact file when a task matches.
+
+The review is refused while an agent turn or queued messages are active, and
+only one review runs at a time. Escape cancels it. Memory entries and lessons
+are additive-or-replace; the curator never deletes existing entries. A full
+memory store rejects new entries until `~/.tau/MEMORIES.md` is consolidated by
+hand. The learned snapshot is taken at session start, so what `/learn` writes
+benefits the next session (and any session started after a `/reload`).
+
 ## `/resume`
 
 The resume picker uses separate project and recent-session columns. Project
