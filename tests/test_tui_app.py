@@ -120,6 +120,7 @@ from tau_coding.tui.app import (
     PromptTemplateEditorScreen,
     PromptTemplatePickerScreen,
     SessionPickerScreen,
+    SidebarFileEditor,
     SkillPickerScreen,
     TauTuiApp,
     ThemePickerScreen,
@@ -158,6 +159,7 @@ from tau_coding.tui.widgets import (
     CompactSessionInfo,
     LeftAlignedMarkdownHeading,
     SessionSidebar,
+    SidebarFileItem,
     StreamingTranscriptMessageWidget,
     TauMarkdownBlock,
     ThemedMarkdownWidget,
@@ -3363,6 +3365,139 @@ async def test_tui_sidebar_resource_sections_expand_independently() -> None:
         await pilot.click("#sidebar-skills CollapsibleTitle")
         assert skills.collapsed is True
         assert prompts.collapsed is False
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_context_file_opens_in_main_editor_and_saves(tmp_path: Path) -> None:
+    context_path = tmp_path / "AGENTS.md"
+    context_path.write_text("Original context.\n", encoding="utf-8")
+    session = FakeSession()
+    session.cwd = tmp_path
+    session.context_files = (
+        ProjectContextFile(path=str(context_path), content="Original context."),
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.click("#sidebar-context-content .sidebar-file-item")
+        await pilot.pause()
+
+        editor = app.query_one("#sidebar-file-editor", SidebarFileEditor)
+        assert editor.path == context_path
+        assert editor.kind == "Context"
+        assert not app.query_one("#transcript", TranscriptView).display
+        editor_input = editor.query_one("#sidebar-file-editor-input", TextArea)
+        assert editor_input.text == "Original context.\n"
+
+        editor_input.text = "Updated context.\n"
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+
+        assert context_path.read_text(encoding="utf-8") == "Updated context.\n"
+        assert editor.query_one("#sidebar-file-editor-status", Static).render().plain == (
+            f"Saved {context_path}"
+        )
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.query_one("#transcript", TranscriptView).display
+        assert app.query_one("#prompt", PromptInput).has_focus
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_prompt_file_opens_in_main_editor(tmp_path: Path) -> None:
+    prompt_path = tmp_path / ".tau" / "prompts" / "review.md"
+    prompt_path.parent.mkdir(parents=True)
+    prompt_path.write_text("Review this.\n", encoding="utf-8")
+    session = FakeSession()
+    session.cwd = tmp_path
+    session.prompt_templates = (
+        PromptTemplate("review", prompt_path, "Review this.", "Review changes"),
+    )
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.query_one("#sidebar-prompts", Collapsible).collapsed = False
+        await pilot.pause()
+        await pilot.click("#sidebar-prompts-content .sidebar-file-item")
+        await pilot.pause()
+
+        editor = app.query_one("#sidebar-file-editor", SidebarFileEditor)
+        assert editor.path == prompt_path
+        assert editor.kind == "Prompt"
+        assert editor.query_one("#sidebar-file-editor-input", TextArea).text == "Review this.\n"
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_skill_opens_only_main_skill_file(tmp_path: Path) -> None:
+    skill_path = tmp_path / ".agents" / "skills" / "review" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text("# Review\n", encoding="utf-8")
+    (skill_path.parent / "reference.md").write_text("Supporting notes.\n", encoding="utf-8")
+    session = FakeSession()
+    session.cwd = tmp_path
+    session.skills = (Skill("review", skill_path, "# Review", "Review changes"),)
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.query_one("#sidebar-skills", Collapsible).collapsed = False
+        await pilot.pause()
+        skill_items = app.query("#sidebar-skills-content .sidebar-file-item")
+        assert len(skill_items) == 1
+        await pilot.click("#sidebar-skills-content .sidebar-file-item")
+        await pilot.pause()
+
+        editor = app.query_one("#sidebar-file-editor", SidebarFileEditor)
+        assert editor.path == skill_path
+        assert editor.kind == "Skill"
+        editor_path = editor.query_one("#sidebar-file-editor-path", Static).render().plain
+        assert "reference.md" not in editor_path
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_file_items_have_clear_hover_style(tmp_path: Path) -> None:
+    context_path = tmp_path / "AGENTS.md"
+    context_path.write_text("Rules.\n", encoding="utf-8")
+    session = FakeSession()
+    session.cwd = tmp_path
+    session.context_files = (ProjectContextFile(path=str(context_path), content="Rules."),)
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        item = app.query_one("#sidebar-context-content .sidebar-file-item", SidebarFileItem)
+        await pilot.hover("#sidebar-context-content .sidebar-file-item")
+
+        assert item.styles.background == Color.parse(TAU_DARK_THEME.highlight_background)
+        assert item.styles.color == Color.parse(TAU_DARK_THEME.highlight_text)
+        assert item.styles.text_style.underline
+
+
+@pytest.mark.anyio
+async def test_tui_sidebar_editor_keeps_contents_open_after_save_failure(tmp_path: Path) -> None:
+    context_path = tmp_path / "nested" / "AGENTS.md"
+    context_path.parent.mkdir()
+    context_path.write_text("Rules.\n", encoding="utf-8")
+    session = FakeSession()
+    session.cwd = tmp_path
+    session.context_files = (ProjectContextFile(path=str(context_path), content="Rules."),)
+    app = TauTuiApp(session)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.click("#sidebar-context-content .sidebar-file-item")
+        await pilot.pause()
+        context_path.unlink()
+        context_path.parent.rmdir()
+
+        editor = app.query_one("#sidebar-file-editor", SidebarFileEditor)
+        editor.query_one("#sidebar-file-editor-input", TextArea).text = "Unsaved changes.\n"
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+
+        assert editor.is_mounted
+        assert (
+            "Could not save"
+            in editor.query_one("#sidebar-file-editor-status", Static).render().plain
+        )
+        assert not context_path.exists()
 
 
 @pytest.mark.anyio

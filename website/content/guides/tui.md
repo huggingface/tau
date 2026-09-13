@@ -252,8 +252,15 @@ the loaded skill index in the system prompt; full skill instructions enter conte
 only when that skill is invoked. Click either heading (or focus it and press
 **Enter**) to expand or collapse that section independently, so both lists can
 remain open when needed. Every loaded skill or prompt is shown while its section
-is expanded. Model-visible skills use a solid bullet (`•`), while user-only skills
-with `disable-model-invocation: true` use a hollow bullet (`◦`). If
+is expanded. Click a skill, prompt template, or context-file row to replace the
+transcript with a main-area editor. **Ctrl+S** writes the edited contents to disk
+and reports success or failure without closing the editor; **Escape** closes it
+and restores the transcript. Run **`/reload`** after saving when you want the
+active session to use the changed resource. Skill rows open only that skill's
+main `SKILL.md`; supporting files in the skill directory are not exposed in the
+sidebar yet. Editable rows highlight and underline on hover. Model-visible skills
+use a solid bullet (`•`), while user-only skills with
+`disable-model-invocation: true` use a hollow bullet (`◦`). If
 the sidebar content is
 taller than the available space, scroll it to see the remaining resource groups;
 the Tau version mark stays pinned at the bottom. Context files

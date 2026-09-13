@@ -183,6 +183,7 @@ from tau_coding.tui.themes import (
 from tau_coding.tui.widgets import (
     CompactSessionInfo,
     SessionSidebar,
+    SidebarFileItem,
     TranscriptView,
     _custom_markup_to_text,
     _sidebar_separator,
@@ -1440,6 +1441,72 @@ class PromptTemplateEditorScreen(ModalScreen[str | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+class SidebarFileEditor(Vertical):
+    """Main-area editor for a file selected from the session sidebar."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "close", "Close", show=False, priority=True),
+        Binding("ctrl+s", "save", "Save", show=False, priority=True),
+    ]
+
+    def __init__(
+        self,
+        *,
+        handle: MainViewHandle,
+        path: Path,
+        label: str,
+        kind: str,
+        source: str,
+    ) -> None:
+        super().__init__(id="sidebar-file-editor")
+        self.handle = handle
+        self.path = path
+        self.label = label
+        self.kind = kind
+        self.source = source
+        self._saving = False
+
+    def compose(self) -> ComposeResult:
+        yield Static(f"Edit {self.kind}: {self.label}", id="sidebar-file-editor-title")
+        yield Static(str(self.path), id="sidebar-file-editor-path")
+        yield TextArea(self.source, id="sidebar-file-editor-input")
+        yield Static(
+            "Ctrl+S saves - Escape closes",
+            id="sidebar-file-editor-help",
+        )
+        yield Static("", id="sidebar-file-editor-status")
+
+    def on_mount(self) -> None:
+        self.query_one("#sidebar-file-editor-input", TextArea).focus()
+
+    def action_save(self) -> None:
+        """Write the current editor contents without closing the editor."""
+        if self._saving:
+            return
+        self._saving = True
+        self.query_one("#sidebar-file-editor-status", Static).update("Saving…")
+        self.app.run_worker(self._save(), exclusive=False)
+
+    async def _save(self) -> None:
+        source = self.query_one("#sidebar-file-editor-input", TextArea).text
+        try:
+            await asyncio.to_thread(self.path.write_text, source, encoding="utf-8")
+        except OSError as exc:
+            message = f"Could not save {self.path}: {exc}"
+            self.query_one("#sidebar-file-editor-status", Static).update(message)
+            cast(TauTuiApp, self.app)._notify(message, severity="error")
+        else:
+            message = f"Saved {self.path}"
+            self.query_one("#sidebar-file-editor-status", Static).update(message)
+            cast(TauTuiApp, self.app)._notify(message)
+        finally:
+            self._saving = False
+
+    def action_close(self) -> None:
+        """Close the editor and restore the transcript."""
+        self.handle.close()
 
 
 class SessionPickerScreen(ModalScreen[str | None]):
@@ -3440,6 +3507,40 @@ class TauTuiApp(App[None]):
         padding: 1 0 0 1;
     }
 
+    #sidebar .sidebar-section-title {
+        height: 1;
+        padding: 0 0 0 1;
+        color: $tau-prompt-text;
+        text-style: bold;
+    }
+
+    #sidebar .sidebar-file-list {
+        width: 1fr;
+        height: auto;
+    }
+
+    #sidebar .sidebar-resource-origin,
+    #sidebar .sidebar-file-empty,
+    #sidebar .sidebar-file-overflow {
+        width: 1fr;
+        height: auto;
+        color: $tau-muted-text;
+    }
+
+    #sidebar .sidebar-file-item {
+        width: 1fr;
+        height: auto;
+        color: $tau-muted-text;
+        background: transparent;
+    }
+
+    #sidebar .sidebar-file-item:hover,
+    #sidebar .sidebar-file-item:focus {
+        color: $tau-highlight-text;
+        background: $tau-highlight-background;
+        text-style: underline;
+    }
+
     #sidebar-extension-sections,
     #sidebar .extension-sidebar-section,
     #sidebar .extension-sidebar-body {
@@ -3498,6 +3599,36 @@ class TauTuiApp(App[None]):
         overflow-x: auto;
         scrollbar-size-vertical: 0;
         scrollbar-size-horizontal: 1;
+    }
+
+    #sidebar-file-editor {
+        width: 1fr;
+        height: 1fr;
+        padding: 0 1;
+    }
+
+    #sidebar-file-editor-title {
+        height: 1;
+        color: $tau-accent;
+        text-style: bold;
+    }
+
+    #sidebar-file-editor-path,
+    #sidebar-file-editor-help,
+    #sidebar-file-editor-status {
+        height: 1;
+        color: $tau-muted-text;
+    }
+
+    #sidebar-file-editor-path {
+        margin-bottom: 1;
+    }
+
+    #sidebar-file-editor-input {
+        height: 1fr;
+        background: $tau-prompt-background;
+        color: $tau-prompt-text;
+        border: tall $tau-prompt-border;
     }
 
     #above-prompt-slot {
@@ -4467,6 +4598,26 @@ class TauTuiApp(App[None]):
         """Update responsive chrome when the terminal changes size."""
         self._completion_visible_line_budget = None
         self._update_responsive_layout(event.size.width, event.size.height)
+
+    @on(SidebarFileItem.OpenRequested)
+    def on_sidebar_file_open_requested(self, event: SidebarFileItem.OpenRequested) -> None:
+        """Open a sidebar resource file in the main-area editor."""
+        event.stop()
+        item = event.item
+        try:
+            source = item.path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            self._notify(f"Could not read {item.path}: {exc}", severity="error")
+            return
+        self._open_extension_main_view(
+            lambda handle, theme: SidebarFileEditor(
+                handle=handle,
+                path=item.path,
+                label=item.file_label,
+                kind=item.kind,
+                source=source,
+            )
+        )
 
     def on_click(self, event: events.Click) -> None:
         """Return keyboard focus to the prompt after clicks in the main TUI."""

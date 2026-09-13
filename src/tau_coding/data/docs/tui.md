@@ -31,6 +31,16 @@ session. It preserves a configured `left` or `right` position and never writes
 `sidebar_position` is `"off"`, an explicit show temporarily uses the default
 right position.
 
+## Sidebar file editor
+
+Click a prompt template, context file, or skill row in the sidebar to open its
+file in an editor in the main UI area. Skill rows open only their main
+`SKILL.md`, not supporting files from the skill directory. Editable rows use a
+highlighted, underlined hover state. Press Ctrl+S to write changes to disk; Tau
+keeps the editor open and reports either success or the write error. Press Escape
+to restore the transcript. Run `/reload` afterward to apply changed resources to
+the active session.
+
 ## `/resume`
 
 The resume picker uses separate project and recent-session columns. Project
