@@ -730,8 +730,7 @@ class CodingSession:
                             or TauPaths(
                                 home=unfiltered_resource_paths.root,
                                 agents_home=(
-                                    unfiltered_resource_paths.agents_root
-                                    or Path.home() / ".agents"
+                                    unfiltered_resource_paths.agents_root or Path.home() / ".agents"
                                 ),
                             )
                         )
