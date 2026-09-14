@@ -47,8 +47,10 @@ Tau also mirrors Pi's refreshable-catalog behavior. Opening `/model` renders the
 last-known snapshot immediately and refreshes models.dev in the background.
 Refreshes are throttled to four hours, use ETag revalidation, apply the same live
 NVIDIA filter as generation, and atomically cache the transformed catalog in
-`~/.tau/models-store.json`. `tau update --models` bypasses the freshness window
-and forces immediate revalidation.
+`~/.tau/models-store.json`. `tau update --models` bypasses the freshness window,
+forces immediate revalidation, and summarizes model additions, removals, and
+metadata updates relative to the previous cache. The first refresh compares
+against the bundled snapshot.
 
 Unlike Pi, which serves transformed provider catalogs from `pi.dev`, Tau has no
 catalog service, so it fetches models.dev and NVIDIA directly and performs the
@@ -90,5 +92,5 @@ model lists, limits, costs, modalities, and thinking controls.
 Focused coverage lives in `tests/test_models_dev.py` and the provider catalog,
 configuration, runtime, and thinking suites. It covers Pi-compatible effort
 conversion, distinct `max`, full model generation, new-model discovery,
-provider aliases, malformed-resource fallback, user preference fallback, and
-GLM-5.2 wire behavior.
+provider aliases, malformed-resource fallback, user preference fallback,
+refresh change summaries, and GLM-5.2 wire behavior.

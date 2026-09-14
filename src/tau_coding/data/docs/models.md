@@ -112,7 +112,9 @@ Pi. Provider/manual behavior remains in effect for those models.
 
 Tau also refreshes catalogs like Pi. Opening `/model` shows the current snapshot
 immediately and refreshes in the background. `tau update --models` forces a
-refresh. Results are ETag-revalidated, throttled to four hours, and cached at
+refresh and reports counts of added, removed, and updated models compared with
+the previous cache or, on first refresh, the bundled snapshot. Results are
+ETag-revalidated, throttled to four hours, and cached at
 `~/.tau/models-store.json`; a cache applies only when newer than the bundled
 snapshot. Since Tau has no hosted catalog service, it fetches models.dev and
 NVIDIA directly and transforms them locally.

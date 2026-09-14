@@ -200,8 +200,10 @@ behavior. Hugging Face `zai-org/GLM-5.2` currently uses a narrow verified
 correction exposing `off`, `high`, and `max`, so Tau never sends its unsupported
 `medium` value. A bundled snapshot keeps startup offline. Opening `/model`
 refreshes catalogs in the background and caches them in
-`~/.tau/models-store.json`; run `tau update --models` to force revalidation.
-New models and capability changes can therefore arrive without upgrading Tau.
+`~/.tau/models-store.json`; run `tau update --models` to force revalidation and
+see counts of models added, removed, and updated since the previous cached (or
+bundled) snapshot. New models and capability changes can therefore arrive
+without upgrading Tau.
 Set `TAU_OFFLINE=1` to use cached/bundled data without catalog network access.
 
 For a new session without an explicit preference, Hugging Face initially routes
