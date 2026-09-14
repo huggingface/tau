@@ -4509,17 +4509,20 @@ class TauTuiApp(App[None]):
         self._refresh_completions()
 
     def on_text_area_selection_changed(self, event: TextArea.SelectionChanged) -> None:
-        """Rebuild prompt autocomplete when the caret moves without an edit."""
+        """Close prompt autocomplete when the caret leaves the completed token."""
         if event.text_area.id != "prompt":
             return
-        # Only typing opens the popup; a caret move may update or clear it.
+        # Edits post SelectionChanged before Changed; check after Changed has rebuilt.
+        self.call_later(self._close_completions_if_caret_left_token)
+
+    def _close_completions_if_caret_left_token(self) -> None:
         if not self._completion_state.items:
             return
-        # Runs after queued edits and accepts, so it is the last writer of the state.
-        prompt = self.query_one("#prompt", PromptInput)
-        self._completion_state = self._build_completion_state(
-            prompt.text, cursor=prompt.cursor_position
-        )
+        item = self._completion_state.items[0]
+        cursor = self.query_one("#prompt", PromptInput).cursor_position
+        if item.start < cursor <= item.end:
+            return
+        self._completion_state = CompletionState()
         self._refresh_completions()
 
     async def action_submit_prompt(self) -> None:

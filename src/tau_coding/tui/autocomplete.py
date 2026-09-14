@@ -28,7 +28,6 @@ IGNORED_FILE_COMPLETION_DIRS = frozenset(
     }
 )
 MAX_FILE_COMPLETIONS = 50
-SHELL_UNSAFE_PATH_CHARS = "\"'`$*?[{"
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,9 +327,6 @@ def _shell_path_completions(
     token = text[start:cursor]
     if not token:
         return ()
-    # Replacing a tail with shell syntax could splice a path into quoting.
-    if any(char in text[cursor:end] for char in SHELL_UNSAFE_PATH_CHARS):
-        return ()
 
     shell_path = _parse_shell_path_token(token)
     if shell_path is None:
@@ -421,7 +417,7 @@ def _parse_shell_path_token(token: str) -> tuple[str, str, str] | None:
         path_text = path_text[2:]
     if path_text.startswith(("/", "~")):
         return None
-    if any(char in path_text for char in SHELL_UNSAFE_PATH_CHARS):
+    if any(char in path_text for char in "\"'`$*?[{"):
         return None
 
     parent_text, separator, name_prefix = path_text.rpartition("/")
