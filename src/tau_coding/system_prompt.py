@@ -6,11 +6,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
+from typing import Literal
 from xml.sax.saxutils import escape
 
 from tau_agent.tools import AgentTool
 from tau_coding.self_docs import tau_docs_path, tau_examples_path, tau_readme_path
 from tau_coding.skills import Skill
+
+PromptSourceKind = Literal[
+    "default", "system", "append", "extension", "context", "skill", "runtime"
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +39,7 @@ class PromptSection:
 class SystemPromptSource:
     """One contiguous, attributed section of an effective system prompt."""
 
+    kind: PromptSourceKind
     label: str
     source: str
     content: str
@@ -78,6 +84,7 @@ def build_system_prompt_inspection(options: BuildSystemPromptOptions) -> SystemP
     if options.custom_prompt is not None:
         sources.append(
             SystemPromptSource(
+                kind="system",
                 label="System prompt override",
                 source=options.custom_prompt_source or "runtime configuration",
                 content=options.custom_prompt,
@@ -86,6 +93,7 @@ def build_system_prompt_inspection(options: BuildSystemPromptOptions) -> SystemP
     else:
         sources.append(
             SystemPromptSource(
+                kind="default",
                 label="Tau default prompt",
                 source="tau_coding.system_prompt",
                 content=(
@@ -111,14 +119,20 @@ def build_system_prompt_inspection(options: BuildSystemPromptOptions) -> SystemP
                 source="runtime append configuration",
             ),
         )
-    for section in (*append_sections, *options.extra_sections):
-        sources.append(
-            SystemPromptSource(
-                label=section.title or "Appended system prompt",
-                source=section.source or "runtime configuration",
-                content=f"\n\n{format_prompt_section(section)}",
+
+    def add_sections(sections: Sequence[PromptSection], kind: PromptSourceKind) -> None:
+        for section in sections:
+            sources.append(
+                SystemPromptSource(
+                    kind=kind,
+                    label=section.title or "Appended system prompt",
+                    source=section.source or "runtime configuration",
+                    content=f"\n\n{format_prompt_section(section)}",
+                )
             )
-        )
+
+    add_sections(append_sections, "append")
+    add_sections(options.extra_sections, "extension")
 
     sources.extend(_project_context_sources(options.context_files))
     if _has_tool(options.tools, "read"):
@@ -126,11 +140,13 @@ def build_system_prompt_inspection(options: BuildSystemPromptOptions) -> SystemP
     sources.extend(
         (
             SystemPromptSource(
+                kind="runtime",
                 label="Current date",
                 source="Tau runtime",
                 content=f"\nCurrent date: {current_date.isoformat()}",
             ),
             SystemPromptSource(
+                kind="runtime",
                 label="Working directory",
                 source=cwd,
                 content=f"\nCurrent working directory: {cwd}",
@@ -284,6 +300,7 @@ def _project_context_sources(
         suffix = "\n</project_context>" if index == len(context_files) - 1 else "\n"
         sources.append(
             SystemPromptSource(
+                kind="context",
                 label="Project instructions",
                 source=context_file.path,
                 content=(
@@ -324,6 +341,7 @@ def _skill_sources(skills: Sequence[Skill]) -> tuple[SystemPromptSource, ...]:
         )
         sources.append(
             SystemPromptSource(
+                kind="skill",
                 label=f"Skill: {skill.name}",
                 source=str(skill.path),
                 content=(prefix if index == 0 else "\n")

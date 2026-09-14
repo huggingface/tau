@@ -22,6 +22,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
+from textual.color import Color as TextualColor
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.content import Content, Span
 from textual.content import Style as TextualStyle  # type: ignore[attr-defined]
@@ -39,7 +40,11 @@ from tau_coding.context_window import estimate_text_tokens
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.session_stats import SessionStats
 from tau_coding.skills import Skill
-from tau_coding.system_prompt import ProjectContextFile, format_skills_for_prompt
+from tau_coding.system_prompt import (
+    ProjectContextFile,
+    SystemPromptSource,
+    format_skills_for_prompt,
+)
 from tau_coding.tui.autocomplete import CompletionState
 from tau_coding.tui.config import TAU_DARK_THEME, TuiRoleStyle, TuiTheme
 from tau_coding.tui.state import (
@@ -476,6 +481,111 @@ class TranscriptWindowBoundary(Static):
         return f"{arrow} Scroll for {count} {self.direction} {noun}"
 
 
+class SystemPromptSectionWidget(Vertical):
+    """One prompt source with a matching accent and faint background."""
+
+    DEFAULT_CSS = """
+    SystemPromptSectionWidget {
+        width: 1fr;
+        height: auto;
+        margin: 0 0 1 0;
+        padding: 1 1 0 1;
+    }
+
+    SystemPromptSectionWidget > .system-prompt-source-name,
+    SystemPromptSectionWidget > .system-prompt-source-origin {
+        width: 1fr;
+        height: auto;
+    }
+
+    SystemPromptSectionWidget > .system-prompt-source-body {
+        width: 1fr;
+        height: auto;
+        margin: 1 0 0 0;
+        padding: 0;
+    }
+
+    SystemPromptSectionWidget > .system-prompt-source-body > MarkdownParagraph {
+        margin: 0 0 1 0;
+    }
+    """
+
+    def __init__(
+        self,
+        source: SystemPromptSource,
+        *,
+        index: int,
+        theme: TuiTheme,
+    ) -> None:
+        self.source = source
+        self.index = index
+        self._theme = theme
+        self.source_color = _system_prompt_source_color(source, theme=theme)
+        super().__init__(classes=f"system-prompt-source system-prompt-source-{source.kind}")
+        background = TextualColor.parse(theme.transcript_background).blend(
+            TextualColor.parse(self.source_color),
+            0.08,
+        )
+        self.styles.background = background
+        self.styles.border_left = ("tall", self.source_color)
+
+    def compose(self) -> Any:
+        name = Text()
+        name.append(f"{self.index:02d} · ", style=self._theme.muted_text)
+        name.append(self.source.label, style=f"bold {self.source_color}")
+        origin = Text("Source: ", style=self._theme.muted_text)
+        origin.append(self.source.source, style=self.source_color)
+        yield Static(name, classes="system-prompt-source-name")
+        yield Static(origin, classes="system-prompt-source-origin")
+        yield ThemedMarkdownWidget(
+            _system_prompt_markdown(self.source.content.lstrip("\n")),
+            theme=self._theme,
+            classes="system-prompt-source-body",
+        )
+
+
+class SystemPromptSourcesWidget(Vertical):
+    """Structured rendering for a sourced system prompt."""
+
+    DEFAULT_CSS = """
+    SystemPromptSourcesWidget {
+        width: 1fr;
+        height: auto;
+    }
+
+    SystemPromptSourcesWidget > .system-prompt-title {
+        width: 1fr;
+        height: auto;
+        margin: 0 0 1 1;
+    }
+    """
+
+    def __init__(self, sources: tuple[SystemPromptSource, ...], *, theme: TuiTheme) -> None:
+        self.sources = sources
+        self._theme = theme
+        super().__init__()
+
+    def compose(self) -> Any:
+        yield Static(
+            Text("/system", style=f"bold {self._theme.accent}"), classes="system-prompt-title"
+        )
+        for index, source in enumerate(self.sources, start=1):
+            yield SystemPromptSectionWidget(source, index=index, theme=self._theme)
+
+
+def _system_prompt_source_color(source: SystemPromptSource, *, theme: TuiTheme) -> str:
+    """Choose a stable theme color for one prompt-source kind."""
+    return {
+        "default": theme.accent,
+        "system": theme.role_styles["assistant"].border,
+        "append": theme.role_styles["status"].border,
+        "extension": theme.role_styles["tool"].border,
+        "context": theme.role_styles["branch_summary"].border,
+        "skill": theme.role_styles["skill"].border,
+        "runtime": theme.muted_text,
+    }[source.kind]
+
+
 class TranscriptMessageWidget(Horizontal):
     """One selectable transcript message rendered as a full-height role block."""
 
@@ -538,7 +648,7 @@ class TranscriptMessageWidget(Horizontal):
             self.styles.padding = (1, 0)
         foreground, background = _split_rich_style_colors(self._role_style.body)
         self._body_foreground = foreground
-        if item.role in _BORDERLESS_TRANSCRIPT_ROLES:
+        if item.role in _BORDERLESS_TRANSCRIPT_ROLES or item.system_prompt_sources is not None:
             self._body_background = None
         else:
             self._body_background = background
@@ -549,8 +659,10 @@ class TranscriptMessageWidget(Horizontal):
     def compose(self) -> Any:
         yield self._body_widget()
 
-    def _body_widget(self) -> Static | ThemedMarkdownWidget:
+    def _body_widget(self) -> Widget:
         body: Static | ThemedMarkdownWidget
+        if self.item.system_prompt_sources is not None:
+            return SystemPromptSourcesWidget(self.item.system_prompt_sources, theme=self._theme)
         if self.item.role == "custom":
             return Static(
                 _custom_body_renderable(

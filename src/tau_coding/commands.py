@@ -137,6 +137,7 @@ class CommandResult:
     thinking_level: str | None = None
     theme: str | None = None
     message: str | None = None
+    system_prompt_inspection: SystemPromptInspection | None = None
     session_name: str | None = None
 
 
@@ -516,13 +517,18 @@ def _system_command(context: CommandContext) -> CommandResult:
             text=context.session.system_prompt,
             sources=(
                 SystemPromptSource(
+                    kind="runtime",
                     label="Effective system prompt",
                     source="active Tau session",
                     content=context.session.system_prompt,
                 ),
             ),
         )
-    return CommandResult(handled=True, message=format_system_prompt_inspection(inspection))
+    return CommandResult(
+        handled=True,
+        message=format_system_prompt_inspection(inspection),
+        system_prompt_inspection=inspection,
+    )
 
 
 def _hotkeys_command(context: CommandContext) -> CommandResult:

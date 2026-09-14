@@ -9,9 +9,11 @@ Tau's deterministic builder attributes the built-in/custom base, each append
 file, extension section, project instruction file, skill, date, and working
 directory while preserving the exact provider-facing prompt when section
 contents are concatenated. Explicit CLI values use their flag as the origin.
-An exact `CodingSessionConfig.system` override is labeled directly. If live
-prompt text ever differs from reconstructed inputs, inspection falls back to a
-single runtime-composed section rather than showing incorrect provenance.
+An exact `CodingSessionConfig.system` override is labeled directly. In the TUI,
+each source is its own block: its name, left border, and faint background share
+a stable theme-derived source-kind color. If live prompt text ever differs from
+reconstructed inputs, inspection falls back to a single runtime-composed
+section rather than showing incorrect provenance.
 
 The system prompt is display-only: it is not sent back to the provider, persisted as a session message, or counted as conversation context.
 

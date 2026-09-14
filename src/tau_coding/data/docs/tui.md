@@ -8,10 +8,11 @@ Shift+Ctrl+P cycles backward.
 ## `/system`
 
 `/system` displays the effective prompt as read-only transcript Markdown and
-labels each contiguous section with its source. File-backed prompt overrides,
-append files, project instructions, and skills show their paths; extension
-sections and runtime values show their owning component. The command does not
-add content to model context or session history. If an effective prompt cannot
+labels each contiguous section with its source. Every section has a separate
+faint background matching its theme-colored source name and border. File-backed
+prompt overrides, append files, project instructions, and skills show their
+paths; extension sections and runtime values show their owning component. The
+command does not add content to model context or session history. If an effective prompt cannot
 be verified against Tau's deterministic builder inputs, Tau labels the whole
 prompt as runtime-composed rather than guessing provenance.
 

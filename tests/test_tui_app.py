@@ -98,7 +98,12 @@ from tau_coding.session import (
 from tau_coding.session_manager import CodingSessionRecord
 from tau_coding.session_stats import SessionStats
 from tau_coding.skills import Skill, format_skill_invocation
-from tau_coding.system_prompt import ProjectContextFile
+from tau_coding.system_prompt import (
+    ProjectContextFile,
+    SystemPromptInspection,
+    SystemPromptSource,
+    format_system_prompt_inspection,
+)
 from tau_coding.tools import create_coding_tools
 from tau_coding.tui import app as tui_app
 from tau_coding.tui.adapter import TuiEventAdapter
@@ -162,6 +167,8 @@ from tau_coding.tui.widgets import (
     SessionSidebar,
     SidebarFileItem,
     StreamingTranscriptMessageWidget,
+    SystemPromptSectionWidget,
+    SystemPromptSourcesWidget,
     TauMarkdownBlock,
     ThemedMarkdownWidget,
     TranscriptMessageWidget,
@@ -293,6 +300,7 @@ class FakeSession:
             estimated_cost=1.24,
         )
         self.system_prompt = "You are Tau."
+        self.system_prompt_sources: tuple[SystemPromptSource, ...] | None = None
         self.session_manager = None
         self._session_title: str | None = None
         self.compact_summaries: list[str] = []
@@ -341,13 +349,22 @@ class FakeSession:
                 message="Reloaded local coding resources and project context.",
             )
         if text == "/system":
+            inspection = SystemPromptInspection(
+                text=self.system_prompt,
+                sources=self.system_prompt_sources
+                or (
+                    SystemPromptSource(
+                        kind="runtime",
+                        label="Effective system prompt",
+                        source="active Tau session",
+                        content=self.system_prompt,
+                    ),
+                ),
+            )
             return CommandResult(
                 handled=True,
-                message=(
-                    "#### 01 · Effective system prompt\n\n"
-                    "**Source:** `active Tau session`\n\n"
-                    f"{self.system_prompt}"
-                ),
+                message=format_system_prompt_inspection(inspection),
+                system_prompt_inspection=inspection,
             )
         if text == "/skills":
             return CommandResult(handled=True, skills_picker_requested=True)
@@ -7846,8 +7863,22 @@ async def test_tui_app_reload_appends_command_output_to_transcript() -> None:
 @pytest.mark.anyio
 async def test_tui_app_system_appends_markdown_command_output_to_transcript() -> None:
     session = FakeSession()
-    session.system_prompt = "You are Tau.\n" + "\n".join(
-        f"Guideline {index}" for index in range(80)
+    base_prompt = "You are Tau.\n"
+    context_prompt = "\n".join(f"Guideline {index}" for index in range(80))
+    session.system_prompt = base_prompt + context_prompt
+    session.system_prompt_sources = (
+        SystemPromptSource(
+            kind="default",
+            label="Tau default prompt",
+            source="tau_coding.system_prompt",
+            content=base_prompt,
+        ),
+        SystemPromptSource(
+            kind="context",
+            label="Project instructions",
+            source="/repo/AGENTS.md",
+            content=context_prompt,
+        ),
     )
     app = TauTuiApp(session)
 
@@ -7863,12 +7894,27 @@ async def test_tui_app_system_appends_markdown_command_output_to_transcript() ->
         assert item.role == "status"
         assert item.system_prompt is True
         assert item.text.startswith(
-            "### /system\n\n#### 01 · Effective system prompt\n\n"
-            "**Source:** `active Tau session`\n\nYou are Tau."
+            "### /system\n\n#### 01 · Tau default prompt\n\n"
+            "**Source:** `tau_coding.system_prompt`\n\nYou are Tau."
         )
         transcript = app.query_one("#transcript", TranscriptView)
         message = transcript.query_one(TranscriptMessageWidget)
-        assert isinstance(message.query_one(ThemedMarkdownWidget), ThemedMarkdownWidget)
+        source_view = message.query_one(SystemPromptSourcesWidget)
+        sections = list(source_view.query(SystemPromptSectionWidget))
+        assert [section.source_color for section in sections] == [
+            TAU_DARK_THEME.accent,
+            TAU_DARK_THEME.role_styles["branch_summary"].border,
+        ]
+        assert sections[0].styles.background == Color.parse(
+            TAU_DARK_THEME.transcript_background
+        ).blend(Color.parse(TAU_DARK_THEME.accent), 0.08)
+        assert sections[1].styles.background == Color.parse(
+            TAU_DARK_THEME.transcript_background
+        ).blend(
+            Color.parse(TAU_DARK_THEME.role_styles["branch_summary"].border),
+            0.08,
+        )
+        assert len(list(message.query(ThemedMarkdownWidget))) == 2
 
 
 @pytest.mark.anyio

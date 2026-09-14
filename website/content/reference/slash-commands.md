@@ -33,8 +33,9 @@ command palette with **Ctrl+K**.
 
 `/system` labels contiguous prompt sections with their origin, including Tau's
 built-in prompt, `SYSTEM.md` and `APPEND_SYSTEM.md` files, project instruction
-files, skills, extension sections, and runtime date/cwd values. If the active
-prompt no longer matches Tau's deterministic composition, Tau conservatively
+files, skills, extension sections, and runtime date/cwd values. In the TUI,
+each section uses a separate faint background matching its source-name color.
+If the active prompt no longer matches Tau's deterministic composition, Tau conservatively
 shows one runtime-composed source instead of guessing.
 
 {{% note title="Live HTML exports include the system prompt" %}}

@@ -146,6 +146,7 @@ from tau_coding.session_manager import CodingSessionRecord, SessionManager
 from tau_coding.session_preparation import prepare_coding_session
 from tau_coding.shell_config import load_shell_settings
 from tau_coding.skills import Skill
+from tau_coding.system_prompt import SystemPromptInspection
 from tau_coding.thinking import ThinkingLevel
 from tau_coding.tui.adapter import TuiEventAdapter
 from tau_coding.tui.autocomplete import (
@@ -4937,7 +4938,11 @@ class TauTuiApp(App[None]):
                 if _command_message_uses_notification(text, command.message):
                     self._notify(command.message)
                 elif _command_message_uses_transcript(text):
-                    self._append_command_message(text, command.message)
+                    self._append_command_message(
+                        text,
+                        command.message,
+                        system_prompt_inspection=command.system_prompt_inspection,
+                    )
                 else:
                     self._show_command_message(text, command.message)
             self._refresh()
@@ -6645,7 +6650,13 @@ class TauTuiApp(App[None]):
             return None
         return item.apply(value)
 
-    def _append_command_message(self, command_text: str, message: str) -> None:
+    def _append_command_message(
+        self,
+        command_text: str,
+        message: str,
+        *,
+        system_prompt_inspection: SystemPromptInspection | None = None,
+    ) -> None:
         """Append non-persistent command output to the visible transcript."""
         is_system_prompt = command_text.split(maxsplit=1)[0].casefold() == "/system"
         separator = "\n\n" if is_system_prompt else "\n"
@@ -6656,6 +6667,9 @@ class TauTuiApp(App[None]):
             "status",
             f"{title}{separator}{message}",
             system_prompt=is_system_prompt,
+            system_prompt_sources=(
+                system_prompt_inspection.sources if system_prompt_inspection is not None else None
+            ),
         )
 
     def _show_command_message(self, command_text: str, message: str) -> None:

@@ -1208,6 +1208,7 @@ class CodingSession:
                 text=self.system_prompt,
                 sources=(
                     SystemPromptSource(
+                        kind="system",
                         label="System prompt override",
                         source="CodingSessionConfig.system",
                         content=self.system_prompt,
@@ -1244,6 +1245,7 @@ class CodingSession:
             text=self.system_prompt,
             sources=(
                 SystemPromptSource(
+                    kind="runtime",
                     label="Effective system prompt",
                     source="active Tau session (runtime-composed)",
                     content=self.system_prompt,
