@@ -36,10 +36,11 @@ right position.
 Click a prompt template, context file, or skill row in the sidebar to open its
 file in an editor in the main UI area. Skill rows open only their main
 `SKILL.md`, not supporting files from the skill directory. Editable rows use a
-highlighted, underlined hover state. Press Ctrl+S to write changes to disk; Tau
-keeps the editor open and reports either success or the write error. Press Escape
-to restore the transcript. Run `/reload` afterward to apply changed resources to
-the active session.
+highlighted, underlined hover state. Use the arrow keys to move the editing
+cursor. Press Ctrl+S to write changes to disk; Tau keeps the editor open and
+reports either success or the write error. Press Escape to restore the
+transcript. Run `/reload` afterward to apply changed resources to the active
+session.
 
 ## `/resume`
 

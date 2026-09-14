@@ -4,8 +4,9 @@
 
 Prompt-template, project-context, and skill rows in the TUI sidebar are now
 interactive file entries. Clicking one replaces the transcript with a main-area
-text editor. `Ctrl+S` saves without closing the editor, while `Escape` restores
-the transcript. Save success and filesystem errors remain visible in both the
+text editor. Arrow keys move the editing cursor, `Ctrl+S` saves without closing
+the editor, and `Escape` restores the transcript. Save success and filesystem
+errors remain visible in both the
 editor status line and a TUI notification.
 
 Skills deliberately expose only their main `SKILL.md`. Supporting files beside

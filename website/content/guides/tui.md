@@ -253,9 +253,10 @@ only when that skill is invoked. Click either heading (or focus it and press
 **Enter**) to expand or collapse that section independently, so both lists can
 remain open when needed. Every loaded skill or prompt is shown while its section
 is expanded. Click a skill, prompt template, or context-file row to replace the
-transcript with a main-area editor. **Ctrl+S** writes the edited contents to disk
-and reports success or failure without closing the editor; **Escape** closes it
-and restores the transcript. Run **`/reload`** after saving when you want the
+transcript with a main-area editor. Use the **arrow keys** to move the editing
+cursor. **Ctrl+S** writes the edited contents to disk and reports success or
+failure without closing the editor; **Escape** closes it and restores the
+transcript. Run **`/reload`** after saving when you want the
 active session to use the changed resource. Skill rows open only that skill's
 main `SKILL.md`; supporting files in the skill directory are not exposed in the
 sidebar yet. Editable rows highlight and underline on hover. Model-visible skills

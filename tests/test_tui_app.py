@@ -3425,7 +3425,19 @@ async def test_tui_sidebar_prompt_file_opens_in_main_editor(tmp_path: Path) -> N
         editor = app.query_one("#sidebar-file-editor", SidebarFileEditor)
         assert editor.path == prompt_path
         assert editor.kind == "Prompt"
-        assert editor.query_one("#sidebar-file-editor-input", TextArea).text == "Review this.\n"
+        editor_input = editor.query_one("#sidebar-file-editor-input", TextArea)
+        assert editor_input.text == "Review this.\n"
+
+        editor_input.text = "first\nsecond"
+        editor_input.move_cursor((0, 0))
+        await pilot.press("right")
+        assert editor_input.cursor_location == (0, 1)
+        await pilot.press("down")
+        assert editor_input.cursor_location == (1, 1)
+        await pilot.press("left")
+        assert editor_input.cursor_location == (1, 0)
+        await pilot.press("up")
+        assert editor_input.cursor_location == (0, 0)
 
 
 @pytest.mark.anyio

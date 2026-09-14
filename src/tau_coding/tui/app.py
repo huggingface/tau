@@ -6140,7 +6140,10 @@ class TauTuiApp(App[None]):
         self._refresh_completions()
 
     def action_completion_next(self) -> None:
-        """Select the next prompt completion or move down in the prompt."""
+        """Select the next prompt completion or move down in the active editor."""
+        if isinstance(self.focused, TextArea) and self.focused.id == "sidebar-file-editor-input":
+            self.focused.action_cursor_down()
+            return
         if isinstance(self.screen, PromptTemplateEditorScreen):
             self.screen.query_one("#prompt-template-editor-input", TextArea).action_cursor_down()
             return
@@ -6176,7 +6179,10 @@ class TauTuiApp(App[None]):
         self._refresh_completions()
 
     def action_completion_previous(self) -> None:
-        """Select the previous prompt completion or move up in the prompt."""
+        """Select the previous prompt completion or move up in the active editor."""
+        if isinstance(self.focused, TextArea) and self.focused.id == "sidebar-file-editor-input":
+            self.focused.action_cursor_up()
+            return
         if isinstance(self.screen, PromptTemplateEditorScreen):
             self.screen.query_one("#prompt-template-editor-input", TextArea).action_cursor_up()
             return
