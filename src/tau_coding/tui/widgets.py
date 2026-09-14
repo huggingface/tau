@@ -2803,14 +2803,15 @@ def _grouped_resource_names(
     theme: TuiTheme,
 ) -> Text:
     origin_precedence = {
-        f"~/.tau/{directory}": 0,
         f"~/.agents/{directory}": 1,
         f"./.tau/{directory}": 2,
         f"./.agents/{directory}": 3,
     }
+    # The remaining origin is the configurable user Tau home. Its rendered
+    # path may be ~/.tau, another path beneath ~, or an absolute path.
     ordered_origins = sorted(
         grouped,
-        key=lambda origin: (origin_precedence.get(origin, len(origin_precedence)), origin),
+        key=lambda origin: (origin_precedence.get(origin, 0), origin),
     )
     text = Text()
     for origin in ordered_origins:
