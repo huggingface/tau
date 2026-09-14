@@ -4,6 +4,15 @@
 
 The TUI keeps `/system` output inside the transcript as a local-only status item. The output is separated from the command label with a blank line so the existing Markdown transcript renderer can provide readable paragraph, heading, list, and inline-code spacing.
 
+Each contiguous prompt section now has a numbered heading and source label.
+Tau's deterministic builder attributes the built-in/custom base, each append
+file, extension section, project instruction file, skill, date, and working
+directory while preserving the exact provider-facing prompt when section
+contents are concatenated. Explicit CLI values use their flag as the origin.
+An exact `CodingSessionConfig.system` override is labeled directly. If live
+prompt text ever differs from reconstructed inputs, inspection falls back to a
+single runtime-composed section rather than showing incorrect provenance.
+
 The system prompt is display-only: it is not sent back to the provider, persisted as a session message, or counted as conversation context.
 
 ## Why
@@ -18,7 +27,10 @@ The behavior stays in `tau_coding.tui`: slash-command semantics remain in `tau_c
 
 ## Testing
 
-The Textual pilot test for `/system` verifies that the command remains in the transcript, uses the Markdown widget, and leaves no modal or model-context entry:
+Builder and coding-session tests verify source ordering, paths, exact text
+coverage, and conservative fallback behavior. The Textual pilot test for
+`/system` verifies that the command remains in the transcript, uses the Markdown
+widget, and leaves no modal or model-context entry:
 
 ```bash
 uv run pytest tests/test_tui_app.py -k system

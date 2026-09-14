@@ -341,7 +341,14 @@ class FakeSession:
                 message="Reloaded local coding resources and project context.",
             )
         if text == "/system":
-            return CommandResult(handled=True, message=self.system_prompt)
+            return CommandResult(
+                handled=True,
+                message=(
+                    "#### 01 · Effective system prompt\n\n"
+                    "**Source:** `active Tau session`\n\n"
+                    f"{self.system_prompt}"
+                ),
+            )
         if text == "/skills":
             return CommandResult(handled=True, skills_picker_requested=True)
         if text == "/new":
@@ -7851,13 +7858,14 @@ async def test_tui_app_system_appends_markdown_command_output_to_transcript() ->
         await pilot.pause()
 
         assert not isinstance(app.screen, CommandOutputScreen)
-        assert app.state.items == [
-            ChatItem(
-                role="status",
-                text=f"### /system\n\n{session.system_prompt}",
-                system_prompt=True,
-            )
-        ]
+        assert len(app.state.items) == 1
+        item = app.state.items[0]
+        assert item.role == "status"
+        assert item.system_prompt is True
+        assert item.text.startswith(
+            "### /system\n\n#### 01 · Effective system prompt\n\n"
+            "**Source:** `active Tau session`\n\nYou are Tau."
+        )
         transcript = app.query_one("#transcript", TranscriptView)
         message = transcript.query_one(TranscriptMessageWidget)
         assert isinstance(message.query_one(ThemedMarkdownWidget), ThemedMarkdownWidget)

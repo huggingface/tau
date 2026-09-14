@@ -20,6 +20,7 @@ class SystemPromptResources:
     custom_prompt: str | None = None
     custom_prompt_path: Path | None = None
     append_prompt: str | None = None
+    append_prompts: tuple[str, ...] = ()
     append_prompt_paths: tuple[Path, ...] = ()
     diagnostics: tuple[ResourceDiagnostic, ...] = ()
 
@@ -165,14 +166,15 @@ def discover_system_prompt_resources(
         explicit=custom_prompt_explicit,
         diagnostics=diagnostics,
     )
-    append_prompt, append_paths = _discover_append_system_prompt_files(
+    append_prompts, append_paths = _discover_append_system_prompt_files(
         paths,
         diagnostics=diagnostics,
     )
     return SystemPromptResources(
         custom_prompt=custom_prompt,
         custom_prompt_path=custom_path,
-        append_prompt=append_prompt,
+        append_prompt="\n\n".join(append_prompts) if append_prompts else None,
+        append_prompts=append_prompts,
         append_prompt_paths=append_paths,
         diagnostics=tuple(diagnostics),
     )
@@ -249,7 +251,7 @@ def _discover_append_system_prompt_files(
     paths: TauResourcePaths,
     *,
     diagnostics: list[ResourceDiagnostic],
-) -> tuple[str | None, tuple[Path, ...]]:
+) -> tuple[tuple[str, ...], tuple[Path, ...]]:
     """Read every append file in broad-to-specific order."""
     candidates: list[tuple[str, Path]] = [("user", paths.root / "APPEND_SYSTEM.md")]
     if paths.cwd is not None and paths.project_resources_enabled:
@@ -289,9 +291,7 @@ def _discover_append_system_prompt_files(
             )
         )
 
-    if not contents:
-        return None, ()
-    return "\n\n".join(contents), tuple(selected_paths)
+    return tuple(contents), tuple(selected_paths)
 
 
 def resource_paths_with_cwd(

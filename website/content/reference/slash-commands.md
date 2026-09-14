@@ -11,7 +11,7 @@ command palette with **Ctrl+K**.
 | `/quit` | Exit the session |
 | `/new` | Start a new session |
 | `/session` | Show session info and stats (model, cwd, tools, skills, context) |
-| `/system` | Show the active system prompt with Markdown formatting without adding it to context or session history |
+| `/system` | Show the active system prompt grouped by source without adding it to context or session history |
 | `/compact [instructions]` | Summarize and compact the active context |
 | `/export [--format html\|jsonl] [dest]` | Export the current session |
 | `/resume [session-id]` | Resume a previous session, or open the picker |
@@ -30,6 +30,12 @@ command palette with **Ctrl+K**.
 | `/hotkeys` | Show the keyboard shortcuts |
 | `/skills` | Open a searchable picker of loaded skills and insert a selection into the prompt |
 | `/skill:<name> [request]` | Expand a loaded skill into your prompt |
+
+`/system` labels contiguous prompt sections with their origin, including Tau's
+built-in prompt, `SYSTEM.md` and `APPEND_SYSTEM.md` files, project instruction
+files, skills, extension sections, and runtime date/cwd values. If the active
+prompt no longer matches Tau's deterministic composition, Tau conservatively
+shows one runtime-composed source instead of guessing.
 
 {{% note title="Live HTML exports include the system prompt" %}}
 `/export` includes the current system prompt in a collapsed section when it

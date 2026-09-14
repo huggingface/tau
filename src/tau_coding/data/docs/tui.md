@@ -5,6 +5,16 @@ portable `tau_agent` harness emits provider-neutral events; the TUI renders
 them and owns interaction. Ctrl+P cycles forward through scoped models;
 Shift+Ctrl+P cycles backward.
 
+## `/system`
+
+`/system` displays the effective prompt as read-only transcript Markdown and
+labels each contiguous section with its source. File-backed prompt overrides,
+append files, project instructions, and skills show their paths; extension
+sections and runtime values show their owning component. The command does not
+add content to model context or session history. If an effective prompt cannot
+be verified against Tau's deterministic builder inputs, Tau labels the whole
+prompt as runtime-composed rather than guessing provenance.
+
 The sidebar usage section shows `avg TPS` and `avg TTFT` across timed session
 history. Effective TPS uses the accumulated time Tau spends awaiting provider
 events, including provider queueing, network waits, prefill, and TTFT; it
