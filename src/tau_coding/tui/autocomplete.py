@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 from tau_coding.commands import CommandRegistry, SlashCommand
@@ -38,6 +39,17 @@ class CompletionOption:
     description: str | None = None
 
 
+class CompletionKind(StrEnum):
+    """Source of a prompt completion and its Enter-key behavior."""
+
+    COMMAND = "command"
+    PROMPT_TEMPLATE = "prompt_template"
+    SKILL = "skill"
+    ARGUMENT = "argument"
+    FILE_REFERENCE = "file_reference"
+    SHELL_PATH = "shell_path"
+
+
 @dataclass(frozen=True, slots=True)
 class CompletionItem:
     """One selectable prompt completion."""
@@ -46,6 +58,7 @@ class CompletionItem:
     replacement: str
     start: int
     end: int
+    kind: CompletionKind
     description: str | None = None
     category: str | None = None
 
@@ -194,6 +207,7 @@ def _file_reference_completions(*, text: str, cursor: int, cwd: Path) -> tuple[C
                 replacement=display,
                 start=start,
                 end=end,
+                kind=CompletionKind.FILE_REFERENCE,
                 description="File reference",
             )
         )
@@ -218,6 +232,7 @@ def _external_file_reference_completions(
                 replacement=display,
                 start=start,
                 end=end,
+                kind=CompletionKind.FILE_REFERENCE,
                 description="File reference",
             ),
         )
@@ -252,6 +267,7 @@ def _external_file_reference_completions(
                 replacement=display,
                 start=start,
                 end=end,
+                kind=CompletionKind.FILE_REFERENCE,
                 description="File reference",
             )
         )
@@ -348,6 +364,7 @@ def _shell_path_completions(
                 replacement=replacement,
                 start=start,
                 end=end,
+                kind=CompletionKind.SHELL_PATH,
                 description="Directory" if child.is_dir() else "File",
             )
         )
@@ -453,6 +470,7 @@ def _command_completions(
             replacement=f"/{template.name}",
             start=0,
             end=token_end,
+            kind=CompletionKind.PROMPT_TEMPLATE,
             description=template.description or "Prompt template",
             category="Custom prompts",
         )
@@ -499,6 +517,7 @@ def _command_alias_completions(
                 replacement=replacement,
                 start=0,
                 end=token_end,
+                kind=CompletionKind.COMMAND,
                 description=command.description,
                 category="Commands",
             )
@@ -516,6 +535,7 @@ def _skill_completions(
             replacement=f"/skill:{skill.name}",
             start=0,
             end=token_end,
+            kind=CompletionKind.SKILL,
             description=skill.description,
         )
         for skill in sorted(skills, key=lambda item: item.name)
@@ -590,6 +610,7 @@ def _value_completions(
             replacement=option.value,
             start=start,
             end=end,
+            kind=CompletionKind.ARGUMENT,
             description=option.description,
         )
         for option in ordered_options

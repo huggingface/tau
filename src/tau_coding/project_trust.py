@@ -97,6 +97,8 @@ class ProjectTrustResolution:
     diagnostics: tuple[str, ...] = ()
     had_candidates: bool = True
     cancelled: bool = False
+    # True when staged preparation deferred the durable trust-store write.
+    needs_persistence: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -500,6 +502,7 @@ class ProjectTrustCoordinator:
         extension_deciders: Sequence[ExtensionDecider] = (),
         refresh: bool = False,
         cache_result: bool = True,
+        persist: bool = True,
     ) -> tuple[ProtectedResourceSummary, ProjectTrustResolution]:
         canonical = canonicalize_project_path(cwd, base=Path.cwd())
         summary = self.detector.detect(canonical)
@@ -543,19 +546,24 @@ class ProjectTrustCoordinator:
                 continue
             trusted = extension_result.decision == "approve"
             saved_path: CanonicalProjectPath | None = None
+            needs_persistence = False
             if extension_result.remember:
-                try:
-                    self.store.set(canonical, "trusted" if trusted else "untrusted")
-                except ProjectTrustError as exc:
-                    diagnostics.append(str(exc))
-                    trusted = False
+                saved_path = canonical
+                if persist:
+                    try:
+                        self.store.set(canonical, "trusted" if trusted else "untrusted")
+                    except ProjectTrustError as exc:
+                        diagnostics.append(str(exc))
+                        trusted = False
+                        saved_path = None
                 else:
-                    saved_path = canonical
+                    needs_persistence = True
             result = ProjectTrustResolution(
                 trusted=trusted,
                 source="extension",
                 saved_path=saved_path,
                 diagnostics=tuple(diagnostics),
+                needs_persistence=needs_persistence,
             )
             return summary, finish(result)
 
@@ -590,15 +598,26 @@ class ProjectTrustCoordinator:
         choice = await prompt(ProjectTrustRequest(canonical, summary, inherited))
         trusted = choice in {"trust-exact", "trust-parent", "trust-run"}
         saved_path = None
+        needs_persistence = False
         try:
             if choice == "trust-exact":
-                self.store.set(canonical, "trusted")
                 saved_path = canonical
+                if persist:
+                    self.store.set(canonical, "trusted")
+                else:
+                    needs_persistence = True
             elif choice == "trust-parent":
-                saved_path = self.store.trust_parent(canonical)
+                saved_path = CanonicalProjectPath(canonical.value.parent)
+                if persist:
+                    saved_path = self.store.trust_parent(canonical)
+                else:
+                    needs_persistence = True
             elif choice == "decline-exact":
-                self.store.set(canonical, "untrusted")
                 saved_path = canonical
+                if persist:
+                    self.store.set(canonical, "untrusted")
+                else:
+                    needs_persistence = True
         except ProjectTrustError as exc:
             diagnostics.append(str(exc))
             trusted = False
@@ -609,11 +628,21 @@ class ProjectTrustCoordinator:
             saved_path=saved_path,
             diagnostics=tuple(diagnostics),
             cancelled=choice is None,
+            needs_persistence=needs_persistence,
         )
         return summary, finish(result)
 
     def commit(self, cwd: CanonicalProjectPath, result: ProjectTrustResolution) -> None:
-        """Publish a staged resolution after its resource snapshot succeeds."""
+        """Publish a staged resolution after its candidate is adopted."""
+        if result.needs_persistence and result.saved_path is not None:
+            # A store failure cannot undo an already adopted run.  The write is
+            # intentionally fail-closed: the next process asks again rather
+            # than accidentally treating an uncommitted grant as durable.
+            with suppress(ProjectTrustError):
+                self.store.set(
+                    result.saved_path,
+                    "trusted" if result.trusted else "untrusted",
+                )
         self._cache[cwd.value] = result
 
 

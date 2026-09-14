@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from tau_coding.built_in_extensions import BuiltInExtension, BuiltInExtensionSetup
 from tau_coding.commands import (
     CommandRegistry,
     CommandResult,
@@ -53,7 +54,9 @@ from tau_coding.prompt_templates import (
     expand_prompt_template_command,
     load_prompt_templates,
     load_prompt_templates_with_diagnostics,
+    parse_prompt_template_arguments,
     render_prompt_template,
+    substitute_prompt_template_args,
 )
 from tau_coding.provider_catalog import (
     BUILTIN_PROVIDER_CATALOG,
@@ -176,6 +179,8 @@ __all__ = [
     "CodingSession",
     "CodingSessionConfig",
     "CodingSessionRecord",
+    "BuiltInExtension",
+    "BuiltInExtensionSetup",
     "CommandRegistry",
     "CommandResult",
     "DEFAULT_MODEL",
@@ -278,6 +283,8 @@ __all__ = [
     "load_shell_settings",
     "load_prompt_templates",
     "load_prompt_templates_with_diagnostics",
+    "parse_prompt_template_arguments",
+    "substitute_prompt_template_args",
     "load_skills",
     "load_skills_with_diagnostics",
     "openai_compatible_config_from_provider",

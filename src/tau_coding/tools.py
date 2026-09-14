@@ -593,12 +593,13 @@ def create_bash_tool_definition(
     """Create a definition for the `bash` tool.
 
     The tool runs a shell command with `cwd` as the subprocess working
-    directory and combines stdout and stderr into one UTF-8 decoded output
-    stream. The optional `timeout` argument must be positive when supplied. On
-    timeout, POSIX commands are started in a new session and the entire process
-    group is killed so shell children from pipelines or compound commands do
-    not continue running; non-POSIX platforms fall back to killing the direct
-    subprocess.
+    directory, disconnects stdin, and combines stdout and stderr into one UTF-8
+    decoded output stream. Disconnecting stdin keeps interactive programs from
+    competing with Tau for terminal input. The optional `timeout` argument must
+    be positive when supplied. On timeout, POSIX commands are started in a new
+    session and the entire process group is killed so shell children from
+    pipelines or compound commands do not continue running; non-POSIX platforms
+    fall back to killing the direct subprocess.
 
     Output is tail-truncated to `DEFAULT_MAX_OUTPUT_LINES` lines or
     `DEFAULT_MAX_OUTPUT_BYTES` bytes. When truncation occurs, the full output is
@@ -626,6 +627,7 @@ def create_bash_tool_definition(
             process = await asyncio.create_subprocess_shell(
                 shell_command,
                 cwd=root,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 start_new_session=True,
@@ -635,6 +637,7 @@ def create_bash_tool_definition(
             process = await asyncio.create_subprocess_shell(
                 shell_command,
                 cwd=root,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )

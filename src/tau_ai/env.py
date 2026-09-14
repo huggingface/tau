@@ -42,9 +42,9 @@ type RuntimeResponseHeadersObserver = Callable[[Mapping[str, str]], None]
 class OpenAICompatibleConfig:
     """Configuration for an OpenAI-compatible chat completions endpoint."""
 
-    api_key: str
+    api_key: str = field(repr=False)
     base_url: str = DEFAULT_OPENAI_COMPATIBLE_BASE_URL
-    headers: Mapping[str, str] | None = None
+    headers: Mapping[str, str] | None = field(default=None, repr=False)
     timeout_seconds: float = DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS
     max_retries: int = DEFAULT_OPENAI_COMPATIBLE_MAX_RETRIES
     max_retry_delay_seconds: float = DEFAULT_OPENAI_COMPATIBLE_MAX_RETRY_DELAY_SECONDS
@@ -62,6 +62,7 @@ class OpenAICompatibleConfig:
     omit_authorization_header: bool = False
     credential_resolver: RuntimeProviderAuthResolver | None = None
     response_headers_observer: RuntimeResponseHeadersObserver | None = None
+    infer_api_from_model: bool = True
 
 
 @dataclass(frozen=True, slots=True)

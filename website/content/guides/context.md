@@ -80,9 +80,10 @@ Compact on demand any time:
 /compact focus on the database migration work
 ```
 
-Optional text after `/compact` is added as extra focus for the summary. Manual
-compaction summarizes the whole active context into one summary and fails visibly
-if the request fails.
+Optional text after `/compact` is added as extra focus for the summary. Like automatic
+compaction, manual compaction summarizes an older prefix and keeps a recent suffix. If
+there is not enough older context to summarize while retaining a real entry, Tau reports
+that the context is too short to compact. Summary generation failures remain visible.
 
 In the TUI, a manual compaction looks like a normal working turn: the prompt
 activity indicator and terminal tab title animate while it runs, and a
@@ -95,7 +96,7 @@ Some models can spend extra effort reasoning before answering. Tau exposes a
 thinking level you can cycle:
 
 ```text
-off → minimal → low → medium → high → xhigh
+off → minimal → low → medium → high → xhigh → max
 ```
 
 - **Shift+Tab** cycles the thinking level (default is `medium`).
@@ -116,3 +117,10 @@ supports `low`, `high`, and `xhigh`; because `medium` is unavailable, it opens
 at its `xhigh` catalog default instead of failing with "Thinking mode medium is
 not available". Picking an unsupported level explicitly (via `/think` or the
 thinking picker) still shows an error listing the available modes.
+
+You can also set the startup level from the command line with `--thinking`
+(`-t`), for example `tau -t high` or `tau -t max -p "explain this"`. The flag
+takes precedence over remembered and catalog defaults for that run but is not
+saved as a new default; requesting a level the selected model does not support
+exits with an error listing the available modes. Levels chosen interactively
+afterwards (via `/think` or Shift+Tab) persist as usual.

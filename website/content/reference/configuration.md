@@ -13,7 +13,10 @@ those locations and file formats.
 ~/.tau/
 ├── catalog.toml        # optional provider/model catalog overlay
 ├── providers.json      # provider/model preferences
+├── models-store.json   # refreshed models.dev catalog cache
+├── codex-models-store.json # account-scoped Codex model snapshot
 ├── credentials.json    # saved API keys / OAuth tokens (0600, atomic writes)
+├── state/extensions/    # built-in integration state, including llama.cpp
 ├── settings.json       # general settings (trust default, shell prefix)
 ├── trust.json          # versioned project-input trust decisions
 ├── tui.json            # TUI theme, keybindings, and layout
@@ -41,6 +44,16 @@ Startup update checks cache their latest PyPI result in
 `~/.tau/cache/update-check.json` and refresh at most once per day. Set
 `TAU_NO_UPDATE_CHECK=1` to disable the check; Tau also skips it when `CI` is set.
 
+`models-store.json` caches an ETag-revalidated models.dev catalog newer than the
+bundled snapshot. `/model` refreshes it in the background at most every four
+hours; `tau update --models` forces revalidation. Set `TAU_OFFLINE=1` to disable
+catalog network access. User `catalog.toml` overrides still apply after the cache.
+
+`codex-models-store.json` contains only parsed model metadata and the active
+Codex account ID. Tau loads it at startup, then refreshes it when `/model` or
+`/scoped-models` opens; a snapshot from a different account is ignored. It never
+contains OAuth tokens.
+
 ## System prompt files
 
 Tau can replace or extend its generated system prompt with Tau-native Markdown
@@ -53,17 +66,19 @@ files:
 <project>/.tau/APPEND_SYSTEM.md  # project append
 ```
 
-For each kind, precedence is explicit CLI input, then the project file, then the
-user file. A higher-precedence append file replaces the lower-precedence append
-file; Tau does not concatenate project and user files. Replacement content still
-receives the selected append text, project instructions, eligible skills, the
-current date, and the working directory. Empty files are valid explicit values.
+Replacement inputs use precedence: explicit CLI input, then the project
+`SYSTEM.md`, then the user `SYSTEM.md`. Append inputs compose instead of
+shadowing one another: Tau adds the user `APPEND_SYSTEM.md`, then the project
+`APPEND_SYSTEM.md`, then every explicit `--append-system-prompt` value in CLI
+order. Replacement content still receives all append text, project instructions,
+eligible skills, the current date, and the working directory. Empty files are
+valid contributions.
 
 Run `/reload` after adding, changing, or removing a file. Tau rebuilds the prompt
 for the next model request without adding it to session history. `/session`
-resource diagnostics identify selected, shadowed, or CLI-overridden files. A
-selected file that cannot be inspected or decoded as UTF-8 stops startup or
-reload rather than silently falling back.
+resource diagnostics identify selected append files and selected, shadowed, or
+CLI-overridden replacement files. A selected file that cannot be inspected or
+decoded as UTF-8 stops startup or reload rather than silently falling back.
 
 System prompt files are Tau-specific and are not discovered from `.agents`.
 Project files load only after the destination cwd is trusted. User files and
@@ -104,6 +119,18 @@ Tau separates provider metadata from runtime preferences:
 - `~/.tau/catalog.toml` optionally adds personal providers or overlays built-ins.
 - `~/.tau/providers.json` stores runtime preferences such as the default provider,
   default model, scoped models, headers, and timeout/retry settings.
+
+The built-in llama.cpp backend stores only its normalized endpoint and safe
+server-reported model snapshot at `~/.tau/state/extensions/llama.cpp.json`.
+Optional credentials remain in `credentials.json` or `LLAMA_API_KEY`; dynamic
+llama.cpp provider definitions are not written to `catalog.toml` or
+`providers.json`. Scoped llama.cpp entries in `providers.json` contain only the
+stable `llama.cpp` provider ID and exact model ID; stale entries do not create
+availability or router work. For Hugging Face GGUF search, Tau reads `HF_TOKEN`
+or standard Hugging Face token files but never stores or forwards that token to
+the llama.cpp server. The independent server needs its own `HF_TOKEN` for gated
+downloads. See the [local inference guide]({{< relref
+"../guides/local-inference.md" >}}).
 
 Tau intentionally reads catalog overlays only from the user-level
 `~/.tau/catalog.toml`. There is no project-level `.tau/catalog.toml`, so cloning a
@@ -258,14 +285,18 @@ Provider preferences live in `~/.tau/providers.json`:
   `"inference_providers": { "zai-org/GLM-5.2": "deepinfra" }`. Each key must be
   a configured model and each value an explicit provider suffix advertised by
   Hugging Face—not the `fastest`, `cheapest`, or `preferred` routing policies.
-  Tau snapshots the selected suffix into new session metadata, retains it on
-  resume, and sends only the suffixed wire model; ordinary model identity and
-  catalog metadata remain unsuffixed. Without a preference, Tau starts with
-  automatic routing and pins the `x-inference-provider` reported by the first
-  successful response. `/session` reports the route; changing the active session
-  route is available in Tau 0.3.10+ through the external
+  Tau snapshots the selected suffix into new session metadata as a fixed route,
+  retains it on resume, and sends only the suffixed wire model; ordinary model
+  identity and catalog metadata remain unsuffixed. Without a preference, Tau
+  starts in automatic mode and records the `x-inference-provider` reported by
+  the first successful response as a sticky but recoverable route. After a
+  retryable pre-output HTTP failure exhausts provider-level retries, Tau clears
+  that automatic pin, retries the interrupted turn once through Hugging Face
+  automatic routing, and stores the successful replacement. Explicitly configured
+  routes never fail over. `/session` reports both mode and current route; changing
+  the active session route is available through the external
   [`tau-huggingface`](https://github.com/alejandro-ao/tau-huggingface) extension;
-  clone it and launch Tau with `tau -e ./tau-huggingface`.
+  clone it and launch Tau with `tau -e ./tau-huggingface`, then use `/hf route`.
   `timeout_seconds` defaults to `60` (> 0); `max_retries`
   defaults to `2`; `max_retry_delay_seconds` defaults to `1` (both ≥ 0).
   Retries cover transient HTTP statuses (`408`, `409`, `425`, `429`, `5xx`),
@@ -273,7 +304,10 @@ Provider preferences live in `~/.tau/providers.json`:
   otherwise successful HTTP 200 response. Anthropic retries `api_error`,
   `overloaded_error`, and `rate_limit_error`; OpenAI Codex retries transient
   events such as `server_is_overloaded`. In-stream errors remain terminal after
-  partial content to prevent duplicate output or tool calls.
+  partial content to prevent duplicate output or tool calls. Existing session
+  records that contain a Hugging Face route but predate route-mode metadata are
+  treated as fixed, preventing an upgrade from overriding a potentially explicit
+  user selection.
 - API keys and OAuth credentials are **not** stored here — they live in
   `~/.tau/credentials.json` (private but not encrypted). OAuth objects may contain
   provider metadata such as a GitHub Enterprise domain and are refreshed
@@ -282,7 +316,8 @@ Provider preferences live in `~/.tau/providers.json`:
 - The selected model must be present in that provider's `models` list. Add
   custom or local model names to `models` before using them as defaults,
   CLI/TUI selections, or scoped models.
-- `scoped_models` are favorites for the **Ctrl+P** quick-cycle.
+- `scoped_models` are favorites for the **Ctrl+P** / **Shift+Ctrl+P**
+  forward / backward quick-cycle.
 - `providers.json` uses `schema_version: 2` and stores preferences only. Provider
   capabilities—model lists, context windows, transports, metadata, and thinking
   support—always come from the current effective catalog.
@@ -353,11 +388,13 @@ The built-in frontend reads optional settings from `~/.tau/tui.json`:
     "command_palette": "ctrl+k",
     "session_picker": "ctrl+r",
     "queue_follow_up": "alt+enter",
+    "insert_newline": "shift+enter",
     "accept_completion": "tab",
     "completion_next": "down",
     "completion_previous": "up",
     "thinking_cycle": "shift+tab",
     "model_cycle": "ctrl+p",
+    "model_cycle_reverse": "ctrl+shift+p",
     "toggle_thinking": "ctrl+t",
     "toggle_tool_results": "ctrl+o",
     "copy_message": "ctrl+c",
@@ -379,7 +416,10 @@ Tau rejects invalid values, empty keys, and duplicate assignments.
 
 - `sidebar_position`: `"right"` (default), `"left"`, or `"off"`. Controls
   placement of the session metadata sidebar. `"off"` hides the sidebar entirely;
-  the compact session info row below the prompt still works.
+  the compact session info row below the prompt still works. In a running TUI,
+  `/sidebar` temporarily toggles visibility without writing this setting; a
+  temporarily shown `"off"` sidebar uses the default right position and the
+  saved setting is honored again after restart.
 - `turn_notification`: `"desktop"` (default), `"bell"`, or `"off"`. When Tau's
   terminal surface is unfocused and the agent becomes fully idle, `"desktop"`
   selects OSC 9 for Ghostty, iTerm2, and MinTTY, or Kitty's OSC 99 protocol for
@@ -398,8 +438,12 @@ Full list in [Keyboard shortcuts]({{< relref "./keybindings.md" >}}).
 ```
 
 Each working directory gets its own subdirectory; transcripts are append-only
-JSONL preserving messages, model changes, and the active leaf of the session
-tree. Metadata is indexed per project. See the
+JSONL preserving messages and state changes. The last non-legacy-leaf entry in
+file order is the active session-tree tip; historical `leaf` records remain
+readable but are ignored. Per-entry bookmarks are append-only `label` changes
+with `target_id` and an optional `label`; the latest change per target wins and
+`null`/empty clears it. Session display names remain `session_info.title`.
+Metadata is indexed per project. See the
 [Sessions guide]({{< relref "../guides/sessions.md" >}}).
 
 ## Skills, prompts & project context

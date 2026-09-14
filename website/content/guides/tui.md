@@ -12,7 +12,9 @@ see [Keyboard shortcuts]({{< relref "../reference/keybindings.md" >}}).
 Type into the prompt box at the bottom and press **Enter** to submit. The editor
 keeps its padded block size and background, while a single left border changes
 color to reflect focus, shell mode, and active runs without boxing it in.
-**Shift+Enter** inserts a newline for multi-line prompts. Tau streams the
+**Shift+Enter** inserts a newline for multi-line prompts. If your terminal cannot
+distinguish it from Enter, remap `insert_newline` in `~/.tau/tui.json`; see
+[Keyboard shortcuts]({{< relref "../reference/keybindings.md#prompting" >}}). Tau streams the
 assistant's reply above the prompt, showing tool calls as they run. When OpenAI
 returns several reasoning-summary parts, Tau keeps them as separate Markdown
 paragraphs rather than joining their headings together. In supported terminal
@@ -26,6 +28,11 @@ terminal mark the tab or apply its configured bell behavior instead, or `"off"`
 to disable notifications. BEL and operating-system desktop notifications may
 produce sounds according to the user's terminal and system settings; see
 [Configuration]({{< relref "../reference/configuration.md#tui-settings" >}}).
+
+Chat Completions providers can interleave reasoning and answer fragments (for
+example, DeepSeek through Hugging Face). Tau keeps each channel in one continuous
+block while streaming and saving the reply, rather than splitting sentences at
+channel switches. Previously saved replies retain their original block layout.
 
 Clicking anywhere in the window returns focus to the prompt, so you can scroll
 the transcript and keep typing without tabbing back.
@@ -57,14 +64,47 @@ In-session commands start with `/`. Open the **command palette** with **Ctrl+K**
 to search and run them. Common ones:
 
 - `/session` — show model, tools, skills, and context usage for the session. Text selected in this modal is copied to the clipboard automatically.
+- `/system` — show the active system prompt with Markdown formatting in the transcript without adding it to context or session history
 - `/model` — pick the active model
 - `/tools` — search active tools by origin and open their full descriptions
 - `/compact` — summarize and shrink the context
 - `/resume`, `/tree` — open previous sessions or branch from history
 - `/prompts` — search prompt templates, insert an invocation, or edit the template file with **Ctrl+E**
 - `/hotkeys` — show the keyboard shortcuts
+- `/local` — choose and manage a registered local backend
+- `/sidebar` — show or hide the sidebar for this session
 
-The full list is in the [Slash commands reference]({{< relref "../reference/slash-commands.md" >}}).
+When slash-command autocomplete is open, **Enter** applies the highlighted
+suggestion without submitting it; use the arrow keys first to choose a different
+suggestion. **Tab** also applies the highlighted suggestion.
+
+The full list is in the [Slash commands reference]({{< relref "../reference/slash-commands.md" >}}). For local inference, see the [local backends guide]({{< relref "./local-inference.md" >}}).
+
+### Local backends
+
+`/local` first opens an explicit backend chooser. One backend is preselected but
+still requires confirmation; a recommended backend is only a marker. Tau's
+built-in `llama.cpp` backend automatically probes its one effective
+saved/environment/default endpoint; **Configure** accepts another URL and an
+optional secret key. It renders models and backend actions as separate
+arrow-key navigable sections. Only the focused section shows a `focused` marker,
+accent border, and highlighted row; Tab switches sections directly. Enter
+selects from the focused section and Escape closes. Expensive
+load/download operations require a separate confirmation with model details,
+and active downloads show a full-width block bar with router-reported byte
+progress, including after reopening `/local`. The actions section exposes
+Hugging Face search/download, explicit active-download
+cancellation, status, refresh, Doctor, and reset; the model section owns load,
+use, and unload.
+
+Configure, refresh, status, Doctor, and reset work asynchronously, show
+structured progress/diagnostics, and are cancelled when the screen closes. A
+server-side download instead continues in llama.cpp when `/local` closes.
+Cached model snapshots remain visible as stale during server downtime.
+State-changing actions require an idle agent. Reset does not stop llama.cpp or
+delete model files; credential deletion is separately confirmed. For explicit
+startup and troubleshooting, see the [local inference guide]({{< relref
+"./local-inference.md" >}}).
 
 ## Running shell commands directly
 
@@ -73,6 +113,9 @@ You can run a shell command yourself without asking the model:
 - `!<command>` runs it in the session's working directory **and** records the
   command and output in the conversation context.
 - `!!<command>` runs it and shows the output **without** adding it to context.
+
+Shell commands are non-interactive: their stdin is disconnected from the TUI.
+Programs that require an interactive terminal should be run in a separate terminal.
 
 As soon as the input starts with `!`, the whole input and its left border turn
 the same amber/orange color as a tool while it is running, and the `τ` prompt
@@ -97,7 +140,9 @@ complete files and directories outside the project root. External completion
 follows only the path you type instead of scanning the surrounding filesystem.
 Dot-prefixed content such as `.env` and `.agents/` is included. Tau still skips
 known metadata and generated directories such as `.git`, `.venv`, `node_modules`,
-`__pycache__`, `build`, and `dist`.
+`__pycache__`, `build`, and `dist`. Press **Tab** to insert the highlighted file;
+press **Enter** to submit exactly what you typed without inserting it. The same
+rule applies to `@` suggestions in skill and custom-prompt argument text.
 
 ## Dropping files into the prompt
 
@@ -126,8 +171,10 @@ every file path listed beneath it. Expanded edit and write groups retain each
 invocation and result; expanded read groups omit repeated file contents. The
 complete block remains one selectable text surface,
 including across line boundaries.
-Batches never cross assistant text, model continuations, or separate responses;
-extension tools, custom rendered call cards, and skill loads remain separate.
+Batches never cross assistant text, thinking, or unrelated responses. Consecutive
+same-tool edit or write continuations are grouped so providers that serialize
+file mutations one at a time still produce one file list. Extension tools, custom
+rendered call cards, and skill loads remain separate.
 
 Tool results (like long `read` or `bash` output) render as compact previews so
 the transcript stays readable. Tau requires the model to give each `bash` call a
@@ -169,11 +216,17 @@ when you want to reduce what is sent to the model.
 
 ## Picking models and themes
 
-- **`/model`** opens the model picker. Selecting a model from another provider
-  switches the active provider too.
-- **Ctrl+P** quickly cycles through your *scoped* (favorite) models without
-  opening the picker. Manage that list with `/scoped-models` or by pressing
-  `Space` on a model in the `/model` picker.
+- **`/model`** opens the model picker. It shows cached/bundled models immediately,
+  refreshes catalogs in the background, and updates the open list. The
+  account-scoped Codex snapshot is also reused across sessions, and `/model`
+  refreshes it.
+- **`/scoped-models`** opens the favorite-model picker and refreshes provider
+  catalogs in the background too, so newly discovered Codex models can be
+  scoped without opening `/model` first. Use `tau update --models` to force
+  public-catalog refresh or `TAU_OFFLINE=1` to disable catalog network access.
+- **Ctrl+P** quickly cycles forward through your *scoped* (favorite) models;
+  **Shift+Ctrl+P** cycles backward. Neither opens the picker. Manage that list
+  with `/scoped-models` or by pressing `Space` on a model in the `/model` picker.
 - **`/theme`** switches between `tau-dark`, `tau-light`, `high-contrast`, and
   any custom themes you have installed. Each theme uses one shared selection
   palette for prompt autocomplete and modal lists such as `/resume`. In
@@ -186,20 +239,32 @@ when you want to reduce what is sent to the model.
 
 On wide-enough terminals Tau shows the session name prominently without a
 redundant section label, followed by active-branch
-turn and tool-call totals, provider-reported token usage, latest-request and
-session prompt-cache hit rates, estimated cost, automatic-compaction threshold,
+turn and tool-call totals, provider-reported token usage, average effective
+output speed and TTFT, latest-request and session prompt-cache hit rates, estimated cost,
+automatic-compaction threshold,
 and loaded tools, skills, prompt templates, extensions, and context files such as
 `AGENTS.md`. Tool and extension names use compact comma-separated lists limited
 to three rendered lines. Skills and prompt templates are grouped under their
 resource origins (for example, `./.tau/skills`, `~/.agents/skills`, or
-`./.tau/prompts`), and every loaded skill and prompt is shown. If the sidebar
-content is taller than the available space, scroll it to see the remaining
-resource groups; the Tau version mark stays pinned at the bottom. Context files
-use a bullet list with one path per line, limited to five entries. Truncated sections
-end with `...(X more)` showing how many context entries are hidden. Project
-context paths are relative to the working directory; context
-loaded from the home directory starts with `~/`, while other context loaded from
-outside the project uses its full path.
+`./.tau/prompts`). These two sections start collapsed and show their loaded-item
+counts in the headings. The skills heading also shows the estimated token cost of
+the loaded skill index in the system prompt; full skill instructions enter context
+only when that skill is invoked. Click either heading (or focus it and press
+**Enter**) to expand or collapse that section independently, so both lists can
+remain open when needed. Every loaded skill or prompt is shown while its section
+is expanded. Model-visible skills use a solid bullet (`•`), while user-only skills
+with `disable-model-invocation: true` use a hollow bullet (`◦`). If
+the sidebar content is
+taller than the available space, scroll it to see the remaining resource groups;
+the Tau version mark stays pinned at the bottom. Context files
+use a bullet list with one path per line, limited to five entries. When Tau loads a
+`SYSTEM.md` replacement or `APPEND_SYSTEM.md` addition from a user or project
+`.tau` directory, a separate **system prompt** section lists each active file.
+Tau omits that section when no system-prompt files are active. Truncated sections
+end with `...(X more)` showing how many entries are hidden. Project resource paths
+are relative to the working directory; resources loaded from the home directory
+start with `~/`, while other resources loaded from outside the project use their
+full path.
 
 The wider, borderless sidebar uses the prompt field's background color, bright
 section headings, quieter gray values, and keeps Tau's versioned `τ = 2π` mark
@@ -209,10 +274,21 @@ and terminal tab title; `/hotkeys` lists shortcuts when needed. The sidebar hide
 automatically when the terminal is small, while the tab title continues to
 identify the session.
 
+`avg TPS` divides provider-reported output tokens by the accumulated time Tau
+spends awaiting provider stream events. That includes provider queueing, network
+waits, prefill, and time to first output, but excludes Tau's rendering and
+persistence work between stream pulls. TPS is token-weighted across timed
+responses rather than an average of per-response rates. `avg TTFT` is the
+arithmetic mean of provider-wait time through Tau's first text, thinking, or
+tool-call output event. Timing is persisted on new assistant messages. Older
+history still counts toward cumulative token usage and cost but is omitted from
+both performance metrics.
+
 Cumulative usage and cost cover the active branch, including history replaced by
-compaction. Input usage counts tokens processed on every
-provider request, so it can be much larger than the context used by the next
-request. Cost is an estimate based on provider-reported usage and configured
+compaction and the model requests used to generate compaction or branch summaries.
+Heuristic summary fallbacks have no provider usage and add nothing. Input usage
+counts tokens processed on every provider request, so it can be much larger than
+the context used by the next request. Cost is an estimate based on provider-reported usage and configured
 catalog rates; the sidebar shows `$N/A` when Tau lacks complete pricing data.
 
 The cache line separates the latest model request from the cumulative session.
@@ -238,6 +314,20 @@ branch, and provider use the quieter metadata color.
 The sidebar appears on the **right** by default. It can be moved to the **left**
 or turned **off** entirely by setting `sidebar_position` in `~/.tau/tui.json` —
 see [Configuration]({{< relref "../reference/configuration.md#tui-settings" >}}).
+Use `/sidebar` to toggle visibility during a session. This is temporary: it
+preserves a configured left/right position, does not change `tui.json`, and is
+forgotten when Tau restarts. A configured `off` sidebar can be shown temporarily
+on the default right side.
+
+## Herdr compatibility
+
+When Tau detects that its TUI is running inside Herdr, it defaults Textual to
+cell-coordinate mouse input and standard terminal resize signals. This avoids a
+Herdr 0.9.0 interoperability bug that can collapse clicks, hover, selection, and
+scrolling into the top-left corner of the pane. Other terminals keep Textual's
+normal in-band resize and pixel-mouse behavior. An explicitly configured
+`TEXTUAL_SMOOTH_SCROLL` environment variable takes precedence over Tau's
+compatibility default.
 
 ## Next
 

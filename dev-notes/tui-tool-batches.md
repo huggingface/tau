@@ -30,10 +30,13 @@ expand to individual read invocations without repeating file-content previews;
 grouped edits and writes retain each invocation and result. Batch invocations and
 results remain one selectable plain-text surface.
 
-Batches never cross assistant text, thinking blocks, model continuations, skill
-loads, or separate assistant responses. Only the known `bash`, `read`, `edit`,
-and `write` tools are eligible; extension tools remain separate so custom call
-or result cards are never flattened into generic text rows.
+Batches never cross assistant text, thinking blocks, skill loads, or unrelated
+assistant responses. A narrow exception joins consecutive completed `edit` or
+`write` calls from same-tool model continuations, matching providers that
+serialize file mutations one at a time. Only the known `bash`, `read`, `edit`,
+and `write` tools are eligible; extension tools remain separate so custom call or
+result cards are never
+flattened into generic text rows.
 
 ## Architecture
 

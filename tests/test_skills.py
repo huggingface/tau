@@ -296,3 +296,86 @@ def test_build_skill_index(tmp_path: Path) -> None:
     assert "- testing: Test things" in index
     assert "create-tau-extension" not in index
     assert "tau-model-catalog" not in index
+
+
+def test_load_skill_parses_disable_model_invocation(tmp_path: Path) -> None:
+    skills_dir = tmp_path / "skills"
+    (skills_dir / "hidden").mkdir(parents=True)
+    (skills_dir / "hidden" / "SKILL.md").write_text(
+        "---\ndescription: Hidden skill\ndisable-model-invocation: true\n---\nBody",
+        encoding="utf-8",
+    )
+    (skills_dir / "visible").mkdir()
+    (skills_dir / "visible" / "SKILL.md").write_text(
+        "---\ndescription: Visible skill\n---\nBody",
+        encoding="utf-8",
+    )
+    (skills_dir / "explicit-false").mkdir()
+    (skills_dir / "explicit-false" / "SKILL.md").write_text(
+        "---\ndescription: Explicitly enabled\ndisable-model-invocation: false\n---\nBody",
+        encoding="utf-8",
+    )
+    (skills_dir / "invalid-value").mkdir()
+    (skills_dir / "invalid-value" / "SKILL.md").write_text(
+        "---\ndescription: Invalid flag value\ndisable-model-invocation: yes\n---\nBody",
+        encoding="utf-8",
+    )
+
+    skills = load_skills(TauResourcePaths(root=tmp_path, agents_root=None))
+
+    skill_by_name = {skill.name: skill for skill in skills}
+    assert skill_by_name["hidden"].disable_model_invocation is True
+    assert skill_by_name["visible"].disable_model_invocation is False
+    assert skill_by_name["explicit-false"].disable_model_invocation is False
+    assert skill_by_name["invalid-value"].disable_model_invocation is False
+
+
+def test_disable_model_invocation_accepts_case_insensitive_true(tmp_path: Path) -> None:
+    skills_dir = tmp_path / "skills" / "hidden"
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "SKILL.md").write_text(
+        "---\ndescription: Hidden skill\ndisable-model-invocation: True\n---\nBody",
+        encoding="utf-8",
+    )
+
+    skills = load_skills(TauResourcePaths(root=tmp_path, agents_root=None))
+
+    assert skills[0].disable_model_invocation is True
+
+
+def test_disabled_skill_remains_invocable_via_skill_command(tmp_path: Path) -> None:
+    skill = Skill(
+        name="hidden",
+        path=tmp_path / "skills" / "hidden" / "SKILL.md",
+        content="Hidden body",
+        description="Hidden skill",
+        disable_model_invocation=True,
+    )
+
+    expanded = expand_skill_command("/skill:hidden", [skill])
+
+    assert expanded is not None
+    assert "Hidden body" in expanded
+
+
+def test_build_skill_index_excludes_disabled_skills(tmp_path: Path) -> None:
+    visible = Skill(
+        name="visible",
+        path=tmp_path / "visible" / "SKILL.md",
+        content="Body",
+        description="Visible skill",
+    )
+    hidden = Skill(
+        name="hidden",
+        path=tmp_path / "hidden" / "SKILL.md",
+        content="Body",
+        description="Hidden skill",
+        disable_model_invocation=True,
+    )
+
+    index = build_skill_index([visible, hidden])
+
+    assert "- visible: Visible skill" in index
+    assert "hidden" not in index
+
+    assert build_skill_index([hidden]) == "Available skills: none"

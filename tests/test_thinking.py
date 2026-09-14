@@ -22,9 +22,10 @@ def test_normalize_thinking_level_rejects_unknown_mode() -> None:
 
 def test_next_thinking_level_cycles_supported_modes() -> None:
     assert next_thinking_level("medium") == "high"
-    assert next_thinking_level("xhigh") == "off"
+    assert next_thinking_level("xhigh") == "max"
+    assert next_thinking_level("max") == "off"
     assert next_thinking_level("missing", available=("low", "high")) == "low"
-    assert THINKING_LEVELS == ("off", "minimal", "low", "medium", "high", "xhigh")
+    assert THINKING_LEVELS == ("off", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
 def test_normalize_thinking_levels_rejects_empty_and_duplicates() -> None:

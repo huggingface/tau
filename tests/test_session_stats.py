@@ -1,13 +1,13 @@
 from tau_agent.messages import (
     AssistantMessage,
-    CustomMessage,
+    ResponseTiming,
     TextContent,
     ToolCall,
     ToolResultMessage,
     Usage,
     UserMessage,
 )
-from tau_agent.session import CompactionEntry, MessageEntry
+from tau_agent.session import CompactionEntry, CustomMessageEntry, MessageEntry
 from tau_coding.session_stats import SessionStats, calculate_session_stats
 
 
@@ -26,7 +26,10 @@ def test_cache_hit_rate_is_zero_when_a_write_happened_but_nothing_was_read() -> 
 
 
 def test_cache_hit_rate_is_none_without_billed_input() -> None:
-    assert SessionStats().cache_hit_rate is None
+    stats = SessionStats()
+
+    assert stats.cache_hit_rate is None
+    assert stats.average_time_to_first_output_ms is None
 
 
 def test_cache_hit_rate_divides_reads_by_total_prompt_tokens() -> None:
@@ -117,6 +120,51 @@ def test_latest_cache_hit_rate_reports_miss_after_earlier_cache_activity() -> No
     assert stats.latest_cache_hit_rate == 0.0
 
 
+def test_calculate_session_stats_aggregates_effective_output_speed() -> None:
+    first = MessageEntry(
+        message=AssistantMessage(
+            usage=Usage(output=100),
+            timing=ResponseTiming(time_to_first_output_ms=500, total_duration_ms=2000),
+        )
+    )
+    second = MessageEntry(
+        parent_id=first.id,
+        message=AssistantMessage(
+            usage=Usage(output=300),
+            timing=ResponseTiming(time_to_first_output_ms=1000, total_duration_ms=3000),
+        ),
+    )
+
+    stats = calculate_session_stats(
+        [first, second],
+        pricing=lambda _provider, _model, _input: {},
+    )
+
+    assert stats.output_tokens_per_second == 80.0
+    assert stats.average_time_to_first_output_ms == 750.0
+
+
+def test_calculate_session_stats_ignores_untimed_history_for_speed() -> None:
+    timed = MessageEntry(
+        message=AssistantMessage(
+            usage=Usage(output=100),
+            timing=ResponseTiming(time_to_first_output_ms=500, total_duration_ms=2000),
+        )
+    )
+    legacy = MessageEntry(
+        parent_id=timed.id,
+        message=AssistantMessage(usage=Usage(output=300)),
+    )
+
+    stats = calculate_session_stats(
+        [timed, legacy],
+        pricing=lambda _provider, _model, _input: {},
+    )
+
+    assert stats.output_tokens_per_second == 50.0
+    assert stats.average_time_to_first_output_ms == 500.0
+
+
 def test_calculate_session_stats_keeps_compacted_active_branch_usage() -> None:
     user = MessageEntry(message=UserMessage(content="Fix it"))
     assistant = MessageEntry(
@@ -132,31 +180,45 @@ def test_calculate_session_stats_keeps_compacted_active_branch_usage() -> None:
             usage=Usage(input=1_000_000, output=100_000, cache_read=500_000),
         ),
     )
-    extension_turn = MessageEntry(
+    extension_turn = CustomMessageEntry(
         parent_id=assistant.id,
-        message=CustomMessage(custom_type="test:status", content="Continue"),
+        custom_type="test:status",
+        content="Continue",
     )
     compaction = CompactionEntry(
         parent_id=extension_turn.id,
         summary="Earlier work",
-        replaces_entry_ids=[user.id, assistant.id],
+        first_kept_entry_id=extension_turn.id,
+        usage=Usage(input=200_000, output=10_000, cache_read=100_000),
+        provider="summary-provider",
+        model="summary-model",
     )
+    priced_requests: list[tuple[str, str, int]] = []
 
-    stats = calculate_session_stats(
-        [user, assistant, extension_turn, compaction],
-        pricing=lambda provider, model, input_tokens: {
+    def pricing(provider: str, model: str, input_tokens: int) -> dict[str, float]:
+        priced_requests.append((provider, model, input_tokens))
+        return {
             "input": 2.0,
             "output": 8.0,
             "cacheRead": 0.5,
             "cacheWrite": 0.0,
-        },
+        }
+
+    stats = calculate_session_stats(
+        [user, assistant, extension_turn, compaction],
+        pricing=pricing,
     )
 
+    assert priced_requests == [
+        ("openai", "gpt-test", 1_500_000),
+        ("summary-provider", "summary-model", 300_000),
+    ]
     assert stats.turn_count == 2
     assert stats.tool_call_count == 2
-    assert stats.input_tokens == 1_500_000
-    assert stats.output_tokens == 100_000
-    assert stats.estimated_cost == 3.05
+    assert stats.input_tokens == 1_800_000
+    assert stats.output_tokens == 110_000
+    assert stats.latest_cache_hit_rate == 1 / 3
+    assert stats.estimated_cost == 3.58
 
 
 def test_calculate_session_stats_marks_cost_unavailable_when_pricing_is_missing() -> None:

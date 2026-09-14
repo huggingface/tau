@@ -11,17 +11,19 @@ command palette with **Ctrl+K**.
 | `/quit` | Exit the session |
 | `/new` | Start a new session |
 | `/session` | Show session info and stats (model, cwd, tools, skills, context) |
-| `/system` | Show the active system prompt without adding it to context or session history |
+| `/system` | Show the active system prompt with Markdown formatting without adding it to context or session history |
 | `/compact [instructions]` | Summarize and compact the active context |
 | `/export [--format html\|jsonl] [dest]` | Export the current session |
 | `/resume [session-id]` | Resume a previous session, or open the picker |
 | `/tree` | Branch from an earlier point in the session tree |
 | `/name <new name>` | Rename the current session and, in supported terminals, the terminal tab title |
-| `/model` | Open the model picker |
+| `/model` | Refresh provider catalogs and open the model picker |
 | `/tools` | Browse active tools and open their full descriptions |
-| `/scoped-models` | Choose favorite models for the Ctrl+P quick-cycle |
+| `/scoped-models` | Refresh provider catalogs and choose favorite models for the Ctrl+P / Shift+Ctrl+P quick-cycle |
 | `/theme [name]` | Show or set the TUI theme |
 | `/login [provider]` | Connect a built-in provider with OAuth or an API key; Anthropic uses `anthropic-subscription` or `anthropic-api` |
+| `/local` | Choose and manage a registered local backend; interactive-only. Compatible llama.cpp routers add explicit load/unload, Hugging Face GGUF search, and server-side download actions with confirmation and reconciliation. |
+| `/sidebar` | Toggle the sidebar for this session without changing `tui.json` |
 | `/logout [provider]` | Remove saved credentials for a provider |
 | `/reload` | Reload local skills, prompts, extensions, and project context |
 | `/prompts` | Search loaded prompt templates; press Enter to insert an invocation or Ctrl+E to edit the file |

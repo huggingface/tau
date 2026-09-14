@@ -22,21 +22,23 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.content import Content, Span
 from textual.content import Style as TextualStyle  # type: ignore[attr-defined]
 from textual.css.query import NoMatches
 from textual.geometry import Offset
 from textual.selection import Selection
 from textual.widget import Widget
+from textual.widgets import Collapsible, Static
 from textual.widgets import Markdown as TextualMarkdown
-from textual.widgets import Static
-from textual.widgets.markdown import MarkdownBlock, MarkdownStream
+from textual.widgets.markdown import MarkdownBlock, MarkdownFence, MarkdownStream
 
 from tau_agent.tools import AgentTool, ToolCall
+from tau_coding.context_window import estimate_text_tokens
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.session_stats import SessionStats
 from tau_coding.skills import Skill
-from tau_coding.system_prompt import ProjectContextFile
+from tau_coding.system_prompt import ProjectContextFile, format_skills_for_prompt
 from tau_coding.tui.autocomplete import CompletionState
 from tau_coding.tui.config import TAU_DARK_THEME, TuiRoleStyle, TuiTheme
 from tau_coding.tui.state import (
@@ -86,6 +88,9 @@ class SessionSummarySource(Protocol):
     def context_files(self) -> Sequence[ProjectContextFile]: ...
 
     @property
+    def system_prompt_files(self) -> Sequence[Path]: ...
+
+    @property
     def context_token_estimate(self) -> int: ...
 
     @property
@@ -111,11 +116,34 @@ class SessionSummarySource(Protocol):
 
 
 class SessionSidebar(Vertical):
-    """Compact sidebar with session metadata and bottom-aligned branding."""
+    """Compact sidebar with collapsible resource lists and pinned branding."""
 
     def compose(self) -> Any:
         with VerticalScroll(id="sidebar-scroll"):
             yield Static("", id="sidebar-content")
+            yield Static(_sidebar_separator(theme=TAU_DARK_THEME), classes="sidebar-separator")
+            yield Collapsible(
+                Static("", id="sidebar-skills-content"),
+                title=_sidebar_resource_title(
+                    "skills",
+                    "0 · ~0 tokens",
+                    theme=TAU_DARK_THEME,
+                ),
+                collapsed=True,
+                id="sidebar-skills",
+                classes="sidebar-resource-section",
+            )
+            yield Static(_sidebar_separator(theme=TAU_DARK_THEME), classes="sidebar-separator")
+            yield Collapsible(
+                Static("", id="sidebar-prompts-content"),
+                title=_sidebar_resource_title("prompts", "0", theme=TAU_DARK_THEME),
+                collapsed=True,
+                id="sidebar-prompts",
+                classes="sidebar-resource-section",
+            )
+            yield Static(_sidebar_separator(theme=TAU_DARK_THEME), classes="sidebar-separator")
+            yield Static("", id="sidebar-extensions-content")
+            yield Container(id="sidebar-extension-sections")
         yield Static("", id="sidebar-brand")
 
     _summary_fingerprint: tuple[object, ...] | None = None
@@ -131,9 +159,25 @@ class SessionSidebar(Vertical):
         if fingerprint == self._summary_fingerprint:
             return
         self._summary_fingerprint = fingerprint
+        content = _build_sidebar_content(session, theme=theme)
         self.query_one("#sidebar-content", Static).update(
-            render_session_sidebar(session, theme=theme),
+            Group(*_separate_sidebar_sections(content.summary_sections, theme=theme)),
         )
+        skills = self.query_one("#sidebar-skills", Collapsible)
+        skills.title = _skill_section_title(session, theme=theme)
+        self.query_one("#sidebar-skills-content", Static).update(content.skills)
+        prompts = self.query_one("#sidebar-prompts", Collapsible)
+        prompts.title = _sidebar_resource_title(
+            "prompts",
+            str(len(session.prompt_templates)),
+            theme=theme,
+        )
+        self.query_one("#sidebar-prompts-content", Static).update(content.prompts)
+        self.query_one("#sidebar-extensions-content", Static).update(
+            _sidebar_section("extensions", content.extensions, theme=theme),
+        )
+        for separator in self.query(Static).filter(".sidebar-separator"):
+            separator.update(_sidebar_separator(theme=theme))
         self.query_one("#sidebar-brand", Static).update(
             _sidebar_brand(theme=theme),
             layout=False,
@@ -159,6 +203,26 @@ class CompactSessionInfo(Static):
         self.update(render_compact_session_info(session, theme=theme))
 
 
+def _sidebar_resource_title(label: str, detail: str, *, theme: TuiTheme) -> str:
+    """Style a resource label separately from its quieter summary."""
+    return f"[bold {theme.prompt_text}]{label}[/] [{theme.completion_description}]({detail})[/]"
+
+
+def _skill_section_title(session: SessionSummarySource, *, theme: TuiTheme) -> str:
+    """Summarize skill count and estimated system-prompt footprint."""
+    skill_prompt = (
+        format_skills_for_prompt(session.skills)
+        if any(tool.name == "read" for tool in session.tools)
+        else ""
+    )
+    estimated_tokens = estimate_text_tokens(skill_prompt)
+    return _sidebar_resource_title(
+        "skills",
+        f"{len(session.skills)} · ~{_compact_usage_count(estimated_tokens)} tokens",
+        theme=theme,
+    )
+
+
 def _session_summary_fingerprint(
     session: SessionSummarySource,
     *,
@@ -178,9 +242,13 @@ def _session_summary_fingerprint(
         session.session_stats,
         tuple(session.extension_names),
         tuple(tool.name for tool in session.tools),
-        tuple((skill.name, skill.path) for skill in session.skills),
+        tuple(
+            (skill.name, skill.path, skill.description, skill.disable_model_invocation)
+            for skill in session.skills
+        ),
         tuple((template.name, template.path) for template in session.prompt_templates),
         tuple(context.path for context in session.context_files),
+        tuple(session.system_prompt_files),
     )
 
 
@@ -221,10 +289,47 @@ class TauMarkdownBlock(MarkdownBlock):
         return type(content)(content.plain, spans=spans)
 
 
+class TauMarkdownFence(MarkdownFence):
+    """Code fence that discards invalid spans produced by Textual's highlighter."""
+
+    @classmethod
+    def highlight(
+        cls,
+        code: str,
+        language: str,
+        ansi: bool = False,
+        dark: bool = False,
+    ) -> Content:
+        content = super().highlight(code, language, ansi=ansi, dark=dark)
+        text_length = len(content.plain)
+        if all(0 <= span.start < span.end <= text_length for span in content.spans):
+            return content
+        spans = [
+            Span(max(0, span.start), min(text_length, span.end), span.style)
+            for span in content.spans
+            if max(0, span.start) < min(text_length, span.end)
+        ]
+        return Content(content.plain, spans=spans)
+
+
 class ThemedMarkdownWidget(TextualMarkdown):
     """Textual Markdown widget reserved for Tau transcript streaming."""
 
-    BLOCKS = {**TextualMarkdown.BLOCKS, "paragraph_open": TauMarkdownBlock}
+    @property
+    def allow_select(self) -> bool:
+        """Ignore stale mouse hits after a transcript widget is detached.
+
+        Textual's selection startup dereferences the selected widget's parent.
+        Its compositor can still return a removed widget before the next layout.
+        """
+        return self.parent is not None and super().allow_select
+
+    BLOCKS = {
+        **TextualMarkdown.BLOCKS,
+        "paragraph_open": TauMarkdownBlock,
+        "fence": TauMarkdownFence,
+        "code_block": TauMarkdownFence,
+    }
 
     DEFAULT_CSS = """
     ThemedMarkdownWidget MarkdownH1,
@@ -733,6 +838,10 @@ class TranscriptView(VerticalScroll):
 
         self.call_after_refresh(restore_anchor)
 
+    async def finish_thinking_message(self) -> None:
+        """Close a thinking block at its explicit stream boundary."""
+        await self._finalize_active_thinking_message()
+
     async def _finalize_active_thinking_message(self) -> None:
         """Stop streaming for a completed thinking block before another block starts."""
         widget = self._active_thinking_widget
@@ -1084,11 +1193,13 @@ class TranscriptView(VerticalScroll):
         *,
         theme: TuiTheme = TAU_DARK_THEME,
         scroll_end: bool = False,
+        preserve_thinking: bool = False,
     ) -> StreamingTranscriptMessageWidget:
         """Create the active assistant message widget if needed."""
         if self._active_assistant_widget is not None:
             return self._active_assistant_widget
-        await self._finalize_active_thinking_message()
+        if not preserve_thinking:
+            await self._finalize_active_thinking_message()
         should_follow = self._should_follow_output if not scroll_end else True
         widget = StreamingTranscriptMessageWidget(
             ChatItem(role="assistant", text=""),
@@ -1113,7 +1224,9 @@ class TranscriptView(VerticalScroll):
         if not self._window_is_latest:
             return
         should_follow = self._should_follow_output if not scroll_end else True
-        widget = await self.start_assistant_message(theme=theme, scroll_end=scroll_end)
+        widget = await self.start_assistant_message(
+            theme=theme, scroll_end=scroll_end, preserve_thinking=True
+        )
         await widget.append_fragment(delta)
         if should_follow:
             self._request_follow_scroll(force=scroll_end)
@@ -1469,9 +1582,215 @@ def _transcript_item_markdown(
     visible_text = _visible_chat_text(
         item, show_tool_results=show_tool_results, invocation=invocation
     )
+    if item.system_prompt:
+        return _system_prompt_markdown(visible_text)
     if item.role in {"assistant", "thinking", "status", "branch_summary", "compaction_summary"}:
         return visible_text
     return _plain_markdown(visible_text)
+
+
+_SYSTEM_PROMPT_TAG_PATTERN = re.compile(
+    r"""
+    </?
+    [A-Za-z][A-Za-z0-9_.:-]*
+    (?:
+        \s+
+        [A-Za-z_:][A-Za-z0-9_.:-]*
+        \s*=\s*
+        (?:
+            "[^"]*"
+            | '[^']*'
+            | [^\s"'=<>`]+
+        )
+    )*
+    \s*/?>
+    """,
+    re.VERBOSE,
+)
+_SYSTEM_PROMPT_FENCE_PATTERN = re.compile(r"^ {0,3}(?P<marker>`{3,}|~{3,})")
+_SYSTEM_PROMPT_INDENTED_CODE_PATTERN = re.compile(r"^(?: {4,}|[ ]*\t)")
+_SYSTEM_PROMPT_URI_AUTOLINK_PATTERN = re.compile(r"<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\s]+>")
+
+
+def _system_prompt_markdown(text: str) -> str:
+    """Protect prompt markup tags so Markdown displays them as highlighted code.
+
+    Tags inside fenced blocks or existing inline code are left untouched. Tags
+    containing backticks use a longer code-span delimiter so their source stays
+    valid Markdown.
+    """
+    protected_ranges = _system_prompt_protected_ranges(text)
+    output: list[str] = []
+    cursor = 0
+    for match in _SYSTEM_PROMPT_TAG_PATTERN.finditer(text):
+        if _position_in_ranges(match.start(), protected_ranges):
+            continue
+        output.append(text[cursor : match.start()])
+        tag = match.group(0)
+        longest_backtick_run = max(
+            (len(run) for run in re.findall(r"`+", tag)),
+            default=0,
+        )
+        delimiter = "`" * (longest_backtick_run + 1)
+        output.append(f"{delimiter}{tag}{delimiter}")
+        cursor = match.end()
+    output.append(text[cursor:])
+    return "".join(output)
+
+
+def _system_prompt_protected_ranges(text: str) -> tuple[tuple[int, int], ...]:
+    """Return Markdown ranges that must not be rewritten."""
+    block_ranges = [
+        *_system_prompt_fenced_ranges(text),
+        *_system_prompt_indented_code_ranges(text),
+    ]
+    ranges = [
+        *block_ranges,
+        *_system_prompt_uri_autolink_ranges(text),
+        *_system_prompt_inline_code_ranges(text, block_ranges),
+    ]
+    return tuple(sorted(ranges))
+
+
+def _system_prompt_fenced_ranges(text: str) -> tuple[tuple[int, int], ...]:
+    """Find fenced Markdown blocks, including unterminated blocks."""
+    ranges: list[tuple[int, int]] = []
+    offset = 0
+    fence_start: int | None = None
+    fence_character: str | None = None
+    fence_length = 0
+    for line in text.splitlines(keepends=True):
+        if fence_character is None:
+            opening = _SYSTEM_PROMPT_FENCE_PATTERN.match(line)
+            if opening is not None:
+                marker = opening.group("marker")
+                fence_start = offset
+                fence_character = marker[0]
+                fence_length = len(marker)
+        elif _is_system_prompt_fence_close(
+            line,
+            character=fence_character,
+            minimum_length=fence_length,
+        ):
+            assert fence_start is not None
+            ranges.append((fence_start, offset + len(line)))
+            fence_start = None
+            fence_character = None
+            fence_length = 0
+        offset += len(line)
+    if fence_start is not None:
+        ranges.append((fence_start, len(text)))
+    return tuple(ranges)
+
+
+def _is_system_prompt_fence_close(
+    line: str,
+    *,
+    character: str,
+    minimum_length: int,
+) -> bool:
+    stripped = line.rstrip("\r\n")
+    marker = re.match(rf"^ {{0,3}}{re.escape(character)}+", stripped)
+    if marker is None or len(marker.group(0).lstrip()) < minimum_length:
+        return False
+    return not stripped[marker.end() :].strip()
+
+
+def _system_prompt_indented_code_ranges(text: str) -> tuple[tuple[int, int], ...]:
+    """Find lines belonging to indented Markdown code blocks."""
+    ranges: list[tuple[int, int]] = []
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        if _SYSTEM_PROMPT_INDENTED_CODE_PATTERN.match(line) is not None:
+            ranges.append((offset, offset + len(line)))
+        offset += len(line)
+    return tuple(ranges)
+
+
+def _system_prompt_uri_autolink_ranges(text: str) -> tuple[tuple[int, int], ...]:
+    """Find CommonMark URI autolinks, including schemes without ``//``."""
+    return tuple(
+        (match.start(), match.end()) for match in _SYSTEM_PROMPT_URI_AUTOLINK_PATTERN.finditer(text)
+    )
+
+
+def _system_prompt_inline_code_ranges(
+    text: str,
+    block_ranges: Sequence[tuple[int, int]],
+) -> tuple[tuple[int, int], ...]:
+    """Find inline backtick code spans outside Markdown code blocks."""
+    ranges: list[tuple[int, int]] = []
+    position = 0
+    while position < len(text):
+        block_end = _protected_range_end(position, block_ranges)
+        if block_end is not None:
+            position = block_end
+            continue
+        if text[position] != "`":
+            position += 1
+            continue
+        opener_end = _backtick_run_end(text, position)
+        delimiter_length = opener_end - position
+        closing = _find_backtick_closer(
+            text,
+            start=opener_end,
+            delimiter_length=delimiter_length,
+            block_ranges=block_ranges,
+        )
+        if closing is None:
+            position = opener_end
+            continue
+        closing_end = closing + delimiter_length
+        ranges.append((position, closing_end))
+        position = closing_end
+    return tuple(ranges)
+
+
+def _find_backtick_closer(
+    text: str,
+    *,
+    start: int,
+    delimiter_length: int,
+    block_ranges: Sequence[tuple[int, int]],
+) -> int | None:
+    position = start
+    while position < len(text):
+        block_end = _protected_range_end(position, block_ranges)
+        if block_end is not None:
+            position = block_end
+            continue
+        if text[position] != "`":
+            position += 1
+            continue
+        run_end = _backtick_run_end(text, position)
+        if run_end - position == delimiter_length:
+            return position
+        position = run_end
+    return None
+
+
+def _backtick_run_end(text: str, start: int) -> int:
+    end = start
+    while end < len(text) and text[end] == "`":
+        end += 1
+    return end
+
+
+def _protected_range_end(
+    position: int,
+    ranges: Sequence[tuple[int, int]],
+) -> int | None:
+    protected_end: int | None = None
+    for start, end in ranges:
+        if position < start:
+            break
+        if position < end:
+            protected_end = max(protected_end or end, end)
+    return protected_end
+
+
+def _position_in_ranges(position: int, ranges: Sequence[tuple[int, int]]) -> bool:
+    return _protected_range_end(position, ranges) is not None
 
 
 def _plain_markdown(text: str) -> str:
@@ -1512,12 +1831,36 @@ def _clip_selection_offset(offset: Offset | None, lines: list[str]) -> Offset | 
     return Offset(column, line_index)
 
 
+@dataclass(frozen=True, slots=True)
+class _SidebarContent:
+    summary_sections: tuple[RenderableType, ...]
+    skills: RenderableType
+    prompts: RenderableType
+    extensions: RenderableType
+
+
 def render_session_sidebar(
     session: SessionSummarySource,
     *,
     theme: TuiTheme = TAU_DARK_THEME,
 ) -> RenderableType:
-    """Render a dark, minimalist summary of the active coding session."""
+    """Render a static summary of the active coding session."""
+    content = _build_sidebar_content(session, theme=theme)
+    sections = (
+        *content.summary_sections,
+        _sidebar_section("skills", content.skills, theme=theme),
+        _sidebar_section("prompts", content.prompts, theme=theme),
+        _sidebar_section("extensions", content.extensions, theme=theme),
+    )
+    return Group(*_separate_sidebar_sections(sections, theme=theme))
+
+
+def _build_sidebar_content(
+    session: SessionSummarySource,
+    *,
+    theme: TuiTheme,
+) -> _SidebarContent:
+    """Build shared sidebar renderables for static and interactive views."""
     title = Text(session.session_title or "Untitled session", style=f"bold {theme.accent}")
     stats = session.session_stats
     activity = Text(
@@ -1541,43 +1884,66 @@ def render_session_sidebar(
     if cache_rates:
         usage.append("\ncache: ", style=theme.completion_description)
         usage.append(" · ".join(cache_rates), style=theme.completion_description)
+    performance: list[str] = []
+    if (session_speed := stats.output_tokens_per_second) is not None:
+        performance.append(f"avg TPS: {session_speed:.1f}")
+    if (average_ttft := stats.average_time_to_first_output_ms) is not None:
+        performance.append(f"avg TTFT: {_format_milliseconds(average_ttft)}")
+    if performance:
+        usage.append(f"\n{' · '.join(performance)}", style=theme.completion_description)
 
     threshold = session.auto_compact_token_threshold
     compaction = Text(
         "off" if threshold is None else f"auto at {_compact_token_count(threshold)}",
         style=theme.completion_description,
     )
-    tools = _comma_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
-    skills = _grouped_skill_list(session.skills, cwd=session.cwd, theme=theme)
-    prompts = _grouped_prompt_list(session.prompt_templates, cwd=session.cwd, theme=theme)
-    extensions = _comma_list(
-        list(session.extension_names),
-        empty="No extensions",
-        theme=theme,
-    )
     context = _limited_bullet_list(
         _context_file_labels(session.context_files, cwd=session.cwd),
         empty="No context files",
         theme=theme,
     )
-    sections = (
-        Padding(title, (0, 0, 0, 1)),
-        _sidebar_section("activity", activity, theme=theme),
-        _sidebar_section("usage", usage, theme=theme),
-        _sidebar_section("compaction", compaction, theme=theme),
-        _sidebar_section("context", context, theme=theme),
-        _sidebar_section("tools", tools, theme=theme),
-        _sidebar_section("skills", skills, theme=theme),
-        _sidebar_section("prompts", prompts, theme=theme),
-        _sidebar_section("extensions", extensions, theme=theme),
+    system_prompt_sections: tuple[RenderableType, ...] = ()
+    if session.system_prompt_files:
+        system_prompt_files = _limited_bullet_list(
+            [_context_file_label(path, cwd=session.cwd) for path in session.system_prompt_files],
+            empty="No system prompt files",
+            theme=theme,
+        )
+        system_prompt_sections = (
+            _sidebar_section("system prompt", system_prompt_files, theme=theme),
+        )
+    tools = _comma_list([tool.name for tool in session.tools], empty="No tools", theme=theme)
+    return _SidebarContent(
+        summary_sections=(
+            Padding(title, (0, 0, 0, 1)),
+            _sidebar_section("activity", activity, theme=theme),
+            _sidebar_section("usage", usage, theme=theme),
+            _sidebar_section("compaction", compaction, theme=theme),
+            _sidebar_section("context", context, theme=theme),
+            *system_prompt_sections,
+            _sidebar_section("tools", tools, theme=theme),
+        ),
+        skills=_grouped_skill_list(session.skills, cwd=session.cwd, theme=theme),
+        prompts=_grouped_prompt_list(session.prompt_templates, cwd=session.cwd, theme=theme),
+        extensions=_comma_list(
+            list(session.extension_names),
+            empty="No extensions",
+            theme=theme,
+        ),
     )
-    separated_sections: list[RenderableType] = []
+
+
+def _separate_sidebar_sections(
+    sections: Sequence[RenderableType],
+    *,
+    theme: TuiTheme,
+) -> list[RenderableType]:
+    separated: list[RenderableType] = []
     for index, section in enumerate(sections):
         if index:
-            separated_sections.append(_sidebar_separator(theme=theme))
-        separated_sections.append(section)
-
-    return Group(*separated_sections)
+            separated.append(_sidebar_separator(theme=theme))
+        separated.append(section)
+    return separated
 
 
 def _sidebar_section(
@@ -1613,8 +1979,10 @@ def render_compact_session_info(
     right = Text(style=theme.muted_text, overflow="fold", no_wrap=False, justify="right")
     right.append(session.provider_name, style=theme.completion_description)
     right.append(f":{session.model}", style=theme.prompt_text)
-    right.append(" ")
-    right.append(f"({_thinking_level(session)})", style=theme.completion_description)
+    thinking_level = _thinking_level(session)
+    if thinking_level is not None:
+        right.append(" ")
+        right.append(f"({thinking_level})", style=theme.completion_description)
     right.append("\n")
     right.append(_context_usage(session), style=theme.completion_description)
 
@@ -2187,6 +2555,13 @@ def _styled_cwd(cwd: Path, *, theme: TuiTheme) -> Text:
     return text
 
 
+def _format_milliseconds(value: float) -> str:
+    rounded = round(value)
+    if rounded < 1000:
+        return f"{rounded}ms"
+    return f"{rounded / 1000:.1f}s"
+
+
 def _compact_token_count(value: int) -> str:
     if value <= 0:
         return "0k"
@@ -2217,10 +2592,10 @@ def _context_file_label(path: Path, *, cwd: Path) -> str:
         return _short_path(absolute_path)
 
 
-def _thinking_level(session: SessionSummarySource) -> str:
+def _thinking_level(session: SessionSummarySource) -> str | None:
     available = getattr(session, "available_thinking_levels", None)
     if available == ():
-        return "unavailable"
+        return None
     explicit_level = getattr(session, "thinking_level", None)
     if explicit_level:
         return str(explicit_level)
@@ -2397,11 +2772,11 @@ def _grouped_skill_list(
     if not skills:
         return Text("No skills loaded", style=theme.completion_description)
 
-    grouped: dict[str, list[str]] = {}
+    grouped: dict[str, list[tuple[str, bool]]] = {}
     for skill in skills:
         origin = skill.path.parent.parent if skill.path.name == "SKILL.md" else skill.path.parent
         label = _resource_origin_label(origin, cwd=cwd)
-        grouped.setdefault(label, []).append(skill.name)
+        grouped.setdefault(label, []).append((skill.name, skill.disable_model_invocation))
     return _grouped_resource_names(grouped, directory="skills", theme=theme)
 
 
@@ -2414,15 +2789,15 @@ def _grouped_prompt_list(
     if not templates:
         return Text("No prompt templates", style=theme.completion_description)
 
-    grouped: dict[str, list[str]] = {}
+    grouped: dict[str, list[tuple[str, bool]]] = {}
     for template in templates:
         label = _resource_origin_label(template.path.parent, cwd=cwd)
-        grouped.setdefault(label, []).append(template.name)
+        grouped.setdefault(label, []).append((template.name, False))
     return _grouped_resource_names(grouped, directory="prompts", theme=theme)
 
 
 def _grouped_resource_names(
-    grouped: dict[str, list[str]],
+    grouped: dict[str, list[tuple[str, bool]]],
     *,
     directory: str,
     theme: TuiTheme,
@@ -2442,8 +2817,9 @@ def _grouped_resource_names(
         if text:
             text.append("\n")
         text.append(origin, style=theme.completion_description)
-        for name in sorted(grouped[origin]):
-            text.append("\n  • ", style=theme.completion_description)
+        for name, hollow_bullet in sorted(grouped[origin]):
+            bullet = "◦" if hollow_bullet else "•"
+            text.append(f"\n  {bullet} ", style=theme.completion_description)
             text.append(name, style=theme.completion_description)
     return text
 

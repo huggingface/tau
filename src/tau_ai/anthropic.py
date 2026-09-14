@@ -700,9 +700,11 @@ def _anthropic_tool(
 
 
 def _parse_sse_line(line: str) -> str | None:
-    if not line.startswith("data:"):
+    line = line.strip()
+    if not line or not line.startswith("data:"):
         return None
-    return line.removeprefix("data:").strip()
+    data = line.removeprefix("data:").strip()
+    return data or None
 
 
 def _loads_object(text: str) -> dict[str, Any] | None:
@@ -721,6 +723,11 @@ def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _nonnegative_int_or_none(value: object) -> int | None:
+    integer = _int_or_none(value)
+    return integer if integer is not None and integer >= 0 else None
+
+
 def _usage_from_message_start(raw: object) -> Usage:
     """Build a Usage from the ``message_start`` event's ``message.usage``.
 
@@ -730,15 +737,19 @@ def _usage_from_message_start(raw: object) -> Usage:
     data = raw if isinstance(raw, Mapping) else {}
     cache_creation = data.get("cache_creation")
     cache_write_1h = (
-        _int_or_none(cache_creation.get("ephemeral_1h_input_tokens"))
+        _nonnegative_int_or_none(cache_creation.get("ephemeral_1h_input_tokens"))
         if isinstance(cache_creation, Mapping)
         else None
     )
+    input_tokens = _nonnegative_int_or_none(data.get("input_tokens")) or 0
+    cache_read = _nonnegative_int_or_none(data.get("cache_read_input_tokens")) or 0
+    cache_write = _nonnegative_int_or_none(data.get("cache_creation_input_tokens")) or 0
     usage = Usage(
-        input=_int_or_none(data.get("input_tokens")) or 0,
-        output=_int_or_none(data.get("output_tokens")) or 0,
-        cache_read=_int_or_none(data.get("cache_read_input_tokens")) or 0,
-        cache_write=_int_or_none(data.get("cache_creation_input_tokens")) or 0,
+        # Anthropic's input_tokens already excludes cache reads and writes.
+        input=input_tokens,
+        output=_nonnegative_int_or_none(data.get("output_tokens")) or 0,
+        cache_read=cache_read,
+        cache_write=cache_write,
         cache_write_1h=cache_write_1h,
     )
     usage.total_tokens = usage.input + usage.output + usage.cache_read + usage.cache_write
@@ -750,21 +761,22 @@ def _apply_message_delta_usage(usage: Usage | None, raw: object) -> Usage | None
 
     Ports Pi's anthropic-messages.ts message_delta handling: only overwrite
     fields the provider reports (non-null), then recompute the token total.
+    Anthropic's input_tokens already excludes cache reads and writes.
     """
     if not isinstance(raw, Mapping):
         return usage
     usage = usage or Usage()
-    if (value := _int_or_none(raw.get("input_tokens"))) is not None:
+    if (value := _nonnegative_int_or_none(raw.get("input_tokens"))) is not None:
         usage.input = value
-    if (value := _int_or_none(raw.get("output_tokens"))) is not None:
+    if (value := _nonnegative_int_or_none(raw.get("output_tokens"))) is not None:
         usage.output = value
-    if (value := _int_or_none(raw.get("cache_read_input_tokens"))) is not None:
+    if (value := _nonnegative_int_or_none(raw.get("cache_read_input_tokens"))) is not None:
         usage.cache_read = value
-    if (value := _int_or_none(raw.get("cache_creation_input_tokens"))) is not None:
+    if (value := _nonnegative_int_or_none(raw.get("cache_creation_input_tokens"))) is not None:
         usage.cache_write = value
     details = raw.get("output_tokens_details")
     if isinstance(details, Mapping):
-        thinking = _int_or_none(details.get("thinking_tokens"))
+        thinking = _nonnegative_int_or_none(details.get("thinking_tokens"))
         if thinking is not None:
             usage.reasoning = thinking
     usage.total_tokens = usage.input + usage.output + usage.cache_read + usage.cache_write

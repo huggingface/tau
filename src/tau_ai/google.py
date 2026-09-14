@@ -160,6 +160,27 @@ class GoogleGenerativeAIProvider:
                                 continue
                             for parser_event in parser.feed(event):
                                 yield parser_event
+                            if parser.fatal:
+                                return
+                        if (
+                            not parser.has_finish_reason
+                            and not parser.emitted_content
+                            and self._should_retry(attempt)
+                        ):
+                            delay = retry_delay_seconds(
+                                attempt,
+                                max_delay_seconds=self._config.max_retry_delay_seconds,
+                            )
+                            yield provider_retry_event(
+                                attempt=attempt,
+                                max_retries=self._config.max_retries,
+                                delay_seconds=delay,
+                                reason="stream ended without finishReason",
+                            )
+                            attempt += 1
+                            if not await wait_for_retry(delay, signal=signal):
+                                return
+                            continue
                         for parser_event in parser.finalize():
                             yield parser_event
                         return
@@ -199,15 +220,21 @@ class GoogleGenerativeAIProvider:
 class _GoogleStreamParser:
     def __init__(self) -> None:
         self.emitted_content = False
+        self.fatal = False
         self._content_parts: list[str] = []
         self._thinking_parts: list[str] = []
         self._tool_calls: list[ToolCall] = []
         self._finish_reason: str | None = None
 
+    @property
+    def has_finish_reason(self) -> bool:
+        return self._finish_reason is not None
+
     def feed(self, event: str) -> list[ProviderEvent]:
         chunk = _loads_object(event)
         if chunk is None:
-            return []
+            self.fatal = True
+            return [ProviderErrorEvent(message="Google returned an invalid JSON stream chunk")]
         events: list[ProviderEvent] = []
         candidates = chunk.get("candidates")
         if not isinstance(candidates, list) or not candidates:
@@ -254,6 +281,8 @@ class _GoogleStreamParser:
         return events
 
     def finalize(self) -> list[ProviderEvent]:
+        if self._finish_reason is None:
+            return [ProviderErrorEvent(message="Google stream ended without finishReason")]
         content = assistant_content("".join(self._content_parts), self._tool_calls)
         if self._thinking_parts:
             content.insert(0, ThinkingContent(thinking="".join(self._thinking_parts)))

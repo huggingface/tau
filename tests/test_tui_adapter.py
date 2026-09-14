@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from tau_agent import (
     AgentEndEvent,
     AgentStartEvent,
@@ -260,6 +262,214 @@ def test_tui_state_clusters_writes_and_lists_every_path() -> None:
     assert "→ write b.py\n\n✓ write\nwrote b" in expanded
 
 
+def test_tui_state_restores_write_only_model_continuations_as_one_group() -> None:
+    messages = []
+    for index in range(1, 6):
+        messages.extend(
+            [
+                AssistantMessage(
+                    content=[
+                        ToolCall(
+                            id=f"write-{index}",
+                            name="write",
+                            arguments={"path": f"file-{index}.md", "content": str(index)},
+                        )
+                    ]
+                ),
+                ToolResultMessage(
+                    tool_call_id=f"write-{index}",
+                    tool_name="write",
+                    content=f"wrote {index}",
+                ),
+            ]
+        )
+    state = TuiState()
+    state.load_messages(messages)
+
+    assert len(state.items) == 1
+    item = state.items[0]
+    assert item.text == (
+        "→ Written 5 files\n"
+        "  - file-1.md\n"
+        "  - file-2.md\n"
+        "  - file-3.md\n"
+        "  - file-4.md\n"
+        "  - file-5.md"
+    )
+    assert item.grouped_tool_calls is not None
+    assert [member.tool_call_id for member in item.grouped_tool_calls] == [
+        "write-1",
+        "write-2",
+        "write-3",
+        "write-4",
+        "write-5",
+    ]
+    assert all(state.find_tool_item(f"write-{index}") is item for index in range(1, 6))
+
+
+def test_tui_state_restores_edit_only_model_continuations_as_one_group() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(
+                        id="edit-1",
+                        name="edit",
+                        arguments={"path": "a.py", "edits": []},
+                    )
+                ]
+            ),
+            ToolResultMessage(tool_call_id="edit-1", tool_name="edit", content="edited a"),
+            AssistantMessage(
+                content=[
+                    ToolCall(
+                        id="edit-2",
+                        name="edit",
+                        arguments={"path": "b.py", "edits": []},
+                    )
+                ]
+            ),
+            ToolResultMessage(tool_call_id="edit-2", tool_name="edit", content="edited b"),
+            AssistantMessage(
+                content=[
+                    ToolCall(
+                        id="edit-3",
+                        name="edit",
+                        arguments={"path": "c.py", "edits": []},
+                    )
+                ]
+            ),
+            ToolResultMessage(tool_call_id="edit-3", tool_name="edit", content="edited c"),
+        ]
+    )
+
+    assert len(state.items) == 1
+    item = state.items[0]
+    assert item.text == "→ Edited 3 files\n  - a.py\n  - b.py\n  - c.py"
+    assert item.grouped_tool_calls is not None
+    assert [member.tool_call_id for member in item.grouped_tool_calls] == [
+        "edit-1",
+        "edit-2",
+        "edit-3",
+    ]
+    assert all(state.find_tool_item(f"edit-{index}") is item for index in range(1, 4))
+
+
+def test_tui_state_keeps_write_continuations_separate_across_assistant_text() -> None:
+    state = TuiState()
+    state.load_messages(
+        [
+            AssistantMessage(
+                content=[
+                    ToolCall(
+                        id="write-1",
+                        name="write",
+                        arguments={"path": "a.md", "content": "one"},
+                    )
+                ]
+            ),
+            ToolResultMessage(tool_call_id="write-1", tool_name="write", content="wrote a"),
+            AssistantMessage(
+                content=[
+                    TextContent(text="Now writing the next file."),
+                    ToolCall(
+                        id="write-2",
+                        name="write",
+                        arguments={"path": "b.md", "content": "two"},
+                    ),
+                ]
+            ),
+            ToolResultMessage(tool_call_id="write-2", tool_name="write", content="wrote b"),
+        ]
+    )
+
+    assert len(state.items) == 3
+    assert state.items[0].text == "→ write a.md"
+    assert state.items[1].role == "assistant"
+    assert state.items[2].text == "→ write b.md"
+    assert all(item.grouped_tool_calls is None for item in (state.items[0], state.items[2]))
+
+
+@pytest.mark.parametrize(
+    ("boundary", "boundary_before_call"),
+    [
+        (TextContent(text="boundary text"), True),
+        (TextContent(text="boundary text"), False),
+        (ThinkingContent(thinking="boundary thinking"), True),
+        (ThinkingContent(thinking="boundary thinking"), False),
+    ],
+)
+def test_file_mutation_continuation_boundaries_match_live_and_restored(
+    boundary: TextContent | ThinkingContent,
+    boundary_before_call: bool,
+) -> None:
+    first_call = ToolCall(
+        id="write-1",
+        name="write",
+        arguments={"path": "a.md", "content": "one"},
+    )
+    second_call = ToolCall(
+        id="write-2",
+        name="write",
+        arguments={"path": "b.md", "content": "two"},
+    )
+    first_content = [boundary, first_call] if boundary_before_call else [first_call, boundary]
+    messages = [
+        AssistantMessage(content=first_content),
+        ToolResultMessage(tool_call_id="write-1", tool_name="write", content="wrote a"),
+        AssistantMessage(content=[second_call]),
+        ToolResultMessage(tool_call_id="write-2", tool_name="write", content="wrote b"),
+    ]
+
+    restored = TuiState()
+    restored.load_messages(messages)
+
+    live = TuiState()
+    adapter = TuiEventAdapter(live)
+    adapter.apply(MessageEndEvent(message=messages[0]))
+    adapter.apply(
+        ToolExecutionStartEvent(
+            tool_call_id="write-1",
+            tool_name="write",
+            args={"path": "a.md", "content": "one"},
+        )
+    )
+    adapter.apply(
+        ToolExecutionEndEvent(
+            tool_call_id="write-1",
+            tool_name="write",
+            result=AgentToolResult(content="wrote a"),
+            is_error=False,
+        )
+    )
+    adapter.apply(MessageEndEvent(message=messages[2]))
+    adapter.apply(
+        ToolExecutionStartEvent(
+            tool_call_id="write-2",
+            tool_name="write",
+            args={"path": "b.md", "content": "two"},
+        )
+    )
+    adapter.apply(
+        ToolExecutionEndEvent(
+            tool_call_id="write-2",
+            tool_name="write",
+            result=AgentToolResult(content="wrote b"),
+            is_error=False,
+        )
+    )
+
+    for state in (restored, live):
+        first_item = state.find_tool_item("write-1")
+        second_item = state.find_tool_item("write-2")
+        assert first_item is not None
+        assert second_item is not None
+        assert first_item is not second_item
+        assert first_item.grouped_tool_calls is None
+        assert second_item.grouped_tool_calls is None
+
+
 def test_tui_state_batches_mixed_tools_and_clusters_adjacent_reads() -> None:
     state = TuiState()
     state.load_messages(
@@ -499,6 +709,11 @@ def test_tui_adapter_renders_skill_file_reads_with_skill_style() -> None:
 def test_tui_adapter_records_retry_and_queue_status() -> None:
     state = TuiState()
     adapter = TuiEventAdapter(state)
+    adapter.apply(
+        MessageEndEvent(
+            message=AssistantMessage(stop_reason="error", error_message="provider failed")
+        )
+    )
 
     adapter.apply(
         AutoRetryStartEvent(
@@ -513,6 +728,7 @@ def test_tui_adapter_records_retry_and_queue_status() -> None:
     assert [(item.role, item.text) for item in state.items] == [
         ("status", "… Retrying provider request 2/3 after HTTP 503.")
     ]
+    assert state.error is None
     assert state.queued_steering == ("adjust",)
     assert state.queued_follow_up == ("after",)
 

@@ -36,7 +36,7 @@ A session file is one JSON object per line:
 ```jsonl
 {"type":"message","id":"...","message":{"role":"user","content":"Hello"}}
 {"type":"message","id":"...","parent_id":"...","message":{"role":"assistant","content":"Hi"}}
-{"type":"label","id":"...","label":"Greeting"}
+{"type":"label","id":"...","parent_id":"...","target_id":"...","label":"Greeting"}
 ```
 
 ## Entry types
@@ -87,7 +87,7 @@ The reconstructed state includes:
 - transcript messages
 - active model
 - thinking level
-- label
+- resolved per-entry labels and their latest change timestamps
 - active leaf id
 - session info
 - custom entries

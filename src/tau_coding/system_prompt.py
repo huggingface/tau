@@ -22,6 +22,14 @@ class ProjectContextFile:
 
 
 @dataclass(frozen=True, slots=True)
+class PromptSection:
+    """A free-form section appended to the system prompt."""
+
+    title: str | None
+    body: str
+
+
+@dataclass(frozen=True, slots=True)
 class BuildSystemPromptOptions:
     """Options used to build Tau's system prompt."""
 
@@ -33,13 +41,16 @@ class BuildSystemPromptOptions:
     context_files: Sequence[ProjectContextFile] = ()
     current_date: date | None = None
     extra_guidelines: Sequence[str] = field(default_factory=tuple)
+    extra_sections: Sequence[PromptSection] = field(default_factory=tuple)
 
 
 def build_system_prompt(options: BuildSystemPromptOptions) -> str:
     """Build a deterministic Pi-style system prompt for Tau."""
     current_date = options.current_date or date.today()
     cwd = _format_path(options.cwd)
-    append_section = f"\n\n{options.append_system_prompt}" if options.append_system_prompt else ""
+    append_parts = [options.append_system_prompt] if options.append_system_prompt else []
+    append_parts.extend(format_prompt_section(section) for section in options.extra_sections)
+    append_section = "".join(f"\n\n{part}" for part in append_parts)
 
     if options.custom_prompt is not None:
         prompt = options.custom_prompt
@@ -68,6 +79,13 @@ def build_system_prompt(options: BuildSystemPromptOptions) -> str:
     prompt += f"\nCurrent date: {current_date.isoformat()}"
     prompt += f"\nCurrent working directory: {cwd}"
     return prompt
+
+
+def format_prompt_section(section: PromptSection) -> str:
+    """Render one optional-title free-form prompt section."""
+    if section.title is None:
+        return section.body
+    return f"## {section.title}\n\n{section.body}"
 
 
 def format_tau_documentation() -> str:
@@ -170,8 +188,13 @@ def format_project_context(context_files: Sequence[ProjectContextFile]) -> str:
 
 
 def format_skills_for_prompt(skills: Sequence[Skill]) -> str:
-    """Format skills for inclusion in a system prompt using Pi's XML style."""
-    if not skills:
+    """Format skills for inclusion in a system prompt using Pi's XML style.
+
+    Skills with ``disable_model_invocation`` set are excluded from the prompt;
+    they remain invocable explicitly via ``/skill:<name>``.
+    """
+    visible_skills = [skill for skill in skills if not skill.disable_model_invocation]
+    if not visible_skills:
         return ""
 
     lines = [
@@ -182,7 +205,7 @@ def format_skills_for_prompt(skills: Sequence[Skill]) -> str:
         "",
         "<available_skills>",
     ]
-    for skill in sorted(skills, key=lambda item: item.name):
+    for skill in sorted(visible_skills, key=lambda item: item.name):
         description = skill.description or "No description"
         lines.extend(
             [
