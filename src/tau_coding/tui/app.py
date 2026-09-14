@@ -1456,9 +1456,31 @@ def _write_staged_utf8(handle: BinaryIO, source: str) -> None:
         remaining = remaining[written:]
 
 
-def _atomic_write_sidebar_file(path: Path, source: str) -> None:
-    """Atomically replace a writable file while preserving its mode and any symlink."""
+@dataclass(frozen=True, slots=True)
+class _SidebarFileSnapshot:
+    """Resolved target and exact bytes observed when a sidebar file was loaded."""
+
+    target: Path
+    content: bytes
+
+
+def _read_sidebar_file(path: Path) -> tuple[str, _SidebarFileSnapshot]:
+    """Read a sidebar file without normalizing its encoded contents."""
     target = path.resolve(strict=True)
+    content = target.read_bytes()
+    return content.decode("utf-8"), _SidebarFileSnapshot(target=target, content=content)
+
+
+def _atomic_write_sidebar_file(
+    path: Path,
+    source: str,
+    expected: _SidebarFileSnapshot,
+) -> _SidebarFileSnapshot:
+    """Atomically replace an unchanged, writable file and preserve its mode/symlink."""
+    target = path.resolve(strict=True)
+    replacement = source.encode("utf-8")
+    if target != expected.target:
+        raise OSError(f"File target changed on disk; reopen before saving: {path}")
     # Ask the OS to enforce ownership/ACL rules without truncating the target.
     authorization = os.open(
         target,
@@ -1481,14 +1503,18 @@ def _atomic_write_sidebar_file(path: Path, source: str) -> None:
             prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
         )
         temporary = Path(raw_temporary)
-        os.fchmod(descriptor, target_mode)
+        os.chmod(temporary, target_mode)
         with os.fdopen(descriptor, "wb") as handle:
             descriptor = -1
             _write_staged_utf8(handle, source)
             handle.flush()
             os.fsync(handle.fileno())
+        current_target = path.resolve(strict=True)
+        if current_target != expected.target or current_target.read_bytes() != expected.content:
+            raise OSError(f"File changed on disk; reopen before saving: {path}")
         os.replace(temporary, target)
         temporary = None
+        return _SidebarFileSnapshot(target=target, content=replacement)
     finally:
         if descriptor >= 0:
             with suppress(OSError):
@@ -1514,6 +1540,7 @@ class SidebarFileEditor(Vertical):
         label: str,
         kind: str,
         source: str,
+        snapshot: _SidebarFileSnapshot,
     ) -> None:
         super().__init__(id="sidebar-file-editor")
         self.handle = handle
@@ -1521,6 +1548,8 @@ class SidebarFileEditor(Vertical):
         self.label = label
         self.kind = kind
         self.source = source
+        self._saved_source = source
+        self._snapshot = snapshot
         self._saving = False
 
     def compose(self) -> ComposeResult:
@@ -1536,6 +1565,15 @@ class SidebarFileEditor(Vertical):
     def on_mount(self) -> None:
         self.query_one("#sidebar-file-editor-input", TextArea).focus()
 
+    @property
+    def is_dirty(self) -> bool:
+        """Return whether the mounted editor differs from its last saved source."""
+        try:
+            source = self.query_one("#sidebar-file-editor-input", TextArea).text
+        except NoMatches:
+            return False
+        return source != self._saved_source
+
     def action_save(self) -> None:
         """Write the current editor contents without closing the editor."""
         if self._saving:
@@ -1547,12 +1585,19 @@ class SidebarFileEditor(Vertical):
     async def _save(self) -> None:
         source = self.query_one("#sidebar-file-editor-input", TextArea).text
         try:
-            await asyncio.to_thread(_atomic_write_sidebar_file, self.path, source)
-        except OSError as exc:
+            snapshot = await asyncio.to_thread(
+                _atomic_write_sidebar_file,
+                self.path,
+                source,
+                self._snapshot,
+            )
+        except Exception as exc:  # noqa: BLE001 - filesystem worker boundary
             message = f"Could not save {self.path}: {exc}"
             self.query_one("#sidebar-file-editor-status", Static).update(message)
             cast(TauTuiApp, self.app)._notify(message, severity="error")
         else:
+            self._snapshot = snapshot
+            self._saved_source = source
             message = f"Saved {self.path}"
             self.query_one("#sidebar-file-editor-status", Static).update(message)
             cast(TauTuiApp, self.app)._notify(message)
@@ -4659,8 +4704,19 @@ class TauTuiApp(App[None]):
         """Open a sidebar resource file in the main-area editor."""
         event.stop()
         item = event.item
+        current = self._extension_main_view
+        if (
+            current is not None
+            and isinstance(current.widget, SidebarFileEditor)
+            and current.widget.is_dirty
+        ):
+            message = "Save or close the current file before opening another."
+            self._notify(message, severity="warning")
+            current.widget.query_one("#sidebar-file-editor-status", Static).update(message)
+            current.widget.query_one("#sidebar-file-editor-input", TextArea).focus()
+            return
         try:
-            source = item.path.read_text(encoding="utf-8")
+            source, snapshot = _read_sidebar_file(item.path)
         except (OSError, UnicodeDecodeError) as exc:
             self._notify(f"Could not read {item.path}: {exc}", severity="error")
             return
@@ -4671,6 +4727,7 @@ class TauTuiApp(App[None]):
                 label=item.file_label,
                 kind=item.kind,
                 source=source,
+                snapshot=snapshot,
             )
         )
 

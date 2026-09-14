@@ -38,9 +38,11 @@ file in an editor in the main UI area. Skill rows open only their main
 `SKILL.md`, not supporting files from the skill directory. Editable rows use a
 highlighted, underlined hover state. Use the arrow keys to move the editing
 cursor. Press Ctrl+S to write changes to disk; Tau keeps the editor open and
-reports either success or the write error. Press Escape to restore the
-transcript. Run `/reload` afterward to apply changed resources to the active
-session.
+reports either success or the write error. Tau refuses to overwrite a file
+that changed on disk after you opened it, and keeps the current editor open if
+you click another file while it has unsaved changes. Save or close the current
+file first. Press Escape to restore the transcript. Run `/reload` afterward to
+apply changed resources to the active session.
 
 ## `/resume`
 

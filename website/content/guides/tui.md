@@ -255,9 +255,12 @@ remain open when needed. Every loaded skill or prompt is shown while its section
 is expanded. Click a skill, prompt template, or context-file row to replace the
 transcript with a main-area editor. Use the **arrow keys** to move the editing
 cursor. **Ctrl+S** writes the edited contents to disk and reports success or
-failure without closing the editor; **Escape** closes it and restores the
-transcript. Run **`/reload`** after saving when you want the
-active session to use the changed resource. Skill rows open only that skill's
+failure without closing the editor. Tau refuses to overwrite a file changed on
+disk after it was opened, and blocks switching to another sidebar file while
+the current editor has unsaved changes. Save or close that file first.
+**Escape** closes the editor and restores the transcript. Run **`/reload`**
+after saving when you want the active session to use the changed resource.
+Skill rows open only that skill's
 main `SKILL.md`; supporting files in the skill directory are not exposed in the
 sidebar yet. Editable rows highlight and underline on hover. Model-visible skills
 use a solid bullet (`•`), while user-only skills with
