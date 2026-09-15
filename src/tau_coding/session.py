@@ -160,7 +160,11 @@ from tau_coding.skills import Skill, expand_skill_command, load_skills_with_diag
 from tau_coding.system_prompt import (
     BuildSystemPromptOptions,
     ProjectContextFile,
+    PromptSection,
+    SystemPromptInspection,
+    SystemPromptSource,
     build_system_prompt,
+    build_system_prompt_inspection,
 )
 from tau_coding.thinking import (
     DEFAULT_THINKING_LEVEL,
@@ -292,6 +296,7 @@ class SessionResources:
     custom_system_prompt: str | None
     custom_system_prompt_path: Path | None
     append_system_prompt: str | None
+    append_system_prompts: tuple[str, ...]
     append_system_prompt_paths: tuple[Path, ...]
     diagnostics: tuple[ResourceDiagnostic, ...]
 
@@ -424,6 +429,7 @@ class CodingSession:
         custom_system_prompt: str | None = None,
         custom_system_prompt_path: Path | None = None,
         append_system_prompt: str | None = None,
+        append_system_prompts: tuple[str, ...] = (),
         append_system_prompt_paths: tuple[Path, ...] = (),
         resource_diagnostics: tuple[ResourceDiagnostic, ...] = (),
         command_registry: CommandRegistry | None = None,
@@ -448,6 +454,7 @@ class CodingSession:
         self._custom_system_prompt = custom_system_prompt
         self._custom_system_prompt_path = custom_system_prompt_path
         self._append_system_prompt = append_system_prompt
+        self._append_system_prompts = append_system_prompts
         self._append_system_prompt_paths = append_system_prompt_paths
         self._resource_diagnostics = resource_diagnostics
         self._command_registry = command_registry or create_default_command_registry()
@@ -717,13 +724,18 @@ class CodingSession:
                         if config.custom_system_prompt is not None
                         else resources.custom_system_prompt
                     ),
-                    append_system_prompt=_compose_append_system_prompt(
-                        resources.append_system_prompt,
+                    append_sections=_append_prompt_sections(
+                        resources.append_system_prompts,
+                        resources.append_system_prompt_paths,
                         config.append_system_prompt,
                     ),
                     context_files=resources.context_files,
                     extra_guidelines=extension_runtime.prompt_guidelines,
-                    extra_sections=extension_runtime.prompt_sections,
+                    extra_sections=extension_runtime.sourced_prompt_sections,
+                    custom_prompt_source=_custom_prompt_source(
+                        explicit=config.custom_system_prompt is not None,
+                        path=resources.custom_system_prompt_path,
+                    ),
                     learned_context=compose_learned_section(
                         snapshot_learned_context(
                             unfiltered_resource_paths.paths
@@ -761,6 +773,7 @@ class CodingSession:
             custom_system_prompt=resources.custom_system_prompt,
             custom_system_prompt_path=resources.custom_system_prompt_path,
             append_system_prompt=resources.append_system_prompt,
+            append_system_prompts=resources.append_system_prompts,
             append_system_prompt_paths=resources.append_system_prompt_paths,
             resource_diagnostics=resources.diagnostics,
             command_registry=config.command_registry or extension_runtime.build_command_registry(),
@@ -1208,6 +1221,59 @@ class CodingSession:
     def system_prompt(self) -> str:
         """Return the effective system prompt sent to the model."""
         return self._harness.config.system
+
+    @property
+    def system_prompt_inspection(self) -> SystemPromptInspection:
+        """Return the effective prompt with source attribution for local inspection."""
+        if self._config.system is not None:
+            return SystemPromptInspection(
+                text=self.system_prompt,
+                sources=(
+                    SystemPromptSource(
+                        kind="system",
+                        label="System prompt override",
+                        source="CodingSessionConfig.system",
+                        content=self.system_prompt,
+                    ),
+                ),
+            )
+        inspection = build_system_prompt_inspection(
+            BuildSystemPromptOptions(
+                cwd=self.cwd,
+                tools=self.tools,
+                skills=self.skills,
+                custom_prompt=(
+                    self._config.custom_system_prompt
+                    if self._config.custom_system_prompt is not None
+                    else self._custom_system_prompt
+                ),
+                append_sections=_append_prompt_sections(
+                    self._append_system_prompts,
+                    self._append_system_prompt_paths,
+                    self._config.append_system_prompt,
+                ),
+                context_files=self.context_files,
+                extra_guidelines=self._extension_runtime.prompt_guidelines,
+                extra_sections=self._extension_runtime.sourced_prompt_sections,
+                custom_prompt_source=_custom_prompt_source(
+                    explicit=self._config.custom_system_prompt is not None,
+                    path=self._custom_system_prompt_path,
+                ),
+            )
+        )
+        if inspection.text == self.system_prompt:
+            return inspection
+        return SystemPromptInspection(
+            text=self.system_prompt,
+            sources=(
+                SystemPromptSource(
+                    kind="runtime",
+                    label="Effective system prompt",
+                    source="active Tau session (runtime-composed)",
+                    content=self.system_prompt,
+                ),
+            ),
+        )
 
     @property
     def auto_compact_token_threshold(self) -> int | None:
@@ -2274,7 +2340,7 @@ class CodingSession:
         before_extensions = _extension_signatures(self._extension_runtime)
         before_tool_names = tuple(tool.name for tool in self._harness.config.tools)
         before_guidelines = self._extension_runtime.prompt_guidelines
-        before_sections = self._extension_runtime.prompt_sections
+        before_sections = self._extension_runtime.sourced_prompt_sections
 
         # Nothing below mutates the live session. Eligible extensions are loaded
         # first so project code cannot import before the destination decision.
@@ -2377,7 +2443,7 @@ class CodingSession:
             append_system_prompt_paths=resources.append_system_prompt_paths,
         )
         after_guidelines = staged_runtime.prompt_guidelines
-        after_sections = staged_runtime.prompt_sections
+        after_sections = staged_runtime.sourced_prompt_sections
         system_prompt_rebuilt = self._config.system is None and (
             before_system_prompt_inputs != after_system_prompt_inputs
             or before_tool_names != tuple(tool.name for tool in staged_tools)
@@ -2396,14 +2462,19 @@ class CodingSession:
                         if self._config.custom_system_prompt is not None
                         else resources.custom_system_prompt
                     ),
-                    append_system_prompt=_compose_append_system_prompt(
-                        resources.append_system_prompt,
+                    append_sections=_append_prompt_sections(
+                        resources.append_system_prompts,
+                        resources.append_system_prompt_paths,
                         self._config.append_system_prompt,
                     ),
                     context_files=resources.context_files,
                     extra_guidelines=after_guidelines,
                     extra_sections=after_sections,
                     learned_context=self._learned_section,
+                    custom_prompt_source=_custom_prompt_source(
+                        explicit=self._config.custom_system_prompt is not None,
+                        path=resources.custom_system_prompt_path,
+                    ),
                 )
             )
 
@@ -2437,6 +2508,7 @@ class CodingSession:
         self._custom_system_prompt = resources.custom_system_prompt
         self._custom_system_prompt_path = resources.custom_system_prompt_path
         self._append_system_prompt = resources.append_system_prompt
+        self._append_system_prompts = resources.append_system_prompts
         self._append_system_prompt_paths = resources.append_system_prompt_paths
         self._resource_diagnostics = resources.diagnostics
         self._command_registry = staged_commands
@@ -2901,6 +2973,7 @@ class CodingSession:
         self._custom_system_prompt = replacement._custom_system_prompt
         self._custom_system_prompt_path = replacement._custom_system_prompt_path
         self._append_system_prompt = replacement._append_system_prompt
+        self._append_system_prompts = replacement._append_system_prompts
         self._append_system_prompt_paths = replacement._append_system_prompt_paths
         self._resource_diagnostics = replacement._resource_diagnostics
         self._command_registry = replacement._command_registry
@@ -4954,6 +5027,7 @@ def _load_session_resources(
         custom_system_prompt=system_prompts.custom_prompt,
         custom_system_prompt_path=system_prompts.custom_prompt_path,
         append_system_prompt=system_prompts.append_prompt,
+        append_system_prompts=system_prompts.append_prompts,
         append_system_prompt_paths=system_prompts.append_prompt_paths,
         diagnostics=tuple(
             [
@@ -4966,12 +5040,31 @@ def _load_session_resources(
     )
 
 
-def _compose_append_system_prompt(*parts: str | None) -> str | None:
-    """Compose discovered and explicit append content in source order."""
-    selected = [part for part in parts if part is not None]
-    if not selected:
-        return None
-    return "\n\n".join(selected)
+def _append_prompt_sections(
+    prompts: tuple[str, ...],
+    paths: tuple[Path, ...],
+    explicit_prompt: str | None,
+) -> tuple[PromptSection, ...]:
+    """Pair append content with its file or CLI origin in composition order."""
+    sections = [
+        PromptSection(title=None, body=prompt, source=str(path))
+        for prompt, path in zip(prompts, paths, strict=True)
+    ]
+    if explicit_prompt is not None:
+        sections.append(
+            PromptSection(
+                title=None,
+                body=explicit_prompt,
+                source="CLI --append-system-prompt",
+            )
+        )
+    return tuple(sections)
+
+
+def _custom_prompt_source(*, explicit: bool, path: Path | None) -> str:
+    if explicit:
+        return "CLI --system-prompt"
+    return str(path) if path is not None else "runtime configuration"
 
 
 def _merge_context_files(

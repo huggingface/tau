@@ -18,7 +18,12 @@ from tau_coding.session_manager import (
     normalize_session_name,
 )
 from tau_coding.skills import Skill
-from tau_coding.system_prompt import ProjectContextFile
+from tau_coding.system_prompt import (
+    ProjectContextFile,
+    SystemPromptInspection,
+    SystemPromptSource,
+    format_system_prompt_inspection,
+)
 from tau_coding.thinking import normalize_thinking_level
 
 LOGIN_PROVIDER_ALIASES = {
@@ -79,6 +84,9 @@ class CommandSession(Protocol):
     def system_prompt(self) -> str: ...
 
     @property
+    def system_prompt_inspection(self) -> SystemPromptInspection: ...
+
+    @property
     def session_id(self) -> str | None: ...
 
     @property
@@ -130,6 +138,7 @@ class CommandResult:
     thinking_level: str | None = None
     theme: str | None = None
     message: str | None = None
+    system_prompt_inspection: SystemPromptInspection | None = None
     session_name: str | None = None
 
 
@@ -512,7 +521,24 @@ def _status_command(context: CommandContext) -> CommandResult:
 def _system_command(context: CommandContext) -> CommandResult:
     if context.args:
         return CommandResult(handled=True, message="Usage: /system")
-    return CommandResult(handled=True, message=context.session.system_prompt)
+    inspection = getattr(context.session, "system_prompt_inspection", None)
+    if inspection is None:
+        inspection = SystemPromptInspection(
+            text=context.session.system_prompt,
+            sources=(
+                SystemPromptSource(
+                    kind="runtime",
+                    label="Effective system prompt",
+                    source="active Tau session",
+                    content=context.session.system_prompt,
+                ),
+            ),
+        )
+    return CommandResult(
+        handled=True,
+        message=format_system_prompt_inspection(inspection),
+        system_prompt_inspection=inspection,
+    )
 
 
 def _hotkeys_command(context: CommandContext) -> CommandResult:

@@ -22,7 +22,12 @@ from tau_coding.provider_config import (
 from tau_coding.rendering import PrintOutputMode
 from tau_coding.resources import TauResourcePaths
 from tau_coding.skills import load_skills
-from tau_coding.system_prompt import BuildSystemPromptOptions, build_system_prompt
+from tau_coding.system_prompt import (
+    BuildSystemPromptOptions,
+    build_system_prompt,
+    build_system_prompt_inspection,
+    format_system_prompt_inspection,
+)
 from tau_coding.tools import create_coding_tools
 from tau_coding.update_check import (
     ReleaseNoteSection,
@@ -758,7 +763,7 @@ async def test_run_print_mode_system_command_prints_prompt_without_provider_call
     )
 
     captured = capsys.readouterr()
-    expected_system = build_system_prompt(
+    inspection = build_system_prompt_inspection(
         BuildSystemPromptOptions(
             cwd=tmp_path,
             tools=create_coding_tools(cwd=tmp_path),
@@ -766,7 +771,7 @@ async def test_run_print_mode_system_command_prints_prompt_without_provider_call
         )
     )
     assert ok is True
-    assert captured.out == f"{expected_system}\n"
+    assert captured.out == f"{format_system_prompt_inspection(inspection)}\n"
     assert captured.err == ""
     assert provider.calls == []
     assert await storage.read_all() == []
