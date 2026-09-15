@@ -54,7 +54,8 @@ tau_coding.oauth_registry
         │ OAuthProvider protocol
         ├── OpenAI Codex
         ├── Anthropic
-        └── GitHub Copilot
+        ├── GitHub Copilot
+        └── xAI
         │
         ▼
 FileCredentialStore ── OAuthRuntimeCredentialResolver ── tau_ai adapter
@@ -135,6 +136,7 @@ users can update or delete old local entries safely.
 
 ## Follow-ups
 
+- xAI SuperGrok / X Premium device-code OAuth is implemented separately; see [xAI OAuth](./xai-oauth.md).
 - Add OpenAI Codex device-code login and an explicit browser/device selector.
 - Add a frontend-neutral non-TUI login command for SSH-only use.
 - Consider process-level refresh locking if Tau introduces concurrent processes
