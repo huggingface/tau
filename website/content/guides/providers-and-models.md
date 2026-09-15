@@ -25,11 +25,12 @@ tau
 /login github-copilot # authenticate GitHub Copilot with a device code
 /login opencode-go  # save an OpenCode Go API key
 /login nvidia       # save an NVIDIA NIM API key
+/login ollama-cloud # save an Ollama Cloud API key
 /login custom       # add an OpenAI-compatible custom provider
 ```
 
 Built-in providers include **OpenAI**, **Anthropic**, **OpenAI Codex**
-(subscription), **GitHub Copilot**, **OpenCode Go**, **OpenCode Zen**,
+(subscription), **GitHub Copilot**, **OpenCode Go**, **OpenCode Zen**, **Ollama Cloud**,
 **Moonshot AI (Kimi)**, **Kimi Code** (subscription), **OpenRouter**, **Hugging Face**,
 and **NVIDIA NIM**.
 
@@ -165,6 +166,20 @@ separate `opencode-go` and `opencode` names, allowing different keys when
 needed. Available models and plan limits change over time; consult the
 [OpenCode Go](https://opencode.ai/docs/go) and
 [OpenCode Zen](https://opencode.ai/docs/zen) pages for the current list.
+
+### Ollama Cloud
+
+Ollama Cloud is an **API-key provider**. Create an API key at
+[ollama.com/settings/keys](https://ollama.com/settings/keys), then run:
+
+```text
+/login ollama-cloud
+```
+
+It can also read OLLAMA_API_KEY. Cloud models run on ollama.com's servers
+with the same tool-calling behavior as local Ollama models. For local Ollama
+servers (http://localhost:11434), keep using the custom-provider flow or
+tau setup below. Ollama Cloud does not replace them.
 
 ### Z.AI
 
