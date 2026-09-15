@@ -50,12 +50,13 @@ class ResourceDiagnostic:
 class TauResourcePaths:
     """Filesystem locations for Tau markdown resources.
 
-    By default Tau loads both Tau-native resources and `.agents` resources from
-    the user home directory. When a cwd is provided, project-local `.tau` and
-    `.agents` resources are loaded automatically as well.
+    By default Tau loads Tau-native resources from the configured Tau home and
+    `.agents` resources from the user home directory. When a cwd is provided,
+    project-local `.tau` and `.agents` resources are loaded automatically as
+    well.
     """
 
-    root: Path = field(default_factory=lambda: Path.home() / ".tau")
+    root: Path = field(default_factory=lambda: TauPaths().home)
     cwd: Path | None = None
     agents_root: Path | None = field(default_factory=lambda: Path.home() / ".agents")
     paths: TauPaths | None = None
