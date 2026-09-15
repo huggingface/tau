@@ -85,6 +85,12 @@ from tau_coding.events import (
 from tau_coding.extensions.provider_registry import DynamicProviderRegistry
 from tau_coding.extensions.providers import DynamicProvider, ProviderModel
 from tau_coding.extensions.runtime import ExtensionRuntime
+from tau_coding.learning import (
+    compose_learned_section,
+    resolve_store_paths,
+    snapshot_learned_context,
+)
+from tau_coding.learning_curator import CuratorRunResult, curate_session
 from tau_coding.models_dev_store import ModelsDevRefreshResult, refresh_models_dev_catalog
 from tau_coding.oauth import account_id_from_access_token
 from tau_coding.paths import TauPaths
@@ -476,6 +482,11 @@ class CodingSession:
         self._credential_store = FileCredentialStore(
             credentials_path(self._resource_paths.paths) if self._resource_paths.paths else None
         )
+        # Frozen learned-context snapshot (memory + lesson index), taken once at
+        # session construction and never re-rendered mid-session.
+        self._learned_section = compose_learned_section(
+            snapshot_learned_context(self._resource_paths.paths)
+        )
         self._last_diagnostic_log_path: Path | None = None
         self._runtime_model_limits: RuntimeModelLimits | None = None
         self._runtime_model_limits_key: tuple[str, str] | None = None
@@ -724,6 +735,17 @@ class CodingSession:
                     custom_prompt_source=_custom_prompt_source(
                         explicit=config.custom_system_prompt is not None,
                         path=resources.custom_system_prompt_path,
+                    ),
+                    learned_context=compose_learned_section(
+                        snapshot_learned_context(
+                            unfiltered_resource_paths.paths
+                            or TauPaths(
+                                home=unfiltered_resource_paths.root,
+                                agents_home=(
+                                    unfiltered_resource_paths.agents_root or Path.home() / ".agents"
+                                ),
+                            )
+                        )
                     ),
                 )
             )
@@ -2269,6 +2291,37 @@ class CodingSession:
             if isinstance(provider, ModelCatalogProvider):
                 self._model_catalog_discovery_errors[self.provider_name] = error
 
+    async def learn(self) -> CuratorRunResult:
+        """Review the settled transcript and apply lessons to the durable stores.
+
+        The curator reuses this session's provider and model, then appends
+        memory entries and writes lesson files under the Tau home. Refuses to
+        run while an agent turn is active, mirroring reload-like operations.
+        """
+        self._require_idle("learn")
+        provider = self._harness.config.provider
+        if provider is None:
+            raise ValueError("No active provider is configured; cannot run the learning curator.")
+        store_paths = resolve_store_paths(self._resource_paths.paths)
+        try:
+            result = await curate_session(
+                provider=provider,
+                model=self.model,
+                messages=self.messages,
+                store=store_paths,
+            )
+        except ValueError as exc:
+            message = str(exc)
+            if "Memory store is full" in message:
+                raise ValueError(message) from exc
+            raise ValueError(f"Learning review failed: {message}") from exc
+        # Refresh the frozen snapshot so the next prompt build (e.g. /reload)
+        # sees what this run just learned.
+        self._learned_section = compose_learned_section(
+            snapshot_learned_context(self._resource_paths.paths)
+        )
+        return result
+
     async def reload(self) -> CodingReloadSummary:
         """Stage and atomically publish a complete replacement snapshot."""
         self._require_idle("reload")
@@ -2417,6 +2470,7 @@ class CodingSession:
                     context_files=resources.context_files,
                     extra_guidelines=after_guidelines,
                     extra_sections=after_sections,
+                    learned_context=self._learned_section,
                     custom_prompt_source=_custom_prompt_source(
                         explicit=self._config.custom_system_prompt is not None,
                         path=resources.custom_system_prompt_path,
