@@ -68,6 +68,7 @@ def test_system_prompt_files_replace_by_precedence_and_append_in_order(tmp_path:
     assert resources.custom_prompt == "Project base"
     assert resources.custom_prompt_path == cwd / ".tau" / "SYSTEM.md"
     assert resources.append_prompt == "User append\n\nProject append"
+    assert resources.append_prompts == ("User append", "Project append")
     assert resources.append_prompt_paths == (
         tau_home / "APPEND_SYSTEM.md",
         cwd / ".tau" / "APPEND_SYSTEM.md",

@@ -5,6 +5,17 @@ portable `tau_agent` harness emits provider-neutral events; the TUI renders
 them and owns interaction. Ctrl+P cycles forward through scoped models;
 Shift+Ctrl+P cycles backward.
 
+## `/system`
+
+`/system` displays the effective prompt as read-only transcript Markdown and
+labels each contiguous section with its source. Every section has a separate
+faint background matching its theme-colored source name and border. File-backed
+prompt overrides, append files, project instructions, and skills show their
+paths; extension sections and runtime values show their owning component. The
+command does not add content to model context or session history. If an effective prompt cannot
+be verified against Tau's deterministic builder inputs, Tau labels the whole
+prompt as runtime-composed rather than guessing provenance.
+
 The sidebar usage section shows `avg TPS` and `avg TTFT` across timed session
 history. Effective TPS uses the accumulated time Tau spends awaiting provider
 events, including provider queueing, network waits, prefill, and TTFT; it
@@ -30,6 +41,19 @@ session. It preserves a configured `left` or `right` position and never writes
 `~/.tau/tui.json`; the choice is forgotten when Tau restarts. When
 `sidebar_position` is `"off"`, an explicit show temporarily uses the default
 right position.
+
+## Sidebar file editor
+
+Click a prompt template, context file, or skill row in the sidebar to open its
+file in an editor in the main UI area. Skill rows open only their main
+`SKILL.md`, not supporting files from the skill directory. Editable rows use a
+highlighted, underlined hover state. Use the arrow keys to move the editing
+cursor. Press Ctrl+S to write changes to disk; Tau keeps the editor open and
+reports either success or the write error. Tau refuses to overwrite a file
+that changed on disk after you opened it, and keeps the current editor open if
+you click another file while it has unsaved changes. Save or close the current
+file first. Press Escape to restore the transcript. Run `/reload` afterward to
+apply changed resources to the active session.
 
 ## `/resume`
 
