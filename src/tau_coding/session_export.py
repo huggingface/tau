@@ -183,6 +183,22 @@ def render_session_html(
 ) -> str:
     """Render a session transcript/tree as standalone HTML."""
     entry_list = list(entries)
+    if title == "Tau Session Export":
+        title = next(
+            (
+                entry.name
+                for entry in reversed(entry_list)
+                if isinstance(entry, SessionInfoEntry) and entry.name
+            ),
+            None,
+        ) or next(
+            (
+                entry.title
+                for entry in reversed(entry_list)
+                if isinstance(entry, SessionInfoEntry) and entry.title
+            ),
+            title,
+        )
     active_leaf_id = _active_leaf_id(entry_list)
     active_path_ids = _active_path_ids(entry_list, active_leaf_id)
     visible_entries = _visible_export_entries(entry_list)
@@ -1401,6 +1417,8 @@ def _render_entry_body(entry: SessionEntry) -> str:
         leaf = entry.entry_id or "none"
         return f"<p>Active leaf pointer: <code>{_escape(leaf)}</code></p>"
     if isinstance(entry, SessionInfoEntry):
+        if entry.name is not None:
+            return f"<p>Session name: <strong>{_escape(entry.name)}</strong></p>"
         return (
             f"<p>Title: <strong>{_escape(entry.title or 'Untitled')}</strong></p>"
             f"<p>Working directory: <code>{_escape(entry.cwd or 'unknown')}</code></p>"
@@ -1667,7 +1685,7 @@ def _entry_preview(entry: SessionEntry) -> str:
     if isinstance(entry, LeafEntry):
         return entry.entry_id or "none"
     if isinstance(entry, SessionInfoEntry):
-        return entry.title or entry.cwd or "session metadata"
+        return entry.name or entry.title or entry.cwd or "session metadata"
     if isinstance(entry, CustomEntry):
         return f"{len(entry.data)} field(s)"
     return entry.id
