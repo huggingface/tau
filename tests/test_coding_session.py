@@ -81,6 +81,7 @@ from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_config import ProviderModelMetadata, provider_thinking_levels
 from tau_coding.session import (
     _ordered_tree_entries,
+    _tree_branch_indents,
     is_retryable_huggingface_route_error,
     parse_terminal_command,
 )
@@ -1535,21 +1536,21 @@ async def test_tree_choices_handles_deep_session_without_recursion_error(
     assert choices[-1].entry_id == f"m{depth - 1}"
 
 
-def test_ordered_tree_entries_preserves_branch_order() -> None:
-    # Locks the traversal contract the iterative walk must preserve: emit a
-    # node's direct children before descending, then depth-first into each child.
+def test_ordered_tree_entries_puts_longest_history_first() -> None:
     entries = [
         MessageEntry(id="A", parent_id=None, message=UserMessage(content="A")),
-        MessageEntry(id="B", parent_id=None, message=UserMessage(content="B")),
-        MessageEntry(id="C", parent_id="A", message=UserMessage(content="C")),
-        MessageEntry(id="D", parent_id="A", message=UserMessage(content="D")),
+        MessageEntry(id="B", parent_id="A", message=UserMessage(content="B")),
+        MessageEntry(id="C", parent_id="B", message=UserMessage(content="C")),
+        MessageEntry(id="D", parent_id="B", message=UserMessage(content="D")),
         MessageEntry(id="E", parent_id="B", message=UserMessage(content="E")),
-        MessageEntry(id="F", parent_id="C", message=UserMessage(content="F")),
+        MessageEntry(id="F", parent_id="E", message=UserMessage(content="F")),
     ]
 
     ordered = _ordered_tree_entries(entries)
+    indents = _tree_branch_indents(entries)
 
-    assert [entry.id for entry in ordered] == ["A", "B", "C", "D", "F", "E"]
+    assert [entry.id for entry in ordered] == ["A", "B", "E", "F", "C", "D"]
+    assert indents == {"A": 0, "B": 0, "E": 0, "F": 0, "C": 1, "D": 1}
 
 
 def test_ordered_tree_entries_terminates_on_parent_cycle() -> None:
@@ -2235,10 +2236,10 @@ async def test_session_tree_choices_indent_only_diverged_branches(tmp_path: Path
     assert [choice.label for choice in choices] == [
         "user: Root",
         "assistant: Main",
-        "  assistant: First branch",
-        "  assistant: Second branch",
         "user: Main follow-up",
+        "  assistant: First branch",
         "  user: Follow-up",
+        "  assistant: Second branch",
     ]
 
 

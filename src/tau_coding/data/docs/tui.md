@@ -55,6 +55,12 @@ you click another file while it has unsaved changes. Save or close the current
 file first. Press Escape to restore the transcript. Run `/reload` afterward to
 apply changed resources to the active session.
 
+## `/tree`
+
+At each session fork, the tree picker displays the child with the longest
+history as the main branch. Alternate branches follow that history, indented
+beneath their parent branch point, so every branch's events remain together.
+
 ## `/resume`
 
 The resume picker uses separate project and recent-session columns. Project

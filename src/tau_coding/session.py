@@ -965,7 +965,7 @@ class CodingSession:
     async def tree_choices(self) -> tuple[SessionTreeChoice, ...]:
         """Return branchable session entries for a tree picker."""
         entries = await self._read_session_entries()
-        branch_indents = _tree_branch_indents(entries)
+        ordered_entries, branch_indents = _tree_layout(entries)
         labels_by_id, label_timestamps_by_id = _resolved_labels(entries)
         active_choice_id = _active_branchable_entry_id(entries, self._state.active_leaf_id)
         return tuple(
@@ -977,7 +977,7 @@ class CodingSession:
                 bookmark_label=labels_by_id.get(entry.id),
                 label_timestamp=label_timestamps_by_id.get(entry.id),
             )
-            for entry in _ordered_tree_entries(entries)
+            for entry in ordered_entries
             if _is_branchable_tree_entry(entry)
         )
 
@@ -4134,64 +4134,79 @@ def _tree_choice_label(entry: SessionEntry, *, branch_indent: int = 0) -> str:
 
 
 def _tree_branch_indents(entries: list[SessionEntry]) -> dict[str, int]:
-    children_by_parent: dict[str | None, list[str]] = {}
-    for entry in entries:
-        if entry.type != "leaf":
-            children_by_parent.setdefault(entry.parent_id, []).append(entry.id)
-
-    sibling_indexes = {
-        child_id: index
-        for children in children_by_parent.values()
-        for index, child_id in enumerate(children)
-    }
-    indents: dict[str, int] = {}
-    for entry in entries:
-        if entry.type == "leaf":
-            continue
-        parent_indent = indents.get(entry.parent_id, 0) if entry.parent_id is not None else 0
-        sibling_index = sibling_indexes.get(entry.id, 0)
-        indents[entry.id] = parent_indent + (1 if sibling_index > 0 else 0)
-    return indents
+    return _tree_layout(entries)[1]
 
 
 def _ordered_tree_entries(entries: list[SessionEntry]) -> tuple[SessionEntry, ...]:
+    return _tree_layout(entries)[0]
+
+
+def _tree_layout(
+    entries: list[SessionEntry],
+) -> tuple[tuple[SessionEntry, ...], dict[str, int]]:
+    tree_entries = [entry for entry in entries if entry.type != "leaf"]
     children_by_parent: dict[str | None, list[SessionEntry]] = {}
-    for entry in entries:
-        if entry.type != "leaf":
-            children_by_parent.setdefault(entry.parent_id, []).append(entry)
+    entries_by_id: dict[str, SessionEntry] = {}
+    for entry in tree_entries:
+        children_by_parent.setdefault(entry.parent_id, []).append(entry)
+        entries_by_id[entry.id] = entry
+
+    # Resolve each child's longest path to a leaf without recursion. Processing
+    # leaves upward also keeps deep sessions safe. Malformed cycles retain a
+    # finite fallback length and are handled by the traversal's `seen` set.
+    branch_lengths = dict.fromkeys(entries_by_id, 1)
+    remaining_children = {
+        entry_id: len(children_by_parent.get(entry_id, ())) for entry_id in entries_by_id
+    }
+    pending = [entry_id for entry_id, count in remaining_children.items() if count == 0]
+    while pending:
+        entry_id = pending.pop()
+        parent_id = entries_by_id[entry_id].parent_id
+        if parent_id not in remaining_children:
+            continue
+        branch_lengths[parent_id] = max(branch_lengths[parent_id], branch_lengths[entry_id] + 1)
+        remaining_children[parent_id] -= 1
+        if remaining_children[parent_id] == 0:
+            pending.append(parent_id)
+
+    def ordered_children(parent_id: str | None) -> list[SessionEntry]:
+        return sorted(
+            children_by_parent.get(parent_id, ()),
+            key=lambda child: branch_lengths.get(child.id, 1),
+            reverse=True,
+        )
 
     ordered: list[SessionEntry] = []
+    indents: dict[str, int] = {}
     seen: set[str] = set()
-    expanded: set[str | None] = set()
 
-    def append_descendants(root_parent_id: str | None) -> None:
-        # Iterative depth-first walk rather than recursion so a long session (a
-        # deep root-to-leaf entry chain) cannot exceed Python's recursion limit.
-        # `expanded` also makes a malformed parent cycle terminate instead of
-        # recursing forever. Emitting a node's direct children before descending,
-        # and pushing them reversed so the first child is processed next,
-        # preserves the original traversal order.
-        stack: list[str | None] = [root_parent_id]
+    def append_subtrees(children: list[SessionEntry], parent_indent: int) -> None:
+        # Pre-order traversal keeps every branch's history together. The longest
+        # child is the unindented main branch; shorter siblings follow it at one
+        # additional indentation level. Stable sorting preserves storage order
+        # when histories have equal lengths.
+        stack = [
+            (child, parent_indent + (1 if index > 0 else 0))
+            for index, child in reversed(list(enumerate(children)))
+        ]
         while stack:
-            parent_id = stack.pop()
-            if parent_id in expanded:
+            entry, indent = stack.pop()
+            if entry.id in seen:
                 continue
-            expanded.add(parent_id)
-            children = children_by_parent.get(parent_id, [])
-            for child in children:
-                if child.id not in seen:
-                    ordered.append(child)
-                    seen.add(child.id)
-            for child in reversed(children):
-                stack.append(child.id)
-
-    append_descendants(None)
-    for entry in entries:
-        if entry.type != "leaf" and entry.id not in seen:
-            ordered.append(entry)
             seen.add(entry.id)
-            append_descendants(entry.id)
-    return tuple(ordered)
+            ordered.append(entry)
+            indents[entry.id] = indent
+            child_entries = ordered_children(entry.id)
+            stack.extend(
+                (child, indent + (1 if index > 0 else 0))
+                for index, child in reversed(list(enumerate(child_entries)))
+            )
+
+    append_subtrees(ordered_children(None), 0)
+    for entry in tree_entries:
+        if entry.id not in seen:
+            append_subtrees([entry], 0)
+    return tuple(ordered), indents
 
 
 def _is_tool_call_tree_entry(entry: SessionEntry) -> bool:

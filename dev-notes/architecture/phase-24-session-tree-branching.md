@@ -8,10 +8,10 @@ mutation, not a transcript edit.
 
 ## What Changed
 
-`/tree` opens a modal tree picker for the active session. The picker lists
-branchable conversation entries near their parent branch point, with small
-indentation only where the session history has diverged into alternate branches,
-marks the active leaf, and supports two actions:
+`/tree` opens a modal tree picker for the active session. The picker keeps each
+branch's entries together, uses the child with the longest history as the main
+branch, and places shorter alternatives afterward with indentation at their
+parent branch point. It marks the active leaf and supports two actions:
 
 - `Enter` moves the active leaf to the selected entry.
 - `S` moves the active leaf through a new `branch_summary` entry.
