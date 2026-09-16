@@ -63,6 +63,7 @@ class TuiKeybindings:
     model_cycle_reverse: str = "ctrl+shift+p"
     toggle_thinking: str = "ctrl+t"
     toggle_tool_results: str = "ctrl+o"
+    paste_clipboard: str = "ctrl+v"
     copy_message: str = "ctrl+c"
     quit: str = "ctrl+d"
 
@@ -82,6 +83,7 @@ class TuiKeybindings:
             "model_cycle_reverse": self.model_cycle_reverse,
             "toggle_thinking": self.toggle_thinking,
             "toggle_tool_results": self.toggle_tool_results,
+            "paste_clipboard": self.paste_clipboard,
             "copy_message": self.copy_message,
             "quit": self.quit,
         }
