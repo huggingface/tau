@@ -58,6 +58,23 @@ resolve an explicit provider/model, then construct the candidate runtime. A
 saved llama.cpp snapshot can therefore support explicit startup during server
 downtime without making the local backend an implicit fallback.
 
+## How they work together
+
+For a request like **“Explain this project”**:
+
+1. **The app (`tau_coding`)** accepts your prompt and supplies tools such as
+   `read`, `edit`, and `bash` to the agent loop.
+2. **The loop (`tau_agent`)** sends the conversation to the model through
+   `tau_ai`. If the model requests a file, the loop executes the app's `read`
+   tool, adds the result to the conversation, and asks the model again.
+3. **The model connection (`tau_ai`)** translates between the provider's API
+   and Tau's shared response format. The loop emits progress events that the
+   app displays, while the coding session saves the conversation.
+
+Requests and responses travel in both directions at runtime. That does **not**
+mean the packages import each other in both directions: the app supplies tool
+implementations and consumes events without the core importing the app.
+
 ## Dependency direction
 
 Dependencies only point one way: `tau_coding → tau_agent → tau_ai`. UI code

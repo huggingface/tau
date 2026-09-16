@@ -1,0 +1,68 @@
+# Original recordings from Alejandro's Tau v0.4.0 launch thread (2026-08-28).
+# Bunny serves production videos; local MP4s remain development backups.
+# Originals are already optimized H.264; encoded fallbacks become available after Bunny processing.
+- id: local-inference
+  bunny_library_id: "506199"
+  bunny_video_id: 180e97fc-74d5-4d43-968e-e8f239870273
+  video_url: https://vz-3d011147-43d.b-cdn.net/180e97fc-74d5-4d43-968e-e8f239870273/original
+  video_fallbacks:
+    - https://vz-3d011147-43d.b-cdn.net/180e97fc-74d5-4d43-968e-e8f239870273/play_1080p.mp4
+    - https://vz-3d011147-43d.b-cdn.net/180e97fc-74d5-4d43-968e-e8f239870273/play_720p.mp4
+  title: Run a model locally.
+  category: Local inference
+  command: /local
+  duration: "1:07"
+  description: Connect Tau to llama.cpp and use a model on your own machine. Choose a model, load it, and start working from the terminal.
+  summary: The recording starts a llama.cpp server, opens /local in Tau, selects a local model, and asks it to analyze the project. Tau then reads project files and responds using that model.
+  guide: /guides/local-inference/
+  guide_label: Set up local inference
+  source: https://x.com/_alejandroao/status/2093395753645314556
+  featured: true
+- id: model-catalog
+  bunny_library_id: "506199"
+  bunny_video_id: 3372aa9f-ee46-4979-baf6-9f906f58f5fb
+  video_url: https://vz-3d011147-43d.b-cdn.net/3372aa9f-ee46-4979-baf6-9f906f58f5fb/original
+  video_fallbacks:
+    - https://vz-3d011147-43d.b-cdn.net/3372aa9f-ee46-4979-baf6-9f906f58f5fb/play_1080p.mp4
+    - https://vz-3d011147-43d.b-cdn.net/3372aa9f-ee46-4979-baf6-9f906f58f5fb/play_720p.mp4
+  title: Refresh your models.
+  category: Model catalog
+  command: tau update --models
+  duration: "0:16"
+  description: Refresh the model catalog from models.dev with one command. No manual YAML edits to add a catalog model.
+  summary: The terminal runs tau update --models and confirms that the model catalog has been refreshed and cached. The model count shown belongs to this recording, not today's catalog.
+  guide: /guides/providers-and-models/
+  guide_label: Explore providers and models
+  source: https://x.com/_alejandroao/status/2093395756098990190
+- id: extensions
+  bunny_library_id: "506199"
+  bunny_video_id: 9e44461c-5ced-4af9-98a7-ca30710dfaac
+  video_url: https://vz-3d011147-43d.b-cdn.net/9e44461c-5ced-4af9-98a7-ca30710dfaac/original
+  video_fallbacks:
+    - https://vz-3d011147-43d.b-cdn.net/9e44461c-5ced-4af9-98a7-ca30710dfaac/play_1080p.mp4
+    - https://vz-3d011147-43d.b-cdn.net/9e44461c-5ced-4af9-98a7-ca30710dfaac/play_720p.mp4
+  title: Make Tau your own.
+  category: Extensions
+  command: Python extensions
+  duration: "0:10"
+  description: Register providers, add sidebar sections, append system-prompt snippets, and read session metadata from your extensions.
+  summary: The recording shows a coding session with an extension-provided Hugging Face sidebar section, including the active model, routing mode, and providers. The broader extension capabilities are described in the linked announcement and guide.
+  guide: /guides/extensions/
+  guide_label: Build an extension
+  source: https://x.com/_alejandroao/status/2093395758754009432
+- id: system-prompt
+  bunny_library_id: "506199"
+  bunny_video_id: eb1bae4e-ac2d-4614-8402-8788dab838db
+  video_url: https://vz-3d011147-43d.b-cdn.net/eb1bae4e-ac2d-4614-8402-8788dab838db/original
+  video_fallbacks:
+    - https://vz-3d011147-43d.b-cdn.net/eb1bae4e-ac2d-4614-8402-8788dab838db/play_1080p.mp4
+    - https://vz-3d011147-43d.b-cdn.net/eb1bae4e-ac2d-4614-8402-8788dab838db/play_720p.mp4
+  title: See the full prompt.
+  category: System prompts
+  command: /system
+  duration: "0:13"
+  description: Inspect the full system prompt with /system. See where instructions come from and combine multiple prompt sources.
+  summary: The recording enters /system, then displays the active system prompt, including the coding-agent instructions, available tools, and guidelines. This view lets you inspect the prompt without adding it to the conversation.
+  guide: /reference/slash-commands/
+  guide_label: See the commands
+  source: https://x.com/_alejandroao/status/2093395761752948819

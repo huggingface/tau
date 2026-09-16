@@ -3,9 +3,12 @@
   <head>
     {{ partial "head.html" . }}
   </head>
-  <body>
+  <body{{ if .IsHome }} class="home-page"{{ end }}>
+    <a class="skip-link" href="#main-content">Skip to content</a>
     {{ partial "navbar.html" . }}
-    {{ block "main" . }}{{ end }}
+    <main id="main-content" tabindex="-1">
+      {{ block "main" . }}{{ end }}
+    </main>
     {{ partial "footer.html" . }}
 
     {{ $navJs := resources.Get "js/nav-toggle.js" }}

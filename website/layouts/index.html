@@ -1,208 +1,148 @@
 {{ define "main" }}
-<div class="wrap">
-  <header class="hero">
-    <div class="hero-grid">
-      <div>
-        <p class="eyebrow-hand">An educational coding-agent project</p>
-        <h1 class="hero-title-original">Learn how coding agents are <em>built.</em></h1>
-        <p class="lede">
-          <strong>Tau</strong> is a small Python coding agent you read like a
-          textbook. Watch it stream model output, call tools, manage sessions,
-          and grow into a terminal UI &mdash; one readable layer at a time.
-        </p>
-        <p class="lede small-lede">
-          No hidden machinery. Every moving part is on the page.
-        </p>
-        <div class="cta-row">
-          <span class="install">
-            <span><span class="dollar">$</span> curl -LsSf https://twotimespi.dev/install.sh | sh</span>
-            <button class="copy" id="copyBtn" type="button" aria-label="Copy install command">copy</button>
-          </span>
-          <a class="ghost" href="{{ "/internals/architecture/" | relURL }}">Start with the architecture <span class="arr">&rarr;</span></a>
-          <a class="ghost" href="{{ .Site.Params.discordUrl }}" target="_blank" rel="noopener">Join the Discord community <span class="arr">&rarr;</span></a>
+<div class="atlas-home">
+  <header class="atlas-hero">
+    <div class="wrap">
+      <div class="atlas-kicker"><span><i></i> Tau / An open-source Python agent</span><span>Small code. Clear ideas.</span></div>
+      <div class="hero-stage">
+        <div class="hero-copy">
+          <h1>Understand<br>the <span>agent.</span></h1>
+          <p>A coding agent you can run, read, and change. Learn how it works, one layer at a time.</p>
+          <div class="hero-actions">
+            <a class="atlas-button" href="{{ "/quickstart/" | relURL }}">Get started <span>↗</span></a>
+            <a class="atlas-text-link" href="{{ "/internals/architecture/" | relURL }}">Explore the code ↗</a>
+          </div>
         </div>
-        <div class="star-cta">
-          <a class="star-cta-link" href="{{ .Site.Params.githubUrl }}" target="_blank" rel="noopener">
-            <svg class="gh-icon" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
-            <span>Star Tau on GitHub</span>
-            <svg class="star-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.79L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.192L.818 6.375a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
-          </a>
-        </div>
+        <figure class="hero-sculpture" aria-label="Mathematical surfaces: torus, sphere, and Möbius strip">
+          <div class="manifold-art" aria-hidden="true">
+            <div class="manifold-fallback">{{ partial "manifold.html" . }}</div>
+            <canvas id="manifoldCanvas" hidden></canvas>
+          </div>
+          <figcaption class="sculpture-caption"><span id="surfaceName">01 / Torus</span><span id="surfaceEquation">(√(x² + y²) − R)² + z² = r²</span></figcaption>
+          <div class="sculpture-controls" id="sculptureControls" hidden>
+            <button type="button" id="motionToggle" aria-label="Pause animation">Pause <span aria-hidden="true">Ⅱ</span></button>
+          </div>
+        </figure>
       </div>
-
-      <figure class="figure">
-        <span class="figlabel">&#952; sweeps 0 &rarr; &#964;</span>
-        <canvas id="tauCanvas" width="520" height="380" role="img"
-          aria-label="A radius sweeping a unit circle through one full turn, tracing one period of a sine wave on notebook paper."></canvas>
-        <span class="figval" id="thetaVal">&#952; = 0.00</span>
-      </figure>
-    </div>
-
-    <div class="strip arch-strip">
-      <div class="cellitem"><span class="num">learn</span><span class="cap">agent architecture</span></div>
-      <div class="cellitem"><span class="num">read</span><span class="cap">small Python layers</span></div>
-      <div class="cellitem"><span class="num">run</span><span class="cap">a real terminal agent</span></div>
+      <div class="atlas-install-row">
+        <span class="atlas-label">Start in your terminal</span>
+        <div class="install"><span><span class="dollar">$</span> curl -LsSf https://twotimespi.dev/install.sh | sh</span><button class="copy" id="copyBtn" type="button" aria-label="Copy install command">copy</button></div>
+        <a class="atlas-text-link" href="{{ .Site.Params.githubUrl }}" target="_blank" rel="noopener">View on GitHub ↗</a>
+      </div>
     </div>
   </header>
-</div>
 
-<div class="wrap">
-  <section id="start">
-    <div class="sec-head">
-      <span class="mark">01</span>
-      <div>
-        <p class="eyebrow-hand">3-layers</p>
-        <h2>A coding agent as a curriculum</h2>
-      </div>
+  <section class="atlas-demos wrap" id="demos" aria-labelledby="demos-heading">
+    <div class="atlas-section-label"><span>TAU IN ACTION</span><span>Real recordings. Real features.</span></div>
+    <div class="demos-heading">
+      <h2 id="demos-heading">See Tau in action.</h2>
+      <p>Four demos from the <a href="https://x.com/_alejandroao/status/2093395753645314556" target="_blank" rel="noopener">v0.4.0 launch thread ↗</a>.<br>Silent demos play as you scroll. Open fullscreen for a closer look.</p>
     </div>
-    <div class="layers">
-      <div class="layer">
-        <span class="idx">&#8544;</span>
-        <span class="pkg">tau_ai</span>
-        <h3>Models become streams</h3>
-        <p>Provider adapters turn model responses into provider-neutral events the rest of the agent consumes.</p>
-      </div>
-      <div class="layer">
-        <span class="idx">&#8545;</span>
-        <span class="pkg">tau_agent</span>
-        <h3>The agent loop</h3>
-        <p>The reusable harness: messages, tools, transcript state, cancellation, queued prompts, sessions.</p>
-      </div>
-      <div class="layer">
-        <span class="idx">&#8546;</span>
-        <span class="pkg">tau_coding</span>
-        <h3>It becomes useful</h3>
-        <p>The coding environment: files, shell, durable sessions, skills, slash commands, and a Textual TUI.</p>
-      </div>
+    <div class="demo-grid">
+      {{ range .Site.Data.demos }}{{ partial "video-card.html" . }}{{ end }}
     </div>
+    <p class="demos-note">Recorded for v0.4.0. Some screens have changed since then; the linked guides cover the current version.</p>
   </section>
 
-  <section>
-    <div class="two">
-      <div>
-        <p class="eyebrow-hand">no black boxes</p>
-        <h2>Every moving part is visible.</h2>
-        <p>Tau answers the questions tutorials skip: What <em>is</em> an agent loop? Where do tool calls come from? How does the transcript grow? How do sessions survive the process exiting?</p>
+  <section class="atlas-premise wrap">
+    <div class="atlas-section-label"><span>01 / THE PREMISE</span><span>Understand, don't just use.</span></div>
+    <h2>A model. A loop.<br><span>A few useful tools.</span></h2>
+    <div class="atlas-premise-bottom"><span class="premise-asterisk" aria-hidden="true">✳</span><p>The model responds. The loop runs tools. The session keeps the history. Tau separates these parts so you can understand and change each one.</p><a class="atlas-text-link" href="{{ "/internals/architecture/" | relURL }}">Read the architecture ↗</a></div>
+  </section>
+
+  <section class="atlas-anatomy" aria-labelledby="architecture-heading">
+    <div class="wrap">
+      <div class="atlas-section-label"><span>02 / HOW THE PARTS CONNECT</span><span>From your terminal to the model and back.</span></div>
+      <div class="atlas-anatomy-head">
+        <h2 id="architecture-heading">Three layers. <br>One agent.</h2>
+        <p>The app handles your workspace. The loop coordinates the work. The model connection handles the AI provider.</p>
       </div>
-      <div class="event-flow" aria-label="Tau event flow">
-        <div class="flow-node"><span>model stream</span><small>tokens, tool requests, thinking deltas</small></div>
-        <div class="flow-arrow">&darr;</div>
-        <div class="flow-node"><span>event stream</span><small>the contract between layers</small></div>
-        <div class="flow-arrow">&darr;</div>
-        <div class="flow-node"><span>agent loop</span><small>decide, call tools, update transcript</small></div>
-        <div class="flow-arrow">&darr;</div>
-        <div class="flow-split">
-          <div class="flow-node"><span>session</span><small>inspectable JSONL history</small></div>
-          <div class="flow-node"><span>frontend</span><small>print, Rich, or TUI</small></div>
+      <figure class="architecture-map" aria-describedby="architecture-caption">
+        <div class="architecture-endpoints"><span>You work here</span><span>The AI connects here</span></div>
+        <div class="architecture-flow">
+          <article class="architecture-node architecture-app">
+            <span class="architecture-role">01 / Your workspace</span>
+            <h3>The app</h3>
+            <a class="architecture-package" href="{{ "/internals/architecture/" | relURL }}#tau_coding--the-coding-application">tau_coding <span aria-hidden="true">↗</span></a>
+            <p>Takes your prompt, supplies coding tools, and shows the answer.</p>
+            <ul><li>Terminal interface</li><li>Files and shell tools</li><li>Saved sessions</li></ul>
+          </article>
+          <div class="architecture-connector" role="img" aria-label="App to loop: prompt and tools. Loop to app: progress and results.">
+            <span>prompt + tools</span><b class="connector-out" aria-hidden="true"></b>
+            <b class="connector-back" aria-hidden="true"></b><span>progress + results</span>
+          </div>
+          <article class="architecture-node architecture-agent">
+            <span class="architecture-role">02 / The coordinator</span>
+            <h3>The agent loop</h3>
+            <a class="architecture-package" href="{{ "/internals/architecture/" | relURL }}#tau_agent--the-portable-brain">tau_agent <span aria-hidden="true">↗</span></a>
+            <p>Asks the model what to do, runs requested tools, and sends their results back.</p>
+            <ul><li>Conversation state</li><li>Tool execution</li><li>Repeat until done</li></ul>
+          </article>
+          <div class="architecture-connector" role="img" aria-label="Loop to model connection: model request. Model connection to loop: text and tool requests.">
+            <span>model request</span><b class="connector-out" aria-hidden="true"></b>
+            <b class="connector-back" aria-hidden="true"></b><span>text + tool requests</span>
+          </div>
+          <article class="architecture-node architecture-model">
+            <span class="architecture-role">03 / The translator</span>
+            <h3>The model connection</h3>
+            <a class="architecture-package" href="{{ "/internals/architecture/" | relURL }}#tau_ai--talking-to-models">tau_ai <span aria-hidden="true">↗</span></a>
+            <p>Talks to your chosen AI provider and turns its responses into a shared format.</p>
+            <ul><li>Provider API calls</li><li>Streaming responses</li><li>One format for the loop</li></ul>
+          </article>
         </div>
+        <figcaption id="architecture-caption">Requests go toward the model; text, tool requests, and results flow back. These arrows show communication, not code dependencies.</figcaption>
+      </figure>
+      <div class="architecture-example">
+        <div class="architecture-example-heading"><span class="atlas-label">One request, end to end</span><p><span aria-hidden="true">τ › </span>“Explain this project.”</p></div>
+        <ol>
+          <li><strong>You ask.</strong><span>The app passes your prompt and available tools to the loop. The loop asks the model through <code>tau_ai</code>.</span></li>
+          <li><strong>Tau reads.</strong><span>If the model asks for a file, the loop runs the app's <code>read</code> tool and sends the contents back to the model.</span></li>
+          <li><strong>You get an answer.</strong><span>The model uses that context to respond. The loop streams progress to the app, which displays and saves the conversation.</span></li>
+        </ol>
+      </div>
+      <div class="architecture-takeaway"><p><strong>Why separate them?</strong> You can change the interface or the model provider without rewriting the agent loop.</p><a class="atlas-text-link" href="{{ "/internals/architecture/" | relURL }}">Read the architecture <span aria-hidden="true">↗</span></a></div>
+    </div>
+  </section>
+
+  <section class="atlas-lab wrap" id="loop-study">
+    <div class="atlas-section-label"><span>03 / THE LOOP</span><span>A closer look at one turn.</span></div>
+    <div class="atlas-lab-grid">
+      <div><h2>See how <br>the loop works.</h2><p>Follow a request from the model to a tool and back. Select a step to see what happens.</p><a class="atlas-text-link" href="{{ "/internals/agent-loop/" | relURL }}">Go deeper into the loop ↗</a></div>
+      <div class="loop-explorer">
+        <div class="loop-explorer-bar"><span>AGENT LOOP / AN INTERACTIVE SCHEMATIC</span><span aria-hidden="true">↻</span></div>
+        <div class="loop-controls" role="group" aria-label="Explore agent loop steps">
+          <button type="button" data-step="0" aria-pressed="true">01 <span>Stream</span></button>
+          <button type="button" data-step="1" aria-pressed="false">02 <span>Request</span></button>
+          <button type="button" data-step="2" aria-pressed="false">03 <span>Execute</span></button>
+          <button type="button" data-step="3" aria-pressed="false">04 <span>Append</span></button>
+        </div>
+        <div class="loop-readout" aria-live="polite" aria-atomic="true">
+          <span class="loop-step-label" id="loopLabel">01 / MODEL → EVENTS</span>
+          <h3 id="loopTitle">A response becomes a stream.</h3>
+          <p id="loopDescription">The provider adapter emits text, thinking deltas, and tool-call events. The harness consumes a common event format, not a provider-specific response.</p>
+          <pre><code id="loopCode">model output → provider adapter → events</code></pre>
+        </div>
+        <div class="loop-explorer-foot"><span>SCHEMATIC, NOT A LIVE SESSION</span><span id="loopProgress">1 / 4</span></div>
       </div>
     </div>
   </section>
 
-  <section>
-    <div class="two boundary-two">
-      <div>
-        <p class="eyebrow-hand">the boundary</p>
-        <h2>Separate the brain, the environment, and the face.</h2>
-        <p>The whole lesson is the boundary. A reusable harness must not depend on the terminal, file paths, or Rich rendering. Those wrap the harness &mdash; they never live inside it.</p>
-      </div>
-      <div class="terminal" aria-hidden="true">
-        <div class="bar"><span></span><span></span><span></span><span class="t">tau &mdash; design split</span></div>
-        <pre><span class="key">AgentHarness</span> = reusable agent brain
-<span class="key">AgentSession</span> = coding-agent environment
-<span class="key">TUI</span>          = one possible frontend
-
-<span class="out">dependency direction</span>
-<span class="cmd">tau_coding</span> &rarr; <span class="cmd">tau_agent</span> &rarr; <span class="cmd">tau_ai</span></pre>
-      </div>
-    </div>
+  <section class="atlas-directory wrap">
+    <div class="atlas-section-label"><span>04 / CHOOSE A DIRECTION</span><span>There is more than one way in.</span></div>
+    <a href="{{ "/quickstart/" | relURL }}"><span class="directory-number">A</span><h3>Run it.</h3><p>From install to your first conversation.</p><span class="directory-arrow">↗</span></a>
+    <a href="{{ "/internals/architecture/" | relURL }}"><span class="directory-number">B</span><h3>Take it apart.</h3><p>The code, the boundaries, the decisions.</p><span class="directory-arrow">↗</span></a>
+    <a href="{{ "/roadmap/" | relURL }}"><span class="directory-number">C</span><h3>See it grow.</h3><p>A project built and documented in phases.</p><span class="directory-arrow">↗</span></a>
+    <a href="{{ .Site.Params.discordUrl }}" target="_blank" rel="noopener"><span class="directory-number">D</span><h3>Think out loud.</h3><p>Questions, experiments, and the community.</p><span class="directory-arrow">↗</span></a>
   </section>
 
-  <section>
-    <div class="sec-head">
-      <span class="mark">02</span>
-      <div>
-        <p class="eyebrow-hand">the skills</p>
-        <h2>What you can learn from Tau</h2>
-      </div>
-    </div>
-    <div class="capabilities">
-      <div>Provider-neutral streaming interfaces</div>
-      <div>Agent loops that request and execute tools</div>
-      <div>Typed local tools for read, write, edit, and bash</div>
-      <div>Durable sessions under <code>~/.tau/sessions</code></div>
-      <div>Session resume, branching, JSONL export, and HTML export</div>
-      <div>Project instructions, skills, and prompt templates</div>
-      <div>Slash commands and model/provider selection</div>
-      <div>Context accounting, compaction, and thinking controls</div>
-      <div>How to keep Textual behind a UI adapter boundary</div>
-    </div>
-  </section>
-
-  <section>
-    <div class="sec-head">
-      <span class="mark">03</span>
-      <div>
-        <p class="eyebrow-hand">how we think</p>
-        <h2>Educational principles</h2>
-      </div>
-    </div>
-    <div class="principles">
-      <div class="pr">
-        <h3>Small layers beat magic</h3>
-        <p>One job per package. Study the provider layer, harness, and coding app on their own.</p>
-      </div>
-      <div class="pr">
-        <h3>Events make agents teachable</h3>
-        <p>The agent emits a stream you can render, test, and export &mdash; not control flow buried in callbacks.</p>
-      </div>
-      <div class="pr">
-        <h3>Real enough to matter</h3>
-        <p>Educational, not a toy. Run it as a real terminal agent while reading the code behind it.</p>
-      </div>
-      <div class="pr">
-        <h3>Docs follow implementation</h3>
-        <p>Built phase by phase, each with notes on what was added, why, and how it fits.</p>
-      </div>
-    </div>
-  </section>
-
-  <section>
-    <div class="two">
-      <div>
-        <p class="eyebrow-hand">the origin</p>
-        <h2>Inspired by <a href="https://pi.dev" target="_blank" rel="noopener">Pi</a>, written as a Python learning path.</h2>
-        <p><a href="https://pi.dev" target="_blank" rel="noopener">Pi</a> is the minimalist coding-agent harness this project borrows its architectural lesson from &mdash; keep the harness, the environment, and the UI apart. Tau isn't a line-by-line port; it's an educational Python take on the same core ideas.</p>
-        <p><a class="ghost" href="https://pi.dev" target="_blank" rel="noopener">Visit pi.dev <span class="arr">&rarr;</span></a></p>
-      </div>
-      <div class="terminal" aria-hidden="true">
-        <div class="bar"><span></span><span></span><span></span><span class="t">tau &mdash; session</span></div>
-        <pre><span class="pmt">&#964; &rsaquo;</span> <span class="cmd">explain the agent loop</span>
-
-<span class="out">  stream   </span><span class="key">model events</span>
-<span class="out">  request  </span><span class="key">tool call</span>
-<span class="out">  execute  </span><span class="key">read / edit / bash</span>
-<span class="out">  append   </span><span class="key">transcript entries</span>
-<span class="out">  render   </span><span class="key">print mode or TUI</span></pre>
-      </div>
-    </div>
-  </section>
-
-  <section class="closing">
-    <span class="turn">&#964;</span>
-    <p>A map for building your own agent: start with events, add a loop, wrap it in a harness, then give it tools and a UI.</p>
-    <div class="cta-row">
-      <span class="install">
-        <span><span class="dollar">$</span> curl -LsSf https://twotimespi.dev/install.sh | sh</span>
-        <button class="copy" id="copyBtn2" type="button" aria-label="Copy install command">copy</button>
-      </span>
-      <a class="ghost" href="{{ "/quickstart/" | relURL }}">Get started <span class="arr">&rarr;</span></a>
-      <a class="ghost" href="{{ "/roadmap/" | relURL }}">Follow the roadmap <span class="arr">&rarr;</span></a>
-    </div>
+  <section class="atlas-finale">
+    <div class="wrap"><div class="atlas-section-label"><span>AN OPEN INVITATION</span><span>Inspired by <a href="https://pi.dev" target="_blank" rel="noopener">Pi ↗</a> · Rebuilt in Python</span></div><h2>Make the<br>loop <em>yours.</em><span aria-hidden="true">↗</span></h2><div class="finale-bottom"><p>Read it. Run it. Change it.<br>Understanding is the starting point.</p><a class="atlas-button" href="{{ "/quickstart/" | relURL }}">Begin with Tau <span>↗</span></a></div></div>
   </section>
 </div>
 {{ end }}
 
 {{ define "scripts" }}
 <script src="{{ "landing.js" | relURL }}"></script>
+{{ $atlasJs := slice (resources.Get "js/atlas.js") (resources.Get "js/manifold.js") (resources.Get "js/demos.js") | resources.Concat "js/home.js" }}
+{{ if hugo.IsProduction }}{{ $atlasJs = $atlasJs | js.Build | minify | fingerprint }}{{ end }}
+<script src="{{ $atlasJs.RelPermalink }}"></script>
 {{ end }}

@@ -1,6 +1,6 @@
 ---
 title: "Tau"
-description: "An educational Python project for learning how coding agents are built."
+description: "Inside the agent. Take apart a small, real Python coding agent—follow the loop, explore the layers, and make it yours."
 build:
   list: false
 ---

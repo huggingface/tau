@@ -1,19 +1,19 @@
 /* Tau site styles — shared by landing pages and docs. */
 
-@import url("https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,300;0,400;0,500;0,600;0,800;1,400&family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Caveat:wght@500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap");
 
 html, body{ margin:0; padding:0; }
 
 :root{
-  --ground:#FFFFFF;
-  --grid:#DCE4F2;
-  --grid-strong:#C9D6EE;
-  --ink:#13213C;
-  --ink-soft:#54607A;
-  --accent:#1B3FA0;
-  --red:#D6435B;
+  --ground:#FAF9F6;
+  --grid:#ECECE6;
+  --grid-strong:#D9DDD6;
+  --ink:#202C35;
+  --ink-soft:#59656D;
+  --accent:#285B99;
+  --red:#A4553E;
   --green:#1F8A5F;
-  --paper-edge:#EEF2FA;
+  --paper-edge:#F0F2EE;
   /* solid reading surface for long-form text containers (issue #423) */
   --paper:#FFFFFF;
 
@@ -21,10 +21,10 @@ html, body{ margin:0; padding:0; }
   --grotesk:"Space Grotesk", ui-sans-serif, system-ui, sans-serif;
   --mono:"JetBrains Mono", ui-monospace, monospace;
   --math:"STIX Two Text","Cambria Math","Times New Roman",serif;
-  --hand:"Caveat", "Segoe Print", cursive;
+  --hand:var(--serif);
 
   --cell:28px;
-  --maxw:1080px;
+  --maxw:1200px;
 }
 
 body, body *{box-sizing:border-box;}
@@ -37,34 +37,13 @@ body{
   font-size:18px;
   line-height:1.6;
   -webkit-font-smoothing:antialiased;
-  /* notebook grid */
-  background-image:
-    linear-gradient(var(--grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
-  background-size:var(--cell) var(--cell), var(--cell) var(--cell);
+  /* Quiet reading surface; graph paper is reserved for figures. */
   position:relative;
   min-height:100vh;
 }
-/* faint top-fade so the grid feels like paper, not a screen */
-body::before{
-  content:"";
-  position:fixed; inset:0;
-  background:radial-gradient(120% 80% at 50% -10%, rgba(255,255,255,.85), rgba(255,255,255,0) 60%);
-  pointer-events:none; z-index:0;
-}
-/* red margin line of a notebook */
-body::after{
-  content:"";
-  position:fixed; top:0; bottom:0;
-  left:calc(var(--cell) * 3 + 1px);
-  width:1.5px;
-  background:var(--red);
-  opacity:.45;
-  pointer-events:none; z-index:1;
-}
-@media (max-width:720px){
-  body::after{ left:calc(var(--cell) * 1.5); }
-}
+/* Selection and anchor navigation defaults. */
+::selection{ background:#DBE7F3; color:var(--ink); }
+html{ scroll-padding-top:32px; }
 
 .wrap{
   position:relative; z-index:2;
@@ -252,8 +231,7 @@ h1{
 h1 em{ font-style:normal; font-weight:500; color:var(--accent); }
 .h1-compact{ font-size:clamp(48px,7.5vw,72px); margin-top:8px; }
 
-/* The homepage hero title keeps its original serif treatment, while every
-   other heading across the site uses the handwritten font. */
+/* Large editorial title, paired with precise monospace annotations. */
 .hero-title-original{
   font-family:var(--serif);
   font-weight:300;
@@ -377,10 +355,7 @@ section{ padding:88px 0; }
   font-size:clamp(32px,5vw,46px); line-height:1.0; margin:0; letter-spacing:-0.01em;
 }
 
-/* ---- handwritten eyebrow labels ----
-   The small label above each section heading is set in a handwritten
-   font, so section intros read like a sketched marginal note rather
-   than a printed kicker. */
+/* ---- section annotations ---- */
 .eyebrow-hand{
   font-family:var(--hand);
   font-size:22px;
@@ -775,9 +750,7 @@ section{ padding:88px 0; }
 /* ---- roadmap page ---- */
 .release-hero .eyebrow-hand{ margin-bottom:0; }
 
-/* A hand-drawn dashed line runs down through the marker column, connecting
-   every phase in a group like a sketched timeline. Each marker (check/dot)
-   sits on top with a solid background so it reads as a bead on the line. */
+/* Timeline markers connect each phase in a release group. */
 .roadmap-list{
   position:relative;
   display:flex; flex-direction:column;

@@ -27,7 +27,7 @@
 <meta name="twitter:description" content="{{ $pageDesc }}" />
 <meta name="twitter:image" content="{{ $ogImage }}" />
 
-{{ $css := resources.Get "css/main.css" }}
+{{ $css := slice (resources.Get "css/main.css") (resources.Get "css/atlas.css") | resources.Concat "css/site.css" }}
 {{ if hugo.IsProduction }}
   {{ $css = $css | resources.Minify | fingerprint }}
   <link rel="stylesheet" href="{{ $css.RelPermalink }}" integrity="{{ $css.Data.Integrity }}" />
