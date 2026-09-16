@@ -21,6 +21,11 @@ class AgentEndEvent(WireModel):
     messages: list[AgentMessage] = Field(default_factory=list)
 
 
+class ModelChangeEvent(WireModel):
+    type: Literal["model_change"] = "model_change"
+    model: str
+
+
 class TurnStartEvent(WireModel):
     type: Literal["turn_start"] = "turn_start"
 
@@ -82,6 +87,7 @@ type AgentEvent = Annotated[
     | MessageEndEvent
     | ToolExecutionStartEvent
     | ToolExecutionUpdateEvent
-    | ToolExecutionEndEvent,
+    | ToolExecutionEndEvent
+    | ModelChangeEvent,
     Field(discriminator="type"),
 ]
