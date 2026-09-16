@@ -25,13 +25,14 @@ tau
 /login github-copilot # authenticate GitHub Copilot with a device code
 /login opencode-go  # save an OpenCode Go API key
 /login nvidia       # save an NVIDIA NIM API key
+/login requesty     # save a Requesty API key
 /login custom       # add an OpenAI-compatible custom provider
 ```
 
 Built-in providers include **OpenAI**, **Anthropic**, **OpenAI Codex**
 (subscription), **GitHub Copilot**, **OpenCode Go**, **OpenCode Zen**,
-**Moonshot AI (Kimi)**, **Kimi Code** (subscription), **OpenRouter**, **Hugging Face**,
-and **NVIDIA NIM**.
+**Moonshot AI (Kimi)**, **Kimi Code** (subscription), **OpenRouter**, **Requesty**,
+**Hugging Face**, and **NVIDIA NIM**.
 
 ### OAuth subscriptions
 
@@ -182,6 +183,57 @@ continue to omit it. See the [Z.AI deep-thinking
 reference](https://docs.z.ai/guides/capabilities/thinking) and [chat-completion
 schema](https://docs.z.ai/api-reference/llm/chat-completion) for the authoritative
 wire contract.
+
+### Requesty
+
+Log in with `/login requesty` or set `REQUESTY_API_KEY`. Requesty is an LLM
+gateway that exposes one OpenAI-compatible API across many upstream providers
+at `https://router.requesty.ai/v1`. Tau treats it as a standard
+`openai-compatible` provider and sends the OpenAI `reasoning_effort` field for
+thinking levels.
+
+Two kinds of model ids are valid:
+
+- Catalog ids use the `<vendor>/<model>` form, for example `openai/gpt-4o-mini`,
+  `anthropic/claude-sonnet-4-6`, or `google/gemini-2.5-flash`. Get the full list
+  from `GET https://router.requesty.ai/v1/models` (with your key it returns only
+  the models your organization has approved).
+- Managed policy ids are short names such as `claude-sonnet-4-6`, `gpt-5.4`, or
+  `kimi-k3`. Each is a Requesty-maintained routing chain across several
+  upstream providers for one model. Ids ending in `@eu` route only through EU
+  providers. The list comes from `GET https://router.requesty.ai/v1/models/managed`
+  and is what [models.dev](https://models.dev) publishes for Requesty, so Tau's
+  generated snapshot and `tau update --models` refresh it automatically.
+
+The built-in entry ships a starter set of both, with `openai/gpt-4o-mini` as the
+default model. Use `/model` to search the generated list.
+
+Requesty also serves regional endpoints with the same key: `https://router.eu.requesty.ai/v1`
+(EU, Frankfurt), `https://router.us.requesty.ai/v1`, and
+`https://router.ap.requesty.ai/v1`. To pin Tau to one of them, override the
+`base_url` in `~/.tau/catalog.toml`:
+
+```toml
+schema_version = 1
+[[providers]]
+name = "requesty"
+base_url = "https://router.eu.requesty.ai/v1"
+```
+
+Requesty-specific request options (tags, `user_id`, `trace_id`, `auto_cache`) can
+be sent through the `requestyOptions` compat key at the provider or model level.
+Tau forwards the mapping as the request's `requesty` body field:
+
+```toml
+schema_version = 1
+[[providers]]
+name = "requesty"
+compat = { requestyOptions = { tags = ["tau"], auto_cache = true } }
+```
+
+Keys are created at [app.requesty.ai/api-keys](https://app.requesty.ai/api-keys);
+see the [Requesty docs](https://docs.requesty.ai) for the current model list,
+pricing, and routing behavior.
 
 ### Hugging Face Inference Providers
 

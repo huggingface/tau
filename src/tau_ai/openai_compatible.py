@@ -831,6 +831,9 @@ def _build_chat_payload(
     openrouter_provider = resolved_compat.get("openrouterProvider")
     if isinstance(openrouter_provider, dict):
         payload["provider"] = openrouter_provider
+    requesty_options = resolved_compat.get("requestyOptions")
+    if isinstance(requesty_options, dict):
+        payload["requesty"] = requesty_options
     _apply_chat_reasoning(
         payload,
         reasoning_effort=(
