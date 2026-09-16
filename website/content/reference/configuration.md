@@ -398,7 +398,8 @@ The built-in frontend reads optional settings from `~/.tau/tui.json`:
     "toggle_thinking": "ctrl+t",
     "toggle_tool_results": "ctrl+o",
     "copy_message": "ctrl+c",
-    "quit": "ctrl+d"
+    "quit": "ctrl+d",
+    "suspend": "ctrl+z"
   }
 }
 ```
@@ -412,7 +413,10 @@ to `tau-dark` with a startup notice, without overwriting the setting. Keys use
 Textual syntax; omitted keys keep their defaults. Tau ignores unrecognized
 settings and keybinding names so a `tui.json` written by a newer Tau version does
 not prevent an older version from starting. Recognized settings remain strict:
-Tau rejects invalid values, empty keys, and duplicate assignments.
+Tau rejects invalid values, empty keys, and duplicate assignments. The `suspend`
+action defaults to `"ctrl+z"` on Unix-like systems and `null` on native Windows,
+where Unix job control is unavailable. Set it to `null` on any platform to leave
+the action unbound.
 
 - `sidebar_position`: `"right"` (default), `"left"`, or `"off"`. Controls
   placement of the session metadata sidebar. `"off"` hides the sidebar entirely;
