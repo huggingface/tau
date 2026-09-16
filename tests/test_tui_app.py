@@ -78,6 +78,7 @@ from tau_coding.extensions import (
     OpenAICompatibleTransport,
     ProviderModel,
 )
+from tau_coding.learning_curator import CuratorRunResult
 from tau_coding.paths import TauPaths
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_config import (
@@ -374,6 +375,8 @@ class FakeSession:
             return CommandResult(handled=True, compact_summary="")
         if text.startswith("/compact "):
             return CommandResult(handled=True, compact_summary=text.removeprefix("/compact "))
+        if text == "/learn":
+            return CommandResult(handled=True, learn_requested=True)
         if text == "/export":
             return CommandResult(handled=True, export_requested=True)
         if text.startswith("/export "):
@@ -5581,10 +5584,13 @@ async def test_tui_app_shows_working_state_during_manual_compaction() -> None:
         assert app._is_compaction_active() is True
         assert prompt._footer_mode == "running"
         assert indicator.render().plain != "τ"
-        assert titles[-1] == "\x1b]0;⠋ τ | build notes\x07"
+        # The title shows a spinner frame; which frame depends on timer timing.
+        idle_title = "\x1b]0;τ | build notes\x07"
+        assert titles[-1] != idle_title
+        title_before_tick = titles[-1]
 
         app._tick_activity()
-        assert titles[-1] == "\x1b]0;⠙ τ | build notes\x07"
+        assert titles[-1] != title_before_tick
 
         finish.set()
         await pilot.pause()
@@ -5712,6 +5718,137 @@ async def test_tui_app_keeps_working_state_when_recompacting_during_cancel_teard
 
         assert app._is_working() is False
         assert app._is_compaction_active() is False
+
+
+@pytest.mark.anyio
+async def test_tui_app_shows_working_state_during_learning_review() -> None:
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    class SlowLearnSession(FakeSession):
+        async def learn(self) -> CuratorRunResult:
+            started.set()
+            await finish.wait()
+            return CuratorRunResult(
+                memory_added=("a durable fact",),
+                lessons=(),
+            )
+
+    session = SlowLearnSession(messages=[UserMessage(content="Earlier")])
+    session._session_title = "build notes"
+    app = TauTuiApp(session)
+    titles: list[str] = []
+    app._terminal_title = TerminalTitleController(enabled=True, writer=titles.append)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        indicator = app.query_one("#prompt-prefix", Static)
+        prompt.value = "/learn"
+        await pilot.press("enter")
+        await asyncio.wait_for(started.wait(), timeout=1)
+        await pilot.pause()
+
+        assert app._is_working() is True
+        assert app.state.running is False
+        assert app._is_learning_active() is True
+        assert prompt._footer_mode == "running"
+        assert indicator.render().plain != "τ"
+        # The title shows a spinner frame; which frame depends on timer timing.
+        idle_title = "\x1b]0;τ | build notes\x07"
+        assert titles[-1] != idle_title
+        title_before_tick = titles[-1]
+
+        app._tick_activity()
+        assert titles[-1] != title_before_tick
+
+        finish.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app._is_working() is False
+        assert app._is_learning_active() is False
+        assert prompt._footer_mode == "normal"
+        assert indicator.render().plain == "τ"
+        assert titles[-1] == "\x1b]0;τ | build notes\x07"
+
+
+@pytest.mark.anyio
+async def test_tui_app_clears_working_state_when_learning_review_fails() -> None:
+    class FailingLearnSession(FakeSession):
+        async def learn(self) -> CuratorRunResult:
+            raise RuntimeError("boom")
+
+    app = TauTuiApp(FailingLearnSession(messages=[UserMessage(content="Earlier")]))
+    notifications: list[str] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        del kwargs
+        notifications.append(message)
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/learn"
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert notifications == ["Could not learn: boom"]
+        assert app._is_working() is False
+        assert app._is_learning_active() is False
+
+
+@pytest.mark.anyio
+async def test_tui_app_shows_learning_summary_in_transcript() -> None:
+    from tau_coding.learning_curator import CuratorRunResult as _Result
+
+    class QuickLearnSession(FakeSession):
+        async def learn(self) -> _Result:
+            return _Result(memory_added=("a durable fact",), lessons=())
+
+    app = TauTuiApp(QuickLearnSession(messages=[UserMessage(content="Earlier")]))
+    app._notify = lambda message, **kwargs: None  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/learn"
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        rendered = "\n".join(item.text for item in app.state.items if item.role == "status")
+        assert "Learning review complete." in rendered
+        assert "a durable fact" in rendered
+
+
+@pytest.mark.anyio
+async def test_tui_app_clears_working_state_when_learning_review_is_cancelled() -> None:
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    class SlowLearnSession(FakeSession):
+        async def learn(self) -> CuratorRunResult:
+            started.set()
+            await finish.wait()
+            return CuratorRunResult(memory_added=(), lessons=())
+
+    app = TauTuiApp(SlowLearnSession(messages=[UserMessage(content="Earlier")]))
+    app._notify = lambda message, **kwargs: None  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/learn"
+        await pilot.press("enter")
+        await asyncio.wait_for(started.wait(), timeout=1)
+        await pilot.pause()
+        assert app._is_working() is True
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert app._is_working() is False
+        assert app._is_learning_active() is False
 
 
 @pytest.mark.anyio

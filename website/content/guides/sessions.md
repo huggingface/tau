@@ -227,5 +227,26 @@ the field-wise total. Older entries and heuristic branch-summary fallbacks omit
 `usage`; they continue to load normally and do not add a zero-cost request to
 usage analytics.
 
+## Learning across sessions
+
+Sessions are independent by default: a new session starts with no memory of
+what happened in previous ones. **`/learn`** closes part of that gap. It
+reviews the settled transcript with the session's own provider and model and
+writes durable state under the Tau home:
+
+```text
+~/.tau/MEMORIES.md                  # declarative facts, delimiter-joined
+~/.tau/lessons/<name>/SKILL.md      # durable lessons, skill-file format
+```
+
+Memory entries appear in every future session's system prompt; lessons are
+listed there by name, description, and absolute path, and the agent reads a
+lesson's file when a task matches it. Writes are additive-or-replace and never
+delete existing entries. Run `/learn` after a productive stretch — the report
+lands in the transcript, and the working indicator shows while the review
+runs. `Escape` cancels it; what it wrote benefits the *next* session, because
+the learned snapshot is taken when a session starts. See
+[Slash commands]({{< relref "../reference/slash-commands.md" >}}).
+
 See
 [Configuration]({{< relref "../reference/configuration.md#sessions" >}}) for the exact layout.
