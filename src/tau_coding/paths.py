@@ -5,18 +5,32 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from hashlib import sha256
+from os import environ
 from pathlib import Path
+
+
+def _default_tau_home() -> Path:
+    """Return the configured Tau home, falling back to ``~/.tau``."""
+    value = environ.get("TAU_HOME")
+    if value is None or value == "":
+        return Path.home() / ".tau"
+
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise ValueError("TAU_HOME must be an absolute path after '~' expansion")
+    return path
 
 
 @dataclass(frozen=True, slots=True)
 class TauPaths:
     """Resolved Tau filesystem locations.
 
-    Tau keeps durable application data under the user's home directory while also
-    loading project-local resources from the active working directory.
+    Tau keeps durable application data under ``TAU_HOME`` (``~/.tau`` by
+    default) while also loading project-local resources from the active working
+    directory.
     """
 
-    home: Path = field(default_factory=lambda: Path.home() / ".tau")
+    home: Path = field(default_factory=_default_tau_home)
     agents_home: Path = field(default_factory=lambda: Path.home() / ".agents")
 
     @property
