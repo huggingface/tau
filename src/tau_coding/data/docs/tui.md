@@ -57,9 +57,9 @@ apply changed resources to the active session.
 
 ## `/tree`
 
-At each session fork, the tree picker displays the child with the longest
-history as the main branch. Alternate branches follow that history, indented
-beneath their parent branch point, so every branch's events remain together.
+At each session fork, the tree picker treats the child with the longest history
+as the main branch. Alternate branches appear immediately after the parent,
+indented at the branch point, before the unindented main history continues.
 
 ## `/resume`
 

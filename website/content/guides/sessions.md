@@ -57,7 +57,8 @@ path without losing what you had.
 
 Run `/tree` to open the session tree, then select an earlier entry. At each
 fork, the child with the longest history is shown as the main branch. Alternate
-branches follow that history and are indented beneath their parent branch point.
+branches appear immediately after the parent, indented at the branch point,
+before the unindented main history continues.
 
 - **Enter** — continue from that point, preserving the existing branch.
 - **S** — ask the active model for a structured summary of the messages you're

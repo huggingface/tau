@@ -4180,15 +4180,24 @@ def _tree_layout(
     indents: dict[str, int] = {}
     seen: set[str] = set()
 
-    def append_subtrees(children: list[SessionEntry], parent_indent: int) -> None:
-        # Pre-order traversal keeps every branch's history together. The longest
-        # child is the unindented main branch; shorter siblings follow it at one
-        # additional indentation level. Stable sorting preserves storage order
-        # when histories have equal lengths.
-        stack = [
-            (child, parent_indent + (1 if index > 0 else 0))
-            for index, child in reversed(list(enumerate(children)))
+    def child_stack_items(
+        children: list[SessionEntry], parent_indent: int
+    ) -> list[tuple[SessionEntry, int]]:
+        if not children:
+            return []
+        main_child, *alternate_children = children
+        display_children = [*alternate_children, main_child]
+        return [
+            (child, parent_indent if child is main_child else parent_indent + 1)
+            for child in reversed(display_children)
         ]
+
+    def append_subtrees(children: list[SessionEntry], parent_indent: int) -> None:
+        # The longest child is the unindented main branch. Emit shorter siblings
+        # immediately after their parent, indented one level, before continuing
+        # down the main branch. Stable length sorting preserves storage order
+        # when histories have equal lengths.
+        stack = child_stack_items(children, parent_indent)
         while stack:
             entry, indent = stack.pop()
             if entry.id in seen:
@@ -4196,11 +4205,7 @@ def _tree_layout(
             seen.add(entry.id)
             ordered.append(entry)
             indents[entry.id] = indent
-            child_entries = ordered_children(entry.id)
-            stack.extend(
-                (child, indent + (1 if index > 0 else 0))
-                for index, child in reversed(list(enumerate(child_entries)))
-            )
+            stack.extend(child_stack_items(ordered_children(entry.id), indent))
 
     append_subtrees(ordered_children(None), 0)
     for entry in tree_entries:

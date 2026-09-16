@@ -1536,7 +1536,7 @@ async def test_tree_choices_handles_deep_session_without_recursion_error(
     assert choices[-1].entry_id == f"m{depth - 1}"
 
 
-def test_ordered_tree_entries_puts_longest_history_first() -> None:
+def test_ordered_tree_entries_uses_longest_history_as_main_branch() -> None:
     entries = [
         MessageEntry(id="A", parent_id=None, message=UserMessage(content="A")),
         MessageEntry(id="B", parent_id="A", message=UserMessage(content="B")),
@@ -1549,8 +1549,8 @@ def test_ordered_tree_entries_puts_longest_history_first() -> None:
     ordered = _ordered_tree_entries(entries)
     indents = _tree_branch_indents(entries)
 
-    assert [entry.id for entry in ordered] == ["A", "B", "E", "F", "C", "D"]
-    assert indents == {"A": 0, "B": 0, "E": 0, "F": 0, "C": 1, "D": 1}
+    assert [entry.id for entry in ordered] == ["A", "B", "C", "D", "E", "F"]
+    assert indents == {"A": 0, "B": 0, "C": 1, "D": 1, "E": 0, "F": 0}
 
 
 def test_ordered_tree_entries_terminates_on_parent_cycle() -> None:
@@ -2235,11 +2235,11 @@ async def test_session_tree_choices_indent_only_diverged_branches(tmp_path: Path
 
     assert [choice.label for choice in choices] == [
         "user: Root",
-        "assistant: Main",
-        "user: Main follow-up",
         "  assistant: First branch",
         "  user: Follow-up",
         "  assistant: Second branch",
+        "assistant: Main",
+        "user: Main follow-up",
     ]
 
 
