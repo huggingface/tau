@@ -54,6 +54,7 @@ def test_builtin_catalog_matches_expected_providers() -> None:
     names = [entry.name for entry in BUILTIN_PROVIDER_CATALOG]
     assert names == [
         "openai",
+        "yourmodel",
         "openai-codex",
         "anthropic",
         "google",
