@@ -63,7 +63,7 @@ otherwise stop. Overlapping `session.prompt(...)` calls without
 Slash commands belong to `tau_coding`. Before treating input as a prompt:
 
 ```python
-result = session.handle_command(text)
+result = await session.handle_command(text)
 ```
 
 If `result.handled`, apply the requested effect (`exit_requested`,

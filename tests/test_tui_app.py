@@ -329,7 +329,7 @@ class FakeSession:
     def session_title(self) -> str | None:
         return self._session_title
 
-    def handle_command(self, text: str) -> CommandResult:
+    async def handle_command(self, text: str) -> CommandResult:
         if text == "/session":
             return CommandResult(
                 handled=True,
