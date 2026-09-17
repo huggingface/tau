@@ -1307,7 +1307,7 @@ async def run_print_mode(
     # Informational print commands must not publish the staged initial
     # transcript; /system explicitly promises not to save anything.
     if (stripped_prompt := prompt.strip()) == "/system" or stripped_prompt.startswith("/system "):
-        command = prepared.session.handle_command(prompt)
+        command = await prepared.session.handle_command(prompt)
         await prepared.abort()
         if command.message:
             typer.echo(command.message)
@@ -1333,7 +1333,7 @@ async def run_print_mode(
             )
             typer.echo(_format_terminal_command_result(result))
             return result.ok
-        command = session.handle_command(prompt)
+        command = await session.handle_command(prompt)
         if command.handled:
             message = command.message
             if command.local_requested:

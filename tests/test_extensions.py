@@ -32,6 +32,8 @@ from tau_coding import (
     TauResourcePaths,
 )
 from tau_coding.extensions import (
+    BeforeAgentStartEvent,
+    BeforeAgentStartHookResult,
     CustomMessageView,
     DynamicProvider,
     ExtensionAPI,
@@ -603,7 +605,9 @@ async def test_hidden_built_in_registers_real_runtime_surfaces_despite_no_extens
     registry = runtime.build_command_registry()
     command = registry.get("fake-built-in")
     assert command is not None
-    result = command.handler(_command_context(registry, "/fake-built-in ok", "fake-built-in", "ok"))
+    result = await command.handler(
+        _command_context(registry, "/fake-built-in ok", "fake-built-in", "ok")
+    )
     assert result.message == "built-in: ok"
     provider = runtime.provider_registry.effective("fake-built-in-provider")
     assert provider is not None
@@ -688,7 +692,9 @@ def setup(tau):
     registry = runtime.build_command_registry()
     command = registry.get("fake-built-in")
     assert command is not None
-    result = command.handler(_command_context(registry, "/fake-built-in", "fake-built-in", ""))
+    result = await command.handler(
+        _command_context(registry, "/fake-built-in", "fake-built-in", "")
+    )
     assert result.message == "built-in: "
     provider = runtime.provider_registry.effective("fake-built-in-provider")
     assert provider is not None
@@ -889,7 +895,9 @@ def setup(tau):
     registry = runtime.build_command_registry()
     command = registry.get("shared-command")
     assert command is not None
-    result = command.handler(_command_context(registry, "/shared-command", "shared-command", ""))
+    result = await command.handler(
+        _command_context(registry, "/shared-command", "shared-command", "")
+    )
     assert result.message == "first"
     assert any("already registered" in diag.message for diag in runtime.diagnostics)
 
@@ -974,7 +982,7 @@ def setup(tau):
     assert any("setup failed" in diagnostic.message for diagnostic in runtime.diagnostics)
 
 
-def test_extension_commands_layer_onto_default_registry(tmp_path: Path) -> None:
+async def test_extension_commands_layer_onto_default_registry(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     _write_extension(
         _user_extensions_dir(paths),
@@ -992,7 +1000,7 @@ def test_extension_commands_layer_onto_default_registry(tmp_path: Path) -> None:
 
     command = registry.get("echo")
     assert command is not None
-    result = command.handler(_command_context(registry, "/echo hi", "echo", "hi"))
+    result = await command.handler(_command_context(registry, "/echo hi", "echo", "hi"))
     assert result.handled is True
     assert result.message == "echo: hi"
 
@@ -1014,7 +1022,29 @@ def test_extension_command_cannot_shadow_builtin(tmp_path: Path) -> None:
     assert any("could not register command" in diag.message for diag in runtime.diagnostics)
 
 
-def test_extension_command_errors_are_contained(tmp_path: Path) -> None:
+async def test_async_extension_command_failures_are_contained(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _register_inline_extension(runtime, "async-boom")
+
+    async def bad_command(args: str, context: object) -> str | None:
+        await asyncio.sleep(0)
+        raise RuntimeError("async boom")
+
+    api.register_command("async-boom", bad_command)  # type: ignore[attr-defined, arg-type]
+    registry = runtime.build_command_registry()
+    command = registry.get("async-boom")
+    assert command is not None
+
+    result = await command.handler(  # type: ignore[arg-type]
+        _command_context(registry, "/async-boom", "async-boom", "")
+    )
+
+    assert result.handled is True
+    assert result.message is not None and "failed" in result.message
+    assert any("command:/async-boom" in diag.message for diag in runtime.diagnostics)
+
+
+async def test_extension_command_errors_are_contained(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     _write_extension(
         _user_extensions_dir(paths),
@@ -1032,7 +1062,7 @@ def test_extension_command_errors_are_contained(tmp_path: Path) -> None:
     command = registry.get("boom")
     assert command is not None
 
-    result = command.handler(_command_context(registry, "/boom", "boom", ""))
+    result = await command.handler(_command_context(registry, "/boom", "boom", ""))
 
     assert result.handled is True
     assert result.message is not None and "failed" in result.message
@@ -1316,6 +1346,72 @@ async def test_input_hook_receives_source_and_streaming_behavior(tmp_path: Path)
     assert len(seen) == 1
     assert seen[0].source == "extension"
     assert seen[0].streaming_behavior == "steer"
+
+
+async def test_before_agent_start_handlers_chain_in_order(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _register_inline_extension(runtime, "chain")
+    seen: list[BeforeAgentStartEvent] = []
+
+    def sync_replace(event: BeforeAgentStartEvent, context: object) -> BeforeAgentStartHookResult:
+        seen.append(event)
+        return BeforeAgentStartHookResult(system_prompt=f"{event.system_prompt} +sync")
+
+    async def async_replace(
+        event: BeforeAgentStartEvent, context: object
+    ) -> BeforeAgentStartHookResult:
+        seen.append(event)
+        return BeforeAgentStartHookResult(system_prompt=f"{event.system_prompt} +async")
+
+    api.on("before_agent_start", sync_replace)  # type: ignore[attr-defined]
+    api.on("before_agent_start", async_replace)  # type: ignore[attr-defined]
+
+    final = await runtime.run_before_agent_start_hooks(prompt="hi", system_prompt="base")
+
+    assert final == "base +sync +async"
+    assert [(event.prompt, event.system_prompt) for event in seen] == [
+        ("hi", "base"),
+        ("hi", "base +sync"),
+    ]
+
+
+async def test_before_agent_start_without_replacement_keeps_current(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _register_inline_extension(runtime, "keep")
+    api.on("before_agent_start", lambda event, context: None)  # type: ignore[attr-defined]
+    api.on(  # type: ignore[attr-defined]
+        "before_agent_start", lambda event, context: BeforeAgentStartHookResult()
+    )
+
+    final = await runtime.run_before_agent_start_hooks(prompt="hi", system_prompt="base")
+
+    assert final == "base"
+
+
+async def test_before_agent_start_bad_handlers_fail_open(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _register_inline_extension(runtime, "flaky")
+
+    def raising(event: object, context: object) -> object:
+        raise RuntimeError("boom")
+
+    api.on("before_agent_start", raising)  # type: ignore[attr-defined]
+    api.on("before_agent_start", lambda event, context: "not a result")  # type: ignore[attr-defined, return-value]
+    api.on(  # type: ignore[attr-defined, arg-type]
+        "before_agent_start", lambda event, context: BeforeAgentStartHookResult(system_prompt=42)
+    )
+    api.on(  # type: ignore[attr-defined]
+        "before_agent_start",
+        lambda event, context: BeforeAgentStartHookResult(system_prompt="fixed"),
+    )
+
+    final = await runtime.run_before_agent_start_hooks(prompt="hi", system_prompt="base")
+
+    assert final == "fixed"
+    messages = [diagnostic.message for diagnostic in runtime.diagnostics]
+    assert any("raised" in message and "before_agent_start" in message for message in messages)
+    assert any("unsupported result type str" in message for message in messages)
+    assert any("unsupported result type int" in message for message in messages)
 
 
 async def test_agent_event_fan_out_and_wildcard(tmp_path: Path) -> None:
@@ -1921,7 +2017,7 @@ async def test_sync_command_spawns_task_that_awaits_dialog(tmp_path: Path) -> No
     command = registry.get("menu")
     assert command is not None
 
-    result = command.handler(_command_context(registry, "/menu", "menu", ""))  # type: ignore[arg-type]
+    result = await command.handler(_command_context(registry, "/menu", "menu", ""))  # type: ignore[arg-type]
     assert result.handled is True
     assert result.message == "opening menu..."
 
@@ -2141,7 +2237,7 @@ async def test_session_exposes_extension_tools_and_commands(tmp_path: Path) -> N
     assert "hello" in tool_names
     assert tool_names[:4] == ["read", "write", "edit", "bash"]
 
-    result = session.handle_command("/hi")
+    result = await session.handle_command("/hi")
     assert result.handled is True
     assert result.message == "extension says hi"
 

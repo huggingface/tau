@@ -53,6 +53,7 @@ LIFECYCLE_EVENT_TYPES: frozenset[str] = frozenset(
         "session_start",
         "session_shutdown",
         "input",
+        "before_agent_start",
         "tool_call",
         "tool_result",
         "project_trust",
@@ -460,6 +461,32 @@ class InputHookResult:
 
 
 @dataclass(frozen=True, slots=True)
+class BeforeAgentStartEvent:
+    """Payload for the `before_agent_start` hook, fired just before an idle run.
+
+    `prompt` is the user prompt after input hooks and skill/template expansion;
+    `system_prompt` is the current value, already chained through earlier
+    handlers. Fired only for a run that starts now, never for input queued into
+    an already-running agent.
+    """
+
+    prompt: str
+    system_prompt: str
+
+
+@dataclass(frozen=True, slots=True)
+class BeforeAgentStartHookResult:
+    """Result of a `before_agent_start` handler.
+
+    Returning `None` (or a result whose `system_prompt` is `None`) keeps the
+    current value; a string is a full replacement, scoped to the upcoming run
+    only and never persisted.
+    """
+
+    system_prompt: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ToolCallHookEvent:
     """Payload for the `tool_call` hook, before a tool executes.
 
@@ -504,9 +531,14 @@ class ToolResultHookResult:
 
 
 ExtensionHandler = Callable[[object, "ExtensionContext"], object | Awaitable[object]]
-# Command handlers are sync-only: the slash-command path (CommandRegistry ->
-# CodingSession.handle_command -> TUI submit) is synchronous end to end.
-ExtensionCommandHandler = Callable[["str", "ExtensionCommandContext"], "str | None"]
+# Command handlers may return their result directly or through an awaitable, so
+# extension commands can await public async APIs (append_entry, dialogs) before
+# reporting success. CommandRegistry.execute() and CodingSession.handle_command()
+# resolve either form.
+ExtensionCommandHandler = Callable[
+    ["str", "ExtensionCommandContext"],
+    "str | None | Awaitable[str | None]",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -977,8 +1009,8 @@ class ExtensionContext:
         """Return the interactive UI facade (Pi's `ctx.ui`).
 
         Use `await context.ui.select/confirm/input(...)` to drive dialogs.
-        Because command handlers are sync (see the docs), a `/command` that
-        needs a dialog should spawn a loop task that awaits `context.ui`.
+        Command handlers may be `async` (see the docs), so a `/command` that
+        needs a dialog can await `context.ui` directly before returning.
         """
         self._generation.assert_active()
         return self._ui

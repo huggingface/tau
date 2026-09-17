@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from inspect import isawaitable
 from pathlib import Path
 from typing import Protocol
 
@@ -152,7 +153,7 @@ class CommandContext:
     args: str
 
 
-CommandHandler = Callable[[CommandContext], CommandResult]
+CommandHandler = Callable[[CommandContext], "CommandResult | Awaitable[CommandResult]"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,8 +197,12 @@ class CommandRegistry:
         """Return registered commands sorted by name."""
         return tuple(self._commands[name] for name in sorted(self._commands))
 
-    def execute(self, session: CommandSession, text: str) -> CommandResult:
-        """Execute a slash command, or return unhandled for ordinary prompts."""
+    async def execute(self, session: CommandSession, text: str) -> CommandResult:
+        """Execute a slash command, or return unhandled for ordinary prompts.
+
+        Handler results may be returned directly or through an awaitable;
+        either form is resolved exactly once here.
+        """
         stripped = text.strip()
         if not stripped.startswith("/"):
             return CommandResult(handled=False)
@@ -217,9 +222,12 @@ class CommandRegistry:
         if command is None:
             return CommandResult(handled=False)
 
-        return command.handler(
+        result = command.handler(
             CommandContext(session=session, registry=self, text=stripped, name=name, args=args)
         )
+        if isawaitable(result):
+            result = await result
+        return result
 
 
 def create_default_command_registry() -> CommandRegistry:
