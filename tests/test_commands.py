@@ -1,13 +1,32 @@
 from pathlib import Path
 
-from tau_coding.commands import CommandRegistry, SlashCommand, create_default_command_registry
+import pytest
+
+from tau_coding.commands import (
+    CommandContext,
+    CommandRegistry,
+    CommandResult,
+    SlashCommand,
+    create_default_command_registry,
+)
 from tau_coding.paths import TauPaths
 from tau_coding.reload import CodingReloadSummary, ReloadCategorySummary
 from tau_coding.session import ModelChoice
 from tau_coding.session_manager import SessionManager
 from tau_coding.skills import Skill
-from tau_coding.system_prompt import ProjectContextFile
+from tau_coding.system_prompt import (
+    ProjectContextFile,
+    SystemPromptInspection,
+    SystemPromptSource,
+)
 from tau_coding.tools import create_coding_tools
+
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
 
 
 class FakeSession:
@@ -17,7 +36,7 @@ class FakeSession:
         self.inference_provider: str | None = None
         self.inference_provider_mode = "automatic"
         self.model = "fake-model"
-        self.available_models = ("fake-model", "other-model")
+        self.available_models: tuple[str, ...] = ("fake-model", "other-model")
         self.available_model_choices = (
             ModelChoice(provider_name="openai", model="fake-model"),
             ModelChoice(provider_name="openai", model="other-model"),
@@ -41,11 +60,29 @@ class FakeSession:
         self.auto_compact_token_threshold = 200
         self.context_window_tokens = 584
         self.thinking_level = "medium"
-        self.available_thinking_levels = ("off", "minimal", "low", "medium", "high", "xhigh")
+        self.available_thinking_levels: tuple[str, ...] = (
+            "off",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+        )
         self.thinking_unavailable_reason: str | None = None
         self.tui_theme = "tau-dark"
         self.resource_diagnostics = ()
         self.system_prompt = "You are Tau.\nFollow project instructions."
+        self.system_prompt_inspection = SystemPromptInspection(
+            text=self.system_prompt,
+            sources=(
+                SystemPromptSource(
+                    kind="runtime",
+                    label="Effective system prompt",
+                    source="active Tau session",
+                    content=self.system_prompt,
+                ),
+            ),
+        )
         self.session_id = "session-1"
         self.session_title: str | None = None
         self.session_manager: SessionManager | None = manager
@@ -103,25 +140,47 @@ class FakeSession:
         self.provider_reload_called = True
 
 
-def test_registry_ignores_ordinary_prompts_and_skill_expansion(tmp_path: Path) -> None:
+async def test_registry_ignores_ordinary_prompts_and_skill_expansion(tmp_path: Path) -> None:
     registry = create_default_command_registry()
     session = FakeSession(tmp_path)
 
-    assert registry.execute(session, "hello").handled is False
-    assert registry.execute(session, "/skill:review fix this").handled is False
+    assert (await registry.execute(session, "hello")).handled is False
+    assert (await registry.execute(session, "/skill:review fix this")).handled is False
 
 
-def test_registry_ignores_unregistered_slash_prompts(tmp_path: Path) -> None:
+async def test_registry_ignores_unregistered_slash_prompts(tmp_path: Path) -> None:
     registry = create_default_command_registry()
     session = FakeSession(tmp_path)
 
     for prompt in ("/missing", "/README.md", "/tmp", "/Users/me/screenshot.png"):
-        result = registry.execute(session, prompt)
+        result = await registry.execute(session, prompt)
         assert result.handled is False
         assert result.message is None
 
 
-def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
+async def test_registry_resolves_async_command_handler(tmp_path: Path) -> None:
+    registry = create_default_command_registry()
+    session = FakeSession(tmp_path)
+
+    async def async_handler(context: CommandContext) -> CommandResult:
+        return CommandResult(handled=True, message="async handled")
+
+    registry.register(
+        SlashCommand(
+            name="async-cmd",
+            description="Async test command.",
+            usage="/async-cmd",
+            handler=async_handler,
+        )
+    )
+
+    result = await registry.execute(session, "/async-cmd")
+
+    assert result.handled is True
+    assert result.message == "async handled"
+
+
+async def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
     commands = create_default_command_registry().list_commands()
 
     assert [command.name for command in commands] == [
@@ -150,38 +209,38 @@ def test_registered_commands_are_pi_aligned(tmp_path: Path) -> None:
     ]
 
 
-def test_local_command_requests_host_action(tmp_path: Path) -> None:
+async def test_local_command_requests_host_action(tmp_path: Path) -> None:
     registry = create_default_command_registry()
     session = FakeSession(tmp_path)
 
-    assert registry.execute(session, "/local").local_requested is True
-    assert registry.execute(session, "/local extra").message == "Usage: /local"
+    assert (await registry.execute(session, "/local")).local_requested is True
+    assert (await registry.execute(session, "/local extra")).message == "Usage: /local"
 
 
-def test_sidebar_command_requests_host_action(tmp_path: Path) -> None:
+async def test_sidebar_command_requests_host_action(tmp_path: Path) -> None:
     registry = create_default_command_registry()
     session = FakeSession(tmp_path)
 
-    result = registry.execute(session, "/sidebar")
+    result = await registry.execute(session, "/sidebar")
 
     assert result.handled is True
     assert result.sidebar_toggle_requested is True
-    assert registry.execute(session, "/sidebar extra").message == "Usage: /sidebar"
+    assert (await registry.execute(session, "/sidebar extra")).message == "Usage: /sidebar"
 
 
-def test_prompts_command_requests_picker(tmp_path: Path) -> None:
+async def test_prompts_command_requests_picker(tmp_path: Path) -> None:
     registry = create_default_command_registry()
     session = FakeSession(tmp_path)
 
-    assert registry.execute(session, "/prompts").prompts_picker_requested is True
-    assert registry.execute(session, "/prompts extra").message == "Usage: /prompts"
+    assert (await registry.execute(session, "/prompts")).prompts_picker_requested is True
+    assert (await registry.execute(session, "/prompts extra")).message == "Usage: /prompts"
 
 
-def test_system_command_returns_active_prompt(tmp_path: Path) -> None:
+async def test_system_command_returns_active_prompt(tmp_path: Path) -> None:
     registry = create_default_command_registry()
     session = FakeSession(tmp_path)
 
-    result = registry.execute(session, "/system")
+    result = await registry.execute(session, "/system")
 
     assert result.handled is True
     assert result.message == (
@@ -189,56 +248,59 @@ def test_system_command_returns_active_prompt(tmp_path: Path) -> None:
         "**Source:** `active Tau session`\n\n"
         "You are Tau.\nFollow project instructions."
     )
-    assert registry.execute(session, "/system extra").message == "Usage: /system"
+    assert (await registry.execute(session, "/system extra")).message == "Usage: /system"
 
 
-def test_quit_and_new_return_control_flags(tmp_path: Path) -> None:
+async def test_quit_and_new_return_control_flags(tmp_path: Path) -> None:
     registry = create_default_command_registry()
     session = FakeSession(tmp_path)
 
-    assert registry.execute(session, "/quit").exit_requested is True
-    assert registry.execute(session, "/exit").exit_requested is True
-    assert registry.execute(session, "/q").handled is False
-    assert registry.execute(session, "/new").new_session_requested is True
-    assert registry.execute(session, "/clear").handled is False
+    assert (await registry.execute(session, "/quit")).exit_requested is True
+    assert (await registry.execute(session, "/exit")).exit_requested is True
+    assert (await registry.execute(session, "/q")).handled is False
+    assert (await registry.execute(session, "/new")).new_session_requested is True
+    assert (await registry.execute(session, "/clear")).handled is False
 
 
-def test_compact_command_accepts_optional_instructions(tmp_path: Path) -> None:
+async def test_compact_command_accepts_optional_instructions(tmp_path: Path) -> None:
     registry = create_default_command_registry()
     session = FakeSession(tmp_path)
 
-    default = registry.execute(session, "/compact")
-    requested = registry.execute(session, "/compact Summary of prior work.")
+    default = await registry.execute(session, "/compact")
+    requested = await registry.execute(session, "/compact Summary of prior work.")
 
     assert default.compact_summary == ""
     assert requested.compact_summary == "Summary of prior work."
 
 
-def test_skills_command_requests_picker(tmp_path: Path) -> None:
+async def test_skills_command_requests_picker(tmp_path: Path) -> None:
     registry = create_default_command_registry()
     session = FakeSession(tmp_path)
 
-    result = registry.execute(session, "/skills")
+    result = await registry.execute(session, "/skills")
 
     assert result.handled is True
     assert result.skills_picker_requested is True
-    assert registry.execute(session, "/skills extra").message == "Usage: /skills"
+    assert (await registry.execute(session, "/skills extra")).message == "Usage: /skills"
 
 
-def test_tree_command_requests_picker(tmp_path: Path) -> None:
+async def test_tree_command_requests_picker(tmp_path: Path) -> None:
     registry = create_default_command_registry()
     session = FakeSession(tmp_path)
 
-    result = registry.execute(session, "/tree")
-    with_args = registry.execute(session, "/tree root")
+    result = await registry.execute(session, "/tree")
+    with_args = await registry.execute(session, "/tree root")
 
     assert result.handled is True
     assert result.tree_picker_requested is True
     assert with_args.message == "Usage: /tree"
 
 
-def test_export_command_requests_default_export(tmp_path: Path) -> None:
-    result = create_default_command_registry().execute(FakeSession(tmp_path), "/export")
+async def test_export_command_requests_default_export(tmp_path: Path) -> None:
+    result = await create_default_command_registry().execute(
+        FakeSession(tmp_path),
+        "/export",
+    )
 
     assert result.handled is True
     assert result.export_requested is True
@@ -246,8 +308,8 @@ def test_export_command_requests_default_export(tmp_path: Path) -> None:
     assert result.export_format is None
 
 
-def test_export_command_parses_format_and_destination(tmp_path: Path) -> None:
-    result = create_default_command_registry().execute(
+async def test_export_command_parses_format_and_destination(tmp_path: Path) -> None:
+    result = await create_default_command_registry().execute(
         FakeSession(tmp_path),
         "/export --format jsonl exports/session.jsonl",
     )
@@ -257,8 +319,11 @@ def test_export_command_parses_format_and_destination(tmp_path: Path) -> None:
     assert result.export_destination == Path("exports/session.jsonl")
 
 
-def test_session_command_includes_session_details(tmp_path: Path) -> None:
-    result = create_default_command_registry().execute(FakeSession(tmp_path), "/session")
+async def test_session_command_includes_session_details(tmp_path: Path) -> None:
+    result = await create_default_command_registry().execute(
+        FakeSession(tmp_path),
+        "/session",
+    )
 
     assert result.message is not None
     assert "Model: fake-model" in result.message
@@ -273,21 +338,28 @@ def test_session_command_includes_session_details(tmp_path: Path) -> None:
     assert "Resource diagnostics: 0" in result.message
     assert "Session: session-1" in result.message
     assert "Session name:" not in result.message
-    assert (
-        create_default_command_registry().execute(FakeSession(tmp_path), "/status").handled is False
+    status_result = await create_default_command_registry().execute(
+        FakeSession(tmp_path), "/status"
     )
+    assert status_result.handled is False
 
 
-def test_session_command_distinguishes_automatic_and_fixed_huggingface_routes(
+async def test_session_command_distinguishes_automatic_and_fixed_huggingface_routes(
     tmp_path: Path,
 ) -> None:
     session = FakeSession(tmp_path)
     session.provider_name = "huggingface"
     session.inference_provider = "baseten"
 
-    automatic = create_default_command_registry().execute(session, "/session")
+    automatic = await create_default_command_registry().execute(
+        session,
+        "/session",
+    )
     session.inference_provider_mode = "fixed"
-    fixed = create_default_command_registry().execute(session, "/session")
+    fixed = await create_default_command_registry().execute(
+        session,
+        "/session",
+    )
 
     assert automatic.message is not None
     assert "Hugging Face inference provider: automatic (currently baseten)" in automatic.message
@@ -295,29 +367,38 @@ def test_session_command_distinguishes_automatic_and_fixed_huggingface_routes(
     assert "Hugging Face inference provider: baseten (fixed)" in fixed.message
 
 
-def test_route_command_is_not_built_in(tmp_path: Path) -> None:
-    result = create_default_command_registry().execute(FakeSession(tmp_path), "/route deepinfra")
+async def test_route_command_is_not_built_in(tmp_path: Path) -> None:
+    result = await create_default_command_registry().execute(
+        FakeSession(tmp_path),
+        "/route deepinfra",
+    )
 
     assert result.handled is False
 
 
-def test_session_command_includes_named_session_title(tmp_path: Path) -> None:
+async def test_session_command_includes_named_session_title(tmp_path: Path) -> None:
     session = FakeSession(tmp_path)
     session.session_title = "Customer bugfix"
 
-    result = create_default_command_registry().execute(session, "/session")
+    result = await create_default_command_registry().execute(
+        session,
+        "/session",
+    )
 
     assert result.message is not None
     assert "Session: session-1" in result.message
     assert "Session name: Customer bugfix" in result.message
 
 
-def test_session_command_explains_unavailable_thinking_controls(tmp_path: Path) -> None:
+async def test_session_command_explains_unavailable_thinking_controls(tmp_path: Path) -> None:
     session = FakeSession(tmp_path)
     session.available_thinking_levels = ()
     session.thinking_unavailable_reason = "Provider local does not declare thinking_levels"
 
-    result = create_default_command_registry().execute(session, "/session")
+    result = await create_default_command_registry().execute(
+        session,
+        "/session",
+    )
 
     assert result.message is not None
     assert "Thinking mode: unavailable" in result.message
@@ -325,8 +406,11 @@ def test_session_command_explains_unavailable_thinking_controls(tmp_path: Path) 
     assert "Thinking mode: medium" not in result.message
 
 
-def test_hotkeys_command_lists_common_tui_shortcuts(tmp_path: Path) -> None:
-    result = create_default_command_registry().execute(FakeSession(tmp_path), "/hotkeys")
+async def test_hotkeys_command_lists_common_tui_shortcuts(tmp_path: Path) -> None:
+    result = await create_default_command_registry().execute(
+        FakeSession(tmp_path),
+        "/hotkeys",
+    )
 
     assert result.message is not None
     assert "Common keyboard shortcuts:" in result.message
@@ -336,12 +420,12 @@ def test_hotkeys_command_lists_common_tui_shortcuts(tmp_path: Path) -> None:
     assert "Shift+Tab: cycle thinking mode" in result.message
 
 
-def test_model_command_requests_picker_and_switches_models(tmp_path: Path) -> None:
+async def test_model_command_requests_picker_and_switches_models(tmp_path: Path) -> None:
     session = FakeSession(tmp_path)
     registry = create_default_command_registry()
 
-    list_result = registry.execute(session, "/model")
-    switch_result = registry.execute(session, "/model other-model")
+    list_result = await registry.execute(session, "/model")
+    switch_result = await registry.execute(session, "/model other-model")
 
     assert list_result.model_picker_requested is True
     assert switch_result.message == "Current model: other-model"
@@ -349,46 +433,52 @@ def test_model_command_requests_picker_and_switches_models(tmp_path: Path) -> No
     assert session.provider_reload_called is True
 
 
-def test_scoped_models_command_requests_scoped_picker(tmp_path: Path) -> None:
+async def test_scoped_models_command_requests_scoped_picker(tmp_path: Path) -> None:
     session = FakeSession(tmp_path)
     registry = create_default_command_registry()
 
-    dashed_result = registry.execute(session, "/scoped-models")
-    pi_style_result = registry.execute(session, "/scoped models")
+    dashed_result = await registry.execute(session, "/scoped-models")
+    pi_style_result = await registry.execute(session, "/scoped models")
 
     assert dashed_result.scoped_models_picker_requested is True
     assert pi_style_result.scoped_models_picker_requested is True
     assert session.provider_reload_called is True
 
 
-def test_model_command_rejects_unknown_model(tmp_path: Path) -> None:
+async def test_model_command_rejects_unknown_model(tmp_path: Path) -> None:
     session = FakeSession(tmp_path)
 
-    result = create_default_command_registry().execute(session, "/model missing")
+    result = await create_default_command_registry().execute(
+        session,
+        "/model missing",
+    )
 
     assert result.message is not None
     assert "Unknown model for provider openai: missing" in result.message
     assert session.model == "fake-model"
 
 
-def test_model_command_reports_provider_refresh_failure(tmp_path: Path) -> None:
+async def test_model_command_reports_provider_refresh_failure(tmp_path: Path) -> None:
     class FailingRefreshSession(FakeSession):
         def reload_provider_settings(self) -> None:
             raise ValueError("providers.json is invalid")
 
-    result = create_default_command_registry().execute(FailingRefreshSession(tmp_path), "/model")
+    result = await create_default_command_registry().execute(
+        FailingRefreshSession(tmp_path),
+        "/model",
+    )
 
     assert result.message == "Could not refresh provider settings: providers.json is invalid"
     assert result.model_picker_requested is False
 
 
-def test_theme_command_requests_picker_and_sets_theme(tmp_path: Path) -> None:
+async def test_theme_command_requests_picker_and_sets_theme(tmp_path: Path) -> None:
     session = FakeSession(tmp_path)
     registry = create_default_command_registry()
 
-    list_result = registry.execute(session, "/theme")
-    switch_result = registry.execute(session, "/theme tau-light")
-    unknown_result = registry.execute(session, "/theme solarized")
+    list_result = await registry.execute(session, "/theme")
+    switch_result = await registry.execute(session, "/theme tau-light")
+    unknown_result = await registry.execute(session, "/theme solarized")
 
     assert list_result.theme_picker_requested is True
     assert switch_result.theme == "tau-light"
@@ -396,7 +486,7 @@ def test_theme_command_requests_picker_and_sets_theme(tmp_path: Path) -> None:
     assert "Unknown theme: solarized" in unknown_result.message
 
 
-def test_theme_command_accepts_registered_custom_theme(tmp_path: Path) -> None:
+async def test_theme_command_accepts_registered_custom_theme(tmp_path: Path) -> None:
     from tau_coding.tui.themes import (
         THEME_COLOR_FIELDS,
         TRANSCRIPT_ROLES,
@@ -411,8 +501,14 @@ def test_theme_command_accepts_registered_custom_theme(tmp_path: Path) -> None:
     }
     set_custom_tui_themes({"midnight": parse_tui_theme_json(theme_data)})
     try:
-        result = create_default_command_registry().execute(FakeSession(tmp_path), "/theme midnight")
-        unknown = create_default_command_registry().execute(FakeSession(tmp_path), "/theme nope")
+        result = await create_default_command_registry().execute(
+            FakeSession(tmp_path),
+            "/theme midnight",
+        )
+        unknown = await create_default_command_registry().execute(
+            FakeSession(tmp_path),
+            "/theme nope",
+        )
     finally:
         set_custom_tui_themes({})
 
@@ -421,44 +517,53 @@ def test_theme_command_accepts_registered_custom_theme(tmp_path: Path) -> None:
     assert "midnight" in unknown.message
 
 
-def test_non_pi_commands_are_not_registered(tmp_path: Path) -> None:
+async def test_non_pi_commands_are_not_registered(tmp_path: Path) -> None:
     registry = create_default_command_registry()
     session = FakeSession(tmp_path)
 
     for command in ("/provider", "/resources", "/context", "/help"):
-        result = registry.execute(session, command)
+        result = await registry.execute(session, command)
         assert result.handled is False
         assert result.message is None
 
 
-def test_tools_command_requests_read_only_picker(tmp_path: Path) -> None:
-    result = create_default_command_registry().execute(FakeSession(tmp_path), "/tools")
+async def test_tools_command_requests_read_only_picker(tmp_path: Path) -> None:
+    result = await create_default_command_registry().execute(
+        FakeSession(tmp_path),
+        "/tools",
+    )
 
     assert result.handled is True
     assert result.tools_picker_requested is True
     assert result.message is None
 
 
-def test_login_command_requests_provider_picker(tmp_path: Path) -> None:
-    result = create_default_command_registry().execute(FakeSession(tmp_path), "/login")
+async def test_login_command_requests_provider_picker(tmp_path: Path) -> None:
+    result = await create_default_command_registry().execute(
+        FakeSession(tmp_path),
+        "/login",
+    )
 
     assert result.handled is True
     assert result.login_picker_requested is True
 
 
-def test_login_command_requests_provider_login(tmp_path: Path) -> None:
-    result = create_default_command_registry().execute(FakeSession(tmp_path), "/login openai")
+async def test_login_command_requests_provider_login(tmp_path: Path) -> None:
+    result = await create_default_command_registry().execute(
+        FakeSession(tmp_path),
+        "/login openai",
+    )
 
     assert result.handled is True
     assert result.login_provider == "openai"
 
 
-def test_login_command_resolves_anthropic_auth_aliases(tmp_path: Path) -> None:
+async def test_login_command_resolves_anthropic_auth_aliases(tmp_path: Path) -> None:
     registry = create_default_command_registry()
     session = FakeSession(tmp_path)
 
-    api_result = registry.execute(session, "/login anthropic-api")
-    subscription_result = registry.execute(session, "/login anthropic-subscription")
+    api_result = await registry.execute(session, "/login anthropic-api")
+    subscription_result = await registry.execute(session, "/login anthropic-subscription")
 
     assert api_result.login_provider == "anthropic"
     assert api_result.login_method == "api-key"
@@ -466,47 +571,65 @@ def test_login_command_resolves_anthropic_auth_aliases(tmp_path: Path) -> None:
     assert subscription_result.login_method == "subscription"
 
 
-def test_login_command_lists_auth_aliases_for_unknown_provider(tmp_path: Path) -> None:
-    result = create_default_command_registry().execute(FakeSession(tmp_path), "/login missing")
+async def test_login_command_lists_auth_aliases_for_unknown_provider(tmp_path: Path) -> None:
+    result = await create_default_command_registry().execute(
+        FakeSession(tmp_path),
+        "/login missing",
+    )
 
     assert result.message is not None
     assert "anthropic-api" in result.message
     assert "anthropic-subscription" in result.message
 
 
-def test_login_command_requests_custom_provider_login(tmp_path: Path) -> None:
-    result = create_default_command_registry().execute(FakeSession(tmp_path), "/login custom")
+async def test_login_command_requests_custom_provider_login(tmp_path: Path) -> None:
+    result = await create_default_command_registry().execute(
+        FakeSession(tmp_path),
+        "/login custom",
+    )
 
     assert result.handled is True
     assert result.custom_provider_login_requested is True
 
 
-def test_logout_command_requests_provider_picker(tmp_path: Path) -> None:
-    result = create_default_command_registry().execute(FakeSession(tmp_path), "/logout")
+async def test_logout_command_requests_provider_picker(tmp_path: Path) -> None:
+    result = await create_default_command_registry().execute(
+        FakeSession(tmp_path),
+        "/logout",
+    )
 
     assert result.handled is True
     assert result.logout_picker_requested is True
 
 
-def test_logout_command_requests_provider_logout(tmp_path: Path) -> None:
-    result = create_default_command_registry().execute(FakeSession(tmp_path), "/logout openai")
+async def test_logout_command_requests_provider_logout(tmp_path: Path) -> None:
+    result = await create_default_command_registry().execute(
+        FakeSession(tmp_path),
+        "/logout openai",
+    )
 
     assert result.handled is True
     assert result.logout_provider == "openai"
 
 
-def test_logout_command_rejects_unknown_provider(tmp_path: Path) -> None:
-    result = create_default_command_registry().execute(FakeSession(tmp_path), "/logout local")
+async def test_logout_command_rejects_unknown_provider(tmp_path: Path) -> None:
+    result = await create_default_command_registry().execute(
+        FakeSession(tmp_path),
+        "/logout local",
+    )
 
     assert result.handled is True
     assert result.message is not None
     assert "Unknown logout provider: local" in result.message
 
 
-def test_reload_command_requests_async_session_reload(tmp_path: Path) -> None:
+async def test_reload_command_requests_async_session_reload(tmp_path: Path) -> None:
     session = FakeSession(tmp_path)
 
-    result = create_default_command_registry().execute(session, "/reload")
+    result = await create_default_command_registry().execute(
+        session,
+        "/reload",
+    )
 
     assert result.handled is True
     assert result.reload_requested is True
@@ -515,55 +638,70 @@ def test_reload_command_requests_async_session_reload(tmp_path: Path) -> None:
     assert session.provider_reload_called is False
 
 
-def test_resume_without_argument_requests_picker(tmp_path: Path) -> None:
+async def test_resume_without_argument_requests_picker(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     session = FakeSession(tmp_path, manager=manager)
 
-    result = create_default_command_registry().execute(session, "/resume")
+    result = await create_default_command_registry().execute(
+        session,
+        "/resume",
+    )
 
     assert result.resume_picker_requested is True
     assert result.message is None
-    assert create_default_command_registry().execute(session, "/sessions").handled is False
+    assert (await create_default_command_registry().execute(session, "/sessions")).handled is False
 
 
-def test_resume_command_requests_indexed_session(tmp_path: Path) -> None:
+async def test_resume_command_requests_indexed_session(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake-model", title="Test session")
     session = FakeSession(tmp_path, manager=manager)
 
-    result = create_default_command_registry().execute(session, f"/resume {record.id}")
+    result = await create_default_command_registry().execute(
+        session,
+        f"/resume {record.id}",
+    )
 
     assert result.resume_session_id == record.id
     assert result.message is None
 
 
-def test_resume_command_rejects_missing_or_unknown_session(tmp_path: Path) -> None:
+async def test_resume_command_rejects_missing_or_unknown_session(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     session = FakeSession(tmp_path, manager=manager)
 
-    unknown = create_default_command_registry().execute(session, "/resume missing")
+    unknown = await create_default_command_registry().execute(
+        session,
+        "/resume missing",
+    )
 
     assert unknown.message == "Unknown session: missing"
 
 
-def test_name_command_shows_current_name_and_usage(tmp_path: Path) -> None:
+async def test_name_command_shows_current_name_and_usage(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake-model", title="Test session")
     session = FakeSession(tmp_path, manager=manager)
     session.session_id = record.id
 
-    result = create_default_command_registry().execute(session, "/name")
+    result = await create_default_command_registry().execute(
+        session,
+        "/name",
+    )
 
     assert result.message == "Current session name: Test session\nUsage: /name <new name>"
 
 
-def test_name_command_requests_session_rename(tmp_path: Path) -> None:
+async def test_name_command_requests_session_rename(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake-model", title="Old name")
     session = FakeSession(tmp_path, manager=manager)
     session.session_id = record.id
 
-    result = create_default_command_registry().execute(session, "/name Customer bugfix")
+    result = await create_default_command_registry().execute(
+        session,
+        "/name Customer bugfix",
+    )
 
     assert result.message == "Session renamed: Customer bugfix"
     assert result.session_name == "Customer bugfix"
@@ -572,12 +710,15 @@ def test_name_command_requests_session_rename(tmp_path: Path) -> None:
     assert unchanged.title == "Old name"
 
 
-def test_name_command_defers_indexing_pending_session(tmp_path: Path) -> None:
+async def test_name_command_defers_indexing_pending_session(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     session = FakeSession(tmp_path, manager=manager)
     session.session_id = "pending-session"
 
-    result = create_default_command_registry().execute(session, "/name Customer bugfix")
+    result = await create_default_command_registry().execute(
+        session,
+        "/name Customer bugfix",
+    )
 
     assert result.message == "Session renamed: Customer bugfix"
     assert result.session_name == "Customer bugfix"
@@ -585,25 +726,31 @@ def test_name_command_defers_indexing_pending_session(tmp_path: Path) -> None:
     assert manager.get_session("pending-session") is None
 
 
-def test_name_command_reports_missing_session_manager(tmp_path: Path) -> None:
-    result = create_default_command_registry().execute(FakeSession(tmp_path), "/name Work")
+async def test_name_command_reports_missing_session_manager(tmp_path: Path) -> None:
+    result = await create_default_command_registry().execute(
+        FakeSession(tmp_path),
+        "/name Work",
+    )
 
     assert result.message == "Session manager is not available."
 
 
-def test_name_command_rejects_multiline_name(tmp_path: Path) -> None:
+async def test_name_command_rejects_multiline_name(tmp_path: Path) -> None:
     manager = SessionManager(TauPaths(home=tmp_path / ".tau", agents_home=tmp_path / ".agents"))
     record = manager.create_session(cwd=tmp_path, model="fake-model")
     session = FakeSession(tmp_path, manager=manager)
     session.session_id = record.id
 
-    result = create_default_command_registry().execute(session, "/name Bad\nName")
+    result = await create_default_command_registry().execute(
+        session,
+        "/name Bad\nName",
+    )
 
     assert result.message == "Session name must be a single line."
     assert manager.get_session(record.id) == record
 
 
-def test_registry_rejects_duplicate_commands_and_aliases() -> None:
+async def test_registry_rejects_duplicate_commands_and_aliases() -> None:
     registry = CommandRegistry()
     command = SlashCommand(
         name="test",

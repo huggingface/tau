@@ -131,7 +131,7 @@ uv run pytest
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
-uv run mkdocs build --strict
+(cd website && hugo --minify)
 ```
 
 One parent-authorized fix pass may address review or gate findings, followed by one delta-only recheck and the affected gates. Any remaining material blocker returns to the owner rather than opening another review cycle.

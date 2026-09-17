@@ -38,6 +38,8 @@ from tau_coding.extensions.api import (
     AGENT_EVENT_TYPES,
     AGENT_EVENT_WILDCARD,
     LIFECYCLE_EVENT_TYPES,
+    BeforeAgentStartEvent,
+    BeforeAgentStartHookResult,
     CustomMessageView,
     ExtensionAPI,
     ExtensionCommandContext,
@@ -1126,15 +1128,20 @@ class ExtensionRuntime:
 
     def _command_handler(
         self, command: ExtensionCommand
-    ) -> Callable[[CommandContext], CommandResult]:
-        def handler(context: CommandContext) -> CommandResult:
+    ) -> Callable[[CommandContext], Awaitable[CommandResult]]:
+        async def handler(context: CommandContext) -> CommandResult:
             extension_context = ExtensionCommandContext(
                 name=command.name,
                 args=context.args,
                 api=self._api_for(command.source_id),
             )
             try:
+                # Awaiting inside the boundary contains post-await failures too:
+                # they produce the same diagnostic and handled error result as
+                # synchronous handler failures.
                 message = command.handler(context.args, extension_context)
+                if isawaitable(message):
+                    message = await message
             except Exception as exc:  # noqa: BLE001 - extensions are an isolation boundary
                 self._record_runtime_failure(command.extension, f"command:/{command.name}", exc)
                 return CommandResult(
@@ -1214,6 +1221,37 @@ class ExtensionRuntime:
             if result.action == "transform" and result.text is not None:
                 current = result.text
         return InputHookOutcome(handled=False, text=current)
+
+    async def run_before_agent_start_hooks(self, *, prompt: str, system_prompt: str) -> str:
+        """Chain `before_agent_start` handlers into the run-scoped system prompt.
+
+        Handlers run in extension order and each receives the latest chained
+        value. Returning `None`/no replacement keeps the current value; a
+        replacement is a full string. Failures and invalid results are
+        diagnosed and skipped (fail-open: a faulty prompt extension cannot
+        prevent an agent run).
+        """
+        current = system_prompt
+        for owner, handler in self._handlers_for("before_agent_start"):
+            event = BeforeAgentStartEvent(prompt=prompt, system_prompt=current)
+            try:
+                result = await _resolve(handler(event, self._fresh_context(owner.source_id)))
+            except Exception as exc:  # noqa: BLE001 - fail-open: a bad hook cannot block a run
+                self._record_runtime_failure(owner.name, "before_agent_start", exc)
+                continue
+            if result is None:
+                continue
+            if not isinstance(result, BeforeAgentStartHookResult):
+                self._record_bad_result(owner.name, "before_agent_start", result)
+                continue
+            replacement = result.system_prompt
+            if replacement is None:
+                continue
+            if not isinstance(replacement, str):
+                self._record_bad_result(owner.name, "before_agent_start", replacement)
+                continue
+            current = replacement
+        return current
 
     async def emit_event(self, event: object) -> None:
         """Dispatch one canonical agent or coding-session event to extensions."""
