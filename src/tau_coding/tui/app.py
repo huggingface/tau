@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
+import stat
+import tempfile
 import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping, Sequence
 from contextlib import suppress
@@ -13,7 +16,7 @@ from enum import Enum, auto
 from inspect import isawaitable
 from io import StringIO
 from pathlib import Path
-from typing import Any, ClassVar, Literal, Protocol, TypeVar, cast
+from typing import Any, BinaryIO, ClassVar, Literal, Protocol, TypeVar, cast
 
 from rich.console import Console, Group
 from rich.style import Style
@@ -143,6 +146,7 @@ from tau_coding.session_manager import CodingSessionRecord, SessionManager
 from tau_coding.session_preparation import prepare_coding_session
 from tau_coding.shell_config import load_shell_settings
 from tau_coding.skills import Skill
+from tau_coding.system_prompt import SystemPromptInspection
 from tau_coding.thinking import ThinkingLevel
 from tau_coding.tui.adapter import TuiEventAdapter
 from tau_coding.tui.autocomplete import (
@@ -183,6 +187,7 @@ from tau_coding.tui.themes import (
 from tau_coding.tui.widgets import (
     CompactSessionInfo,
     SessionSidebar,
+    SidebarFileItem,
     TranscriptView,
     _custom_markup_to_text,
     _sidebar_separator,
@@ -1440,6 +1445,169 @@ class PromptTemplateEditorScreen(ModalScreen[str | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+def _write_staged_utf8(handle: BinaryIO, source: str) -> None:
+    """Write complete UTF-8 editor contents to an open staging file."""
+    remaining = memoryview(source.encode("utf-8"))
+    while remaining:
+        written = handle.write(remaining)
+        if written is None or written <= 0:
+            raise OSError("staged write did not make progress")
+        remaining = remaining[written:]
+
+
+@dataclass(frozen=True, slots=True)
+class _SidebarFileSnapshot:
+    """Resolved target and exact bytes observed when a sidebar file was loaded."""
+
+    target: Path
+    content: bytes
+
+
+def _read_sidebar_file(path: Path) -> tuple[str, _SidebarFileSnapshot]:
+    """Read a sidebar file without normalizing its encoded contents."""
+    target = path.resolve(strict=True)
+    content = target.read_bytes()
+    return content.decode("utf-8"), _SidebarFileSnapshot(target=target, content=content)
+
+
+def _atomic_write_sidebar_file(
+    path: Path,
+    source: str,
+    expected: _SidebarFileSnapshot,
+) -> _SidebarFileSnapshot:
+    """Atomically replace an unchanged, writable file and preserve its mode/symlink."""
+    target = path.resolve(strict=True)
+    replacement = source.encode("utf-8")
+    if target != expected.target:
+        raise OSError(f"File target changed on disk; reopen before saving: {path}")
+    # Ask the OS to enforce ownership/ACL rules without truncating the target.
+    authorization = os.open(
+        target,
+        os.O_WRONLY | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        target_stat = os.fstat(authorization)
+        # Privileged processes may open 0444 files, but the editor treats an
+        # explicitly read-only resource as not authorized for replacement.
+        if target_stat.st_mode & 0o222 == 0:
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), target)
+        target_mode = stat.S_IMODE(target_stat.st_mode)
+    finally:
+        os.close(authorization)
+
+    descriptor = -1
+    temporary: Path | None = None
+    try:
+        descriptor, raw_temporary = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+        )
+        temporary = Path(raw_temporary)
+        os.chmod(temporary, target_mode)
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1
+            _write_staged_utf8(handle, source)
+            handle.flush()
+            os.fsync(handle.fileno())
+        current_target = path.resolve(strict=True)
+        if current_target != expected.target or current_target.read_bytes() != expected.content:
+            raise OSError(f"File changed on disk; reopen before saving: {path}")
+        os.replace(temporary, target)
+        temporary = None
+        return _SidebarFileSnapshot(target=target, content=replacement)
+    finally:
+        if descriptor >= 0:
+            with suppress(OSError):
+                os.close(descriptor)
+        if temporary is not None:
+            with suppress(OSError):
+                temporary.unlink()
+
+
+class SidebarFileEditor(Vertical):
+    """Main-area editor for a file selected from the session sidebar."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "close", "Close", show=False, priority=True),
+        Binding("ctrl+s", "save", "Save", show=False, priority=True),
+    ]
+
+    def __init__(
+        self,
+        *,
+        handle: MainViewHandle,
+        path: Path,
+        label: str,
+        kind: str,
+        source: str,
+        snapshot: _SidebarFileSnapshot,
+    ) -> None:
+        super().__init__(id="sidebar-file-editor")
+        self.handle = handle
+        self.path = path
+        self.label = label
+        self.kind = kind
+        self.source = source
+        self._saved_source = source
+        self._snapshot = snapshot
+        self._saving = False
+
+    def compose(self) -> ComposeResult:
+        yield Static(f"Edit {self.kind}: {self.label}", id="sidebar-file-editor-title")
+        yield Static(str(self.path), id="sidebar-file-editor-path")
+        yield TextArea(self.source, id="sidebar-file-editor-input")
+        yield Static(
+            "Ctrl+S saves - Escape closes",
+            id="sidebar-file-editor-help",
+        )
+        yield Static("", id="sidebar-file-editor-status")
+
+    def on_mount(self) -> None:
+        self.query_one("#sidebar-file-editor-input", TextArea).focus()
+
+    @property
+    def is_dirty(self) -> bool:
+        """Return whether the mounted editor differs from its last saved source."""
+        try:
+            source = self.query_one("#sidebar-file-editor-input", TextArea).text
+        except NoMatches:
+            return False
+        return source != self._saved_source
+
+    def action_save(self) -> None:
+        """Write the current editor contents without closing the editor."""
+        if self._saving:
+            return
+        self._saving = True
+        self.query_one("#sidebar-file-editor-status", Static).update("Saving…")
+        self.app.run_worker(self._save(), exclusive=False)
+
+    async def _save(self) -> None:
+        source = self.query_one("#sidebar-file-editor-input", TextArea).text
+        try:
+            snapshot = await asyncio.to_thread(
+                _atomic_write_sidebar_file,
+                self.path,
+                source,
+                self._snapshot,
+            )
+        except Exception as exc:  # noqa: BLE001 - filesystem worker boundary
+            message = f"Could not save {self.path}: {exc}"
+            self.query_one("#sidebar-file-editor-status", Static).update(message)
+            cast(TauTuiApp, self.app)._notify(message, severity="error")
+        else:
+            self._snapshot = snapshot
+            self._saved_source = source
+            message = f"Saved {self.path}"
+            self.query_one("#sidebar-file-editor-status", Static).update(message)
+            cast(TauTuiApp, self.app)._notify(message)
+        finally:
+            self._saving = False
+
+    def action_close(self) -> None:
+        """Close the editor and restore the transcript."""
+        self.handle.close()
 
 
 class SessionPickerScreen(ModalScreen[str | None]):
@@ -3440,6 +3608,40 @@ class TauTuiApp(App[None]):
         padding: 1 0 0 1;
     }
 
+    #sidebar .sidebar-section-title {
+        height: 1;
+        padding: 0 0 0 1;
+        color: $tau-prompt-text;
+        text-style: bold;
+    }
+
+    #sidebar .sidebar-file-list {
+        width: 1fr;
+        height: auto;
+    }
+
+    #sidebar .sidebar-resource-origin,
+    #sidebar .sidebar-file-empty,
+    #sidebar .sidebar-file-overflow {
+        width: 1fr;
+        height: auto;
+        color: $tau-muted-text;
+    }
+
+    #sidebar .sidebar-file-item {
+        width: 1fr;
+        height: auto;
+        color: $tau-muted-text;
+        background: transparent;
+    }
+
+    #sidebar .sidebar-file-item:hover,
+    #sidebar .sidebar-file-item:focus {
+        color: $tau-highlight-text;
+        background: $tau-highlight-background;
+        text-style: underline;
+    }
+
     #sidebar-extension-sections,
     #sidebar .extension-sidebar-section,
     #sidebar .extension-sidebar-body {
@@ -3498,6 +3700,36 @@ class TauTuiApp(App[None]):
         overflow-x: auto;
         scrollbar-size-vertical: 0;
         scrollbar-size-horizontal: 1;
+    }
+
+    #sidebar-file-editor {
+        width: 1fr;
+        height: 1fr;
+        padding: 0 1;
+    }
+
+    #sidebar-file-editor-title {
+        height: 1;
+        color: $tau-accent;
+        text-style: bold;
+    }
+
+    #sidebar-file-editor-path,
+    #sidebar-file-editor-help,
+    #sidebar-file-editor-status {
+        height: 1;
+        color: $tau-muted-text;
+    }
+
+    #sidebar-file-editor-path {
+        margin-bottom: 1;
+    }
+
+    #sidebar-file-editor-input {
+        height: 1fr;
+        background: $tau-prompt-background;
+        color: $tau-prompt-text;
+        border: tall $tau-prompt-border;
     }
 
     #above-prompt-slot {
@@ -4468,6 +4700,38 @@ class TauTuiApp(App[None]):
         self._completion_visible_line_budget = None
         self._update_responsive_layout(event.size.width, event.size.height)
 
+    @on(SidebarFileItem.OpenRequested)
+    def on_sidebar_file_open_requested(self, event: SidebarFileItem.OpenRequested) -> None:
+        """Open a sidebar resource file in the main-area editor."""
+        event.stop()
+        item = event.item
+        current = self._extension_main_view
+        if (
+            current is not None
+            and isinstance(current.widget, SidebarFileEditor)
+            and current.widget.is_dirty
+        ):
+            message = "Save or close the current file before opening another."
+            self._notify(message, severity="warning")
+            current.widget.query_one("#sidebar-file-editor-status", Static).update(message)
+            current.widget.query_one("#sidebar-file-editor-input", TextArea).focus()
+            return
+        try:
+            source, snapshot = _read_sidebar_file(item.path)
+        except (OSError, UnicodeDecodeError) as exc:
+            self._notify(f"Could not read {item.path}: {exc}", severity="error")
+            return
+        self._open_extension_main_view(
+            lambda handle, theme: SidebarFileEditor(
+                handle=handle,
+                path=item.path,
+                label=item.file_label,
+                kind=item.kind,
+                source=source,
+                snapshot=snapshot,
+            )
+        )
+
     def on_click(self, event: events.Click) -> None:
         """Return keyboard focus to the prompt after clicks in the main TUI."""
         if event.button != 1:
@@ -4502,8 +4766,27 @@ class TauTuiApp(App[None]):
             return
         prompt = self.query_one("#prompt", PromptInput)
         prompt.sync_pending_paste()
-        self._sync_prompt_shell_mode(event.text_area.text)
-        self._completion_state = self._build_completion_state(event.text_area.text)
+        # Read text and cursor from the widget so both come from one snapshot.
+        text = prompt.text
+        self._sync_prompt_shell_mode(text)
+        self._completion_state = self._build_completion_state(text, cursor=prompt.cursor_position)
+        self._refresh_completions()
+
+    def on_text_area_selection_changed(self, event: TextArea.SelectionChanged) -> None:
+        """Close prompt autocomplete when the caret leaves the completed token."""
+        if event.text_area.id != "prompt":
+            return
+        # Edits post SelectionChanged before Changed; check after Changed has rebuilt.
+        self.call_later(self._close_completions_if_caret_left_token)
+
+    def _close_completions_if_caret_left_token(self) -> None:
+        if not self._completion_state.items:
+            return
+        item = self._completion_state.items[0]
+        cursor = self.query_one("#prompt", PromptInput).cursor_position
+        if item.start < cursor <= item.end:
+            return
+        self._completion_state = CompletionState()
         self._refresh_completions()
 
     async def action_submit_prompt(self) -> None:
@@ -4674,7 +4957,11 @@ class TauTuiApp(App[None]):
                 if _command_message_uses_notification(text, command.message):
                     self._notify(command.message)
                 elif _command_message_uses_transcript(text):
-                    self._append_command_message(text, command.message)
+                    self._append_command_message(
+                        text,
+                        command.message,
+                        system_prompt_inspection=command.system_prompt_inspection,
+                    )
                 else:
                     self._show_command_message(text, command.message)
             self._refresh()
@@ -5925,16 +6212,21 @@ class TauTuiApp(App[None]):
             self.screen.action_select_cursor()
             return
         prompt = self.query_one("#prompt", PromptInput)
+        item = self._completion_state.selected
         applied = self._apply_selected_completion(prompt.text)
-        if applied is None:
+        if applied is None or item is None:
             return
         prompt.text = applied
-        prompt.move_cursor(_text_end_location(applied))
-        self._completion_state = self._build_completion_state(prompt.text)
+        cursor = item.cursor_after_apply()
+        prompt.cursor_position = cursor
+        self._completion_state = self._build_completion_state(prompt.text, cursor=cursor)
         self._refresh_completions()
 
     def action_completion_next(self) -> None:
-        """Select the next prompt completion or move down in the prompt."""
+        """Select the next prompt completion or move down in the active editor."""
+        if isinstance(self.focused, TextArea) and self.focused.id == "sidebar-file-editor-input":
+            self.focused.action_cursor_down()
+            return
         if isinstance(self.screen, PromptTemplateEditorScreen):
             self.screen.query_one("#prompt-template-editor-input", TextArea).action_cursor_down()
             return
@@ -5970,7 +6262,10 @@ class TauTuiApp(App[None]):
         self._refresh_completions()
 
     def action_completion_previous(self) -> None:
-        """Select the previous prompt completion or move up in the prompt."""
+        """Select the previous prompt completion or move up in the active editor."""
+        if isinstance(self.focused, TextArea) and self.focused.id == "sidebar-file-editor-input":
+            self.focused.action_cursor_up()
+            return
         if isinstance(self.screen, PromptTemplateEditorScreen):
             self.screen.query_one("#prompt-template-editor-input", TextArea).action_cursor_up()
             return
@@ -6376,7 +6671,13 @@ class TauTuiApp(App[None]):
             return None
         return item.apply(value)
 
-    def _append_command_message(self, command_text: str, message: str) -> None:
+    def _append_command_message(
+        self,
+        command_text: str,
+        message: str,
+        *,
+        system_prompt_inspection: SystemPromptInspection | None = None,
+    ) -> None:
         """Append non-persistent command output to the visible transcript."""
         is_system_prompt = command_text.split(maxsplit=1)[0].casefold() == "/system"
         separator = "\n\n" if is_system_prompt else "\n"
@@ -6387,6 +6688,9 @@ class TauTuiApp(App[None]):
             "status",
             f"{title}{separator}{message}",
             system_prompt=is_system_prompt,
+            system_prompt_sources=(
+                system_prompt_inspection.sources if system_prompt_inspection is not None else None
+            ),
         )
 
     def _show_command_message(self, command_text: str, message: str) -> None:
@@ -7148,10 +7452,11 @@ class TauTuiApp(App[None]):
         state = "shown" if self._sidebar_visibility_override else "hidden"
         self._notify(f"Sidebar {state} for this session.")
 
-    def _build_completion_state(self, text: str) -> CompletionState:
+    def _build_completion_state(self, text: str, *, cursor: int | None = None) -> CompletionState:
         registry = _session_command_registry(self.session)
         return build_completion_state(
             text,
+            cursor=cursor,
             command_registry=registry,
             skills=self.session.skills,
             prompt_templates=self.session.prompt_templates,

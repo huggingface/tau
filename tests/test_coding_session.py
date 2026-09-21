@@ -81,6 +81,7 @@ from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.provider_config import ProviderModelMetadata, provider_thinking_levels
 from tau_coding.session import (
     _ordered_tree_entries,
+    _tree_branch_indents,
     is_retryable_huggingface_route_error,
     parse_terminal_command,
 )
@@ -1535,21 +1536,21 @@ async def test_tree_choices_handles_deep_session_without_recursion_error(
     assert choices[-1].entry_id == f"m{depth - 1}"
 
 
-def test_ordered_tree_entries_preserves_branch_order() -> None:
-    # Locks the traversal contract the iterative walk must preserve: emit a
-    # node's direct children before descending, then depth-first into each child.
+def test_ordered_tree_entries_uses_longest_history_as_main_branch() -> None:
     entries = [
         MessageEntry(id="A", parent_id=None, message=UserMessage(content="A")),
-        MessageEntry(id="B", parent_id=None, message=UserMessage(content="B")),
-        MessageEntry(id="C", parent_id="A", message=UserMessage(content="C")),
-        MessageEntry(id="D", parent_id="A", message=UserMessage(content="D")),
+        MessageEntry(id="B", parent_id="A", message=UserMessage(content="B")),
+        MessageEntry(id="C", parent_id="B", message=UserMessage(content="C")),
+        MessageEntry(id="D", parent_id="B", message=UserMessage(content="D")),
         MessageEntry(id="E", parent_id="B", message=UserMessage(content="E")),
-        MessageEntry(id="F", parent_id="C", message=UserMessage(content="F")),
+        MessageEntry(id="F", parent_id="E", message=UserMessage(content="F")),
     ]
 
     ordered = _ordered_tree_entries(entries)
+    indents = _tree_branch_indents(entries)
 
-    assert [entry.id for entry in ordered] == ["A", "B", "C", "D", "F", "E"]
+    assert [entry.id for entry in ordered] == ["A", "B", "C", "D", "E", "F"]
+    assert indents == {"A": 0, "B": 0, "C": 1, "D": 1, "E": 0, "F": 0}
 
 
 def test_ordered_tree_entries_terminates_on_parent_cycle() -> None:
@@ -2234,11 +2235,11 @@ async def test_session_tree_choices_indent_only_diverged_branches(tmp_path: Path
 
     assert [choice.label for choice in choices] == [
         "user: Root",
-        "assistant: Main",
         "  assistant: First branch",
-        "  assistant: Second branch",
-        "user: Main follow-up",
         "  user: Follow-up",
+        "  assistant: Second branch",
+        "assistant: Main",
+        "user: Main follow-up",
     ]
 
 
@@ -3184,7 +3185,11 @@ async def test_system_command_shows_prompt_without_persisting_or_adding_context(
     result = session.handle_command("/system")
 
     assert result.handled is True
-    assert result.message == "You are Tau."
+    assert result.message == (
+        "#### 01 · System prompt override\n\n"
+        "**Source:** `CodingSessionConfig.system`\n\n"
+        "You are Tau."
+    )
     assert session.messages == before_messages
     assert await storage.read_all() == before_entries
     assert provider.calls == []
@@ -3402,6 +3407,14 @@ async def test_session_loads_tau_native_system_prompt_files(tmp_path: Path) -> N
         tau_home / "APPEND_SYSTEM.md",
         project_tau / "APPEND_SYSTEM.md",
     )
+    inspection = session.system_prompt_inspection
+    assert "".join(source.content for source in inspection.sources) == session.system_prompt
+    assert [source.source for source in inspection.sources[:4]] == [
+        str(project_tau / "SYSTEM.md"),
+        str(tau_home / "APPEND_SYSTEM.md"),
+        str(project_tau / "APPEND_SYSTEM.md"),
+        str(tmp_path / "AGENTS.md"),
+    ]
     prompt_diagnostics = [
         item for item in session.resource_diagnostics if item.kind == "system-prompt"
     ]

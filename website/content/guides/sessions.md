@@ -55,7 +55,10 @@ To resume this session: tau --session <session-id>
 A session is a *tree*, not just a line — so you can go back and try a different
 path without losing what you had.
 
-Run `/tree` to open the session tree, then select an earlier entry:
+Run `/tree` to open the session tree, then select an earlier entry. At each
+fork, the child with the longest history is shown as the main branch. Alternate
+branches appear immediately after the parent, indented at the branch point,
+before the unindented main history continues.
 
 - **Enter** — continue from that point, preserving the existing branch.
 - **S** — ask the active model for a structured summary of the messages you're
