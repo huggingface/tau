@@ -1938,6 +1938,61 @@ def test_setup_command_writes_provider_settings(
     assert provider.max_retry_delay_seconds == 0.5
 
 
+def test_relative_tau_home_reports_actionable_cli_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TAU_HOME", ".tau-personal")
+
+    result = CliRunner().invoke(app, ["providers"])
+
+    assert result.exit_code == 2
+    assert "Invalid value for TAU_HOME" in result.stderr
+    assert "must be an absolute path" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_unknown_user_tau_home_reports_actionable_cli_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TAU_HOME", "~tau-review-user-that-does-not-exist-728/.tau")
+
+    result = CliRunner().invoke(app, ["providers"])
+
+    assert result.exit_code == 2
+    assert "Invalid value for TAU_HOME" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_setup_command_writes_only_to_configured_tau_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tau_home = tmp_path / ".tau-personal"
+    monkeypatch.setenv("TAU_HOME", str(tau_home))
+    monkeypatch.setenv("LOCAL_API_KEY", "test-key")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--provider",
+            "local",
+            "--base-url",
+            "http://localhost:11434/v1",
+            "--api-key-env",
+            "LOCAL_API_KEY",
+            "--model",
+            "qwen",
+            "setup",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert (tau_home / "catalog.toml").exists()
+    assert (tau_home / "providers.json").exists()
+    assert not (tmp_path / ".tau").exists()
+    assert load_provider_settings(TauPaths(home=tau_home)).default_provider == "local"
+
+
 def test_setup_command_warns_when_api_key_env_is_missing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
