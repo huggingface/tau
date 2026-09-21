@@ -15,7 +15,12 @@ def _default_tau_home() -> Path:
     if value is None or value == "":
         return Path.home() / ".tau"
 
-    path = Path(value).expanduser()
+    try:
+        path = Path(value).expanduser()
+    except RuntimeError as exc:
+        raise ValueError(
+            "TAU_HOME could not expand '~'; use an absolute path or an existing user home"
+        ) from exc
     if not path.is_absolute():
         raise ValueError("TAU_HOME must be an absolute path after '~' expansion")
     return path

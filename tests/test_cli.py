@@ -1945,6 +1945,18 @@ def test_relative_tau_home_reports_actionable_cli_error(
     assert "Traceback" not in result.stderr
 
 
+def test_unknown_user_tau_home_reports_actionable_cli_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TAU_HOME", "~tau-review-user-that-does-not-exist-728/.tau")
+
+    result = CliRunner().invoke(app, ["providers"])
+
+    assert result.exit_code == 2
+    assert "Invalid value for TAU_HOME" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 def test_setup_command_writes_only_to_configured_tau_home(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
