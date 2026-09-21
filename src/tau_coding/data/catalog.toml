@@ -6880,3 +6880,15 @@ input = ["text", "image"]
 
 [providers.model_metadata."mai-code-1-flash-picker"]
 input = ["text"]
+
+[[providers]]
+name = "ollama-cloud"
+display_name = "Ollama Cloud"
+kind = "openai-compatible"
+base_url = "https://ollama.com/v1"
+api_key_env = "OLLAMA_API_KEY"
+credential_name = "ollama-cloud"
+models = ["qwen3.5:397b", "kimi-k2.7-code", "kimi-k3", "gpt-oss:120b", "glm-5.3", "minimax-m3", "deepseek-v4-pro", "deepseek-v4.1-flash"]
+default_model = "qwen3.5:397b"
+docs_url = "https://docs.ollama.com/cloud"
+api = "openai-completions"
