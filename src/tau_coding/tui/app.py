@@ -1632,21 +1632,18 @@ class SessionPickerScreen(ModalScreen[str | None]):
 
     #session-picker-columns {
         height: auto;
-    }
-
-    .session-picker-column {
-        height: auto;
         border: tall $tau-border;
         background: $tau-transcript-background;
     }
 
-    .session-picker-column.-active-column {
-        border: tall $tau-accent;
+    .session-picker-column {
+        height: auto;
+        background: $tau-transcript-background;
     }
 
     #session-picker-project-column {
         width: 34;
-        margin-right: 1;
+        border-right: tall $tau-border;
     }
 
     #session-picker-session-column {
@@ -1873,11 +1870,9 @@ class SessionPickerScreen(ModalScreen[str | None]):
         project_list = self.query_one("#session-picker-project-list", OptionList)
         items: list[str] = []
         for cwd in self.project_cwds:
-            count = len(self.records_by_project[cwd])
             marker = "● " if cwd == self.local_cwd else "  "
-            noun = "session" if count == 1 else "sessions"
             folder_name = cwd.name or str(cwd)
-            items.append(f"{marker}{folder_name}  {count} {noun}")
+            items.append(f"{marker}{folder_name}")
         project_list.set_options(items)
         project_list.highlighted = self.selected_project_index
 

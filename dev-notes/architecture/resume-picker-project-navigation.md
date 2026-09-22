@@ -17,9 +17,11 @@ foreign sessions below the current project's sessions:
 - Search remains focused for typing and filters names/models within the selected
   project.
 
-The active column gets an accent border and title. The current project gets a
-marker, every project row includes its session count, and the session list has
-horizontal breathing room inside its border.
+The columns share one outer browser border and a single divider, matching
+Finder's contiguous column view rather than looking like separate panels. The
+active column gets an accent title. The current project gets a marker, project
+rows omit session counts, and the session list retains horizontal breathing
+room.
 
 ## Architecture
 

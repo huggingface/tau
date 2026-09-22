@@ -768,6 +768,7 @@ runtime only sees the former.
 
 See [`examples/extensions/`](https://github.com/huggingface/tau/tree/main/examples/extensions):
 
+- **`ask_user_question.py`** — lets the agent ask one multiple-choice question through the host UI.
 - **`hello_tool.py`** — minimal custom tool.
 - **`permission_gate.py`** — blocks dangerous bash commands with the
   `tool_call` hook.
