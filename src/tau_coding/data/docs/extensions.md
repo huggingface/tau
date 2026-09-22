@@ -103,6 +103,25 @@ fresh-generation replacement flows), a context captured from the outgoing
 generation is stale: even reading `context.paths` raises `ExtensionError`. Read
 `context.paths` again from the new generation's context.
 
+## Building child sessions
+
+An extension may construct its own in-process `CodingSession`s (for example a
+subagent tool) via `CodingSession.load(CodingSessionConfig(...))`. Two seams
+exist for that:
+
+- `tau.context.project_trusted` (bool) and `tau.context.project_trust_resolution`
+  (the frozen `ProjectTrustResolution`, or `None`) expose the parent's
+  project-input trust decision. A headless child resolves trust on its own and
+  lands untrusted under the default config, silently losing project skills,
+  `AGENTS.md`, and project extensions. Forward the parent's decision through
+  `CodingSessionConfig.trust_override`: `"approve"` when `project_trusted` is
+  true, `"decline"` otherwise. Never approve unconditionally.
+- `CodingSessionConfig.allowed_tool_names` (`frozenset[str] | None`) caps the
+  child's *final* tool list by name after extension tools are composed on top
+  of the built-ins, and is re-applied on every reload. `tools=` alone cannot do
+  this because extension tools are always appended afterwards. Unknown names
+  are ignored; `None` disables filtering.
+
 ## Dynamic providers
 
 `tau.register_provider(DynamicProvider(...))` adds a frontend-free provider layer

@@ -186,6 +186,8 @@ def setup(tau):
     tau.context.session_id, tau.context.session_name
     tau.context.thinking_level, tau.context.system_prompt
     tau.context.paths                 # resolved TauPaths snapshot
+    tau.context.project_trusted       # bool: were this cwd's project inputs approved?
+    tau.context.project_trust_resolution  # full ProjectTrustResolution, or None
     tau.context.is_running, tau.context.has_ui
     tau.context.transcript   # parent conversation, deep-copied AgentMessages
 
@@ -232,6 +234,41 @@ The snapshot belongs to the extension generation. After `/reload` (and other
 fresh-generation replacement flows), a context captured from the outgoing
 generation is stale: even reading `context.paths` raises `ExtensionError`. Read
 `context.paths` again from the new generation's context.
+
+#### Building child sessions
+
+An extension can construct its own `CodingSession`s in-process (for example a
+subagent tool) with `CodingSession.load(CodingSessionConfig(...))`. Two config
+fields are the seam for that:
+
+- **Trust.** A headless child resolves project trust on its own and, with the
+  default `trust_default="ask"` / `trust_interactive=False`, lands untrusted —
+  so it silently loses the project's skills, `AGENTS.md`, and project
+  extensions even when the user already approved the repo for the parent.
+  Forward the parent's decision instead:
+
+  ```python
+  child = await CodingSession.load(
+      CodingSessionConfig(
+          ...,  # provider, model, storage, cwd, resource_paths for the child
+          trust_override="approve" if tau.context.project_trusted else "decline",
+      )
+  )
+  ```
+
+  `tau.context.project_trust_resolution` exposes the full frozen
+  `ProjectTrustResolution` (`trusted`, `source`, `saved_path`, ...) for
+  diagnostics. Do not approve unconditionally: a repo the user declined would
+  otherwise get its project inputs loaded into every child.
+
+- **Tool allow-list.** `CodingSessionConfig.tools` only replaces the built-in
+  tool set; every extension-registered tool is composed on top afterwards.
+  `CodingSessionConfig.allowed_tool_names=frozenset({"read", "bash"})` filters
+  the *final* composed list by name — on initial load and again on every
+  `/reload` — so the restriction cannot be bypassed by an extension tool and
+  does not need to be re-applied by the host. `None` (the default) keeps every
+  tool; unknown names are ignored. Pair it with `skills_enabled=False` for a
+  child that should also get no skills.
 
 ### Local-backend registrations
 
