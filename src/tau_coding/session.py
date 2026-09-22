@@ -388,6 +388,18 @@ class CodingSessionConfig:
     the seam hosts use to construct skill-less sessions (e.g. a subagent type that
     gets no skills).
     """
+    allowed_tool_names: frozenset[str] | None = None
+    """Optional allow-list applied to the session's final tool set.
+
+    ``tools`` only replaces the built-in tool set; extension-registered tools are
+    composed on top of it afterwards. This filter is applied *after* that
+    composition (on initial load and again on every reload), so it caps the
+    complete tool list by name regardless of where a tool came from. An
+    extension tool that overrides a built-in of the same name is subject to the
+    list like any other. ``None`` (the default) disables filtering; names that
+    match no tool are ignored. It is the seam hosts use to construct sessions
+    with a restricted tool set (e.g. a subagent type limited to ``read``/``bash``).
+    """
     extension_paths: tuple[Path, ...] = ()
     extensions_enabled: bool = True
     project_extensions_enabled: bool = False
@@ -699,7 +711,9 @@ class CodingSession:
                 image_support=image_support,
             )
         )
-        tools = extension_runtime.compose_tools(base_tools)
+        tools = _filter_tools(
+            extension_runtime.compose_tools(base_tools), config.allowed_tool_names
+        )
         system = (
             config.system
             if config.system is not None
@@ -2379,7 +2393,9 @@ class CodingSession:
                 image_support=self._image_support,
             )
         )
-        staged_tools = staged_runtime.compose_tools(base_tools)
+        staged_tools = _filter_tools(
+            staged_runtime.compose_tools(base_tools), self._config.allowed_tool_names
+        )
         staged_commands = self._config.command_registry or staged_runtime.build_command_registry()
         after_system_prompt_inputs = _system_prompt_resource_signatures(
             skills=resources.skills,
@@ -2697,6 +2713,7 @@ class CodingSession:
                 thinking_level=self._thinking_level,
                 shell_command_prefix=self._config.shell_command_prefix,
                 skills_enabled=self._config.skills_enabled,
+                allowed_tool_names=self._config.allowed_tool_names,
                 extension_paths=self._config.extension_paths,
                 extensions_enabled=self._config.extensions_enabled,
                 project_extensions_enabled=self._config.project_extensions_enabled,
@@ -4533,6 +4550,15 @@ def _session_inference_provider_mode(
             "fixed" if inference_provider is not None else "automatic"
         )
     return _configured_inference_provider_mode(provider, model)
+
+
+def _filter_tools(
+    tools: Sequence[AgentTool], allowed_tool_names: frozenset[str] | None
+) -> list[AgentTool]:
+    """Apply ``CodingSessionConfig.allowed_tool_names`` to a composed tool list."""
+    if allowed_tool_names is None:
+        return list(tools)
+    return [tool for tool in tools if tool.name in allowed_tool_names]
 
 
 def _configured_model_supports_images(config: CodingSessionConfig, model: str) -> bool | None:
