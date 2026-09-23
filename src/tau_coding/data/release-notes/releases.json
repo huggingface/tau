@@ -1,5 +1,24 @@
 [
   {
+    "version": "0.4.5",
+    "date": "2026-09-23",
+    "sections": {
+      "New": [
+        "Edit prompt templates, context files, and skills from the TUI sidebar: click a resource row to open it in an in-app editor, save with Ctrl+S, and close with Escape.",
+        "Run `/system` to see where each system-prompt section came from, with prompt files, project instructions, skills, extensions, and runtime values grouped by origin.",
+        "Isolate credentials, sessions, preferences, and caches per profile with the `TAU_HOME` environment variable."
+      ],
+      "Changed": [
+        "Show resume history as project columns with the current project first and other directories grouped separately.",
+        "Add an ask-user-question example extension that demonstrates interactive prompts from extensions."
+      ],
+      "Fixed": [
+        "Order forked session trees by real history so alternate branches appear after the event where the fork started instead of collecting at the bottom of `/tree`.",
+        "Resolve `@file` and shell `!` path completions at the caret, including `@` mentions in the middle of a prompt or inside skill and template arguments."
+      ]
+    }
+  },
+  {
     "version": "0.4.4",
     "date": "2026-09-13",
     "sections": {
