@@ -8,9 +8,15 @@ from tau_coding.oauth import OpenAICodexOAuthProvider
 from tau_coding.oauth_anthropic import AnthropicOAuthProvider
 from tau_coding.oauth_github_copilot import GitHubCopilotOAuthProvider
 from tau_coding.oauth_types import OAuthProvider
+from tau_coding.oauth_xai import XaiOAuthProvider
 
 _BUILTIN_PROVIDERS: tuple[OAuthProvider, ...] = tuple(
-    [AnthropicOAuthProvider(), GitHubCopilotOAuthProvider(), OpenAICodexOAuthProvider()]
+    [
+        AnthropicOAuthProvider(),
+        GitHubCopilotOAuthProvider(),
+        OpenAICodexOAuthProvider(),
+        XaiOAuthProvider(),
+    ]
 )
 _registry: dict[str, OAuthProvider] = {provider.id: provider for provider in _BUILTIN_PROVIDERS}
 

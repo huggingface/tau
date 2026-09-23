@@ -1,5 +1,6 @@
 import asyncio
 from typing import cast
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
@@ -34,6 +35,16 @@ from tau_coding.oauth_types import (
     OAuthRuntimeAuth,
     OAuthSelectPrompt,
 )
+from tau_coding.oauth_xai import (
+    XAI_CLIENT_ID,
+    XAI_DEVICE_CODE_URL,
+    XAI_REFERRER,
+    XAI_SCOPE,
+    XAI_TOKEN_URL,
+    XaiOAuthProvider,
+    login_xai,
+    refresh_xai_token,
+)
 from tau_coding.provider_config import provider_config_from_catalog_entry
 from tau_coding.provider_runtime import OAuthRuntimeCredentialResolver, _refresh_lock
 
@@ -55,6 +66,14 @@ def _callbacks(
         on_prompt=on_prompt,
         on_select=on_select,
     )
+
+
+def _form(request: httpx.Request) -> dict[str, str]:
+    return {key: values[0] for key, values in parse_qs(request.content.decode()).items()}
+
+
+async def _no_sleep(_seconds: float) -> None:
+    return None
 
 
 @pytest.mark.anyio
@@ -256,6 +275,207 @@ async def test_refresh_github_copilot_preserves_enterprise_metadata() -> None:
 
 
 @pytest.mark.anyio
+async def test_xai_device_login_sends_tau_referrer_and_returns_tokens() -> None:
+    device_codes: list[OAuthDeviceCodeInfo] = []
+    token_polls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal token_polls
+        if str(request.url) == XAI_DEVICE_CODE_URL:
+            fields = _form(request)
+            assert fields["client_id"] == XAI_CLIENT_ID
+            assert fields["scope"] == XAI_SCOPE
+            assert fields["referrer"] == XAI_REFERRER == "tau"
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "device-secret",
+                    "user_code": "ABCD-1234",
+                    "verification_uri": "https://auth.x.ai/activate",
+                    "verification_uri_complete": "https://auth.x.ai/activate?user_code=ABCD-1234",
+                    "interval": 1,
+                    "expires_in": 60,
+                },
+            )
+        if str(request.url) == XAI_TOKEN_URL:
+            fields = _form(request)
+            assert fields["client_id"] == XAI_CLIENT_ID
+            assert fields["device_code"] == "device-secret"
+            assert fields["grant_type"] == "urn:ietf:params:oauth:grant-type:device_code"
+            token_polls += 1
+            if token_polls == 1:
+                return httpx.Response(400, json={"error": "authorization_pending"})
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "xai-access",
+                    "refresh_token": "xai-refresh",
+                    "expires_in": 3600,
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        credential = await login_xai(
+            _callbacks(device_codes=device_codes),
+            client=client,
+            sleep=_no_sleep,
+        )
+
+    assert device_codes == [
+        OAuthDeviceCodeInfo(
+            user_code="ABCD-1234",
+            verification_uri="https://auth.x.ai/activate?user_code=ABCD-1234",
+            interval_seconds=1,
+            expires_in_seconds=60,
+        )
+    ]
+    assert credential.access == "xai-access"
+    assert credential.refresh == "xai-refresh"
+    assert credential.expires > 0
+    assert XaiOAuthProvider().runtime_auth(credential).api_key == "xai-access"
+
+
+@pytest.mark.anyio
+async def test_xai_device_login_rejects_untrusted_verification_uri() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "device_code": "device",
+                "user_code": "code",
+                "verification_uri": "file:///tmp/not-safe",
+                "interval": 5,
+                "expires_in": 60,
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(OAuthError, match="Untrusted verification URI"):
+            await login_xai(_callbacks(), client=client, sleep=_no_sleep)
+
+
+@pytest.mark.anyio
+async def test_xai_device_login_denial_and_expiry() -> None:
+    async def run(error: str, message: str) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if str(request.url) == XAI_DEVICE_CODE_URL:
+                return httpx.Response(
+                    200,
+                    json={
+                        "device_code": "device",
+                        "user_code": "CODE",
+                        "verification_uri": "https://auth.x.ai/activate",
+                        "interval": 1,
+                        "expires_in": 60,
+                    },
+                )
+            return httpx.Response(400, json={"error": error})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with pytest.raises(OAuthError, match=message):
+                await login_xai(_callbacks(), client=client, sleep=_no_sleep)
+
+    await run("access_denied", "xAI device authorization was denied")
+    await run("expired_token", "xAI device code expired")
+
+
+@pytest.mark.anyio
+async def test_xai_device_login_rejects_malformed_json() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="not-json")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(OAuthError, match="invalid JSON"):
+            await login_xai(_callbacks(), client=client, sleep=_no_sleep)
+
+
+@pytest.mark.anyio
+async def test_refresh_xai_token_rotates_refresh_token() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        fields = _form(request)
+        assert str(request.url) == XAI_TOKEN_URL
+        assert fields["grant_type"] == "refresh_token"
+        assert fields["refresh_token"] == "old-refresh"
+        assert fields["client_id"] == XAI_CLIENT_ID
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "new-access",
+                "refresh_token": "new-refresh",
+                "expires_in": 3600,
+            },
+        )
+
+    original = OAuthCredential(access="old-access", refresh="old-refresh", expires=1)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        refreshed = await refresh_xai_token(original, client=client)
+
+    assert refreshed.access == "new-access"
+    assert refreshed.refresh == "new-refresh"
+
+
+@pytest.mark.anyio
+async def test_refresh_xai_token_keeps_previous_refresh_when_omitted() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"access_token": "new-access", "expires_in": 3600},
+        )
+
+    original = OAuthCredential(access="old-access", refresh="keep-me", expires=1)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        refreshed = await refresh_xai_token(original, client=client)
+
+    assert refreshed.access == "new-access"
+    assert refreshed.refresh == "keep-me"
+
+
+@pytest.mark.anyio
+async def test_refresh_xai_token_redacts_failed_response_body() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            json={
+                "error": "invalid_grant",
+                "error_description": "secret-token-body",
+            },
+        )
+
+    original = OAuthCredential(access="old-access", refresh="refresh-secret", expires=1)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(OAuthError) as error:
+            await refresh_xai_token(original, client=client)
+
+    message = str(error.value)
+    assert "401" in message
+    assert "invalid_grant" in message
+    assert "secret-token-body" in message
+    assert "refresh-secret" not in message
+
+
+@pytest.mark.anyio
+async def test_refresh_xai_token_scrubs_echoed_refresh_token() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={
+                "error": "invalid_grant",
+                "error_description": "token refresh-secret is malformed",
+            },
+        )
+
+    original = OAuthCredential(access="old-access", refresh="refresh-secret", expires=1)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(OAuthError) as error:
+            await refresh_xai_token(original, client=client)
+
+    message = str(error.value)
+    assert "invalid_grant: token <redacted> is malformed" in message
+    assert "refresh-secret" not in message
+
+
+@pytest.mark.anyio
 async def test_device_poll_slow_down_and_cancel() -> None:
     sleeps: list[float] = []
     results = iter(
@@ -410,8 +630,12 @@ def test_refresh_locks_are_not_shared_between_event_loops() -> None:
 
 
 def test_builtin_oauth_registry_matches_supported_subscription_providers() -> None:
-    assert oauth_provider_ids() == {"anthropic", "github-copilot", "openai-codex"}
+    assert oauth_provider_ids() == {"anthropic", "github-copilot", "openai-codex", "xai"}
     anthropic = get_oauth_provider("anthropic")
     assert anthropic is not None
     assert anthropic.name == "Anthropic (Claude Pro/Max)"
+    xai = get_oauth_provider("xai")
+    assert xai is not None
+    assert xai.name == "xAI (SuperGrok/X Premium)"
+    assert xai.flow_kinds == ("device_code",)
     assert get_oauth_provider("missing") is None
