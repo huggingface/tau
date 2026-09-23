@@ -4844,7 +4844,7 @@ class TauTuiApp(App[None]):
             )
             return
 
-        command = self.session.handle_command(text)
+        command = await self.session.handle_command(text)
         if command.handled:
             if command.clear_requested:
                 self.state.clear()

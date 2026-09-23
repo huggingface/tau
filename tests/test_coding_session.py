@@ -86,6 +86,29 @@ from tau_coding.session import (
     parse_terminal_command,
 )
 
+PROMPT_HOOK_EXTENSION = """
+from tau_coding.extensions import BeforeAgentStartHookResult
+
+
+def setup(tau):
+    def handler(event, context):
+        if not getattr(handler, "used", False):
+            handler.used = True
+            return BeforeAgentStartHookResult(system_prompt="RUN PROMPT")
+        return None
+
+    tau.on("before_agent_start", handler)
+"""
+
+ASYNC_COMMAND_EXTENSION = """
+def setup(tau):
+    async def mode_command(args, context):
+        await context.api.append_entry("ponytail", {"mode": args or "default"})
+        return f"mode: {args or 'default'}"
+
+    tau.register_command("mode", mode_command)
+"""
+
 
 async def _collect_session_events(session_stream: object) -> list[object]:
     return [event async for event in session_stream]  # type: ignore[attr-defined]
@@ -760,6 +783,289 @@ async def test_reconcile_persistence_failure_is_logged(tmp_path: Path) -> None:
     ]
     assert diagnostics[-1]["phase"] == "session_persistence_reconcile"
     assert diagnostics[-1]["exception"]["message"] == "simulated message_always failure"
+
+
+@pytest.mark.anyio
+async def test_before_agent_start_replaces_system_prompt_for_whole_run(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    extension = tmp_path / "prompt_hook.py"
+    extension.write_text(PROMPT_HOOK_EXTENSION, encoding="utf-8")
+    tool_call = ToolCall(id="call-1", name="echo", arguments={})
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(
+                    message=AssistantMessage(
+                        content=assistant_content("Using tool.", [tool_call]),
+                        stop_reason="toolUse",
+                    )
+                ),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Finished.")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="BASE",
+            storage=storage,
+            cwd=tmp_path,
+            tools=[_echo_tool()],
+            extension_paths=(extension,),
+            extensions_enabled=False,
+        )
+    )
+
+    await _collect_session_events(session.prompt("go"))
+
+    assert [system for _model, system, _messages, _tools in provider.calls] == [
+        "RUN PROMPT",
+        "RUN PROMPT",
+    ]
+    assert session.system_prompt == "BASE"
+    await session.aclose()
+
+
+@pytest.mark.anyio
+async def test_before_agent_start_does_not_leak_into_next_run(tmp_path: Path) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    extension = tmp_path / "prompt_hook.py"
+    extension.write_text(PROMPT_HOOK_EXTENSION, encoding="utf-8")
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="one")),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="two")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="BASE",
+            storage=storage,
+            cwd=tmp_path,
+            extension_paths=(extension,),
+            extensions_enabled=False,
+        )
+    )
+
+    await _collect_session_events(session.prompt("first"))
+    assert session.system_prompt == "BASE"
+    await _collect_session_events(session.prompt("second"))
+
+    assert [system for _model, system, _messages, _tools in provider.calls] == [
+        "RUN PROMPT",
+        "BASE",
+    ]
+    assert session.system_prompt == "BASE"
+    await session.aclose()
+
+
+@pytest.mark.anyio
+async def test_before_agent_start_restores_base_system_prompt_on_provider_failure(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    extension = tmp_path / "prompt_hook.py"
+    extension.write_text(PROMPT_HOOK_EXTENSION, encoding="utf-8")
+    provider = FakeProvider([[assistant_error(message="provider failed")]])
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="BASE",
+            storage=storage,
+            cwd=tmp_path,
+            extension_paths=(extension,),
+            extensions_enabled=False,
+        )
+    )
+
+    await _collect_session_events(session.prompt("go"))
+
+    assert [system for _model, system, _messages, _tools in provider.calls] == ["RUN PROMPT"]
+    assert session.system_prompt == "BASE"
+    await session.aclose()
+
+
+@pytest.mark.anyio
+async def test_before_agent_start_restores_base_system_prompt_on_cancellation(
+    tmp_path: Path,
+) -> None:
+    storage = JsonlSessionStorage(tmp_path / "session.jsonl")
+    extension = tmp_path / "prompt_hook.py"
+    extension.write_text(PROMPT_HOOK_EXTENSION, encoding="utf-8")
+    tool_started = asyncio.Event()
+    release = asyncio.Event()
+    tool_call = ToolCall(id="call-1", name="hang", arguments={})
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(
+                    message=AssistantMessage(
+                        content=assistant_content("Running.", [tool_call]),
+                        stop_reason="toolUse",
+                    )
+                ),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="BASE",
+            storage=storage,
+            cwd=tmp_path,
+            tools=[_hang_tool(tool_started, release)],
+            extension_paths=(extension,),
+            extensions_enabled=False,
+        )
+    )
+
+    async def consume() -> None:
+        async for _event in session.prompt("go"):
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(tool_started.wait(), timeout=5)
+    session.cancel()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert [system for _model, system, _messages, _tools in provider.calls] == ["RUN PROMPT"]
+    assert session.system_prompt == "BASE"
+    await session.aclose()
+
+
+@pytest.mark.anyio
+async def test_queued_input_does_not_retrigger_before_agent_start(tmp_path: Path) -> None:
+    marker = tmp_path / "hook-invocations.txt"
+    extension = tmp_path / "counting_hook.py"
+    extension.write_text(
+        "\n".join(
+            [
+                "from tau_coding.extensions import BeforeAgentStartHookResult",
+                "",
+                "",
+                "def setup(tau):",
+                "    def handler(event, context):",
+                f'        with open({str(marker)!r}, "a", encoding="utf-8") as handle:',
+                '            handle.write("invoked\\n")',
+                "        return None",
+                "",
+                "    tau.on('before_agent_start', handler)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    tool_started = asyncio.Event()
+    release = asyncio.Event()
+    tool_call = ToolCall(id="call-1", name="hang", arguments={})
+    provider = FakeProvider(
+        [
+            [
+                assistant_start(model="fake"),
+                assistant_done(
+                    message=AssistantMessage(
+                        content=assistant_content("Running.", [tool_call]),
+                        stop_reason="toolUse",
+                    )
+                ),
+            ],
+            [
+                assistant_start(model="fake"),
+                assistant_done(message=AssistantMessage(content="Recovered.")),
+            ],
+        ]
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=provider,
+            model="fake",
+            system="BASE",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            tools=[_hang_tool(tool_started, release)],
+            extension_paths=(extension,),
+            extensions_enabled=False,
+        )
+    )
+
+    async def consume() -> None:
+        async for _event in session.prompt("go"):
+            pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(tool_started.wait(), timeout=5)
+    await _collect_session_events(session.prompt("queued", streaming_behavior="steer"))
+    release.set()
+    await task
+
+    assert marker.read_text(encoding="utf-8").count("invoked") == 1
+    assert session.system_prompt == "BASE"
+    await session.aclose()
+
+
+@pytest.mark.anyio
+async def test_async_extension_command_persists_entry_before_return(tmp_path: Path) -> None:
+    extension = tmp_path / "mode_cmd.py"
+    extension.write_text(ASYNC_COMMAND_EXTENSION, encoding="utf-8")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="fake",
+            system="You are Tau.",
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            cwd=tmp_path,
+            extension_paths=(extension,),
+            extensions_enabled=False,
+        )
+    )
+
+    result = await session.handle_command("/mode llama")
+
+    assert result.handled is True
+    assert result.message == "mode: llama"
+    entries = await session.session_entries()
+    ponytail_entries = [
+        entry
+        for entry in entries
+        if isinstance(entry, CustomEntry) and entry.namespace == "ponytail"
+    ]
+    assert ponytail_entries[0].data == {"mode": "llama"}
+    await session.aclose()
+
+
+def _echo_tool() -> AgentTool:
+    async def echo(
+        tool_call_id: object,
+        arguments: object,
+        signal: object = None,
+        on_update: object = None,
+    ) -> AgentToolResult:
+        return AgentToolResult(content=[TextContent(text="done")])
+
+    return AgentTool(
+        name="echo",
+        label="Echo",
+        description="Return done.",
+        parameters={"type": "object"},
+        execute_fn=echo,
+    )
 
 
 def _hang_tool(tool_started: asyncio.Event, release: asyncio.Event) -> AgentTool:
@@ -3088,7 +3394,7 @@ async def test_session_loads_and_expands_skills(tmp_path: Path) -> None:
     assert '<skill name="testing" location="' in provider.calls[0][2][0].content
     assert "References are relative to" in provider.calls[0][2][0].content
     assert provider.calls[0][2][0].content.endswith("</skill>\n\nadd tests")
-    assert session.handle_command("/skill:testing").handled is False
+    assert (await session.handle_command("/skill:testing")).handled is False
 
 
 @pytest.mark.anyio
@@ -3182,7 +3488,7 @@ async def test_system_command_shows_prompt_without_persisting_or_adding_context(
     before_messages = session.messages
     before_entries = await storage.read_all()
 
-    result = session.handle_command("/system")
+    result = await session.handle_command("/system")
 
     assert result.handled is True
     assert result.message == (
@@ -3224,7 +3530,7 @@ async def test_session_expands_prompt_templates_as_slash_commands(tmp_path: Path
     session = await CodingSession.load(config)
 
     assert [template.name for template in session.prompt_templates] == ["example"]
-    assert session.handle_command("/example src/app.py").handled is False
+    assert (await session.handle_command("/example src/app.py")).handled is False
 
     _events = await _collect_session_events(session.prompt("/example src/app.py"))
 
@@ -3249,7 +3555,7 @@ async def test_reserved_prompts_template_cannot_shadow_picker_command(tmp_path: 
         )
     )
 
-    result = session.handle_command("/prompts")
+    result = await session.handle_command("/prompts")
 
     assert result.handled is True
     assert result.prompts_picker_requested is True
@@ -3279,7 +3585,7 @@ async def test_reserved_tools_template_cannot_shadow_picker_command(tmp_path: Pa
         )
     )
 
-    result = session.handle_command("/tools")
+    result = await session.handle_command("/tools")
 
     assert result.handled is True
     assert result.tools_picker_requested is True
@@ -3371,7 +3677,7 @@ async def test_session_loads_with_resource_diagnostics_instead_of_failing(
     assert (
         "bare .md files are no longer treated as skills" in session.resource_diagnostics[0].message
     )
-    assert "Resource diagnostics: 1" in (session.handle_command("/session").message or "")
+    assert "Resource diagnostics: 1" in ((await session.handle_command("/session")).message or "")
 
 
 @pytest.mark.anyio
@@ -3610,7 +3916,7 @@ async def test_session_reload_refreshes_resources_and_system_prompt(tmp_path: Pa
     (tmp_path / "AGENTS.md").write_text("Reloaded project rules.", encoding="utf-8")
 
     entries_before = await storage.read_all()
-    command = session.handle_command("/reload")
+    command = await session.handle_command("/reload")
     assert command.reload_requested is True
     summary = await session.reload()
     entries_after = await storage.read_all()
@@ -3687,7 +3993,7 @@ async def test_session_reload_skips_provider_settings_refresh(
         )
     )
 
-    command = session.handle_command("/reload")
+    command = await session.handle_command("/reload")
     assert command.reload_requested is True
     await session.reload()
 
@@ -3717,7 +4023,7 @@ async def test_session_reload_leaves_system_prompt_when_inputs_are_unchanged(
         fail_build_system_prompt,
     )
 
-    command = session.handle_command("/reload")
+    command = await session.handle_command("/reload")
     assert command.reload_requested is True
     summary = await session.reload()
 
@@ -6225,7 +6531,7 @@ async def test_session_name_indexes_pending_session_without_prompt(
     assert pending_id is not None
     assert manager.get_session(pending_id) is None
 
-    result = session.handle_command("/name Customer bugfix")
+    result = await session.handle_command("/name Customer bugfix")
     assert result.session_name == "Customer bugfix"
     renamed = await session.set_session_name(result.session_name)
 
@@ -6519,7 +6825,10 @@ async def test_session_context_usage_recalculates_after_resume(tmp_path: Path) -
     assert session.context_token_estimate == after_resume_usage.total_tokens
 
 
-def test_custom_prompt_template_retains_precedence_over_other_commands(tmp_path: Path) -> None:
+@pytest.mark.anyio
+async def test_custom_prompt_template_retains_precedence_over_other_commands(
+    tmp_path: Path,
+) -> None:
     session = CodingSession(
         _config(tmp_path, FakeProvider([]), JsonlSessionStorage(tmp_path / "session.jsonl")),
         state=object(),  # type: ignore[arg-type]
@@ -6530,13 +6839,14 @@ def test_custom_prompt_template_retains_precedence_over_other_commands(tmp_path:
         ),
     )
 
-    result = session.handle_command("/new")
+    result = await session.handle_command("/new")
 
     assert result.handled is False
     assert session.expand_prompt_text("/new") == "Custom workflow"
 
 
-def test_minimal_commands_are_handled(tmp_path: Path) -> None:
+@pytest.mark.anyio
+async def test_minimal_commands_are_handled(tmp_path: Path) -> None:
     session = CodingSession(
         _config(tmp_path, FakeProvider([]), JsonlSessionStorage(tmp_path / "session.jsonl")),
         state=object(),  # type: ignore[arg-type]
@@ -6544,12 +6854,12 @@ def test_minimal_commands_are_handled(tmp_path: Path) -> None:
         last_parent_id=None,
     )
 
-    assert session.handle_command("hello").handled is False
-    assert session.handle_command("/new").new_session_requested is True
-    assert session.handle_command("/clear").handled is False
-    assert session.handle_command("/quit").exit_requested is True
-    assert session.handle_command("/exit").exit_requested is True
-    assert session.handle_command("/unknown").handled is False
+    assert (await session.handle_command("hello")).handled is False
+    assert (await session.handle_command("/new")).new_session_requested is True
+    assert (await session.handle_command("/clear")).handled is False
+    assert (await session.handle_command("/quit")).exit_requested is True
+    assert (await session.handle_command("/exit")).exit_requested is True
+    assert (await session.handle_command("/unknown")).handled is False
 
 
 def _thinking_override_provider_config(  # noqa: D103

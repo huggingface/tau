@@ -377,9 +377,12 @@ along with the extension's other contributions.
 ### Commands
 
 `register_command(name, handler, *, description, usage, aliases)` adds a
-slash command. Handlers are sync, receive `(args: str, context)`, and may
-return a `str` shown to the user. Built-in commands cannot be overridden.
-Extension commands appear in the TUI autocomplete automatically.
+slash command. Handlers may be sync or `async`, receive
+`(args: str, context)`, and may return a `str` shown to the user (an `async`
+handler may `await` it). Async handlers can await public async APIs such as
+`context.api.append_entry(...)` before returning, so persisted state is
+durable before the command reports success. Built-in commands cannot be
+overridden. Extension commands appear in the TUI autocomplete automatically.
 
 ### UI dialogs
 
@@ -407,27 +410,23 @@ returns its cancel default immediately, so extensions can call them
 unconditionally. Check `tau.context.ui.has_ui` (or `tau.context.has_ui`) if
 you want to branch on whether a real UI is attached.
 
-**Driving a dialog from a slash command.** Command handlers are synchronous,
-so they cannot `await` a dialog directly. Instead, spawn a task on the
-running event loop and return immediately:
+**Awaiting a dialog from a slash command.** Command handlers may be `async`,
+so a command can `await` a dialog (or `append_entry`) directly before
+returning:
 
 ```python
-import asyncio
-
-def _handler(args, context):
-    async def _menu():
-        choice = await context.api.context.ui.select("Action", ["deploy", "cancel"])
-        if choice and choice != "cancel":
-            context.api.send_user_message(f"run {choice}")
-    asyncio.get_running_loop().create_task(_menu())
-    return None  # any returned text opens a modal the user must dismiss first
+async def _handler(args, context):
+    choice = await context.api.context.ui.select("Action", ["deploy", "cancel"])
+    if choice and choice != "cancel":
+        context.api.send_user_message(f"run {choice}")
+    return None
 
 def setup(tau):
     tau.register_command("menu", _handler)
 ```
 
-The task runs on the same event loop as the session, so awaiting the dialog
-there is safe. (A tool executor, which is already `async`, can `await
+The session event loop runs command handlers, so awaiting dialogs there is
+safe. (A tool executor, which is also `async`, can `await
 tau.context.ui...` directly.)
 
 ### Sidebar sections
@@ -637,6 +636,7 @@ Lifecycle and intercepting hooks:
 | `session_start` | `SessionStartEvent(reason)` | — |
 | `session_shutdown` | `SessionShutdownEvent(reason)` | — |
 | `input` | `InputEvent(text)` | `InputHookResult(action, text, message)` |
+| `before_agent_start` | `BeforeAgentStartEvent(prompt, system_prompt)` | `BeforeAgentStartHookResult(system_prompt)` |
 | `tool_call` | `ToolCallHookEvent(tool_name, arguments)` | `ToolCallHookResult(block, reason, arguments)` |
 | `tool_result` | `ToolResultHookEvent(tool_name, arguments, result)` | `ToolResultHookResult(content, details)` |
 
@@ -646,11 +646,49 @@ Lifecycle and intercepting hooks:
 - `input` runs on the raw prompt text before skill/template expansion.
   `action="transform"` rewrites it (transforms chain), `action="handled"`
   consumes it without an agent run and shows `message` as a notification.
+- `before_agent_start` runs after input handling and skill/template
+  expansion, immediately before an idle run starts (input queued into an
+  already-running agent never triggers it). Each handler receives the
+  chained system prompt and may return `BeforeAgentStartHookResult(
+  system_prompt="...")` as a **full replacement**; the final value applies
+  to every provider request in that run and is restored — never persisted —
+  when the run settles, fails, or is cancelled. Handlers may be sync or
+  `async`.
 - `tool_call` runs before a tool executes. `block=True` prevents execution
   and reports `reason` to the model; returning `arguments` rewrites the
   call. A crashing `tool_call` handler blocks the tool (fail-safe).
 - `tool_result` can rewrite a result's text `content` or `details`; execution
   error state belongs to the host's tool lifecycle rather than the result payload.
+
+A mode-switching extension that swaps prompt guidance per run fits
+`before_agent_start`: keep the mode in setup-local state, persist it with a
+command (see [Commands](#commands) and `append_entry`), and read it here:
+
+```python
+from tau_coding.extensions import BeforeAgentStartHookResult
+
+
+def setup(tau):
+    state = {"mode": "default"}
+
+    @tau.on("before_agent_start")
+    def apply_mode(event, context):
+        if state["mode"] == "concise":
+            return BeforeAgentStartHookResult(
+                system_prompt=event.system_prompt + "\\n\\nBe concise."
+            )
+        return None  # keep the current system prompt
+
+    def set_mode(args, context):
+        state["mode"] = args.strip() or "default"
+        return f"Mode: {state['mode']}"
+
+    tau.register_command("mode", set_mode)
+```
+
+A crashing or malformed `before_agent_start` handler is recorded as a
+diagnostic and skipped (fail-open), so a faulty prompt extension can never
+prevent an agent run.
 
 All other handler failures are contained: they are recorded as diagnostics
 (visible in `/session`) and never crash the session.

@@ -3056,7 +3056,7 @@ class CodingSession:
         if error is not None:
             raise error
 
-    def handle_command(self, text: str) -> CommandResult:
+    async def handle_command(self, text: str) -> CommandResult:
         """Handle coding-session slash commands.
 
         Prompt-template slash commands are expansion directives, so they remain
@@ -3064,7 +3064,7 @@ class CodingSession:
         """
         if expand_prompt_template_command(text, self._prompt_templates) is not None:
             return CommandResult(handled=False)
-        return self._command_registry.execute(self, text)
+        return await self._command_registry.execute(self, text)
 
     def ensure_session_indexed(self) -> None:
         """Persist pending session metadata and add this session to the resume index."""
@@ -3197,7 +3197,18 @@ class CodingSession:
         auto_name_attempted = False
         overflow_message: AssistantMessage | None = None
         route_failure_message: AssistantMessage | None = None
+        base_system_prompt = self._harness.config.system
         try:
+            # Run-scoped prompt transformation: extensions may replace the
+            # system prompt for this run only (including tool continuations and
+            # automatic retries); the cleanup below restores the base value on
+            # every exit path and the transformed value is never persisted.
+            self._harness.config.system = (
+                await self._extension_runtime.run_before_agent_start_hooks(
+                    prompt=expanded_content,
+                    system_prompt=base_system_prompt,
+                )
+            )
             prompt_message: AgentMessage
             if custom_type is not None:
                 prompt_message = CustomMessage(
@@ -3320,6 +3331,7 @@ class CodingSession:
             )
             raise
         finally:
+            self._harness.config.system = base_system_prompt
             try:
                 await self._reconcile_run_persistence(events, context=context)
             finally:
