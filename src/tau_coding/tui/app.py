@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import errno
+import os
+import stat
+import tempfile
 import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping, Sequence
 from contextlib import suppress
@@ -12,11 +16,12 @@ from enum import Enum, auto
 from inspect import isawaitable
 from io import StringIO
 from pathlib import Path
-from typing import Any, ClassVar, Literal, Protocol, TypeVar, cast
+from typing import Any, BinaryIO, ClassVar, Literal, Protocol, TypeVar, cast
 
 from rich.console import Console, Group
 from rich.style import Style
 from rich.text import Text
+from textual import constants as textual_constants
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingsMap
@@ -33,6 +38,7 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    OptionList,
     Static,
     TextArea,
 )
@@ -140,6 +146,7 @@ from tau_coding.session_manager import CodingSessionRecord, SessionManager
 from tau_coding.session_preparation import prepare_coding_session
 from tau_coding.shell_config import load_shell_settings
 from tau_coding.skills import Skill
+from tau_coding.system_prompt import SystemPromptInspection
 from tau_coding.thinking import ThinkingLevel
 from tau_coding.tui.adapter import TuiEventAdapter
 from tau_coding.tui.autocomplete import (
@@ -180,6 +187,7 @@ from tau_coding.tui.themes import (
 from tau_coding.tui.widgets import (
     CompactSessionInfo,
     SessionSidebar,
+    SidebarFileItem,
     TranscriptView,
     _custom_markup_to_text,
     _sidebar_separator,
@@ -203,6 +211,16 @@ NO_STORED_CREDENTIALS_MESSAGE = (
     "No stored credentials to remove. /logout only removes credentials saved by /login; "
     "environment variables and providers.json config are unchanged."
 )
+
+
+def _configure_herdr_textual_mouse() -> None:
+    """Keep Textual on cell mouse coordinates inside affected Herdr versions."""
+    if os.environ.get("HERDR_ENV") != "1" or "TEXTUAL_SMOOTH_SCROLL" in os.environ:
+        return
+    os.environ["TEXTUAL_SMOOTH_SCROLL"] = "0"
+    # Textual reads this environment variable while importing constants, before
+    # Tau reaches the TUI runner. Update the loaded value for this process too.
+    textual_constants.SMOOTH_SCROLL = False  # type: ignore[misc]
 
 
 class LoginRequiredProvider:
@@ -1429,6 +1447,169 @@ class PromptTemplateEditorScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+def _write_staged_utf8(handle: BinaryIO, source: str) -> None:
+    """Write complete UTF-8 editor contents to an open staging file."""
+    remaining = memoryview(source.encode("utf-8"))
+    while remaining:
+        written = handle.write(remaining)
+        if written is None or written <= 0:
+            raise OSError("staged write did not make progress")
+        remaining = remaining[written:]
+
+
+@dataclass(frozen=True, slots=True)
+class _SidebarFileSnapshot:
+    """Resolved target and exact bytes observed when a sidebar file was loaded."""
+
+    target: Path
+    content: bytes
+
+
+def _read_sidebar_file(path: Path) -> tuple[str, _SidebarFileSnapshot]:
+    """Read a sidebar file without normalizing its encoded contents."""
+    target = path.resolve(strict=True)
+    content = target.read_bytes()
+    return content.decode("utf-8"), _SidebarFileSnapshot(target=target, content=content)
+
+
+def _atomic_write_sidebar_file(
+    path: Path,
+    source: str,
+    expected: _SidebarFileSnapshot,
+) -> _SidebarFileSnapshot:
+    """Atomically replace an unchanged, writable file and preserve its mode/symlink."""
+    target = path.resolve(strict=True)
+    replacement = source.encode("utf-8")
+    if target != expected.target:
+        raise OSError(f"File target changed on disk; reopen before saving: {path}")
+    # Ask the OS to enforce ownership/ACL rules without truncating the target.
+    authorization = os.open(
+        target,
+        os.O_WRONLY | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        target_stat = os.fstat(authorization)
+        # Privileged processes may open 0444 files, but the editor treats an
+        # explicitly read-only resource as not authorized for replacement.
+        if target_stat.st_mode & 0o222 == 0:
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), target)
+        target_mode = stat.S_IMODE(target_stat.st_mode)
+    finally:
+        os.close(authorization)
+
+    descriptor = -1
+    temporary: Path | None = None
+    try:
+        descriptor, raw_temporary = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+        )
+        temporary = Path(raw_temporary)
+        os.chmod(temporary, target_mode)
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1
+            _write_staged_utf8(handle, source)
+            handle.flush()
+            os.fsync(handle.fileno())
+        current_target = path.resolve(strict=True)
+        if current_target != expected.target or current_target.read_bytes() != expected.content:
+            raise OSError(f"File changed on disk; reopen before saving: {path}")
+        os.replace(temporary, target)
+        temporary = None
+        return _SidebarFileSnapshot(target=target, content=replacement)
+    finally:
+        if descriptor >= 0:
+            with suppress(OSError):
+                os.close(descriptor)
+        if temporary is not None:
+            with suppress(OSError):
+                temporary.unlink()
+
+
+class SidebarFileEditor(Vertical):
+    """Main-area editor for a file selected from the session sidebar."""
+
+    BINDINGS: ClassVar[list[BindingEntry]] = [
+        Binding("escape", "close", "Close", show=False, priority=True),
+        Binding("ctrl+s", "save", "Save", show=False, priority=True),
+    ]
+
+    def __init__(
+        self,
+        *,
+        handle: MainViewHandle,
+        path: Path,
+        label: str,
+        kind: str,
+        source: str,
+        snapshot: _SidebarFileSnapshot,
+    ) -> None:
+        super().__init__(id="sidebar-file-editor")
+        self.handle = handle
+        self.path = path
+        self.label = label
+        self.kind = kind
+        self.source = source
+        self._saved_source = source
+        self._snapshot = snapshot
+        self._saving = False
+
+    def compose(self) -> ComposeResult:
+        yield Static(f"Edit {self.kind}: {self.label}", id="sidebar-file-editor-title")
+        yield Static(str(self.path), id="sidebar-file-editor-path")
+        yield TextArea(self.source, id="sidebar-file-editor-input")
+        yield Static(
+            "Ctrl+S saves - Escape closes",
+            id="sidebar-file-editor-help",
+        )
+        yield Static("", id="sidebar-file-editor-status")
+
+    def on_mount(self) -> None:
+        self.query_one("#sidebar-file-editor-input", TextArea).focus()
+
+    @property
+    def is_dirty(self) -> bool:
+        """Return whether the mounted editor differs from its last saved source."""
+        try:
+            source = self.query_one("#sidebar-file-editor-input", TextArea).text
+        except NoMatches:
+            return False
+        return source != self._saved_source
+
+    def action_save(self) -> None:
+        """Write the current editor contents without closing the editor."""
+        if self._saving:
+            return
+        self._saving = True
+        self.query_one("#sidebar-file-editor-status", Static).update("Saving…")
+        self.app.run_worker(self._save(), exclusive=False)
+
+    async def _save(self) -> None:
+        source = self.query_one("#sidebar-file-editor-input", TextArea).text
+        try:
+            snapshot = await asyncio.to_thread(
+                _atomic_write_sidebar_file,
+                self.path,
+                source,
+                self._snapshot,
+            )
+        except Exception as exc:  # noqa: BLE001 - filesystem worker boundary
+            message = f"Could not save {self.path}: {exc}"
+            self.query_one("#sidebar-file-editor-status", Static).update(message)
+            cast(TauTuiApp, self.app)._notify(message, severity="error")
+        else:
+            self._snapshot = snapshot
+            self._saved_source = source
+            message = f"Saved {self.path}"
+            self.query_one("#sidebar-file-editor-status", Static).update(message)
+            cast(TauTuiApp, self.app)._notify(message)
+        finally:
+            self._saving = False
+
+    def action_close(self) -> None:
+        """Close the editor and restore the transcript."""
+        self.handle.close()
+
+
 class SessionPickerScreen(ModalScreen[str | None]):
     """Project-and-session navigator for indexed sessions."""
 
@@ -1451,21 +1632,18 @@ class SessionPickerScreen(ModalScreen[str | None]):
 
     #session-picker-columns {
         height: auto;
-    }
-
-    .session-picker-column {
-        height: auto;
         border: tall $tau-border;
         background: $tau-transcript-background;
     }
 
-    .session-picker-column.-active-column {
-        border: tall $tau-accent;
+    .session-picker-column {
+        height: auto;
+        background: $tau-transcript-background;
     }
 
     #session-picker-project-column {
         width: 34;
-        margin-right: 1;
+        border-right: tall $tau-border;
     }
 
     #session-picker-session-column {
@@ -1502,6 +1680,8 @@ class SessionPickerScreen(ModalScreen[str | None]):
         *,
         local_cwd: Path,
         theme: TuiTheme,
+        loading_other_projects: bool = False,
+        current_project_loaded: bool = True,
     ) -> None:
         super().__init__()
         self.records = tuple(records)
@@ -1509,9 +1689,12 @@ class SessionPickerScreen(ModalScreen[str | None]):
         self.theme = theme
         self.search_value = ""
         self.active_column: Literal["projects", "sessions"] = "sessions"
-        self.project_cwds = self._project_paths()
+        self.records_by_project = self._group_records_by_project()
+        self.project_cwds = tuple(self.records_by_project)
         self.selected_project_index = 0
         self.visible_records: tuple[SessionCompletionRecord, ...] = ()
+        self.loading_other_projects = loading_other_projects
+        self.current_project_loaded = current_project_loaded
 
     def compose(self) -> ComposeResult:
         """Compose project and session columns under one search field."""
@@ -1527,7 +1710,7 @@ class SessionPickerScreen(ModalScreen[str | None]):
                     classes="session-picker-column",
                 ):
                     yield Static("Projects", classes="session-picker-column-title")
-                    yield ListView(id="session-picker-project-list")
+                    yield OptionList(id="session-picker-project-list", markup=False, compact=True)
                 with Vertical(
                     id="session-picker-session-column",
                     classes="session-picker-column -active-column",
@@ -1537,7 +1720,7 @@ class SessionPickerScreen(ModalScreen[str | None]):
                         id="session-picker-session-title",
                         classes="session-picker-column-title",
                     )
-                    yield ListView(id="session-picker-list")
+                    yield OptionList(id="session-picker-list", markup=False, compact=True)
             yield Static("", id="session-picker-help")
 
     def on_mount(self) -> None:
@@ -1575,20 +1758,20 @@ class SessionPickerScreen(ModalScreen[str | None]):
             event.stop()
             action()
 
-    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         """Show sessions for the highlighted project immediately."""
-        if event.list_view.id != "session-picker-project-list":
+        if event.option_list.id != "session-picker-project-list":
             return
-        index = event.list_view.index
-        if index is None or index == self.selected_project_index:
+        index = event.option_index
+        if index == self.selected_project_index:
             return
         self.selected_project_index = index
         self._refresh_session_list()
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
-        if event.list_view.id == "session-picker-project-list":
-            self.selected_project_index = event.index
+        if event.option_list.id == "session-picker-project-list":
+            self.selected_project_index = event.option_index
             self._refresh_session_list()
             self.action_focus_sessions()
             return
@@ -1615,13 +1798,51 @@ class SessionPickerScreen(ModalScreen[str | None]):
     def action_cancel(self) -> None:
         self.dismiss(None)
 
-    def _active_list(self) -> ListView:
+    def update_records(
+        self,
+        records: Sequence[SessionCompletionRecord],
+        *,
+        loading_other_projects: bool = False,
+    ) -> None:
+        """Replace records after background loading while preserving navigation."""
+        selected_cwd = self.project_cwds[self.selected_project_index]
+        session_list = self.query_one("#session-picker-list", OptionList)
+        selected_session_id = None
+        if session_list.highlighted is not None and session_list.highlighted < len(
+            self.visible_records
+        ):
+            selected_session_id = self.visible_records[session_list.highlighted].id
+
+        self.records = tuple(records)
+        self.records_by_project = self._group_records_by_project()
+        self.project_cwds = tuple(self.records_by_project)
+        try:
+            self.selected_project_index = self.project_cwds.index(selected_cwd)
+        except ValueError:
+            self.selected_project_index = 0
+        self.loading_other_projects = loading_other_projects
+        self.current_project_loaded = True
+        self._refresh_project_list()
+        self._refresh_session_list()
+
+        if selected_session_id is not None:
+            for index, record in enumerate(self.visible_records):
+                if record.id == selected_session_id:
+                    session_list.highlighted = index
+                    break
+
+    def finish_loading(self) -> None:
+        """Remove the loading state when a background refresh fails."""
+        self.loading_other_projects = False
+        self._update_help()
+
+    def _active_list(self) -> OptionList:
         selector = (
             "#session-picker-project-list"
             if self.active_column == "projects"
             else "#session-picker-list"
         )
-        return self.query_one(selector, ListView)
+        return self.query_one(selector, OptionList)
 
     def _set_active_column(self, column: Literal["projects", "sessions"]) -> None:
         self.active_column = column
@@ -1632,53 +1853,47 @@ class SessionPickerScreen(ModalScreen[str | None]):
         self._update_help()
 
     def _select_visible_record(self) -> None:
-        index = self.query_one("#session-picker-list", ListView).index
+        index = self.query_one("#session-picker-list", OptionList).highlighted
         if index is not None and index < len(self.visible_records):
             self.dismiss(self.visible_records[index].id)
 
-    def _project_paths(self) -> tuple[Path, ...]:
-        paths = [self.local_cwd]
+    def _group_records_by_project(
+        self,
+    ) -> dict[Path, tuple[SessionCompletionRecord, ...]]:
+        """Group records once so picker refreshes stay linear in history size."""
+        grouped: dict[Path, list[SessionCompletionRecord]] = {self.local_cwd: []}
         for record in self.records:
-            cwd = Path(record.cwd).resolve()
-            if cwd not in paths:
-                paths.append(cwd)
-        return tuple(paths)
+            grouped.setdefault(Path(record.cwd).resolve(), []).append(record)
+        return {cwd: tuple(records) for cwd, records in grouped.items()}
 
     def _refresh_project_list(self) -> None:
-        project_list = self.query_one("#session-picker-project-list", ListView)
-        project_list.clear()
-        items: list[ListItem] = []
+        project_list = self.query_one("#session-picker-project-list", OptionList)
+        items: list[str] = []
         for cwd in self.project_cwds:
-            count = sum(1 for record in self.records if Path(record.cwd).resolve() == cwd)
             marker = "● " if cwd == self.local_cwd else "  "
-            noun = "session" if count == 1 else "sessions"
             folder_name = cwd.name or str(cwd)
-            items.append(ListItem(Label(f"{marker}{folder_name}  {count} {noun}", markup=False)))
-        project_list.extend(items)
-        project_list.index = self.selected_project_index
+            items.append(f"{marker}{folder_name}")
+        project_list.set_options(items)
+        project_list.highlighted = self.selected_project_index
 
     def _refresh_session_list(self) -> None:
         selected_cwd = self.project_cwds[self.selected_project_index]
         self.query_one("#session-picker-session-title", Static).update(
             f"Recent sessions — {selected_cwd}"
         )
-        project_records = tuple(
-            record for record in self.records if Path(record.cwd).resolve() == selected_cwd
-        )
+        project_records = self.records_by_project[selected_cwd]
         self.visible_records = _filter_session_records(project_records, self.search_value)
-        session_list = self.query_one("#session-picker-list", ListView)
-        session_list.clear()
-        session_list.extend(
-            ListItem(Label(_session_picker_label(record), markup=False))
-            for record in self.visible_records
-        )
-        session_list.index = 0 if self.visible_records else None
+        session_list = self.query_one("#session-picker-list", OptionList)
+        session_list.set_options(_session_picker_label(record) for record in self.visible_records)
+        session_list.highlighted = 0 if self.visible_records else None
         self._update_help()
 
     def _update_help(self) -> None:
-        if not self.is_mounted:
-            return
-        if not self.visible_records and self.active_column == "sessions":
+        if self.loading_other_projects and not self.current_project_loaded:
+            text = "Loading sessions… - Escape closes"
+        elif self.loading_other_projects:
+            text = "Loading other projects… - Current sessions are ready - Escape closes"
+        elif not self.visible_records and self.active_column == "sessions":
             text = "No matching sessions - Left selects a project - Escape closes"
         elif self.active_column == "projects":
             text = "Up/Down selects project - Right opens sessions - Escape closes"
@@ -3388,6 +3603,40 @@ class TauTuiApp(App[None]):
         padding: 1 0 0 1;
     }
 
+    #sidebar .sidebar-section-title {
+        height: 1;
+        padding: 0 0 0 1;
+        color: $tau-prompt-text;
+        text-style: bold;
+    }
+
+    #sidebar .sidebar-file-list {
+        width: 1fr;
+        height: auto;
+    }
+
+    #sidebar .sidebar-resource-origin,
+    #sidebar .sidebar-file-empty,
+    #sidebar .sidebar-file-overflow {
+        width: 1fr;
+        height: auto;
+        color: $tau-muted-text;
+    }
+
+    #sidebar .sidebar-file-item {
+        width: 1fr;
+        height: auto;
+        color: $tau-muted-text;
+        background: transparent;
+    }
+
+    #sidebar .sidebar-file-item:hover,
+    #sidebar .sidebar-file-item:focus {
+        color: $tau-highlight-text;
+        background: $tau-highlight-background;
+        text-style: underline;
+    }
+
     #sidebar-extension-sections,
     #sidebar .extension-sidebar-section,
     #sidebar .extension-sidebar-body {
@@ -3446,6 +3695,36 @@ class TauTuiApp(App[None]):
         overflow-x: auto;
         scrollbar-size-vertical: 0;
         scrollbar-size-horizontal: 1;
+    }
+
+    #sidebar-file-editor {
+        width: 1fr;
+        height: 1fr;
+        padding: 0 1;
+    }
+
+    #sidebar-file-editor-title {
+        height: 1;
+        color: $tau-accent;
+        text-style: bold;
+    }
+
+    #sidebar-file-editor-path,
+    #sidebar-file-editor-help,
+    #sidebar-file-editor-status {
+        height: 1;
+        color: $tau-muted-text;
+    }
+
+    #sidebar-file-editor-path {
+        margin-bottom: 1;
+    }
+
+    #sidebar-file-editor-input {
+        height: 1fr;
+        background: $tau-prompt-background;
+        color: $tau-prompt-text;
+        border: tall $tau-prompt-border;
     }
 
     #above-prompt-slot {
@@ -3609,7 +3888,8 @@ class TauTuiApp(App[None]):
         border: tall $tau-border;
     }
 
-    ListView {
+    ListView,
+    OptionList {
         scrollbar-background: $tau-transcript-background;
         scrollbar-color: $tau-border;
         scrollbar-color-hover: $tau-highlight-background;
@@ -3625,6 +3905,11 @@ class TauTuiApp(App[None]):
     }
 
     ListView > ListItem.-highlight Label {
+        background: $tau-highlight-background;
+        color: $tau-highlight-text;
+    }
+
+    OptionList > .option-list--option-highlighted {
         background: $tau-highlight-background;
         color: $tau-highlight-text;
     }
@@ -4410,6 +4695,38 @@ class TauTuiApp(App[None]):
         self._completion_visible_line_budget = None
         self._update_responsive_layout(event.size.width, event.size.height)
 
+    @on(SidebarFileItem.OpenRequested)
+    def on_sidebar_file_open_requested(self, event: SidebarFileItem.OpenRequested) -> None:
+        """Open a sidebar resource file in the main-area editor."""
+        event.stop()
+        item = event.item
+        current = self._extension_main_view
+        if (
+            current is not None
+            and isinstance(current.widget, SidebarFileEditor)
+            and current.widget.is_dirty
+        ):
+            message = "Save or close the current file before opening another."
+            self._notify(message, severity="warning")
+            current.widget.query_one("#sidebar-file-editor-status", Static).update(message)
+            current.widget.query_one("#sidebar-file-editor-input", TextArea).focus()
+            return
+        try:
+            source, snapshot = _read_sidebar_file(item.path)
+        except (OSError, UnicodeDecodeError) as exc:
+            self._notify(f"Could not read {item.path}: {exc}", severity="error")
+            return
+        self._open_extension_main_view(
+            lambda handle, theme: SidebarFileEditor(
+                handle=handle,
+                path=item.path,
+                label=item.file_label,
+                kind=item.kind,
+                source=source,
+                snapshot=snapshot,
+            )
+        )
+
     def on_click(self, event: events.Click) -> None:
         """Return keyboard focus to the prompt after clicks in the main TUI."""
         if event.button != 1:
@@ -4444,8 +4761,27 @@ class TauTuiApp(App[None]):
             return
         prompt = self.query_one("#prompt", PromptInput)
         prompt.sync_pending_paste()
-        self._sync_prompt_shell_mode(event.text_area.text)
-        self._completion_state = self._build_completion_state(event.text_area.text)
+        # Read text and cursor from the widget so both come from one snapshot.
+        text = prompt.text
+        self._sync_prompt_shell_mode(text)
+        self._completion_state = self._build_completion_state(text, cursor=prompt.cursor_position)
+        self._refresh_completions()
+
+    def on_text_area_selection_changed(self, event: TextArea.SelectionChanged) -> None:
+        """Close prompt autocomplete when the caret leaves the completed token."""
+        if event.text_area.id != "prompt":
+            return
+        # Edits post SelectionChanged before Changed; check after Changed has rebuilt.
+        self.call_later(self._close_completions_if_caret_left_token)
+
+    def _close_completions_if_caret_left_token(self) -> None:
+        if not self._completion_state.items:
+            return
+        item = self._completion_state.items[0]
+        cursor = self.query_one("#prompt", PromptInput).cursor_position
+        if item.start < cursor <= item.end:
+            return
+        self._completion_state = CompletionState()
         self._refresh_completions()
 
     async def action_submit_prompt(self) -> None:
@@ -4616,7 +4952,11 @@ class TauTuiApp(App[None]):
                 if _command_message_uses_notification(text, command.message):
                     self._notify(command.message)
                 elif _command_message_uses_transcript(text):
-                    self._append_command_message(text, command.message)
+                    self._append_command_message(
+                        text,
+                        command.message,
+                        system_prompt_inspection=command.system_prompt_inspection,
+                    )
                 else:
                     self._show_command_message(text, command.message)
             self._refresh()
@@ -5867,16 +6207,21 @@ class TauTuiApp(App[None]):
             self.screen.action_select_cursor()
             return
         prompt = self.query_one("#prompt", PromptInput)
+        item = self._completion_state.selected
         applied = self._apply_selected_completion(prompt.text)
-        if applied is None:
+        if applied is None or item is None:
             return
         prompt.text = applied
-        prompt.move_cursor(_text_end_location(applied))
-        self._completion_state = self._build_completion_state(prompt.text)
+        cursor = item.cursor_after_apply()
+        prompt.cursor_position = cursor
+        self._completion_state = self._build_completion_state(prompt.text, cursor=cursor)
         self._refresh_completions()
 
     def action_completion_next(self) -> None:
-        """Select the next prompt completion or move down in the prompt."""
+        """Select the next prompt completion or move down in the active editor."""
+        if isinstance(self.focused, TextArea) and self.focused.id == "sidebar-file-editor-input":
+            self.focused.action_cursor_down()
+            return
         if isinstance(self.screen, PromptTemplateEditorScreen):
             self.screen.query_one("#prompt-template-editor-input", TextArea).action_cursor_down()
             return
@@ -5912,7 +6257,10 @@ class TauTuiApp(App[None]):
         self._refresh_completions()
 
     def action_completion_previous(self) -> None:
-        """Select the previous prompt completion or move up in the prompt."""
+        """Select the previous prompt completion or move up in the active editor."""
+        if isinstance(self.focused, TextArea) and self.focused.id == "sidebar-file-editor-input":
+            self.focused.action_cursor_up()
+            return
         if isinstance(self.screen, PromptTemplateEditorScreen):
             self.screen.query_one("#prompt-template-editor-input", TextArea).action_cursor_up()
             return
@@ -6013,22 +6361,54 @@ class TauTuiApp(App[None]):
         self._refresh_completions()
 
     def action_open_session_picker(self) -> None:
-        """Open the indexed session picker."""
+        """Open local sessions immediately, then load other projects."""
         if self.state.running:
             self._notify("Tau is already working. Press Escape to cancel.")
             return
-        records = _session_records(self.session)
-        if not records:
+        if getattr(self.session, "session_manager", None) is None:
             self._notify("No sessions found.")
             return
-        self.push_screen(
-            SessionPickerScreen(
-                records,
-                local_cwd=Path(self.session.cwd),
-                theme=self.tui_settings.resolved_theme,
-            ),
-            callback=self._handle_session_picker_result,
+        picker = SessionPickerScreen(
+            (),
+            local_cwd=Path(self.session.cwd),
+            theme=self.tui_settings.resolved_theme,
+            loading_other_projects=True,
+            current_project_loaded=False,
         )
+        self.push_screen(picker, callback=self._handle_session_picker_result)
+        self.run_worker(self._refresh_open_session_picker(picker), exclusive=False)
+
+    async def _refresh_open_session_picker(self, picker: SessionPickerScreen) -> None:
+        """Load session indexes without blocking Textual's event loop."""
+        try:
+            local_records = await asyncio.to_thread(_local_session_records, self.session)
+        except Exception as exc:  # noqa: BLE001 - still attempt the global index
+            if self.screen is picker:
+                self._notify(f"Could not load current project sessions: {exc}", severity="warning")
+        else:
+            if not await self._wait_for_open_session_picker(picker):
+                return
+            picker.update_records(local_records, loading_other_projects=True)
+
+        try:
+            records = await asyncio.to_thread(_session_records, self.session)
+        except Exception as exc:  # noqa: BLE001 - keep local sessions usable
+            if self.screen is picker:
+                picker.finish_loading()
+                self._notify(f"Could not load other projects: {exc}", severity="warning")
+            return
+        if await self._wait_for_open_session_picker(picker):
+            picker.update_records(records)
+
+    async def _wait_for_open_session_picker(self, picker: SessionPickerScreen) -> bool:
+        """Wait until this picker is mounted, or report that it was closed."""
+        if self.screen is not picker:
+            return False
+        while not picker.is_mounted:
+            await asyncio.sleep(0)
+            if self.screen is not picker:
+                return False
+        return True
 
     def _open_prompt_template_picker(self) -> None:
         self.push_screen(
@@ -6286,7 +6666,13 @@ class TauTuiApp(App[None]):
             return None
         return item.apply(value)
 
-    def _append_command_message(self, command_text: str, message: str) -> None:
+    def _append_command_message(
+        self,
+        command_text: str,
+        message: str,
+        *,
+        system_prompt_inspection: SystemPromptInspection | None = None,
+    ) -> None:
         """Append non-persistent command output to the visible transcript."""
         is_system_prompt = command_text.split(maxsplit=1)[0].casefold() == "/system"
         separator = "\n\n" if is_system_prompt else "\n"
@@ -6297,6 +6683,9 @@ class TauTuiApp(App[None]):
             "status",
             f"{title}{separator}{message}",
             system_prompt=is_system_prompt,
+            system_prompt_sources=(
+                system_prompt_inspection.sources if system_prompt_inspection is not None else None
+            ),
         )
 
     def _show_command_message(self, command_text: str, message: str) -> None:
@@ -7058,10 +7447,11 @@ class TauTuiApp(App[None]):
         state = "shown" if self._sidebar_visibility_override else "hidden"
         self._notify(f"Sidebar {state} for this session.")
 
-    def _build_completion_state(self, text: str) -> CompletionState:
+    def _build_completion_state(self, text: str, *, cursor: int | None = None) -> CompletionState:
         registry = _session_command_registry(self.session)
         return build_completion_state(
             text,
+            cursor=cursor,
             command_registry=registry,
             skills=self.session.skills,
             prompt_templates=self.session.prompt_templates,
@@ -7072,7 +7462,7 @@ class TauTuiApp(App[None]):
             ),
             thinking_levels=getattr(self.session, "available_thinking_levels", ()),
             theme_names=available_tui_theme_names(),
-            session_options=_session_options(self.session),
+            session_options=(_session_options(self.session) if text.startswith("/resume ") else ()),
             cwd=self.session.cwd,
         )
 
@@ -7326,6 +7716,19 @@ def _session_command_registry(session: CodingSession) -> CommandRegistry:
 
 def _session_options(session: CodingSession) -> tuple[CompletionOption, ...]:
     return tuple(_session_option(record) for record in _session_records(session))
+
+
+def _local_session_records(session: CodingSession) -> tuple[SessionCompletionRecord, ...]:
+    """Return only the current project's indexed sessions."""
+    manager = getattr(session, "session_manager", None)
+    if manager is None:
+        return ()
+    try:
+        records = manager.list_sessions(session.cwd)
+    except TypeError:
+        records = manager.list_sessions()
+    local_cwd = Path(session.cwd).resolve()
+    return tuple(record for record in records if Path(record.cwd).resolve() == local_cwd)
 
 
 def _session_records(session: CodingSession) -> tuple[SessionCompletionRecord, ...]:
@@ -8023,6 +8426,7 @@ async def run_tui_app(
     thinking_level_override: ThinkingLevel | None = None,
 ) -> str | None:
     """Run the Textual app and return the active id when its session is persisted."""
+    _configure_herdr_textual_mouse()
     if new_session and session_id is not None:
         raise RuntimeError("--session and --new-session cannot be used together")
 

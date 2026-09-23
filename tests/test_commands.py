@@ -184,7 +184,11 @@ def test_system_command_returns_active_prompt(tmp_path: Path) -> None:
     result = registry.execute(session, "/system")
 
     assert result.handled is True
-    assert result.message == "You are Tau.\nFollow project instructions."
+    assert result.message == (
+        "#### 01 · Effective system prompt\n\n"
+        "**Source:** `active Tau session`\n\n"
+        "You are Tau.\nFollow project instructions."
+    )
     assert registry.execute(session, "/system extra").message == "Usage: /system"
 
 

@@ -922,6 +922,18 @@ class ExtensionRuntime:
         """Return free-form prompt sections in registration order."""
         return tuple(section for _, _, section in self._prompt_sections)
 
+    @property
+    def sourced_prompt_sections(self) -> tuple[PromptSection, ...]:
+        """Return prompt sections annotated with their owning extension."""
+        return tuple(
+            PromptSection(
+                title=section.title,
+                body=section.body,
+                source=f"extension: {extension}",
+            )
+            for _owner, extension, section in self._prompt_sections
+        )
+
     # -- actions (called through ExtensionAPI) --------------------------------
 
     def send_user_message(self, content: str, *, deliver_as: str = "follow_up") -> None:

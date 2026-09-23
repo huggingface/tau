@@ -22,7 +22,12 @@ from tau_coding.provider_config import (
 from tau_coding.rendering import PrintOutputMode
 from tau_coding.resources import TauResourcePaths
 from tau_coding.skills import load_skills
-from tau_coding.system_prompt import BuildSystemPromptOptions, build_system_prompt
+from tau_coding.system_prompt import (
+    BuildSystemPromptOptions,
+    build_system_prompt,
+    build_system_prompt_inspection,
+    format_system_prompt_inspection,
+)
 from tau_coding.tools import create_coding_tools
 from tau_coding.update_check import (
     ReleaseNoteSection,
@@ -758,7 +763,7 @@ async def test_run_print_mode_system_command_prints_prompt_without_provider_call
     )
 
     captured = capsys.readouterr()
-    expected_system = build_system_prompt(
+    inspection = build_system_prompt_inspection(
         BuildSystemPromptOptions(
             cwd=tmp_path,
             tools=create_coding_tools(cwd=tmp_path),
@@ -766,7 +771,7 @@ async def test_run_print_mode_system_command_prints_prompt_without_provider_call
         )
     )
     assert ok is True
-    assert captured.out == f"{expected_system}\n"
+    assert captured.out == f"{format_system_prompt_inspection(inspection)}\n"
     assert captured.err == ""
     assert provider.calls == []
     assert await storage.read_all() == []
@@ -1931,6 +1936,61 @@ def test_setup_command_writes_provider_settings(
     assert provider.timeout_seconds == 120
     assert provider.max_retries == 2
     assert provider.max_retry_delay_seconds == 0.5
+
+
+def test_relative_tau_home_reports_actionable_cli_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TAU_HOME", ".tau-personal")
+
+    result = CliRunner().invoke(app, ["providers"])
+
+    assert result.exit_code == 2
+    assert "Invalid value for TAU_HOME" in result.stderr
+    assert "must be an absolute path" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_unknown_user_tau_home_reports_actionable_cli_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TAU_HOME", "~tau-review-user-that-does-not-exist-728/.tau")
+
+    result = CliRunner().invoke(app, ["providers"])
+
+    assert result.exit_code == 2
+    assert "Invalid value for TAU_HOME" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_setup_command_writes_only_to_configured_tau_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tau_home = tmp_path / ".tau-personal"
+    monkeypatch.setenv("TAU_HOME", str(tau_home))
+    monkeypatch.setenv("LOCAL_API_KEY", "test-key")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--provider",
+            "local",
+            "--base-url",
+            "http://localhost:11434/v1",
+            "--api-key-env",
+            "LOCAL_API_KEY",
+            "--model",
+            "qwen",
+            "setup",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert (tau_home / "catalog.toml").exists()
+    assert (tau_home / "providers.json").exists()
+    assert not (tmp_path / ".tau").exists()
+    assert load_provider_settings(TauPaths(home=tau_home)).default_provider == "local"
 
 
 def test_setup_command_warns_when_api_key_env_is_missing(

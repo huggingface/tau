@@ -20,6 +20,41 @@ def test_resource_paths_use_tau_subdirectories(tmp_path: Path) -> None:
     assert paths.prompts_dirs == (tmp_path / "prompts",)
 
 
+def test_default_resource_paths_follow_tau_home_and_share_agents(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tau_home = tmp_path / ".tau-personal"
+    cwd = tmp_path / "project"
+    monkeypatch.setenv("TAU_HOME", str(tau_home))
+
+    paths = TauResourcePaths(cwd=cwd)
+
+    assert paths.root == tau_home
+    assert paths.skills_dir == tau_home / "skills"
+    assert paths.prompts_dir == tau_home / "prompts"
+    assert paths.themes_dirs == (tau_home / "themes", cwd / ".tau" / "themes")
+    assert paths.system_prompt_path == tau_home / "SYSTEM.md"
+    assert paths.append_system_prompt_path == tau_home / "APPEND_SYSTEM.md"
+    assert paths.agents_root == Path.home() / ".agents"
+    assert paths.skills_dirs == (
+        tau_home / "skills",
+        Path.home() / ".agents" / "skills",
+        cwd / ".tau" / "skills",
+        cwd / ".agents" / "skills",
+    )
+
+
+def test_explicit_resource_root_ignores_tau_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    explicit_root = tmp_path / "explicit"
+    monkeypatch.setenv("TAU_HOME", str(tmp_path / "environment"))
+
+    assert TauResourcePaths(root=explicit_root).root == explicit_root
+
+
 def test_resource_paths_include_agents_and_project_directories(tmp_path: Path) -> None:
     cwd = tmp_path / "project"
     tau_home = tmp_path / "home" / ".tau"
@@ -68,6 +103,7 @@ def test_system_prompt_files_replace_by_precedence_and_append_in_order(tmp_path:
     assert resources.custom_prompt == "Project base"
     assert resources.custom_prompt_path == cwd / ".tau" / "SYSTEM.md"
     assert resources.append_prompt == "User append\n\nProject append"
+    assert resources.append_prompts == ("User append", "Project append")
     assert resources.append_prompt_paths == (
         tau_home / "APPEND_SYSTEM.md",
         cwd / ".tau" / "APPEND_SYSTEM.md",

@@ -364,6 +364,42 @@ Use these slash commands inside Tau:
 Saved credentials take precedence over environment variables. `/logout` only
 edits saved credentials — it never touches your environment or `providers.json`.
 
+### Multiple account profiles
+
+Tau stores one saved credential per provider in its user-data home. To use
+multiple accounts for the same provider, give each account a separate
+`TAU_HOME`. This isolates credentials, sessions, provider preferences, settings,
+extensions, and caches:
+
+```bash
+# POSIX shells
+install -d -m 700 "$HOME/.tau-work" "$HOME/.tau-personal"
+alias tau-work='TAU_HOME="$HOME/.tau-work" command tau'
+alias tau-personal='TAU_HOME="$HOME/.tau-personal" command tau'
+```
+
+In PowerShell, a function can scope the environment change to one invocation:
+
+```powershell
+function tau-personal {
+  $previous = $env:TAU_HOME
+  try { $env:TAU_HOME = "$HOME\.tau-personal"; tau @args }
+  finally { $env:TAU_HOME = $previous }
+}
+```
+
+Run each alias or function and authenticate that profile once:
+
+```text
+/login anthropic-subscription
+```
+
+`TAU_HOME` must be an absolute path after optional `~` expansion. User-level
+`~/.agents` resources and project `.tau`/`.agents` resources remain shared, as
+do credentials supplied directly through environment variables. See
+[Configuration]({{< relref "../reference/configuration.md#tau-home" >}}) for the
+complete boundary.
+
 {{% note title="OAuth troubleshooting" %}}
 Browser login can fall back to a pasted redirect URL/code when the callback
 port is unavailable or the browser runs on another machine. In that flow the

@@ -22,11 +22,13 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
+from textual.color import Color as TextualColor
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.content import Content, Span
 from textual.content import Style as TextualStyle  # type: ignore[attr-defined]
 from textual.css.query import NoMatches
 from textual.geometry import Offset
+from textual.message import Message
 from textual.selection import Selection
 from textual.widget import Widget
 from textual.widgets import Collapsible, Static
@@ -38,7 +40,11 @@ from tau_coding.context_window import estimate_text_tokens
 from tau_coding.prompt_templates import PromptTemplate
 from tau_coding.session_stats import SessionStats
 from tau_coding.skills import Skill
-from tau_coding.system_prompt import ProjectContextFile, format_skills_for_prompt
+from tau_coding.system_prompt import (
+    ProjectContextFile,
+    SystemPromptSource,
+    format_skills_for_prompt,
+)
 from tau_coding.tui.autocomplete import CompletionState
 from tau_coding.tui.config import TAU_DARK_THEME, TuiRoleStyle, TuiTheme
 from tau_coding.tui.state import (
@@ -115,6 +121,39 @@ class SessionSummarySource(Protocol):
     def session_stats(self) -> SessionStats: ...
 
 
+class SidebarFileItem(Static):
+    """One keyboard- and mouse-openable file in the session sidebar."""
+
+    can_focus = True
+
+    class OpenRequested(Message):
+        """Request opening this item's file in the main area."""
+
+        def __init__(self, item: SidebarFileItem) -> None:
+            super().__init__()
+            self.item = item
+
+    def __init__(self, label: str, *, path: Path, kind: str, bullet: str = "•") -> None:
+        super().__init__(f"  {bullet} {label}", classes="sidebar-file-item", markup=False)
+        self.path = path
+        self.kind = kind
+        self.file_label = label
+        self.tooltip = str(path)
+
+    def on_click(self, event: Any) -> None:
+        """Open the represented file on a primary click."""
+        if event.button == 1:
+            event.stop()
+            self.post_message(self.OpenRequested(self))
+
+    def on_key(self, event: Any) -> None:
+        """Open the represented file from keyboard focus."""
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.OpenRequested(self))
+
+
 class SessionSidebar(Vertical):
     """Compact sidebar with collapsible resource lists and pinned branding."""
 
@@ -122,8 +161,13 @@ class SessionSidebar(Vertical):
         with VerticalScroll(id="sidebar-scroll"):
             yield Static("", id="sidebar-content")
             yield Static(_sidebar_separator(theme=TAU_DARK_THEME), classes="sidebar-separator")
+            yield Static("context", id="sidebar-context-title", classes="sidebar-section-title")
+            yield Vertical(id="sidebar-context-content", classes="sidebar-file-list")
+            yield Static(_sidebar_separator(theme=TAU_DARK_THEME), classes="sidebar-separator")
+            yield Static("", id="sidebar-after-context-content")
+            yield Static(_sidebar_separator(theme=TAU_DARK_THEME), classes="sidebar-separator")
             yield Collapsible(
-                Static("", id="sidebar-skills-content"),
+                Vertical(id="sidebar-skills-content", classes="sidebar-file-list"),
                 title=_sidebar_resource_title(
                     "skills",
                     "0 · ~0 tokens",
@@ -135,7 +179,7 @@ class SessionSidebar(Vertical):
             )
             yield Static(_sidebar_separator(theme=TAU_DARK_THEME), classes="sidebar-separator")
             yield Collapsible(
-                Static("", id="sidebar-prompts-content"),
+                Vertical(id="sidebar-prompts-content", classes="sidebar-file-list"),
                 title=_sidebar_resource_title("prompts", "0", theme=TAU_DARK_THEME),
                 collapsed=True,
                 id="sidebar-prompts",
@@ -161,18 +205,32 @@ class SessionSidebar(Vertical):
         self._summary_fingerprint = fingerprint
         content = _build_sidebar_content(session, theme=theme)
         self.query_one("#sidebar-content", Static).update(
-            Group(*_separate_sidebar_sections(content.summary_sections, theme=theme)),
+            Group(*_separate_sidebar_sections(content.summary_sections[:4], theme=theme)),
+        )
+        self.query_one("#sidebar-context-title", Static).styles.color = theme.prompt_text
+        _replace_sidebar_file_widgets(
+            self.query_one("#sidebar-context-content", Vertical),
+            _context_file_widgets(session.context_files, cwd=session.cwd, theme=theme),
+        )
+        self.query_one("#sidebar-after-context-content", Static).update(
+            Group(*_separate_sidebar_sections(content.summary_sections[5:], theme=theme)),
         )
         skills = self.query_one("#sidebar-skills", Collapsible)
         skills.title = _skill_section_title(session, theme=theme)
-        self.query_one("#sidebar-skills-content", Static).update(content.skills)
+        _replace_sidebar_file_widgets(
+            self.query_one("#sidebar-skills-content", Vertical),
+            _skill_file_widgets(session.skills, cwd=session.cwd, theme=theme),
+        )
         prompts = self.query_one("#sidebar-prompts", Collapsible)
         prompts.title = _sidebar_resource_title(
             "prompts",
             str(len(session.prompt_templates)),
             theme=theme,
         )
-        self.query_one("#sidebar-prompts-content", Static).update(content.prompts)
+        _replace_sidebar_file_widgets(
+            self.query_one("#sidebar-prompts-content", Vertical),
+            _prompt_file_widgets(session.prompt_templates, cwd=session.cwd, theme=theme),
+        )
         self.query_one("#sidebar-extensions-content", Static).update(
             _sidebar_section("extensions", content.extensions, theme=theme),
         )
@@ -423,6 +481,111 @@ class TranscriptWindowBoundary(Static):
         return f"{arrow} Scroll for {count} {self.direction} {noun}"
 
 
+class SystemPromptSectionWidget(Vertical):
+    """One prompt source with a matching accent and faint background."""
+
+    DEFAULT_CSS = """
+    SystemPromptSectionWidget {
+        width: 1fr;
+        height: auto;
+        margin: 0 0 1 0;
+        padding: 1 1 0 1;
+    }
+
+    SystemPromptSectionWidget > .system-prompt-source-name,
+    SystemPromptSectionWidget > .system-prompt-source-origin {
+        width: 1fr;
+        height: auto;
+    }
+
+    SystemPromptSectionWidget > .system-prompt-source-body {
+        width: 1fr;
+        height: auto;
+        margin: 1 0 0 0;
+        padding: 0;
+    }
+
+    SystemPromptSectionWidget > .system-prompt-source-body > MarkdownParagraph {
+        margin: 0 0 1 0;
+    }
+    """
+
+    def __init__(
+        self,
+        source: SystemPromptSource,
+        *,
+        index: int,
+        theme: TuiTheme,
+    ) -> None:
+        self.source = source
+        self.index = index
+        self._theme = theme
+        self.source_color = _system_prompt_source_color(source, theme=theme)
+        super().__init__(classes=f"system-prompt-source system-prompt-source-{source.kind}")
+        background = TextualColor.parse(theme.transcript_background).blend(
+            TextualColor.parse(self.source_color),
+            0.08,
+        )
+        self.styles.background = background
+        self.styles.border_left = ("tall", self.source_color)
+
+    def compose(self) -> Any:
+        name = Text()
+        name.append(f"{self.index:02d} · ", style=self._theme.muted_text)
+        name.append(self.source.label, style=f"bold {self.source_color}")
+        origin = Text("Source: ", style=self._theme.muted_text)
+        origin.append(self.source.source, style=self.source_color)
+        yield Static(name, classes="system-prompt-source-name")
+        yield Static(origin, classes="system-prompt-source-origin")
+        yield ThemedMarkdownWidget(
+            _system_prompt_markdown(self.source.content.lstrip("\n")),
+            theme=self._theme,
+            classes="system-prompt-source-body",
+        )
+
+
+class SystemPromptSourcesWidget(Vertical):
+    """Structured rendering for a sourced system prompt."""
+
+    DEFAULT_CSS = """
+    SystemPromptSourcesWidget {
+        width: 1fr;
+        height: auto;
+    }
+
+    SystemPromptSourcesWidget > .system-prompt-title {
+        width: 1fr;
+        height: auto;
+        margin: 0 0 1 1;
+    }
+    """
+
+    def __init__(self, sources: tuple[SystemPromptSource, ...], *, theme: TuiTheme) -> None:
+        self.sources = sources
+        self._theme = theme
+        super().__init__()
+
+    def compose(self) -> Any:
+        yield Static(
+            Text("/system", style=f"bold {self._theme.accent}"), classes="system-prompt-title"
+        )
+        for index, source in enumerate(self.sources, start=1):
+            yield SystemPromptSectionWidget(source, index=index, theme=self._theme)
+
+
+def _system_prompt_source_color(source: SystemPromptSource, *, theme: TuiTheme) -> str:
+    """Choose a stable theme color for one prompt-source kind."""
+    return {
+        "default": theme.accent,
+        "system": theme.role_styles["assistant"].border,
+        "append": theme.role_styles["status"].border,
+        "extension": theme.role_styles["tool"].border,
+        "context": theme.role_styles["branch_summary"].border,
+        "skill": theme.role_styles["skill"].border,
+        "runtime": theme.muted_text,
+    }[source.kind]
+
+
 class TranscriptMessageWidget(Horizontal):
     """One selectable transcript message rendered as a full-height role block."""
 
@@ -485,7 +648,7 @@ class TranscriptMessageWidget(Horizontal):
             self.styles.padding = (1, 0)
         foreground, background = _split_rich_style_colors(self._role_style.body)
         self._body_foreground = foreground
-        if item.role in _BORDERLESS_TRANSCRIPT_ROLES:
+        if item.role in _BORDERLESS_TRANSCRIPT_ROLES or item.system_prompt_sources is not None:
             self._body_background = None
         else:
             self._body_background = background
@@ -496,8 +659,10 @@ class TranscriptMessageWidget(Horizontal):
     def compose(self) -> Any:
         yield self._body_widget()
 
-    def _body_widget(self) -> Static | ThemedMarkdownWidget:
+    def _body_widget(self) -> Widget:
         body: Static | ThemedMarkdownWidget
+        if self.item.system_prompt_sources is not None:
+            return SystemPromptSourcesWidget(self.item.system_prompt_sources, theme=self._theme)
         if self.item.role == "custom":
             return Static(
                 _custom_body_renderable(
@@ -2763,6 +2928,126 @@ def _plural(count: int, singular: str) -> str:
     return singular if count == 1 else f"{singular}s"
 
 
+def _replace_sidebar_file_widgets(container: Vertical, widgets: Sequence[Widget]) -> None:
+    """Replace a sidebar file list after its session-resource fingerprint changed."""
+    container.remove_children()
+    if widgets:
+        container.mount(*widgets)
+
+
+def _context_file_widgets(
+    context_files: Sequence[ProjectContextFile],
+    *,
+    cwd: Path,
+    theme: TuiTheme,
+) -> list[Widget]:
+    widgets: list[Widget] = [
+        SidebarFileItem(
+            _context_file_label(Path(context_file.path), cwd=cwd),
+            path=_absolute_sidebar_path(Path(context_file.path), cwd=cwd),
+            kind="Context",
+        )
+        for context_file in context_files[:SIDEBAR_BULLET_LIST_LIMIT]
+    ]
+    hidden_count = len(context_files) - len(widgets)
+    if hidden_count:
+        widgets.append(
+            Static(
+                f"  ...({hidden_count} more)",
+                classes="sidebar-file-overflow",
+                markup=False,
+            )
+        )
+    if not widgets:
+        widgets.append(Static("No context files", classes="sidebar-file-empty", markup=False))
+    for widget in widgets:
+        if not isinstance(widget, SidebarFileItem):
+            widget.styles.color = theme.completion_description
+    return widgets
+
+
+def _skill_file_widgets(
+    skills: Sequence[Skill],
+    *,
+    cwd: Path,
+    theme: TuiTheme,
+) -> list[Widget]:
+    grouped: dict[str, list[Skill]] = {}
+    for skill in skills:
+        origin = skill.path.parent.parent if skill.path.name == "SKILL.md" else skill.path.parent
+        grouped.setdefault(_resource_origin_label(origin, cwd=cwd), []).append(skill)
+    return _grouped_sidebar_file_widgets(grouped, cwd=cwd, kind="Skill", theme=theme)
+
+
+def _prompt_file_widgets(
+    templates: Sequence[PromptTemplate],
+    *,
+    cwd: Path,
+    theme: TuiTheme,
+) -> list[Widget]:
+    grouped: dict[str, list[PromptTemplate]] = {}
+    for template in templates:
+        origin = _resource_origin_label(template.path.parent, cwd=cwd)
+        grouped.setdefault(origin, []).append(template)
+    return _grouped_sidebar_file_widgets(grouped, cwd=cwd, kind="Prompt", theme=theme)
+
+
+def _grouped_sidebar_file_widgets[SidebarResource: (Skill, PromptTemplate)](
+    grouped: dict[str, list[SidebarResource]],
+    *,
+    cwd: Path,
+    kind: str,
+    theme: TuiTheme,
+) -> list[Widget]:
+    if not grouped:
+        empty = "No skills loaded" if kind == "Skill" else "No prompt templates"
+        widget = Static(empty, classes="sidebar-file-empty", markup=False)
+        widget.styles.color = theme.completion_description
+        return [widget]
+
+    widgets: list[Widget] = []
+    for origin in sorted(grouped, key=_resource_origin_sort_key):
+        origin_widget = Static(origin, classes="sidebar-resource-origin", markup=False)
+        origin_widget.styles.color = theme.completion_description
+        widgets.append(origin_widget)
+        for resource in sorted(grouped[origin], key=lambda item: item.name):
+            path = resource.path
+            widgets.append(
+                SidebarFileItem(
+                    resource.name,
+                    path=_absolute_sidebar_path(path, cwd=cwd),
+                    kind=kind,
+                    bullet=(
+                        "◦"
+                        if isinstance(resource, Skill) and resource.disable_model_invocation
+                        else "•"
+                    ),
+                )
+            )
+    return widgets
+
+
+def _resource_origin_sort_key(origin: str) -> tuple[int, str]:
+    precedence = {
+        "~/.tau/skills": 0,
+        "~/.agents/skills": 1,
+        "./.tau/skills": 2,
+        "./.agents/skills": 3,
+        "~/.tau/prompts": 0,
+        "~/.agents/prompts": 1,
+        "./.tau/prompts": 2,
+        "./.agents/prompts": 3,
+    }
+    return precedence.get(origin, len(precedence)), origin
+
+
+def _absolute_sidebar_path(path: Path, *, cwd: Path) -> Path:
+    expanded = path.expanduser()
+    if not expanded.is_absolute():
+        expanded = cwd / expanded
+    return expanded.absolute()
+
+
 def _grouped_skill_list(
     skills: Sequence[Skill],
     *,
@@ -2803,14 +3088,15 @@ def _grouped_resource_names(
     theme: TuiTheme,
 ) -> Text:
     origin_precedence = {
-        f"~/.tau/{directory}": 0,
         f"~/.agents/{directory}": 1,
         f"./.tau/{directory}": 2,
         f"./.agents/{directory}": 3,
     }
+    # The remaining origin is the configurable user Tau home. Its rendered
+    # path may be ~/.tau, another path beneath ~, or an absolute path.
     ordered_origins = sorted(
         grouped,
-        key=lambda origin: (origin_precedence.get(origin, len(origin_precedence)), origin),
+        key=lambda origin: (origin_precedence.get(origin, 0), origin),
     )
     text = Text()
     for origin in ordered_origins:

@@ -154,7 +154,11 @@ from tau_coding.skills import Skill, expand_skill_command, load_skills_with_diag
 from tau_coding.system_prompt import (
     BuildSystemPromptOptions,
     ProjectContextFile,
+    PromptSection,
+    SystemPromptInspection,
+    SystemPromptSource,
     build_system_prompt,
+    build_system_prompt_inspection,
 )
 from tau_coding.thinking import (
     DEFAULT_THINKING_LEVEL,
@@ -286,6 +290,7 @@ class SessionResources:
     custom_system_prompt: str | None
     custom_system_prompt_path: Path | None
     append_system_prompt: str | None
+    append_system_prompts: tuple[str, ...]
     append_system_prompt_paths: tuple[Path, ...]
     diagnostics: tuple[ResourceDiagnostic, ...]
 
@@ -418,6 +423,7 @@ class CodingSession:
         custom_system_prompt: str | None = None,
         custom_system_prompt_path: Path | None = None,
         append_system_prompt: str | None = None,
+        append_system_prompts: tuple[str, ...] = (),
         append_system_prompt_paths: tuple[Path, ...] = (),
         resource_diagnostics: tuple[ResourceDiagnostic, ...] = (),
         command_registry: CommandRegistry | None = None,
@@ -442,6 +448,7 @@ class CodingSession:
         self._custom_system_prompt = custom_system_prompt
         self._custom_system_prompt_path = custom_system_prompt_path
         self._append_system_prompt = append_system_prompt
+        self._append_system_prompts = append_system_prompts
         self._append_system_prompt_paths = append_system_prompt_paths
         self._resource_diagnostics = resource_diagnostics
         self._command_registry = command_registry or create_default_command_registry()
@@ -706,13 +713,18 @@ class CodingSession:
                         if config.custom_system_prompt is not None
                         else resources.custom_system_prompt
                     ),
-                    append_system_prompt=_compose_append_system_prompt(
-                        resources.append_system_prompt,
+                    append_sections=_append_prompt_sections(
+                        resources.append_system_prompts,
+                        resources.append_system_prompt_paths,
                         config.append_system_prompt,
                     ),
                     context_files=resources.context_files,
                     extra_guidelines=extension_runtime.prompt_guidelines,
-                    extra_sections=extension_runtime.prompt_sections,
+                    extra_sections=extension_runtime.sourced_prompt_sections,
+                    custom_prompt_source=_custom_prompt_source(
+                        explicit=config.custom_system_prompt is not None,
+                        path=resources.custom_system_prompt_path,
+                    ),
                 )
             )
         )
@@ -739,6 +751,7 @@ class CodingSession:
             custom_system_prompt=resources.custom_system_prompt,
             custom_system_prompt_path=resources.custom_system_prompt_path,
             append_system_prompt=resources.append_system_prompt,
+            append_system_prompts=resources.append_system_prompts,
             append_system_prompt_paths=resources.append_system_prompt_paths,
             resource_diagnostics=resources.diagnostics,
             command_registry=config.command_registry or extension_runtime.build_command_registry(),
@@ -952,7 +965,7 @@ class CodingSession:
     async def tree_choices(self) -> tuple[SessionTreeChoice, ...]:
         """Return branchable session entries for a tree picker."""
         entries = await self._read_session_entries()
-        branch_indents = _tree_branch_indents(entries)
+        ordered_entries, branch_indents = _tree_layout(entries)
         labels_by_id, label_timestamps_by_id = _resolved_labels(entries)
         active_choice_id = _active_branchable_entry_id(entries, self._state.active_leaf_id)
         return tuple(
@@ -964,7 +977,7 @@ class CodingSession:
                 bookmark_label=labels_by_id.get(entry.id),
                 label_timestamp=label_timestamps_by_id.get(entry.id),
             )
-            for entry in _ordered_tree_entries(entries)
+            for entry in ordered_entries
             if _is_branchable_tree_entry(entry)
         )
 
@@ -1186,6 +1199,59 @@ class CodingSession:
     def system_prompt(self) -> str:
         """Return the effective system prompt sent to the model."""
         return self._harness.config.system
+
+    @property
+    def system_prompt_inspection(self) -> SystemPromptInspection:
+        """Return the effective prompt with source attribution for local inspection."""
+        if self._config.system is not None:
+            return SystemPromptInspection(
+                text=self.system_prompt,
+                sources=(
+                    SystemPromptSource(
+                        kind="system",
+                        label="System prompt override",
+                        source="CodingSessionConfig.system",
+                        content=self.system_prompt,
+                    ),
+                ),
+            )
+        inspection = build_system_prompt_inspection(
+            BuildSystemPromptOptions(
+                cwd=self.cwd,
+                tools=self.tools,
+                skills=self.skills,
+                custom_prompt=(
+                    self._config.custom_system_prompt
+                    if self._config.custom_system_prompt is not None
+                    else self._custom_system_prompt
+                ),
+                append_sections=_append_prompt_sections(
+                    self._append_system_prompts,
+                    self._append_system_prompt_paths,
+                    self._config.append_system_prompt,
+                ),
+                context_files=self.context_files,
+                extra_guidelines=self._extension_runtime.prompt_guidelines,
+                extra_sections=self._extension_runtime.sourced_prompt_sections,
+                custom_prompt_source=_custom_prompt_source(
+                    explicit=self._config.custom_system_prompt is not None,
+                    path=self._custom_system_prompt_path,
+                ),
+            )
+        )
+        if inspection.text == self.system_prompt:
+            return inspection
+        return SystemPromptInspection(
+            text=self.system_prompt,
+            sources=(
+                SystemPromptSource(
+                    kind="runtime",
+                    label="Effective system prompt",
+                    source="active Tau session (runtime-composed)",
+                    content=self.system_prompt,
+                ),
+            ),
+        )
 
     @property
     def auto_compact_token_threshold(self) -> int | None:
@@ -2221,7 +2287,7 @@ class CodingSession:
         before_extensions = _extension_signatures(self._extension_runtime)
         before_tool_names = tuple(tool.name for tool in self._harness.config.tools)
         before_guidelines = self._extension_runtime.prompt_guidelines
-        before_sections = self._extension_runtime.prompt_sections
+        before_sections = self._extension_runtime.sourced_prompt_sections
 
         # Nothing below mutates the live session. Eligible extensions are loaded
         # first so project code cannot import before the destination decision.
@@ -2324,7 +2390,7 @@ class CodingSession:
             append_system_prompt_paths=resources.append_system_prompt_paths,
         )
         after_guidelines = staged_runtime.prompt_guidelines
-        after_sections = staged_runtime.prompt_sections
+        after_sections = staged_runtime.sourced_prompt_sections
         system_prompt_rebuilt = self._config.system is None and (
             before_system_prompt_inputs != after_system_prompt_inputs
             or before_tool_names != tuple(tool.name for tool in staged_tools)
@@ -2343,13 +2409,18 @@ class CodingSession:
                         if self._config.custom_system_prompt is not None
                         else resources.custom_system_prompt
                     ),
-                    append_system_prompt=_compose_append_system_prompt(
-                        resources.append_system_prompt,
+                    append_sections=_append_prompt_sections(
+                        resources.append_system_prompts,
+                        resources.append_system_prompt_paths,
                         self._config.append_system_prompt,
                     ),
                     context_files=resources.context_files,
                     extra_guidelines=after_guidelines,
                     extra_sections=after_sections,
+                    custom_prompt_source=_custom_prompt_source(
+                        explicit=self._config.custom_system_prompt is not None,
+                        path=resources.custom_system_prompt_path,
+                    ),
                 )
             )
 
@@ -2383,6 +2454,7 @@ class CodingSession:
         self._custom_system_prompt = resources.custom_system_prompt
         self._custom_system_prompt_path = resources.custom_system_prompt_path
         self._append_system_prompt = resources.append_system_prompt
+        self._append_system_prompts = resources.append_system_prompts
         self._append_system_prompt_paths = resources.append_system_prompt_paths
         self._resource_diagnostics = resources.diagnostics
         self._command_registry = staged_commands
@@ -2847,6 +2919,7 @@ class CodingSession:
         self._custom_system_prompt = replacement._custom_system_prompt
         self._custom_system_prompt_path = replacement._custom_system_prompt_path
         self._append_system_prompt = replacement._append_system_prompt
+        self._append_system_prompts = replacement._append_system_prompts
         self._append_system_prompt_paths = replacement._append_system_prompt_paths
         self._resource_diagnostics = replacement._resource_diagnostics
         self._command_registry = replacement._command_registry
@@ -4061,64 +4134,84 @@ def _tree_choice_label(entry: SessionEntry, *, branch_indent: int = 0) -> str:
 
 
 def _tree_branch_indents(entries: list[SessionEntry]) -> dict[str, int]:
-    children_by_parent: dict[str | None, list[str]] = {}
-    for entry in entries:
-        if entry.type != "leaf":
-            children_by_parent.setdefault(entry.parent_id, []).append(entry.id)
-
-    sibling_indexes = {
-        child_id: index
-        for children in children_by_parent.values()
-        for index, child_id in enumerate(children)
-    }
-    indents: dict[str, int] = {}
-    for entry in entries:
-        if entry.type == "leaf":
-            continue
-        parent_indent = indents.get(entry.parent_id, 0) if entry.parent_id is not None else 0
-        sibling_index = sibling_indexes.get(entry.id, 0)
-        indents[entry.id] = parent_indent + (1 if sibling_index > 0 else 0)
-    return indents
+    return _tree_layout(entries)[1]
 
 
 def _ordered_tree_entries(entries: list[SessionEntry]) -> tuple[SessionEntry, ...]:
+    return _tree_layout(entries)[0]
+
+
+def _tree_layout(
+    entries: list[SessionEntry],
+) -> tuple[tuple[SessionEntry, ...], dict[str, int]]:
+    tree_entries = [entry for entry in entries if entry.type != "leaf"]
     children_by_parent: dict[str | None, list[SessionEntry]] = {}
-    for entry in entries:
-        if entry.type != "leaf":
-            children_by_parent.setdefault(entry.parent_id, []).append(entry)
+    entries_by_id: dict[str, SessionEntry] = {}
+    for entry in tree_entries:
+        children_by_parent.setdefault(entry.parent_id, []).append(entry)
+        entries_by_id[entry.id] = entry
+
+    # Resolve each child's longest path to a leaf without recursion. Processing
+    # leaves upward also keeps deep sessions safe. Malformed cycles retain a
+    # finite fallback length and are handled by the traversal's `seen` set.
+    branch_lengths = dict.fromkeys(entries_by_id, 1)
+    remaining_children = {
+        entry_id: len(children_by_parent.get(entry_id, ())) for entry_id in entries_by_id
+    }
+    pending = [entry_id for entry_id, count in remaining_children.items() if count == 0]
+    while pending:
+        entry_id = pending.pop()
+        parent_id = entries_by_id[entry_id].parent_id
+        if parent_id not in remaining_children:
+            continue
+        branch_lengths[parent_id] = max(branch_lengths[parent_id], branch_lengths[entry_id] + 1)
+        remaining_children[parent_id] -= 1
+        if remaining_children[parent_id] == 0:
+            pending.append(parent_id)
+
+    def ordered_children(parent_id: str | None) -> list[SessionEntry]:
+        return sorted(
+            children_by_parent.get(parent_id, ()),
+            key=lambda child: branch_lengths.get(child.id, 1),
+            reverse=True,
+        )
 
     ordered: list[SessionEntry] = []
+    indents: dict[str, int] = {}
     seen: set[str] = set()
-    expanded: set[str | None] = set()
 
-    def append_descendants(root_parent_id: str | None) -> None:
-        # Iterative depth-first walk rather than recursion so a long session (a
-        # deep root-to-leaf entry chain) cannot exceed Python's recursion limit.
-        # `expanded` also makes a malformed parent cycle terminate instead of
-        # recursing forever. Emitting a node's direct children before descending,
-        # and pushing them reversed so the first child is processed next,
-        # preserves the original traversal order.
-        stack: list[str | None] = [root_parent_id]
+    def child_stack_items(
+        children: list[SessionEntry], parent_indent: int
+    ) -> list[tuple[SessionEntry, int]]:
+        if not children:
+            return []
+        main_child, *alternate_children = children
+        display_children = [*alternate_children, main_child]
+        return [
+            (child, parent_indent if child is main_child else parent_indent + 1)
+            for child in reversed(display_children)
+        ]
+
+    def append_subtrees(children: list[SessionEntry], parent_indent: int) -> None:
+        # The longest child is the unindented main branch. Emit shorter siblings
+        # immediately after their parent, indented one level, before continuing
+        # down the main branch. Stable length sorting preserves storage order
+        # when histories have equal lengths.
+        stack = child_stack_items(children, parent_indent)
         while stack:
-            parent_id = stack.pop()
-            if parent_id in expanded:
+            entry, indent = stack.pop()
+            if entry.id in seen:
                 continue
-            expanded.add(parent_id)
-            children = children_by_parent.get(parent_id, [])
-            for child in children:
-                if child.id not in seen:
-                    ordered.append(child)
-                    seen.add(child.id)
-            for child in reversed(children):
-                stack.append(child.id)
-
-    append_descendants(None)
-    for entry in entries:
-        if entry.type != "leaf" and entry.id not in seen:
-            ordered.append(entry)
             seen.add(entry.id)
-            append_descendants(entry.id)
-    return tuple(ordered)
+            ordered.append(entry)
+            indents[entry.id] = indent
+            stack.extend(child_stack_items(ordered_children(entry.id), indent))
+
+    append_subtrees(ordered_children(None), 0)
+    for entry in tree_entries:
+        if entry.id not in seen:
+            append_subtrees([entry], 0)
+    return tuple(ordered), indents
 
 
 def _is_tool_call_tree_entry(entry: SessionEntry) -> bool:
@@ -4900,6 +4993,7 @@ def _load_session_resources(
         custom_system_prompt=system_prompts.custom_prompt,
         custom_system_prompt_path=system_prompts.custom_prompt_path,
         append_system_prompt=system_prompts.append_prompt,
+        append_system_prompts=system_prompts.append_prompts,
         append_system_prompt_paths=system_prompts.append_prompt_paths,
         diagnostics=tuple(
             [
@@ -4912,12 +5006,31 @@ def _load_session_resources(
     )
 
 
-def _compose_append_system_prompt(*parts: str | None) -> str | None:
-    """Compose discovered and explicit append content in source order."""
-    selected = [part for part in parts if part is not None]
-    if not selected:
-        return None
-    return "\n\n".join(selected)
+def _append_prompt_sections(
+    prompts: tuple[str, ...],
+    paths: tuple[Path, ...],
+    explicit_prompt: str | None,
+) -> tuple[PromptSection, ...]:
+    """Pair append content with its file or CLI origin in composition order."""
+    sections = [
+        PromptSection(title=None, body=prompt, source=str(path))
+        for prompt, path in zip(prompts, paths, strict=True)
+    ]
+    if explicit_prompt is not None:
+        sections.append(
+            PromptSection(
+                title=None,
+                body=explicit_prompt,
+                source="CLI --append-system-prompt",
+            )
+        )
+    return tuple(sections)
+
+
+def _custom_prompt_source(*, explicit: bool, path: Path | None) -> str:
+    if explicit:
+        return "CLI --system-prompt"
+    return str(path) if path is not None else "runtime configuration"
 
 
 def _merge_context_files(
