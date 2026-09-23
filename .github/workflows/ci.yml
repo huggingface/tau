@@ -7,15 +7,17 @@ on:
       - main
   workflow_dispatch:
 
-permissions:
-  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
   python:
+    permissions:
+      contents: read
     name: Python checks
     runs-on: ubuntu-latest
     steps:
@@ -48,6 +50,8 @@ jobs:
         run: uv run mypy
 
   docs:
+    permissions:
+      contents: read
     name: Documentation build
     runs-on: ubuntu-latest
     defaults:

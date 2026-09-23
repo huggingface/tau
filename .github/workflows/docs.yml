@@ -6,10 +6,6 @@ on:
       - main
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -19,8 +15,12 @@ defaults:
   run:
     working-directory: website
 
+permissions: {}
+
 jobs:
   build:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -44,6 +44,9 @@ jobs:
           path: website/public
 
   deploy:
+    permissions:
+      id-token: write
+      pages: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
