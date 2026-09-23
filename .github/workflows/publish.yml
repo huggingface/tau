@@ -5,12 +5,14 @@ on:
     types:
       - published
 
-permissions:
-  contents: read
-  id-token: write
+
+permissions: {}
 
 jobs:
   publish:
+    permissions:
+      contents: read
+      id-token: write
     name: Publish to PyPI
     runs-on: ubuntu-latest
     environment: pypi
