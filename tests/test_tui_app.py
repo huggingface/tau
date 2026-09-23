@@ -155,6 +155,7 @@ from tau_coding.tui.config import (
     TuiTheme,
     tui_settings_path,
 )
+from tau_coding.tui.external_editor import ExternalEditorError, ExternalEditorResult
 from tau_coding.tui.local_backends import LocalBackendScreen, LocalConfirmScreen
 from tau_coding.tui.state import ChatItem, TuiState
 from tau_coding.tui.terminal_notification import TerminalNotificationController
@@ -7748,6 +7749,127 @@ async def test_tui_app_opens_command_palette_from_keybinding() -> None:
         assert app._completion_state.items
         assert any(item.display == "/session" for item in app._completion_state.items)
         assert app.query_one("#autocomplete").display is True
+
+
+class _NullSuspend:
+    """Stand in for ``App.suspend()`` without touching the real terminal driver."""
+
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, *exc_info: object) -> bool:
+        return False
+
+
+@pytest.mark.anyio
+async def test_tui_app_opens_external_editor_from_keybinding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TauTuiApp(FakeSession())
+    monkeypatch.setattr(app, "suspend", lambda: _NullSuspend())
+
+    def fake_edit(text: str) -> ExternalEditorResult:
+        assert text == "hello"
+        return ExternalEditorResult(text="hello world")
+
+    monkeypatch.setattr(tui_app, "edit_text_in_external_editor", fake_edit)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.text = "hello"
+        await pilot.press("ctrl+g")
+        await pilot.pause()
+
+        assert prompt.value == "hello world"
+
+
+@pytest.mark.anyio
+async def test_tui_app_external_editor_guards_while_agent_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TauTuiApp(FakeSession())
+    notifications: list[str] = []
+    edit_calls: list[str] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        del kwargs
+        notifications.append(message)
+
+    def fake_edit(text: str) -> ExternalEditorResult:
+        edit_calls.append(text)
+        return ExternalEditorResult(text=text)
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+    monkeypatch.setattr(tui_app, "edit_text_in_external_editor", fake_edit)
+
+    async with app.run_test() as pilot:
+        app.state.running = True
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.text = "hello"
+        await pilot.press("ctrl+g")
+        await pilot.pause()
+
+        assert prompt.value == "hello"
+        assert edit_calls == []
+        assert notifications == ["Tau is already working. Press Escape to cancel."]
+
+
+@pytest.mark.anyio
+async def test_tui_app_external_editor_leaves_prompt_unchanged_on_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TauTuiApp(FakeSession())
+    notifications: list[tuple[str, object]] = []
+
+    def fake_notify(message: str, **kwargs: object) -> None:
+        notifications.append((message, kwargs.get("severity")))
+
+    app._notify = fake_notify  # type: ignore[method-assign]
+    monkeypatch.setattr(app, "suspend", lambda: _NullSuspend())
+
+    def failing_edit(text: str) -> ExternalEditorResult:
+        del text
+        raise ExternalEditorError("editor exited with status 1")
+
+    monkeypatch.setattr(tui_app, "edit_text_in_external_editor", failing_edit)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.text = "hello"
+        await pilot.press("ctrl+g")
+        await pilot.pause()
+
+        assert prompt.value == "hello"
+        assert notifications == [("editor exited with status 1", "error")]
+
+
+@pytest.mark.anyio
+async def test_tui_app_uses_configured_external_editor_keybinding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TauTuiApp(
+        FakeSession(),
+        tui_settings=TuiSettings(keybindings=TuiKeybindings(external_editor="ctrl+j")),
+    )
+    monkeypatch.setattr(app, "suspend", lambda: _NullSuspend())
+
+    def fake_edit(text: str) -> ExternalEditorResult:
+        return ExternalEditorResult(text=f"{text}!")
+
+    monkeypatch.setattr(tui_app, "edit_text_in_external_editor", fake_edit)
+
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.text = "hello"
+        await pilot.press("ctrl+g")
+        await pilot.pause()
+
+        assert prompt.value == "hello"
+
+        await pilot.press("ctrl+j")
+        await pilot.pause()
+
+        assert prompt.value == "hello!"
 
 
 def test_tui_model_picker_guides_setup_when_no_provider_is_usable() -> None:
