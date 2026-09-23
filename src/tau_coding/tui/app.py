@@ -1632,21 +1632,18 @@ class SessionPickerScreen(ModalScreen[str | None]):
 
     #session-picker-columns {
         height: auto;
-    }
-
-    .session-picker-column {
-        height: auto;
         border: tall $tau-border;
         background: $tau-transcript-background;
     }
 
-    .session-picker-column.-active-column {
-        border: tall $tau-accent;
+    .session-picker-column {
+        height: auto;
+        background: $tau-transcript-background;
     }
 
     #session-picker-project-column {
         width: 34;
-        margin-right: 1;
+        border-right: tall $tau-border;
     }
 
     #session-picker-session-column {
@@ -1873,11 +1870,9 @@ class SessionPickerScreen(ModalScreen[str | None]):
         project_list = self.query_one("#session-picker-project-list", OptionList)
         items: list[str] = []
         for cwd in self.project_cwds:
-            count = len(self.records_by_project[cwd])
             marker = "● " if cwd == self.local_cwd else "  "
-            noun = "session" if count == 1 else "sessions"
             folder_name = cwd.name or str(cwd)
-            items.append(f"{marker}{folder_name}  {count} {noun}")
+            items.append(f"{marker}{folder_name}")
         project_list.set_options(items)
         project_list.highlighted = self.selected_project_index
 
@@ -4766,8 +4761,27 @@ class TauTuiApp(App[None]):
             return
         prompt = self.query_one("#prompt", PromptInput)
         prompt.sync_pending_paste()
-        self._sync_prompt_shell_mode(event.text_area.text)
-        self._completion_state = self._build_completion_state(event.text_area.text)
+        # Read text and cursor from the widget so both come from one snapshot.
+        text = prompt.text
+        self._sync_prompt_shell_mode(text)
+        self._completion_state = self._build_completion_state(text, cursor=prompt.cursor_position)
+        self._refresh_completions()
+
+    def on_text_area_selection_changed(self, event: TextArea.SelectionChanged) -> None:
+        """Close prompt autocomplete when the caret leaves the completed token."""
+        if event.text_area.id != "prompt":
+            return
+        # Edits post SelectionChanged before Changed; check after Changed has rebuilt.
+        self.call_later(self._close_completions_if_caret_left_token)
+
+    def _close_completions_if_caret_left_token(self) -> None:
+        if not self._completion_state.items:
+            return
+        item = self._completion_state.items[0]
+        cursor = self.query_one("#prompt", PromptInput).cursor_position
+        if item.start < cursor <= item.end:
+            return
+        self._completion_state = CompletionState()
         self._refresh_completions()
 
     async def action_submit_prompt(self) -> None:
@@ -6193,12 +6207,14 @@ class TauTuiApp(App[None]):
             self.screen.action_select_cursor()
             return
         prompt = self.query_one("#prompt", PromptInput)
+        item = self._completion_state.selected
         applied = self._apply_selected_completion(prompt.text)
-        if applied is None:
+        if applied is None or item is None:
             return
         prompt.text = applied
-        prompt.move_cursor(_text_end_location(applied))
-        self._completion_state = self._build_completion_state(prompt.text)
+        cursor = item.cursor_after_apply()
+        prompt.cursor_position = cursor
+        self._completion_state = self._build_completion_state(prompt.text, cursor=cursor)
         self._refresh_completions()
 
     def action_completion_next(self) -> None:
@@ -7431,10 +7447,11 @@ class TauTuiApp(App[None]):
         state = "shown" if self._sidebar_visibility_override else "hidden"
         self._notify(f"Sidebar {state} for this session.")
 
-    def _build_completion_state(self, text: str) -> CompletionState:
+    def _build_completion_state(self, text: str, *, cursor: int | None = None) -> CompletionState:
         registry = _session_command_registry(self.session)
         return build_completion_state(
             text,
+            cursor=cursor,
             command_registry=registry,
             skills=self.session.skills,
             prompt_templates=self.session.prompt_templates,
