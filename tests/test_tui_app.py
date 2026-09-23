@@ -1719,6 +1719,21 @@ async def test_textual_markdown_widget_uses_theme_link_style() -> None:
     assert block.content.plain[5:9] == "docs"
 
 
+@pytest.mark.anyio
+async def test_transcript_markdown_paragraphs_keep_bottom_margin() -> None:
+    app = TauTuiApp(
+        FakeSession([AssistantMessage(content="First paragraph.\n\nSecond paragraph.")]),
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        blocks = list(app.query(TauMarkdownBlock))
+
+    assert len(blocks) == 2
+    assert [block.styles.margin.bottom for block in blocks] == [1, 1]
+
+
 def test_system_prompt_markdown_highlights_markup_tags_as_inline_code() -> None:
     prompt = (
         '<project_instructions path="/workspace/AGENTS.md">\nUse `rg`.\n</project_instructions>'
