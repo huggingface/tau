@@ -61,6 +61,17 @@ class ChatItem:
     text: str
     tool_call_id: str | None = None
     tool_result_text: str | None = None
+    # The untruncated result block, kept only when it differs from
+    # `tool_result_text`. A tool result loses its tail to the preview limits
+    # below (a long `bash` result, an `edit` patch), and the TUI offers the
+    # hidden remainder on demand -- `--show-full-output` at startup, or the
+    # tool-results toggle afterwards -- so the full text has to survive in the
+    # item rather than being recomputed from a `tool_result` the restored
+    # transcript path does not always carry.
+    tool_result_full_text: str | None = None
+    # Whether this row should render its full result rather than the preview.
+    # Resolved per item so restored and live rows behave identically.
+    full_output: bool = False
     # The raw result object, kept alongside the formatted text so the tool's
     # `render_result` (resolved lazily, like `render_call`) can format it.
     tool_result: AgentToolResult | None = None
@@ -79,6 +90,19 @@ class ChatItem:
     system_prompt_sources: tuple[SystemPromptSource, ...] | None = None
     highlight: Literal["alert", "update"] | None = None
 
+    def result_text(self, *, expanded: bool) -> str | None:
+        """Return the visible tool result block, honouring a full-output request.
+
+        ``expanded`` mirrors the transcript's tool-results toggle; a row is only
+        ever asked to show its result when that toggle is on. ``full_output`` is
+        this item's retained opt-in (stamped from
+        :attr:`TuiState.show_full_output`), so a row captured under
+        ``--show-full-output`` keeps rendering untruncated text after the fact.
+        """
+        if expanded and self.full_output and self.tool_result_full_text is not None:
+            return self.tool_result_full_text
+        return self.tool_result_text
+
 
 @dataclass(slots=True)
 class TuiState:
@@ -90,6 +114,11 @@ class TuiState:
     error: str | None = None
     show_tool_results: bool = False
     show_thinking: bool = False
+    # Startup opt-in for issue #730: previews exist to keep long results from
+    # flooding the transcript, but a debugging user needs the whole thing. This
+    # is a per-invocation startup default (`--show-full-output`), not durable
+    # state, so it never reaches `tui.json`.
+    show_full_output: bool = False
     queued_steering: tuple[str, ...] = ()
     queued_follow_up: tuple[str, ...] = ()
     skills: tuple[Skill, ...] = ()
@@ -565,12 +594,24 @@ class TuiState:
         is_error: bool,
     ) -> None:
         """Attach a Pi-compatible tool result to its matching call."""
+        data = result.details if isinstance(result.details, dict) else None
         result_text = format_tool_result_block(
             name=tool_name,
             ok=not is_error,
             content=result.text,
-            data=result.details if isinstance(result.details, dict) else None,
+            data=data,
         )
+        full_result_text: str | None = format_tool_result_block(
+            name=tool_name,
+            ok=not is_error,
+            content=result.text,
+            data=data,
+            full=True,
+        )
+        if full_result_text == result_text:
+            # Nothing was hidden from the preview, so do not carry the same
+            # (possibly large) string twice.
+            full_result_text = None
         item = self.find_tool_item(tool_call_id)
         if item is not None:
             row = self._batched_items_by_call_id.get(tool_call_id, item)
@@ -583,6 +624,8 @@ class TuiState:
                 self._refresh_tool_group(row)
             else:
                 row.tool_result_text = result_text
+                row.tool_result_full_text = full_result_text
+                row.full_output = self.show_full_output
                 row.tool_result = result
                 row.update_text = None
                 row.started_at = None
@@ -594,10 +637,24 @@ class TuiState:
             text=format_tool_result_summary(name=tool_name, ok=not is_error),
             tool_call_id=tool_call_id,
             tool_result_text=result_text,
+            tool_result_full_text=full_result_text,
+            full_output=self.show_full_output,
             tool_result=result,
         )
         self.items.append(item)
         self._tool_items_by_call_id[tool_call_id] = item
+
+    def set_full_output(self, enabled: bool) -> bool:
+        """Enable or skip full (untruncated) tool and command output.
+
+        Rows already in the transcript are updated too, so the state stays the
+        single source of truth for what a later redraw renders.
+        """
+        self.show_full_output = enabled
+        for item in self.items:
+            if item.role == "tool":
+                item.full_output = enabled
+        return self.show_full_output
 
     def toggle_tool_results(self) -> bool:
         """Toggle expanded display for tool results and return the new state."""
@@ -863,15 +920,23 @@ def format_tool_result_block(
     ok: bool,
     content: str,
     data: dict[str, JSONValue] | None = None,
+    full: bool = False,
 ) -> str:
-    """Format a tool result for live and restored transcript blocks."""
+    """Format a tool result for live and restored transcript blocks.
+
+    *full* skips the preview limits so the whole result is available to a user
+    who asked for it; the caller stores that text on the item for the TUI to
+    swap in without re-running the tool.
+    """
     status = "✓" if ok else "✗"
     lines = [f"{status} {name}"]
     if content:
-        lines.append(_preview_text(content, max_lines=TOOL_RESULT_PREVIEW_LINES))
+        lines.append(_preview_text(content, max_lines=TOOL_RESULT_PREVIEW_LINES, full=full))
     patch = _result_patch(name=name, ok=ok, data=data)
     if patch:
-        lines.extend(["", "Patch:", _preview_text(patch, max_lines=TOOL_PATCH_PREVIEW_LINES)])
+        lines.extend(
+            ["", "Patch:", _preview_text(patch, max_lines=TOOL_PATCH_PREVIEW_LINES, full=full)]
+        )
     return "\n".join(lines)
 
 
@@ -880,13 +945,24 @@ def format_terminal_command_result_block(
     ok: bool,
     added_to_context: bool,
     output: str,
+    full: bool = False,
 ) -> str:
-    """Format an input-bar terminal command result for visible TUI display."""
+    """Format an input-bar terminal command result for visible TUI display.
+
+    *full* skips the preview limits, which is how issue #730's hidden
+    ``!``-command output is surfaced.
+    """
     status = "✓" if ok else "✗"
     suffix = " · added to context" if added_to_context else " · not added to context"
     lines = [f"{status} bash{suffix}"]
     if output:
-        lines.append(_preview_text(output, max_lines=TERMINAL_COMMAND_OUTPUT_PREVIEW_LINES))
+        lines.append(
+            _preview_text(
+                output,
+                max_lines=TERMINAL_COMMAND_OUTPUT_PREVIEW_LINES,
+                full=full,
+            )
+        )
     return "\n".join(lines)
 
 
@@ -902,7 +978,16 @@ def _result_patch(
     return patch if isinstance(patch, str) and patch.strip() else None
 
 
-def _preview_text(text: str, *, max_lines: int) -> str:
+def _preview_text(text: str, *, max_lines: int, full: bool = False) -> str:
+    """Return *text* previewed to the TUI limits, or verbatim when *full*.
+
+    The preview is lossy: it drops whole trailing lines and (once the character
+    budget is spent) the tail of the last kept line. ``full`` bypasses both so a
+    caller can retain the exact result alongside its preview.
+    """
+    if full:
+        return text
+
     lines = text.splitlines()
     if not lines:
         return text[:TOOL_RESULT_PREVIEW_CHARS]

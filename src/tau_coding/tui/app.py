@@ -4372,12 +4372,17 @@ class TauTuiApp(App[None]):
         startup_alerts: Sequence[str] = (),
         startup_notices: Sequence[str] = (),
         initial_prompt: str | None = None,
+        show_full_output: bool = False,
     ) -> None:
         self.tui_settings = tui_settings or TuiSettings()
         self.startup_message = startup_message
         legacy_notices = (startup_notice,) if startup_notice else ()
         self.startup_notices = tuple((*startup_notices, *legacy_notices))
         self.initial_prompt = initial_prompt
+        # Issue #730: a deliberate per-invocation opt-in, like the sidebar
+        # override below. It is startup state rather than durable preference, so
+        # it never participates in tui.json.
+        self._show_full_output_override = show_full_output
         # This override is deliberately separate from durable settings. It is
         # reset with every app instance and never participates in tui.json.
         self._sidebar_visibility_override: bool | None = None
@@ -4393,6 +4398,7 @@ class TauTuiApp(App[None]):
         self._bindings = BindingsMap(_app_bindings(self.tui_settings.keybindings))
         self.session = session
         self.state = TuiState(skills=session.skills)
+        self.state.set_full_output(self._show_full_output_override)
         if startup_update_notice is not None:
             self.state.add_item("status", startup_update_notice, highlight="update")
         for alert in startup_alerts:
@@ -5883,6 +5889,21 @@ class TauTuiApp(App[None]):
             added_to_context=result.added_to_context,
             output=result.output,
         )
+        # Issue #730: keep the untruncated output when the preview hid some of
+        # it, so `--show-full-output` (and the tool-results toggle) can reveal it
+        # without re-running the command. Command output is the case the issue
+        # reports: `!`-commands are the debugging path, and their preview limit
+        # is independent of the tool-result one.
+        full_output_text = format_terminal_command_result_block(
+            ok=result.ok,
+            added_to_context=result.added_to_context,
+            output=result.output,
+            full=True,
+        )
+        item.tool_result_full_text = (
+            None if full_output_text == item.tool_result_text else full_output_text
+        )
+        item.full_output = self.state.show_full_output
         self._follow_transcript_output()
         await transcript.update_item(
             item,
@@ -8424,6 +8445,7 @@ async def run_tui_app(
     append_system_prompt: str | None = None,
     trust_override: TrustOverride | None = None,
     thinking_level_override: ThinkingLevel | None = None,
+    show_full_output: bool = False,
 ) -> str | None:
     """Run the Textual app and return the active id when its session is persisted."""
     _configure_herdr_textual_mouse()
@@ -8614,6 +8636,7 @@ async def run_tui_app(
             startup_alerts=startup_alerts,
             startup_notices=all_startup_notices,
             initial_prompt=initial_prompt,
+            show_full_output=show_full_output,
         )
         set_trust_prompt = getattr(session, "set_project_trust_prompt", None)
         if set_trust_prompt is not None:
