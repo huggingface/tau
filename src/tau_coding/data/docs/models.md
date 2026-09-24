@@ -4,6 +4,26 @@ A provider hosts models; a model is the exact ID accepted by that provider. Use
 `/login` for durable built-in credentials and `/model` to choose an available
 model.
 
+## Multiple account profiles
+
+Tau stores one saved credential per provider in its user-data home. The home is
+`~/.tau` by default; set `TAU_HOME` to a non-empty absolute path (after `~`
+expansion) to select another one. Separate homes isolate credentials, sessions,
+provider preferences, settings, extensions, and caches, which makes shell
+aliases useful for multiple provider accounts:
+
+```bash
+alias tau-work='TAU_HOME="$HOME/.tau-work" command tau'
+alias tau-personal='TAU_HOME="$HOME/.tau-personal" command tau'
+```
+
+Run `/login anthropic-subscription` once through each alias to connect a
+different Claude Pro/Max account. User-level `~/.agents` resources and project
+`.tau`/`.agents` resources remain shared; `TAU_HOME` is an application profile
+boundary, not a security sandbox. Environment-provided API keys also remain
+process-wide. An explicit `TauPaths` supplied by an embedding application takes
+precedence over `TAU_HOME`.
+
 ## Built-in llama.cpp
 
 Tau includes a trusted, hidden `llama.cpp` provider layer for local inference.

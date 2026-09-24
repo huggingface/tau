@@ -73,12 +73,19 @@ you click another file while it has unsaved changes. Save or close the current
 file first. Press Escape to restore the transcript. Run `/reload` afterward to
 apply changed resources to the active session.
 
+## `/tree`
+
+At each session fork, the tree picker treats the child with the longest history
+as the main branch. Alternate branches appear immediately after the parent,
+indented at the branch point, before the unindented main history continues.
+
 ## `/resume`
 
-The resume picker uses separate project and recent-session columns. Project
-rows show compact folder names, while the session-column header shows the
-selected project's full path. Its shell opens immediately, then the current
-project and other project indexes load in the background. Press Left to
+The resume picker uses one Finder-style browser with contiguous project and
+recent-session columns. Project rows show compact folder names without session
+counts, while the session-column header shows the selected project's full path.
+Its shell opens immediately, then the current project and other project indexes
+load in the background. Press Left to
 select the project column, Up/Down to choose a project, and Right to return to
 its sessions. Enter resumes the selected session. Search filters names and
 models within the selected project.
