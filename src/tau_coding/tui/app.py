@@ -4435,8 +4435,10 @@ class TauTuiApp(App[None]):
         self._connect_extension_runtime(session)
         self._prompt_worker: Worker[None] | None = None
         self._compaction_worker: Worker[None] | None = None
+        self._learn_worker: Worker[None] | None = None
         self._compacting = False
         self._compaction_run_id = 0
+        self._learning = False
         self._prompt_run_id = 0
         self._optimistic_user_messages: list[tuple[int, str]] = []
         self._completion_state = CompletionState()
@@ -4465,7 +4467,7 @@ class TauTuiApp(App[None]):
 
     def _is_working(self) -> bool:
         """Return whether the app should show working affordances (agent turn or compaction)."""
-        return self.state.running or self._compacting
+        return self.state.running or self._compacting or self._learning
 
     def _sync_terminal_title(self) -> None:
         """Reflect the active session name and running state in the terminal tab title."""
@@ -4856,6 +4858,22 @@ class TauTuiApp(App[None]):
                 else:
                     self._reload_session_themes()
                     command = replace(command, message=format_reload_summary(summary))
+            if command.learn_requested:
+                if self._is_learning_active():
+                    self._notify("A learning review is already running.", severity="warning")
+                elif self._is_agent_or_queue_active():
+                    prompt.text = raw_text
+                    prompt.move_cursor(_text_end_location(raw_text))
+                    self._notify(
+                        "Wait for the current agent turn and queued messages to finish "
+                        "before running the learning review.",
+                        severity="warning",
+                    )
+                else:
+                    self._learn_worker = self.run_worker(
+                        self._run_learning(),
+                        exclusive=False,
+                    )
             if command.new_session_requested:
                 await self._new_session()
             if command.compact_summary is not None:
@@ -4993,6 +5011,32 @@ class TauTuiApp(App[None]):
         if worker is not None and not worker.is_finished and not worker.is_cancelled:
             return True
         return self._compacting
+
+    def _is_learning_active(self) -> bool:
+        """Return whether a /learn curation worker is still running."""
+        worker = self._learn_worker
+        if worker is not None and not worker.is_finished and not worker.is_cancelled:
+            return True
+        return self._learning
+
+    async def _run_learning(self) -> None:
+        """Run /learn curation with the same working affordances as compaction."""
+        self._learning = True
+        try:
+            self.state.add_item("status", "Learning from this session…")
+            self._refresh()
+            learn_result = await self.session.learn()
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:  # noqa: BLE001 - surface command failures in the TUI
+            self._notify(f"Could not learn: {exc}", severity="error")
+            return
+        finally:
+            self._learning = False
+            self._learn_worker = None
+            self._refresh_chrome_if_mounted()
+        self._append_command_message("/learn", learn_result.format_summary())
+        self._notify(learn_result.format_summary())
 
     def _is_agent_or_queue_active(self) -> bool:
         """Return whether compaction would race an active or queued agent turn."""
@@ -6132,10 +6176,29 @@ class TauTuiApp(App[None]):
         self._refresh_chrome()
 
     def action_cancel(self) -> None:
-        """Cancel the active compaction or agent turn."""
+        """Cancel the active compaction, learning review, or agent turn."""
         if self._cancel_active_compaction(notify=True):
             return
+        if self._cancel_active_learning(notify=True):
+            return
         self._cancel_active_prompt(notify=True)
+
+    def _cancel_active_learning(self, *, notify: bool) -> bool:
+        """Cancel the active /learn curation worker and restore visible state."""
+        worker = self._learn_worker
+        if worker is None or worker.is_finished or worker.is_cancelled:
+            return False
+
+        worker.cancel()
+        self._learn_worker = None
+        self._learning = False
+        self.state.clear()
+        self.state.set_skills(self.session.skills)
+        self._load_session_messages_from_session()
+        self._refresh()
+        if notify:
+            self._notify("Cancelled learning review.")
+        return True
 
     def _cancel_active_compaction(self, *, notify: bool) -> bool:
         """Cancel the active manual compaction worker and restore visible session state."""
