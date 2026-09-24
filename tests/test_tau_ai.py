@@ -575,6 +575,42 @@ async def test_openai_compatible_provider_includes_openrouter_provider_routing()
 
 
 @pytest.mark.anyio
+async def test_openai_compatible_provider_includes_requesty_options() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://router.requesty.ai/v1",
+                compat={"requestyOptions": {"tags": ["tau"], "auto_cache": True}},
+            ),
+            client=client,
+        )
+
+        await _collect(
+            provider.stream_response(
+                model="openai/gpt-4o-mini",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    payload = loads(requests[0].content)
+    assert payload["requesty"] == {"tags": ["tau"], "auto_cache": True}
+    assert "provider" not in payload
+
+
+@pytest.mark.anyio
 async def test_openai_compatible_provider_supports_nested_reasoning_effort_parameter() -> None:
     requests: list[httpx.Request] = []
 
