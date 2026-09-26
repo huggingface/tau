@@ -13,6 +13,7 @@ These are the default keys in the interactive [TUI]({{< relref "../guides/tui.md
 | --- | --- |
 | `Enter` | Accept a highlighted non-file completion; otherwise submit the prompt exactly as typed (including `@` file-reference text) |
 | `Shift+Enter` | Insert a newline |
+| `Ctrl+G` | Edit the prompt in your external editor (`$VISUAL`/`$EDITOR`) |
 | `Esc` | Cancel the active run |
 | `Enter` (while running) | Queue text as steering for the current run |
 | `Alt+Enter` | Queue a follow-up that waits until the run would stop |

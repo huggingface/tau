@@ -23,7 +23,7 @@ from rich.style import Style
 from rich.text import Text
 from textual import constants as textual_constants
 from textual import events, on
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SuspendNotSupported
 from textual.binding import Binding, BindingsMap
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
@@ -165,6 +165,7 @@ from tau_coding.tui.config import (
     load_tui_settings,
     save_tui_settings,
 )
+from tau_coding.tui.external_editor import ExternalEditorError, edit_text_in_external_editor
 from tau_coding.tui.file_drop import normalize_dropped_paths
 from tau_coding.tui.local_backends import (
     LocalBackendPickerScreen,
@@ -532,6 +533,8 @@ class CompletionActionTarget(Protocol):
 
     def action_edit_queued_message(self) -> bool: ...
 
+    async def action_open_external_editor(self) -> None: ...
+
     async def action_submit_prompt(self) -> None: ...
 
     async def action_submit_follow_up(self) -> None: ...
@@ -827,6 +830,10 @@ class PromptInput(TextArea):
             event.stop()
             event.prevent_default()
             self.insert("\n")
+        elif event.key == keybindings.external_editor:
+            event.stop()
+            event.prevent_default()
+            await self._completion_target().action_open_external_editor()
         elif event.key == keybindings.accept_completion:
             event.stop()
             self._completion_target().action_accept_completion()
@@ -6359,6 +6366,35 @@ class TauTuiApp(App[None]):
         prompt.move_cursor((0, 1))
         self._completion_state = self._build_completion_state(prompt.text)
         self._refresh_completions()
+
+    async def action_open_external_editor(self) -> None:
+        """Edit the current prompt text in the user's external editor.
+
+        Suspends the Textual app so the editor gets the real terminal, then
+        writes the saved text back into the prompt on a clean exit. Leaves
+        the prompt untouched on cancellation/failure.
+        """
+        if self.state.running or self._is_agent_or_queue_active():
+            self._notify("Tau is already working. Press Escape to cancel.")
+            return
+        prompt = self.query_one("#prompt", PromptInput)
+        original_text = prompt.text
+        try:
+            with self.suspend():
+                result = await asyncio.to_thread(edit_text_in_external_editor, original_text)
+        except ExternalEditorError as exc:
+            self._notify(str(exc), severity="error")
+            return
+        except SuspendNotSupported:
+            self._notify(
+                "External editor is not supported in this environment.",
+                severity="error",
+            )
+            return
+        prompt.text = result.text
+        prompt.sync_pending_paste()
+        prompt.move_cursor(_text_end_location(prompt.text))
+        prompt.focus()
 
     def action_open_session_picker(self) -> None:
         """Open local sessions immediately, then load other projects."""
