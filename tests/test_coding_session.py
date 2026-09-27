@@ -4320,6 +4320,126 @@ async def test_codex_missing_active_model_survives_settings_refresh(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("refreshed_models", [(), ("new-model",)])
+@pytest.mark.parametrize("preview_other_provider", [False, True])
+async def test_provider_reload_keeps_committed_runtime_when_catalog_drops_active_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    refreshed_models: tuple[str, ...],
+    preview_other_provider: bool,
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "test-key")
+    active = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        api_key_env="LOCAL_API_KEY",
+        credential_name=None,
+        models=("gpt-6-sol",),
+        default_model="gpt-6-sol",
+    )
+    other = OpenAICompatibleProviderConfig(
+        name="local",
+        api_key_env="LOCAL_API_KEY",
+        credential_name=None,
+        models=("qwen",),
+        default_model="qwen",
+    )
+    settings = ProviderSettings(providers=(active, other))
+    refreshed = ProviderSettings(
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="huggingface",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=refreshed_models,
+                default_model="gpt-6-sol",
+            ),
+            other,
+        )
+    )
+    runtime = FakeProvider([])
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=runtime,
+            model="gpt-6-sol",
+            provider_name="huggingface",
+            provider_settings=settings,
+            runtime_provider_config=active,
+            system="Test",
+            cwd=tmp_path,
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            extensions_enabled=False,
+        )
+    )
+    runtime = session.provider
+    monkeypatch.setattr(coding_session_module, "load_provider_settings", lambda *a: refreshed)
+    if preview_other_provider:
+        session.preview_model_choice(ModelChoice("local", "qwen"))
+    before = await session._config.storage.read_all()
+
+    session.reload_provider_settings()
+
+    assert session.provider is runtime
+    assert session._harness.config.model == "gpt-6-sol"
+    assert session.model == ("qwen" if preview_other_provider else "gpt-6-sol")
+    assert session.provider_config("huggingface").models == refreshed_models
+    assert ModelChoice("huggingface", "gpt-6-sol") not in session.available_model_choices
+    assert session.handle_command("/model").model_picker_requested is True
+    assert await session._config.storage.read_all() == before
+
+
+@pytest.mark.anyio
+async def test_provider_reload_uses_committed_model_with_cross_provider_preview(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "test-key")
+    active = OpenAICompatibleProviderConfig(
+        name="huggingface",
+        api_key_env="LOCAL_API_KEY",
+        credential_name=None,
+        models=("gpt-6-sol",),
+        default_model="gpt-6-sol",
+    )
+    other = OpenAICompatibleProviderConfig(
+        name="local",
+        api_key_env="LOCAL_API_KEY",
+        credential_name=None,
+        models=("qwen",),
+        default_model="qwen",
+    )
+    settings = ProviderSettings(providers=(active, other))
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="gpt-6-sol",
+            provider_name="huggingface",
+            provider_settings=settings,
+            runtime_provider_config=active,
+            system="Test",
+            cwd=tmp_path,
+            storage=JsonlSessionStorage(tmp_path / "session.jsonl"),
+            extensions_enabled=False,
+        )
+    )
+    session.preview_model_choice(ModelChoice("local", "qwen"))
+    created: list[str] = []
+
+    def create_provider(*args: object, **kwargs: object) -> FakeProvider:
+        del args
+        created.append(str(kwargs["model"]))
+        return FakeProvider([])
+
+    monkeypatch.setattr(coding_session_module, "load_provider_settings", lambda *a: settings)
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    session.reload_provider_settings()
+
+    assert created == ["gpt-6-sol"]
+    assert session._harness.config.model == "gpt-6-sol"
+    assert session.model == "qwen"
+    assert session.provider_name == "local"
+    assert session.has_pending_selection
+
+
+@pytest.mark.anyio
 async def test_session_skips_codex_catalog_discovery_offline(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

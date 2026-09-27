@@ -7059,7 +7059,11 @@ class TauTuiApp(App[None]):
     def _open_model_picker(self) -> None:
         choices = self._available_model_choices()
         scoped = tuple(getattr(self.session, "scoped_model_choices", ()))
-        if not choices and not scoped:
+        if (
+            not choices
+            and not scoped
+            and not getattr(self.session, "has_stale_active_model", False)
+        ):
             self._notify(
                 "No configured providers are usable. Run /login to set up a provider.",
                 severity="warning",
@@ -7104,7 +7108,11 @@ class TauTuiApp(App[None]):
     def _open_scoped_models_picker(self) -> None:
         choices = self._available_model_choices()
         scoped = tuple(getattr(self.session, "scoped_model_choices", ()))
-        if not choices and not scoped:
+        if (
+            not choices
+            and not scoped
+            and not getattr(self.session, "has_stale_active_model", False)
+        ):
             self._notify(
                 "No configured providers are usable. Run /login to set up a provider.",
                 severity="warning",

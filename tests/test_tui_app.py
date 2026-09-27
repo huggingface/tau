@@ -7775,6 +7775,21 @@ def test_tui_model_picker_guides_setup_when_no_provider_is_usable() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_model_picker_opens_with_empty_catalog_and_stale_active_model() -> None:
+    session = FakeSession()
+    session.available_models = ()
+    session.available_model_choices = ()
+    session.has_stale_active_model = True  # type: ignore[attr-defined]
+    app = TauTuiApp(session)
+
+    async with app.run_test() as pilot:
+        app._open_model_picker()
+        await pilot.pause()
+        assert isinstance(app.screen, ModelPickerScreen)
+        assert app.screen.visible_choices == ()
+
+
+@pytest.mark.anyio
 async def test_tui_app_deduplicates_active_notifications() -> None:
     app = TauTuiApp(FakeSession())
 

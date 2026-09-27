@@ -926,6 +926,13 @@ class CodingSession:
         return tuple(choices)
 
     @property
+    def has_stale_active_model(self) -> bool:
+        """Whether the committed runtime model disappeared from the picker snapshot."""
+        return ModelChoice(self._provider_name, self._harness.config.model) not in (
+            self.available_model_choices
+        )
+
+    @property
     def unavailable_scoped_model_choices(self) -> tuple[ModelChoice, ...]:
         """Return persisted references that have no current provider snapshot row."""
         available = set(self.available_model_choices)
@@ -2052,10 +2059,10 @@ class CodingSession:
         runtime = self._runtime_provider_config
         if (
             isinstance(provider, OpenAICodexProviderConfig)
-            and self.model not in provider.models
+            and self._harness.config.model not in provider.models
             and runtime is not None
             and runtime.name == provider.name
-            and self.model in runtime.models
+            and self._harness.config.model in runtime.models
         ):
             # Picker visibility must not invalidate an already selected runtime.
             return runtime
@@ -2101,17 +2108,20 @@ class CodingSession:
         provider = self._active_provider_config()
         if provider is None:
             return
+        committed_model = self._harness.config.model
         self._thinking_level = _coerced_thinking_level(
             provider,
-            model=self.model,
+            model=committed_model,
             current=self._thinking_level,
-            preferred=provider.thinking_defaults.get(self.model),
+            preferred=provider.thinking_defaults.get(committed_model),
         )
 
     def _sync_image_support(self) -> None:
         provider = self._active_provider_config() or self._runtime_provider_config
         self._image_support.supported = (
-            provider_model_supports_images(provider, self.model) if provider is not None else None
+            provider_model_supports_images(provider, self._harness.config.model)
+            if provider is not None
+            else None
         )
 
     def _persist_default_model_choice(self) -> None:
@@ -2306,12 +2316,13 @@ class CodingSession:
         if self._runtime_provider_config is None:
             raise ProviderConfigError("Runtime provider configuration is unavailable")
         provider_config = self._active_provider_config() or self._runtime_provider_config
-        validate_provider_model(provider_config, self.model)
+        committed_model = self._harness.config.model
+        validate_provider_model(provider_config, committed_model)
         try:
             provider = _create_runtime_provider(
                 provider_config,
                 credential_store=self._credential_store,
-                model=self.model,
+                model=committed_model,
                 thinking_level=self._thinking_level,
                 inference_provider=inference_provider,
                 response_headers_observer=(
@@ -2713,6 +2724,11 @@ class CodingSession:
         previous_thinking_level = self._thinking_level
         self._durable_provider_settings = load_provider_settings(self._resource_paths.paths)
         self._apply_runtime_model_catalogs()
+        active_config = self._active_provider_config()
+        if active_config is None or self._harness.config.model not in active_config.models:
+            # The refreshed picker snapshot is authoritative for new selections,
+            # but cannot invalidate an already constructed, working provider.
+            return
         try:
             self._sync_thinking_level_to_active_model()
             self._refresh_runtime_provider()
