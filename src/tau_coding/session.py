@@ -1891,12 +1891,24 @@ class CodingSession:
         try:
             if choice is not None:
                 await self.select_provider_model(choice, persist_default=False)
-            if (
-                thinking is not None
-                and thinking != self._thinking_level
-                and self.available_thinking_levels
-            ):
-                await self.set_thinking_level(thinking, persist_preference=False)
+            if thinking is not None and thinking != self._state.thinking_level:
+                if thinking == "off" and not self.available_thinking_levels:
+                    # A non-reasoning model has no effort control to rebuild.
+                    self._thinking_level = "off"
+                if thinking != self._thinking_level and self.available_thinking_levels:
+                    await self.set_thinking_level(thinking, persist_preference=False)
+                elif thinking == self._thinking_level:
+                    # A model switch can clamp thinking before set_thinking_level
+                    # runs. Record that effective change on the same branch.
+                    entry = ThinkingLevelChangeEntry(
+                        parent_id=self._last_parent_id, thinking_level=thinking
+                    )
+                    await self._append_session_entry(entry)
+                    self._last_parent_id = entry.id
+                    await self._refresh_persisted_state(leaf_id=entry.id)
+                    await self._extension_runtime.emit_event(
+                        ThinkingLevelChangedEvent(level=thinking)
+                    )
         except Exception:
             self._preview_model = choice
             self._preview_thinking = thinking

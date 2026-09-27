@@ -5569,6 +5569,7 @@ async def test_preview_selection_commits_only_at_next_prompt(
                 models=("qwen", "llama"),
                 default_model="qwen",
                 thinking_levels=("off", "high"),
+                thinking_models=("llama",),
             ),
         ),
         scoped_models=(
@@ -5621,6 +5622,7 @@ async def test_preview_selection_commits_only_at_next_prompt(
     # An invalid candidate must not send with the previous model or lose the
     # pending choice; the user can retry once the provider is available.
     session.preview_model_choice(ModelChoice("local", "qwen"))
+    assert session.thinking_level == "off"
     before_failure = await storage.read_all()
 
     def fail_provider(*args: object, **kwargs: object) -> FakeProvider:
@@ -5634,6 +5636,19 @@ async def test_preview_selection_commits_only_at_next_prompt(
     assert session.has_pending_selection
     assert session.model == "qwen"
     assert session.state.model == "llama"
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    await _collect_session_events(session.prompt("retry now"))
+    entries = await storage.read_all()
+    assert session.state.thinking_level == "off"
+    assert [
+        (entry.type, getattr(entry, "thinking_level", None))
+        for entry in entries
+        if entry.type in {"model_change", "thinking_level_change"}
+    ][-2:] == [
+        ("model_change", None),
+        ("thinking_level_change", "off"),
+    ]
 
 
 @pytest.mark.anyio
