@@ -26,8 +26,10 @@ without persisted timing still count toward token usage but not these metrics.
 
 ## `/model` and `/scoped-models`
 
-The pickers render cached/bundled choices immediately, then refresh remote
-catalogs in the background and update the open list. This includes the
+The pickers open from cached/bundled choices immediately, then start remote
+catalog refresh only after the first screen refresh and update the open list.
+The virtualized model list renders only visible rows and does not mount the
+entire catalog twice. This includes the
 account-scoped OpenAI Codex model snapshot, so models discovered in an earlier
 session are available before a refresh. Both commands refresh the Codex catalog;
 refresh failures leave the existing list usable. A missing active model after a

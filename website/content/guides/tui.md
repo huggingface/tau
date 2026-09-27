@@ -216,8 +216,9 @@ when you want to reduce what is sent to the model.
 
 ## Picking models and themes
 
-- **`/model`** opens the model picker. It shows cached/bundled models immediately,
-  refreshes catalogs in the background, and updates the open list. The
+- **`/model`** opens the model picker from cached/bundled models immediately,
+  then refreshes catalogs in the background after the picker first renders.
+  Its model list renders only visible rows and updates the open list. The
   account-scoped Codex snapshot is also reused across sessions, and `/model`
   refreshes it.
 - **`/scoped-models`** opens the favorite-model picker and refreshes provider

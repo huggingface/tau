@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-from textual.widgets import ListView
+from textual.widgets import OptionList
 
 from tau_agent.session import JsonlSessionStorage, ModelChangeEntry, SessionInfoEntry
 from tau_ai import FakeProvider, RuntimeModel, RuntimeModelCatalog
@@ -116,7 +116,7 @@ async def test_codex_resume_restores_astra_through_real_frontend(
             await pilot.pause()
             picker = app.screen
             assert isinstance(picker, tui_app.ModelPickerScreen)
-            index = picker.query_one("#model-picker-list", ListView).index
+            index = picker.query_one("#model-picker-list", OptionList).highlighted
             assert index is not None
             assert picker.visible_choices[index].model == "gpt-6-astra"
 

@@ -2965,6 +2965,7 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         picker_kind: Literal["model", "scoped"] = "model",
     ) -> None:
         super().__init__()
+        self.on_first_refresh: Callable[[], None] | None = None
         available = tuple(dict.fromkeys(choices))
         self.scoped_choices = tuple(dict.fromkeys(scoped_choices))
         self.unavailable_choices = frozenset(self.scoped_choices) - frozenset(available)
@@ -2987,23 +2988,11 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
             yield Static(title, id="model-picker-title")
             yield Static("", id="model-picker-tabs")
             yield ModelPickerSearchInput(placeholder="Search models", id="model-picker-search")
-            yield ListView(
-                *[
-                    ListItem(
-                        Label(
-                            _model_picker_label(
-                                choice,
-                                current_model=self.current_model,
-                                current_provider=self.provider_name,
-                                scoped=choice in self.scoped_choices,
-                                unavailable=choice in self.unavailable_choices,
-                            ),
-                            markup=False,
-                        )
-                    )
-                    for choice in self.choices
-                ],
+            yield OptionList(
+                *(self._label_for_choice(choice) for choice in self.choices),
                 id="model-picker-list",
+                markup=False,
+                compact=True,
             )
             yield Static("", id="model-picker-help")
 
@@ -3011,13 +3000,18 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         """Focus the search field."""
         search = self.query_one("#model-picker-search", Input)
         search.focus()
-        self._refresh_model_list()
+        # compose() already mounted the cached rows; only set selection/help.
+        self._refresh_model_list(rebuild_rows=False)
+        if self.on_first_refresh is not None:
+            self.call_after_refresh(self.on_first_refresh)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Filter model choices as the search value changes."""
         if event.input.id != "model-picker-search":
             return
         event.stop()
+        if self.search_value == event.value:
+            return
         self.search_value = event.value
         self._refresh_model_list()
 
@@ -3030,16 +3024,16 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
 
     def _reset_model_list_index(self) -> None:
         """Move selection to the current model or first visible row."""
-        model_list = self.query_one("#model-picker-list", ListView)
+        model_list = self.query_one("#model-picker-list", OptionList)
         if not self.visible_choices:
-            model_list.index = None
+            model_list.highlighted = None
             return
         try:
-            model_list.index = self.visible_choices.index(
+            model_list.highlighted = self.visible_choices.index(
                 ModelChoice(provider_name=self.provider_name, model=self.current_model)
             )
         except ValueError:
-            model_list.index = 0
+            model_list.highlighted = 0
 
     def on_key(self, event: Key) -> None:
         """Route model picker keys to the list."""
@@ -3056,18 +3050,18 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
             event.stop()
             self.action_toggle_mode()
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         """Handle the selected row."""
         event.stop()
         self._select_visible_choice()
 
     def action_cursor_up(self) -> None:
         """Move to the previous model."""
-        self.query_one("#model-picker-list", ListView).action_cursor_up()
+        self.query_one("#model-picker-list", OptionList).action_cursor_up()
 
     def action_cursor_down(self) -> None:
         """Move to the next model."""
-        self.query_one("#model-picker-list", ListView).action_cursor_down()
+        self.query_one("#model-picker-list", OptionList).action_cursor_down()
 
     def action_accept_model(self) -> None:
         """Select the highlighted model."""
@@ -3082,8 +3076,8 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         """Add or remove the highlighted model from scoped models."""
         if self.on_toggle_scoped is None or not self.visible_choices:
             return
-        model_list = self.query_one("#model-picker-list", ListView)
-        index = model_list.index
+        model_list = self.query_one("#model-picker-list", OptionList)
+        index = model_list.highlighted
         if index is None:
             return
         choice = self.visible_choices[index]
@@ -3101,16 +3095,25 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
     ) -> None:
         """Publish a refreshed catalog without replacing the open picker."""
         available = tuple(dict.fromkeys(choices))
-        self.scoped_choices = tuple(dict.fromkeys(scoped_choices))
-        self.unavailable_choices = frozenset(self.scoped_choices) - frozenset(available)
-        self.choices = tuple(dict.fromkeys((*available, *self.scoped_choices)))
+        scoped = tuple(dict.fromkeys(scoped_choices))
+        updated = tuple(dict.fromkeys((*available, *scoped)))
+        unavailable = frozenset(scoped) - frozenset(available)
+        if (
+            scoped == self.scoped_choices
+            and updated == self.choices
+            and unavailable == self.unavailable_choices
+        ):
+            return
+        self.scoped_choices = scoped
+        self.unavailable_choices = unavailable
+        self.choices = updated
         self._refresh_model_list()
 
     def _select_visible_choice(self) -> None:
         if not self.visible_choices:
             return
-        model_list = self.query_one("#model-picker-list", ListView)
-        index = model_list.index
+        model_list = self.query_one("#model-picker-list", OptionList)
+        index = model_list.highlighted
         if index is None:
             return
         choice = self.visible_choices[index]
@@ -3121,28 +3124,24 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
             return
         self.dismiss(choice)
 
-    def _refresh_model_list(self) -> None:
+    def _label_for_choice(self, choice: ModelChoice) -> str:
+        return _model_picker_label(
+            choice,
+            current_model=self.current_model,
+            current_provider=self.provider_name,
+            scoped=choice in self.scoped_choices,
+            unavailable=choice in self.unavailable_choices,
+        )
+
+    def _refresh_model_list(self, *, rebuild_rows: bool = True) -> None:
         base_choices = self.scoped_choices if self.mode == "scoped" else self.choices
         self.visible_choices = _filter_model_choices(base_choices, self.search_value)
-        model_list = self.query_one("#model-picker-list", ListView)
-        model_list.clear()
-        model_list.extend(
-            [
-                ListItem(
-                    Label(
-                        _model_picker_label(
-                            choice,
-                            current_model=self.current_model,
-                            current_provider=self.provider_name,
-                            scoped=choice in self.scoped_choices,
-                            unavailable=choice in self.unavailable_choices,
-                        ),
-                        markup=False,
-                    )
-                )
-                for choice in self.visible_choices
-            ]
-        )
+        if rebuild_rows:
+            model_list = self.query_one("#model-picker-list", OptionList)
+            model_list.clear_options()
+            model_list.add_options(
+                self._label_for_choice(choice) for choice in self.visible_choices
+            )
         self._reset_model_list_index()
         scope_count = len(self.scoped_choices)
         tabs = self.query_one("#model-picker-tabs", Static)
@@ -4253,14 +4252,18 @@ class TauTuiApp(App[None]):
     #login-method-list ListItem Label,
     #login-provider-list ListItem Label,
     #theme-picker-list ListItem Label,
-    #model-picker-list ListItem Label {
+    #model-picker-list {
         color: $tau-screen-text;
     }
 
     #login-method-list ListItem.-highlight Label,
     #login-provider-list ListItem.-highlight Label,
-    #theme-picker-list ListItem.-highlight Label,
-    #model-picker-list ListItem.-highlight Label {
+    #theme-picker-list ListItem.-highlight Label {
+        background: $tau-highlight-background;
+        color: $tau-highlight-text;
+    }
+
+    #model-picker-list > .option-list--option-highlighted {
         background: $tau-highlight-background;
         color: $tau-highlight-text;
     }
@@ -4846,6 +4849,12 @@ class TauTuiApp(App[None]):
 
         command = self.session.handle_command(text)
         if command.handled:
+            if command.model_picker_requested:
+                self._open_model_picker()
+                return
+            if command.scoped_models_picker_requested:
+                self._open_scoped_models_picker()
+                return
             if command.clear_requested:
                 self.state.clear()
             if command.reload_requested:
@@ -4925,12 +4934,8 @@ class TauTuiApp(App[None]):
                     ),
                     exclusive=False,
                 )
-            if command.model_picker_requested:
-                self._open_model_picker()
             if command.tools_picker_requested:
                 self._open_tools_reference()
-            if command.scoped_models_picker_requested:
-                self._open_scoped_models_picker()
             if command.skills_picker_requested:
                 self._open_skills_picker()
             if command.theme_picker_requested:
@@ -7069,19 +7074,21 @@ class TauTuiApp(App[None]):
                 severity="warning",
             )
             return
-        self.push_screen(
-            ModelPickerScreen(
-                choices,
-                scoped_choices=scoped,
-                current_model=self.session.model,
-                provider_name=self.session.provider_name,
-                theme=self.tui_settings.resolved_theme,
-                on_toggle_scoped=None,
-                picker_kind="model",
-            ),
-            callback=self._handle_model_picker_result,
+        picker = ModelPickerScreen(
+            choices,
+            scoped_choices=scoped,
+            current_model=self.session.model,
+            provider_name=self.session.provider_name,
+            theme=self.tui_settings.resolved_theme,
+            on_toggle_scoped=None,
+            picker_kind="model",
         )
-        self.run_worker(self._refresh_open_model_picker(), exclusive=False)
+        picker.on_first_refresh = lambda: self._start_model_picker_refresh(picker)
+        self.push_screen(picker, callback=self._handle_model_picker_result)
+
+    def _start_model_picker_refresh(self, picker: ModelPickerScreen) -> None:
+        if self.screen is picker:
+            self.run_worker(self._refresh_open_model_picker(), exclusive=False)
 
     async def _refresh_open_model_picker(self) -> None:
         refresh = getattr(self.session, "refresh_model_catalogs", None)
@@ -7118,19 +7125,17 @@ class TauTuiApp(App[None]):
                 severity="warning",
             )
             return
-        self.push_screen(
-            ModelPickerScreen(
-                choices,
-                scoped_choices=scoped,
-                current_model=self.session.model,
-                provider_name=self.session.provider_name,
-                theme=self.tui_settings.resolved_theme,
-                on_toggle_scoped=self._toggle_scoped_model,
-                picker_kind="scoped",
-            ),
-            callback=self._handle_scoped_models_picker_result,
+        picker = ModelPickerScreen(
+            choices,
+            scoped_choices=scoped,
+            current_model=self.session.model,
+            provider_name=self.session.provider_name,
+            theme=self.tui_settings.resolved_theme,
+            on_toggle_scoped=self._toggle_scoped_model,
+            picker_kind="scoped",
         )
-        self.run_worker(self._refresh_open_model_picker(), exclusive=False)
+        picker.on_first_refresh = lambda: self._start_model_picker_refresh(picker)
+        self.push_screen(picker, callback=self._handle_scoped_models_picker_result)
 
     def _toggle_scoped_model(self, choice: ModelChoice) -> Sequence[ModelChoice]:
         toggle_scoped_model = getattr(self.session, "toggle_scoped_model", None)

@@ -8950,8 +8950,10 @@ async def test_tui_model_opens_interactive_picker() -> None:
         assert isinstance(app.screen, ModelPickerScreen)
         tabs = app.screen.query_one("#model-picker-tabs", Static)
         assert str(tabs.render()) == "Tabs: ● All models  ○ Scoped models"
-        model_list = app.screen.query_one("#model-picker-list", ListView)
-        labels = [str(item.query_one(Label).render()) for item in model_list.children]
+        model_list = app.screen.query_one("#model-picker-list", OptionList)
+        labels = [
+            str(model_list.get_option_at_index(i).prompt) for i in range(model_list.option_count)
+        ]
         assert labels == [
             "* openai:fake-model",
             "  openai:other-model",
@@ -8963,7 +8965,9 @@ async def test_tui_model_opens_interactive_picker() -> None:
         search.value = "local"
         await pilot.pause()
 
-        labels = [str(item.query_one(Label).render()) for item in model_list.children]
+        labels = [
+            str(model_list.get_option_at_index(i).prompt) for i in range(model_list.option_count)
+        ]
         assert labels == ["  local:local-model"]
 
         await pilot.press("tab")
@@ -8980,6 +8984,65 @@ async def test_tui_model_opens_interactive_picker() -> None:
     assert session.prompt_texts == []
     assert session.model_catalog_refresh_count == 1
     assert notifications == []
+
+
+@pytest.mark.anyio
+async def test_tui_model_picker_virtualizes_large_cached_catalog() -> None:
+    session = FakeSession()
+    session.available_model_choices = tuple(
+        ModelChoice("openai", f"model-{index}") for index in range(1200)
+    )
+    app = TauTuiApp(session)
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/model"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, ModelPickerScreen)
+        model_list = app.screen.query_one("#model-picker-list", OptionList)
+        assert model_list.option_count == 1200
+        assert not list(model_list.query(ListItem))
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("command", ["/model", "/scoped-models"])
+async def test_tui_model_picker_shows_cached_choices_before_remote_refresh(command: str) -> None:
+    class SlowCatalogSession(FakeSession):
+        def __init__(self) -> None:
+            super().__init__()
+            self.refresh_started = asyncio.Event()
+            self.finish_refresh = asyncio.Event()
+
+        async def refresh_model_catalogs(self) -> None:
+            self.refresh_started.set()
+            await self.finish_refresh.wait()
+            self.available_model_choices = (
+                ModelChoice("openai", "fake-model"),
+                ModelChoice("openai", "new-model"),
+            )
+
+    session = SlowCatalogSession()
+    app = TauTuiApp(session)
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = command
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ModelPickerScreen)
+        picker = app.screen
+        model_list = picker.query_one("#model-picker-list", OptionList)
+        assert model_list.option_count == 3
+        assert picker.visible_choices[1] == ModelChoice("openai", "other-model")
+        assert session.refresh_started.is_set()
+
+        session.finish_refresh.set()
+        await pilot.pause()
+        assert model_list.option_count == 2
+        assert picker.visible_choices[1] == ModelChoice("openai", "new-model")
+        first = model_list.get_option_at_index(0)
+        picker.update_choices(session.available_model_choices, ())
+        assert model_list.get_option_at_index(0) is first
 
 
 @pytest.mark.anyio
@@ -9005,8 +9068,10 @@ async def test_tui_scoped_models_picker_toggles_scoped_models_without_switching_
         )
         assert session.provider_name == "openai"
         assert session.model == "fake-model"
-        model_list = app.screen.query_one("#model-picker-list", ListView)
-        labels = [str(item.query_one(Label).render()) for item in model_list.children]
+        model_list = app.screen.query_one("#model-picker-list", OptionList)
+        labels = [
+            str(model_list.get_option_at_index(i).prompt) for i in range(model_list.option_count)
+        ]
         assert labels[0] == "* openai:fake-model [scoped]"
 
         await pilot.press("enter")
@@ -9039,8 +9104,10 @@ async def test_tui_scoped_models_picker_tab_shows_only_scoped_models_for_unselec
 
         tabs = app.screen.query_one("#model-picker-tabs", Static)
         assert str(tabs.render()) == "Tabs: ○ All models  ● Scoped models"
-        model_list = app.screen.query_one("#model-picker-list", ListView)
-        labels = [str(item.query_one(Label).render()) for item in model_list.children]
+        model_list = app.screen.query_one("#model-picker-list", OptionList)
+        labels = [
+            str(model_list.get_option_at_index(i).prompt) for i in range(model_list.option_count)
+        ]
         assert labels == [
             "* openai:fake-model [scoped]",
             "  openai:other-model [scoped]",
@@ -9054,7 +9121,9 @@ async def test_tui_scoped_models_picker_tab_shows_only_scoped_models_for_unselec
         )
         assert session.provider_name == "openai"
         assert session.model == "fake-model"
-        labels = [str(item.query_one(Label).render()) for item in model_list.children]
+        labels = [
+            str(model_list.get_option_at_index(i).prompt) for i in range(model_list.option_count)
+        ]
         assert labels == ["  openai:other-model [scoped]"]
 
         await pilot.press("tab")
