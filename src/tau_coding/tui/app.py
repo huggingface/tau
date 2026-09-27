@@ -5973,6 +5973,12 @@ class TauTuiApp(App[None]):
         except Exception as exc:  # noqa: BLE001 - surface unexpected worker errors in the TUI
             if active_run_id != self._prompt_run_id:
                 return
+            if getattr(self.session, "has_pending_selection", False):
+                prompt = self.query_one("#prompt", PromptInput)
+                if not prompt.text:
+                    prompt.text = text
+                    prompt.move_cursor(_text_end_location(text))
+                    prompt.focus()
             message = _format_prompt_error(exc, self.session)
             self.state.error = message
             self.state.add_item("error", message)
@@ -6496,6 +6502,15 @@ class TauTuiApp(App[None]):
 
     def action_cycle_thinking(self) -> None:
         """Cycle the active thinking mode."""
+        preview = getattr(self.session, "preview_cycle_thinking_level", None)
+        if preview is not None:
+            try:
+                preview()
+            except Exception as exc:  # noqa: BLE001 - report invalid selections
+                self._notify(f"Could not change thinking mode: {exc}", severity="error")
+                return
+            self._refresh_chrome()
+            return
         self.run_worker(self._cycle_thinking_level(), exclusive=False)
 
     def action_cycle_model(self) -> None:
@@ -6509,6 +6524,15 @@ class TauTuiApp(App[None]):
     def _cycle_model(self, *, reverse: bool) -> None:
         if self.state.running:
             self._notify("Tau is already working. Press Escape to cancel.")
+            return
+        preview = getattr(self.session, "preview_cycle_scoped_model", None)
+        if preview is not None:
+            try:
+                preview(reverse=reverse)
+            except Exception as exc:  # noqa: BLE001 - report invalid selections
+                self._notify(f"Could not switch scoped model: {exc}", severity="error")
+                return
+            self._refresh_chrome()
             return
         self.run_worker(self._cycle_scoped_model(reverse=reverse), exclusive=False)
 
@@ -7122,7 +7146,9 @@ class TauTuiApp(App[None]):
 
     async def _switch_model(self, choice: ModelChoice) -> None:
         try:
-            select = getattr(self.session, "select_provider_model", None)
+            select = getattr(self.session, "preview_model_choice", None)
+            if select is None:
+                select = getattr(self.session, "select_provider_model", None)
             if select is not None:
                 result = select(choice)
                 if isawaitable(result):
@@ -7156,7 +7182,9 @@ class TauTuiApp(App[None]):
         self._set_tui_theme(theme)
 
     async def _set_thinking_level(self, level: str) -> None:
-        setter = getattr(self.session, "set_thinking_level", None)
+        setter = getattr(self.session, "preview_thinking_level", None)
+        if setter is None:
+            setter = getattr(self.session, "set_thinking_level", None)
         if setter is None:
             self._notify("Thinking controls are not available.", severity="warning")
             return

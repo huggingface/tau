@@ -5555,6 +5555,88 @@ async def test_available_model_choices_include_stored_credentials(
 
 
 @pytest.mark.anyio
+async def test_preview_selection_commits_only_at_next_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "local-key")
+    settings = ProviderSettings(
+        default_provider="local",
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="local",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("qwen", "llama"),
+                default_model="qwen",
+                thinking_levels=("off", "high"),
+            ),
+        ),
+        scoped_models=(
+            ScopedModelConfig(provider="local", model="qwen"),
+            ScopedModelConfig(provider="local", model="llama"),
+        ),
+    )
+    storage = JsonlSessionStorage(tmp_path / "preview.jsonl")
+    config = CodingSessionConfig(
+        provider=FakeProvider([]),
+        model="qwen",
+        system="You are Tau.",
+        storage=storage,
+        cwd=tmp_path,
+        provider_name="local",
+        provider_settings=settings,
+        runtime_provider_config=settings.get_provider("local"),
+    )
+    session = await CodingSession.load(config)
+    before = await storage.read_all()
+    constructed: list[str] = []
+
+    def create_provider(*args: object, **kwargs: object) -> FakeProvider:
+        del args
+        constructed.append(str(kwargs["model"]))
+        return FakeProvider([])
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", create_provider)
+    assert session.preview_cycle_scoped_model() == ModelChoice("local", "llama")
+    assert session.preview_cycle_thinking_level() == "Thinking mode: high"
+    assert session.model == "llama"
+    assert session.thinking_level == "high"
+    assert session.state.model == "qwen"
+    assert await storage.read_all() == before
+    assert constructed == []
+
+    await _collect_session_events(session.prompt("hello"))
+    entries = await storage.read_all()
+    assert constructed == ["llama", "llama"]
+    assert [
+        (entry.type, getattr(entry, "model", getattr(entry, "thinking_level", "")))
+        for entry in entries
+        if entry.type in {"model_change", "thinking_level_change"}
+    ][-2:] == [
+        ("model_change", "llama"),
+        ("thinking_level_change", "high"),
+    ]
+    assert session.state.model == "llama"
+
+    # An invalid candidate must not send with the previous model or lose the
+    # pending choice; the user can retry once the provider is available.
+    session.preview_model_choice(ModelChoice("local", "qwen"))
+    before_failure = await storage.read_all()
+
+    def fail_provider(*args: object, **kwargs: object) -> FakeProvider:
+        del args, kwargs
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(coding_session_module, "create_model_provider", fail_provider)
+    with pytest.raises(Exception, match="provider unavailable"):
+        await _collect_session_events(session.prompt("retry later"))
+    assert await storage.read_all() == before_failure
+    assert session.has_pending_selection
+    assert session.model == "qwen"
+    assert session.state.model == "llama"
+
+
+@pytest.mark.anyio
 async def test_session_toggles_and_cycles_scoped_models(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

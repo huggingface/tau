@@ -9763,6 +9763,34 @@ async def test_tui_prompt_ctrl_c_clears_text() -> None:
 
 
 @pytest.mark.anyio
+async def test_tui_shortcuts_use_immediate_preview_when_available() -> None:
+    session = FakeSession()
+    session.scoped_model_choices = (
+        ModelChoice("openai", "fake-model"),
+        ModelChoice("openai", "other-model"),
+    )
+
+    def preview_model(*, reverse: bool = False) -> ModelChoice:
+        del reverse
+        choice = session.scoped_model_choices[1]
+        session.model = choice.model
+        return choice
+
+    def preview_thinking() -> str:
+        session.thinking_level = "high"
+        return "Thinking mode: high"
+
+    session.preview_cycle_scoped_model = preview_model  # type: ignore[attr-defined]
+    session.preview_cycle_thinking_level = preview_thinking  # type: ignore[attr-defined]
+    app = TauTuiApp(session)
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+p")
+        assert session.model == "other-model"
+        await pilot.press("shift+tab")
+        assert session.thinking_level == "high"
+
+
+@pytest.mark.anyio
 async def test_tui_app_cycles_thinking_from_keybinding() -> None:
     session = FakeSession()
     app = TauTuiApp(session)

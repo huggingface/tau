@@ -30,7 +30,10 @@ The pickers render cached/bundled choices immediately, then refresh remote
 catalogs in the background and update the open list. This includes the
 account-scoped OpenAI Codex model snapshot, so models discovered in an earlier
 session are available before a refresh. Both commands refresh the Codex catalog;
-refresh failures leave the existing list usable. Use `tau update --models` for
+refresh failures leave the existing list usable. Model selections and thinking
+changes in the TUI update immediately, but only the final selection is recorded
+in session history before the next accepted user message. Unsent selections are
+lost on restart and do not update defaults for future sessions. Use `tau update --models` for
 forced public-catalog revalidation or `TAU_OFFLINE=1` to disable catalog network
 access.
 

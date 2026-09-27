@@ -1,0 +1,7 @@
+# Reactive model and thinking selection
+
+The interactive TUI now previews model and thinking changes in memory. Ctrl+P and Shift+Tab do not construct a provider, save defaults, or append session entries on each keystroke. The status display reads the preview while the harness keeps its last committed provider/model until the next accepted idle prompt. The session stats used by the sidebar are cached until the session state or configuration changes, so repeated shortcut presses do not recount the entire transcript. Before starting that turn, `CodingSession.prompt` commits the final choice and thinking level ahead of the user message. If preparation fails, no user prompt is sent with the old provider, and the preview remains for retry.
+
+This follows Pi's separation of model selection from request-time streaming, but differs in history behavior: Pi appends selection entries immediately; Tau batches unsent choices into their final values at the next prompt. Previews are session-only, discarded on restart or branch/resume/new-session navigation. Existing explicit session APIs still support durable selection and settings persistence for non-TUI callers.
+
+Test with `uv run pytest tests/test_coding_session.py tests/test_tui_app.py`. Try Ctrl+P and Shift+Tab repeatedly before sending a message: status changes immediately; the session file does not. Send a prompt and inspect the entries before the user message. Restart without sending to verify the old committed selection returns.

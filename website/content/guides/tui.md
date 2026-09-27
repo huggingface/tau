@@ -227,6 +227,11 @@ when you want to reduce what is sent to the model.
 - **Ctrl+P** quickly cycles forward through your *scoped* (favorite) models;
   **Shift+Ctrl+P** cycles backward. Neither opens the picker. Manage that list
   with `/scoped-models` or by pressing `Space` on a model in the `/model` picker.
+- Model and thinking selections update the status display immediately. Tau records
+  only the final selections when you send the next message, before that message
+  enters session history. Unsent selections disappear when you restart; cycling
+  does not change the default for future sessions. If the selected model cannot
+  be prepared, Tau reports an error instead of sending with the old model.
 - **`/theme`** switches between `tau-dark`, `tau-light`, `high-contrast`, and
   any custom themes you have installed. Each theme uses one shared selection
   palette for prompt autocomplete and modal lists such as `/resume`. In
