@@ -40,15 +40,12 @@ from tau_coding.extensions import (
     InputEvent,
     InputHookResult,
     MessageRenderOptions,
-<<<<<<< HEAD
     NoAuth,
+    NullUiBridge,
     OpenAICompatibleTransport,
     ProviderModelSnapshot,
     ProviderRefreshContext,
     RefreshModels,
-=======
-    NullUiBridge,
->>>>>>> a627263 (feat(extensions): add ui.suspend() for plugins)
     ToolCallHookResult,
     ToolResultHookResult,
     discover_extensions,

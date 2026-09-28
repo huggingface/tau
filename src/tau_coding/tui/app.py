@@ -8,13 +8,8 @@ import os
 import stat
 import tempfile
 import traceback
-<<<<<<< HEAD
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping, Sequence
-from contextlib import suppress
-=======
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Sequence
 from contextlib import AbstractContextManager, suppress
->>>>>>> a627263 (feat(extensions): add ui.suspend() for plugins)
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import Enum, auto
