@@ -1698,8 +1698,8 @@ def _transcript_plain_body_text(
         return Group(invocation_text, markup_text)
 
     result_text: str | None = None
-    if show_tool_results and item.tool_result_text:
-        result_text = item.tool_result_text
+    if show_tool_results and (visible_result := item.result_text(expanded=show_tool_results)):
+        result_text = visible_result
     elif item.update_text and not item.tool_result_text:
         result_text = f"… {item.update_text}"
     if result_text is None:
@@ -2425,9 +2425,10 @@ def _visible_chat_text(
     text = invocation if item.role == "tool" and invocation else item.text
     if item.grouped_tool_calls is not None:
         return text
-    if show_tool_results and item.tool_result_text:
-        return f"{text}\n\n{item.tool_result_text}"
-    if item.update_text and not item.tool_result_text:
+    result_text = item.result_text(expanded=show_tool_results)
+    if show_tool_results and result_text:
+        return f"{text}\n\n{result_text}"
+    if item.update_text and not result_text:
         return f"{text}\n\n… {item.update_text}"
     return text
 

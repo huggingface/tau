@@ -58,6 +58,7 @@ features and fixes.
 | `-e, --extension PATH` | Load an [extension]({{< relref "../guides/extensions.md" >}}) file or directory (repeatable) |
 | `--no-extensions` | Disable extension directory discovery (explicit `-e` paths still load) |
 | `--project-extensions` | Also load trusted `<project>/.tau/extensions`; project trust and this code opt-in are both required |
+| `--show-full-output` | Start the TUI with untruncated tool and `!`-command output instead of previews; **Ctrl+O** toggles the same at runtime |
 | `-a, --approve` | Trust protected project inputs for this invocation only |
 | `-na, --no-approve` | Decline protected project inputs for this invocation only |
 | `-v, --version` | Print the version and exit |
