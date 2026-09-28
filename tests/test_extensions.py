@@ -40,11 +40,15 @@ from tau_coding.extensions import (
     InputEvent,
     InputHookResult,
     MessageRenderOptions,
+<<<<<<< HEAD
     NoAuth,
     OpenAICompatibleTransport,
     ProviderModelSnapshot,
     ProviderRefreshContext,
     RefreshModels,
+=======
+    NullUiBridge,
+>>>>>>> a627263 (feat(extensions): add ui.suspend() for plugins)
     ToolCallHookResult,
     ToolResultHookResult,
     discover_extensions,
@@ -1678,6 +1682,11 @@ class RecordingUiBridge:
     def notify(self, message: str, level: str = "info") -> None:
         self.notifications.append((message, level))
 
+    def suspend(self):
+        from contextlib import nullcontext
+
+        return nullcontext()
+
     async def select(
         self,
         title: str,
@@ -2884,6 +2893,11 @@ def test_reset_for_reload_invalidates_only_after_component_cleanup() -> None:
             observed_active.append(api.name == "old")
             super().clear_components()
 
+        def suspend(self):
+            from contextlib import nullcontext
+
+            return nullcontext()
+
     runtime.set_ui_bridge(CleanupBridge())
 
     runtime.reset_for_reload()
@@ -3422,3 +3436,37 @@ def _loaded_extension_module(name: str) -> object:
     ]
     assert candidates, f"extension module {name} not loaded"
     return candidates[-1]
+
+
+async def test_headless_ui_bridges_suspend_is_a_noop(tmp_path: Path) -> None:
+    from tau_coding.extensions import NullUiBridge, StderrUiBridge
+
+    for bridge in (NullUiBridge(), StderrUiBridge()):
+        ran = False
+        with bridge.suspend():
+            ran = True
+        assert ran
+
+
+async def test_context_ui_suspend_passes_through(tmp_path: Path) -> None:
+    from contextlib import contextmanager
+    from typing import cast
+
+    from tau_coding.extensions.api import ExtensionAPI
+
+    events: list[str] = []
+
+    class SuspendingBridge(NullUiBridge):
+        @contextmanager
+        def suspend(self):
+            events.append("suspended")
+            yield
+            events.append("resumed")
+
+    runtime = ExtensionRuntime(ui=SuspendingBridge())
+    api = cast(ExtensionAPI, _register_inline_extension(runtime, "suspend"))
+
+    with api.context.ui.suspend():
+        events.append("inside")
+
+    assert events == ["suspended", "inside", "resumed"]
