@@ -76,7 +76,11 @@ from tau_coding.extensions.provider_registry import (
 from tau_coding.extensions.providers import CredentialReader, DynamicProvider
 from tau_coding.local_backends import LocalBackend, LocalBackendRegistry
 from tau_coding.paths import TauPaths
-from tau_coding.project_trust import ExtensionTrustResult, ProjectTrustEvent
+from tau_coding.project_trust import (
+    ExtensionTrustResult,
+    ProjectTrustEvent,
+    ProjectTrustResolution,
+)
 from tau_coding.provider_config import ProviderConfig
 from tau_coding.resources import ResourceDiagnostic, TauResourcePaths
 from tau_coding.system_prompt import PromptSection
@@ -117,6 +121,9 @@ class BoundSession(Protocol):
 
     @property
     def system_prompt(self) -> str: ...
+
+    @property
+    def project_trust_resolution(self) -> ProjectTrustResolution | None: ...
 
     @property
     def is_running(self) -> bool: ...

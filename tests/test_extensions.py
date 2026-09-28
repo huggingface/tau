@@ -50,7 +50,7 @@ from tau_coding.extensions import (
     discover_extensions,
     load_extensions,
 )
-from tau_coding.project_trust import ProjectTrustRequest, TrustChoice
+from tau_coding.project_trust import ProjectTrustRequest, ProjectTrustResolution, TrustChoice
 from tau_coding.system_prompt import PromptSection
 
 pytestmark = pytest.mark.anyio
@@ -130,6 +130,9 @@ class RecordingSession:
         self.session_name: str | None = "Test session"
         self.thinking_level = "medium"
         self.system_prompt = "You are Tau."
+        self.project_trust_resolution: ProjectTrustResolution | None = ProjectTrustResolution(
+            trusted=True, source="saved"
+        )
         self.is_running = running
         self.messages: tuple[AgentMessage, ...] = ()
         self.steered: list[str] = []
@@ -1556,6 +1559,26 @@ def test_transcript_is_empty_at_session_start(tmp_path: Path) -> None:
     assert api.context.transcript == ()  # type: ignore[attr-defined]
 
 
+def test_context_exposes_project_trust_decision(tmp_path: Path) -> None:
+    runtime = ExtensionRuntime()
+    api = _register_inline_extension(runtime, "reader")
+    session = RecordingSession(tmp_path)
+    runtime.bind(session)
+
+    assert api.context.project_trusted is True  # type: ignore[attr-defined]
+    assert api.context.project_trust_resolution == ProjectTrustResolution(  # type: ignore[attr-defined]
+        trusted=True, source="saved"
+    )
+
+    session.project_trust_resolution = ProjectTrustResolution(trusted=False, source="default")
+    assert api.context.project_trusted is False  # type: ignore[attr-defined]
+
+    # A session that never resolved trust reads as untrusted rather than raising.
+    session.project_trust_resolution = None
+    assert api.context.project_trusted is False  # type: ignore[attr-defined]
+    assert api.context.project_trust_resolution is None  # type: ignore[attr-defined]
+
+
 def test_transcript_exposes_prior_messages_in_order(tmp_path: Path) -> None:
     runtime = ExtensionRuntime()
     api = _register_inline_extension(runtime, "reader")
@@ -2557,6 +2580,78 @@ async def test_append_entry_persists_on_active_path(tmp_path: Path) -> None:
     assert custom[0].namespace == "test:records"
     assert custom[0].data == {"value": 7}
     assert session.state.custom_entries
+
+
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [("approve", True), ("decline", False)],
+)
+async def test_context_project_trusted_follows_session_trust_override(
+    tmp_path: Path, override: str, expected: bool
+) -> None:
+    config = replace(
+        _session_config(tmp_path, FakeProvider([]), extension_body=HELLO_TOOL_EXTENSION),
+        trust_override=override,
+    )
+    session = await CodingSession.load(config)
+    api = cast(ExtensionAPI, _register_inline_extension(session.extension_runtime, "observer"))
+
+    assert api.context.project_trusted is expected
+    assert api.context.project_trust_resolution is session.project_trust_resolution
+    assert api.context.project_trust_resolution is not None
+    assert api.context.project_trust_resolution.source == "override"
+    await session.aclose()
+
+
+async def test_allowed_tool_names_caps_composed_tools_and_survives_reload(
+    tmp_path: Path,
+) -> None:
+    manager = SessionManager(
+        TauPaths(home=tmp_path / "home-tau", agents_home=tmp_path / "home-agents")
+    )
+    config = _session_config(tmp_path, FakeProvider([]), extension_body=HELLO_TOOL_EXTENSION)
+    initial = manager.create_session(cwd=config.cwd, model="fake")
+    destination = manager.create_session(cwd=config.cwd, model="fake")
+    config = replace(
+        config,
+        allowed_tool_names=frozenset({"read", "not-a-tool"}),
+        session_manager=manager,
+        session_id=initial.id,
+    )
+    session = await CodingSession.load(config)
+
+    # The extension registered ``hello`` on top of the built-ins; the allow-list
+    # is applied after that composition so only ``read`` remains.
+    assert session.extension_names == ("integration",)
+    assert [tool.name for tool in session.tools] == ["read"]
+    assert "hello" not in session.system_prompt
+
+    paths = _paths(tmp_path)
+    _write_extension(_user_extensions_dir(paths), "late_arrival", HELLO_TOOL_EXTENSION)
+    summary = await session.reload()
+
+    assert summary.extensions.after == 2
+    assert [tool.name for tool in session.tools] == ["read"]
+    assert "hello" not in session.system_prompt
+
+    # ``resume`` rebuilds the config from scratch rather than via ``replace``,
+    # so it must forward the allow-list explicitly.
+    await session.resume(destination.id)
+
+    assert session.session_id == destination.id
+    assert [tool.name for tool in session.tools] == ["read"]
+    await session.aclose()
+
+
+async def test_allowed_tool_names_none_keeps_every_composed_tool(tmp_path: Path) -> None:
+    session = await CodingSession.load(
+        _session_config(tmp_path, FakeProvider([]), extension_body=HELLO_TOOL_EXTENSION)
+    )
+
+    tool_names = [tool.name for tool in session.tools]
+    assert "read" in tool_names
+    assert "hello" in tool_names
+    await session.aclose()
 
 
 async def test_reload_picks_up_new_extension(tmp_path: Path) -> None:
