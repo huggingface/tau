@@ -9,5 +9,10 @@ commands now return directly after opening instead of rebuilding the transcript,
 and the catalog refresh starts only after the first screen refresh. The model
 list uses Textual's virtualized `OptionList` rather than mounting every model
 widget twice; unchanged catalog results leave existing options untouched.
+Picker refresh workers belong to their screens and are cancelled on dismissal;
+results from an old picker cannot update a replacement picker. Since Textual
+calls result callbacks before removing the screen, selection work is scheduled
+after the main screen's next refresh. Scoped-model cancellation skips chrome
+rebuild unless the active thinking level actually changed.
 
 Test with `uv run pytest tests/test_commands.py tests/test_coding_session.py tests/test_tui_app.py`. Try Ctrl+P and Shift+Tab repeatedly before sending a message: status changes immediately; the session file does not. Send a prompt and inspect the entries before the user message. Restart without sending to verify the old committed selection returns.

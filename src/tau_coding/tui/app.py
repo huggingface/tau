@@ -2963,9 +2963,12 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
         theme: TuiTheme,
         on_toggle_scoped: Callable[[ModelChoice], Sequence[ModelChoice]] | None = None,
         picker_kind: Literal["model", "scoped"] = "model",
+        initial_thinking_level: str | None = None,
     ) -> None:
         super().__init__()
         self.on_first_refresh: Callable[[], None] | None = None
+        self.refresh_worker: Worker[None] | None = None
+        self.initial_thinking_level = initial_thinking_level
         available = tuple(dict.fromkeys(choices))
         self.scoped_choices = tuple(dict.fromkeys(scoped_choices))
         self.unavailable_choices = frozenset(self.scoped_choices) - frozenset(available)
@@ -3086,7 +3089,17 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
 
     def action_cancel(self) -> None:
         """Close without selecting a model."""
+        self.cancel_refresh()
         self.dismiss(None)
+
+    def cancel_refresh(self) -> None:
+        """Stop work owned by this picker when it is no longer visible."""
+        if self.refresh_worker is not None and not self.refresh_worker.is_finished:
+            self.refresh_worker.cancel()
+
+    def on_unmount(self) -> None:
+        """Also cancel when a caller removes the picker without dismissing it."""
+        self.cancel_refresh()
 
     def update_choices(
         self,
@@ -3122,6 +3135,7 @@ class ModelPickerScreen(ModalScreen[ModelChoice | None]):
             return
         if choice in self.unavailable_choices:
             return
+        self.cancel_refresh()
         self.dismiss(choice)
 
     def _label_for_choice(self, choice: ModelChoice) -> str:
@@ -7084,33 +7098,31 @@ class TauTuiApp(App[None]):
             picker_kind="model",
         )
         picker.on_first_refresh = lambda: self._start_model_picker_refresh(picker)
-        self.push_screen(picker, callback=self._handle_model_picker_result)
+        self.push_screen(
+            picker, callback=lambda choice: self._handle_model_picker_result(picker, choice)
+        )
 
     def _start_model_picker_refresh(self, picker: ModelPickerScreen) -> None:
         if self.screen is picker:
-            self.run_worker(self._refresh_open_model_picker(), exclusive=False)
+            picker.refresh_worker = self.run_worker(
+                self._refresh_open_model_picker(picker), exclusive=False
+            )
 
-    async def _refresh_open_model_picker(self) -> None:
+    async def _refresh_open_model_picker(self, picker: ModelPickerScreen) -> None:
         refresh = getattr(self.session, "refresh_model_catalogs", None)
         if not callable(refresh):
             return
         try:
             await refresh()
         except Exception as error:
-            if isinstance(self.screen, ModelPickerScreen):
+            if self.screen is picker:
                 self._notify(f"Could not refresh model catalogs: {error}", severity="warning")
             return
-        if not isinstance(self.screen, ModelPickerScreen):
-            return
-        picker = self.screen
-        while not picker.is_mounted:
-            await asyncio.sleep(0)
-            if self.screen is not picker:
-                return
-        picker.update_choices(
-            self._available_model_choices(),
-            tuple(getattr(self.session, "scoped_model_choices", ())),
-        )
+        if self.screen is picker and picker.is_mounted:
+            picker.update_choices(
+                self._available_model_choices(),
+                tuple(getattr(self.session, "scoped_model_choices", ())),
+            )
 
     def _open_scoped_models_picker(self) -> None:
         choices = self._available_model_choices()
@@ -7133,9 +7145,12 @@ class TauTuiApp(App[None]):
             theme=self.tui_settings.resolved_theme,
             on_toggle_scoped=self._toggle_scoped_model,
             picker_kind="scoped",
+            initial_thinking_level=self.session.thinking_level,
         )
         picker.on_first_refresh = lambda: self._start_model_picker_refresh(picker)
-        self.push_screen(picker, callback=self._handle_scoped_models_picker_result)
+        self.push_screen(
+            picker, callback=lambda choice: self._handle_scoped_models_picker_result(picker, choice)
+        )
 
     def _toggle_scoped_model(self, choice: ModelChoice) -> Sequence[ModelChoice]:
         toggle_scoped_model = getattr(self.session, "toggle_scoped_model", None)
@@ -7148,13 +7163,25 @@ class TauTuiApp(App[None]):
             self._notify(f"Could not update scoped models: {exc}", severity="error")
             return tuple(getattr(self.session, "scoped_model_choices", ()))
 
-    def _handle_scoped_models_picker_result(self, choice: ModelChoice | None) -> None:
+    def _handle_scoped_models_picker_result(
+        self, picker: ModelPickerScreen, choice: ModelChoice | None
+    ) -> None:
         del choice
-        self._refresh_chrome()
+        picker.cancel_refresh()
+        if (
+            picker.initial_thinking_level is not None
+            and picker.initial_thinking_level != self.session.thinking_level
+        ):
+            self.call_after_refresh(self._refresh_chrome)
 
-    def _handle_model_picker_result(self, choice: ModelChoice | None) -> None:
-        if choice is None:
-            return
+    def _handle_model_picker_result(
+        self, picker: ModelPickerScreen, choice: ModelChoice | None
+    ) -> None:
+        picker.cancel_refresh()
+        if choice is not None:
+            self.call_after_refresh(self._start_selected_model_switch, choice)
+
+    def _start_selected_model_switch(self, choice: ModelChoice) -> None:
         self.run_worker(self._switch_model(choice), exclusive=False)
 
     async def _switch_model(self, choice: ModelChoice) -> None:

@@ -29,7 +29,10 @@ without persisted timing still count toward token usage but not these metrics.
 The pickers open from cached/bundled choices immediately, then start remote
 catalog refresh only after the first screen refresh and update the open list.
 The virtualized model list renders only visible rows and does not mount the
-entire catalog twice. This includes the
+entire catalog twice. Closing either picker cancels its owned catalog refresh;
+closing scoped models without changing the effective thinking level avoids
+refreshing the sidebar. A model selected from the picker updates the session
+after the modal has closed. This includes the
 account-scoped OpenAI Codex model snapshot, so models discovered in an earlier
 session are available before a refresh. Both commands refresh the Codex catalog;
 refresh failures leave the existing list usable. A missing active model after a

@@ -8987,6 +8987,106 @@ async def test_tui_model_opens_interactive_picker() -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("command", ["/model", "/scoped-models"])
+async def test_tui_closing_model_picker_cancels_its_refresh_without_chrome_rebuild(
+    command: str,
+) -> None:
+    class PendingCatalogSession(FakeSession):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+
+        async def refresh_model_catalogs(self) -> None:
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+
+    session = PendingCatalogSession()
+    app = TauTuiApp(session)
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = command
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, ModelPickerScreen)
+        assert session.started.is_set()
+        chrome_refreshes = 0
+        original_refresh_chrome = app._refresh_chrome
+
+        def track_chrome(*args: object, **kwargs: object) -> None:
+            nonlocal chrome_refreshes
+            chrome_refreshes += 1
+            original_refresh_chrome(*args, **kwargs)
+
+        app._refresh_chrome = track_chrome  # type: ignore[method-assign]
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, ModelPickerScreen)
+        assert session.cancelled.is_set()
+        assert chrome_refreshes == 0
+
+
+@pytest.mark.anyio
+async def test_tui_scoped_picker_refreshes_chrome_when_thinking_changes() -> None:
+    session = FakeSession()
+    original_toggle = session.toggle_scoped_model
+
+    def toggle_and_change_thinking(choice: ModelChoice) -> tuple[ModelChoice, ...]:
+        session.thinking_level = "high"
+        return original_toggle(choice)
+
+    session.toggle_scoped_model = toggle_and_change_thinking  # type: ignore[method-assign]
+    app = TauTuiApp(session)
+    async with app.run_test() as pilot:
+        prompt = app.query_one("#prompt")
+        prompt.value = "/scoped-models"
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, ModelPickerScreen)
+        assert app.screen.initial_thinking_level == "medium"
+        assert session.thinking_level == "high"
+        refreshes = 0
+        original_refresh_chrome = app._refresh_chrome
+
+        def track_chrome(*args: object, **kwargs: object) -> None:
+            nonlocal refreshes
+            refreshes += 1
+            original_refresh_chrome(*args, **kwargs)
+
+        app._refresh_chrome = track_chrome  # type: ignore[method-assign]
+        await pilot.press("escape")
+        await pilot.pause()
+        assert refreshes == 1
+
+
+@pytest.mark.anyio
+async def test_tui_model_selection_runs_after_picker_closes() -> None:
+    session = FakeSession()
+    app = TauTuiApp(session)
+    was_closed: list[bool] = []
+    async with app.run_test() as pilot:
+
+        async def track_switch(choice: ModelChoice) -> None:
+            del choice
+            was_closed.append(not isinstance(app.screen, ModelPickerScreen))
+
+        app._switch_model = track_switch  # type: ignore[method-assign]
+        prompt = app.query_one("#prompt")
+        prompt.value = "/model"
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert was_closed == [True]
+
+
+@pytest.mark.anyio
 async def test_tui_model_picker_virtualizes_large_cached_catalog() -> None:
     session = FakeSession()
     session.available_model_choices = tuple(
