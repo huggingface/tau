@@ -6880,3 +6880,34 @@ input = ["text", "image"]
 
 [providers.model_metadata."mai-code-1-flash-picker"]
 input = ["text"]
+
+[[providers]]
+name = "tsubasa"
+display_name = "Tsubasa"
+kind = "openai-compatible"
+base_url = "https://api.tsubasa.sh/v1"
+api_key_env = "TSUBASA_API_KEY"
+credential_name = "tsubasa"
+models = ["tsubasa-pro", "tsubasa-fast"]
+default_model = "tsubasa-pro"
+docs_url = "https://tsubasa.sh/docs"
+api = "openai-completions"
+compat = { supportsStore = false, supportsReasoningEffort = false }
+
+[providers.context_windows]
+tsubasa-pro = 32768
+tsubasa-fast = 32768
+
+[providers.model_metadata.tsubasa-pro]
+name = "Tsubasa Pro"
+reasoning = false
+input = ["text"]
+context_window = 32768
+max_tokens = 16384
+
+[providers.model_metadata.tsubasa-fast]
+name = "Tsubasa Fast"
+reasoning = false
+input = ["text"]
+context_window = 32768
+max_tokens = 8192
