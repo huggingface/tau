@@ -423,6 +423,7 @@ The built-in frontend reads optional settings from `~/.tau/tui.json`:
     "session_picker": "ctrl+r",
     "queue_follow_up": "alt+enter",
     "insert_newline": "shift+enter",
+    "external_editor": "ctrl+g",
     "accept_completion": "tab",
     "completion_next": "down",
     "completion_previous": "up",
