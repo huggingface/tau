@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import ssl
 from asyncio import sleep
+
+import httpx
 
 from tau_agent.types import JSONValue
 from tau_ai._provider_events import ProviderRetryEvent
@@ -10,6 +13,12 @@ from tau_ai.provider import CancellationToken
 
 RETRY_POLL_SECONDS = 0.05
 RETRY_BASE_DELAY_SECONDS = 0.25
+
+# Transport failures that are safe to retry before any content is emitted.
+# httpcore's anyio backend only maps ssl.SSLError during the TLS handshake (to
+# ConnectError), so post-handshake record errors such as
+# SSLV3_ALERT_BAD_RECORD_MAC escape as raw ssl.SSLError.
+RETRYABLE_TRANSPORT_ERRORS: tuple[type[Exception], ...] = (httpx.HTTPError, ssl.SSLError)
 
 
 def retry_delay_seconds(attempt: int, *, max_delay_seconds: float) -> float:

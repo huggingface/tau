@@ -1,3 +1,4 @@
+import ssl
 from collections.abc import AsyncIterator, Mapping
 from json import loads
 
@@ -368,6 +369,47 @@ async def test_openai_compatible_provider_does_not_retry_after_partial_output() 
                 max_retries=2,
                 max_retry_delay_seconds=0,
                 model_aliases={"zai-org/GLM-5.2": "zai-org/GLM-5.2:deepinfra"},
+            ),
+            client=client,
+        )
+        events = await _collect(
+            provider.stream_response(
+                model="zai-org/GLM-5.2",
+                system="You are Tau.",
+                messages=[UserMessage(content="hello")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 1
+    assert isinstance(events[-1], AssistantErrorEvent)
+    assert events[-1].error.text == "partial"
+
+
+@pytest.mark.anyio
+async def test_openai_compatible_provider_reports_raw_ssl_error_after_partial_output() -> None:
+    requests: list[httpx.Request] = []
+
+    class FailingStream(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+            raise ssl.SSLError(1, "[SSL: SSLV3_ALERT_BAD_RECORD_MAC] bad record mac")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            stream=FailingStream(),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenAICompatibleProvider(
+            OpenAICompatibleConfig(
+                api_key="test-key",
+                base_url="https://router.huggingface.co/v1",
+                max_retries=2,
+                max_retry_delay_seconds=0,
             ),
             client=client,
         )
@@ -2528,6 +2570,52 @@ async def test_anthropic_provider_retries_transient_status_with_event() -> None:
         "text_end",
         "done",
     ]
+
+
+@pytest.mark.anyio
+async def test_anthropic_provider_retries_raw_ssl_error() -> None:
+    # Post-handshake TLS record errors escape httpx as raw ssl.SSLError rather
+    # than an httpx.TransportError; they should still be retried.
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            raise ssl.SSLError(1, "[SSL: SSLV3_ALERT_BAD_RECORD_MAC] bad record mac")
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type":"content_block_delta","index":0,'
+                '"delta":{"type":"text_delta","text":"ok"}}\n\n'
+                'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n'
+                'data: {"type":"message_stop"}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AnthropicProvider(
+            AnthropicConfig(
+                api_key="test-key",
+                base_url="https://api.anthropic.test/v1",
+                max_retries=1,
+                max_retry_delay_seconds=0,
+            ),
+            client=client,
+        )
+
+        events = await _collect(
+            provider.stream_response(
+                model="claude-test",
+                system="You are Tau.",
+                messages=[UserMessage(content="Say ok")],
+                tools=[],
+            )
+        )
+
+    assert len(requests) == 2
+    assert isinstance(events[-1], AssistantDoneEvent)
+    assert events[-1].message.text == "ok"
 
 
 @pytest.mark.anyio
