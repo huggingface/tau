@@ -5675,6 +5675,68 @@ async def test_available_model_choices_include_stored_credentials(
 
 
 @pytest.mark.anyio
+async def test_cross_provider_preview_uses_previewed_models_and_thinking_capabilities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCAL_API_KEY", "local-key")
+    settings = ProviderSettings(
+        providers=(
+            OpenAICompatibleProviderConfig(
+                name="provider-a",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("alpha",),
+                default_model="alpha",
+                thinking_levels=("off", "high"),
+            ),
+            OpenAICompatibleProviderConfig(
+                name="provider-b",
+                api_key_env="LOCAL_API_KEY",
+                credential_name=None,
+                models=("beta", "no-think"),
+                default_model="beta",
+                thinking_levels=("off", "low"),
+                thinking_models=("beta",),
+            ),
+        ),
+    )
+    storage = JsonlSessionStorage(tmp_path / "preview.jsonl")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            model="alpha",
+            system="Test",
+            storage=storage,
+            cwd=tmp_path,
+            provider_name="provider-a",
+            provider_settings=settings,
+            runtime_provider_config=settings.get_provider("provider-a"),
+            extensions_enabled=False,
+        )
+    )
+    before = await storage.read_all()
+    assert session._provider_registry.effective("provider-b") is not None
+
+    session.preview_model_choice(ModelChoice("provider-b", "no-think"))
+    assert session.available_models == ("beta", "no-think")
+    assert session.available_thinking_levels == ()
+    assert "provider-b:no-think" in (session.thinking_unavailable_reason or "")
+    assert "thinking_models" in (session.thinking_unavailable_reason or "")
+
+    session.preview_model_choice(ModelChoice("provider-b", "beta"))
+    assert session.available_thinking_levels == ("off", "low")
+    assert session.preview_thinking_level("low") == "Thinking mode: low"
+    result = session.handle_command("/model beta")
+    assert result.model_selection_provider == "provider-b"
+    assert result.model_selection_model == "beta"
+    unknown = session.handle_command("/model alpha")
+    assert "Unknown model for provider provider-b: alpha" in (unknown.message or "")
+    assert "Available models: beta, no-think" in (unknown.message or "")
+    assert session._harness.config.model == "alpha"
+    assert await storage.read_all() == before
+
+
+@pytest.mark.anyio
 async def test_preview_selection_commits_only_at_next_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

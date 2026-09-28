@@ -884,7 +884,7 @@ class CodingSession:
         if self._provider_settings is None:
             return (self.model,)
         try:
-            provider = self._provider_settings.get_provider(self._provider_name)
+            provider = self._provider_settings.get_provider(self.provider_name)
         except ProviderConfigError:
             return (self.model,)
         if not self._provider_is_usable(provider):
@@ -1111,13 +1111,7 @@ class CodingSession:
             return model.thinking_levels or ()
         if self._provider_settings is None:
             return THINKING_LEVELS
-        provider = (
-            self._provider_settings.get_provider(self.provider_name)
-            if self._preview_model is not None
-            and self._provider_settings is not None
-            and self._provider_registry.effective(self.provider_name) is None
-            else self._active_provider_config()
-        )
+        provider = self._selected_provider_config()
         if provider is None:
             return ()
         return provider_thinking_levels(provider, model=self.model)
@@ -1138,7 +1132,7 @@ class CodingSession:
                     "thinking levels"
                 )
             return f"{self.provider_name}:{self.model} declares no configurable thinking levels"
-        provider = self._active_provider_config()
+        provider = self._selected_provider_config()
         if provider is None:
             return "Active provider settings are not available"
         return provider_thinking_unavailable_reason(provider, model=self.model)
@@ -2048,6 +2042,17 @@ class CodingSession:
                 available=self.available_thinking_levels,
             )
         )
+
+    def _selected_provider_config(self) -> ProviderConfig | None:
+        """Resolve displayed capabilities without changing the committed runtime."""
+        if self._preview_model is None:
+            return self._active_provider_config()
+        if self._provider_settings is None:
+            return None
+        try:
+            return self._provider_settings.get_provider(self.provider_name)
+        except ProviderConfigError:
+            return None
 
     def _active_provider_config(self) -> ProviderConfig | None:
         if self._provider_settings is None:
