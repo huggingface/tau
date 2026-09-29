@@ -766,7 +766,7 @@ class _ResponsesToolCallBuilder:
             self.call_id = call_id
         if name:
             self.name = name
-        if isinstance(arguments, str):
+        if isinstance(arguments, str) and arguments:
             self.arguments_final = arguments
         if output_index is not None:
             self.output_index = output_index
