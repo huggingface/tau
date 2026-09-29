@@ -1,5 +1,20 @@
 [
   {
+    "version": "0.4.6",
+    "date": "2026-09-28",
+    "sections": {
+      "Changed": [
+        "Preview model and thinking shortcuts immediately in the TUI and record only the final selection when sending a prompt; unsent choices remain session-only.",
+        "Open /model and /scoped-models from cached choices with a virtualized list, then refresh catalogs in the background after the picker renders.",
+        "Limit GitHub Actions token permissions per job and pin workflow actions to immutable commit SHAs."
+      ],
+      "Fixed": [
+        "Reduce model-switching and picker latency by avoiding provider rebuilds and session-history writes on each shortcut, cancelling picker-owned refreshes on close, and skipping unnecessary sidebar updates.",
+        "Keep the active provider working when a refreshed catalog drops its model, and preserve cross-provider preview model and thinking capabilities."
+      ]
+    }
+  },
+  {
     "version": "0.4.5",
     "date": "2026-09-23",
     "sections": {
