@@ -1,7 +1,7 @@
 [
   {
     "version": "0.4.6",
-    "date": "2026-09-28",
+    "date": "2026-09-29",
     "sections": {
       "Changed": [
         "Preview model and thinking shortcuts immediately in the TUI and record only the final selection when sending a prompt; unsent choices remain session-only.",
