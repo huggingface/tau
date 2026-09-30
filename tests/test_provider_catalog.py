@@ -63,6 +63,7 @@ def test_builtin_catalog_matches_expected_providers() -> None:
         "cerebras",
         "nvidia",
         "openrouter",
+        "requesty",
         "zai",
         "mistral",
         "minimax",
@@ -333,6 +334,60 @@ def test_builtin_catalog_golden_nvidia_entry() -> None:
     assert gpt_oss_metadata.reasoning is True
     assert gpt_oss_metadata.context_window == 128_000
     assert gpt_oss_metadata.max_tokens == 8_192
+
+
+def test_builtin_catalog_golden_requesty_entry() -> None:
+    entry = builtin_provider_entry("requesty")
+    assert entry is not None
+    assert entry.display_name == "Requesty"
+    assert entry.kind == "openai-compatible"
+    assert entry.base_url == "https://router.requesty.ai/v1"
+    assert entry.api_key_env == "REQUESTY_API_KEY"
+    assert entry.credential_name == "requesty"
+    # Vendor-prefixed catalog ids and short managed policy ids are both valid
+    # Requesty model names; the built-in entry ships a starter set of each.
+    assert {
+        "openai/gpt-4o-mini",
+        "openai/gpt-5-mini",
+        "anthropic/claude-sonnet-4-5",
+        "anthropic/claude-haiku-4-5",
+        "google/gemini-2.5-flash",
+        "deepseek/deepseek-chat",
+        "claude-sonnet-4-6",
+        "gpt-5.4",
+    } <= set(entry.models)
+    assert entry.default_model == "openai/gpt-4o-mini"
+    assert entry.docs_url == "https://docs.requesty.ai"
+    assert entry.api == "openai-completions"
+    assert entry.context_windows is not None
+    assert entry.context_windows["openai/gpt-4o-mini"] == 128_000
+    assert entry.context_windows["claude-sonnet-4-6"] == 1_000_000
+    assert entry.thinking_levels == ("off", "minimal", "low", "medium", "high", "xhigh")
+    assert entry.thinking_models == ()
+    assert entry.thinking_default == "medium"
+    assert entry.thinking_parameter == "reasoning_effort"
+
+    default_metadata = entry.model_metadata[entry.default_model]
+    assert default_metadata.name == "OpenAI: GPT-4o-mini"
+    assert default_metadata.reasoning is False
+    assert default_metadata.input == ("text", "image")
+    assert default_metadata.context_window == 128_000
+    assert default_metadata.max_tokens == 16_384
+    assert default_metadata.cost == {
+        "input": 0.15,
+        "output": 0.6,
+        "cacheRead": 0.075,
+        "cacheWrite": 0,
+    }
+
+    # Managed policy rows come from the generated models.dev snapshot.
+    managed_metadata = entry.model_metadata["claude-sonnet-4-6"]
+    assert managed_metadata.reasoning is True
+    assert managed_metadata.context_window == 1_000_000
+    assert managed_metadata.thinking_level_map["off"] == "none"
+    assert managed_metadata.thinking_level_map["max"] == "max"
+    eu_models = [model for model in entry.models if model.endswith("@eu")]
+    assert eu_models
 
 
 def test_builtin_catalog_huggingface_model_expansion() -> None:
