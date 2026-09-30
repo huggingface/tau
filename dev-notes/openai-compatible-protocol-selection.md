@@ -11,6 +11,10 @@ Issue #546 adds the API choice to `tau setup` and `/login custom`. Tau saves the
 selection with the existing provider metadata in `catalog.toml` and uses it for
 every request.
 
+Stream canonicalization follows the same explicit API choice. Chat Completions
+keeps reasoning and answer deltas in independent channels, including when a
+model name contains `gpt-5`. Responses retains sequential block ordering.
+
 ## What changed
 
 `openai-completions` selects `/chat/completions`, while `openai-responses`
