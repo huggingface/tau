@@ -4775,7 +4775,7 @@ def _state_thinking_level(
 def _create_runtime_provider(
     provider: ProviderConfig,
     *,
-    credential_store: FileCredentialStore,
+    credential_store: FileCredentialStore | None,
     model: str,
     thinking_level: ThinkingLevel | None,
     inference_provider: str | None,
