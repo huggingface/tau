@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from json import dumps, loads
 from pathlib import Path
@@ -46,6 +47,11 @@ class TuiConfigError(ValueError):
     """Raised when Tau TUI configuration is invalid."""
 
 
+def _default_suspend_key() -> str | None:
+    """Return the platform-appropriate process suspension shortcut."""
+    return None if sys.platform == "win32" else "ctrl+z"
+
+
 @dataclass(frozen=True, slots=True)
 class TuiKeybindings:
     """Configurable keys for Tau's built-in Textual frontend."""
@@ -65,8 +71,9 @@ class TuiKeybindings:
     toggle_tool_results: str = "ctrl+o"
     copy_message: str = "ctrl+c"
     quit: str = "ctrl+d"
+    suspend: str | None = field(default_factory=_default_suspend_key)
 
-    def to_json(self) -> dict[str, str]:
+    def to_json(self) -> dict[str, str | None]:
         """Serialize these keybindings to JSON-compatible data."""
         return {
             "cancel": self.cancel,
@@ -84,6 +91,7 @@ class TuiKeybindings:
             "toggle_tool_results": self.toggle_tool_results,
             "copy_message": self.copy_message,
             "quit": self.quit,
+            "suspend": self.suspend,
         }
 
 
@@ -178,14 +186,17 @@ def _bool_setting(value: object, field_name: str) -> bool:
 
 def _keybindings_from_json(data: dict[str, Any]) -> TuiKeybindings:
     defaults = TuiKeybindings()
+    serialized_defaults = defaults.to_json()
+    suspend_default = serialized_defaults.pop("suspend")
     # Future versions may add actions to this nested object. Read only actions
     # this version understands, just as the top-level settings parser does.
     values = {
         field_name: _key_string(data.get(field_name, default_value), field_name)
-        for field_name, default_value in defaults.to_json().items()
+        for field_name, default_value in serialized_defaults.items()
     }
-    _reject_duplicate_keys(values)
-    return TuiKeybindings(**values)
+    suspend = _optional_key_string(data.get("suspend", suspend_default), "suspend")
+    _reject_duplicate_keys({**values, "suspend": suspend})
+    return TuiKeybindings(**values, suspend=suspend)
 
 
 def _key_string(value: object, field_name: str) -> str:
@@ -194,15 +205,23 @@ def _key_string(value: object, field_name: str) -> str:
     return value.strip()
 
 
+def _optional_key_string(value: object, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _key_string(value, field_name)
+
+
 def _theme_name(value: object) -> TuiThemeName:
     if not isinstance(value, str) or not value.strip():
         raise TuiConfigError("TUI theme must be a non-empty string")
     return value.strip()
 
 
-def _reject_duplicate_keys(values: dict[str, str]) -> None:
+def _reject_duplicate_keys(values: dict[str, str | None]) -> None:
     key_to_action: dict[str, str] = {}
     for action, key in values.items():
+        if key is None:
+            continue
         previous_action = key_to_action.get(key)
         if previous_action is not None:
             raise TuiConfigError(

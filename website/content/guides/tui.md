@@ -55,6 +55,9 @@ While the agent is working you don't have to wait:
   applied to the current run.
 - **Alt+Enter** queues a **follow-up** — a prompt that waits until the current
   run would otherwise finish.
+- **Ctrl+Z** suspends Tau to the shell on Unix-like systems. Run `fg` to resume
+  the same TUI session. Native Windows leaves suspension unbound because it does
+  not provide Unix job control.
 - Press **Up** on an empty prompt while running to pull the most recently queued
   follow-up back into the prompt for editing.
 

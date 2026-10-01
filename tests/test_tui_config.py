@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+import tau_coding.tui.config as tui_config
 from tau_coding.paths import TauPaths
 from tau_coding.tui.config import (
     HIGH_CONTRAST_THEME,
@@ -28,6 +29,8 @@ def test_load_tui_settings_returns_defaults_when_file_is_missing(tmp_path: Path)
     assert load_tui_settings(paths) == TuiSettings()
     assert load_tui_settings(paths).keybindings.model_cycle_reverse == "ctrl+shift+p"
     assert load_tui_settings(paths).keybindings.quit == "ctrl+d"
+    expected_suspend = None if tui_config.sys.platform == "win32" else "ctrl+z"
+    assert load_tui_settings(paths).keybindings.suspend == expected_suspend
 
 
 def test_load_tui_settings_reads_keybindings(tmp_path: Path) -> None:
@@ -47,7 +50,8 @@ def test_load_tui_settings_reads_keybindings(tmp_path: Path) -> None:
             "model_cycle": "f6",
             "model_cycle_reverse": "shift+f6",
             "toggle_thinking": "f4",
-            "copy_message": "ctrl+b"
+            "copy_message": "ctrl+b",
+            "suspend": "f8"
           },
           "theme": "high-contrast"
         }
@@ -69,6 +73,7 @@ def test_load_tui_settings_reads_keybindings(tmp_path: Path) -> None:
     assert settings.keybindings.model_cycle_reverse == "shift+f6"
     assert settings.keybindings.copy_message == "ctrl+b"
     assert settings.keybindings.cancel == "escape"
+    assert settings.keybindings.suspend == "f8"
     assert settings.theme == "high-contrast"
     assert settings.resolved_theme == HIGH_CONTRAST_THEME
 
@@ -117,6 +122,33 @@ def test_tui_keybindings_ignore_unknown_actions() -> None:
     )
 
     assert settings.keybindings.quit == "f12"
+
+
+def test_tui_suspend_keybinding_can_be_unbound() -> None:
+    settings = tui_settings_from_json({"keybindings": {"suspend": None}})
+
+    assert settings.keybindings.suspend is None
+    assert settings.to_json()["keybindings"]["suspend"] is None
+
+
+@pytest.mark.parametrize("value", ["", "  ", 7, False])
+def test_tui_suspend_keybinding_rejects_invalid_values(value: object) -> None:
+    with pytest.raises(TuiConfigError, match="suspend"):
+        tui_settings_from_json({"keybindings": {"suspend": value}})
+
+
+def test_tui_suspend_keybinding_participates_in_duplicate_validation() -> None:
+    with pytest.raises(TuiConfigError, match="assigned to both"):
+        tui_settings_from_json({"keybindings": {"command_palette": "ctrl+z", "suspend": "ctrl+z"}})
+
+
+def test_tui_suspend_keybinding_defaults_to_unbound_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tui_config.sys, "platform", "win32")
+
+    assert TuiKeybindings().suspend is None
+    assert tui_settings_from_json({}).keybindings.suspend is None
 
 
 def test_tui_keybindings_reject_duplicate_keys() -> None:
@@ -178,6 +210,7 @@ def test_tui_keybindings_serialize_to_json() -> None:
             model_cycle_reverse="shift+f6",
             toggle_thinking="f4",
             copy_message="ctrl+b",
+            suspend="f8",
         ),
         theme="high-contrast",
     )
@@ -193,6 +226,7 @@ def test_tui_keybindings_serialize_to_json() -> None:
     assert settings.to_json()["keybindings"]["model_cycle"] == "f6"
     assert settings.to_json()["keybindings"]["model_cycle_reverse"] == "shift+f6"
     assert settings.to_json()["keybindings"]["copy_message"] == "ctrl+b"
+    assert settings.to_json()["keybindings"]["suspend"] == "f8"
     assert settings.to_json()["theme"] == "high-contrast"
     assert settings.to_json()["auto_copy_selection"] is False
 
